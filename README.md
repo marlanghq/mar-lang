@@ -27,6 +27,12 @@ Compilar `.belm` para manifesto JSON:
 go run ./cmd/belmc compile examples/store.belm build/store.manifest.json
 ```
 
+Ao compilar, o Belm também gera um cliente Elm no mesmo diretório do manifesto.
+Exemplo de saída:
+
+- `build/store.manifest.json`
+- `build/StoreApiClient.elm`
+
 Rodar direto do `.belm`:
 
 ```bash
@@ -38,6 +44,48 @@ Rodar a partir de manifesto compilado:
 ```bash
 go run ./cmd/belmc serve-manifest build/store.manifest.json
 ```
+
+## Cliente Elm gerado automaticamente
+
+O módulo gerado (`<AppName>Client.elm`) inclui:
+
+- `schema` (metadados das entidades)
+- `rowDecoder`
+- funções CRUD por entidade:
+  - `list<Entity>`
+  - `get<Entity>`
+  - `create<Entity>`
+  - `update<Entity>`
+  - `delete<Entity>`
+- quando auth está habilitado:
+  - `requestCode`
+  - `login`
+  - `logout`
+  - `me`
+
+Exemplo de uso em Elm:
+
+```elm
+import StoreApiClient as Api
+
+type Msg
+    = GotCustomers (Result Http.Error (List Api.Row))
+
+load : Cmd Msg
+load =
+    Api.listCustomer
+        { baseUrl = "http://localhost:4100", token = "" }
+        GotCustomers
+```
+
+## Painel Admin (Elm + elm-ui)
+
+Foi adicionado um painel gráfico em Elm:
+
+- código: [admin/src/Main.elm](/Users/marcio/dev/github/belm/admin/src/Main.elm)
+- docs: [admin/README.md](/Users/marcio/dev/github/belm/admin/README.md)
+
+Ele consome `GET /_belm/schema` para descobrir entidades e permite listar/criar/editar/deletar registros.
 
 ## Sintaxe da linguagem
 
@@ -181,6 +229,7 @@ Para cada entidade `X`:
 Sempre:
 
 - `GET /health`
+- `GET /_belm/schema`
 
 Com auth habilitado:
 

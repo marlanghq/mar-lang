@@ -124,6 +124,12 @@ func (r *Runtime) Serve(ctx context.Context) error {
 }
 
 func (r *Runtime) handleHTTP(w http.ResponseWriter, req *http.Request) {
+	setCORSHeaders(w)
+	if req.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	if err := r.route(w, req); err != nil {
 		r.writeError(w, err)
 	}
@@ -138,6 +144,10 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request) error {
 
 	if method == http.MethodGet && path == "/health" {
 		r.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "app": r.App.AppName})
+		return nil
+	}
+	if method == http.MethodGet && path == "/_belm/schema" {
+		r.writeJSON(w, http.StatusOK, r.schemaPayload())
 		return nil
 	}
 
@@ -259,4 +269,10 @@ func fatalIfErr(err error) {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+func setCORSHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
 }

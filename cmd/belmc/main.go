@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
+	"belm/internal/generator"
 	"belm/internal/model"
 	"belm/internal/parser"
 	"belm/internal/runtime"
@@ -70,6 +72,9 @@ func writeManifest(path string, app *model.App) error {
 	if app == nil {
 		return errors.New("nil app")
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(app, "", "  ")
 	if err != nil {
 		return err
@@ -77,7 +82,16 @@ func writeManifest(path string, app *model.App) error {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return err
 	}
+	elmClient, err := generator.GenerateElmClient(app)
+	if err != nil {
+		return err
+	}
+	elmPath := generator.ElmOutputPath(path, elmClient.FileName)
+	if err := os.WriteFile(elmPath, elmClient.Source, 0o644); err != nil {
+		return err
+	}
 	fmt.Printf("Compiled %s\n", path)
+	fmt.Printf("Generated Elm client %s\n", elmPath)
 	return nil
 }
 
