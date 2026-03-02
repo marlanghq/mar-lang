@@ -1,0 +1,16 @@
+app TodoApi
+port 4000
+database "./todo.db"
+
+entity Todo {
+  id: Int primary auto
+  title: String
+  done: Bool
+}
+
+entity User {
+  id: Int primary auto
+  name: String
+  email: String
+  active: Bool
+}

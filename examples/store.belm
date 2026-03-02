@@ -1,0 +1,42 @@
+app StoreApi
+port 4100
+database "./store.db"
+
+entity Customer {
+  id: Int primary auto
+  name: String
+  email: String
+  age: Int
+  vip: Bool
+  phone: String optional
+  rule "Customer must be 18 or older" when age >= 18
+  rule "Customer email must be valid" when matches(email, "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
+}
+
+entity Product {
+  id: Int primary auto
+  name: String
+  price: Float
+  stock: Int
+  active: Bool
+  rule "Price must be greater than zero" when price > 0
+  rule "Stock cannot be negative" when stock >= 0
+}
+
+entity Order {
+  id: Int primary auto
+  customerId: Int
+  status: String
+  total: Float
+  notes: String optional
+  rule "Total must be non-negative" when total >= 0
+  rule "Status must be one of created, paid, shipped, canceled" when status == "created" or status == "paid" or status == "shipped" or status == "canceled"
+}
+
+entity OrderItem {
+  id: Int primary auto
+  orderId: Int
+  productId: Int
+  quantity: Int
+  unitPrice: Float
+}
