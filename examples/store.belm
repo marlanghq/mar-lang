@@ -1,6 +1,18 @@
 app StoreApi
 port 4100
-database "./store.db"
+database "./store-auth.db"
+
+auth {
+  user_entity Customer
+  email_field email
+  role_field role
+  code_ttl_minutes 10
+  session_ttl_hours 24
+  email_transport console
+  email_from "no-reply@store.local"
+  email_subject "Your StoreApi login code"
+  dev_expose_code true
+}
 
 entity Customer {
   id: Int primary auto
@@ -8,9 +20,16 @@ entity Customer {
   email: String
   age: Int
   vip: Bool
+  role: String optional
   phone: String optional
   rule "Customer must be 18 or older" when age >= 18
   rule "Customer email must be valid" when matches(email, "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
+  rule "Role must be admin or user when provided" when role == null or role == "admin" or role == "user"
+  authorize list when isRole("admin")
+  authorize get when auth_authenticated and (id == auth_user_id or isRole("admin"))
+  authorize create when true
+  authorize update when auth_authenticated and (id == auth_user_id or isRole("admin"))
+  authorize delete when isRole("admin")
 }
 
 entity Product {
@@ -21,6 +40,11 @@ entity Product {
   active: Bool
   rule "Price must be greater than zero" when price > 0
   rule "Stock cannot be negative" when stock >= 0
+  authorize list when true
+  authorize get when true
+  authorize create when isRole("admin")
+  authorize update when isRole("admin")
+  authorize delete when isRole("admin")
 }
 
 entity Order {
@@ -31,6 +55,11 @@ entity Order {
   notes: String optional
   rule "Total must be non-negative" when total >= 0
   rule "Status must be one of created, paid, shipped, canceled" when status == "created" or status == "paid" or status == "shipped" or status == "canceled"
+  authorize list when auth_authenticated
+  authorize get when auth_authenticated and (customerId == auth_user_id or isRole("admin"))
+  authorize create when auth_authenticated and (customerId == auth_user_id or isRole("admin"))
+  authorize update when auth_authenticated and (customerId == auth_user_id or isRole("admin"))
+  authorize delete when isRole("admin")
 }
 
 entity OrderItem {
@@ -39,4 +68,9 @@ entity OrderItem {
   productId: Int
   quantity: Int
   unitPrice: Float
+  authorize list when auth_authenticated
+  authorize get when auth_authenticated
+  authorize create when auth_authenticated
+  authorize update when auth_authenticated
+  authorize delete when isRole("admin")
 }

@@ -1,21 +1,47 @@
-# Belm
+# Belm (Go)
 
-Belm is a new backend programming language inspired by Elm.
+Belm é uma linguagem inspirada em Elm para backend, agora reimplementada em **Go** com foco em legibilidade e manutenção.
 
-- Pure-by-design model: application code is declarative (entities + types), while effects (HTTP + SQLite) are handled by the generated runtime.
-- Simple syntax: no classes, no inheritance, no hidden state.
-- Backend focus: compile to a production-friendly REST API with SQLite-backed CRUD.
-- Business logic included: entity rules are validated on `POST`/`PUT`/`PATCH`.
+## Objetivo
 
-## Host Language
+- Sintaxe simples e declarativa (`entity`, `rule`, `authorize`, `auth`)
+- CRUD REST automático
+- SQLite como banco
+- Login por código enviado por email
+- Autorização por regras
+- Migrações automáticas seguras
 
-Belm is hosted in **TypeScript/Node.js** (implemented here as ESM JavaScript running on Node.js).  
-Reason: we can compile and run immediately with zero external dependencies using built-in modules:
+## Arquitetura (Go)
 
-- `node:http` for REST API serving
-- `node:sqlite` for SQLite persistence
+- [cmd/belmc/main.go](/Users/marcio/dev/github/belm/cmd/belmc/main.go): CLI do compilador/runtime
+- [internal/parser/parser.go](/Users/marcio/dev/github/belm/internal/parser/parser.go): parser da linguagem `.belm`
+- [internal/expr/parser.go](/Users/marcio/dev/github/belm/internal/expr/parser.go): parser de expressões (`rule`/`authorize`)
+- [internal/runtime](/Users/marcio/dev/github/belm/internal/runtime): servidor HTTP, auth/authz e migrações
+- [internal/sqlitecli/sqlitecli.go](/Users/marcio/dev/github/belm/internal/sqlitecli/sqlitecli.go): acesso SQLite via binário `sqlite3` (sem dependências externas)
 
-## Language Syntax
+## Comandos
+
+Compilar `.belm` para manifesto JSON:
+
+```bash
+go run ./cmd/belmc compile examples/store.belm build/store.manifest.json
+```
+
+Rodar direto do `.belm`:
+
+```bash
+go run ./cmd/belmc serve examples/store.belm
+```
+
+Rodar a partir de manifesto compilado:
+
+```bash
+go run ./cmd/belmc serve-manifest build/store.manifest.json
+```
+
+## Sintaxe da linguagem
+
+Exemplo mínimo:
 
 ```belm
 app TodoApi
@@ -30,130 +56,165 @@ entity Todo {
 }
 ```
 
-### Supported statements
+### Statements
 
 - `app <Name>`
 - `port <number>`
-- `database "<sqlite_file_path>"`
+- `database "<sqlite_path>"`
+- `auth { ... }`
 - `entity <Name> { ... }`
-- `rule "<message>" when <expression>` (inside an `entity`)
 
-### Field syntax
+### Fields
 
 `<fieldName>: <Type> [primary] [auto] [optional]`
 
-Types:
+Tipos:
 
 - `Int`
 - `String`
 - `Bool`
 - `Float`
 
-Attributes:
+Atributos:
 
-- `primary`: primary key
-- `auto`: auto increment (valid for integer keys)
-- `optional`: nullable field
+- `primary`: chave primária
+- `auto`: autoincrement (normalmente usado com `Int primary`)
+- `optional`: campo nullable
 
-### Rule syntax
+Se não houver primary key, Belm adiciona automaticamente:
 
-Rules are boolean expressions. If a rule returns `false`, Belm responds with HTTP `422`.
+`id: Int primary auto`
 
-Operators:
+## Regras de negócio (`rule`)
+
+Dentro de `entity`:
+
+```belm
+rule "Customer must be 18 or older" when age >= 18
+```
+
+Operadores:
 
 - `and`, `or`, `not`
 - `==`, `!=`, `>`, `>=`, `<`, `<=`
 - `+`, `-`, `*`, `/`
 
-Functions:
+Funções:
 
 - `contains(text, part)`
 - `startsWith(text, prefix)`
 - `endsWith(text, suffix)`
-- `len(value)` (string/array length, otherwise `0`)
+- `len(value)`
 - `matches(text, regex)`
 
-Example:
+Literais:
+
+- `true`, `false`, `null`
+
+Se uma regra falha, retorna HTTP `422` com `error` e `details`.
+
+## Autenticação (`auth`)
+
+Fluxo nativo de login por código:
+
+1. `POST /auth/request-code`
+2. envio do código por email
+3. `POST /auth/login` (email + code) retorna bearer token
+4. `POST /auth/logout` revoga sessão
+
+Configuração:
 
 ```belm
-entity Customer {
-  id: Int primary auto
-  name: String
-  email: String
-  age: Int
-  rule "Customer must be at least 18 years old" when age >= 18
-  rule "Email must look valid" when matches(email, "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
+auth {
+  user_entity Customer
+  email_field email
+  role_field role
+  code_ttl_minutes 10
+  session_ttl_hours 24
+  email_transport console
+  email_from "no-reply@store.local"
+  email_subject "Your StoreApi login code"
+  dev_expose_code true
 }
 ```
 
-If no primary key is declared, Belm automatically adds:
+`email_transport`:
 
-`id: Int primary auto`
+- `console`: imprime código no log
+- `sendmail`: usa binário local (`sendmail_path`)
 
-## What the compiler generates
+## Autorização (`authorize`)
 
-For each `entity X`, Belm generates:
+Por operação CRUD:
 
-- SQLite table (snake_case pluralized)
-- REST resource path (`/xs`)
-- Endpoints:
-  - `GET /xs`
-  - `GET /xs/:id`
-  - `POST /xs`
-  - `PUT /xs/:id` (also supports `PATCH`)
-  - `DELETE /xs/:id`
+```belm
+authorize list when isRole("admin")
+authorize get when auth_authenticated and (id == auth_user_id or isRole("admin"))
+authorize create when true
+authorize update when auth_authenticated and (id == auth_user_id or isRole("admin"))
+authorize delete when isRole("admin")
+```
 
-Extra endpoint:
+Contexto disponível em expressões de autorização:
+
+- `auth_authenticated`
+- `auth_email`
+- `auth_user_id`
+- `auth_role`
+- campos da entidade (`id`, `customerId`, etc.)
+
+Função extra:
+
+- `isRole("admin")`
+
+## Endpoints gerados
+
+Para cada entidade `X`:
+
+- `GET /xs`
+- `GET /xs/:id`
+- `POST /xs`
+- `PUT /xs/:id`
+- `PATCH /xs/:id`
+- `DELETE /xs/:id`
+
+Sempre:
 
 - `GET /health`
 
-If a rule fails, response includes:
+Com auth habilitado:
 
-- `error` (rule message)
-- `details.entity`
-- `details.rule`
+- `POST /auth/request-code`
+- `POST /auth/login`
+- `POST /auth/logout`
+- `GET /auth/me`
 
-## Compile and run
+## Migrações
 
-```bash
-node src/belmc.mjs examples/todo.belm build/todo.server.mjs
-node build/todo.server.mjs
-```
+As migrações rodam automaticamente no startup.
 
-Server output includes URL, SQLite path, and generated resource routes.
+Automático:
 
-## Example requests
+- cria tabelas faltantes
+- adiciona colunas novas opcionais
+- cria/migra tabelas internas de auth
+- registra operações em `belm_schema_migrations`
 
-Create:
+Bloqueado (migração manual):
 
-```bash
-curl -X POST http://localhost:4000/todos \
-  -H "content-type: application/json" \
-  -d '{"title":"buy milk","done":false}'
-```
+- troca de tipo de coluna
+- mudança de primary key
+- mudança de nulabilidade
+- adição de campo obrigatório em tabela existente
+- adição de coluna primary/auto em tabela existente
 
-List:
+Quando bloqueia, o servidor falha no startup com mensagem explícita.
 
-```bash
-curl http://localhost:4000/todos
-```
+## Exemplo completo
 
-Update:
+Use [examples/store.belm](/Users/marcio/dev/github/belm/examples/store.belm), que já inclui:
 
-```bash
-curl -X PUT http://localhost:4000/todos/1 \
-  -H "content-type: application/json" \
-  -d '{"done":true}'
-```
-
-Delete:
-
-```bash
-curl -X DELETE http://localhost:4000/todos/1
-```
-
-## Project layout
-
-- `src/belmc.mjs`: Belm compiler
-- `examples/todo.belm`: sample source program
-- `build/`: generated servers
+- regras de negócio (`age >= 18`, validação email etc.)
+- auth por código
+- autorização por papel/ownership
+- entidades `Customer`, `Product`, `Order`, `OrderItem`
