@@ -50,6 +50,15 @@ func Run(binaryName string, args []string) error {
 			outputPath = defaultOutputPath(args[1], args[2])
 		}
 		return buildExecutable(app, outputPath)
+	case "dev":
+		if len(args) != 2 && len(args) != 3 {
+			return fmt.Errorf("usage: %s dev <input.belm> [output-name]", binaryName)
+		}
+		outputPath := defaultOutputPath(args[1], "")
+		if len(args) == 3 {
+			outputPath = defaultOutputPath(args[1], args[2])
+		}
+		return runDev(binaryName, args[1], outputPath)
 	case "format":
 		return runFormat(binaryName, args[1:])
 	case "lsp":
@@ -183,7 +192,15 @@ func parseBelmFile(path string) (*model.App, error) {
 	return parser.Parse(string(content))
 }
 
+type buildOptions struct {
+	PrintSummary bool
+}
+
 func buildExecutable(app *model.App, outputPath string) error {
+	return buildExecutableWithOptions(app, outputPath, buildOptions{PrintSummary: true})
+}
+
+func buildExecutableWithOptions(app *model.App, outputPath string, options buildOptions) error {
 	if app == nil {
 		return errors.New("nil app")
 	}
@@ -395,8 +412,10 @@ func runAdmin(app *model.App) error {
 
 	adminURL := fmt.Sprintf("http://127.0.0.1:%%d/index.html", port)
 	fmt.Printf("\nAdmin panel: %%s\n", adminURL)
-	if err := openBrowser(adminURL); err != nil {
-		fmt.Fprintln(os.Stderr, "warning: could not open browser:", err)
+	if strings.TrimSpace(os.Getenv("BELM_ADMIN_NO_OPEN")) == "" {
+		if err := openBrowser(adminURL); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: could not open browser:", err)
+		}
 	}
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -517,7 +536,9 @@ func openBrowser(target string) error {
 	if err := cmd.Run(); err != nil {
 		return err
 	}
-	printCompileSummary(outputPath, elmPath, tsPath)
+	if options.PrintSummary {
+		printCompileSummary(outputPath, elmPath, tsPath)
+	}
 	return nil
 }
 
@@ -633,6 +654,7 @@ func printUsage(binaryName string) {
 	fmt.Println()
 	fmt.Printf("%s\n", colorizeCLI(useColor, "\033[1;36m", "Available commands"))
 	fmt.Printf("  %s\n", fmt.Sprintf("%s compile <input.belm> [output-name]", binaryName))
+	fmt.Printf("  %s\n", fmt.Sprintf("%s dev <input.belm> [output-name]", binaryName))
 	fmt.Printf("  %s\n", fmt.Sprintf("%s format [--check] [--stdin] [files...]", binaryName))
 	fmt.Printf("  %s\n", fmt.Sprintf("%s lsp", binaryName))
 	fmt.Printf("  %s\n", fmt.Sprintf("%s version", binaryName))
@@ -647,6 +669,7 @@ func unknownCommandError(binaryName, provided string) error {
 	fmt.Fprintf(&b, "%s %q\n\n", colorizeCLI(useColor, "\033[1;31m", "unknown command"), provided)
 	fmt.Fprintf(&b, "%s\n", colorizeCLI(useColor, "\033[1;36m", "Available commands:"))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s compile <input.belm> [output-name]", binaryName))
+	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s dev <input.belm> [output-name]", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s format [--check] [--stdin] [files...]", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s lsp", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s version", binaryName))

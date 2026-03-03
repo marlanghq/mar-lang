@@ -129,7 +129,7 @@ entity AuditLog {
 -- 2) create one OrderItem
 -- 3) write an AuditLog event
 type alias PlaceBookOrderInput =
-  { orderRef : String
+  { orderRef : Str
   , userId : Int
   , bookId : Int
   , quantity : Int

@@ -27,6 +27,12 @@ Compile `.belm` into an executable:
 ./belm compile examples/store.belm
 ```
 
+Run development mode with hot reload (rebuild/restart on save):
+
+```bash
+./belm dev examples/store.belm
+```
+
 Show Belm CLI version and build metadata:
 
 ```bash
