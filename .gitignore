@@ -2,3 +2,5 @@
 build/
 .gomodcache/
 .gocache/
+admin/elm-stuff
+admin/dist/

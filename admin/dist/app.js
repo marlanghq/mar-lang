@@ -6322,7 +6322,7 @@ var $author$project$Main$loadSchema = function (apiBase) {
 };
 var $author$project$Main$init = function (flags) {
 	return _Utils_Tuple2(
-		{actionFormValues: $elm$core$Dict$empty, actionResult: $elm$core$Maybe$Nothing, apiBase: flags.apiBase, authCode: '', authEmail: '', authToken: '', authToolsOpen: false, flash: $elm$core$Maybe$Nothing, formMode: $author$project$Main$FormHidden, formValues: $elm$core$Dict$empty, rows: $author$project$Main$NotAsked, schema: $author$project$Main$Loading, selectedAction: $elm$core$Maybe$Nothing, selectedEntity: $elm$core$Maybe$Nothing, selectedRow: $elm$core$Maybe$Nothing},
+		{actionFormValues: $elm$core$Dict$empty, actionResult: $elm$core$Maybe$Nothing, advancedMode: false, apiBase: flags.apiBase, authCode: '', authEmail: '', authToken: '', authToolsOpen: false, flash: $elm$core$Maybe$Nothing, formMode: $author$project$Main$FormHidden, formValues: $elm$core$Dict$empty, rows: $author$project$Main$NotAsked, schema: $author$project$Main$Loading, selectedAction: $elm$core$Maybe$Nothing, selectedEntity: $elm$core$Maybe$Nothing, selectedRow: $elm$core$Maybe$Nothing},
 		$author$project$Main$loadSchema(flags.apiBase));
 };
 var $elm$core$Platform$Sub$batch = _Platform_batch;
@@ -7361,6 +7361,12 @@ var $author$project$Main$update = F2(
 							}),
 						$elm$core$Platform$Cmd$none);
 				}
+			case 'ToggleAdvanced':
+				return _Utils_Tuple2(
+					_Utils_update(
+						model,
+						{advancedMode: !model.advancedMode}),
+					$elm$core$Platform$Cmd$none);
 			case 'ToggleAuthTools':
 				return _Utils_Tuple2(
 					_Utils_update(
@@ -16010,8 +16016,130 @@ var $author$project$Main$SetApiBase = function (a) {
 var $author$project$Main$SetToken = function (a) {
 	return {$: 'SetToken', a: a};
 };
+var $author$project$Main$ToggleAdvanced = {$: 'ToggleAdvanced'};
 var $author$project$Main$ToggleAuthTools = {$: 'ToggleAuthTools'};
 var $author$project$Main$viewTopBar = function (model) {
+	var tokenInput = function (attrs) {
+		return A2(
+			$mdgriffith$elm_ui$Element$Input$text,
+			attrs,
+			{
+				label: A2(
+					$mdgriffith$elm_ui$Element$Input$labelAbove,
+					_List_fromArray(
+						[
+							$mdgriffith$elm_ui$Element$Font$size(12)
+						]),
+					$mdgriffith$elm_ui$Element$text('Auth token')),
+				onChange: $author$project$Main$SetToken,
+				placeholder: $elm$core$Maybe$Just(
+					A2(
+						$mdgriffith$elm_ui$Element$Input$placeholder,
+						_List_Nil,
+						$mdgriffith$elm_ui$Element$text('Bearer token'))),
+				text: model.authToken
+			});
+	};
+	var reloadSchemaButton = A2(
+		$mdgriffith$elm_ui$Element$Input$button,
+		_List_fromArray(
+			[
+				$mdgriffith$elm_ui$Element$alignBottom,
+				$mdgriffith$elm_ui$Element$Background$color(
+				A3($mdgriffith$elm_ui$Element$rgb255, 54, 94, 217)),
+				$mdgriffith$elm_ui$Element$Font$color(
+				A3($mdgriffith$elm_ui$Element$rgb255, 245, 248, 252)),
+				$mdgriffith$elm_ui$Element$Border$rounded(10),
+				$mdgriffith$elm_ui$Element$paddingEach(
+				{bottom: 12, left: 16, right: 16, top: 12})
+			]),
+		{
+			label: $mdgriffith$elm_ui$Element$text('Reload schema'),
+			onPress: $elm$core$Maybe$Just($author$project$Main$ReloadSchema)
+		});
+	var authToolsButtons = function () {
+		var _v0 = $author$project$Main$authInfoFromModel(model);
+		if (_v0.$ === 'Just') {
+			return _List_fromArray(
+				[
+					A2(
+					$mdgriffith$elm_ui$Element$Input$button,
+					_List_fromArray(
+						[
+							$mdgriffith$elm_ui$Element$alignBottom,
+							$mdgriffith$elm_ui$Element$Background$color(
+							A3($mdgriffith$elm_ui$Element$rgb255, 224, 231, 241)),
+							$mdgriffith$elm_ui$Element$Border$rounded(10),
+							$mdgriffith$elm_ui$Element$paddingEach(
+							{bottom: 12, left: 16, right: 16, top: 12})
+						]),
+					{
+						label: model.authToolsOpen ? $mdgriffith$elm_ui$Element$text('Hide auth tools') : $mdgriffith$elm_ui$Element$text('Auth tools'),
+						onPress: $elm$core$Maybe$Just($author$project$Main$ToggleAuthTools)
+					})
+				]);
+		} else {
+			return _List_Nil;
+		}
+	}();
+	var apiInput = A2(
+		$mdgriffith$elm_ui$Element$Input$text,
+		_List_fromArray(
+			[
+				$mdgriffith$elm_ui$Element$width(
+				$mdgriffith$elm_ui$Element$fillPortion(3))
+			]),
+		{
+			label: A2(
+				$mdgriffith$elm_ui$Element$Input$labelAbove,
+				_List_fromArray(
+					[
+						$mdgriffith$elm_ui$Element$Font$size(12)
+					]),
+				$mdgriffith$elm_ui$Element$text('API')),
+			onChange: $author$project$Main$SetApiBase,
+			placeholder: $elm$core$Maybe$Just(
+				A2(
+					$mdgriffith$elm_ui$Element$Input$placeholder,
+					_List_Nil,
+					$mdgriffith$elm_ui$Element$text('API base URL'))),
+			text: model.apiBase
+		});
+	var mainControls = model.advancedMode ? _List_fromArray(
+		[
+			apiInput,
+			tokenInput(
+			_List_fromArray(
+				[
+					$mdgriffith$elm_ui$Element$width(
+					$mdgriffith$elm_ui$Element$fillPortion(2))
+				])),
+			reloadSchemaButton
+		]) : _List_fromArray(
+		[
+			tokenInput(
+			_List_fromArray(
+				[
+					$mdgriffith$elm_ui$Element$width($mdgriffith$elm_ui$Element$fill)
+				]))
+		]);
+	var advancedButton = A2(
+		$mdgriffith$elm_ui$Element$Input$button,
+		_List_fromArray(
+			[
+				$mdgriffith$elm_ui$Element$alignBottom,
+				$mdgriffith$elm_ui$Element$Background$color(
+				model.advancedMode ? A3($mdgriffith$elm_ui$Element$rgb255, 76, 111, 224) : A3($mdgriffith$elm_ui$Element$rgb255, 224, 231, 241)),
+				$mdgriffith$elm_ui$Element$Font$color(
+				model.advancedMode ? A3($mdgriffith$elm_ui$Element$rgb255, 245, 248, 252) : A3($mdgriffith$elm_ui$Element$rgb255, 41, 52, 68)),
+				$mdgriffith$elm_ui$Element$Border$rounded(10),
+				$mdgriffith$elm_ui$Element$paddingEach(
+				{bottom: 12, left: 16, right: 16, top: 12})
+			]),
+		{
+			label: model.advancedMode ? $mdgriffith$elm_ui$Element$text('Hide advanced') : $mdgriffith$elm_ui$Element$text('Advanced'),
+			onPress: $elm$core$Maybe$Just($author$project$Main$ToggleAdvanced)
+		});
 	return A2(
 		$mdgriffith$elm_ui$Element$row,
 		_List_fromArray(
@@ -16026,94 +16154,12 @@ var $author$project$Main$viewTopBar = function (model) {
 				$mdgriffith$elm_ui$Element$Border$color(
 				A3($mdgriffith$elm_ui$Element$rgb255, 226, 232, 239))
 			]),
-		_List_fromArray(
-			[
-				A2(
-				$mdgriffith$elm_ui$Element$Input$text,
+		_Utils_ap(
+			mainControls,
+			_Utils_ap(
 				_List_fromArray(
-					[
-						$mdgriffith$elm_ui$Element$width(
-						$mdgriffith$elm_ui$Element$fillPortion(3))
-					]),
-				{
-					label: A2(
-						$mdgriffith$elm_ui$Element$Input$labelAbove,
-						_List_fromArray(
-							[
-								$mdgriffith$elm_ui$Element$Font$size(12)
-							]),
-						$mdgriffith$elm_ui$Element$text('API')),
-					onChange: $author$project$Main$SetApiBase,
-					placeholder: $elm$core$Maybe$Just(
-						A2(
-							$mdgriffith$elm_ui$Element$Input$placeholder,
-							_List_Nil,
-							$mdgriffith$elm_ui$Element$text('API base URL'))),
-					text: model.apiBase
-				}),
-				A2(
-				$mdgriffith$elm_ui$Element$Input$text,
-				_List_fromArray(
-					[
-						$mdgriffith$elm_ui$Element$width(
-						$mdgriffith$elm_ui$Element$fillPortion(2))
-					]),
-				{
-					label: A2(
-						$mdgriffith$elm_ui$Element$Input$labelAbove,
-						_List_fromArray(
-							[
-								$mdgriffith$elm_ui$Element$Font$size(12)
-							]),
-						$mdgriffith$elm_ui$Element$text('Auth token')),
-					onChange: $author$project$Main$SetToken,
-					placeholder: $elm$core$Maybe$Just(
-						A2(
-							$mdgriffith$elm_ui$Element$Input$placeholder,
-							_List_Nil,
-							$mdgriffith$elm_ui$Element$text('Bearer token'))),
-					text: model.authToken
-				}),
-				A2(
-				$mdgriffith$elm_ui$Element$Input$button,
-				_List_fromArray(
-					[
-						$mdgriffith$elm_ui$Element$alignBottom,
-						$mdgriffith$elm_ui$Element$Background$color(
-						A3($mdgriffith$elm_ui$Element$rgb255, 54, 94, 217)),
-						$mdgriffith$elm_ui$Element$Font$color(
-						A3($mdgriffith$elm_ui$Element$rgb255, 245, 248, 252)),
-						$mdgriffith$elm_ui$Element$Border$rounded(10),
-						$mdgriffith$elm_ui$Element$paddingEach(
-						{bottom: 12, left: 16, right: 16, top: 12})
-					]),
-				{
-					label: $mdgriffith$elm_ui$Element$text('Reload schema'),
-					onPress: $elm$core$Maybe$Just($author$project$Main$ReloadSchema)
-				}),
-				function () {
-				var _v0 = $author$project$Main$authInfoFromModel(model);
-				if (_v0.$ === 'Just') {
-					return A2(
-						$mdgriffith$elm_ui$Element$Input$button,
-						_List_fromArray(
-							[
-								$mdgriffith$elm_ui$Element$alignBottom,
-								$mdgriffith$elm_ui$Element$Background$color(
-								A3($mdgriffith$elm_ui$Element$rgb255, 224, 231, 241)),
-								$mdgriffith$elm_ui$Element$Border$rounded(10),
-								$mdgriffith$elm_ui$Element$paddingEach(
-								{bottom: 12, left: 16, right: 16, top: 12})
-							]),
-						{
-							label: model.authToolsOpen ? $mdgriffith$elm_ui$Element$text('Hide auth tools') : $mdgriffith$elm_ui$Element$text('Auth tools'),
-							onPress: $elm$core$Maybe$Just($author$project$Main$ToggleAuthTools)
-						});
-				} else {
-					return $mdgriffith$elm_ui$Element$none;
-				}
-			}()
-			]));
+					[advancedButton]),
+				authToolsButtons)));
 };
 var $author$project$Main$viewContent = function (model) {
 	return A2(

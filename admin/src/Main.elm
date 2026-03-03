@@ -33,6 +33,7 @@ type FormMode
 
 type alias Model =
     { apiBase : String
+    , advancedMode : Bool
     , authToken : String
     , authEmail : String
     , authCode : String
@@ -70,6 +71,7 @@ type Msg
     | GotAuthMe (Result Http.Error AuthMeResponse)
     | LogoutSession
     | GotLogoutSession (Result Http.Error ())
+    | ToggleAdvanced
     | ToggleAuthTools
     | SelectRow Row
     | StartCreate
@@ -116,6 +118,7 @@ main =
 init : Flags -> ( Model, Cmd Msg )
 init flags =
     ( { apiBase = flags.apiBase
+      , advancedMode = False
       , authToken = ""
       , authEmail = ""
       , authCode = ""
@@ -321,6 +324,9 @@ update msg model =
 
                 Err httpError ->
                     ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+
+        ToggleAdvanced ->
+            ( { model | advancedMode = not model.advancedMode }, Cmd.none )
 
         ToggleAuthTools ->
             ( { model | authToolsOpen = not model.authToolsOpen }, Cmd.none )
@@ -1057,6 +1063,96 @@ viewContent model =
 
 viewTopBar : Model -> Element Msg
 viewTopBar model =
+    let
+        tokenInput attrs =
+            Input.text attrs
+                { onChange = SetToken
+                , text = model.authToken
+                , placeholder = Just (Input.placeholder [] (text "Bearer token"))
+                , label = Input.labelAbove [ Font.size 12 ] (text "Auth token")
+                }
+
+        apiInput =
+            Input.text [ width (fillPortion 3) ]
+                { onChange = SetApiBase
+                , text = model.apiBase
+                , placeholder = Just (Input.placeholder [] (text "API base URL"))
+                , label = Input.labelAbove [ Font.size 12 ] (text "API")
+                }
+
+        reloadSchemaButton =
+            Input.button
+                [ Element.alignBottom
+                , Background.color (rgb255 54 94 217)
+                , Font.color (rgb255 245 248 252)
+                , Border.rounded 10
+                , paddingEach { top = 12, right = 16, bottom = 12, left = 16 }
+                ]
+                { onPress = Just ReloadSchema
+                , label = text "Reload schema"
+                }
+
+        advancedButton =
+            Input.button
+                [ Element.alignBottom
+                , Background.color
+                    (if model.advancedMode then
+                        rgb255 76 111 224
+
+                     else
+                        rgb255 224 231 241
+                    )
+                , Font.color
+                    (if model.advancedMode then
+                        rgb255 245 248 252
+
+                     else
+                        rgb255 41 52 68
+                    )
+                , Border.rounded 10
+                , paddingEach { top = 12, right = 16, bottom = 12, left = 16 }
+                ]
+                { onPress = Just ToggleAdvanced
+                , label =
+                    if model.advancedMode then
+                        text "Hide advanced"
+
+                    else
+                        text "Advanced"
+                }
+
+        authToolsButtons =
+            case authInfoFromModel model of
+                Just _ ->
+                    [ Input.button
+                        [ Element.alignBottom
+                        , Background.color (rgb255 224 231 241)
+                        , Border.rounded 10
+                        , paddingEach { top = 12, right = 16, bottom = 12, left = 16 }
+                        ]
+                        { onPress = Just ToggleAuthTools
+                        , label =
+                            if model.authToolsOpen then
+                                text "Hide auth tools"
+
+                            else
+                                text "Auth tools"
+                        }
+                    ]
+
+                Nothing ->
+                    []
+
+        mainControls =
+            if model.advancedMode then
+                [ apiInput
+                , tokenInput [ width (fillPortion 2) ]
+                , reloadSchemaButton
+                ]
+
+            else
+                [ tokenInput [ width fill ] ]
+    in
     row
         [ width fill
         , spacing 12
@@ -1066,48 +1162,7 @@ viewTopBar model =
         , Border.width 1
         , Border.color (rgb255 226 232 239)
         ]
-        [ Input.text [ width (fillPortion 3) ]
-            { onChange = SetApiBase
-            , text = model.apiBase
-            , placeholder = Just (Input.placeholder [] (text "API base URL"))
-            , label = Input.labelAbove [ Font.size 12 ] (text "API")
-            }
-        , Input.text [ width (fillPortion 2) ]
-            { onChange = SetToken
-            , text = model.authToken
-            , placeholder = Just (Input.placeholder [] (text "Bearer token"))
-            , label = Input.labelAbove [ Font.size 12 ] (text "Auth token")
-            }
-        , Input.button
-            [ Element.alignBottom
-            , Background.color (rgb255 54 94 217)
-            , Font.color (rgb255 245 248 252)
-            , Border.rounded 10
-            , paddingEach { top = 12, right = 16, bottom = 12, left = 16 }
-            ]
-            { onPress = Just ReloadSchema
-            , label = text "Reload schema"
-            }
-        , case authInfoFromModel model of
-            Just _ ->
-                Input.button
-                    [ Element.alignBottom
-                    , Background.color (rgb255 224 231 241)
-                    , Border.rounded 10
-                    , paddingEach { top = 12, right = 16, bottom = 12, left = 16 }
-                    ]
-                    { onPress = Just ToggleAuthTools
-                    , label =
-                        if model.authToolsOpen then
-                            text "Hide auth tools"
-
-                        else
-                            text "Auth tools"
-                    }
-
-            Nothing ->
-                none
-        ]
+        (mainControls ++ [ advancedButton ] ++ authToolsButtons)
 
 
 viewAuthToolsPanel : Model -> Element Msg

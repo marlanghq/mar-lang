@@ -148,12 +148,12 @@ func main() {
 	switch {
 	case len(os.Args) == 1:
 		if err := runServe(&app); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
+			belmruntime.PrintStartupError(err, os.Args[0])
 			os.Exit(1)
 		}
 	case len(os.Args) == 2 && os.Args[1] == "admin":
 		if err := runAdmin(&app); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
+			belmruntime.PrintStartupError(err, os.Args[0])
 			os.Exit(1)
 		}
 	default:
@@ -421,15 +421,15 @@ func printUsage(binaryName string) {
 func unknownCommandError(binaryName, provided string) error {
 	useColor := cliSupportsANSIStream(os.Stderr)
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s\n\n", colorizeCLI(useColor, "\033[1;31m", "unknown command"), colorizeCLI(useColor, "\033[37m", fmt.Sprintf("%q", provided)))
+	fmt.Fprintf(&b, "%s %q\n\n", colorizeCLI(useColor, "\033[1;31m", "unknown command"), provided)
 	fmt.Fprintf(&b, "%s\n", colorizeCLI(useColor, "\033[1;36m", "Available commands:"))
-	fmt.Fprintf(&b, "  %s\n", colorizeCLI(useColor, "\033[37m", fmt.Sprintf("%s compile <input.belm> [output-name]", binaryName)))
+	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s compile <input.belm> [output-name]", binaryName))
 	if looksLikeBelmFile(provided) {
-		fmt.Fprintf(&b, "\n%s\n", colorizeCLI(useColor, "\033[1;33m", "Tip:"))
+		fmt.Fprintf(&b, "\n%s\n", colorizeCLI(useColor, "\033[1;33m", "Hint:"))
 		fmt.Fprintf(&b, "  It looks like you passed a .belm file directly.\n")
 		fmt.Fprintf(&b, "  Run: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s compile %s", binaryName, provided)))
 	} else {
-		fmt.Fprintf(&b, "\n%s\n", colorizeCLI(useColor, "\033[1;33m", "Tip:"))
+		fmt.Fprintf(&b, "\n%s\n", colorizeCLI(useColor, "\033[1;33m", "Hint:"))
 		fmt.Fprintf(&b, "  To compile an app, run: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s compile <input.belm>", binaryName)))
 	}
 	return errors.New(b.String())
@@ -445,15 +445,16 @@ func printCompileSummary(outputPath, elmPath, tsPath string) {
 	outputBin := filepath.Base(outputPath)
 
 	fmt.Println()
-	fmt.Printf("%s\n", colorizeCLI(useColor, "\033[1;97m", "Build output"))
+	fmt.Printf("%s\n", colorizeCLI(useColor, "\033[1m", "Build output"))
 	fmt.Printf("  %s\n", colorizeCLI(useColor, "\033[1;32m", "Executable:"))
-	fmt.Printf("    %s\n", colorizeCLI(useColor, "\033[37m", outputPath))
+	fmt.Printf("    %s\n", outputPath)
 	fmt.Printf("  %s\n", colorizeCLI(useColor, "\033[1;36m", "Clients:"))
-	fmt.Printf("    %s\n", colorizeCLI(useColor, "\033[37m", elmPath))
-	fmt.Printf("    %s\n", colorizeCLI(useColor, "\033[37m", tsPath))
-	fmt.Printf("  %s\n", colorizeCLI(useColor, "\033[1;33m", "Hint:"))
-	fmt.Printf("    %s\n", colorizeCLI(useColor, "\033[37m", "cd "+outputDir))
-	fmt.Printf("    %s\n", colorizeCLI(useColor, "\033[37m", "./"+outputBin+" admin"))
+	fmt.Printf("    %s\n", elmPath)
+	fmt.Printf("    %s\n", tsPath)
+	fmt.Printf("\n  %s\n", colorizeCLI(useColor, "\033[1;33m", "Hint:"))
+	fmt.Printf("    %s\n", "To run this app and open Belm Admin:")
+	fmt.Printf("    %s\n", colorizeCLI(useColor, "\033[1;32m", "cd "+outputDir))
+	fmt.Printf("    %s\n", colorizeCLI(useColor, "\033[1;32m", "./"+outputBin+" admin"))
 	fmt.Println()
 }
 
