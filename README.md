@@ -208,7 +208,7 @@ entity Todo {
 - `entity <Name> { ... }`
 - `type alias <Name> = { ... }`
 - `<actionName> : <InputAlias> -> Effect`
-- `<actionName> = tx [ insert Entity { field = input.value } ]`
+- `<actionName> = transaction [ insert Entity { field = input.value } ]`
 
 ### Fields
 
@@ -244,7 +244,7 @@ type alias PlaceOrderInput =
 
 placeOrder : PlaceOrderInput -> Result DomainError Effect
 placeOrder =
-  tx
+  transaction
     [ insert Order { userId = input.userId, status = "created", total = input.total, note = input.note }
     , insert AuditLog { userId = input.userId, message = "order created" }
     ]

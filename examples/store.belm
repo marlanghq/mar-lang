@@ -141,7 +141,7 @@ type alias PlaceBookOrderInput =
 
 placeBookOrder : PlaceBookOrderInput -> Result DomainError Effect
 placeBookOrder =
-  tx
+  transaction
     [ insert Order { orderRef = input.orderRef, userId = input.userId, status = "confirmed", total = input.orderTotal, currency = "BRL", notes = input.notes }
     , insert OrderItem { orderRef = input.orderRef, userId = input.userId, bookId = input.bookId, quantity = input.quantity, unitPrice = input.unitPrice, lineTotal = input.lineTotal }
     , insert AuditLog { userId = input.userId, event = "book order created", orderRef = input.orderRef }

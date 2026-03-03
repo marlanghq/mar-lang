@@ -38,7 +38,7 @@
       "",
       "${7:registerUser} : ${6:RegisterUserInput} -> Result ${8:DomainError} Effect",
       "${7:registerUser} =",
-      "  tx",
+      "  transaction",
       "    [ insert ${4:User} { email = input.email, role = \"user\" }",
       "    ]"
     ]
@@ -117,26 +117,26 @@
   },
   "Belm Action Definition": {
     "prefix": "actiondef",
-    "description": "Create an action definition with tx list",
+    "description": "Create an action definition with transaction list",
     "body": [
       "${1:placeOrder} =",
-      "  tx",
+      "  transaction",
       "    [ insert ${2:Order} { ${3:userId} = input.${4:userId} }",
       "    ]"
     ]
   },
   "Belm Insert Step": {
     "prefix": "insertstep",
-    "description": "Create one insert step inside a tx list",
+    "description": "Create one insert step inside a transaction list",
     "body": "insert ${1:Order} { ${2:userId} = input.${3:userId} }"
   },
   "Belm Typed Action": {
-    "prefix": "actiontx",
-    "description": "Create an Elm-style typed action with tx insert steps",
+    "prefix": "actiontransaction",
+    "description": "Create an Elm-style typed action with transaction insert steps",
     "body": [
       "${1:placeOrder} : ${2:PlaceOrderInput} -> Result ${3:DomainError} Effect",
       "${1:placeOrder} =",
-      "  tx",
+      "  transaction",
       "    [ insert ${4:Order} { ${5:userId} = input.${6:userId} }",
       "    ]"
     ]

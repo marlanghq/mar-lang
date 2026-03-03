@@ -63,7 +63,7 @@ func Format(source string) (string, error) {
 		if state.inTypeAlias || (state.pendingAlias && strings.HasPrefix(strings.TrimSpace(line), "{")) {
 			indentBefore = 1
 		}
-		if state.awaitingTxDef && strings.TrimSpace(line) == "tx" {
+		if state.awaitingTxDef && strings.TrimSpace(line) == "transaction" {
 			indentBefore = 1
 		}
 		if state.inTx {
@@ -126,7 +126,7 @@ func (s *formatState) update(line string) {
 		s.awaitingTxDef = true
 		s.inTx = false
 		s.inTxList = false
-	case trimLine == "tx":
+	case trimLine == "transaction":
 		if s.awaitingTxDef {
 			s.awaitingTxDef = false
 		}
@@ -225,8 +225,8 @@ func normalizeLine(trimmed string, state *formatState) string {
 		}
 	}
 
-	if strings.TrimSpace(trimmed) == "tx" {
-		return "tx"
+	if strings.TrimSpace(trimmed) == "transaction" {
+		return "transaction"
 	}
 	if strings.TrimSpace(trimmed) == "[" || strings.TrimSpace(trimmed) == "]" {
 		return strings.TrimSpace(trimmed)

@@ -475,20 +475,20 @@ func parseAction(lines []line, idx *int, name, inputAlias string) (*model.Action
 			(*idx)++
 			continue
 		}
-		if trimmed == "tx" {
+		if trimmed == "transaction" {
 			(*idx)++
 			break
 		}
-		if strings.HasPrefix(trimmed, "tx ") {
-			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "tx"))
+		if strings.HasPrefix(trimmed, "transaction ") {
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "transaction"))
 			if rest == "[" {
-				// tx [ on one line
+				// transaction [ on one line
 				startListOpen = true
 				(*idx)++
 				break
 			}
 		}
-		return nil, fmt.Errorf("line %d: action %s body must start with `tx`", lines[*idx].number, name)
+		return nil, fmt.Errorf("line %d: action %s body must start with `transaction`", lines[*idx].number, name)
 	}
 	if *idx >= len(lines) {
 		return nil, fmt.Errorf("action %s is missing transaction steps", name)
@@ -513,7 +513,7 @@ func parseAction(lines []line, idx *int, name, inputAlias string) (*model.Action
 				startedList = true
 				trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "["))
 			} else {
-				return nil, fmt.Errorf("line %d: action %s tx block must use list syntax `[ ... ]`", ln.number, name)
+				return nil, fmt.Errorf("line %d: action %s transaction block must use list syntax `[ ... ]`", ln.number, name)
 			}
 		}
 
@@ -542,7 +542,7 @@ func parseAction(lines []line, idx *int, name, inputAlias string) (*model.Action
 	}
 
 	if len(action.Steps) == 0 {
-		return nil, fmt.Errorf("action %s must contain at least one step inside tx", name)
+		return nil, fmt.Errorf("action %s must contain at least one step inside transaction", name)
 	}
 	return action, nil
 }

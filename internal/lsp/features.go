@@ -29,27 +29,27 @@ var (
 	appDeclRe                = regexp.MustCompile(`^\s*app\s+([A-Za-z][A-Za-z0-9_]*)\s*$`)
 	unknownInputTypeErrorRe  = regexp.MustCompile(`action\s+[a-z][A-Za-z0-9_]*\s+references unknown input type\s+"([A-Za-z][A-Za-z0-9_]*)"$`)
 	keywordHoverDescriptions = map[string]string{
-		"app":        "Declares the app name. Example: `app BookStoreApi`.",
-		"port":       "Sets the HTTP server port. Example: `port 4100`.",
-		"database":   "Sets the SQLite file path. Example: `database \"./app.db\"`.",
-		"entity":     "Declares an entity. Belm generates CRUD endpoints for it.",
-		"auth":       "Configures email-code authentication for the app.",
-		"rule":       "Adds validation logic for entity records.",
-		"authorize":  "Adds authorization rules for CRUD actions.",
-		"type":       "Used with `type alias` to define an action input record.",
-		"alias":      "Used with `type alias` to define an action input record.",
-		"tx":         "Starts a transaction block inside an action definition.",
-		"insert":     "Inserts a record in a transaction step.",
-		"optional":   "Marks a field as nullable.",
-		"primary":    "Marks a field as primary key.",
-		"auto":       "Marks a field as auto-generated.",
-		"input":      "References the action input record (e.g. `input.userId`).",
-		"isRole":     "Authorization helper: `isRole(\"admin\")`.",
-		"len":        "Returns the string length.",
-		"contains":   "Returns true when text contains a substring.",
-		"startsWith": "Returns true when text starts with a prefix.",
-		"endsWith":   "Returns true when text ends with a suffix.",
-		"matches":    "Returns true when text matches a regex pattern.",
+		"app":         "Declares the app name. Example: `app BookStoreApi`.",
+		"port":        "Sets the HTTP server port. Example: `port 4100`.",
+		"database":    "Sets the SQLite file path. Example: `database \"./app.db\"`.",
+		"entity":      "Declares an entity. Belm generates CRUD endpoints for it.",
+		"auth":        "Configures email-code authentication for the app.",
+		"rule":        "Adds validation logic for entity records.",
+		"authorize":   "Adds authorization rules for CRUD actions.",
+		"type":        "Used with `type alias` to define an action input record.",
+		"alias":       "Used with `type alias` to define an action input record.",
+		"transaction": "Starts a transaction block inside an action definition.",
+		"insert":      "Inserts a record in a transaction step.",
+		"optional":    "Marks a field as nullable.",
+		"primary":     "Marks a field as primary key.",
+		"auto":        "Marks a field as auto-generated.",
+		"input":       "References the action input record (e.g. `input.userId`).",
+		"isRole":      "Authorization helper: `isRole(\"admin\")`.",
+		"len":         "Returns the string length.",
+		"contains":    "Returns true when text contains a substring.",
+		"startsWith":  "Returns true when text starts with a prefix.",
+		"endsWith":    "Returns true when text ends with a suffix.",
+		"matches":     "Returns true when text matches a regex pattern.",
 	}
 )
 
@@ -361,7 +361,7 @@ func hoverForSymbol(index *workspaceSymbolIndex, symbol symbolOccurrence) string
 		}
 	case symbolAction:
 		header = "Action `" + symbol.Name + "`"
-		detail = "Executes a typed transaction (`tx`) and is exposed as `/actions/<name>`."
+		detail = "Executes a typed transaction (`transaction`) and is exposed as `/actions/<name>`."
 	default:
 		header = "Symbol `" + symbol.Name + "`"
 	}

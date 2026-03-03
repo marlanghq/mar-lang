@@ -422,7 +422,7 @@ func keywordCompletionItems() []map[string]any {
 		"type alias",
 		"rule",
 		"authorize",
-		"tx",
+		"transaction",
 		"insert",
 	}
 	out := make([]map[string]any, 0, len(keywords))

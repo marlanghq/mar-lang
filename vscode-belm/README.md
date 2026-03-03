@@ -7,7 +7,7 @@ This extension adds syntax highlighting, snippets/autocomplete, and LSP features
 - Syntax highlighting for:
 - Belm declarations (`app`, `port`, `database`, `entity`, `auth`, `type alias`)
 - Rule/authz keywords (`rule`, `when`, `authorize`)
-- Action syntax (`name : Input -> Result DomainError Effect`, `tx`, `insert`)
+- Action syntax (`name : Input -> Result DomainError Effect`, `transaction`, `insert`)
 - Auth config keys (`user_entity`, `email_field`, etc.)
 - Field modifiers (`primary`, `auto`, `optional`)
 - Built-in types (`Int`, `String`, `Bool`, `Float`, `Effect`, `Result`)
@@ -26,7 +26,7 @@ This extension adds syntax highlighting, snippets/autocomplete, and LSP features
 - `actionsig`
 - `actiondef`
 - `insertstep`
-- `actiontx`
+- `actiontransaction`
 - LSP (via `belm lsp`):
 - Parse diagnostics while editing
 - Keyword completions

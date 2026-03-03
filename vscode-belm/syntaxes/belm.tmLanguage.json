@@ -246,7 +246,7 @@
         },
         {
           "name": "keyword.control.rule.belm",
-          "match": "\\b(rule|when|authorize|tx|insert)\\b"
+          "match": "\\b(rule|when|authorize|transaction|insert)\\b"
         },
         {
           "name": "storage.type.belm",
