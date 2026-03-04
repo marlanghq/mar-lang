@@ -18390,6 +18390,40 @@ var $author$project$Main$splitEntitiesForSidebar = F2(
 		}
 	});
 var $author$project$Main$viewSidebar = function (model) {
+	var sidebarItemLabel = F2(
+		function (title, subtitle) {
+			return A2(
+				$mdgriffith$elm_ui$Element$column,
+				_List_fromArray(
+					[
+						$mdgriffith$elm_ui$Element$width($mdgriffith$elm_ui$Element$fill),
+						$mdgriffith$elm_ui$Element$spacing(4)
+					]),
+				_List_fromArray(
+					[
+						A2(
+						$mdgriffith$elm_ui$Element$paragraph,
+						_List_fromArray(
+							[$mdgriffith$elm_ui$Element$alignLeft]),
+						_List_fromArray(
+							[
+								$mdgriffith$elm_ui$Element$text(title)
+							])),
+						A2(
+						$mdgriffith$elm_ui$Element$paragraph,
+						_List_fromArray(
+							[
+								$mdgriffith$elm_ui$Element$alignLeft,
+								$mdgriffith$elm_ui$Element$Font$size(11),
+								$mdgriffith$elm_ui$Element$Font$color(
+								A3($mdgriffith$elm_ui$Element$rgb255, 170, 181, 196))
+							]),
+						_List_fromArray(
+							[
+								$mdgriffith$elm_ui$Element$text(subtitle)
+							]))
+					]));
+		});
 	var requestLogsButton = function () {
 		var backgroundColor = (model.requestLogsMode && (!model.authToolsOpen)) ? A3($mdgriffith$elm_ui$Element$rgb255, 54, 94, 217) : A3($mdgriffith$elm_ui$Element$rgb255, 24, 29, 36);
 		return A2(
@@ -18405,32 +18439,7 @@ var $author$project$Main$viewSidebar = function (model) {
 					{bottom: 12, left: 12, right: 12, top: 12})
 				]),
 			{
-				label: A2(
-					$mdgriffith$elm_ui$Element$row,
-					_List_fromArray(
-						[
-							$mdgriffith$elm_ui$Element$width($mdgriffith$elm_ui$Element$fill)
-						]),
-					_List_fromArray(
-						[
-							A2(
-							$mdgriffith$elm_ui$Element$paragraph,
-							_List_fromArray(
-								[$mdgriffith$elm_ui$Element$alignLeft]),
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$text('Logs')
-								])),
-							A2(
-							$mdgriffith$elm_ui$Element$el,
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$Font$size(12),
-									$mdgriffith$elm_ui$Element$Font$color(
-									A3($mdgriffith$elm_ui$Element$rgb255, 170, 181, 196))
-								]),
-							$mdgriffith$elm_ui$Element$text('/_belm/request-logs'))
-						])),
+				label: A2(sidebarItemLabel, 'Logs', '/_belm/request-logs'),
 				onPress: $elm$core$Maybe$Just($author$project$Main$SelectRequestLogs)
 			});
 	}();
@@ -18449,32 +18458,7 @@ var $author$project$Main$viewSidebar = function (model) {
 					{bottom: 12, left: 12, right: 12, top: 12})
 				]),
 			{
-				label: A2(
-					$mdgriffith$elm_ui$Element$row,
-					_List_fromArray(
-						[
-							$mdgriffith$elm_ui$Element$width($mdgriffith$elm_ui$Element$fill)
-						]),
-					_List_fromArray(
-						[
-							A2(
-							$mdgriffith$elm_ui$Element$paragraph,
-							_List_fromArray(
-								[$mdgriffith$elm_ui$Element$alignLeft]),
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$text('Performance')
-								])),
-							A2(
-							$mdgriffith$elm_ui$Element$el,
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$Font$size(12),
-									$mdgriffith$elm_ui$Element$Font$color(
-									A3($mdgriffith$elm_ui$Element$rgb255, 170, 181, 196))
-								]),
-							$mdgriffith$elm_ui$Element$text('/_belm/perf'))
-						])),
+				label: A2(sidebarItemLabel, 'Performance', '/_belm/perf'),
 				onPress: $elm$core$Maybe$Just($author$project$Main$SelectPerformance)
 			});
 	}();
@@ -18502,32 +18486,7 @@ var $author$project$Main$viewSidebar = function (model) {
 					{bottom: 12, left: 12, right: 12, top: 12})
 				]),
 			{
-				label: A2(
-					$mdgriffith$elm_ui$Element$row,
-					_List_fromArray(
-						[
-							$mdgriffith$elm_ui$Element$width($mdgriffith$elm_ui$Element$fill)
-						]),
-					_List_fromArray(
-						[
-							A2(
-							$mdgriffith$elm_ui$Element$paragraph,
-							_List_fromArray(
-								[$mdgriffith$elm_ui$Element$alignLeft]),
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$text(entity.name)
-								])),
-							A2(
-							$mdgriffith$elm_ui$Element$el,
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$Font$size(12),
-									$mdgriffith$elm_ui$Element$Font$color(
-									A3($mdgriffith$elm_ui$Element$rgb255, 170, 181, 196))
-								]),
-							$mdgriffith$elm_ui$Element$text(entity.resource))
-						])),
+				label: A2(sidebarItemLabel, entity.name, entity.resource),
 				onPress: $elm$core$Maybe$Just(
 					$author$project$Main$SelectEntity(entity.name))
 			});
@@ -18547,32 +18506,7 @@ var $author$project$Main$viewSidebar = function (model) {
 					{bottom: 12, left: 12, right: 12, top: 12})
 				]),
 			{
-				label: A2(
-					$mdgriffith$elm_ui$Element$row,
-					_List_fromArray(
-						[
-							$mdgriffith$elm_ui$Element$width($mdgriffith$elm_ui$Element$fill)
-						]),
-					_List_fromArray(
-						[
-							A2(
-							$mdgriffith$elm_ui$Element$paragraph,
-							_List_fromArray(
-								[$mdgriffith$elm_ui$Element$alignLeft]),
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$text('Database')
-								])),
-							A2(
-							$mdgriffith$elm_ui$Element$el,
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$Font$size(12),
-									$mdgriffith$elm_ui$Element$Font$color(
-									A3($mdgriffith$elm_ui$Element$rgb255, 170, 181, 196))
-								]),
-							$mdgriffith$elm_ui$Element$text('/_belm/backups'))
-						])),
+				label: A2(sidebarItemLabel, 'Database', '/_belm/backups'),
 				onPress: $elm$core$Maybe$Just($author$project$Main$SelectDatabase)
 			});
 	}();
@@ -18591,32 +18525,7 @@ var $author$project$Main$viewSidebar = function (model) {
 					{bottom: 12, left: 12, right: 12, top: 12})
 				]),
 			{
-				label: A2(
-					$mdgriffith$elm_ui$Element$row,
-					_List_fromArray(
-						[
-							$mdgriffith$elm_ui$Element$width($mdgriffith$elm_ui$Element$fill)
-						]),
-					_List_fromArray(
-						[
-							A2(
-							$mdgriffith$elm_ui$Element$paragraph,
-							_List_fromArray(
-								[$mdgriffith$elm_ui$Element$alignLeft]),
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$text('Authentication')
-								])),
-							A2(
-							$mdgriffith$elm_ui$Element$el,
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$Font$size(12),
-									$mdgriffith$elm_ui$Element$Font$color(
-									A3($mdgriffith$elm_ui$Element$rgb255, 170, 181, 196))
-								]),
-							$mdgriffith$elm_ui$Element$text('/auth'))
-						])),
+				label: A2(sidebarItemLabel, 'Authentication', '/auth'),
 				onPress: $elm$core$Maybe$Just($author$project$Main$ToggleAuthTools)
 			});
 	}();
@@ -18644,32 +18553,7 @@ var $author$project$Main$viewSidebar = function (model) {
 					{bottom: 12, left: 12, right: 12, top: 12})
 				]),
 			{
-				label: A2(
-					$mdgriffith$elm_ui$Element$row,
-					_List_fromArray(
-						[
-							$mdgriffith$elm_ui$Element$width($mdgriffith$elm_ui$Element$fill)
-						]),
-					_List_fromArray(
-						[
-							A2(
-							$mdgriffith$elm_ui$Element$paragraph,
-							_List_fromArray(
-								[$mdgriffith$elm_ui$Element$alignLeft]),
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$text(actionInfo.name)
-								])),
-							A2(
-							$mdgriffith$elm_ui$Element$el,
-							_List_fromArray(
-								[
-									$mdgriffith$elm_ui$Element$Font$size(12),
-									$mdgriffith$elm_ui$Element$Font$color(
-									A3($mdgriffith$elm_ui$Element$rgb255, 170, 181, 196))
-								]),
-							$mdgriffith$elm_ui$Element$text('action'))
-						])),
+				label: A2(sidebarItemLabel, actionInfo.name, '/actions/' + actionInfo.name),
 				onPress: $elm$core$Maybe$Just(
 					$author$project$Main$SelectAction(actionInfo.name))
 			});

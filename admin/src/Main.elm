@@ -1694,6 +1694,13 @@ viewSidebar model =
                 _ ->
                     ( [], [], [] )
 
+        sidebarItemLabel : String -> String -> Element Msg
+        sidebarItemLabel title subtitle =
+            column [ width fill, spacing 4 ]
+                [ paragraph [ alignLeft ] [ text title ]
+                , paragraph [ alignLeft, Font.size 11, Font.color (rgb255 170 181 196) ] [ text subtitle ]
+                ]
+
         entityButton entity =
             let
                 selected =
@@ -1726,10 +1733,7 @@ viewSidebar model =
                 ]
                 { onPress = Just (SelectEntity entity.name)
                 , label =
-                    row [ width fill ]
-                        [ paragraph [ alignLeft ] [ text entity.name ]
-                        , el [ Font.size 12, Font.color (rgb255 170 181 196) ] (text entity.resource)
-                        ]
+                    sidebarItemLabel entity.name entity.resource
                 }
 
         actionEndpointCard : ActionInfo -> Element Msg
@@ -1765,10 +1769,7 @@ viewSidebar model =
                 ]
                 { onPress = Just (SelectAction actionInfo.name)
                 , label =
-                    row [ width fill ]
-                        [ paragraph [ alignLeft ] [ text actionInfo.name ]
-                        , el [ Font.size 12, Font.color (rgb255 170 181 196) ] (text "action")
-                        ]
+                    sidebarItemLabel actionInfo.name ("/actions/" ++ actionInfo.name)
                 }
 
         performanceButton : Element Msg
@@ -1790,10 +1791,7 @@ viewSidebar model =
                 ]
                 { onPress = Just SelectPerformance
                 , label =
-                    row [ width fill ]
-                        [ paragraph [ alignLeft ] [ text "Performance" ]
-                        , el [ Font.size 12, Font.color (rgb255 170 181 196) ] (text "/_belm/perf")
-                        ]
+                    sidebarItemLabel "Performance" "/_belm/perf"
                 }
 
         requestLogsButton : Element Msg
@@ -1815,10 +1813,7 @@ viewSidebar model =
                 ]
                 { onPress = Just SelectRequestLogs
                 , label =
-                    row [ width fill ]
-                        [ paragraph [ alignLeft ] [ text "Logs" ]
-                        , el [ Font.size 12, Font.color (rgb255 170 181 196) ] (text "/_belm/request-logs")
-                        ]
+                    sidebarItemLabel "Logs" "/_belm/request-logs"
                 }
 
         databaseButton : Element Msg
@@ -1840,10 +1835,7 @@ viewSidebar model =
                 ]
                 { onPress = Just SelectDatabase
                 , label =
-                    row [ width fill ]
-                        [ paragraph [ alignLeft ] [ text "Database" ]
-                        , el [ Font.size 12, Font.color (rgb255 170 181 196) ] (text "/_belm/backups")
-                        ]
+                    sidebarItemLabel "Database" "/_belm/backups"
                 }
 
         authToolsButton : Element Msg
@@ -1865,10 +1857,7 @@ viewSidebar model =
                 ]
                 { onPress = Just ToggleAuthTools
                 , label =
-                    row [ width fill ]
-                        [ paragraph [ alignLeft ] [ text "Authentication" ]
-                        , el [ Font.size 12, Font.color (rgb255 170 181 196) ] (text "/auth")
-                        ]
+                    sidebarItemLabel "Authentication" "/auth"
                 }
     in
     column
