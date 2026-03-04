@@ -30,7 +30,8 @@ var (
 	jsonTokenPattern       = regexp.MustCompile(`(?i)("token"\s*:\s*")([^"]*)(")`)
 	jsonCodePattern        = regexp.MustCompile(`(?i)("code"\s*:\s*")([^"]*)(")`)
 	jsonEmailPattern       = regexp.MustCompile(`(?i)("email"\s*:\s*")([^"]*)(")`)
-	sqlQuotedLiteral       = regexp.MustCompile(`'(?:''|[^'])*'`)
+	sqlBindPlaceholder     = regexp.MustCompile(`\?(?:\d+)?`)
+	sqlInsertValuesPattern = regexp.MustCompile(`(?is)\binsert\s+into\s+[^\(]+\(([^)]*)\)\s+values\s*\(([^)]*)\)`)
 )
 
 type dbQueryTrace struct {
@@ -299,11 +300,94 @@ func sanitizeRequestLogs(entries []requestLogEntry) []requestLogEntry {
 
 func sanitizeSQLForLogs(sqlText string) string {
 	sanitized := sanitizeSensitiveText(sqlText)
-	lowered := strings.ToLower(sqlText)
-	if strings.Contains(lowered, "belm_auth_codes") || strings.Contains(lowered, "belm_sessions") {
-		sanitized = sqlQuotedLiteral.ReplaceAllString(sanitized, "'<masked>'")
-	}
+	sanitized = sanitizeInsertValuesByColumnName(sanitized)
+	sanitized = labelSQLBindPlaceholders(sanitized)
 	return sanitized
+}
+
+func labelSQLBindPlaceholders(sqlText string) string {
+	index := 0
+	return sqlBindPlaceholder.ReplaceAllStringFunc(sqlText, func(_ string) string {
+		index++
+		return fmt.Sprintf("$%d", index)
+	})
+}
+
+func sanitizeInsertValuesByColumnName(sqlText string) string {
+	match := sqlInsertValuesPattern.FindStringSubmatchIndex(sqlText)
+	if match == nil || len(match) < 6 {
+		return sqlText
+	}
+
+	columnsPart := sqlText[match[2]:match[3]]
+	valuesPart := sqlText[match[4]:match[5]]
+
+	columns := splitSQLCSV(columnsPart)
+	values := splitSQLCSV(valuesPart)
+	if len(columns) == 0 || len(columns) != len(values) {
+		return sqlText
+	}
+
+	changed := false
+	for i := range columns {
+		column := normalizeSQLIdentifier(columns[i])
+		if column == "token" || column == "code" || column == "email" {
+			values[i] = "'<omitted>'"
+			changed = true
+		}
+	}
+	if !changed {
+		return sqlText
+	}
+
+	rebuiltValues := strings.Join(values, ", ")
+	return sqlText[:match[4]] + rebuiltValues + sqlText[match[5]:]
+}
+
+func splitSQLCSV(part string) []string {
+	trimmed := strings.TrimSpace(part)
+	if trimmed == "" {
+		return nil
+	}
+
+	items := make([]string, 0, 8)
+	start := 0
+	inQuotes := false
+	runes := []rune(trimmed)
+
+	for i := 0; i < len(runes); i++ {
+		ch := runes[i]
+
+		if ch == '\'' {
+			if inQuotes && i+1 < len(runes) && runes[i+1] == '\'' {
+				i++
+				continue
+			}
+			inQuotes = !inQuotes
+			continue
+		}
+
+		if ch == ',' && !inQuotes {
+			items = append(items, strings.TrimSpace(string(runes[start:i])))
+			start = i + 1
+		}
+	}
+
+	if start < len(runes) {
+		items = append(items, strings.TrimSpace(string(runes[start:])))
+	}
+
+	return items
+}
+
+func normalizeSQLIdentifier(raw string) string {
+	value := strings.TrimSpace(raw)
+	value = strings.Trim(value, "\"`[]")
+	if dot := strings.LastIndex(value, "."); dot >= 0 && dot+1 < len(value) {
+		value = value[dot+1:]
+	}
+	value = strings.Trim(value, "\"`[]")
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func sanitizeSensitiveText(text string) string {
@@ -312,17 +396,17 @@ func sanitizeSensitiveText(text string) string {
 	}
 
 	sanitized := text
-	sanitized = bearerPattern.ReplaceAllString(sanitized, "${1}<masked>")
-	sanitized = tokenQueryParamPattern.ReplaceAllString(sanitized, "${1}<masked>")
-	sanitized = sqlTokenPattern.ReplaceAllString(sanitized, "${1}<masked>${3}")
-	sanitized = sqlCodePattern.ReplaceAllString(sanitized, "${1}<masked>${3}")
-	sanitized = sqlEmailPattern.ReplaceAllString(sanitized, "${1}<masked-email>${3}")
-	sanitized = devCodePattern.ReplaceAllString(sanitized, "${1}<masked>")
-	sanitized = jsonTokenPattern.ReplaceAllString(sanitized, "${1}<masked>${3}")
-	sanitized = jsonCodePattern.ReplaceAllString(sanitized, "${1}<masked>${3}")
-	sanitized = jsonEmailPattern.ReplaceAllString(sanitized, "${1}<masked-email>${3}")
+	sanitized = bearerPattern.ReplaceAllString(sanitized, "${1}<omitted>")
+	sanitized = tokenQueryParamPattern.ReplaceAllString(sanitized, "${1}<omitted>")
+	sanitized = sqlTokenPattern.ReplaceAllString(sanitized, "${1}<omitted>${3}")
+	sanitized = sqlCodePattern.ReplaceAllString(sanitized, "${1}<omitted>${3}")
+	sanitized = sqlEmailPattern.ReplaceAllString(sanitized, "${1}<omitted>${3}")
+	sanitized = devCodePattern.ReplaceAllString(sanitized, "${1}<omitted>")
+	sanitized = jsonTokenPattern.ReplaceAllString(sanitized, "${1}<omitted>${3}")
+	sanitized = jsonCodePattern.ReplaceAllString(sanitized, "${1}<omitted>${3}")
+	sanitized = jsonEmailPattern.ReplaceAllString(sanitized, "${1}<omitted>${3}")
 	sanitized = emailPattern.ReplaceAllStringFunc(sanitized, func(_ string) string {
-		return "<masked-email>"
+		return "<omitted>"
 	})
 	return sanitized
 }

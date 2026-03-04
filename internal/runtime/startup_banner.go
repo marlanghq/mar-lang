@@ -30,7 +30,7 @@ func (r *Runtime) printStartupBanner() {
 		fmt.Printf("  %s %s\n", "POST", "/auth/login")
 		fmt.Printf("  %s %s\n", "POST", "/auth/logout")
 		fmt.Printf("  %s %s\n", "GET ", "/auth/me")
-		fmt.Printf("  %s %s\n", "POST", "/_belm/bootstrap-admin (optional first admin)")
+		fmt.Printf("  %s %s\n", "POST", "/_belm/bootstrap-admin (first admin setup)")
 		if r.authUser != nil {
 			fmt.Printf("  %s %s\n", "ALL ", r.authUser.Resource+" (auth users)")
 		}
@@ -74,7 +74,9 @@ func (r *Runtime) printStartupBanner() {
 	fmt.Printf("  %s %s\n", "GET ", "/health")
 	fmt.Printf("  %s %s\n", "GET ", "/_belm/admin")
 	fmt.Printf("  %s %s\n", "GET ", "/_belm/schema")
+	fmt.Printf("  %s %s\n", "GET ", "/_belm/version")
 	if r.authEnabled() {
+		fmt.Printf("  %s %s\n", "GET ", "/_belm/version/admin (role admin)")
 		fmt.Printf("  %s %s\n", "GET ", "/_belm/perf (role admin)")
 		fmt.Printf("  %s %s\n", "GET ", "/_belm/request-logs (role admin)")
 		fmt.Printf("  %s %s\n", "POST", "/_belm/backups (role admin)")

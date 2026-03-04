@@ -31,7 +31,7 @@ var (
 	keywordHoverDescriptions = map[string]string{
 		"app":                 "Declares the app name. Example: `app BookStoreApi`.",
 		"port":                "Sets the HTTP server port. Example: `port 4100`.",
-		"database":            "Sets the SQLite file path. Example: `database \"./app.db\"`.",
+		"database":            "Sets the SQLite file path. Example: `database \"app.db\"`. Relative paths use the current working directory.",
 		"system":              "Declares system runtime options.",
 		"request_logs_buffer": "Sets in-memory request log capacity. Example: `request_logs_buffer 500`.",
 		"public":              "Declares embedded static frontend files and optional SPA fallback.",

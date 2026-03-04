@@ -36,6 +36,7 @@ type Runtime struct {
 	authLogOnce    sync.Once
 	publicFS       fs.FS
 	adminFS        fs.FS
+	versionInfo    VersionInfo
 }
 
 type compiledRule struct {
@@ -208,6 +209,10 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request) error {
 		r.writeJSON(w, http.StatusOK, r.schemaPayload())
 		return nil
 	}
+	if method == http.MethodGet && path == "/_belm/version" {
+		r.writeJSON(w, http.StatusOK, r.publicVersionPayload())
+		return nil
+	}
 	if method == http.MethodPost && path == "/_belm/bootstrap-admin" {
 		payload, err := readJSONBody(req)
 		if err != nil {
@@ -232,6 +237,19 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request) error {
 			return &apiError{Status: http.StatusForbidden, Message: "Admin role required"}
 		}
 		r.writeJSON(w, http.StatusOK, r.perfPayload())
+		return nil
+	}
+	if method == http.MethodGet && path == "/_belm/version/admin" {
+		if !r.authEnabled() {
+			return &apiError{Status: http.StatusNotFound, Message: "Authentication is not enabled"}
+		}
+		if !auth.Authenticated {
+			return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
+		}
+		if !isAdminRole(auth.Role) {
+			return &apiError{Status: http.StatusForbidden, Message: "Admin role required"}
+		}
+		r.writeJSON(w, http.StatusOK, r.adminVersionPayload())
 		return nil
 	}
 
@@ -476,7 +494,7 @@ func (r *Runtime) metricsRouteLabel(req *http.Request) string {
 	}
 
 	switch path {
-	case "/health", "/_belm/schema", "/_belm/perf", "/_belm/backups", "/_belm/bootstrap-admin":
+	case "/health", "/_belm/schema", "/_belm/version", "/_belm/version/admin", "/_belm/perf", "/_belm/backups", "/_belm/bootstrap-admin":
 		return path
 	case "/_belm/request-logs":
 		return path

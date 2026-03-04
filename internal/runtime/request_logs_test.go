@@ -139,11 +139,14 @@ func TestRequestLogsEndpointMasksSensitiveValues(t *testing.T) {
 	if strings.Contains(body, rawToken) {
 		t.Fatalf("expected token to be masked, got body=%s", body)
 	}
-	if !strings.Contains(normalizedBody, "<masked-email>") {
-		t.Fatalf("expected masked email marker in body=%s", body)
+	if !strings.Contains(normalizedBody, "<omitted>") {
+		t.Fatalf("expected omitted marker in body=%s", body)
 	}
-	if !strings.Contains(normalizedBody, "<masked>") {
-		t.Fatalf("expected masked secret marker in body=%s", body)
+	if !strings.Contains(normalizedBody, ", 1,") {
+		t.Fatalf("expected non-sensitive SQL values to remain visible in body=%s", body)
+	}
+	if strings.Contains(normalizedBody, "<masked-email>") || strings.Contains(normalizedBody, "<masked>") {
+		t.Fatalf("expected no legacy masked markers in body=%s", body)
 	}
 }
 

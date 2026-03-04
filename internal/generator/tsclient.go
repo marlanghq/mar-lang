@@ -111,6 +111,16 @@ func GenerateTSClient(app *model.App) (*TSClientOutput, error) {
 	writeTSLine(buf, "  user: Row;")
 	writeTSLine(buf, "}")
 	writeTSLine(buf, "")
+	writeTSLine(buf, "export interface VersionAppInfo {")
+	writeTSLine(buf, "  name: string;")
+	writeTSLine(buf, "  buildTime: string;")
+	writeTSLine(buf, "  manifestHash: string;")
+	writeTSLine(buf, "}")
+	writeTSLine(buf, "")
+	writeTSLine(buf, "export interface PublicVersionResponse {")
+	writeTSLine(buf, "  app: VersionAppInfo;")
+	writeTSLine(buf, "}")
+	writeTSLine(buf, "")
 	writeTSLine(buf, "function trimRightSlash(value: string): string {")
 	writeTSLine(buf, "  return value.replace(/\\/+$/, \"\");")
 	writeTSLine(buf, "}")
@@ -216,6 +226,10 @@ func GenerateTSClient(app *model.App) (*TSClientOutput, error) {
 		writeTSLine(buf, "  auth: null,")
 	}
 	writeTSLine(buf, "};")
+	writeTSLine(buf, "")
+	writeTSLine(buf, "export async function getVersion(config: Config): Promise<PublicVersionResponse> {")
+	writeTSLine(buf, "  return requestJson<PublicVersionResponse>(config, \"GET\", \"/_belm/version\");")
+	writeTSLine(buf, "}")
 
 	writeTSLine(buf, "")
 	for _, alias := range app.InputAliases {

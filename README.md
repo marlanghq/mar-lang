@@ -11,7 +11,7 @@ Example (`.belm`):
 ```belm
 app TodoApi
 port 4100
-database "./todo.db"
+database "todo.db"
 
 entity Todo {
   id: Int primary auto
@@ -242,6 +242,8 @@ Both clients include:
 - `login`
 - `logout`
 - `me`
+- public backend version endpoint:
+- `getVersion` (calls `GET /_belm/version`)
 
 Elm client also exposes:
 
@@ -335,7 +337,7 @@ Minimal example:
 ```belm
 app TodoApi
 port 4100
-database "./todo.db"
+database "todo.db"
 
 entity Todo {
   id: Int primary auto
@@ -358,6 +360,8 @@ entity Todo {
 - `action <actionName> { ... }`
 - `input: <InputAlias>`
 - `create <Entity> { field: value }`
+
+Relative `database` paths are resolved from the process working directory (where you run the executable), not from the executable file directory.
 
 ### System Configuration
 
@@ -535,6 +539,8 @@ System features use the same app authentication session (`/auth/*`) and check `r
 
 System endpoints:
 
+- `GET /_belm/version`
+- `GET /_belm/version/admin` (role admin)
 - `GET /_belm/perf`
 - `GET /_belm/request-logs`
 - `POST /_belm/backups`
@@ -580,6 +586,7 @@ Always:
 - `GET /health`
 - `GET /_belm/admin`
 - `GET /_belm/schema`
+- `GET /_belm/version`
 
 Auth endpoints:
 
@@ -587,7 +594,8 @@ Auth endpoints:
 - `POST /auth/login`
 - `POST /auth/logout`
 - `GET /auth/me`
-- `POST /_belm/bootstrap-admin` (optional first admin)
+- `POST /_belm/bootstrap-admin` (first admin setup)
+- `GET /_belm/version/admin` (role admin)
 - `GET /_belm/perf` (role admin)
 - `GET /_belm/request-logs` (role admin)
 - `POST /_belm/backups` (role admin)

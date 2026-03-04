@@ -3,7 +3,7 @@ module Main exposing (main)
 import Belm.Api exposing (ActionInfo, AuthInfo, Entity, Field, InputAliasField, InputAliasInfo, Row, Schema, SystemAuthInfo, decodeRows, decodeSchema, encodePayload, fieldTypeLabel, rowDecoder, valueToString)
 import Browser
 import Dict exposing (Dict)
-import Element exposing (Element, alignLeft, centerY, column, el, fill, fillPortion, height, htmlAttribute, none, padding, paddingEach, paragraph, px, rgb255, row, scrollbarY, spacing, text, width)
+import Element exposing (Element, alignLeft, column, el, fill, fillPortion, height, htmlAttribute, none, padding, paddingEach, paragraph, px, rgb255, row, scrollbarY, spacing, text, width)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
@@ -65,6 +65,7 @@ type alias Model =
     , actionFormValues : Dict String String
     , actionResult : Maybe Row
     , perf : Remote PerfPayload
+    , adminVersion : Remote AdminVersionPayload
     , requestLogs : Remote RequestLogsPayload
     , backups : Remote BackupsPayload
     , performanceMode : Bool
@@ -88,6 +89,7 @@ type Msg
     | ReloadPerformance
     | ReloadRequestLogs
     | GotPerformance (Result Http.Error PerfPayload)
+    | GotAdminVersion (Result Http.Error AdminVersionPayload)
     | GotRequestLogs (Result Http.Error RequestLogsPayload)
     | GotBackups (Result Http.Error BackupsPayload)
     | TriggerBackup
@@ -180,6 +182,33 @@ type alias PerfHttp =
     }
 
 
+type alias AdminVersionPayload =
+    { app : VersionApp
+    , belm : VersionBelm
+    , runtimeInfo : VersionRuntime
+    }
+
+
+type alias VersionApp =
+    { name : String
+    , buildTime : String
+    , manifestHash : String
+    }
+
+
+type alias VersionBelm =
+    { version : String
+    , commit : String
+    , buildTime : String
+    }
+
+
+type alias VersionRuntime =
+    { goVersion : String
+    , platform : String
+    }
+
+
 type alias PerfRoute =
     { method : String
     , route : String
@@ -254,6 +283,7 @@ init flags =
       , actionFormValues = Dict.empty
       , actionResult = Nothing
       , perf = NotAsked
+      , adminVersion = NotAsked
       , requestLogs = NotAsked
       , backups = NotAsked
       , performanceMode = False
@@ -308,6 +338,7 @@ update msg model =
                                 , actionResult = Nothing
                                 , requestLogs = NotAsked
                                 , backups = NotAsked
+                                , adminVersion = NotAsked
                                 , firstAdminCodeRequested =
                                     model.firstAdminCodeRequested
                                         && String.trim model.authToken == ""
@@ -408,10 +439,11 @@ update msg model =
                             , formValues = Dict.empty
                             , actionResult = Nothing
                             , perf = Loading
+                            , adminVersion = Loading
                             , flash = Nothing
                         }
                 in
-                ( nextModel, loadPerformance nextModel )
+                ( nextModel, Cmd.batch [ loadPerformance nextModel, loadAdminVersion nextModel ] )
 
         SelectRequestLogs ->
             if not (isAdminProfile model) then
@@ -478,9 +510,9 @@ update msg model =
         ReloadPerformance ->
             let
                 nextModel =
-                    { model | perf = Loading, flash = Nothing }
+                    { model | perf = Loading, adminVersion = Loading, flash = Nothing }
             in
-            ( nextModel, loadPerformance nextModel )
+            ( nextModel, Cmd.batch [ loadPerformance nextModel, loadAdminVersion nextModel ] )
 
         ReloadRequestLogs ->
             let
@@ -496,6 +528,14 @@ update msg model =
 
                 Err httpError ->
                     ( { model | perf = Failed (httpErrorToString httpError) }, Cmd.none )
+
+        GotAdminVersion result ->
+            case result of
+                Ok payload ->
+                    ( { model | adminVersion = Loaded payload }, Cmd.none )
+
+                Err httpError ->
+                    ( { model | adminVersion = Failed (httpErrorToString httpError) }, Cmd.none )
 
         GotRequestLogs result ->
             case result of
@@ -538,7 +578,12 @@ update msg model =
                 Ok response ->
                     case response.devCode of
                         Just code ->
-                            ( { model | authCode = code, flash = Just (authScopeLabel scope ++ " code generated. devCode: " ++ code) }, Cmd.none )
+                            ( { model
+                                | authCode = code
+                                , flash = Just ("Login code sent. Development code: " ++ code ++ ". Enter this code and click Login.")
+                              }
+                            , Cmd.none
+                            )
 
                         Nothing ->
                             ( { model
@@ -642,7 +687,7 @@ update msg model =
 
                                 refreshCmd =
                                     if model.performanceMode then
-                                        loadPerformance nextModel
+                                        Cmd.batch [ loadPerformance nextModel, loadAdminVersion nextModel ]
 
                                     else if model.requestLogsMode then
                                         loadRequestLogs nextModel
@@ -985,6 +1030,19 @@ loadPerformance model =
         , url = model.apiBase ++ "/_belm/perf"
         , body = Http.emptyBody
         , expect = expectJsonWithApiError GotPerformance perfPayloadDecoder
+        , timeout = Nothing
+        , tracker = Nothing
+        }
+
+
+loadAdminVersion : Model -> Cmd Msg
+loadAdminVersion model =
+    Http.request
+        { method = "GET"
+        , headers = appAuthHeaders model
+        , url = model.apiBase ++ "/_belm/version/admin"
+        , body = Http.emptyBody
+        , expect = expectJsonWithApiError GotAdminVersion adminVersionDecoder
         , timeout = Nothing
         , tracker = Nothing
         }
@@ -1346,6 +1404,37 @@ perfRouteDecoder =
         (Decode.field "errors4xx" Decode.int)
         (Decode.field "errors5xx" Decode.int)
         (Decode.field "avgMs" Decode.float)
+
+
+adminVersionDecoder : Decode.Decoder AdminVersionPayload
+adminVersionDecoder =
+    Decode.map3 AdminVersionPayload
+        (Decode.field "app" versionAppDecoder)
+        (Decode.field "belm" versionBelmDecoder)
+        (Decode.field "runtime" versionRuntimeDecoder)
+
+
+versionAppDecoder : Decode.Decoder VersionApp
+versionAppDecoder =
+    Decode.map3 VersionApp
+        (Decode.field "name" Decode.string)
+        (Decode.field "buildTime" Decode.string)
+        (Decode.field "manifestHash" Decode.string)
+
+
+versionBelmDecoder : Decode.Decoder VersionBelm
+versionBelmDecoder =
+    Decode.map3 VersionBelm
+        (Decode.field "version" Decode.string)
+        (Decode.field "commit" Decode.string)
+        (Decode.field "buildTime" Decode.string)
+
+
+versionRuntimeDecoder : Decode.Decoder VersionRuntime
+versionRuntimeDecoder =
+    Decode.map2 VersionRuntime
+        (Decode.field "goVersion" Decode.string)
+        (Decode.field "platform" Decode.string)
 
 
 requestLogsPayloadDecoder : Decode.Decoder RequestLogsPayload
@@ -2114,16 +2203,17 @@ viewAuthToolsPanel model =
         else
             column
                 [ width fill
-                , spacing 10
+                , spacing 12
                 , padding 16
                 , Background.color (rgb255 255 255 255)
                 , Border.rounded 14
                 , Border.width 1
                 , Border.color (rgb255 226 232 239)
                 ]
-                [ row [ width fill, spacing 12, centerY ]
-                    [ el [ Font.bold, Font.size 18 ] (text "Authentication") ]
-                , el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text transportText)
+                [ viewPanelHeader
+                    "Authentication"
+                    [ el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text transportText) ]
+                    []
                 , row [ width fill, spacing 8 ] activeBadgeText
                 , column
                     [ width fill
@@ -2320,6 +2410,36 @@ hasActiveSession model =
         || (model.currentSystemEmail /= Nothing)
 
 
+viewPanelTitle : String -> List (Element msg) -> Element msg
+viewPanelTitle title details =
+    column [ width fill, spacing 6 ]
+        (el [ Font.bold, Font.size 20 ] (text title) :: details)
+
+
+viewPanelHeader : String -> List (Element msg) -> List (Element msg) -> Element msg
+viewPanelHeader title details actions =
+    let
+        titleBlock =
+            if List.isEmpty actions then
+                el
+                    [ width fill
+                    , paddingEach { top = 4, right = 0, bottom = 0, left = 0 }
+                    ]
+                    (viewPanelTitle title details)
+
+            else
+                viewPanelTitle title details
+    in
+    row [ width fill, spacing 10 ]
+        [ titleBlock
+        , if List.isEmpty actions then
+            none
+
+          else
+            row [ spacing 10 ] actions
+        ]
+
+
 viewFlash : Model -> Element Msg
 viewFlash model =
     case model.flash of
@@ -2362,13 +2482,13 @@ viewDataPanel model =
 
         Nothing ->
             let
-                header =
+                headerTitle =
                     case model.selectedEntity of
                         Nothing ->
-                            text "No entity selected"
+                            "No entity selected"
 
                         Just entity ->
-                            text (entity.name ++ " records")
+                            entity.name ++ " records"
             in
             column
                 [ width (fillPortion 3)
@@ -2380,9 +2500,10 @@ viewDataPanel model =
                 , Border.color (rgb255 226 232 239)
                 , padding 16
                 ]
-                [ row [ width fill, spacing 10 ]
-                    [ el [ Font.size 20, Font.bold, width fill ] header
-                    , Input.button
+                [ viewPanelHeader
+                    headerTitle
+                    []
+                    [ Input.button
                         [ Background.color (rgb255 34 124 95)
                         , Font.color (rgb255 248 252 250)
                         , Border.rounded 10
@@ -2418,7 +2539,7 @@ viewActionPanel model actionInfo =
                 , Border.color (rgb255 226 232 239)
                 , padding 16
                 ]
-                [ el [ Font.size 20, Font.bold ] (text ("Action: " ++ actionInfo.name))
+                [ viewPanelHeader ("Action: " ++ actionInfo.name) [] []
                 , paragraph [ Font.color (rgb255 176 60 46) ] [ text ("Input alias not found: " ++ actionInfo.inputAlias) ]
                 ]
 
@@ -2443,10 +2564,12 @@ viewActionPanel model actionInfo =
                 , Border.color (rgb255 226 232 239)
                 , padding 16
                 ]
-                ([ row [ width fill, spacing 10, centerY ]
-                    [ el [ Font.size 20, Font.bold, width fill ] (text ("Action: " ++ actionInfo.name)) ]
-                 , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("POST /actions/" ++ actionInfo.name))
-                 , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("Input: " ++ aliasInfo.name))
+                ([ viewPanelHeader
+                    ("Action: " ++ actionInfo.name)
+                    [ el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("POST /actions/" ++ actionInfo.name))
+                    , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("Input: " ++ aliasInfo.name))
+                    ]
+                    []
                  ]
                     ++ List.map fieldInput aliasInfo.fields
                     ++ [ row [ width fill ]
@@ -2663,17 +2786,25 @@ viewPerformancePanel model =
             , Border.color (rgb255 226 232 239)
             , padding 16
             ]
-            [ row [ width fill, spacing 10, centerY ]
-                [ el [ width fill, Font.bold, Font.size 20 ] (text "Monitoring")
-                , Input.button
+            [ viewPanelHeader
+                "Monitoring"
+                []
+                [ Input.button
                     [ Background.color (rgb255 224 231 241)
                     , Border.rounded 10
                     , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
                     ]
-                { onPress = Just ReloadPerformance
-                , label = text "Refresh"
-                }
+                    { onPress = Just ReloadPerformance
+                    , label = text "Refresh"
+                    }
                 ]
+            , viewMonitoringVersion model.adminVersion
+            , el
+                [ width fill
+                , height (px 1)
+                , Background.color (rgb255 226 232 239)
+                ]
+                none
             , case model.perf of
                 NotAsked ->
                     paragraph [] [ text "No monitoring data loaded yet." ]
@@ -2705,6 +2836,40 @@ viewPerformancePanel model =
             ]
 
 
+viewMonitoringVersion : Remote AdminVersionPayload -> Element Msg
+viewMonitoringVersion versionRemote =
+    case versionRemote of
+        NotAsked ->
+            none
+
+        Loading ->
+            paragraph [ Font.size 13, Font.color (rgb255 93 103 120) ] [ text "Loading version info..." ]
+
+        Failed message ->
+            paragraph [ Font.size 13, Font.color (rgb255 176 60 46) ] [ text ("Version info unavailable: " ++ message) ]
+
+        Loaded versionPayload ->
+            column
+                [ width fill
+                , spacing 8
+                ]
+                [ row [ width fill, spacing 12 ]
+                    [ databaseInfoCard "App" versionPayload.app.name
+                    , databaseInfoCard "App build time" versionPayload.app.buildTime
+                    , databaseInfoCard "Manifest hash" versionPayload.app.manifestHash
+                    ]
+                , row [ width fill, spacing 12 ]
+                    [ databaseInfoCard "Belm" versionPayload.belm.version
+                    , databaseInfoCard "Belm commit" versionPayload.belm.commit
+                    , databaseInfoCard "Belm build time" versionPayload.belm.buildTime
+                    ]
+                , row [ width fill, spacing 12 ]
+                    [ databaseInfoCard "Go version" versionPayload.runtimeInfo.goVersion
+                    , databaseInfoCard "Platform" versionPayload.runtimeInfo.platform
+                    ]
+                ]
+
+
 viewRequestLogsPanel : Model -> Element Msg
 viewRequestLogsPanel model =
     if not (isAdminProfile model) then
@@ -2723,6 +2888,19 @@ viewRequestLogsPanel model =
             ]
 
     else
+        let
+            logsSubtitle =
+                case model.requestLogs of
+                    Loaded payload ->
+                        "Showing "
+                            ++ String.fromInt (List.length payload.logs)
+                            ++ " entries (buffer size: "
+                            ++ String.fromInt payload.buffer
+                            ++ ")"
+
+                    _ ->
+                        ""
+        in
         column
             [ width fill
             , spacing 14
@@ -2732,9 +2910,15 @@ viewRequestLogsPanel model =
             , Border.color (rgb255 226 232 239)
             , padding 16
             ]
-            [ row [ width fill, spacing 10, centerY ]
-                [ el [ width fill, Font.bold, Font.size 20 ] (text "Request logs")
-                , Input.button
+            [ viewPanelHeader
+                "Recent request logs"
+                (if logsSubtitle == "" then
+                    []
+
+                 else
+                    [ el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text logsSubtitle) ]
+                )
+                [ Input.button
                     [ Background.color (rgb255 224 231 241)
                     , Border.rounded 10
                     , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
@@ -2743,7 +2927,7 @@ viewRequestLogsPanel model =
                     , label = text "Refresh"
                     }
                 ]
-            , paragraph [ Font.size 12, Font.color (rgb255 93 103 120) ]
+            , paragraph [ Font.size 13, Font.color (rgb255 93 103 120) ]
                 [ text "Sensitive values are masked by the server in this view (tokens, login codes, and emails)." ]
             , viewRequestLogsSection model.requestLogs
             ]
@@ -2751,51 +2935,28 @@ viewRequestLogsPanel model =
 
 viewRequestLogsSection : Remote RequestLogsPayload -> Element Msg
 viewRequestLogsSection requestLogsRemote =
-    let
-        sectionHeading title subtitle =
-            row [ width fill, spacing 8, centerY ]
-                [ el [ Font.bold, Font.size 18 ] (text title)
-                , el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text subtitle)
-                ]
-    in
     case requestLogsRemote of
         NotAsked ->
             column [ width fill, spacing 8 ]
-                [ sectionHeading "Recent request logs" ""
-                , paragraph [ Font.size 13, Font.color (rgb255 93 103 120) ] [ text "No request logs loaded yet." ]
-                ]
+                [ paragraph [ Font.size 13, Font.color (rgb255 93 103 120) ] [ text "No request logs loaded yet." ] ]
 
         Loading ->
             column [ width fill, spacing 8 ]
-                [ sectionHeading "Recent request logs" ""
-                , paragraph [ Font.size 13, Font.color (rgb255 93 103 120) ] [ text "Loading request logs..." ]
-                ]
+                [ paragraph [ Font.size 13, Font.color (rgb255 93 103 120) ] [ text "Loading request logs..." ] ]
 
         Failed message ->
             column [ width fill, spacing 8 ]
-                [ sectionHeading "Recent request logs" ""
-                , paragraph [ Font.size 13, Font.color (rgb255 176 60 46) ] [ text message ]
-                ]
+                [ paragraph [ Font.size 13, Font.color (rgb255 176 60 46) ] [ text message ] ]
 
         Loaded payload ->
             column [ width fill, spacing 8 ]
-                ([ sectionHeading
-                    "Recent request logs"
-                    ("Showing "
-                        ++ String.fromInt (List.length payload.logs)
-                        ++ " entries (buffer size: "
-                        ++ String.fromInt payload.buffer
-                        ++ ")"
-                    )
-                 ]
-                    ++ (if List.isEmpty payload.logs then
-                            [ paragraph [ Font.size 13, Font.color (rgb255 93 103 120) ]
-                                [ text "No requests captured yet." ]
-                            ]
+                (if List.isEmpty payload.logs then
+                    [ paragraph [ Font.size 13, Font.color (rgb255 93 103 120) ]
+                        [ text "No requests captured yet." ]
+                    ]
 
-                        else
-                            List.map viewRequestLogEntry payload.logs
-                       )
+                 else
+                    List.map viewRequestLogEntry payload.logs
                 )
 
 
@@ -2815,8 +2976,16 @@ viewRequestLogEntry entry =
             else
                 rgb255 34 124 95
 
+        queryLabel =
+            case entry.queryCount of
+                1 ->
+                    "query"
+
+                _ ->
+                    "queries"
+
         querySummary =
-            String.fromInt entry.queryCount ++ " query(ies), " ++ formatMs entry.queryTimeMs
+            String.fromInt entry.queryCount ++ " " ++ queryLabel ++ ", " ++ formatMs entry.queryTimeMs
     in
     column
         [ width fill
@@ -3010,9 +3179,10 @@ viewDatabasePanelAdmin model =
         , Border.color (rgb255 226 232 239)
         , padding 16
         ]
-        [ row [ width fill, spacing 10, centerY ]
-            [ el [ width fill, Font.bold, Font.size 20 ] (text "Database")
-            , Input.button
+        [ viewPanelHeader
+            "Database"
+            []
+            [ Input.button
                 [ Background.color (rgb255 224 231 241)
                 , Border.rounded 10
                 , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }

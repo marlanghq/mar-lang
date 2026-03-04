@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
+	"time"
 
 	"belm/internal/formatter"
 	"belm/internal/generator"
@@ -216,6 +219,10 @@ func buildExecutableWithOptions(app *model.App, outputPath string, options build
 	if err != nil {
 		return err
 	}
+	manifestDigest := sha256.Sum256(manifestJSON)
+	manifestHash := "sha256:" + hex.EncodeToString(manifestDigest[:])
+	appBuildTime := time.Now().UTC().Format(time.RFC3339)
+	compilerInfo := readVersionInfo("belm")
 
 	workDir, err := os.MkdirTemp(".", ".belm-build-*")
 	if err != nil {
@@ -326,6 +333,11 @@ var files embed.FS
 const adminEnabled = %t
 const publicEnabled = %t
 const backupKeepLast = 20
+const belmVersion = %q
+const belmCommit = %q
+const belmBuildTime = %q
+const appBuildTime = %q
+const appManifestHash = %q
 
 func main() {
 	var app model.App
@@ -430,6 +442,13 @@ func runServe(app *model.App) error {
 	if err := configureAdminFiles(r); err != nil {
 		return err
 	}
+	r.SetVersionInfo(belmruntime.VersionInfo{
+		BelmVersion:   belmVersion,
+		BelmCommit:    belmCommit,
+		BelmBuildTime: belmBuildTime,
+		AppBuildTime:  appBuildTime,
+		ManifestHash:  appManifestHash,
+	})
 
 	adminURL := fmt.Sprintf("http://127.0.0.1:%%d/_belm/admin", app.Port)
 	fmt.Printf("\nAdmin panel: %%s\n", adminURL)
@@ -491,7 +510,15 @@ func openBrowser(target string) error {
 	}
 	return cmd.Start()
 }
-`), adminAssetsReady, publicAssetsReady) + "\n"
+`),
+		adminAssetsReady,
+		publicAssetsReady,
+		compilerInfo.Version,
+		compilerInfo.Commit,
+		compilerInfo.BuildTime,
+		appBuildTime,
+		manifestHash,
+	) + "\n"
 	if err := os.WriteFile(filepath.Join(workDir, "main.go"), []byte(mainSource), 0o644); err != nil {
 		return err
 	}

@@ -2,7 +2,7 @@
   "name": "belm-language-support",
   "displayName": "Belm Language Support",
   "description": "Syntax highlighting, snippets, and LSP support for modern Belm (.belm) files.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "belm-dev",
   "repository": {
     "type": "git",

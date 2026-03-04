@@ -33,7 +33,7 @@ func Parse(source string) (*model.App, error) {
 
 	app := &model.App{
 		Port:     3000,
-		Database: "./app.db",
+		Database: "app.db",
 	}
 
 	next := func() *line {

@@ -30,6 +30,9 @@ This extension adds syntax highlighting, snippets/autocomplete, and LSP features
 - `action`
 - `create`
 - `actioncreate`
+- Database path tip:
+- Use `database "app.db"` for a simple relative path.
+- Relative paths are resolved from the process working directory.
 - LSP (via `belm lsp`):
 - Parse diagnostics while editing
 - Keyword completions
