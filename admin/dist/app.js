@@ -14700,6 +14700,18 @@ var $mdgriffith$elm_ui$Element$Input$Label = F3(
 		return {$: 'Label', a: a, b: b, c: c};
 	});
 var $mdgriffith$elm_ui$Element$Input$labelAbove = $mdgriffith$elm_ui$Element$Input$Label($mdgriffith$elm_ui$Element$Input$Above);
+var $author$project$Main$onEnter = function (message) {
+	return $mdgriffith$elm_ui$Element$htmlAttribute(
+		A2(
+			$elm$html$Html$Events$on,
+			'keydown',
+			A2(
+				$elm$json$Json$Decode$andThen,
+				function (key) {
+					return (key === 'Enter') ? $elm$json$Json$Decode$succeed(message) : $elm$json$Json$Decode$fail('ignore non-enter keys');
+				},
+				A2($elm$json$Json$Decode$field, 'key', $elm$json$Json$Decode$string))));
+};
 var $mdgriffith$elm_ui$Internal$Model$Paragraph = {$: 'Paragraph'};
 var $mdgriffith$elm_ui$Element$paragraph = F2(
 	function (attrs, children) {
@@ -15889,7 +15901,8 @@ var $author$project$Main$viewAuthToolsPanel = function (model) {
 							_List_fromArray(
 								[
 									$mdgriffith$elm_ui$Element$width(
-									$mdgriffith$elm_ui$Element$fillPortion(2))
+									$mdgriffith$elm_ui$Element$fillPortion(2)),
+									$author$project$Main$onEnter($author$project$Main$LoginWithCode)
 								]),
 							{
 								label: A2(
@@ -15955,7 +15968,8 @@ var $author$project$Main$viewAuthToolsPanel = function (model) {
 							_List_fromArray(
 								[
 									$mdgriffith$elm_ui$Element$width(
-									$mdgriffith$elm_ui$Element$fillPortion(3))
+									$mdgriffith$elm_ui$Element$fillPortion(3)),
+									$author$project$Main$onEnter($author$project$Main$RequestAuthCode)
 								]),
 							{
 								label: A2(
@@ -15978,7 +15992,8 @@ var $author$project$Main$viewAuthToolsPanel = function (model) {
 							_List_fromArray(
 								[
 									$mdgriffith$elm_ui$Element$width(
-									$mdgriffith$elm_ui$Element$fillPortion(2))
+									$mdgriffith$elm_ui$Element$fillPortion(2)),
+									$author$project$Main$onEnter($author$project$Main$LoginWithCode)
 								]),
 							{
 								label: A2(

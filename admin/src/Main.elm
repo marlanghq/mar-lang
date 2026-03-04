@@ -9,6 +9,7 @@ import Element.Border as Border
 import Element.Font as Font
 import Element.Input as Input
 import Html.Attributes as HtmlAttr
+import Html.Events as HtmlEvents
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -2247,7 +2248,7 @@ viewAuthToolsPanel model =
                             , placeholder = Just (Input.placeholder [] (text "admin@email.com"))
                             , label = Input.labelAbove [ Font.size 12 ] (text "Email")
                             }
-                        , Input.text [ width (fillPortion 2) ]
+                        , Input.text [ width (fillPortion 2), onEnter LoginWithCode ]
                             { onChange = SetAuthCode
                             , text = model.authCode
                             , placeholder = Just (Input.placeholder [] (text "6-digit code"))
@@ -2277,13 +2278,13 @@ viewAuthToolsPanel model =
 
                   else
                     row [ width fill, spacing 10 ]
-                        [ Input.text [ width (fillPortion 3) ]
+                        [ Input.text [ width (fillPortion 3), onEnter RequestAuthCode ]
                             { onChange = SetAuthEmail
                             , text = model.authEmail
                             , placeholder = Just (Input.placeholder [] (text "user@email.com"))
                             , label = Input.labelAbove [ Font.size 12 ] (text "Email")
                             }
-                        , Input.text [ width (fillPortion 2) ]
+                        , Input.text [ width (fillPortion 2), onEnter LoginWithCode ]
                             { onChange = SetAuthCode
                             , text = model.authCode
                             , placeholder = Just (Input.placeholder [] (text "6-digit code"))
@@ -2438,6 +2439,23 @@ viewPanelHeader title details actions =
           else
             row [ spacing 10 ] actions
         ]
+
+
+onEnter : msg -> Element.Attribute msg
+onEnter message =
+    htmlAttribute
+        (HtmlEvents.on "keydown"
+            (Decode.field "key" Decode.string
+                |> Decode.andThen
+                    (\key ->
+                        if key == "Enter" then
+                            Decode.succeed message
+
+                        else
+                            Decode.fail "ignore non-enter keys"
+                    )
+            )
+        )
 
 
 viewFlash : Model -> Element Msg
