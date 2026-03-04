@@ -65,7 +65,7 @@ func (r *Runtime) printStartupBanner() {
 	fmt.Printf("  %s %s\n", "GET ", "/_belm/schema")
 	if r.authEnabled() {
 		fmt.Printf("  %s %s\n", "GET ", "/_belm/perf (role admin)")
-		fmt.Printf("  %s %s\n", "POST", "/_belm/backup (role admin)")
+		fmt.Printf("  %s %s\n", "POST", "/_belm/backups (role admin)")
 		fmt.Printf("  %s %s\n", "GET ", "/_belm/backups (role admin)")
 	}
 

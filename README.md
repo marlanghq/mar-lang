@@ -1,6 +1,49 @@
 # Belm
 
-Belm is a Elm-inspired DSL for backend development, implemented in Go, with a strong focus on readability, simplicity and maintainability.
+Belm is a DSL for backend development inspired by [Elm](https://elm-lang.org) and [PocketBase](https://pocketbase.io), implemented in Go, with a strong focus on readability, simplicity and maintainability.
+
+## Quick Examples
+
+Belm is designed to be read top-to-bottom as a declarative app definition.
+
+Example (`.belm`):
+
+```belm
+app TodoApi
+port 4100
+database "./todo.db"
+
+entity Todo {
+  id: Int primary auto
+  title: String
+  done: Bool
+
+  rule "Title must have at least 3 chars" when len(title) >= 3
+  authorize list when auth_authenticated
+  authorize create when auth_authenticated
+}
+```
+
+Example with typed action:
+
+```belm
+type alias PlaceOrderInput =
+  { userId : Int
+  , total : Float
+  }
+
+placeOrder : PlaceOrderInput -> Result DomainError Effect
+placeOrder =
+  transaction
+    [ insert Order { userId = input.userId, total = input.total, status = "created" }
+    , insert AuditLog { userId = input.userId, event = "order created" }
+    ]
+```
+
+Full examples:
+
+- [examples/todo.belm](/Users/marcio/dev/github/belm/examples/todo.belm): minimal CRUD + auth-ready admin tools
+- [examples/store.belm](/Users/marcio/dev/github/belm/examples/store.belm): full app with auth, admin role, actions, backups
 
 ## Goals
 
@@ -12,7 +55,7 @@ Belm is a Elm-inspired DSL for backend development, implemented in Go, with a st
 - Safe automatic schema migrations
 - Integrated admin panel
 - Built-in SQLite backup workflow
-- Built-in monitoring and performance dashboards (with endpoints)
+- Built-in monitoring and performance dashboards
 
 ## Architecture (Go)
 
@@ -21,6 +64,68 @@ Belm is a Elm-inspired DSL for backend development, implemented in Go, with a st
 - [internal/expr/parser.go](/Users/marcio/dev/github/belm/internal/expr/parser.go): expression parser (`rule`/`authorize`)
 - [internal/runtime](/Users/marcio/dev/github/belm/internal/runtime): HTTP server, auth/authz, and migrations
 - [internal/sqlitecli/sqlitecli.go](/Users/marcio/dev/github/belm/internal/sqlitecli/sqlitecli.go): SQLite access via `sqlite3` binary (no external dependencies)
+
+## Compiler Architecture
+
+Belm has a single Go CLI binary (`belm`) that hosts multiple tools:
+
+- compiler (`belm compile`)
+- dev server with hot reload (`belm dev`)
+- formatter (`belm format`)
+- language server (`belm lsp`)
+
+The compiler pipeline is centered on a shared typed AST/model (`model.App`), produced by the parser and reused by code generators and runtime embedding.
+
+### High-level Module Map
+
+```mermaid
+flowchart LR
+    A["cmd/belm/main.go"] --> B["internal/cli"]
+    B --> C["internal/parser"]
+    C --> D["internal/model (App)"]
+    C --> E["internal/expr (rule/auth expression parsing)"]
+    B --> F["internal/generator/elmclient"]
+    B --> G["internal/generator/tsclient"]
+    B --> H["internal/runtime"]
+    H --> I["internal/sqlitecli (sqlite3 process)"]
+    B --> J["internal/formatter"]
+    B --> K["internal/lsp"]
+```
+
+### `belm compile` Build Flow
+
+```mermaid
+flowchart TD
+    S[".belm source"] --> P["parser.Parse(...)"]
+    P --> M["model.App"]
+    M --> V["Validation (entities, auth, actions, types)"]
+    V --> MAN["manifest.json (serialized model.App)"]
+    MAN --> TMP["temporary build workspace (.belm-build-*)"]
+    TMP --> ADM["copy/build admin assets (admin/index.html + admin/dist/app.js)"]
+    M --> EC["Generate Elm client"]
+    M --> TC["Generate TypeScript client"]
+    TMP --> GS["Generate small Go main with //go:embed manifest + admin assets"]
+    GS --> GB["go build -o build/<name>/<name> <temp-workdir>"]
+    GB --> BIN["Compiled executable"]
+    EC --> OUT["build/<name>/<AppName>Client.elm"]
+    TC --> OUT2["build/<name>/<AppName>Client.ts"]
+```
+
+### What Is Inside the Generated Executable
+
+At compile time, Belm embeds:
+
+- `manifest.json` (compiled app model)
+- `admin/index.html`
+- `admin/dist/app.js`
+
+At runtime, the executable:
+
+1. loads embedded `manifest.json`
+2. initializes `runtime.New(app)` (expression compilation + migrations)
+3. serves REST endpoints, auth, actions, system tools, and embedded admin assets
+
+This means the final app binary is self-contained for server + admin UI.
 
 ## Compiler and Dev Commands
 
@@ -178,7 +283,7 @@ await runPlaceBookOrder(config, {
 
 ## Admin Panel
 
-An Admin panel (built with Elm and elm-ui) is also provided:
+An Admin panel (built with [Elm](https://elm-lang.org) and [elm-ui](https://github.com/mdgriffith/elm-ui)) is also provided:
 
 - code: [admin/src/Main.elm](/Users/marcio/dev/github/belm/admin/src/Main.elm)
 - docs: [admin/README.md](/Users/marcio/dev/github/belm/admin/README.md)
@@ -355,7 +460,7 @@ System features use the same app authentication session (`/auth/*`) and check `r
 System endpoints:
 
 - `GET /_belm/perf`
-- `POST /_belm/backup`
+- `POST /_belm/backups`
 - `GET /_belm/backups`
 
 ## Authorization (`authorize`)
@@ -406,7 +511,7 @@ Auth endpoints:
 - `GET /auth/me`
 - `POST /_belm/bootstrap-admin` (optional first admin)
 - `GET /_belm/perf` (role admin)
-- `POST /_belm/backup` (role admin)
+- `POST /_belm/backups` (role admin)
 - `GET /_belm/backups` (role admin)
 
 For each typed action `myAction`:
@@ -436,7 +541,7 @@ When blocked, the server fails at startup with a clear error message.
 
 ## Full Example
 
-Use [examples/store.belm](/Users/marcio/dev/github/belm/examples/store.belm), which already includes:
+See [examples/store.belm](/Users/marcio/dev/github/belm/examples/store.belm), which already includes:
 
 - business rules (email validation, role checks, stock/order constraints, etc.)
 - email code auth

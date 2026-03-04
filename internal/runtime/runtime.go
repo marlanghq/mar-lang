@@ -205,7 +205,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request) error {
 		return nil
 	}
 
-	if method == http.MethodPost && path == "/_belm/backup" {
+	if method == http.MethodPost && (path == "/_belm/backups" || path == "/_belm/backup") {
 		if !r.authEnabled() {
 			return &apiError{Status: http.StatusNotFound, Message: "Authentication is not enabled"}
 		}
@@ -416,8 +416,11 @@ func (r *Runtime) metricsRouteLabel(req *http.Request) string {
 	}
 
 	switch path {
-	case "/health", "/_belm/schema", "/_belm/perf", "/_belm/backup", "/_belm/backups", "/_belm/bootstrap-admin":
+	case "/health", "/_belm/schema", "/_belm/perf", "/_belm/backups", "/_belm/bootstrap-admin":
 		return path
+	case "/_belm/backup":
+		// Backward compatibility alias kept for one version.
+		return "/_belm/backups"
 	}
 
 	if strings.HasPrefix(path, "/auth/") {

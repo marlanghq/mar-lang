@@ -908,7 +908,7 @@ triggerBackup model =
     Http.request
         { method = "POST"
         , headers = appAuthHeaders model
-        , url = model.apiBase ++ "/_belm/backup"
+        , url = model.apiBase ++ "/_belm/backups"
         , body = Http.emptyBody
         , expect = expectJsonWithApiError GotBackup backupResponseDecoder
         , timeout = Nothing
@@ -1639,7 +1639,7 @@ viewSidebar model =
                 , label =
                     row [ width fill ]
                         [ paragraph [ alignLeft ] [ text "Database" ]
-                        , el [ Font.size 12, Font.color (rgb255 170 181 196) ] (text "/_belm/backup")
+                        , el [ Font.size 12, Font.color (rgb255 170 181 196) ] (text "/_belm/backups")
                         ]
                 }
 
@@ -2593,9 +2593,9 @@ viewDatabasePanelAdmin model =
                 }
             ]
         , row [ width fill, spacing 12 ]
-            [ performanceCard "SQLite file" sqliteSizeText
-            , databaseInfoCard "Path" dbPath
-            , databaseInfoCard "Backups dir" backupDirText
+            [ performanceCard "SQLite database size" sqliteSizeText
+            , databaseInfoCard "File" dbPath
+            , databaseInfoCard "Backups directory" backupDirText
             ]
         , lastBackupInfo
         , el [ Font.bold, Font.size 18 ] (text "Available backups")

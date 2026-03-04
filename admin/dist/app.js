@@ -7391,7 +7391,7 @@ var $author$project$Main$triggerBackup = function (model) {
 			method: 'POST',
 			timeout: $elm$core$Maybe$Nothing,
 			tracker: $elm$core$Maybe$Nothing,
-			url: model.apiBase + '/_belm/backup'
+			url: model.apiBase + '/_belm/backups'
 		});
 };
 var $author$project$Main$GotUpdate = function (a) {
@@ -16801,9 +16801,9 @@ var $author$project$Main$viewDatabasePanelAdmin = function (model) {
 					]),
 				_List_fromArray(
 					[
-						A2($author$project$Main$performanceCard, 'SQLite file', sqliteSizeText),
-						A2($author$project$Main$databaseInfoCard, 'Path', dbPath),
-						A2($author$project$Main$databaseInfoCard, 'Backups dir', backupDirText)
+						A2($author$project$Main$performanceCard, 'SQLite database size', sqliteSizeText),
+						A2($author$project$Main$databaseInfoCard, 'File', dbPath),
+						A2($author$project$Main$databaseInfoCard, 'Backups directory', backupDirText)
 					])),
 				lastBackupInfo,
 				A2(
@@ -17879,7 +17879,7 @@ var $author$project$Main$viewSidebar = function (model) {
 									$mdgriffith$elm_ui$Element$Font$color(
 									A3($mdgriffith$elm_ui$Element$rgb255, 170, 181, 196))
 								]),
-							$mdgriffith$elm_ui$Element$text('/_belm/backup'))
+							$mdgriffith$elm_ui$Element$text('/_belm/backups'))
 						])),
 				onPress: $elm$core$Maybe$Just($author$project$Main$SelectDatabase)
 			});
