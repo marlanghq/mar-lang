@@ -72,6 +72,7 @@ func (r *Runtime) printStartupBanner() {
 
 	fmt.Printf("\n%s\n", colorize(useColor, ansiSection, "System"))
 	fmt.Printf("  %s %s\n", "GET ", "/health")
+	fmt.Printf("  %s %s\n", "GET ", "/_belm/admin")
 	fmt.Printf("  %s %s\n", "GET ", "/_belm/schema")
 	if r.authEnabled() {
 		fmt.Printf("  %s %s\n", "GET ", "/_belm/perf (role admin)")
@@ -81,12 +82,12 @@ func (r *Runtime) printStartupBanner() {
 	}
 
 	if shouldShowAdminHint() {
-		fmt.Printf("\n%s run %s to open Belm Admin\n", colorize(useColor, ansiHint, "Hint:"), colorize(useColor, ansiCommand, os.Args[0]+" admin"))
+		fmt.Printf("\n%s run %s to open Belm Admin\n", colorize(useColor, ansiHint, "Hint:"), colorize(useColor, ansiCommand, os.Args[0]+" serve"))
 	}
 }
 
 func shouldShowAdminHint() bool {
-	return !(len(os.Args) > 1 && os.Args[1] == "admin")
+	return !(len(os.Args) > 1 && os.Args[1] == "serve")
 }
 
 func colorize(enabled bool, colorCode, value string) string {

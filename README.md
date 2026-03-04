@@ -175,7 +175,6 @@ Run the compiled executable:
 
 ```bash
 ./build/store/store serve
-./build/store/store admin
 ./build/store/store backup
 ```
 
@@ -195,7 +194,7 @@ Dev mode also supports custom output name:
 Run API + Admin panel and open browser (from the compiled executable):
 
 ```bash
-./build/store/store admin
+./build/store/store serve
 ```
 
 ## Code Formatting
@@ -579,6 +578,7 @@ For each entity `X`:
 Always:
 
 - `GET /health`
+- `GET /_belm/admin`
 - `GET /_belm/schema`
 
 Auth endpoints:

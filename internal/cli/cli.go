@@ -243,6 +243,9 @@ func buildExecutableWithOptions(app *model.App, outputPath string, options build
 			if err := copyFile(filepath.Join(adminSourceDir, "index.html"), filepath.Join(workDir, "admin", "index.html")); err != nil {
 				return err
 			}
+			if err := copyFile(filepath.Join(adminSourceDir, "favicon.svg"), filepath.Join(workDir, "admin", "favicon.svg")); err != nil {
+				return err
+			}
 			if err := copyFile(filepath.Join(adminSourceDir, "dist", "app.js"), filepath.Join(workDir, "admin", "dist", "app.js")); err != nil {
 				return err
 			}
@@ -252,6 +255,9 @@ func buildExecutableWithOptions(app *model.App, outputPath string, options build
 				return fmt.Errorf("cannot compile executable without full admin assets: %w", err)
 			}
 			if err := copyFile(filepath.Join(adminSourceDir, "index.html"), filepath.Join(workDir, "admin", "index.html")); err != nil {
+				return err
+			}
+			if err := copyFile(filepath.Join(adminSourceDir, "favicon.svg"), filepath.Join(workDir, "admin", "favicon.svg")); err != nil {
 				return err
 			}
 			if err := copyFile(filepath.Join(adminSourceDir, "dist", "app.js"), filepath.Join(workDir, "admin", "dist", "app.js")); err != nil {
@@ -305,21 +311,16 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"runtime"
 	"strings"
-	"syscall"
-	"time"
 
 	"belm/internal/model"
 	belmruntime "belm/internal/runtime"
 )
 
-//go:embed manifest.json admin/index.html admin/dist/app.js all:public
+//go:embed manifest.json admin/index.html admin/favicon.svg admin/dist/app.js all:public
 var files embed.FS
 
 const adminEnabled = %t
@@ -347,11 +348,6 @@ func main() {
 			belmruntime.PrintStartupError(err, os.Args[0])
 			os.Exit(1)
 		}
-	case len(os.Args) == 2 && os.Args[1] == "admin":
-		if err := runAdmin(&app); err != nil {
-			belmruntime.PrintStartupError(err, os.Args[0])
-			os.Exit(1)
-		}
 	case len(os.Args) == 2 && os.Args[1] == "backup":
 		if err := runBackup(&app); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
@@ -367,13 +363,12 @@ func printAppUsage(binaryName string) {
 	useColor := appSupportsANSI(os.Stdout)
 	fmt.Println()
 	fmt.Printf("%%s\n", appColorize(useColor, "\033[1m", "Available commands"))
-	fmt.Printf("  %%s  %%s\n", appColorize(useColor, "\033[1;32m", binaryName+" serve "), "Start the API server.")
-	fmt.Printf("  %%s  %%s\n", appColorize(useColor, "\033[1;32m", binaryName+" admin "), "Start the API server and open Belm Admin.")
+	fmt.Printf("  %%s  %%s\n", appColorize(useColor, "\033[1;32m", binaryName+" serve "), "Start the API server and open Belm Admin.")
 	fmt.Printf("  %%s  %%s\n", appColorize(useColor, "\033[1;32m", binaryName+" backup"), "Create a SQLite backup in ./backups.")
 	fmt.Printf(
 		"\n%%s Use %%s to start the API server and open Belm Admin.\n",
 		appColorize(useColor, "\033[1;33m", "Hint:"),
-		appColorize(useColor, "\033[1;32m", binaryName+" admin"),
+		appColorize(useColor, "\033[1;32m", binaryName+" serve"),
 	)
 	fmt.Println()
 }
@@ -388,13 +383,12 @@ func printAppUnknownCommand(binaryName string, args []string) {
 	fmt.Fprintf(os.Stderr, "%%s %%q\n\n", appColorize(useColor, "\033[1;31m", "unknown command"), provided)
 	fmt.Fprintf(os.Stderr, "%%s\n", appColorize(useColor, "\033[1;36m", "Available commands:"))
 	fmt.Fprintf(os.Stderr, "  %%s\n", binaryName+" serve")
-	fmt.Fprintf(os.Stderr, "  %%s\n", binaryName+" admin")
 	fmt.Fprintf(os.Stderr, "  %%s\n", binaryName+" backup")
 	fmt.Fprintf(
 		os.Stderr,
 		"\n%%s Use %%s to start the API server and open Belm Admin.\n",
 		appColorize(useColor, "\033[1;33m", "Hint:"),
-		appColorize(useColor, "\033[1;32m", binaryName+" admin"),
+		appColorize(useColor, "\033[1;32m", binaryName+" serve"),
 	)
 	fmt.Fprintln(os.Stderr)
 }
@@ -422,18 +416,6 @@ func appColorize(enabled bool, colorCode, value string) string {
 }
 
 func runServe(app *model.App) error {
-	r, err := belmruntime.New(app)
-	if err != nil {
-		return err
-	}
-	defer r.Close()
-	if err := configurePublicFiles(r); err != nil {
-		return err
-	}
-	return r.Serve(context.Background())
-}
-
-func runAdmin(app *model.App) error {
 	if !adminEnabled {
 		return errors.New("admin panel is not embedded in this executable")
 	}
@@ -445,40 +427,18 @@ func runAdmin(app *model.App) error {
 	if err := configurePublicFiles(r); err != nil {
 		return err
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 2)
-	go func() {
-		errCh <- r.Serve(ctx)
-	}()
-	ln, port, err := listenAdmin()
-	if err != nil {
+	if err := configureAdminFiles(r); err != nil {
 		return err
 	}
-	go func() {
-		errCh <- serveAdminFiles(ctx, ln)
-	}()
 
-	adminURL := fmt.Sprintf("http://127.0.0.1:%%d/index.html", port)
+	adminURL := fmt.Sprintf("http://127.0.0.1:%%d/_belm/admin", app.Port)
 	fmt.Printf("\nAdmin panel: %%s\n", adminURL)
 	if strings.TrimSpace(os.Getenv("BELM_ADMIN_NO_OPEN")) == "" {
 		if err := openBrowser(adminURL); err != nil {
 			fmt.Fprintln(os.Stderr, "warning: could not open browser:", err)
 		}
 	}
-
-	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	select {
-	case <-sigCtx.Done():
-		cancel()
-		return nil
-	case err := <-errCh:
-		cancel()
-		return err
-	}
+	return r.Serve(context.Background())
 }
 
 func runBackup(app *model.App) error {
@@ -510,44 +470,13 @@ func configurePublicFiles(r *belmruntime.Runtime) error {
 	return nil
 }
 
-func serveAdminFiles(ctx context.Context, ln net.Listener) error {
+func configureAdminFiles(r *belmruntime.Runtime) error {
 	sub, err := fs.Sub(files, "admin")
 	if err != nil {
 		return err
 	}
-	server := &http.Server{
-		Handler:      http.FileServer(http.FS(sub)),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 20 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
-	errCh := make(chan error, 1)
-	go func() {
-		if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-	}()
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return server.Shutdown(shutdownCtx)
-	case err := <-errCh:
-		return err
-	}
-}
-
-func listenAdmin() (net.Listener, int, error) {
-	candidates := []string{"127.0.0.1:8080", "127.0.0.1:5173", "127.0.0.1:0"}
-	for _, addr := range candidates {
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			continue
-		}
-		port := ln.Addr().(*net.TCPAddr).Port
-		return ln, port, nil
-	}
-	return nil, 0, errors.New("could not bind local port for admin panel")
+	r.SetAdminFiles(sub)
+	return nil
 }
 
 func openBrowser(target string) error {
@@ -673,7 +602,7 @@ func ensureAdminBundle(projectRoot, adminDir string) error {
 		return nil
 	}
 	if _, err := exec.LookPath("elm"); err != nil {
-		return errors.New("Elm compiler not found and admin bundle missing. Install Elm to use `belm admin` or prebuild admin/dist/app.js")
+		return errors.New("Elm compiler not found and admin bundle missing. Install Elm or prebuild admin/dist/app.js")
 	}
 	distDir := filepath.Join(adminDir, "dist")
 	if err := os.MkdirAll(distDir, 0o755); err != nil {
@@ -802,7 +731,7 @@ func printCompileSummary(outputPath, elmPath, tsPath string) {
 	fmt.Printf("\n  %s\n", colorizeCLI(useColor, "\033[1;33m", "Hint:"))
 	fmt.Printf("    %s\n", "To run this app and open Belm Admin:")
 	fmt.Printf("    %s\n", colorizeCLI(useColor, "\033[1;32m", "cd "+outputDir))
-	fmt.Printf("    %s\n", colorizeCLI(useColor, "\033[1;32m", "./"+outputBin+" admin"))
+	fmt.Printf("    %s\n", colorizeCLI(useColor, "\033[1;32m", "./"+outputBin+" serve"))
 	fmt.Println()
 }
 

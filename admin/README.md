@@ -28,7 +28,7 @@ python3 -m http.server 8080
 
 3. Open:
 
-- <http://localhost:8080/index.html>
+- <http://localhost:8080/index.html?api=http://localhost:4100>
 
 ## One-command mode
 
@@ -37,8 +37,12 @@ You can run backend + admin and open the browser automatically:
 ```bash
 cd /Users/marcio/dev/github/belm
 ./belm compile examples/store.belm
-./build/store/store admin
+./build/store/store serve
 ```
+
+The embedded admin URL is:
+
+- <http://localhost:4100/_belm/admin>
 
 ## Features
 

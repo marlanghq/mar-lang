@@ -163,7 +163,7 @@ func readWatchedState(path string) (watchedFileState, error) {
 
 func startDevProcess(outputPath string, noOpen bool) (*devProcess, error) {
 	runDir := filepath.Dir(outputPath)
-	cmd := exec.Command(outputPath, "admin")
+	cmd := exec.Command(outputPath, "serve")
 	cmd.Dir = runDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

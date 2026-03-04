@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestPublicServesEmbeddedFiles(t *testing.T) {
@@ -142,5 +143,68 @@ entity Todo {
 	}
 	if !strings.Contains(rec.Body.String(), "Route not found") {
 		t.Fatalf("expected route-not-found error body, got %q", rec.Body.String())
+	}
+}
+
+func TestAdminPanelServedUnderBelmPrefix(t *testing.T) {
+	requireSQLite3(t)
+
+	app := mustParseApp(t, `
+app FrontApi
+database "./front.db"
+
+public {
+  dir "./frontend/dist"
+  mount "/"
+  spa_fallback "index.html"
+}
+
+entity Todo {
+  title: String
+}
+`)
+	app.Database = filepath.Join(t.TempDir(), "admin-prefix.db")
+
+	r, err := New(app)
+	if err != nil {
+		t.Fatalf("runtime.New failed: %v", err)
+	}
+	r.SetPublicFiles(fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<html><body>public</body></html>")},
+	})
+	r.SetAdminFiles(fstest.MapFS{
+		"index.html":   &fstest.MapFile{Data: []byte("<html><body>admin</body></html>")},
+		"dist/app.js":  &fstest.MapFile{Data: []byte("console.log('admin')")},
+		"dist/app.css": &fstest.MapFile{Data: []byte("body{}")},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/_belm/admin", nil)
+	r.handleHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /_belm/admin, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "admin") {
+		t.Fatalf("expected admin html body, got %q", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/_belm/admin/dist/app.js", nil)
+	r.handleHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /_belm/admin/dist/app.js, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "admin") {
+		t.Fatalf("expected admin js body, got %q", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	r.handleHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "public") {
+		t.Fatalf("expected public html body, got %q", rec.Body.String())
 	}
 }

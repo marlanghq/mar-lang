@@ -35,6 +35,7 @@ type Runtime struct {
 	dbQueries      *dbQueryCollector
 	authLogOnce    sync.Once
 	publicFS       fs.FS
+	adminFS        fs.FS
 }
 
 type compiledRule struct {
@@ -196,6 +197,9 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request) error {
 	if method == http.MethodGet && path == "/health" {
 		r.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "app": r.App.AppName})
 		return nil
+	}
+	if served, err := r.serveAdminAsset(w, req, path); served {
+		return err
 	}
 	if method == http.MethodGet && path == "/_belm/schema" {
 		r.writeJSON(w, http.StatusOK, r.schemaPayload())
@@ -476,6 +480,9 @@ func (r *Runtime) metricsRouteLabel(req *http.Request) string {
 	case "/_belm/backup":
 		// Backward compatibility alias kept for one version.
 		return "/_belm/backups"
+	}
+	if path == "/_belm/admin" || strings.HasPrefix(path, "/_belm/admin/") {
+		return "/_belm/admin"
 	}
 
 	if strings.HasPrefix(path, "/auth/") {

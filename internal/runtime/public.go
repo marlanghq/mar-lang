@@ -13,6 +13,25 @@ func (r *Runtime) SetPublicFiles(publicFS fs.FS) {
 	r.publicFS = publicFS
 }
 
+// SetAdminFiles attaches embedded admin static files to the runtime.
+func (r *Runtime) SetAdminFiles(adminFS fs.FS) {
+	r.adminFS = adminFS
+}
+
+func (r *Runtime) serveAdminAsset(w http.ResponseWriter, req *http.Request, requestPath string) (bool, error) {
+	if r.adminFS == nil {
+		return false, nil
+	}
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		return false, nil
+	}
+	assetPath, ok := publicAssetPathForRequest(requestPath, "/_belm/admin")
+	if !ok {
+		return false, nil
+	}
+	return servePublicFile(w, req, r.adminFS, assetPath)
+}
+
 func (r *Runtime) servePublicAsset(w http.ResponseWriter, req *http.Request, requestPath string) (bool, error) {
 	if r.App.Public == nil || r.publicFS == nil {
 		return false, nil
