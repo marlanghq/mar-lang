@@ -1,5 +1,6 @@
 *.db
 .DS_Store
+vscode-belm/*.vsix
 **/.DS_Store
 build/
 .gomodcache/
