@@ -288,6 +288,8 @@ system {
   sqlite_journal_mode wal
   sqlite_synchronous normal
   sqlite_foreign_keys true
+  auth_request_code_rate_limit_per_minute 5
+  auth_login_rate_limit_per_minute 10
   sqlite_busy_timeout_ms 5000
   sqlite_wal_autocheckpoint 1000
   sqlite_journal_size_limit_mb 64
@@ -316,6 +318,12 @@ entity Todo {
 	}
 	if app.System.SQLiteForeignKeys == nil || !*app.System.SQLiteForeignKeys {
 		t.Fatalf("unexpected sqlite_foreign_keys: %+v", app.System.SQLiteForeignKeys)
+	}
+	if app.System.AuthRequestCodeRateLimit == nil || *app.System.AuthRequestCodeRateLimit != 5 {
+		t.Fatalf("unexpected auth_request_code_rate_limit_per_minute: %+v", app.System.AuthRequestCodeRateLimit)
+	}
+	if app.System.AuthLoginRateLimit == nil || *app.System.AuthLoginRateLimit != 10 {
+		t.Fatalf("unexpected auth_login_rate_limit_per_minute: %+v", app.System.AuthLoginRateLimit)
 	}
 	if app.System.SQLiteBusyTimeoutMs == nil || *app.System.SQLiteBusyTimeoutMs != 5000 {
 		t.Fatalf("unexpected sqlite_busy_timeout_ms: %+v", app.System.SQLiteBusyTimeoutMs)
@@ -402,6 +410,52 @@ entity Todo {
 		t.Fatal("expected parse error for out-of-range http_max_request_body_mb")
 	}
 	if !strings.Contains(err.Error(), "system.http_max_request_body_mb must be between") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestParseSystemAuthRequestCodeRateLimitRejectsOutOfRange(t *testing.T) {
+	src := `
+app FrontApi
+database "./front.db"
+
+system {
+  auth_request_code_rate_limit_per_minute 0
+}
+
+entity Todo {
+  title: String
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for out-of-range auth_request_code_rate_limit_per_minute")
+	}
+	if !strings.Contains(err.Error(), "system.auth_request_code_rate_limit_per_minute must be between") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestParseSystemAuthLoginRateLimitRejectsOutOfRange(t *testing.T) {
+	src := `
+app FrontApi
+database "./front.db"
+
+system {
+  auth_login_rate_limit_per_minute 0
+}
+
+entity Todo {
+  title: String
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for out-of-range auth_login_rate_limit_per_minute")
+	}
+	if !strings.Contains(err.Error(), "system.auth_login_rate_limit_per_minute must be between") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }

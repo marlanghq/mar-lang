@@ -23,6 +23,9 @@ const (
 	minHTTPMaxRequestBodyMB = 1
 	maxHTTPMaxRequestBodyMB = 1024
 
+	minAuthRateLimitPerMinute = 1
+	maxAuthRateLimitPerMinute = 10000
+
 	minCodeTTLMinutes = 1
 	maxCodeTTLMinutes = 1440
 
@@ -401,6 +404,34 @@ func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
 				)
 			}
 			cfg.HTTPMaxRequestBodyMB = intPtr(value)
+			(*idx)++
+			continue
+		}
+		if m := match(`^auth_request_code_rate_limit_per_minute\s+([0-9]{1,5})$`, trimmed); m != nil {
+			value := mustInt(m[1])
+			if value < minAuthRateLimitPerMinute || value > maxAuthRateLimitPerMinute {
+				return nil, fmt.Errorf(
+					"line %d: system.auth_request_code_rate_limit_per_minute must be between %d and %d",
+					ln.number,
+					minAuthRateLimitPerMinute,
+					maxAuthRateLimitPerMinute,
+				)
+			}
+			cfg.AuthRequestCodeRateLimit = intPtr(value)
+			(*idx)++
+			continue
+		}
+		if m := match(`^auth_login_rate_limit_per_minute\s+([0-9]{1,5})$`, trimmed); m != nil {
+			value := mustInt(m[1])
+			if value < minAuthRateLimitPerMinute || value > maxAuthRateLimitPerMinute {
+				return nil, fmt.Errorf(
+					"line %d: system.auth_login_rate_limit_per_minute must be between %d and %d",
+					ln.number,
+					minAuthRateLimitPerMinute,
+					maxAuthRateLimitPerMinute,
+				)
+			}
+			cfg.AuthLoginRateLimit = intPtr(value)
 			(*idx)++
 			continue
 		}

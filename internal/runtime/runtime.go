@@ -33,6 +33,7 @@ type Runtime struct {
 	metrics        *metricsCollector
 	requestLogs    *requestLogStore
 	dbQueries      *dbQueryCollector
+	authRateLimit  *authRateLimiter
 	authLogOnce    sync.Once
 	publicFS       fs.FS
 	adminFS        fs.FS
@@ -86,6 +87,7 @@ func New(app *model.App) (*Runtime, error) {
 		metrics:        newMetricsCollector(),
 		requestLogs:    newRequestLogStore(requestLogsBufferSize(app)),
 		dbQueries:      newDBQueryCollector(requestLogsBufferSize(app)),
+		authRateLimit:  newAuthRateLimiter(authRequestCodeRateLimitPerMinute(app), authLoginRateLimitPerMinute(app)),
 	}
 	db.SetQueryHook(func(event sqlitecli.QueryEvent) {
 		r.dbQueries.record(event)
@@ -381,11 +383,31 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request) error {
 			if err != nil {
 				return err
 			}
+			email, err := parseAuthEmail(payload)
+			if err != nil {
+				return err
+			}
+			if !r.authRateLimit.allowRequestCode(req, email) {
+				return &apiError{
+					Status:  http.StatusTooManyRequests,
+					Message: "Too many request-code attempts. Try again in one minute.",
+				}
+			}
 			return r.handleAuthRequestCode(w, payload)
 		case method == http.MethodPost && path == "/auth/login":
 			payload, err := readJSONBody(req)
 			if err != nil {
 				return err
+			}
+			email, err := parseAuthEmail(payload)
+			if err != nil {
+				return err
+			}
+			if !r.authRateLimit.allowLogin(req, email) {
+				return &apiError{
+					Status:  http.StatusTooManyRequests,
+					Message: "Too many login attempts. Try again in one minute.",
+				}
 			}
 			return r.handleAuthLogin(w, payload)
 		case method == http.MethodPost && path == "/auth/logout":

@@ -370,6 +370,8 @@ Use `system` for runtime-level controls.
 system {
   request_logs_buffer 500
   http_max_request_body_mb 1
+  auth_request_code_rate_limit_per_minute 5
+  auth_login_rate_limit_per_minute 10
   sqlite_journal_mode wal
   sqlite_synchronous normal
   sqlite_foreign_keys true
@@ -392,6 +394,17 @@ system {
 - default: `1`
 - minimum: `1`
 - maximum: `1024`
+
+Auth rate-limit settings control auth endpoint attempts per minute (scoped by email + client host):
+
+- `auth_request_code_rate_limit_per_minute` for `POST /auth/request-code`:
+  - default: `5`
+  - minimum: `1`
+  - maximum: `10000`
+- `auth_login_rate_limit_per_minute` for `POST /auth/login`:
+  - default: `10`
+  - minimum: `1`
+  - maximum: `10000`
 
 SQLite settings are performance-first by default and can be overridden per app in `system`.
 
@@ -536,6 +549,7 @@ Built-in email code login flow:
 
 Authentication endpoints are always available, even when `auth { ... }` is not defined.
 In that case, Belm uses an internal auth users table (`belm_auth_users`) with `email` and `role`.
+Auth endpoints are rate-limited by default (`request-code`: `5/min`, `login`: `10/min`) and can be tuned in `system`.
 
 For first-login flows, `request-code` can auto-create the auth user when the selected `user_entity`
 only requires inferable fields (for example `email` and `role`).

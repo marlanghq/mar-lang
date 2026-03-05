@@ -21,6 +21,8 @@ type PublicConfig struct {
 type SystemConfig struct {
 	RequestLogsBuffer        int     `json:"requestLogsBuffer"`
 	HTTPMaxRequestBodyMB     *int    `json:"httpMaxRequestBodyMb,omitempty"`
+	AuthRequestCodeRateLimit *int    `json:"authRequestCodeRateLimitPerMinute,omitempty"`
+	AuthLoginRateLimit       *int    `json:"authLoginRateLimitPerMinute,omitempty"`
 	SQLiteJournalMode        *string `json:"sqliteJournalMode,omitempty"`
 	SQLiteSynchronous        *string `json:"sqliteSynchronous,omitempty"`
 	SQLiteForeignKeys        *bool   `json:"sqliteForeignKeys,omitempty"`
