@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -23,6 +24,10 @@ func readJSONBody(req *http.Request) (map[string]any, error) {
 	defer req.Body.Close()
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
+		var maxBodyErr *http.MaxBytesError
+		if errors.As(err, &maxBodyErr) {
+			return nil, &apiError{Status: http.StatusRequestEntityTooLarge, Message: "Request body too large"}
+		}
 		return nil, &apiError{Status: http.StatusBadRequest, Message: "failed to read body"}
 	}
 	if strings.TrimSpace(string(body)) == "" {

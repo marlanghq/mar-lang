@@ -34,6 +34,7 @@ var (
 		"database":                     "Sets the SQLite file path. Example: `database \"app.db\"`. Relative paths use the current working directory.",
 		"system":                       "Declares system runtime options.",
 		"request_logs_buffer":          "Sets in-memory request log capacity. Default `200`, range `10..5000`.",
+		"http_max_request_body_mb":     "Sets max HTTP request body size in megabytes. Default `1`, range `1..1024`.",
 		"sqlite_journal_mode":          "Sets SQLite journal mode. Example: `sqlite_journal_mode wal`.",
 		"sqlite_synchronous":           "Sets SQLite synchronous mode. Example: `sqlite_synchronous normal`.",
 		"sqlite_foreign_keys":          "Enables or disables SQLite foreign key checks. Example: `sqlite_foreign_keys true`.",

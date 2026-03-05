@@ -107,14 +107,15 @@
     "body": [
       "system {",
       "  request_logs_buffer ${1:200}",
-      "  sqlite_journal_mode ${2|wal,delete,truncate,persist,memory,off|}",
-      "  sqlite_synchronous ${3|normal,full,extra,off|}",
-      "  sqlite_foreign_keys ${4|true,false|}",
-      "  sqlite_busy_timeout_ms ${5:5000}",
-      "  sqlite_wal_autocheckpoint ${6:1000}",
-      "  sqlite_journal_size_limit_mb ${7:64}",
-      "  sqlite_mmap_size_mb ${8:128}",
-      "  sqlite_cache_size_kb ${9:2000}",
+      "  http_max_request_body_mb ${2:1}",
+      "  sqlite_journal_mode ${3|wal,delete,truncate,persist,memory,off|}",
+      "  sqlite_synchronous ${4|normal,full,extra,off|}",
+      "  sqlite_foreign_keys ${5|true,false|}",
+      "  sqlite_busy_timeout_ms ${6:5000}",
+      "  sqlite_wal_autocheckpoint ${7:1000}",
+      "  sqlite_journal_size_limit_mb ${8:64}",
+      "  sqlite_mmap_size_mb ${9:128}",
+      "  sqlite_cache_size_kb ${10:2000}",
       "}"
     ]
   },

@@ -20,6 +20,7 @@ type PublicConfig struct {
 
 type SystemConfig struct {
 	RequestLogsBuffer        int     `json:"requestLogsBuffer"`
+	HTTPMaxRequestBodyMB     *int    `json:"httpMaxRequestBodyMb,omitempty"`
 	SQLiteJournalMode        *string `json:"sqliteJournalMode,omitempty"`
 	SQLiteSynchronous        *string `json:"sqliteSynchronous,omitempty"`
 	SQLiteForeignKeys        *bool   `json:"sqliteForeignKeys,omitempty"`

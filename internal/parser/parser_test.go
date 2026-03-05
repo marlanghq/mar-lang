@@ -293,6 +293,7 @@ system {
   sqlite_journal_size_limit_mb 64
   sqlite_mmap_size_mb 128
   sqlite_cache_size_kb 2000
+  http_max_request_body_mb 1
 }
 
 entity Todo {
@@ -330,6 +331,9 @@ entity Todo {
 	}
 	if app.System.SQLiteCacheSizeKB == nil || *app.System.SQLiteCacheSizeKB != 2000 {
 		t.Fatalf("unexpected sqlite_cache_size_kb: %+v", app.System.SQLiteCacheSizeKB)
+	}
+	if app.System.HTTPMaxRequestBodyMB == nil || *app.System.HTTPMaxRequestBodyMB != 1 {
+		t.Fatalf("unexpected http_max_request_body_mb: %+v", app.System.HTTPMaxRequestBodyMB)
 	}
 }
 
@@ -375,6 +379,29 @@ entity Todo {
 		t.Fatal("expected parse error for out-of-range sqlite_cache_size_kb")
 	}
 	if !strings.Contains(err.Error(), "system.sqlite_cache_size_kb must be between") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestParseSystemHTTPMaxRequestBodyRejectsOutOfRange(t *testing.T) {
+	src := `
+app FrontApi
+database "./front.db"
+
+system {
+  http_max_request_body_mb 0
+}
+
+entity Todo {
+  title: String
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for out-of-range http_max_request_body_mb")
+	}
+	if !strings.Contains(err.Error(), "system.http_max_request_body_mb must be between") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }

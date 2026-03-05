@@ -60,6 +60,8 @@ type apiError struct {
 	Details map[string]any
 }
 
+const defaultHTTPMaxRequestBodyMB = 1
+
 // Error implements error for API-layer errors that carry HTTP metadata.
 func (e *apiError) Error() string {
 	return e.Message
@@ -198,6 +200,9 @@ func (r *Runtime) handleHTTP(w http.ResponseWriter, req *http.Request) {
 	routeLabel := r.metricsRouteLabel(req)
 	querySeqStart := r.dbQueries.latestSeq()
 	writer := &statusRecorder{ResponseWriter: w}
+	if req.Body != nil {
+		req.Body = http.MaxBytesReader(writer, req.Body, httpMaxRequestBodyBytes(r.App))
+	}
 	requestError := ""
 
 	finishRequest := func() {
@@ -226,6 +231,14 @@ func (r *Runtime) handleHTTP(w http.ResponseWriter, req *http.Request) {
 		writer.WriteHeader(http.StatusOK)
 	}
 	finishRequest()
+}
+
+func httpMaxRequestBodyBytes(app *model.App) int64 {
+	mb := defaultHTTPMaxRequestBodyMB
+	if app != nil && app.System != nil && app.System.HTTPMaxRequestBodyMB != nil && *app.System.HTTPMaxRequestBodyMB > 0 {
+		mb = *app.System.HTTPMaxRequestBodyMB
+	}
+	return int64(mb) * 1024 * 1024
 }
 
 // route resolves Belm endpoints for health, schema, auth, and entity CRUD operations.

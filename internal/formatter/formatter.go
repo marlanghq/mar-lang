@@ -29,7 +29,7 @@ var (
 	systemSyncRe  = regexp.MustCompile(`^(sqlite_synchronous)\s+(off|normal|full|extra)$`)
 	systemBoolRe  = regexp.MustCompile(`^(sqlite_foreign_keys)\s+(true|false)$`)
 	systemLimitRe = regexp.MustCompile(`^(sqlite_journal_size_limit_mb)\s+(-?[0-9]{1,4})$`)
-	systemMBRe    = regexp.MustCompile(`^(sqlite_mmap_size_mb)\s+([0-9]{1,5})$`)
+	systemMBRe    = regexp.MustCompile(`^(sqlite_mmap_size_mb|http_max_request_body_mb)\s+([0-9]{1,5})$`)
 	systemKBRe    = regexp.MustCompile(`^(sqlite_cache_size_kb)\s+([0-9]{1,7})$`)
 	publicQuoteRe = regexp.MustCompile(`^(dir|mount|spa_fallback)\s+"([^"]+)"$`)
 	authStmtRe    = regexp.MustCompile(`^(user_entity|email_field|role_field|code_ttl_minutes|session_ttl_hours|email_transport|dev_expose_code)\s+(.+)$`)

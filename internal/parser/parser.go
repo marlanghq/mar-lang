@@ -20,6 +20,9 @@ const (
 	minRequestLogsBuffer     = 10
 	maxRequestLogsBuffer     = 5000
 
+	minHTTPMaxRequestBodyMB = 1
+	maxHTTPMaxRequestBodyMB = 1024
+
 	minCodeTTLMinutes = 1
 	maxCodeTTLMinutes = 1440
 
@@ -384,6 +387,20 @@ func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
 				)
 			}
 			cfg.RequestLogsBuffer = value
+			(*idx)++
+			continue
+		}
+		if m := match(`^http_max_request_body_mb\s+([0-9]{1,4})$`, trimmed); m != nil {
+			value := mustInt(m[1])
+			if value < minHTTPMaxRequestBodyMB || value > maxHTTPMaxRequestBodyMB {
+				return nil, fmt.Errorf(
+					"line %d: system.http_max_request_body_mb must be between %d and %d",
+					ln.number,
+					minHTTPMaxRequestBodyMB,
+					maxHTTPMaxRequestBodyMB,
+				)
+			}
+			cfg.HTTPMaxRequestBodyMB = intPtr(value)
 			(*idx)++
 			continue
 		}

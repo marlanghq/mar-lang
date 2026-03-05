@@ -441,6 +441,7 @@ func keywordCompletionItems() []map[string]any {
 		"mount",
 		"spa_fallback",
 		"request_logs_buffer",
+		"http_max_request_body_mb",
 		"sqlite_journal_mode",
 		"sqlite_synchronous",
 		"sqlite_foreign_keys",

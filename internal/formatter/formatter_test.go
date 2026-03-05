@@ -183,6 +183,7 @@ sqlite_wal_autocheckpoint 1000
 sqlite_journal_size_limit_mb 64
 sqlite_mmap_size_mb  128
 sqlite_cache_size_kb 2000
+http_max_request_body_mb 1
 }
 entity Todo{
 title:String
@@ -207,6 +208,7 @@ title:String
 		"  sqlite_journal_size_limit_mb 64\n" +
 		"  sqlite_mmap_size_mb 128\n" +
 		"  sqlite_cache_size_kb 2000\n" +
+		"  http_max_request_body_mb 1\n" +
 		"}\n" +
 		"entity Todo {\n" +
 		"  title: String\n" +
