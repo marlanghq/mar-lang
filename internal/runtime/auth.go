@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -265,12 +266,22 @@ func (r *Runtime) issueAuthCode(w http.ResponseWriter, email string, userID any,
 		return err
 	}
 
-	resp := map[string]any{"ok": true, "message": message}
+	responseMessage := message
+	if isBelmDevMode() && strings.EqualFold(strings.TrimSpace(cfg.EmailTransport), "console") {
+		responseMessage = "Login code generated. You are running in dev mode with email transport set to console, so check there."
+	}
+
+	resp := map[string]any{"ok": true, "message": responseMessage}
 	if cfg.DevExposeCode {
 		resp["devCode"] = code
 	}
 	r.writeJSON(w, http.StatusOK, resp)
 	return nil
+}
+
+func isBelmDevMode() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("BELM_DEV_MODE")))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 // loadOrCreateAuthUserForRequestCode loads an auth user by email or auto-creates it when possible.

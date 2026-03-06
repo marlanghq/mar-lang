@@ -168,8 +168,9 @@ func startDevProcess(outputPath string, noOpen bool) (*devProcess, error) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = nil
+	cmd.Env = append(os.Environ(), "BELM_DEV_MODE=1")
 	if noOpen {
-		cmd.Env = append(os.Environ(), "BELM_ADMIN_NO_OPEN=1")
+		cmd.Env = append(cmd.Env, "BELM_ADMIN_NO_OPEN=1")
 	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
