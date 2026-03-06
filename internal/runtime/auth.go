@@ -15,10 +15,6 @@ import (
 
 const internalAuthUsersTable = "belm_auth_users"
 
-func normalizeEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
 func (r *Runtime) authConfig() model.AuthConfig {
 	if r.App.Auth != nil {
 		return *r.App.Auth
@@ -179,9 +175,9 @@ func parseAuthEmail(payload map[string]any) (string, error) {
 	if !ok {
 		return "", &apiError{Status: http.StatusBadRequest, Message: "email is required"}
 	}
-	email := normalizeEmail(emailRaw)
-	if email == "" {
-		return "", &apiError{Status: http.StatusBadRequest, Message: "email is required"}
+	email, err := normalizeAndValidateEmail(emailRaw)
+	if err != nil {
+		return "", &apiError{Status: http.StatusBadRequest, Message: err.Error()}
 	}
 	return email, nil
 }
@@ -407,19 +403,15 @@ func (r *Runtime) tryAutoCreateAuthUserWithRole(email, roleValue string) (map[st
 
 // handleAuthLogin verifies an email+code pair and issues a session token.
 func (r *Runtime) handleAuthLogin(w http.ResponseWriter, payload map[string]any) error {
-	emailRaw, ok := payload["email"].(string)
-	if !ok {
-		return &apiError{Status: http.StatusBadRequest, Message: "email is required"}
+	email, err := parseAuthEmail(payload)
+	if err != nil {
+		return err
 	}
 	codeRaw, ok := payload["code"].(string)
 	if !ok {
 		return &apiError{Status: http.StatusBadRequest, Message: "code is required"}
 	}
-	email := normalizeEmail(emailRaw)
 	code := strings.TrimSpace(codeRaw)
-	if email == "" {
-		return &apiError{Status: http.StatusBadRequest, Message: "email is required"}
-	}
 	if code == "" {
 		return &apiError{Status: http.StatusBadRequest, Message: "code is required"}
 	}
