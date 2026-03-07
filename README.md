@@ -1,6 +1,4 @@
-# Mar
-
-Note: significant parts of this project were developed with assistance from generative AI tools.
+# mar-lang
 
 - Website: [website/index.html](website/index.html)
 - Getting Started (Web): [website/index.html#/getting-started](website/index.html#/getting-started)
@@ -12,3 +10,5 @@ Examples:
 
 - [examples/todo.mar](examples/todo.mar)
 - [examples/store.mar](examples/store.mar)
+
+Note: significant parts of this project were developed with assistance from generative AI tools.

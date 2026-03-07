@@ -3,7 +3,7 @@ port module Main exposing (main)
 import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, InputAliasField, InputAliasInfo, Row, Schema, SystemAuthInfo, decodeRows, decodeSchema, encodePayload, fieldTypeLabel, rowDecoder, valueToString)
 import Browser
 import Dict exposing (Dict)
-import Element exposing (Element, alignLeft, column, el, fill, fillPortion, height, htmlAttribute, none, padding, paddingEach, paragraph, px, rgb255, row, scrollbarY, spacing, text, width)
+import Element exposing (Element, alignLeft, centerX, centerY, column, el, fill, fillPortion, height, htmlAttribute, inFront, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarY, spacing, text, width)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
@@ -79,7 +79,15 @@ type alias Model =
     , requestLogsMode : Bool
     , databaseMode : Bool
     , lastBackup : Maybe BackupResponse
+    , pendingDelete : Maybe PendingDelete
     , flash : Maybe String
+    }
+
+
+type alias PendingDelete =
+    { entity : Entity
+    , idValue : String
+    , message : String
     }
 
 
@@ -124,7 +132,9 @@ type Msg
     | SubmitForm
     | GotCreate (Result Http.Error Row)
     | GotUpdate (Result Http.Error Row)
-    | DeleteRow Row
+    | RequestDeleteRow Row
+    | ConfirmDelete
+    | CancelDelete
     | GotDelete (Result Http.Error ())
     | RunAction
     | GotRunAction (Result Http.Error Row)
@@ -299,6 +309,7 @@ init flags =
             , requestLogsMode = False
             , databaseMode = False
             , lastBackup = Nothing
+            , pendingDelete = Nothing
             , flash = Nothing
             }
 
@@ -1013,7 +1024,7 @@ update msg model =
                 Err httpError ->
                     ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
 
-        DeleteRow rowValue ->
+        RequestDeleteRow rowValue ->
             case model.selectedEntity of
                 Nothing ->
                     ( { model | flash = Just "Select an entity first" }, Cmd.none )
@@ -1024,19 +1035,37 @@ update msg model =
                             ( { model | flash = Just "Could not find row id" }, Cmd.none )
 
                         Just idValue ->
-                            ( model, deleteRowRequest model entity idValue )
+                            let
+                                message =
+                                    deleteConfirmationMessage entity rowValue
+
+                                nextModel =
+                                    { model | pendingDelete = Just { entity = entity, idValue = idValue, message = message } }
+                            in
+                            ( nextModel, Cmd.none )
+
+        ConfirmDelete ->
+            case model.pendingDelete of
+                Just pendingDelete ->
+                    ( { model | pendingDelete = Nothing }, deleteRowRequest model pendingDelete.entity pendingDelete.idValue )
+
+                Nothing ->
+                    ( { model | pendingDelete = Nothing }, Cmd.none )
+
+        CancelDelete ->
+            ( { model | pendingDelete = Nothing }, Cmd.none )
 
         GotDelete result ->
             case result of
                 Ok _ ->
                     let
                         nextModel =
-                            { model | flash = Just "Deleted successfully", selectedRow = Nothing, formMode = FormHidden, formValues = Dict.empty }
+                            { model | flash = Just "Deleted successfully", selectedRow = Nothing, formMode = FormHidden, formValues = Dict.empty, pendingDelete = Nothing }
                     in
                     ( { nextModel | rows = Loading }, loadRows nextModel )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                    ( { model | flash = Just (httpErrorToString httpError), pendingDelete = Nothing }, Cmd.none )
 
         RunAction ->
             case model.selectedAction of
@@ -1756,6 +1785,65 @@ rowId entity rowValue =
         |> Maybe.map valueToString
 
 
+deleteConfirmationMessage : Entity -> Row -> String
+deleteConfirmationMessage entity rowValue =
+    case rowDisplayLabel entity rowValue of
+        Just label ->
+            "Delete " ++ entityLabel entity ++ " \"" ++ label ++ "\"? This action cannot be undone."
+
+        Nothing ->
+            "Delete this " ++ entityLabel entity ++ " entry? This action cannot be undone."
+
+
+rowDisplayLabel : Entity -> Row -> Maybe String
+rowDisplayLabel entity rowValue =
+    let
+        preferredFields =
+            [ "name", "title", "email", "slug", "id", entity.primaryKey ]
+    in
+    preferredFields
+        |> uniqueStrings
+        |> List.filterMap (\fieldName -> rowFieldLabel fieldName rowValue)
+        |> List.head
+
+
+rowFieldLabel : String -> Row -> Maybe String
+rowFieldLabel fieldName rowValue =
+    Dict.get fieldName rowValue
+        |> Maybe.map valueToString
+        |> Maybe.map String.trim
+        |> Maybe.andThen
+            (\value ->
+                if value == "" || value == "null" then
+                    Nothing
+
+                else
+                    Just value
+            )
+
+
+entityLabel : Entity -> String
+entityLabel entity =
+    entity.name
+        |> String.trim
+        |> String.toLower
+
+
+uniqueStrings : List String -> List String
+uniqueStrings values =
+    values
+        |> List.foldl
+            (\value acc ->
+                if List.member value acc then
+                    acc
+
+                else
+                    value :: acc
+            )
+            []
+        |> List.reverse
+
+
 replaceRow : Entity -> Row -> List Row -> List Row
 replaceRow entity updated rows =
     case rowId entity updated of
@@ -1826,6 +1914,7 @@ view model =
                 , Font.sansSerif
                 ]
             , Font.color (rgb255 29 36 44)
+            , inFront (viewDeleteConfirmation model)
             ]
             (viewLayout model)
         ]
@@ -2584,6 +2673,67 @@ viewFlash model =
                 ]
 
 
+viewDeleteConfirmation : Model -> Element Msg
+viewDeleteConfirmation model =
+    case model.pendingDelete of
+        Nothing ->
+            none
+
+        Just pendingDelete ->
+            el
+                [ width fill
+                , height fill
+                , Background.color (rgba255 18 24 33 0.36)
+                ]
+                (el
+                    [ centerX
+                    , centerY
+                    , width (px 480)
+                    , Background.color (rgb255 255 255 255)
+                    , Border.rounded 14
+                    , Border.width 1
+                    , Border.color (rgb255 226 232 239)
+                    , padding 18
+                    ]
+                    (column
+                        [ width fill
+                        , spacing 16
+                        ]
+                        [ el [ Font.bold, Font.size 22 ] (text "Confirm deletion")
+                        , paragraph
+                            [ width fill
+                            , Font.size 15
+                            , Font.color (rgb255 82 92 108)
+                            ]
+                            [ text pendingDelete.message ]
+                        , row
+                            [ width fill
+                            , spacing 10
+                            ]
+                            [ el [ width fill ] none
+                            , Input.button
+                                [ Background.color (rgb255 224 231 241)
+                                , Border.rounded 10
+                                , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                ]
+                                { onPress = Just CancelDelete
+                                , label = text "Cancel"
+                                }
+                            , Input.button
+                                [ Background.color (rgb255 176 60 46)
+                                , Font.color (rgb255 252 247 246)
+                                , Border.rounded 10
+                                , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                ]
+                                { onPress = Just ConfirmDelete
+                                , label = text "Delete"
+                                }
+                            ]
+                        ]
+                    )
+                )
+
+
 viewDataPanel : Model -> Element Msg
 viewDataPanel model =
     case model.selectedAction of
@@ -2804,7 +2954,7 @@ viewRowCard entity rowValue =
             , Border.rounded 8
             , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
             ]
-            { onPress = Just (DeleteRow rowValue)
+            { onPress = Just (RequestDeleteRow rowValue)
             , label = text "Delete"
             }
         ]
