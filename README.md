@@ -11,4 +11,4 @@ Examples:
 - [examples/todo.mar](examples/todo.mar)
 - [examples/store.mar](examples/store.mar)
 
-Note: significant parts of this project were developed with assistance from generative AI tools.
+Note: parts of this project were developed with the assistance of generative AI tools.
