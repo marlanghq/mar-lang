@@ -320,7 +320,7 @@ warningBanner =
                 , text "."
                 ]
             , paragraph [ Font.size 16, Font.color (rgb255 107 62 0), width fill ]
-                [ text "For now, Mar does not guarantee backward compatibility for language syntax or database schema. That guarantee is planned for a future stabilized release." ]
+                [ text "For now, Mar does not guarantee backward compatibility for language syntax or database schema. That guarantee is planned for a future stable release." ]
             ]
         ]
 
@@ -328,13 +328,26 @@ warningBanner =
 footer : Element Msg
 footer =
     el
-        [ width (fill |> maximum 1040)
-        , centerX
-        , paddingEach { top = 8, right = 0, bottom = 0, left = 0 }
-        , Font.size 14
-        , Font.color (rgb255 98 116 139)
+        [ width fill
+        , paddingEach { top = 0, right = 0, bottom = 0, left = 0 }
         ]
-        (text "Copyright © 2026 Marcio Frayze David")
+        (row
+            [ centerX
+            , spacing 4
+            , Font.size 14
+            , Font.color (rgb255 98 116 139)
+            ]
+            [ text "Copyright © 2026"
+            , newTabLink
+                [ Font.color (rgb255 36 82 132)
+                , Font.semiBold
+                , htmlAttribute (HtmlAttr.style "cursor" "pointer")
+                ]
+                { url = "https://segunda.tech/about"
+                , label = text "Marcio Frayze David"
+                }
+            ]
+        )
 
 
 homePage : Model -> Element Msg
@@ -583,7 +596,7 @@ advancedToolingPage model =
                 ]
             , docSubsectionTitle "Compiler and Runtime Commands"
             , commandRow model "1" "Dev" "Runs the app in development mode with hot reload when the .mar file changes." "mar dev store.mar"
-            , commandRow model "2" "Compile" "Builds a self-contained executable and generates frontend clients." "mar compile store.mar"
+            , commandRow model "2" "Compile" "Packages self-contained executables for all supported platforms and generates frontend clients." "mar compile store.mar"
             , commandRow model "3" "Format" "Applies Mar's official formatting style to source files." "mar format store.mar"
             , commandRow model "4" "LSP" "Starts the language server used by the VSCode extension for diagnostics, hovers, and navigation. Usually started by the editor plugin." "mar lsp"
             , docSubsectionTitle "Generated Client Output"
@@ -603,7 +616,7 @@ advancedToolingPage model =
                 , "The VSCode extension provides syntax highlighting, hover docs, go to definition, references, rename, formatting, and LSP diagnostics."
                 ]
             ]
-        , advancedPager (Just AdvancedRuntime) (Just AdvancedLanguageReference)
+        , advancedPager (Just AdvancedRuntime) (Just AdvancedCompiler)
         ]
 
 
@@ -617,10 +630,10 @@ advancedCompilerPage =
         , panel
             [ sectionTitle "Advanced Guide"
             , docSubsectionTitle "Compiler"
-            , bodyText "The compiler parses a single .mar file into a typed app model, validates it, generates clients, embeds admin/static assets, and then builds a self-contained server executable."
+            , bodyText "The compiler parses a single .mar file into a typed app model, validates it, generates clients, packages a manifest bundle with admin/public assets, and stamps that bundle into prebuilt runtime executables for all supported platforms."
             , architectureDiagram
             ]
-        , advancedPager (Just AdvancedTooling) (Just AdvancedCompiler)
+        , advancedPager (Just AdvancedTooling) (Just AdvancedLanguageReference)
         ]
 
 
@@ -710,10 +723,10 @@ quickStart model =
         [ sectionTitle "Quick Start"
         , quickStartCreateCard model "1" "Create" "todo.mar" todoExampleSource
         , commandRow model "2" "Develop" "Runs the app locally with hot reload while you edit todo.mar." "mar dev todo.mar"
-        , commandRow model "3" "Compile" "Builds the production executable and generates the frontend clients." "mar compile todo.mar"
-        , commandRow model "4" "Deploy" "Start the compiled server executable." "cd dist/todo && ./todo serve"
+        , commandRow model "3" "Compile" "Packages production executables for all supported platforms and generates the frontend clients." "mar compile todo.mar"
+        , commandRow model "4" "Deploy" "Choose the target folder for your platform and start that executable." "cd dist/todo/darwin-arm64 && ./todo serve"
         , paragraph [ Font.size 16, Font.color (rgb255 72 95 123), width fill ]
-            [ text "Mar deploys as a single executable that already includes API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools." ]
+            [ text "Mar compile produces a single self-contained executable per target platform. Each one already includes API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools." ]
         ]
 
 
@@ -1025,12 +1038,14 @@ architectureDiagram =
             , spacing 10
             ]
             [ architectureNode "Generated clients" "Elm + TypeScript client code"
-            , architectureNode "Embedded assets" "Admin UI + public files"
+            , architectureNode "App bundle" "Manifest + admin UI + optional public files"
             ]
         , architectureArrow
-        , architectureNode "Go build" "self-contained executable"
+        , architectureNode "Runtime stubs" "Prebuilt executables for supported OS/arch targets"
         , architectureArrow
-        , architectureNode "Executable" "API + auth + admin + runtime"
+        , architectureNode "Packager" "Inject app bundle into each runtime stub"
+        , architectureArrow
+        , architectureNode "Executables" "Self-contained binaries for all supported platforms"
         ]
 
 
