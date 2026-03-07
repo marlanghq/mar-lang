@@ -3,7 +3,7 @@
   "displayName": "Mar Language Support",
   "description": "Syntax highlighting, snippets, and LSP support for modern Mar (.mar) files.",
   "version": "0.1.1",
-  "publisher": "mar-dev",
+  "publisher": "marciofrayze",
   "repository": {
     "type": "git",
     "url": "https://github.com/marcio/mar.git"
