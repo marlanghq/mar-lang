@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -43,11 +45,13 @@ func (r *Runtime) resolveAuth(req *http.Request) (authSession, error) {
 	if token == "" {
 		return authSession{}, nil
 	}
+	tokenHash := hashAuthSecret(token)
 
 	row, ok, err := queryRow(
 		r.DB,
-		`SELECT token, user_id, email, expires_at, revoked FROM mar_sessions WHERE token = ? LIMIT 1`,
+		`SELECT user_id, email, expires_at, revoked FROM mar_sessions WHERE token = ? OR token = ? LIMIT 1`,
 		token,
+		tokenHash,
 	)
 	if err != nil {
 		return authSession{}, err
@@ -254,7 +258,7 @@ func (r *Runtime) issueAuthCode(w http.ResponseWriter, email string, userID any,
 		`INSERT INTO mar_auth_codes (email, user_id, code, grant_role, expires_at, used, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)`,
 		email,
 		userID,
-		code,
+		hashAuthSecret(code),
 		grantRole,
 		expiresAt,
 		now,
@@ -438,7 +442,7 @@ func (r *Runtime) handleAuthLogin(w http.ResponseWriter, payload map[string]any)
 	used, _ := toInt64(row["used"])
 	expiresAt, _ := toInt64(row["expires_at"])
 	storedCode, _ := row["code"].(string)
-	if used == 1 || expiresAt < now || storedCode != code {
+	if used == 1 || expiresAt < now || !storedSecretMatches(storedCode, code) {
 		return &apiError{Status: http.StatusUnauthorized, Message: "Invalid or expired code"}
 	}
 	codeID, _ := toInt64(row["id"])
@@ -473,9 +477,10 @@ func (r *Runtime) handleAuthLogin(w http.ResponseWriter, payload map[string]any)
 	if err != nil {
 		return err
 	}
+	tokenHash := hashAuthSecret(token)
 	cfg := r.authConfig()
 	sessionExpiresAt := now + int64(cfg.SessionTTLHours)*60*60*1000
-	if _, err := r.DB.Exec(`INSERT INTO mar_sessions (token, user_id, email, expires_at, revoked, created_at) VALUES (?, ?, ?, ?, 0, ?)`, token, userID, email, sessionExpiresAt, now); err != nil {
+	if _, err := r.DB.Exec(`INSERT INTO mar_sessions (token, user_id, email, expires_at, revoked, created_at) VALUES (?, ?, ?, ?, 0, ?)`, tokenHash, userID, email, sessionExpiresAt, now); err != nil {
 		return err
 	}
 
@@ -545,7 +550,7 @@ func (r *Runtime) handleAuthLogout(w http.ResponseWriter, auth authSession) erro
 	if !auth.Authenticated || auth.Token == "" {
 		return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
 	}
-	if _, err := r.DB.Exec(`UPDATE mar_sessions SET revoked = 1 WHERE token = ?`, auth.Token); err != nil {
+	if _, err := r.DB.Exec(`UPDATE mar_sessions SET revoked = 1 WHERE token = ? OR token = ?`, auth.Token, hashAuthSecret(auth.Token)); err != nil {
 		return err
 	}
 	r.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -693,4 +698,21 @@ func randomToken(bytesLen int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+func hashAuthSecret(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func storedSecretMatches(storedValue, rawValue string) bool {
+	stored := strings.TrimSpace(storedValue)
+	raw := strings.TrimSpace(rawValue)
+	if stored == "" || raw == "" {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(stored), []byte(raw)) == 1 {
+		return true
+	}
+	return subtle.ConstantTimeCompare([]byte(stored), []byte(hashAuthSecret(raw))) == 1
 }
