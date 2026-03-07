@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// ToBool converts v to the truthiness rules used by expression evaluation.
 func ToBool(v any) bool {
 	switch t := v.(type) {
 	case bool:
@@ -26,6 +27,7 @@ func ToBool(v any) bool {
 	}
 }
 
+// ToFloat converts supported numeric values to float64.
 func ToFloat(v any) (float64, bool) {
 	switch t := v.(type) {
 	case int:
@@ -48,6 +50,7 @@ func ToFloat(v any) (float64, bool) {
 	}
 }
 
+// ToString converts v to the string form used by expression functions.
 func ToString(v any) (string, bool) {
 	switch t := v.(type) {
 	case string:
@@ -70,6 +73,7 @@ func ToString(v any) (string, bool) {
 	}
 }
 
+// Equal compares two values using numeric comparison when both sides are numbers.
 func Equal(a, b any) bool {
 	if af, ok := ToFloat(a); ok {
 		if bf, ok := ToFloat(b); ok {
@@ -79,7 +83,7 @@ func Equal(a, b any) bool {
 	return fmt.Sprintf("%#v", a) == fmt.Sprintf("%#v", b)
 }
 
-// Compare returns cmp (-1/0/1), ok, err.
+// Compare compares two values and returns -1, 0, or 1 when they are comparable.
 func Compare(a, b any) (int, bool, error) {
 	if af, ok := ToFloat(a); ok {
 		bf, ok := ToFloat(b)
@@ -110,6 +114,7 @@ func Compare(a, b any) (int, bool, error) {
 	}
 }
 
+// Contains reports whether left contains right.
 func Contains(left, right string) bool {
 	if left == "" {
 		return false
@@ -117,6 +122,7 @@ func Contains(left, right string) bool {
 	return strings.Contains(left, right)
 }
 
+// StartsWith reports whether left starts with right.
 func StartsWith(left, right string) bool {
 	if left == "" {
 		return false
@@ -124,6 +130,7 @@ func StartsWith(left, right string) bool {
 	return strings.HasPrefix(left, right)
 }
 
+// EndsWith reports whether left ends with right.
 func EndsWith(left, right string) bool {
 	if left == "" {
 		return false
@@ -131,6 +138,7 @@ func EndsWith(left, right string) bool {
 	return strings.HasSuffix(left, right)
 }
 
+// Length returns the length of supported string and list values.
 func Length(v any) int {
 	switch t := v.(type) {
 	case string:
@@ -142,6 +150,7 @@ func Length(v any) int {
 	}
 }
 
+// Matches reports whether subject matches the provided regular expression.
 func Matches(subject, pattern string) (bool, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {

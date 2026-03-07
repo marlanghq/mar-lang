@@ -180,6 +180,7 @@ func boolToOnOff(v bool) string {
 	return "OFF"
 }
 
+// Close releases the underlying SQLite connection.
 func (db *DB) Close() error {
 	if db == nil || db.sqlDB == nil {
 		return nil
@@ -187,12 +188,14 @@ func (db *DB) Close() error {
 	return db.sqlDB.Close()
 }
 
+// SetQueryHook registers a callback invoked after each executed query summary.
 func (db *DB) SetQueryHook(hook func(QueryEvent)) {
 	db.hookMu.Lock()
 	defer db.hookMu.Unlock()
 	db.onQuery = hook
 }
 
+// Exec runs a statement and returns SQLite change metadata for it.
 func (db *DB) Exec(query string, args ...any) (Result, error) {
 	logSQL := interpolateSQLForLog(query, args)
 	if err := db.ensureOpen(); err != nil {
@@ -231,6 +234,7 @@ func (db *DB) Exec(query string, args ...any) (Result, error) {
 	}, nil
 }
 
+// QueryRows runs a query and returns all rows as column-name maps.
 func (db *DB) QueryRows(query string, args ...any) ([]map[string]any, error) {
 	logSQL := interpolateSQLForLog(query, args)
 	if err := db.ensureOpen(); err != nil {
@@ -311,6 +315,7 @@ func (db *DB) QueryRows(query string, args ...any) ([]map[string]any, error) {
 	return result, nil
 }
 
+// QueryRow runs a query and returns the first row, if any.
 func (db *DB) QueryRow(query string, args ...any) (map[string]any, bool, error) {
 	rows, err := db.QueryRows(query, args...)
 	if err != nil {
@@ -322,6 +327,7 @@ func (db *DB) QueryRow(query string, args ...any) (map[string]any, bool, error) 
 	return rows[0], true, nil
 }
 
+// ExecTx executes statements in a single transaction and rolls back on failure.
 func (db *DB) ExecTx(statements []Statement) error {
 	logSQL := txStatementSummary(statements)
 	if len(statements) == 0 {

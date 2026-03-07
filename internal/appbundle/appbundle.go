@@ -46,6 +46,8 @@ type Bundle struct {
 	Archive  *zip.Reader
 }
 
+// BuildPayload packages the manifest, metadata, admin assets, and optional public
+// files into the ZIP payload appended to a Mar executable.
 func BuildPayload(input BuildInput) ([]byte, error) {
 	if len(input.ManifestJSON) == 0 {
 		return nil, errors.New("manifest payload is empty")
@@ -85,6 +87,8 @@ func BuildPayload(input BuildInput) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// WriteExecutable writes a runtime stub, app payload, and bundle footer to
+// outputPath, optionally marking the result as executable.
 func WriteExecutable(stub, payload []byte, outputPath string, executable bool) error {
 	if len(stub) == 0 {
 		return errors.New("runtime stub is empty")
@@ -126,6 +130,7 @@ func WriteExecutable(stub, payload []byte, outputPath string, executable bool) e
 	return nil
 }
 
+// LoadExecutable opens path and loads the appended Mar app bundle from it.
 func LoadExecutable(path string) (*Bundle, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -140,6 +145,8 @@ func LoadExecutable(path string) (*Bundle, error) {
 	return LoadReaderAt(file, info.Size())
 }
 
+// LoadReaderAt reads a Mar app bundle from reader using the executable size to
+// locate and validate the appended payload footer.
 func LoadReaderAt(reader io.ReaderAt, executableSize int64) (*Bundle, error) {
 	if executableSize < int64(footerSize) {
 		return nil, errors.New("mar app bundle footer not found")

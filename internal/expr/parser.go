@@ -33,6 +33,7 @@ type parser struct {
 	opts   ParserOptions
 }
 
+// Parse parses an authorization or rule expression into an executable AST.
 func Parse(input string, opts ParserOptions) (Expr, error) {
 	tokens, err := tokenize(input)
 	if err != nil {
