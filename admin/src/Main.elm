@@ -3,7 +3,7 @@ port module Main exposing (main)
 import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), InputAliasField, InputAliasInfo, Row, Schema, SystemAuthInfo, decodeRows, decodeSchema, encodePayload, fieldTypeLabel, rowDecoder, valueToString)
 import Browser
 import Dict exposing (Dict)
-import Element exposing (Element, alignLeft, centerX, centerY, column, el, fill, fillPortion, height, htmlAttribute, inFront, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarY, spacing, text, width)
+import Element exposing (Element, alignLeft, centerX, centerY, column, el, fill, fillPortion, height, htmlAttribute, inFront, minimum, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarY, spacing, text, width, wrappedRow)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
@@ -37,6 +37,12 @@ type FormMode
     = FormHidden
     | FormCreate
     | FormEdit Row
+
+
+type BooleanFieldState
+    = BooleanUnset
+    | BooleanFalse
+    | BooleanTrue
 
 
 type AuthScope
@@ -86,6 +92,7 @@ type alias Model =
     , actionResult : Maybe Row
     , perf : Remote PerfPayload
     , adminVersion : Remote AdminVersionPayload
+    , monitoringVersionDetailsOpen : Bool
     , requestLogs : Remote RequestLogsPayload
     , backups : Remote BackupsPayload
     , performanceMode : Bool
@@ -115,6 +122,7 @@ type Msg
     | SelectDatabase
     | ReloadDatabase
     | ReloadPerformance
+    | ToggleMonitoringVersionDetails
     | ReloadRequestLogs
     | GotPerformance (Result Http.Error PerfPayload)
     | GotAdminVersion (Result Http.Error AdminVersionPayload)
@@ -320,6 +328,7 @@ init flags =
             , actionResult = Nothing
             , perf = NotAsked
             , adminVersion = NotAsked
+            , monitoringVersionDetailsOpen = False
             , requestLogs = NotAsked
             , backups = NotAsked
             , performanceMode = False
@@ -506,6 +515,7 @@ update msg model =
                             , actionResult = Nothing
                             , perf = Loading
                             , adminVersion = Loading
+                            , monitoringVersionDetailsOpen = False
                             , flash = Nothing
                         }
                 in
@@ -574,11 +584,14 @@ update msg model =
                 ( nextModel, Cmd.batch [ loadPerformance nextModel, loadBackups nextModel ] )
 
         ReloadPerformance ->
-            let
-                nextModel =
-                    { model | perf = Loading, adminVersion = Loading, flash = Nothing }
-            in
-            ( nextModel, Cmd.batch [ loadPerformance nextModel, loadAdminVersion nextModel ] )
+                let
+                    nextModel =
+                        { model | perf = Loading, adminVersion = Loading, flash = Nothing }
+                in
+                ( nextModel, Cmd.batch [ loadPerformance nextModel, loadAdminVersion nextModel ] )
+
+        ToggleMonitoringVersionDetails ->
+            ( { model | monitoringVersionDetailsOpen = not model.monitoringVersionDetailsOpen }, Cmd.none )
 
         ReloadRequestLogs ->
             let
@@ -2482,21 +2495,7 @@ viewSidebar model =
         ]
         (List.concat
             [ [ row [ width fill, spacing 8 ]
-                    [ el [ Font.size 24, Font.bold, Font.color (rgb255 240 245 250) ] (text appName)
-                    , if workspace == AdminWorkspace then
-                        el
-                            [ Background.color (rgb255 54 94 217)
-                            , Font.size 11
-                            , Font.bold
-                            , Font.color (rgb255 244 246 248)
-                            , Border.rounded 999
-                            , paddingEach { top = 4, right = 8, bottom = 4, left = 8 }
-                            ]
-                            (text "ADMIN")
-
-                      else
-                        none
-                    ]
+                    [ el [ Font.size 24, Font.bold, Font.color (rgb255 240 245 250) ] (text appName) ]
               , el [ Font.size 13, Font.color (rgb255 144 158 179) ]
                     (text
                         (if workspace == AppWorkspace then
@@ -3167,48 +3166,153 @@ authDangerButton onPress labelText =
 
 formBooleanField : String -> Bool -> String -> (String -> Msg) -> Element Msg
 formBooleanField labelText isOptional rawValue toMsg =
+    let
+        state =
+            booleanFieldState rawValue
+    in
     column
         [ width fill
         , spacing 8
         ]
         [ el [ Font.size 12 ] (text labelText)
-        , row [ width fill, spacing 8 ]
+        , row [ width fill, spacing 10, centerY ]
             (List.concat
-                [ if isOptional then
-                    [ boolChoiceButton (rawValue == "") (Just (toMsg "")) "Unset" ]
+                [ [ boolToggleButton state (Just (toMsg (nextBooleanRawValue rawValue))) ]
+                , if isOptional then
+                    [ boolUnsetButton (state == BooleanUnset) (Just (toMsg "")) ]
 
                   else
                     []
-                , [ boolChoiceButton (rawValue == "true") (Just (toMsg "true")) "On"
-                  , boolChoiceButton (rawValue == "false") (Just (toMsg "false")) "Off"
-                  ]
                 ]
             )
         ]
 
 
-boolChoiceButton : Bool -> Maybe Msg -> String -> Element Msg
-boolChoiceButton selected onPress labelText =
+booleanFieldState : String -> BooleanFieldState
+booleanFieldState rawValue =
+    case rawValue of
+        "true" ->
+            BooleanTrue
+
+        "false" ->
+            BooleanFalse
+
+        _ ->
+            BooleanUnset
+
+
+nextBooleanRawValue : String -> String
+nextBooleanRawValue rawValue =
+    case booleanFieldState rawValue of
+        BooleanTrue ->
+            "false"
+
+        BooleanFalse ->
+            "true"
+
+        BooleanUnset ->
+            "true"
+
+
+boolToggleButton : BooleanFieldState -> Maybe Msg -> Element Msg
+boolToggleButton state onPress =
+    Input.button
+        []
+        { onPress = onPress
+        , label =
+            row
+                [ width (px 54)
+                , height (px 30)
+                , centerY
+                , Background.color
+                    (case state of
+                        BooleanTrue ->
+                            rgb255 84 121 224
+
+                        BooleanFalse ->
+                            rgb255 212 219 229
+
+                        BooleanUnset ->
+                            rgb255 234 238 244
+                    )
+                , Border.width 1
+                , Border.color
+                    (case state of
+                        BooleanTrue ->
+                            rgb255 70 106 206
+
+                        BooleanFalse ->
+                            rgb255 197 205 217
+
+                        BooleanUnset ->
+                            rgb255 214 221 231
+                    )
+                , Border.rounded 999
+                , paddingEach { top = 3, right = 3, bottom = 3, left = 3 }
+                ]
+                (case state of
+                    BooleanTrue ->
+                        [ el [ width fill ] none
+                        , boolToggleKnob (rgb255 255 255 255)
+                        ]
+
+                    BooleanFalse ->
+                        [ boolToggleKnob (rgb255 255 255 255)
+                        , el [ width fill ] none
+                        ]
+
+                    BooleanUnset ->
+                        [ el [ width fill ] none
+                        , boolToggleKnob (rgb255 244 246 250)
+                        , el [ width fill ] none
+                        ]
+                )
+        }
+
+
+boolToggleKnob : Element.Color -> Element Msg
+boolToggleKnob color =
+    el
+        [ width (px 22)
+        , height (px 22)
+        , Background.color color
+        , Border.width 1
+        , Border.color (rgb255 208 214 224)
+        , Border.rounded 999
+        ]
+        none
+
+
+boolUnsetButton : Bool -> Maybe Msg -> Element Msg
+boolUnsetButton selected onPress =
     Input.button
         [ Background.color
             (if selected then
-                rgb255 84 121 224
+                rgb255 233 236 242
 
              else
-                rgb255 233 236 242
+                rgb255 246 247 250
             )
         , Font.color
             (if selected then
-                rgb255 246 248 252
+                rgb255 55 68 87
 
              else
-                rgb255 55 68 87
+                rgb255 109 121 138
+            )
+        , Border.width 1
+        , Border.color
+            (if selected then
+                rgb255 205 212 222
+
+             else
+                rgb255 225 230 237
             )
         , Border.rounded 999
         , paddingEach { top = 8, right = 12, bottom = 8, left = 12 }
         ]
         { onPress = onPress
-        , label = text labelText
+        , label = text "Unset"
         }
 
 
@@ -3896,7 +4000,7 @@ viewPerformancePanel model =
                     , label = text "Refresh"
                     }
                 ]
-            , viewMonitoringVersion model.adminVersion
+            , viewMonitoringVersion model.adminVersion model.monitoringVersionDetailsOpen
             , el
                 [ width fill
                 , height (px 1)
@@ -3934,8 +4038,8 @@ viewPerformancePanel model =
             ]
 
 
-viewMonitoringVersion : Remote AdminVersionPayload -> Element Msg
-viewMonitoringVersion versionRemote =
+viewMonitoringVersion : Remote AdminVersionPayload -> Bool -> Element Msg
+viewMonitoringVersion versionRemote detailsOpen =
     case versionRemote of
         NotAsked ->
             none
@@ -3947,24 +4051,52 @@ viewMonitoringVersion versionRemote =
             paragraph [ Font.size 13, Font.color (rgb255 176 60 46) ] [ text ("Version info unavailable: " ++ message) ]
 
         Loaded versionPayload ->
+            let
+                summaryCards =
+                    [ databaseInfoCard "App" versionPayload.app.name
+                    , databaseInfoCard "Mar version" versionPayload.mar.version
+                    ]
+            in
             column
                 [ width fill
-                , spacing 8
+                , spacing 10
                 ]
-                [ row [ width fill, spacing 12 ]
-                    [ databaseInfoCard "App" versionPayload.app.name
-                    , databaseInfoCard "App build time" versionPayload.app.buildTime
-                    , databaseInfoCard "Manifest hash" versionPayload.app.manifestHash
+                [ wrappedRow [ width fill, spacing 12 ] summaryCards
+                , Input.button
+                    [ Font.size 13
+                    , Font.color (rgb255 93 103 120)
+                    , alignLeft
+                    , paddingEach { top = 2, right = 2, bottom = 2, left = 2 }
                     ]
-                , row [ width fill, spacing 12 ]
-                    [ databaseInfoCard "Mar version" versionPayload.mar.version
-                    , databaseInfoCard "Mar commit" versionPayload.mar.commit
-                    , databaseInfoCard "Mar build time" versionPayload.mar.buildTime
-                    ]
-                , row [ width fill, spacing 12 ]
-                    [ databaseInfoCard "Go version" versionPayload.runtimeInfo.goVersion
-                    , databaseInfoCard "Platform" versionPayload.runtimeInfo.platform
-                    ]
+                    { onPress = Just ToggleMonitoringVersionDetails
+                    , label =
+                        text
+                            (if detailsOpen then
+                                "Hide details"
+
+                             else
+                                "View details"
+                            )
+                    }
+                , if detailsOpen then
+                    column
+                        [ width fill
+                        , spacing 12
+                        ]
+                        [ row [ width fill, spacing 12 ]
+                            [ databaseInfoCard "App build time" versionPayload.app.buildTime
+                            , databaseInfoCardWithHint "Manifest hash" versionPayload.app.manifestHash "Changes when the app definition changes."
+                            ]
+                        , row [ width fill, spacing 12 ]
+                            [ compactInfoCard "Mar commit" versionPayload.mar.commit
+                            , compactInfoCard "Mar build time" versionPayload.mar.buildTime
+                            , compactInfoCard "Go version" versionPayload.runtimeInfo.goVersion
+                            , compactInfoCard "Platform" versionPayload.runtimeInfo.platform
+                            ]
+                        ]
+
+                  else
+                    none
                 ]
 
 
@@ -4423,8 +4555,13 @@ performanceCard title value =
 
 databaseInfoCard : String -> String -> Element Msg
 databaseInfoCard title value =
+    databaseInfoCardWithHint title value ""
+
+
+databaseInfoCardWithHint : String -> String -> String -> Element Msg
+databaseInfoCardWithHint title value hint =
     column
-        [ width fill
+        [ width (fill |> minimum 220)
         , spacing 6
         , Background.color (rgb255 248 250 252)
         , Border.rounded 10
@@ -4434,6 +4571,27 @@ databaseInfoCard title value =
         ]
         [ el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text title)
         , paragraph [ Font.size 13, Font.color (rgb255 41 52 68) ] [ text value ]
+        , if String.trim hint == "" then
+            none
+
+          else
+            paragraph [ Font.size 11, Font.color (rgb255 109 121 138) ] [ text hint ]
+        ]
+
+
+compactInfoCard : String -> String -> Element Msg
+compactInfoCard title value =
+    column
+        [ width fill
+        , spacing 4
+        , Background.color (rgb255 248 250 252)
+        , Border.rounded 10
+        , Border.width 1
+        , Border.color (rgb255 226 232 239)
+        , padding 10
+        ]
+        [ el [ Font.size 11, Font.color (rgb255 93 103 120) ] (text title)
+        , paragraph [ Font.size 12, Font.color (rgb255 41 52 68) ] [ text value ]
         ]
 
 
