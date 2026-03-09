@@ -10,6 +10,9 @@ admin/elm-stuff
 **/.elm-home/
 admin/dist/
 website/dist/
+firebase.json
+.firebaserc
+.firebase*
 mar
 mar.exe
 internal/cli/compiler_assets/
