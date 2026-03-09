@@ -228,10 +228,9 @@ page model =
 topBar : Route -> Element Msg
 topBar route =
     panel
-        [ row [ width fill ]
+        [ column [ width fill, spacing 12 ]
             [ el [ Font.size 28, Font.bold, Font.color (rgb255 22 57 96) ] (text "Mar")
-            , el [ width fill ] (text "")
-            , row [ spacing 8 ]
+            , wrappedRow [ width fill, spacing 8 ]
                 [ navItem route Home "Home"
                 , navItem route GettingStarted "Getting Started"
                 , navItem route AdvancedGuide "Advanced"
@@ -665,9 +664,9 @@ hero : Element Msg
 hero =
     panel
         [ column [ spacing 10, width fill ]
-            [ paragraph [ Font.size 42, Font.bold, Font.color (rgb255 16 44 79), width (fill |> maximum 900) ]
+            [ paragraph [ Font.size 38, Font.bold, Font.color (rgb255 16 44 79), width (fill |> maximum 900) ]
                 [ text "A simple declarative backend language." ]
-            , paragraph [ Font.size 19, Font.color (rgb255 72 95 123), width (fill |> maximum 880) ]
+            , paragraph [ Font.size 18, Font.color (rgb255 72 95 123), width (fill |> maximum 880) ]
                 [ text "Mar compiles declarative source into a self-contained server executable with API, auth, admin panel, monitoring, and backups." ]
             , paragraph [ Font.size 16, Font.color (rgb255 96 116 140), width (fill |> maximum 880) ]
                 [ text "Inspired by "
@@ -690,7 +689,7 @@ hero =
                     }
                 , text "."
                 ]
-            , row [ spacing 10, paddingEach { top = 6, right = 0, bottom = 0, left = 0 } ]
+            , wrappedRow [ spacing 10, paddingEach { top = 6, right = 0, bottom = 0, left = 0 } ]
                 [ primaryButton "Get Started" (routeHref GettingStarted)
                 , secondaryButton "Advanced Guide" (routeHref AdvancedGuide)
                 ]
@@ -743,25 +742,15 @@ quickStartCreateCard model number label fileName source =
         ]
         [ row [ width fill, spacing 10 ]
             [ stepBadge number
-            , el [ Font.bold, Font.size 18, width (px 104), Font.color (rgb255 28 66 108) ] (text label)
+            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text label)
             ]
         , codeFromString model fileName 320 source
         ]
 
 
-installLabelWidth : Int
-installLabelWidth =
-    136
-
-
-installSubitemIndent : Int
-installSubitemIndent =
-    184
-
-
 installCommandRow : Model -> String -> String -> String -> Element Msg
 installCommandRow model number label command =
-    row
+    column
         [ width fill
         , spacing 10
         , Background.color (rgb255 245 250 255)
@@ -770,17 +759,20 @@ installCommandRow model number label command =
         , Border.rounded 10
         , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
         ]
-        [ stepBadge number
-        , el [ Font.bold, Font.size 18, width (px installLabelWidth), Font.color (rgb255 28 66 108) ] (text label)
-        , codeInline command
-        , el [ width fill ] (text "")
-        , copyLink model command
+        [ wrappedRow [ width fill, spacing 10 ]
+            [ stepBadge number
+            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text label)
+            ]
+        , wrappedRow [ width fill, spacing 8 ]
+            [ codeInline command
+            , copyLink model command
+            ]
         ]
 
 
 downloadInstallRow : Element Msg
 downloadInstallRow =
-    row
+    column
         [ width fill
         , spacing 10
         , Background.color (rgb255 245 250 255)
@@ -789,8 +781,10 @@ downloadInstallRow =
         , Border.rounded 10
         , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
         ]
-        [ stepBadge "1"
-        , el [ Font.bold, Font.size 18, width (px installLabelWidth), Font.color (rgb255 28 66 108) ] (text "Download")
+        [ wrappedRow [ width fill, spacing 10 ]
+            [ stepBadge "1"
+            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Download")
+            ]
         , instructionText "Mar is currently in a closed alpha stage and is not available for general use yet."
         ]
 
@@ -806,26 +800,17 @@ pathInstallRow model =
         , Border.rounded 10
         , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
         ]
-        [ row [ width fill, spacing 10 ]
+        [ wrappedRow [ width fill, spacing 10 ]
             [ stepBadge "2"
-            , el [ Font.bold, Font.size 18, width (px installLabelWidth), Font.color (rgb255 28 66 108) ] (text "Path")
+            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Path")
             , instructionText "Move mar to a directory in your PATH."
             ]
         , column
             [ width fill
             , spacing 8
-            , paddingEach { top = 0, right = 0, bottom = 0, left = installSubitemIndent }
             ]
-            [ row [ spacing 8 ]
-                [ el [ Font.size 13, Font.semiBold, Font.color (rgb255 70 93 121), width (px 88) ] (text "macOS/Linux")
-                , codeInlineSmall "mv mar /usr/local/bin/mar && chmod +x /usr/local/bin/mar"
-                , copyLink model "mv mar /usr/local/bin/mar && chmod +x /usr/local/bin/mar"
-                ]
-            , row [ spacing 8 ]
-                [ el [ Font.size 13, Font.semiBold, Font.color (rgb255 70 93 121), width (px 88) ] (text "Windows")
-                , codeInlineSmall "setx PATH \"%PATH%;C:\\Tools\\mar\""
-                , copyLink model "setx PATH \"%PATH%;C:\\Tools\\mar\""
-                ]
+            [ installSubitem model "macOS/Linux" "mv mar /usr/local/bin/mar && chmod +x /usr/local/bin/mar"
+            , installSubitem model "Windows" "setx PATH \"%PATH%;C:\\Tools\\mar\""
             ]
         ]
 
@@ -841,9 +826,9 @@ pluginInstallRow =
         , Border.rounded 10
         , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
         ]
-        [ row [ width fill, spacing 10 ]
+        [ wrappedRow [ width fill, spacing 10 ]
             [ stepBadge "4"
-            , el [ Font.bold, Font.size 18, width (px installLabelWidth), Font.color (rgb255 28 66 108) ] (text "Code editor")
+            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Code editor")
             , paragraph [ Font.size 16, Font.color (rgb255 70 93 121), width fill ]
                 [ text "Currently, Mar supports only "
                 , newTabLink
@@ -860,7 +845,6 @@ pluginInstallRow =
         , column
             [ spacing 6
             , width fill
-            , paddingEach { top = 0, right = 0, bottom = 0, left = installSubitemIndent }
             ]
             [ paragraph [ Font.size 14, Font.color (rgb255 70 93 121) ]
                 [ text "Open VSCode Extensions (Cmd+Shift+X on macOS, Ctrl+Shift+X on Windows/Linux)." ]
@@ -874,7 +858,6 @@ pluginInstallRow =
             [ Font.size 14
             , Font.color (rgb255 72 95 123)
             , width fill
-            , paddingEach { top = 0, right = 0, bottom = 0, left = installSubitemIndent }
             ]
             [ text "The VSCode extension requires mar on your PATH to start LSP and formatting." ]
         ]
@@ -1025,7 +1008,7 @@ architectureDiagram =
         , architectureArrow
         , architectureNode "Validation" "entities, auth, actions"
         , architectureArrow
-        , row
+        , wrappedRow
             [ width fill
             , spacing 10
             ]
@@ -1072,7 +1055,7 @@ architectureArrow =
 
 whyRow : String -> String -> String -> Element Msg
 whyRow title text1 text2 =
-    row
+    column
         [ width fill
         , spacing 14
         , padding 12
@@ -1082,8 +1065,7 @@ whyRow title text1 text2 =
         , Border.rounded 10
         ]
         [ el
-            [ width (px 240)
-            , Font.size 18
+            [ Font.size 18
             , Font.bold
             , Font.color (rgb255 42 58 77)
             ]
@@ -1097,7 +1079,7 @@ whyRow title text1 text2 =
 
 useCaseRow : String -> String -> String -> Element Msg
 useCaseRow audienceTitle pain solution =
-    row
+    column
         [ width fill
         , spacing 14
         , padding 12
@@ -1107,8 +1089,7 @@ useCaseRow audienceTitle pain solution =
         , Border.rounded 10
         ]
         [ el
-            [ width (px 240)
-            , Font.size 18
+            [ Font.size 18
             , Font.bold
             , Font.color (rgb255 42 58 77)
             ]
@@ -1131,21 +1112,24 @@ commandRow model number label description command =
         , Border.rounded 10
         , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
         ]
-        [ row
+        [ wrappedRow
             [ width fill
             , spacing 10
             ]
             [ stepBadge number
-            , el [ Font.bold, Font.size 18, width (px 104), Font.color (rgb255 28 66 108) ] (text label)
-            , codeInline command
-            , el [ width fill ] (text "")
+            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text label)
+            ]
+        , wrappedRow
+            [ width fill
+            , spacing 8
+            ]
+            [ codeInline command
             , copyLink model command
             ]
         , paragraph
             [ Font.size 14
             , Font.color (rgb255 83 105 132)
             , width fill
-            , paddingEach { top = 0, right = 0, bottom = 0, left = 149 }
             ]
             [ text description ]
         ]
@@ -1193,7 +1177,7 @@ guideCard title summary target =
 advancedSubmenu : Route -> Element Msg
 advancedSubmenu current =
     panel
-        [ row [ width fill, spacing 8 ]
+        [ wrappedRow [ width fill, spacing 8 ]
             [ sectionNavItem current AdvancedFundamentals "Fundamentals"
             , sectionNavItem current AdvancedRuntime "Runtime"
             , sectionNavItem current AdvancedTooling "Tooling"
@@ -1220,21 +1204,25 @@ sectionNavItem current target label =
 advancedPager : Maybe Route -> Maybe Route -> Element Msg
 advancedPager previous next =
     panel
-        [ row [ width fill, spacing 12 ]
-            [ case previous of
-                Just route ->
-                    secondaryButton ("Previous: " ++ routeLabel route) (routeHref route)
-
-                Nothing ->
-                    el [ width fill ] (text "")
-            , el [ width fill ] (text "")
-            , case next of
-                Just route ->
-                    primaryButton ("Next: " ++ routeLabel route) (routeHref route)
-
-                Nothing ->
-                    el [ width fill ] (text "")
+        [ wrappedRow
+            [ width fill
+            , spacing 12
             ]
+            (List.concat
+                [ case previous of
+                    Just route ->
+                        [ secondaryButton ("Previous: " ++ routeLabel route) (routeHref route) ]
+
+                    Nothing ->
+                        []
+                , case next of
+                    Just route ->
+                        [ primaryButton ("Next: " ++ routeLabel route) (routeHref route) ]
+
+                    Nothing ->
+                        []
+                ]
+            )
         ]
 
 
@@ -1340,6 +1328,25 @@ instructionText value =
     paragraph [ Font.size 16, Font.color (rgb255 70 93 121), width fill ] [ text value ]
 
 
+installSubitem : Model -> String -> String -> Element Msg
+installSubitem model platform command =
+    column
+        [ width fill
+        , spacing 6
+        , Background.color (rgb255 250 252 255)
+        , Border.width 1
+        , Border.color (rgb255 223 232 244)
+        , Border.rounded 10
+        , paddingEach { top = 10, right = 10, bottom = 10, left = 10 }
+        ]
+        [ el [ Font.size 13, Font.semiBold, Font.color (rgb255 70 93 121) ] (text platform)
+        , wrappedRow [ width fill, spacing 8 ]
+            [ codeInlineSmall command
+            , copyLink model command
+            ]
+        ]
+
+
 bulletList : List String -> Element Msg
 bulletList items =
     column [ spacing 8, width fill ] (List.map bulletItem items)
@@ -1428,32 +1435,42 @@ languageKeywordText value =
 codeInline : String -> Element Msg
 codeInline source =
     el
-        [ Background.color (rgb255 22 43 67)
+        [ width fill
+        , scrollbarX
+        , Background.color (rgb255 22 43 67)
         , Border.rounded 7
         , paddingEach { top = 7, right = 9, bottom = 7, left = 9 }
         ]
-        (el
-            [ Font.family [ Font.typeface "IBM Plex Mono", Font.monospace ]
-            , Font.size 14
-            , Font.color (rgb255 216 231 248)
-            ]
-            (text source)
+        (html
+            (Html.div
+                [ HtmlAttr.style "white-space" "pre"
+                , HtmlAttr.style "font-family" "IBM Plex Mono, ui-monospace, SFMono-Regular, Menlo, monospace"
+                , HtmlAttr.style "font-size" "14px"
+                , HtmlAttr.style "color" "#D8E7F8"
+                ]
+                [ Html.text source ]
+            )
         )
 
 
 codeInlineSmall : String -> Element Msg
 codeInlineSmall source =
     el
-        [ Background.color (rgb255 22 43 67)
+        [ width fill
+        , scrollbarX
+        , Background.color (rgb255 22 43 67)
         , Border.rounded 7
         , paddingEach { top = 6, right = 8, bottom = 6, left = 8 }
         ]
-        (el
-            [ Font.family [ Font.typeface "IBM Plex Mono", Font.monospace ]
-            , Font.size 12
-            , Font.color (rgb255 216 231 248)
-            ]
-            (text source)
+        (html
+            (Html.div
+                [ HtmlAttr.style "white-space" "pre"
+                , HtmlAttr.style "font-family" "IBM Plex Mono, ui-monospace, SFMono-Regular, Menlo, monospace"
+                , HtmlAttr.style "font-size" "12px"
+                , HtmlAttr.style "color" "#D8E7F8"
+                ]
+                [ Html.text source ]
+            )
         )
 
 
