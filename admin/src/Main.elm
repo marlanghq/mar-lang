@@ -55,6 +55,11 @@ type AuthSubmitState
     | AuthSubmitSigningIn
 
 
+type WorkspaceMode
+    = AppWorkspace
+    | AdminWorkspace
+
+
 type alias Model =
     { apiBase : String
     , authToken : String
@@ -69,6 +74,7 @@ type alias Model =
     , authSubmitting : Maybe AuthSubmitState
     , firstAdminCodeRequested : Bool
     , authToolsOpen : Bool
+    , workspace : WorkspaceMode
     , schema : Remote Schema
     , selectedEntity : Maybe Entity
     , selectedAction : Maybe ActionInfo
@@ -119,6 +125,7 @@ type Msg
     | SetAuthEmail String
     | SetAuthCode String
     | BackToAuthEmail
+    | SwitchWorkspace WorkspaceMode
     | SetActionField String String
     | RequestAuthCode
     | GotRequestAuthCode AuthScope (Result Http.Error RequestCodeResponse)
@@ -306,6 +313,7 @@ init flags =
             , authSubmitting = Nothing
             , firstAdminCodeRequested = False
             , authToolsOpen = String.trim flags.authToken == "" && String.trim flags.systemAuthToken == ""
+            , workspace = AppWorkspace
             , schema = Loading
             , selectedEntity = Nothing
             , selectedAction = Nothing
@@ -624,6 +632,53 @@ update msg model =
 
         BackToAuthEmail ->
             ( { model | authStage = AuthStageEmail, authCode = "", authSubmitting = Nothing, flash = Nothing }, Cmd.none )
+
+        SwitchWorkspace workspace ->
+            let
+                nextEntity =
+                    case model.schema of
+                        Loaded schema ->
+                            case workspace of
+                                AppWorkspace ->
+                                    preferredInitialEntity schema
+
+                                AdminWorkspace ->
+                                    model.selectedEntity
+
+                        _ ->
+                            model.selectedEntity
+
+                shouldLoadRows =
+                    workspace == AppWorkspace && nextEntity /= Nothing
+
+                nextModel =
+                    { model
+                        | workspace = workspace
+                        , authToolsOpen = False
+                        , performanceMode = False
+                        , requestLogsMode = False
+                        , databaseMode = False
+                        , selectedAction = Nothing
+                        , selectedEntity = nextEntity
+                        , rows =
+                            if shouldLoadRows then
+                                Loading
+
+                            else
+                                model.rows
+                        , selectedRow = Nothing
+                        , formMode = FormHidden
+                        , formValues = Dict.empty
+                        , actionFormValues = Dict.empty
+                        , actionResult = Nothing
+                        , flash = Nothing
+                    }
+            in
+            if shouldLoadRows then
+                ( nextModel, loadRows nextModel )
+
+            else
+                ( nextModel, Cmd.none )
 
         SetActionField fieldName value ->
             ( { model | actionFormValues = Dict.insert fieldName value model.actionFormValues }, Cmd.none )
@@ -1961,7 +2016,7 @@ formFromRow model rowValue =
 
 view : Model -> Browser.Document Msg
 view model =
-    { title = "Mar Admin"
+    { title = currentAppName model
     , body =
         [ Element.layout
             [ Background.color (rgb255 244 245 247)
@@ -2071,7 +2126,7 @@ viewAuthGate model =
                             , Font.bold
                             , centerX
                             ]
-                            (text "Mar Admin")
+                            (text (currentAppName model))
                         , el
                             [ Font.size 12
                             , Font.color (rgb255 84 121 224)
@@ -2113,6 +2168,12 @@ viewAuthGate model =
 viewSidebar : Model -> Element Msg
 viewSidebar model =
     let
+        workspace =
+            currentWorkspace model
+
+        appName =
+            currentAppName model
+
         ( authEntities, crudEntities, actions ) =
             case model.schema of
                 Loaded schema ->
@@ -2125,12 +2186,64 @@ viewSidebar model =
                 _ ->
                     ( [], [], [] )
 
-        sidebarItemLabel : String -> String -> Element Msg
-        sidebarItemLabel title subtitle =
-            column [ width fill, spacing 4 ]
-                [ paragraph [ alignLeft ] [ text title ]
-                , paragraph [ alignLeft, Font.size 11, Font.color (rgb255 170 181 196) ] [ text subtitle ]
+        sidebarItemLabel : String -> Maybe String -> Element Msg
+        sidebarItemLabel title maybeSubtitle =
+            if workspace == AppWorkspace then
+                paragraph [ alignLeft ] [ text title ]
+
+            else
+                column [ width fill, spacing 4 ]
+                    ([ paragraph [ alignLeft ] [ text title ] ]
+                        ++ (case maybeSubtitle of
+                                Just subtitle ->
+                                    [ paragraph [ alignLeft, Font.size 11, Font.color (rgb255 170 181 196) ] [ text subtitle ] ]
+
+                                Nothing ->
+                                    []
+                           )
+                    )
+
+        workspaceSwitch : List (Element Msg)
+        workspaceSwitch =
+            if isAdminProfile model then
+                [ row [ width fill, spacing 8 ]
+                    [ Input.button
+                        [ width fill
+                        , Border.rounded 10
+                        , Background.color
+                            (if workspace == AppWorkspace then
+                                rgb255 54 94 217
+
+                             else
+                                rgb255 24 29 36
+                            )
+                        , Font.color (rgb255 244 246 248)
+                        , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
+                        ]
+                        { onPress = Just (SwitchWorkspace AppWorkspace)
+                        , label = text "App"
+                        }
+                    , Input.button
+                        [ width fill
+                        , Border.rounded 10
+                        , Background.color
+                            (if workspace == AdminWorkspace then
+                                rgb255 54 94 217
+
+                             else
+                                rgb255 24 29 36
+                            )
+                        , Font.color (rgb255 244 246 248)
+                        , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
+                        ]
+                        { onPress = Just (SwitchWorkspace AdminWorkspace)
+                        , label = text "Admin"
+                        }
+                    ]
                 ]
+
+            else
+                []
 
         entityButton entity =
             let
@@ -2164,7 +2277,7 @@ viewSidebar model =
                 ]
                 { onPress = Just (SelectEntity entity.name)
                 , label =
-                    sidebarItemLabel entity.name entity.resource
+                    sidebarItemLabel entity.name (Just entity.resource)
                 }
 
         actionEndpointCard : ActionInfo -> Element Msg
@@ -2200,7 +2313,7 @@ viewSidebar model =
                 ]
                 { onPress = Just (SelectAction actionInfo.name)
                 , label =
-                    sidebarItemLabel actionInfo.name ("/actions/" ++ actionInfo.name)
+                    sidebarItemLabel actionInfo.name (Just ("/actions/" ++ actionInfo.name))
                 }
 
         performanceButton : Element Msg
@@ -2222,7 +2335,7 @@ viewSidebar model =
                 ]
                 { onPress = Just SelectPerformance
                 , label =
-                    sidebarItemLabel "Monitoring" "/_mar/perf"
+                    sidebarItemLabel "Monitoring" (Just "/_mar/perf")
                 }
 
         requestLogsButton : Element Msg
@@ -2244,7 +2357,7 @@ viewSidebar model =
                 ]
                 { onPress = Just SelectRequestLogs
                 , label =
-                    sidebarItemLabel "Logs" "/_mar/request-logs"
+                    sidebarItemLabel "Logs" (Just "/_mar/request-logs")
                 }
 
         databaseButton : Element Msg
@@ -2266,7 +2379,7 @@ viewSidebar model =
                 ]
                 { onPress = Just SelectDatabase
                 , label =
-                    sidebarItemLabel "Database" "/_mar/backups"
+                    sidebarItemLabel "Database" (Just "/_mar/backups")
                 }
 
         authToolsButton : Element Msg
@@ -2288,7 +2401,14 @@ viewSidebar model =
                 ]
                 { onPress = Just ToggleAuthTools
                 , label =
-                    sidebarItemLabel "Authentication" "/auth"
+                    sidebarItemLabel
+                        (if workspace == AppWorkspace then
+                            "Account"
+
+                         else
+                            "Authorization"
+                        )
+                        (Just "/auth")
                 }
     in
     column
@@ -2300,22 +2420,42 @@ viewSidebar model =
         , spacing 16
         ]
         (List.concat
-            [ [ el [ Font.size 24, Font.bold, Font.color (rgb255 240 245 250) ] (text "Mar Admin")
+            [ [ row [ width fill, spacing 8 ]
+                    [ el [ Font.size 24, Font.bold, Font.color (rgb255 240 245 250) ] (text appName)
+                    , if workspace == AdminWorkspace then
+                        el
+                            [ Background.color (rgb255 54 94 217)
+                            , Font.size 11
+                            , Font.bold
+                            , Font.color (rgb255 244 246 248)
+                            , Border.rounded 999
+                            , paddingEach { top = 4, right = 8, bottom = 4, left = 8 }
+                            ]
+                            (text "ADMIN")
+
+                      else
+                        none
+                    ]
               , el [ Font.size 13, Font.color (rgb255 144 158 179) ]
                     (text
-                        (case model.schema of
-                            Loaded schema ->
-                                schema.appName
+                        (if workspace == AppWorkspace then
+                            "App workspace"
 
-                            _ ->
-                                "loading schema..."
+                         else
+                            "System workspace"
                         )
                     )
               ]
+            , workspaceSwitch
             , if hasAnyAuthInfo model then
-                el [ Font.size 11, Font.bold, Font.color (rgb255 118 136 160) ] (text "AUTH")
+                el [ Font.size 11, Font.bold, Font.color (rgb255 118 136 160) ] (text (if workspace == AppWorkspace then "ACCOUNT" else "AUTH"))
                     :: authToolsButton
-                    :: List.map entityButton authEntities
+                    :: (if workspace == AdminWorkspace then
+                            List.map entityButton authEntities
+
+                        else
+                            []
+                       )
 
               else
                 []
@@ -2329,7 +2469,14 @@ viewSidebar model =
                     , Font.bold
                     , Font.color (rgb255 118 136 160)
                     ]
-                    (text "CRUD")
+                    (text
+                        (if workspace == AppWorkspace then
+                            "EXPLORE"
+
+                         else
+                            "CRUD"
+                        )
+                    )
                     :: List.map entityButton crudEntities
             , if List.isEmpty actions then
                 []
@@ -2341,9 +2488,16 @@ viewSidebar model =
                     , Font.bold
                     , Font.color (rgb255 118 136 160)
                     ]
-                    (text "ACTIONS")
+                    (text
+                        (if workspace == AppWorkspace then
+                            "FLOWS"
+
+                         else
+                            "ACTIONS"
+                        )
+                    )
                     :: List.map actionEndpointCard actions
-            , if isAdminProfile model then
+            , if isAdminProfile model && workspace == AdminWorkspace then
                 [ el
                     [ paddingEach { top = 10, right = 0, bottom = 0, left = 0 }
                     , Font.size 11
@@ -2404,6 +2558,9 @@ viewAuthToolsPanel model =
 
     else
         let
+            workspace =
+                currentWorkspace model
+
             maybeAppAuth =
                 authInfoFromModel model
 
@@ -2417,38 +2574,46 @@ viewAuthToolsPanel model =
                 currentAuthStage model
 
             activeBadgeText =
-                case activeScope of
-                    AppAuthScope ->
-                        [ badge "POST /auth/request-code"
-                        , badge "POST /auth/login"
-                        , badge "GET /auth/me"
-                        , badge "POST /auth/logout"
-                        ]
+                if workspace == AppWorkspace then
+                    []
 
-                    SystemAuthScope ->
-                        [ badge "POST /auth/request-code"
-                        , badge "POST /auth/login"
-                        , badge "GET /auth/me"
-                        , badge "POST /auth/logout"
-                        ]
+                else
+                    case activeScope of
+                        AppAuthScope ->
+                            [ badge "POST /auth/request-code"
+                            , badge "POST /auth/login"
+                            , badge "GET /auth/me"
+                            , badge "POST /auth/logout"
+                            ]
+
+                        SystemAuthScope ->
+                            [ badge "POST /auth/request-code"
+                            , badge "POST /auth/login"
+                            , badge "GET /auth/me"
+                            , badge "POST /auth/logout"
+                            ]
 
             transportText =
-                case activeScope of
-                    AppAuthScope ->
-                        case maybeAppAuth of
-                            Just appAuth ->
-                                "Transport: " ++ appAuth.emailTransport ++ " | User entity: " ++ appAuth.userEntity
+                if workspace == AppWorkspace then
+                    ""
 
-                            Nothing ->
-                                "User authentication is not enabled."
+                else
+                    case activeScope of
+                        AppAuthScope ->
+                            case maybeAppAuth of
+                                Just appAuth ->
+                                    "Transport: " ++ appAuth.emailTransport ++ " | User entity: " ++ appAuth.userEntity
 
-                    SystemAuthScope ->
-                        case maybeSystemAuth of
-                            Just systemAuth ->
-                                "Transport: " ++ systemAuth.emailTransport ++ " | Scope: admin"
+                                Nothing ->
+                                    "User authentication is not enabled."
 
-                            Nothing ->
-                                "Admin authentication is not available."
+                        SystemAuthScope ->
+                            case maybeSystemAuth of
+                                Just systemAuth ->
+                                    "Transport: " ++ systemAuth.emailTransport ++ " | Scope: admin"
+
+                                Nothing ->
+                                    "Admin authentication is not available."
 
             needsBootstrap =
                 case activeScope of
@@ -2485,48 +2650,80 @@ viewAuthToolsPanel model =
                         needsBootstrap
 
             authFlowTitle =
-                case authStage of
-                    AuthStageEmail ->
-                        if firstAdminMode then
-                            "First access"
+                if workspace == AppWorkspace then
+                    case authStage of
+                        AuthStageEmail ->
+                            if firstAdminMode then
+                                "Get started"
 
-                        else
-                            "Login"
+                            else
+                                "Sign in"
 
-                    AuthStageCode ->
-                        "Enter code"
+                        AuthStageCode ->
+                            "Enter code"
 
-                    AuthStageSession ->
-                        "Session"
+                        AuthStageSession ->
+                            "Your account"
+
+                else
+                    case authStage of
+                        AuthStageEmail ->
+                            if firstAdminMode then
+                                "First access"
+
+                            else
+                                "Login"
+
+                        AuthStageCode ->
+                            "Enter code"
+
+                        AuthStageSession ->
+                            "Session"
 
             authFlowSteps =
-                case authStage of
-                    AuthStageEmail ->
-                        if firstAdminMode then
-                            [ "Enter the email for the first administrator."
-                            , "Mar will send a 6-digit verification code for the first admin setup."
-                            ]
+                if workspace == AppWorkspace then
+                    case authStage of
+                        AuthStageEmail ->
+                            if firstAdminMode then
+                                [ "Use your email to receive the first access code." ]
 
-                        else
-                            [ "Enter your email to receive a 6-digit login code."
-                            , "You will confirm the code on the next screen."
-                            ]
+                            else
+                                [ "We will send a 6-digit code to your email." ]
 
-                    AuthStageCode ->
-                        if firstAdminMode then
-                            [ "Use the verification code sent to the first admin email."
-                            , "After a successful login, Mar will open the admin interface."
-                            ]
+                        AuthStageCode ->
+                            [ "Enter the code we sent to continue." ]
 
-                        else
-                            [ "Enter the login code sent to your email."
-                            , "After a successful login, Mar will open the admin interface."
-                            ]
+                        AuthStageSession ->
+                            []
 
-                    AuthStageSession ->
-                        [ "Your current session is active."
-                        , "Use the actions below to verify or end it."
-                        ]
+                else
+                    case authStage of
+                        AuthStageEmail ->
+                            if firstAdminMode then
+                                [ "Enter the email for the first administrator."
+                                , "Mar will send a 6-digit verification code for the first admin setup."
+                                ]
+
+                            else
+                                [ "Enter your email to receive a 6-digit login code."
+                                , "You will confirm the code on the next screen."
+                                ]
+
+                        AuthStageCode ->
+                            if firstAdminMode then
+                                [ "Use the verification code sent to the first admin email."
+                                , "After a successful login, Mar will open the admin interface."
+                                ]
+
+                            else
+                                [ "Enter the login code sent to your email."
+                                , "After a successful login, Mar will open the admin interface."
+                                ]
+
+                        AuthStageSession ->
+                            [ "Your current session is active."
+                            , "Use the actions below to verify or end it."
+                            ]
 
             authFlowStepRow : Int -> String -> Element Msg
             authFlowStepRow index description =
@@ -2536,23 +2733,27 @@ viewAuthToolsPanel model =
                     ]
 
             tabHint =
-                case activeScope of
-                    AppAuthScope ->
-                        if authStage == AuthStageSession then
-                            "Session actions use the same authentication scope as the rest of the admin."
+                if workspace == AppWorkspace then
+                    ""
 
-                        else if firstAdminMode then
-                            "Complete first admin setup with the same email and login code."
+                else
+                    case activeScope of
+                        AppAuthScope ->
+                            if authStage == AuthStageSession then
+                                "Session actions use the same authentication scope as the rest of the admin."
 
-                        else
-                            "The request sends a login code and automatically creates the user if it does not exist."
+                            else if firstAdminMode then
+                                "Complete first admin setup with the same email and login code."
 
-                    SystemAuthScope ->
-                        if needsBootstrap then
-                            "No admins found. Create the first admin, then login with the code."
+                            else
+                                "The request sends a login code and automatically creates the user if it does not exist."
 
-                        else
-                            "Admin authentication is used only for admin features such as Monitoring and Database backups."
+                        SystemAuthScope ->
+                            if needsBootstrap then
+                                "No admins found. Create the first admin, then login with the code."
+
+                            else
+                                "Admin authentication is used only for admin features such as Monitoring and Database backups."
 
             emailActionLabel =
                 if firstAdminMode then
@@ -2606,46 +2807,68 @@ viewAuthToolsPanel model =
                 , Border.color (rgb255 226 232 239)
                 ]
                 [ viewPanelHeader
-                    "Authentication"
-                    [ el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text transportText) ]
-                    []
-                , row [ width fill, spacing 8 ] activeBadgeText
-                , column
-                    [ width fill
-                    , spacing 6
-                    , Background.color
-                        (if firstAdminMode then
-                            rgb255 255 249 234
+                    (if workspace == AppWorkspace then
+                        "Account"
 
-                         else
-                            rgb255 245 248 255
-                        )
-                    , Border.rounded 10
-                    , Border.width 1
-                    , Border.color
-                        (if firstAdminMode then
-                            rgb255 243 221 156
-
-                         else
-                            rgb255 199 214 242
-                        )
-                    , padding 10
-                    ]
-                    (el [ Font.bold, Font.size 13, Font.color (rgb255 70 89 120) ] (text authFlowTitle)
-                        :: List.indexedMap authFlowStepRow authFlowSteps
+                     else
+                        "Authorization"
                     )
-                , authPanelBody
-                , el
-                    [ Font.size 12
-                    , Font.color
-                        (if needsBootstrap then
-                            rgb255 106 84 31
+                    (if String.trim transportText == "" then
+                        []
 
-                         else
-                            rgb255 93 103 120
+                     else
+                        [ el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text transportText) ]
+                    )
+                    []
+                , if List.isEmpty activeBadgeText then
+                    none
+
+                  else
+                    row [ width fill, spacing 8 ] activeBadgeText
+                , if List.isEmpty authFlowSteps then
+                    none
+
+                  else
+                    column
+                        [ width fill
+                        , spacing 6
+                        , Background.color
+                            (if firstAdminMode then
+                                rgb255 255 249 234
+
+                             else
+                                rgb255 245 248 255
+                            )
+                        , Border.rounded 10
+                        , Border.width 1
+                        , Border.color
+                            (if firstAdminMode then
+                                rgb255 243 221 156
+
+                             else
+                                rgb255 199 214 242
+                            )
+                        , padding 10
+                        ]
+                        (el [ Font.bold, Font.size 13, Font.color (rgb255 70 89 120) ] (text authFlowTitle)
+                            :: List.indexedMap authFlowStepRow authFlowSteps
                         )
-                    ]
-                    (text tabHint)
+                , authPanelBody
+                , if String.trim tabHint == "" then
+                    none
+
+                  else
+                    el
+                        [ Font.size 12
+                        , Font.color
+                            (if needsBootstrap then
+                                rgb255 106 84 31
+
+                             else
+                                rgb255 93 103 120
+                            )
+                        ]
+                        (text tabHint)
                 ]
 
 
@@ -2842,9 +3065,7 @@ viewAuthSessionStage model =
                 el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text ("Role: " ++ roleText))
             ]
         , row [ width fill, spacing 10 ]
-            [ authSecondaryButton (Just LoadAuthMe) "Refresh session"
-            , authDangerButton (Just LogoutSession) "Logout"
-            ]
+            [ authDangerButton (Just LogoutSession) "Logout" ]
         ]
 
 
@@ -2950,6 +3171,25 @@ authFirstAdminMode model =
                             False
     in
     needsBootstrap || model.firstAdminCodeRequested
+
+
+currentWorkspace : Model -> WorkspaceMode
+currentWorkspace model =
+    if isAdminProfile model && model.workspace == AdminWorkspace then
+        AdminWorkspace
+
+    else
+        AppWorkspace
+
+
+currentAppName : Model -> String
+currentAppName model =
+    case model.schema of
+        Loaded schema ->
+            String.trim schema.appName
+
+        _ ->
+            "Mar"
 
 
 activeAuthScope : Model -> AuthScope
@@ -3174,13 +3414,31 @@ viewDataPanel model =
 
         Nothing ->
             let
+                workspace =
+                    currentWorkspace model
+
                 headerTitle =
                     case model.selectedEntity of
                         Nothing ->
-                            "No entity selected"
+                            if workspace == AppWorkspace then
+                                "Choose something to explore"
+
+                            else
+                                "No entity selected"
 
                         Just entity ->
-                            entity.name ++ " records"
+                            if workspace == AppWorkspace then
+                                entity.name
+
+                            else
+                                entity.name ++ " records"
+
+                createLabel =
+                    if workspace == AppWorkspace then
+                        "Create"
+
+                    else
+                        "New"
             in
             column
                 [ width (fillPortion 3)
@@ -3202,7 +3460,7 @@ viewDataPanel model =
                         , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
                         ]
                         { onPress = Just StartCreate
-                        , label = text "New"
+                        , label = text createLabel
                         }
                     , Input.button
                         [ Background.color (rgb255 224 231 241)
@@ -3237,12 +3495,26 @@ viewActionPanel model actionInfo =
 
         Just aliasInfo ->
             let
+                workspace =
+                    currentWorkspace model
+
                 fieldInput : InputAliasField -> Element Msg
                 fieldInput field =
                     Input.text [ width fill ]
                         { onChange = SetActionField field.name
                         , text = Dict.get field.name model.actionFormValues |> Maybe.withDefault ""
-                        , placeholder = Just (Input.placeholder [] (text field.fieldType))
+                        , placeholder =
+                            Just
+                                (Input.placeholder []
+                                    (text
+                                        (if workspace == AppWorkspace then
+                                            "Enter a value"
+
+                                         else
+                                            field.fieldType
+                                        )
+                                    )
+                                )
                         , label = Input.labelAbove [ Font.size 12 ] (text field.name)
                         }
             in
@@ -3258,10 +3530,20 @@ viewActionPanel model actionInfo =
                 ]
                 (List.concat
                     [ [ viewPanelHeader
-                            ("Action: " ++ actionInfo.name)
-                            [ el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("POST /actions/" ++ actionInfo.name))
-                            , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("Input: " ++ aliasInfo.name))
-                            ]
+                            (if workspace == AppWorkspace then
+                                actionInfo.name
+
+                             else
+                                "Action: " ++ actionInfo.name
+                            )
+                            (if workspace == AppWorkspace then
+                                []
+
+                             else
+                                [ el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("POST /actions/" ++ actionInfo.name))
+                                , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("Input: " ++ aliasInfo.name))
+                                ]
+                            )
                             []
                       ]
                     , List.map fieldInput aliasInfo.fields
@@ -3274,7 +3556,7 @@ viewActionPanel model actionInfo =
                                 , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
                                 ]
                                 { onPress = Just RunAction
-                                , label = text "Run action"
+                                , label = text (if workspace == AppWorkspace then "Continue" else "Run action")
                                 }
                             ]
                       ]
@@ -3292,7 +3574,7 @@ viewActionPanel model actionInfo =
                                     , Border.color (rgb255 226 232 239)
                                     , padding 12
                                     ]
-                                    (el [ Font.bold ] (text "Response")
+                                    (el [ Font.bold ] (text (if workspace == AppWorkspace then "Result" else "Response"))
                                         :: (response
                                                 |> Dict.toList
                                                 |> List.map
@@ -3313,31 +3595,32 @@ viewRows : Model -> Element Msg
 viewRows model =
     case ( model.selectedEntity, model.rows ) of
         ( Nothing, _ ) ->
-            paragraph [] [ text "Choose an entity from the sidebar." ]
+            paragraph [] [ text (if currentWorkspace model == AppWorkspace then "Choose something from the menu." else "Choose an entity from the sidebar.") ]
 
         ( Just _, NotAsked ) ->
             paragraph [] [ text "No data loaded yet." ]
 
         ( Just _, Loading ) ->
-            paragraph [] [ text "Loading records..." ]
+            paragraph [] [ text (if currentWorkspace model == AppWorkspace then "Loading..." else "Loading records...") ]
 
         ( Just _, Failed message ) ->
             paragraph [ Font.color (rgb255 176 60 46) ] [ text message ]
 
         ( Just entity, Loaded records ) ->
             if List.isEmpty records then
-                paragraph [] [ text "No records yet." ]
+                paragraph [] [ text (if currentWorkspace model == AppWorkspace then "Nothing here yet." else "No records yet.") ]
 
             else
                 column [ width fill, spacing 8 ]
-                    (List.map (viewRowCard entity) records)
+                    (List.map (viewRowCard (currentWorkspace model) entity) records)
 
 
-viewRowCard : Entity -> Row -> Element Msg
-viewRowCard entity rowValue =
+viewRowCard : WorkspaceMode -> Entity -> Row -> Element Msg
+viewRowCard workspace entity rowValue =
     let
         previewFields =
-            List.take 4 entity.fields
+            displayFieldsForEntity workspace entity
+                |> List.take 4
 
         summary =
             previewFields
@@ -3349,12 +3632,20 @@ viewRowCard entity rowValue =
                                     |> Maybe.map valueToString
                                     |> Maybe.withDefault "-"
                         in
-                        field.name ++ ": " ++ textValue
+                        if workspace == AppWorkspace then
+                            textValue
+
+                        else
+                            field.name ++ ": " ++ textValue
                     )
                 |> String.join "  |  "
 
-        idText =
-            rowId entity rowValue |> Maybe.withDefault "?"
+        headingText =
+            if workspace == AppWorkspace then
+                displayLabelForRow workspace entity rowValue
+
+            else
+                entity.name ++ " #" ++ (rowId entity rowValue |> Maybe.withDefault "?")
     in
     row
         [ width fill
@@ -3364,7 +3655,7 @@ viewRowCard entity rowValue =
         , padding 12
         ]
         [ column [ width fill, spacing 6 ]
-            [ el [ Font.bold ] (text (entity.name ++ " #" ++ idText))
+            [ el [ Font.bold ] (text headingText)
             , el [ Font.size 13, Font.color (rgb255 90 103 120) ] (text summary)
             ]
         , Input.button
@@ -3373,7 +3664,7 @@ viewRowCard entity rowValue =
             , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
             ]
             { onPress = Just (SelectRow rowValue)
-            , label = text "View"
+            , label = text (if workspace == AppWorkspace then "Open" else "View")
             }
         , Input.button
             [ Background.color (rgb255 223 244 238)
@@ -3398,12 +3689,16 @@ viewInspector : Model -> Element Msg
 viewInspector model =
     case model.selectedAction of
         Just actionInfo ->
-            column
-                [ width (fillPortion 2)
-                , height fill
-                , spacing 14
-                ]
-                [ viewActionInfo actionInfo ]
+            if currentWorkspace model == AppWorkspace then
+                none
+
+            else
+                column
+                    [ width (fillPortion 2)
+                    , height fill
+                    , spacing 14
+                    ]
+                    [ viewActionInfo actionInfo ]
 
         Nothing ->
             column
@@ -4160,51 +4455,119 @@ viewActionInfo actionInfo =
         ]
 
 
+appVisibleFields : Entity -> List Field
+appVisibleFields entity =
+    entity.fields
+        |> List.filter (\field -> not field.primary)
+
+
+displayFieldsForEntity : WorkspaceMode -> Entity -> List Field
+displayFieldsForEntity workspace entity =
+    if workspace == AppWorkspace then
+        let
+            visible =
+                appVisibleFields entity
+        in
+        if List.isEmpty visible then
+            entity.fields
+
+        else
+            visible
+
+    else
+        entity.fields
+
+
+displayLabelForRow : WorkspaceMode -> Entity -> Row -> String
+displayLabelForRow workspace entity rowValue =
+    let
+        preferredNames =
+            [ "name", "title", "email", "slug" ]
+
+        valueForField fieldName =
+            Dict.get fieldName rowValue
+                |> Maybe.map valueToString
+                |> Maybe.map String.trim
+
+        firstPreferred =
+            preferredNames
+                |> List.filterMap valueForField
+                |> List.filter (\value -> value /= "")
+                |> List.head
+
+        firstVisible =
+            displayFieldsForEntity workspace entity
+                |> List.filterMap
+                    (\field ->
+                        Dict.get field.name rowValue
+                            |> Maybe.map valueToString
+                            |> Maybe.map String.trim
+                    )
+                |> List.filter (\value -> value /= "")
+                |> List.head
+    in
+    case firstPreferred of
+        Just value ->
+            value
+
+        Nothing ->
+            case firstVisible of
+                Just value ->
+                    value
+
+                Nothing ->
+                    entity.name
+
+
 viewEntitySchema : Model -> Element Msg
 viewEntitySchema model =
-    let
-        rowsForEntity =
-            case model.selectedEntity of
-                Nothing ->
-                    []
+    if currentWorkspace model == AppWorkspace then
+        none
 
-                Just entity ->
-                    entity.fields
-    in
-    column
-        [ width fill
-        , spacing 8
-        , Background.color (rgb255 255 255 255)
-        , Border.rounded 14
-        , Border.width 1
-        , Border.color (rgb255 226 232 239)
-        , padding 14
-        ]
-        (el [ Font.bold, Font.size 18 ] (text "Schema")
-            :: List.map
-                (\field ->
-                    row [ width fill, spacing 8 ]
-                        [ el [ Font.bold ] (text field.name)
-                        , el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text (fieldTypeLabel field.fieldType))
-                        , if field.primary then
-                            badge "primary"
+    else
+        let
+            rowsForEntity =
+                case model.selectedEntity of
+                    Nothing ->
+                        []
 
-                          else
-                            none
-                        , if field.auto then
-                            badge "auto"
+                    Just entity ->
+                        entity.fields
+        in
+        column
+            [ width fill
+            , spacing 8
+            , Background.color (rgb255 255 255 255)
+            , Border.rounded 14
+            , Border.width 1
+            , Border.color (rgb255 226 232 239)
+            , padding 14
+            ]
+            (el [ Font.bold, Font.size 18 ] (text "Schema")
+                :: List.map
+                    (\field ->
+                        row [ width fill, spacing 8 ]
+                            [ el [ Font.bold ] (text field.name)
+                            , el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text (fieldTypeLabel field.fieldType))
+                            , if field.primary then
+                                badge "primary"
 
-                          else
-                            none
-                        , if field.optional then
-                            badge "optional"
+                              else
+                                none
+                            , if field.auto then
+                                badge "auto"
 
-                          else
-                            none
-                        ]
-                )
-                rowsForEntity
-        )
+                              else
+                                none
+                            , if field.optional then
+                                badge "optional"
+
+                              else
+                                none
+                            ]
+                    )
+                    rowsForEntity
+            )
 
 
 badge : String -> Element Msg
@@ -4234,14 +4597,28 @@ viewFormPanel model =
 formCard : Model -> Entity -> String -> Element Msg
 formCard model entity titleText =
     let
+        workspace =
+            currentWorkspace model
+
         formFields =
-            entity.fields |> List.filter (\field -> not field.primary)
+            appVisibleFields entity
 
         fieldInput field =
             Input.text [ width fill ]
                 { onChange = SetFormField field.name
                 , text = Dict.get field.name model.formValues |> Maybe.withDefault ""
-                , placeholder = Just (Input.placeholder [] (text (fieldTypeLabel field.fieldType)))
+                , placeholder =
+                    Just
+                        (Input.placeholder []
+                            (text
+                                (if workspace == AppWorkspace then
+                                    "Enter a value"
+
+                                 else
+                                    fieldTypeLabel field.fieldType
+                                )
+                            )
+                        )
                 , label = Input.labelAbove [ Font.size 12 ] (text field.name)
                 }
     in
@@ -4255,7 +4632,7 @@ formCard model entity titleText =
         , padding 14
         ]
         (List.concat
-            [ [ el [ Font.bold, Font.size 18 ] (text titleText) ]
+            [ [ el [ Font.bold, Font.size 18 ] (text (if workspace == AppWorkspace then titleText else titleText)) ]
             , List.map fieldInput formFields
             , [ row [ spacing 10 ]
                     [ Input.button
@@ -4288,27 +4665,44 @@ viewSelectedRow model =
             none
 
         Just rowValue ->
-            column
-                [ width fill
-                , spacing 8
-                , Background.color (rgb255 255 255 255)
-                , Border.rounded 14
-                , Border.width 1
-                , Border.color (rgb255 226 232 239)
-                , padding 14
-                ]
-                (el [ Font.bold, Font.size 18 ] (text "Record detail")
-                    :: (rowValue
-                            |> Dict.toList
-                            |> List.map
-                                (\( key, value ) ->
-                                    row [ width fill, spacing 8 ]
-                                        [ el [ Font.bold ] (text key)
-                                        , paragraph [ Font.size 13, Font.color (rgb255 82 92 108) ] [ text (valueToString value) ]
-                                        ]
-                                )
-                       )
-                )
+            case model.selectedEntity of
+                Nothing ->
+                    none
+
+                Just entity ->
+                    let
+                        workspace =
+                            currentWorkspace model
+
+                        visibleFieldNames =
+                            displayFieldsForEntity workspace entity
+                                |> List.map .name
+
+                        visibleRows =
+                            rowValue
+                                |> Dict.toList
+                                |> List.filter (\( key, _ ) -> List.member key visibleFieldNames)
+                    in
+                    column
+                        [ width fill
+                        , spacing 8
+                        , Background.color (rgb255 255 255 255)
+                        , Border.rounded 14
+                        , Border.width 1
+                        , Border.color (rgb255 226 232 239)
+                        , padding 14
+                        ]
+                        (el [ Font.bold, Font.size 18 ] (text (if workspace == AppWorkspace then "Details" else "Record detail"))
+                            :: (visibleRows
+                                    |> List.map
+                                        (\( key, value ) ->
+                                            row [ width fill, spacing 8 ]
+                                                [ el [ Font.bold ] (text key)
+                                                , paragraph [ Font.size 13, Font.color (rgb255 82 92 108) ] [ text (valueToString value) ]
+                                                ]
+                                        )
+                               )
+                        )
 
 
 httpErrorToString : Http.Error -> String
