@@ -2782,9 +2782,7 @@ viewAuthToolsPanel model =
                                 ]
 
                         AuthStageSession ->
-                            [ "Your current session is active."
-                            , "Use the actions below to verify or end it."
-                            ]
+                            []
 
             authFlowStepRow : Int -> String -> Element Msg
             authFlowStepRow index description =
@@ -2800,10 +2798,7 @@ viewAuthToolsPanel model =
                 else
                     case activeScope of
                         AppAuthScope ->
-                            if authStage == AuthStageSession then
-                                "Session actions use the same authentication scope as the rest of the admin."
-
-                            else if firstAdminMode then
+                            if firstAdminMode then
                                 "Complete first admin setup with the same email and login code."
 
                             else
