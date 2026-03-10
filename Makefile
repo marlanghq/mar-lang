@@ -3,7 +3,7 @@ GO_MIN_VERSION := 1.26
 ELM_REQUIRED_VERSION := 0.19.1
 GO_VERSION := $(shell go version | awk '{print $$3}' 2>/dev/null | sed 's/^go//')
 
-.PHONY: all check check-go check-elm check-elm-live check-python3 check-node check-npx admin website website-serve website-dev vscode-plugin compiler-assets mar test clean distclean
+.PHONY: all check check-go check-elm check-elm-live check-python3 check-node check-npm check-npx admin website website-serve website-dev vscode-plugin compiler-assets mar test clean distclean
 
 define print_title
 	@sh -c 'if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "\n%s\n" "$(1)"; else printf "\n\033[1;36m%s\033[0m\n" "$(1)"; fi'
@@ -98,6 +98,14 @@ check-node:
 		exit 1; \
 	}
 
+check-npm: check-node
+	@command -v npm >/dev/null 2>&1 || { \
+		printf "\n"; \
+		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "%s\n" "npm is required to package the VS Code extension. Install Node.js and try again."; else printf "\033[1;31m%s\033[0m\n" "npm is required to package the VS Code extension. Install Node.js and try again."; fi; \
+		printf "\n"; \
+		exit 1; \
+	}
+
 check-npx: check-node
 	@command -v npx >/dev/null 2>&1 || { \
 		printf "\n"; \
@@ -142,8 +150,9 @@ website-dev: check-elm check-elm-live
 	$(call print_info,Press Ctrl+C to stop)
 	@cd website && elm-live src/Main.elm --dir=. --port=8080 --open -- --output=dist/app.js
 
-vscode-plugin: check-npx
+vscode-plugin: check-npx check-npm
 	$(call print_title,VS Code extension)
+	$(call print_info,Installing vscode-mar dependencies with npm ci)
 	$(call print_info,Packaging vscode-mar into a .vsix)
 	@cd vscode-mar && sh -c '\
 		publisher=$$(node -p "require(\"./package.json\").publisher"); \
@@ -151,6 +160,7 @@ vscode-plugin: check-npx
 		version=$$(node -p "require(\"./package.json\").version"); \
 		out="../dist/vscode/$$publisher.$$name-$$version.vsix"; \
 		mkdir -p ../dist/vscode; \
+		install_output=$$(npm ci --no-audit --no-fund 2>&1) || { printf "%s\n" "$$install_output"; exit 1; }; \
 		output=$$(npx @vscode/vsce package --out "$$out" 2>&1) || { printf "%s\n" "$$output"; exit 1; }; \
 		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then \
 			printf "  %s\n" "Output: $${out#../}"; \
