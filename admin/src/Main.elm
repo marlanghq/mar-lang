@@ -114,11 +114,11 @@ type alias PendingDelete =
 
 
 type Msg
-    = GotSchema (Result Http.Error Schema)
+    = GotSchema (Result ApiHttpError Schema)
     | SelectEntity String
     | SelectAction String
     | ReloadRows
-    | GotRows (Result Http.Error (List Row))
+    | GotRows (Result ApiHttpError (List Row))
     | SelectPerformance
     | SelectRequestLogs
     | SelectDatabase
@@ -126,27 +126,27 @@ type Msg
     | ReloadPerformance
     | ToggleMonitoringVersionDetails
     | ReloadRequestLogs
-    | GotPerformance (Result Http.Error PerfPayload)
-    | GotAdminVersion (Result Http.Error AdminVersionPayload)
-    | GotRequestLogs (Result Http.Error RequestLogsPayload)
-    | GotBackups (Result Http.Error BackupsPayload)
+    | GotPerformance (Result ApiHttpError PerfPayload)
+    | GotAdminVersion (Result ApiHttpError AdminVersionPayload)
+    | GotRequestLogs (Result ApiHttpError RequestLogsPayload)
+    | GotBackups (Result ApiHttpError BackupsPayload)
     | TriggerBackup
-    | GotBackup (Result Http.Error BackupResponse)
+    | GotBackup (Result ApiHttpError BackupResponse)
     | SetAuthEmail String
     | SetAuthCode String
     | BackToAuthEmail
     | SwitchWorkspace WorkspaceMode
     | SetActionField String String
     | RequestAuthCode
-    | GotRequestAuthCode AuthScope (Result Http.Error RequestCodeResponse)
+    | GotRequestAuthCode AuthScope (Result ApiHttpError RequestCodeResponse)
     | BootstrapFirstAdmin
-    | GotBootstrapFirstAdmin AuthScope (Result Http.Error RequestCodeResponse)
+    | GotBootstrapFirstAdmin AuthScope (Result ApiHttpError RequestCodeResponse)
     | LoginWithCode
-    | GotLoginWithCode AuthScope (Result Http.Error LoginResponse)
+    | GotLoginWithCode AuthScope (Result ApiHttpError LoginResponse)
     | LoadAuthMe
-    | GotAuthMe AuthScope (Result Http.Error AuthMeResponse)
+    | GotAuthMe AuthScope (Result ApiHttpError AuthMeResponse)
     | LogoutSession
-    | GotLogoutSession AuthScope (Result Http.Error ())
+    | GotLogoutSession AuthScope (Result ApiHttpError ())
     | ToggleAuthTools
     | SelectRow Row
     | StartCreate
@@ -154,15 +154,30 @@ type Msg
     | CancelForm
     | SetFormField String String
     | SubmitForm
-    | GotCreate (Result Http.Error Row)
-    | GotUpdate (Result Http.Error Row)
+    | GotCreate (Result ApiHttpError Row)
+    | GotUpdate (Result ApiHttpError Row)
     | RequestDeleteRow Row
     | ConfirmDelete
     | CancelDelete
-    | GotDelete (Result Http.Error ())
+    | GotDelete (Result ApiHttpError ())
     | RunAction
-    | GotRunAction (Result Http.Error Row)
+    | GotRunAction (Result ApiHttpError Row)
     | ClearFlash
+
+
+type ApiHttpError
+    = ApiBadUrl String
+    | ApiTimeout
+    | ApiNetworkError
+    | ApiBadResponse ApiErrorPayload
+    | ApiBadBody String
+
+
+type alias ApiErrorPayload =
+    { statusCode : Int
+    , errorCode : Maybe String
+    , message : String
+    }
 
 
 type alias RequestCodeResponse =
@@ -827,15 +842,6 @@ update msg model =
         GotAuthMe scope result ->
             case result of
                 Ok response ->
-                    let
-                        roleText =
-                            case response.role of
-                                Just role ->
-                                    " (role: " ++ role ++ ")"
-
-                                Nothing ->
-                                    ""
-                    in
                     case scope of
                         AppAuthScope ->
                             let
@@ -1473,7 +1479,7 @@ runAction model actionInfo payload =
         }
 
 
-expectJsonWithApiError : (Result Http.Error a -> msg) -> Decode.Decoder a -> Http.Expect msg
+expectJsonWithApiError : (Result ApiHttpError a -> msg) -> Decode.Decoder a -> Http.Expect msg
 expectJsonWithApiError toMsg decoder =
     Http.expectStringResponse toMsg
         (\response ->
@@ -1484,23 +1490,23 @@ expectJsonWithApiError toMsg decoder =
                             Ok value
 
                         Err decodeError ->
-                            Err (Http.BadBody ("Failed to decode response: " ++ Decode.errorToString decodeError))
+                            Err (ApiBadBody ("Failed to decode response: " ++ Decode.errorToString decodeError))
 
                 Http.BadStatus_ metadata body ->
-                    Err (Http.BadBody (apiErrorMessage metadata.statusCode body))
+                    Err (ApiBadResponse (apiErrorPayload metadata.statusCode body))
 
                 Http.BadUrl_ url ->
-                    Err (Http.BadUrl url)
+                    Err (ApiBadUrl url)
 
                 Http.Timeout_ ->
-                    Err Http.Timeout
+                    Err ApiTimeout
 
                 Http.NetworkError_ ->
-                    Err Http.NetworkError
+                    Err ApiNetworkError
         )
 
 
-expectUnitWithApiError : (Result Http.Error () -> msg) -> Http.Expect msg
+expectUnitWithApiError : (Result ApiHttpError () -> msg) -> Http.Expect msg
 expectUnitWithApiError toMsg =
     Http.expectStringResponse toMsg
         (\response ->
@@ -1509,39 +1515,51 @@ expectUnitWithApiError toMsg =
                     Ok ()
 
                 Http.BadStatus_ metadata body ->
-                    Err (Http.BadBody (apiErrorMessage metadata.statusCode body))
+                    Err (ApiBadResponse (apiErrorPayload metadata.statusCode body))
 
                 Http.BadUrl_ url ->
-                    Err (Http.BadUrl url)
+                    Err (ApiBadUrl url)
 
                 Http.Timeout_ ->
-                    Err Http.Timeout
+                    Err ApiTimeout
 
                 Http.NetworkError_ ->
-                    Err Http.NetworkError
+                    Err ApiNetworkError
         )
 
 
-apiErrorMessage : Int -> String -> String
-apiErrorMessage statusCode body =
+apiErrorPayload : Int -> String -> ApiErrorPayload
+apiErrorPayload statusCode body =
     let
         fallback =
-            "HTTP error: " ++ String.fromInt statusCode
+            { statusCode = statusCode
+            , errorCode = Nothing
+            , message = "HTTP error: " ++ String.fromInt statusCode
+            }
     in
     case Decode.decodeString apiErrorDecoder body of
-        Ok message ->
-            message
+        Ok payload ->
+            { payload | statusCode = statusCode }
 
         Err _ ->
             fallback
 
 
-apiErrorDecoder : Decode.Decoder String
+apiErrorDecoder : Decode.Decoder ApiErrorPayload
 apiErrorDecoder =
-    Decode.oneOf
-        [ Decode.field "error" Decode.string
-        , Decode.field "message" Decode.string
-        ]
+    Decode.map3 ApiErrorPayload
+        (Decode.succeed 0)
+        (Decode.oneOf
+            [ Decode.field "errorCode" (Decode.map Just Decode.string)
+            , Decode.field "errorCode" (Decode.null Nothing)
+            , Decode.succeed Nothing
+            ]
+        )
+        (Decode.oneOf
+            [ Decode.field "error" Decode.string
+            , Decode.field "message" Decode.string
+            ]
+        )
 
 
 requestCodeDecoder : Decode.Decoder RequestCodeResponse
@@ -3486,11 +3504,11 @@ saveSessionFromModel model =
         )
 
 
-isUnauthorizedError : Http.Error -> Bool
+isUnauthorizedError : ApiHttpError -> Bool
 isUnauthorizedError httpError =
     case httpError of
-        Http.BadBody message ->
-            String.contains "HTTP error: 401" message
+        ApiBadResponse payload ->
+            payload.statusCode == 401 || payload.errorCode == Just "auth_required"
 
         _ ->
             False
@@ -5057,60 +5075,58 @@ networkErrorMessage =
     "We could not connect right now. Please try again in a moment."
 
 
-httpErrorToString : Model -> Http.Error -> String
+httpErrorToString : Model -> ApiHttpError -> String
 httpErrorToString model httpError =
     case httpError of
-        Http.BadUrl message ->
+        ApiBadUrl message ->
             "Bad URL: " ++ message
 
-        Http.Timeout ->
+        ApiTimeout ->
             "Request timeout"
 
-        Http.NetworkError ->
+        ApiNetworkError ->
             networkErrorMessage
 
-        Http.BadStatus statusCode ->
-            "HTTP error: " ++ String.fromInt statusCode
+        ApiBadResponse payload ->
+            payload.message
 
-        Http.BadBody message ->
+        ApiBadBody message ->
             message
 
 
-authRequestCodeErrorToString : Model -> Http.Error -> String
+authRequestCodeErrorToString : Model -> ApiHttpError -> String
 authRequestCodeErrorToString model httpError =
     case httpError of
-        Http.Timeout ->
+        ApiTimeout ->
             "We could not send the code in time. Please try again."
 
-        Http.NetworkError ->
+        ApiNetworkError ->
             networkErrorMessage
 
-        Http.BadBody message ->
-            if String.contains "Too many request-code attempts" message then
-                "You requested too many codes. Please wait a minute and try again."
+        ApiBadResponse payload ->
+            payload.message
 
-            else
-                message
+        ApiBadBody message ->
+            message
 
         _ ->
             httpErrorToString model httpError
 
 
-authLoginErrorToString : Model -> Http.Error -> String
+authLoginErrorToString : Model -> ApiHttpError -> String
 authLoginErrorToString model httpError =
     case httpError of
-        Http.Timeout ->
+        ApiTimeout ->
             "We could not complete the sign-in in time. Please try again."
 
-        Http.NetworkError ->
+        ApiNetworkError ->
             networkErrorMessage
 
-        Http.BadBody message ->
-            if String.contains "Invalid or expired code" message then
-                "That code is invalid or expired. Request a new one and try again."
+        ApiBadResponse payload ->
+            payload.message
 
-            else
-                message
+        ApiBadBody message ->
+            message
 
         _ ->
             httpErrorToString model httpError

@@ -59,6 +59,7 @@ type authSession struct {
 
 type apiError struct {
 	Status  int
+	Code    string
 	Message string
 	Details map[string]any
 }
@@ -76,6 +77,41 @@ const (
 // Error implements error for API-layer errors that carry HTTP metadata.
 func (e *apiError) Error() string {
 	return e.Message
+}
+
+func newAPIError(status int, code, message string) *apiError {
+	return &apiError{
+		Status:  status,
+		Code:    strings.TrimSpace(code),
+		Message: message,
+	}
+}
+
+func defaultAPIErrorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "bad_request"
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusMethodNotAllowed:
+		return "method_not_allowed"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusRequestEntityTooLarge:
+		return "request_too_large"
+	case http.StatusUnprocessableEntity:
+		return "validation_failed"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	case http.StatusInternalServerError:
+		return "internal_error"
+	default:
+		return "request_failed"
+	}
 }
 
 // New builds a runtime from an app model, compiles expressions, and applies migrations.
@@ -300,26 +336,26 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 
 	if method == http.MethodGet && path == "/_mar/perf" {
 		if !r.authEnabled() {
-			return &apiError{Status: http.StatusNotFound, Message: "Authentication is not enabled"}
+			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
 		}
 		if !auth.Authenticated {
-			return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
+			return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
 		}
 		if !isAdminRole(auth.Role) {
-			return &apiError{Status: http.StatusForbidden, Message: "Admin role required"}
+			return newAPIError(http.StatusForbidden, "admin_role_required", "Admin role required")
 		}
 		r.writeJSON(w, http.StatusOK, r.perfPayload())
 		return nil
 	}
 	if method == http.MethodGet && path == "/_mar/version/admin" {
 		if !r.authEnabled() {
-			return &apiError{Status: http.StatusNotFound, Message: "Authentication is not enabled"}
+			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
 		}
 		if !auth.Authenticated {
-			return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
+			return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
 		}
 		if !isAdminRole(auth.Role) {
-			return &apiError{Status: http.StatusForbidden, Message: "Admin role required"}
+			return newAPIError(http.StatusForbidden, "admin_role_required", "Admin role required")
 		}
 		r.writeJSON(w, http.StatusOK, r.adminVersionPayload())
 		return nil
@@ -327,13 +363,13 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 
 	if method == http.MethodGet && path == "/_mar/request-logs" {
 		if !r.authEnabled() {
-			return &apiError{Status: http.StatusNotFound, Message: "Authentication is not enabled"}
+			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
 		}
 		if !auth.Authenticated {
-			return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
+			return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
 		}
 		if !isAdminRole(auth.Role) {
-			return &apiError{Status: http.StatusForbidden, Message: "Admin role required"}
+			return newAPIError(http.StatusForbidden, "admin_role_required", "Admin role required")
 		}
 
 		limit := parsePositiveInt(req.URL.Query().Get("limit"), 50)
@@ -352,13 +388,13 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 
 	if method == http.MethodPost && (path == "/_mar/backups" || path == "/_mar/backup") {
 		if !r.authEnabled() {
-			return &apiError{Status: http.StatusNotFound, Message: "Authentication is not enabled"}
+			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
 		}
 		if !auth.Authenticated {
-			return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
+			return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
 		}
 		if !isAdminRole(auth.Role) {
-			return &apiError{Status: http.StatusForbidden, Message: "Admin role required"}
+			return newAPIError(http.StatusForbidden, "admin_role_required", "Admin role required")
 		}
 		result, err := CreateSQLiteBackup(r.App.Database, 20)
 		if err != nil {
@@ -375,13 +411,13 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 	}
 	if method == http.MethodGet && path == "/_mar/backups" {
 		if !r.authEnabled() {
-			return &apiError{Status: http.StatusNotFound, Message: "Authentication is not enabled"}
+			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
 		}
 		if !auth.Authenticated {
-			return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
+			return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
 		}
 		if !isAdminRole(auth.Role) {
-			return &apiError{Status: http.StatusForbidden, Message: "Admin role required"}
+			return newAPIError(http.StatusForbidden, "admin_role_required", "Admin role required")
 		}
 		backups, err := ListSQLiteBackups(r.App.Database, 100)
 		if err != nil {
@@ -407,10 +443,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 				return err
 			}
 			if !r.authRateLimit.allowRequestCode(req, email) {
-				return &apiError{
-					Status:  http.StatusTooManyRequests,
-					Message: "Too many request-code attempts. Try again in one minute.",
-				}
+				return newAPIError(http.StatusTooManyRequests, "rate_limit_request_code", "You requested too many codes. Please wait a minute and try again.")
 			}
 			return r.handleAuthRequestCode(w, requestID, payload)
 		case method == http.MethodPost && path == "/auth/login":
@@ -423,17 +456,14 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 				return err
 			}
 			if !r.authRateLimit.allowLogin(req, email) {
-				return &apiError{
-					Status:  http.StatusTooManyRequests,
-					Message: "Too many login attempts. Try again in one minute.",
-				}
+				return newAPIError(http.StatusTooManyRequests, "rate_limit_login", "Too many sign-in attempts. Please wait a minute and try again.")
 			}
 			return r.handleAuthLogin(w, req, requestID, payload)
 		case method == http.MethodPost && path == "/auth/logout":
 			return r.handleAuthLogout(w, req, requestID, auth)
 		case method == http.MethodGet && path == "/auth/me":
 			if !auth.Authenticated {
-				return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
+				return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
 			}
 			r.writeJSON(w, http.StatusOK, map[string]any{
 				"authenticated": true,
@@ -449,10 +479,10 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 	if strings.HasPrefix(path, "/actions/") {
 		name := strings.TrimPrefix(path, "/actions/")
 		if name == "" || strings.Contains(name, "/") {
-			return &apiError{Status: http.StatusNotFound, Message: "Route not found"}
+			return newAPIError(http.StatusNotFound, "route_not_found", "Route not found")
 		}
 		if method != http.MethodPost {
-			return &apiError{Status: http.StatusMethodNotAllowed, Message: "Method not allowed"}
+			return newAPIError(http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 		}
 		payload, err := readJSONBody(req)
 		if err != nil {
@@ -485,7 +515,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 			}
 			id, ok := parsePrimaryValue(entity, rawID)
 			if !ok {
-				return &apiError{Status: http.StatusBadRequest, Message: fmt.Sprintf("Invalid %s", entity.PrimaryKey)}
+				return newAPIError(http.StatusBadRequest, "invalid_primary_key", fmt.Sprintf("Invalid %s", entity.PrimaryKey))
 			}
 
 			switch method {
@@ -507,7 +537,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		return err
 	}
 
-	return &apiError{Status: http.StatusNotFound, Message: "Route not found"}
+	return newAPIError(http.StatusNotFound, "route_not_found", "Route not found")
 }
 
 func (r *Runtime) writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -517,12 +547,20 @@ func (r *Runtime) writeJSON(w http.ResponseWriter, status int, payload any) {
 // writeError converts internal errors into consistent JSON API responses.
 func (r *Runtime) writeError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
+	code := defaultAPIErrorCode(status)
 	msg := err.Error()
-	payload := map[string]any{"error": msg}
+	payload := map[string]any{"error": msg, "message": msg, "errorCode": code}
 	var apiErr *apiError
 	if errors.As(err, &apiErr) {
 		status = apiErr.Status
+		if strings.TrimSpace(apiErr.Code) != "" {
+			code = apiErr.Code
+		} else {
+			code = defaultAPIErrorCode(status)
+		}
 		payload["error"] = apiErr.Message
+		payload["message"] = apiErr.Message
+		payload["errorCode"] = code
 		if len(apiErr.Details) > 0 {
 			payload["details"] = apiErr.Details
 		}

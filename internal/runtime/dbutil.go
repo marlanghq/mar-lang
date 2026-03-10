@@ -26,19 +26,19 @@ func readJSONBody(req *http.Request) (map[string]any, error) {
 	if err != nil {
 		var maxBodyErr *http.MaxBytesError
 		if errors.As(err, &maxBodyErr) {
-			return nil, &apiError{Status: http.StatusRequestEntityTooLarge, Message: "Request body too large"}
+			return nil, newAPIError(http.StatusRequestEntityTooLarge, "request_too_large", "Request body too large")
 		}
-		return nil, &apiError{Status: http.StatusBadRequest, Message: "failed to read body"}
+		return nil, newAPIError(http.StatusBadRequest, "request_body_read_failed", "Failed to read request body")
 	}
 	if strings.TrimSpace(string(body)) == "" {
 		return map[string]any{}, nil
 	}
 	var out map[string]any
 	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, &apiError{Status: http.StatusBadRequest, Message: "Invalid JSON body"}
+		return nil, newAPIError(http.StatusBadRequest, "invalid_json_body", "Invalid JSON body")
 	}
 	if out == nil {
-		return nil, &apiError{Status: http.StatusBadRequest, Message: "JSON body must be an object"}
+		return nil, newAPIError(http.StatusBadRequest, "json_body_must_be_object", "JSON body must be an object")
 	}
 	return out, nil
 }

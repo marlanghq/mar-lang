@@ -44,7 +44,7 @@ func TestParseAuthEmailReturnsFriendlyErrors(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected apiError, got %T", err)
 	}
-	if apiErr.Status != 400 || apiErr.Message != "email is required" {
+	if apiErr.Status != 400 || apiErr.Code != "email_required" || apiErr.Message != "Email is required." {
 		t.Fatalf("unexpected apiError: %+v", apiErr)
 	}
 
@@ -56,7 +56,7 @@ func TestParseAuthEmailReturnsFriendlyErrors(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected apiError, got %T", err)
 	}
-	if apiErr.Status != 400 || !strings.Contains(apiErr.Message, "invalid email") {
+	if apiErr.Status != 400 || apiErr.Code != "invalid_email" || !strings.Contains(apiErr.Message, "invalid email") {
 		t.Fatalf("unexpected apiError: %+v", apiErr)
 	}
 }

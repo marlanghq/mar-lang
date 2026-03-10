@@ -42,8 +42,11 @@ func TestAuthRequestCodeRateLimitUsesDefaultPerMinute(t *testing.T) {
 	if blocked.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 after hitting request-code limit, got %d body=%s", blocked.Code, blocked.Body.String())
 	}
-	if !strings.Contains(blocked.Body.String(), "Too many request-code attempts") {
+	if !strings.Contains(blocked.Body.String(), "You requested too many codes. Please wait a minute and try again.") {
 		t.Fatalf("expected request-code rate-limit message, got %s", blocked.Body.String())
+	}
+	if !strings.Contains(blocked.Body.String(), `"errorCode":"rate_limit_request_code"`) {
+		t.Fatalf("expected request-code rate-limit error code, got %s", blocked.Body.String())
 	}
 }
 
@@ -68,8 +71,11 @@ func TestAuthLoginRateLimitUsesDefaultPerMinute(t *testing.T) {
 	if blocked.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 after hitting login limit, got %d body=%s", blocked.Code, blocked.Body.String())
 	}
-	if !strings.Contains(blocked.Body.String(), "Too many login attempts") {
+	if !strings.Contains(blocked.Body.String(), "Too many sign-in attempts. Please wait a minute and try again.") {
 		t.Fatalf("expected login rate-limit message, got %s", blocked.Body.String())
+	}
+	if !strings.Contains(blocked.Body.String(), `"errorCode":"rate_limit_login"`) {
+		t.Fatalf("expected login rate-limit error code, got %s", blocked.Body.String())
 	}
 }
 

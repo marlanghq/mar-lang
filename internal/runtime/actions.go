@@ -13,33 +13,33 @@ import (
 func (r *Runtime) handleAction(w http.ResponseWriter, requestID, actionName string, auth authSession, payload map[string]any) error {
 	action := r.actionsByName[actionName]
 	if action == nil {
-		return &apiError{Status: http.StatusNotFound, Message: "Action not found"}
+		return newAPIError(http.StatusNotFound, "action_not_found", "Action not found")
 	}
 	alias := r.aliasesByName[action.InputAlias]
 	if alias == nil {
-		return &apiError{Status: http.StatusInternalServerError, Message: fmt.Sprintf("Action %s is misconfigured: missing input alias %s", action.Name, action.InputAlias)}
+		return newAPIError(http.StatusInternalServerError, "action_misconfigured", fmt.Sprintf("Action %s is misconfigured: missing input alias %s", action.Name, action.InputAlias))
 	}
 
 	input, err := normalizeActionInput(alias, payload)
 	if err != nil {
-		return &apiError{Status: http.StatusBadRequest, Message: err.Error()}
+		return newAPIError(http.StatusBadRequest, "invalid_action_input", err.Error())
 	}
 
 	statements := make([]sqlitecli.Statement, 0, len(action.Steps))
 	for _, step := range action.Steps {
 		entity := r.entitiesByName[step.Entity]
 		if entity == nil {
-			return &apiError{Status: http.StatusInternalServerError, Message: fmt.Sprintf("Action %s references unknown entity %s", action.Name, step.Entity)}
+			return newAPIError(http.StatusInternalServerError, "action_misconfigured", fmt.Sprintf("Action %s references unknown entity %s", action.Name, step.Entity))
 		}
 
 		stepPayload, err := resolveActionStepValues(step, input)
 		if err != nil {
-			return &apiError{Status: http.StatusBadRequest, Message: err.Error()}
+			return newAPIError(http.StatusBadRequest, "invalid_action_input", err.Error())
 		}
 
 		insert, err := buildInsert(entity, stepPayload)
 		if err != nil {
-			return &apiError{Status: http.StatusBadRequest, Message: fmt.Sprintf("Action %s step create %s: %s", action.Name, entity.Name, err.Error())}
+			return newAPIError(http.StatusBadRequest, "invalid_action_input", fmt.Sprintf("Action %s step create %s: %s", action.Name, entity.Name, err.Error()))
 		}
 		if err := r.ensureAuthorized(entity, "create", auth, insert.Context); err != nil {
 			return err

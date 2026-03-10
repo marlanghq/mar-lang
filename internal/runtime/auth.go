@@ -242,11 +242,11 @@ func (r *Runtime) countAuthUsersByRole(requestID, role string) (int64, error) {
 func parseAuthEmail(payload map[string]any) (string, error) {
 	emailRaw, ok := payload["email"].(string)
 	if !ok {
-		return "", &apiError{Status: http.StatusBadRequest, Message: "email is required"}
+		return "", newAPIError(http.StatusBadRequest, "email_required", "Email is required.")
 	}
 	email, err := normalizeAndValidateEmail(emailRaw)
 	if err != nil {
-		return "", &apiError{Status: http.StatusBadRequest, Message: err.Error()}
+		return "", newAPIError(http.StatusBadRequest, "invalid_email", err.Error())
 	}
 	return email, nil
 }
@@ -279,7 +279,7 @@ func (r *Runtime) handleAuthRequestCode(w http.ResponseWriter, requestID string,
 func (r *Runtime) handleBootstrapAdmin(w http.ResponseWriter, requestID string, payload map[string]any) error {
 	cfg := r.authConfig()
 	if strings.TrimSpace(cfg.RoleField) == "" {
-		return &apiError{Status: http.StatusBadRequest, Message: "auth.role_field is required for admin bootstrap"}
+		return newAPIError(http.StatusBadRequest, "bootstrap_role_field_required", "auth.role_field is required for admin bootstrap")
 	}
 
 	totalUsers, err := r.countAuthUsers(requestID)
@@ -287,7 +287,7 @@ func (r *Runtime) handleBootstrapAdmin(w http.ResponseWriter, requestID string, 
 		return err
 	}
 	if totalUsers > 0 {
-		return &apiError{Status: http.StatusConflict, Message: "Bootstrap is only allowed when there are no users"}
+		return newAPIError(http.StatusConflict, "bootstrap_not_allowed", "Bootstrap is only allowed when there are no users")
 	}
 
 	email, err := parseAuthEmail(payload)
@@ -300,7 +300,7 @@ func (r *Runtime) handleBootstrapAdmin(w http.ResponseWriter, requestID string, 
 		return err
 	}
 	if !found {
-		return &apiError{Status: http.StatusUnprocessableEntity, Message: "Could not create first user. Add optional/default fields or create one manually."}
+		return newAPIError(http.StatusUnprocessableEntity, "bootstrap_user_creation_failed", "Could not create first user. Add optional/default fields or create one manually.")
 	}
 	userID := user["id"]
 	if r.usesAppAuthEntity() {
@@ -486,11 +486,11 @@ func (r *Runtime) handleAuthLogin(w http.ResponseWriter, req *http.Request, requ
 	}
 	codeRaw, ok := payload["code"].(string)
 	if !ok {
-		return &apiError{Status: http.StatusBadRequest, Message: "code is required"}
+		return newAPIError(http.StatusBadRequest, "code_required", "Code is required.")
 	}
 	code := strings.TrimSpace(codeRaw)
 	if code == "" {
-		return &apiError{Status: http.StatusBadRequest, Message: "code is required"}
+		return newAPIError(http.StatusBadRequest, "code_required", "Code is required.")
 	}
 
 	row, ok, err := queryRowForRequest(r.DB, requestID, `SELECT id, user_id, code, grant_role, expires_at, used FROM mar_auth_codes WHERE email = ? ORDER BY id DESC LIMIT 1`, email)
@@ -499,13 +499,13 @@ func (r *Runtime) handleAuthLogin(w http.ResponseWriter, req *http.Request, requ
 	}
 	now := time.Now().UnixMilli()
 	if !ok {
-		return &apiError{Status: http.StatusUnauthorized, Message: "Invalid or expired code"}
+		return newAPIError(http.StatusUnauthorized, "invalid_or_expired_code", "That code is invalid or expired. Request a new one and try again.")
 	}
 	used, _ := toInt64(row["used"])
 	expiresAt, _ := toInt64(row["expires_at"])
 	storedCode, _ := row["code"].(string)
 	if used == 1 || expiresAt < now || !storedSecretMatches(storedCode, code) {
-		return &apiError{Status: http.StatusUnauthorized, Message: "Invalid or expired code"}
+		return newAPIError(http.StatusUnauthorized, "invalid_or_expired_code", "That code is invalid or expired. Request a new one and try again.")
 	}
 	codeID, _ := toInt64(row["id"])
 	userID := row["user_id"]
@@ -519,7 +519,7 @@ func (r *Runtime) handleAuthLogin(w http.ResponseWriter, req *http.Request, requ
 		return err
 	}
 	if !found {
-		return &apiError{Status: http.StatusUnauthorized, Message: "Invalid or expired code"}
+		return newAPIError(http.StatusUnauthorized, "invalid_or_expired_code", "That code is invalid or expired. Request a new one and try again.")
 	}
 
 	if strings.EqualFold(strings.TrimSpace(grantRole), "admin") {
@@ -612,7 +612,7 @@ func (r *Runtime) promoteAuthUserToAdmin(requestID string, user map[string]any) 
 // handleAuthLogout revokes the caller session token.
 func (r *Runtime) handleAuthLogout(w http.ResponseWriter, req *http.Request, requestID string, auth authSession) error {
 	if !auth.Authenticated || auth.Token == "" {
-		return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
+		return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
 	}
 	if _, err := r.DB.ExecTagged(requestID, `UPDATE mar_sessions SET revoked = 1 WHERE token = ? OR token = ?`, auth.Token, hashAuthSecret(auth.Token)); err != nil {
 		return err

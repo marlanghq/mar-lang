@@ -707,9 +707,25 @@ hero =
                     }
                 , text "."
                 ]
-            , wrappedRow [ spacing 10, paddingEach { top = 6, right = 0, bottom = 0, left = 0 } ]
-                [ primaryButton "Get Started" (routeHref GettingStarted)
-                , secondaryButton "Advanced Guide" (routeHref AdvancedGuide)
+            , column [ width fill, spacing 10, paddingEach { top = 6, right = 0, bottom = 0, left = 0 } ]
+                [ link
+                    (buttonAttributes
+                        (rgb255 45 126 210)
+                        (rgb255 245 250 255)
+                        ++ [ width (fill |> maximum 260), centerX ]
+                    )
+                    { url = routeHref GettingStarted
+                    , label = text "Get Started"
+                    }
+                , link
+                    (buttonAttributes
+                        (rgb255 230 239 250)
+                        (rgb255 36 82 132)
+                        ++ [ width (fill |> maximum 260), centerX ]
+                    )
+                    { url = routeHref AdvancedGuide
+                    , label = text "Advanced Guide"
+                    }
                 ]
             ]
         ]
@@ -803,7 +819,7 @@ downloadInstallRow =
             [ stepBadge "1"
             , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Download")
             ]
-        , instructionText "Mar is currently in a closed alpha stage and is not available for general use yet."
+        , instructionText "Mar is currently in a closed alpha stage and is not available to the general public yet."
         ]
 
 
@@ -1222,20 +1238,38 @@ sectionNavItem current target label =
 advancedPager : Maybe Route -> Maybe Route -> Element Msg
 advancedPager previous next =
     panel
-        [ wrappedRow
+        [ column
             [ width fill
-            , spacing 12
+            , spacing 10
             ]
             (List.concat
                 [ case previous of
                     Just route ->
-                        [ secondaryButton ("Previous: " ++ routeLabel route) (routeHref route) ]
+                        [ link
+                            (buttonAttributes
+                                (rgb255 230 239 250)
+                                (rgb255 36 82 132)
+                                ++ [ width (fill |> maximum 320), centerX ]
+                            )
+                            { url = routeHref route
+                            , label = text ("Previous: " ++ routeLabel route)
+                            }
+                        ]
 
                     Nothing ->
                         []
                 , case next of
                     Just route ->
-                        [ primaryButton ("Next: " ++ routeLabel route) (routeHref route) ]
+                        [ link
+                            (buttonAttributes
+                                (rgb255 45 126 210)
+                                (rgb255 245 250 255)
+                                ++ [ width (fill |> maximum 320), centerX ]
+                            )
+                            { url = routeHref route
+                            , label = text ("Next: " ++ routeLabel route)
+                            }
+                        ]
 
                     Nothing ->
                         []

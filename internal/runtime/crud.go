@@ -37,7 +37,7 @@ func (r *Runtime) handleGet(w http.ResponseWriter, requestID string, entity *mod
 		return err
 	}
 	if !ok {
-		return &apiError{Status: http.StatusNotFound, Message: entity.Name + " not found"}
+		return newAPIError(http.StatusNotFound, "entity_not_found", entity.Name+" not found")
 	}
 	decoded := decodeEntityRow(entity, row)
 	if err := r.ensureAuthorized(entity, "get", auth, decoded); err != nil {
@@ -54,7 +54,7 @@ func (r *Runtime) handleDelete(w http.ResponseWriter, requestID string, entity *
 		return err
 	}
 	if !ok {
-		return &apiError{Status: http.StatusNotFound, Message: entity.Name + " not found"}
+		return newAPIError(http.StatusNotFound, "entity_not_found", entity.Name+" not found")
 	}
 	decoded := decodeEntityRow(entity, row)
 	if err := r.ensureAuthorized(entity, "delete", auth, decoded); err != nil {
@@ -68,7 +68,7 @@ func (r *Runtime) handleDelete(w http.ResponseWriter, requestID string, entity *
 	}
 	affected := res.Changes
 	if affected == 0 {
-		return &apiError{Status: http.StatusNotFound, Message: entity.Name + " not found"}
+		return newAPIError(http.StatusNotFound, "entity_not_found", entity.Name+" not found")
 	}
 	r.writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
 	return nil
@@ -78,7 +78,7 @@ func (r *Runtime) handleDelete(w http.ResponseWriter, requestID string, entity *
 func (r *Runtime) handleCreate(w http.ResponseWriter, requestID string, entity *model.Entity, auth authSession, payload map[string]any) error {
 	insert, err := buildInsert(entity, payload)
 	if err != nil {
-		return &apiError{Status: http.StatusBadRequest, Message: err.Error()}
+		return newAPIError(http.StatusBadRequest, "invalid_entity_payload", err.Error())
 	}
 	if err := r.ensureAuthorized(entity, "create", auth, insert.Context); err != nil {
 		return err
@@ -123,7 +123,7 @@ func (r *Runtime) handleCreate(w http.ResponseWriter, requestID string, entity *
 		return err
 	}
 	if !ok {
-		return &apiError{Status: http.StatusInternalServerError, Message: "failed to load created entity"}
+		return newAPIError(http.StatusInternalServerError, "created_entity_load_failed", "failed to load created entity")
 	}
 	r.writeJSON(w, http.StatusCreated, decodeEntityRow(entity, created))
 	return nil
@@ -136,12 +136,12 @@ func (r *Runtime) handleUpdate(w http.ResponseWriter, requestID string, entity *
 		return err
 	}
 	if !ok {
-		return &apiError{Status: http.StatusNotFound, Message: entity.Name + " not found"}
+		return newAPIError(http.StatusNotFound, "entity_not_found", entity.Name+" not found")
 	}
 	current := decodeEntityRow(entity, row)
 	update, err := buildUpdate(entity, payload, current)
 	if err != nil {
-		return &apiError{Status: http.StatusBadRequest, Message: err.Error()}
+		return newAPIError(http.StatusBadRequest, "invalid_entity_payload", err.Error())
 	}
 	if err := r.ensureAuthorized(entity, "update", auth, update.Context); err != nil {
 		return err
@@ -165,7 +165,7 @@ func (r *Runtime) handleUpdate(w http.ResponseWriter, requestID string, entity *
 	}
 	affected := res.Changes
 	if affected == 0 {
-		return &apiError{Status: http.StatusNotFound, Message: entity.Name + " not found"}
+		return newAPIError(http.StatusNotFound, "entity_not_found", entity.Name+" not found")
 	}
 
 	updated, ok, err := r.fetchByID(requestID, entity, id)
@@ -173,7 +173,7 @@ func (r *Runtime) handleUpdate(w http.ResponseWriter, requestID string, entity *
 		return err
 	}
 	if !ok {
-		return &apiError{Status: http.StatusInternalServerError, Message: "failed to load updated entity"}
+		return newAPIError(http.StatusInternalServerError, "updated_entity_load_failed", "failed to load updated entity")
 	}
 	r.writeJSON(w, http.StatusOK, decodeEntityRow(entity, updated))
 	return nil
@@ -206,10 +206,10 @@ func (r *Runtime) validateEntityRules(entity *model.Entity, context map[string]a
 	for _, rule := range r.rules[entity.Name] {
 		v, err := rule.Expr.Eval(context)
 		if err != nil {
-			return &apiError{Status: http.StatusUnprocessableEntity, Message: rule.Message, Details: map[string]any{"entity": entity.Name, "rule": rule.Expression}}
+			return &apiError{Status: http.StatusUnprocessableEntity, Code: "entity_rule_failed", Message: rule.Message, Details: map[string]any{"entity": entity.Name, "rule": rule.Expression}}
 		}
 		if !expr.ToBool(v) {
-			return &apiError{Status: http.StatusUnprocessableEntity, Message: rule.Message, Details: map[string]any{"entity": entity.Name, "rule": rule.Expression}}
+			return &apiError{Status: http.StatusUnprocessableEntity, Code: "entity_rule_failed", Message: rule.Message, Details: map[string]any{"entity": entity.Name, "rule": rule.Expression}}
 		}
 	}
 	return nil
@@ -224,7 +224,7 @@ func (r *Runtime) ensureAuthorized(entity *model.Entity, action string, auth aut
 	rule, hasRule := authorizers[action]
 	if !hasRule {
 		if !auth.Authenticated {
-			return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
+			return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
 		}
 		return nil
 	}
@@ -241,15 +241,15 @@ func (r *Runtime) ensureAuthorized(entity *model.Entity, action string, auth aut
 	v, err := rule.Eval(ctx)
 	if err != nil {
 		if !auth.Authenticated {
-			return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
+			return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
 		}
-		return &apiError{Status: http.StatusForbidden, Message: fmt.Sprintf("Not authorized to %s %s", action, entity.Name)}
+		return newAPIError(http.StatusForbidden, "not_authorized", fmt.Sprintf("Not authorized to %s %s", action, entity.Name))
 	}
 	if !expr.ToBool(v) {
 		if !auth.Authenticated {
-			return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
+			return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
 		}
-		return &apiError{Status: http.StatusForbidden, Message: fmt.Sprintf("Not authorized to %s %s", action, entity.Name)}
+		return newAPIError(http.StatusForbidden, "not_authorized", fmt.Sprintf("Not authorized to %s %s", action, entity.Name))
 	}
 	return nil
 }
