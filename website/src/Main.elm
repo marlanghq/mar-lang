@@ -684,7 +684,7 @@ hero =
         [ column [ spacing 10, width fill ]
             [ paragraph [ Font.size 38, Font.bold, Font.color (rgb255 16 44 79), width (fill |> maximum 900) ]
                 [ text "A simple declarative backend language." ]
-            , paragraph [ Font.size 18, Font.color (rgb255 72 95 123), width (fill |> maximum 880) ]
+            , paragraph [ Font.size 18, Font.color (rgb255 72 95 123), width fill ]
                 [ text "Mar compiles declarative source into a self-contained server executable with API, auth, admin panel, monitoring, and backups." ]
             , paragraph [ Font.size 16, Font.color (rgb255 96 116 140), width (fill |> maximum 880) ]
                 [ text "Inspired by "
