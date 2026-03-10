@@ -922,18 +922,7 @@ audience : Element Msg
 audience =
     panel
         [ sectionTitle "Who Mar Is For"
-        , useCaseRow
-            "Functional developers"
-            "Prefer declarative code and explicit data flow."
-            "Mar keeps backend behavior declarative and easy to reason about."
-        , useCaseRow
-            "One-person projects"
-            "Need to build and ship alone with minimal overhead."
-            "Mar provides auth, admin, monitoring, and backups in one binary."
-        , useCaseRow
-            "Small systems"
-            "Need a straightforward backend for focused products and internal tools."
-            "Mar favors clear, maintainable code over unnecessary complexity."
+        , audienceVariantOne
         ]
 
 
@@ -1443,6 +1432,812 @@ useCaseRow audienceTitle pain solution =
         ]
 
 
+audienceOptionBlock : String -> List (Element Msg) -> Element Msg
+audienceOptionBlock label children =
+    column
+        [ width fill
+        , spacing 12
+        , padding 16
+        , Background.color (rgb255 250 252 255)
+        , Border.width 1
+        , Border.color (rgb255 214 225 239)
+        , Border.rounded 14
+        ]
+        (el
+            [ Font.size 13
+            , Font.semiBold
+            , Font.color (rgb255 34 76 122)
+            , Background.color (rgb255 226 237 252)
+            , Border.rounded 999
+            , paddingEach { top = 4, right = 8, bottom = 4, left = 8 }
+            ]
+            (text label)
+            :: children
+        )
+
+
+audiencePersonaCard : String -> String -> String -> Element Msg
+audiencePersonaCard title summary fit =
+    column
+        [ width (fill |> minimum 220)
+        , spacing 8
+        , padding 14
+        , Background.color (rgb255 245 249 255)
+        , Border.width 1
+        , Border.color (rgb255 211 224 241)
+        , Border.rounded 12
+        ]
+        [ paragraph [ Font.size 19, Font.bold, Font.color (rgb255 28 66 108), width fill ]
+            [ text title ]
+        , paragraph [ Font.size 15, Font.color (rgb255 78 101 130), width fill ]
+            [ text summary ]
+        , paragraph [ Font.size 14, Font.color (rgb255 58 84 115), Font.semiBold, width fill ]
+            [ text fit ]
+        ]
+
+
+audienceTag : String -> Element Msg
+audienceTag value =
+    el
+        [ Font.size 14
+        , Font.semiBold
+        , Font.color (rgb255 34 76 122)
+        , Background.color (rgb255 232 241 252)
+        , Border.rounded 999
+        , paddingEach { top = 8, right = 12, bottom = 8, left = 12 }
+        ]
+        (text value)
+
+
+audienceStatement : String -> String -> Element Msg
+audienceStatement title description =
+    column
+        [ width fill
+        , spacing 4
+        ]
+        [ paragraph [ Font.size 18, Font.bold, Font.color (rgb255 31 51 76), width fill ]
+            [ text title ]
+        , paragraph [ Font.size 15, Font.color (rgb255 83 101 124), width fill ]
+            [ text description ]
+        ]
+
+
+audienceOptionOne : Element Msg
+audienceOptionOne =
+    audienceOptionBlock "Option 1"
+        [ paragraph [ Font.size 28, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "For small teams that want the backend to feel complete early." ]
+        , wrappedRow [ width fill, spacing 12 ]
+            [ audiencePersonaCard "Solo founders" "You need to move from idea to working product without wiring five tools first." "Mar gives you auth, admin tools, logs, monitoring, and backups in one place."
+            , audiencePersonaCard "Product engineers" "You want a declarative backend that still ships as one real server binary." "Mar keeps the moving parts small and the result operational."
+            , audiencePersonaCard "Small teams" "You want conventions that remove backend glue code instead of multiplying it." "Mar stays opinionated so the system remains easier to maintain."
+            ]
+        ]
+
+
+audienceOptionTwo : Element Msg
+audienceOptionTwo =
+    audienceOptionBlock "Option 2"
+        [ wrappedRow [ width fill, spacing 18 ]
+            [ column [ width (fill |> maximum 320), spacing 10 ]
+                [ paragraph [ Font.size 29, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+                    [ text "A strong fit when simplicity matters more than endless backend assembly." ]
+                , bodyText "Mar works best when you want to describe the system at a higher level and still end up with something you can run, observe, and deploy easily."
+                ]
+            , column [ width fill, spacing 10 ]
+                [ whyChecklistItem "You prefer declarative backend code over framework sprawl."
+                , whyChecklistItem "You want one binary instead of a trail of infrastructure glue."
+                , whyChecklistItem "You want auth, admin tools, logs, and backups built in."
+                ]
+            ]
+        ]
+
+
+audienceOptionThree : Element Msg
+audienceOptionThree =
+    audienceOptionBlock "Option 3"
+        [ paragraph [ Font.size 27, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "Who usually gets value from Mar?" ]
+        , wrappedRow [ width fill, spacing 10 ]
+            [ audienceTag "Declarative-first developers"
+            , audienceTag "Internal tools"
+            , audienceTag "Lean MVPs"
+            , audienceTag "Small product teams"
+            , audienceTag "One-person backends"
+            ]
+        , bodyText "If you want the backend to stay coherent, operational, and easy to update without a lot of handwritten glue, Mar is aimed at that shape of work."
+        ]
+
+
+audienceOptionFour : Element Msg
+audienceOptionFour =
+    audienceOptionBlock "Option 4"
+        [ wrappedRow [ width fill, spacing 12 ]
+            [ column
+                [ width fill
+                , spacing 8
+                ]
+                [ paragraph [ Font.size 19, Font.bold, Font.color (rgb255 28 66 108), width fill ]
+                    [ text "Best when" ]
+                , whySimpleBullet "You want one runtime with clear conventions."
+                , whySimpleBullet "You care about easier maintenance over maximum flexibility."
+                , whySimpleBullet "You want built-in operational features from day one."
+                ]
+            , column
+                [ width fill
+                , spacing 8
+                ]
+                [ paragraph [ Font.size 19, Font.bold, Font.color (rgb255 28 66 108), width fill ]
+                    [ text "Less ideal when" ]
+                , whySimpleBullet "You want a highly unopinionated backend framework."
+                , whySimpleBullet "You expect every decision to stay fully pluggable."
+                , whySimpleBullet "You want to assemble the stack piece by piece yourself."
+                ]
+            ]
+        ]
+
+
+audienceOptionFive : Element Msg
+audienceOptionFive =
+    audienceOptionBlock "Option 5"
+        [ audienceStatement "For developers who like declarative systems" "Mar keeps the core of the backend readable and intention-first."
+        , audienceStatement "For teams shipping early versions of products" "Mar gives you auth, admin tools, logs, monitoring, and backups without building them one by one."
+        , audienceStatement "For products that should stay easy to operate" "Mar compiles to one server executable that is easier to move, run, update, and reason about."
+        ]
+
+
+audienceOptionSix : Element Msg
+audienceOptionSix =
+    audienceOptionBlock "Option 6"
+        [ paragraph [ Font.size 30, Font.bold, Font.color (rgb255 20 53 89), centerX ]
+            [ text "Built for small backend surfaces that still need real operational depth." ]
+        , wrappedRow [ width fill, spacing 12, centerX ]
+            [ whyMiniCard "Lean teams" "Move faster without spending early time wiring the usual backend pieces."
+            , whyMiniCard "Opinionated builders" "Prefer coherent defaults to a long list of assembly choices."
+            , whyMiniCard "Shipping-focused developers" "Want development to feel simple and deploy to feel even simpler."
+            ]
+        ]
+
+
+audienceOptionSeven : Element Msg
+audienceOptionSeven =
+    audienceOptionBlock "Option 7"
+        [ useCaseRow "Founders building the first version" "You want the first backend to feel complete fast." "Mar shortens the path from schema to working product."
+        , useCaseRow "Engineers replacing repetitive backend setup" "You are tired of re-creating auth, admin, and operations over and over." "Mar turns those into built-in parts of the runtime."
+        , useCaseRow "Teams maintaining small products for a long time" "You care about keeping complexity under control after launch." "Mar keeps the system easier to update and reason about."
+        ]
+
+
+audienceOptionEight : Element Msg
+audienceOptionEight =
+    audienceOptionBlock "Option 8"
+        [ wrappedRow [ width fill, spacing 14 ]
+            [ whyBand "Declarative teams" "You prefer describing the system instead of hand-assembling each layer."
+            , whyBand "Operationally minded teams" "You want logs, monitoring, admin tools, and backups to exist from the beginning."
+            , whyBand "Maintenance-conscious teams" "You want a backend that stays understandable after the first release."
+            ]
+        ]
+
+
+audienceOptionNine : Element Msg
+audienceOptionNine =
+    audienceOptionBlock "Option 9"
+        [ paragraph [ Font.size 26, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "Mar is for people who want the backend to feel like a product, not a pile of setup." ]
+        , wrappedRow [ width fill, spacing 12 ]
+            [ audiencePersonaCard "Indie products" "You need to ship with a small team and keep the stack tight." "One binary. Fewer moving parts."
+            , audiencePersonaCard "Internal tools" "You want admin and operational visibility without building a frontend first." "The runtime already includes those tools."
+            , audiencePersonaCard "Long-lived small systems" "You want updates to stay manageable over time." "Opinionated structure helps avoid entropy."
+            ]
+        ]
+
+
+audienceOptionTen : Element Msg
+audienceOptionTen =
+    audienceOptionBlock "Option 10"
+        [ paragraph [ Font.size 24, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "A good match if these sound familiar:" ]
+        , whyChecklistItem "“I want less backend glue code.”"
+        , whyChecklistItem "“I want auth and operations built in.”"
+        , whyChecklistItem "“I want the first deploy to be simple.”"
+        , whyChecklistItem "“I want the backend to stay easy to maintain.”"
+        ]
+
+
+audienceOptionEleven : Element Msg
+audienceOptionEleven =
+    audienceOptionBlock "Option 11"
+        [ wrappedRow [ width fill, spacing 16 ]
+            [ column [ width (fill |> maximum 340), spacing 10 ]
+                [ paragraph [ Font.size 30, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+                    [ text "Who tends to like Mar?" ]
+                , bodyText "People who value a coherent backend more than total framework flexibility."
+                ]
+            , column [ width fill, spacing 8 ]
+                [ audienceStatement "Declarative builders" "You want backend code to express intent clearly."
+                , audienceStatement "Small teams" "You want one tool to cover more of the backend surface."
+                , audienceStatement "Maintenance-minded teams" "You want upgrades and operations to stay straightforward."
+                ]
+            ]
+        ]
+
+
+audienceOptionTwelve : Element Msg
+audienceOptionTwelve =
+    audienceOptionBlock "Option 12"
+        [ paragraph [ Font.size 28, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "Mar fits best when speed and coherence matter at the same time." ]
+        , wrappedRow [ width fill, spacing 10 ]
+            [ audienceTag "Ship early"
+            , audienceTag "Keep one binary"
+            , audienceTag "Reduce glue code"
+            , audienceTag "Stay easy to operate"
+            , audienceTag "Keep maintenance light"
+            ]
+        ]
+
+
+audienceOptionThirteen : Element Msg
+audienceOptionThirteen =
+    audienceOptionBlock "Option 13"
+        [ commandRowStyle "1" "Describe the system" "You prefer a declarative source of truth."
+        , commandRowStyle "2" "Run a complete backend" "You want auth, admin tools, logs, monitoring, and backups already in place."
+        , commandRowStyle "3" "Keep operating simply" "You want updates and deployments to stay low-friction."
+        ]
+
+
+audienceOptionFourteen : Element Msg
+audienceOptionFourteen =
+    audienceOptionBlock "Option 14"
+        [ wrappedRow [ width fill, spacing 12 ]
+            [ audiencePersonaCard "Backend generalists" "You do not want to spend another week stitching routine pieces together." "Mar narrows the assembly work."
+            , audiencePersonaCard "Founders wearing many hats" "You need the backend to come with product and operational basics." "Mar ships with the fundamentals built in."
+            , audiencePersonaCard "Teams avoiding backend sprawl" "You want fewer systems to keep in sync." "Mar favors one coherent runtime."
+            ]
+        ]
+
+
+audienceOptionFifteen : Element Msg
+audienceOptionFifteen =
+    audienceOptionBlock "Option 15"
+        [ paragraph [ Font.size 25, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "If your ideal backend is small, declarative, and already operational, Mar is probably for you." ]
+        , bodyText "It works especially well when you want to spend more effort on product logic and less on backend plumbing."
+        ]
+
+
+audienceOptionSixteen : Element Msg
+audienceOptionSixteen =
+    audienceOptionBlock "Option 16"
+        [ wrappedRow [ width fill, spacing 12 ]
+            [ whyGridCard "One-person products" "You need the backend to cover more ground with less setup."
+            , whyGridCard "Small customer-facing apps" "You want a complete backend shape without building every layer."
+            , whyGridCard "Internal systems" "You want admin tools and observability without building them from scratch."
+            ]
+        ]
+
+
+audienceOptionSeventeen : Element Msg
+audienceOptionSeventeen =
+    audienceOptionBlock "Option 17"
+        [ audienceStatement "Mar is for teams that like opinions" "Not because flexibility is bad, but because coherent defaults make small systems faster to build and easier to keep healthy."
+        , audienceStatement "Mar is for teams that value operational clarity" "Logs, monitoring, admin tools, and backups are part of the runtime story, not postponed work."
+        ]
+
+
+audienceOptionEighteen : Element Msg
+audienceOptionEighteen =
+    audienceOptionBlock "Option 18"
+        [ paragraph [ Font.size 24, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "Use Mar if you want the first backend to already feel structured." ]
+        , whySimpleBullet "The language stays declarative."
+        , whySimpleBullet "The runtime stays opinionated."
+        , whySimpleBullet "The deploy stays small."
+        , whySimpleBullet "The system stays easier to maintain."
+        ]
+
+
+audienceOptionNineteen : Element Msg
+audienceOptionNineteen =
+    audienceOptionBlock "Option 19"
+        [ wrappedRow [ width fill, spacing 14 ]
+            [ column [ width fill, spacing 8 ]
+                [ paragraph [ Font.size 19, Font.bold, Font.color (rgb255 28 66 108), width fill ]
+                    [ text "For" ]
+                , whySimpleBullet "Founders shipping MVPs"
+                , whySimpleBullet "Teams building focused internal tools"
+                , whySimpleBullet "Developers who want fewer moving parts"
+                ]
+            , column [ width fill, spacing 8 ]
+                [ paragraph [ Font.size 19, Font.bold, Font.color (rgb255 28 66 108), width fill ]
+                    [ text "Because" ]
+                , whySimpleBullet "Mar removes common backend repetition."
+                , whySimpleBullet "Mar bundles the operational essentials."
+                , whySimpleBullet "Mar compiles to one deployable executable."
+                ]
+            ]
+        ]
+
+
+audienceOptionTwenty : Element Msg
+audienceOptionTwenty =
+    audienceOptionBlock "Option 20"
+        [ paragraph [ Font.size 28, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "Not every backend needs Mar. The right ones usually want clarity, speed, and fewer seams." ]
+        , wrappedRow [ width fill, spacing 12 ]
+            [ audienceTag "Declarative source"
+            , audienceTag "Single executable"
+            , audienceTag "Built-in operations"
+            , audienceTag "Opinionated runtime"
+            ]
+        ]
+
+
+audienceOptionTwentyOne : Element Msg
+audienceOptionTwentyOne =
+    audienceOptionBlock "Option 21"
+        [ audienceStatement "Founders and solo builders" "Mar helps when the backend needs to feel complete before you have time to build every missing operational piece."
+        , audienceStatement "Small product teams" "Mar helps when you want conventions that make it easier to move and easier to revisit later."
+        , audienceStatement "Developers who dislike backend sprawl" "Mar helps when you would rather operate one coherent server than a loose collection of parts."
+        ]
+
+
+audienceOptionTwentyTwo : Element Msg
+audienceOptionTwentyTwo =
+    audienceOptionBlock "Option 22"
+        [ paragraph [ Font.size 29, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "For developers who would rather describe the system than assemble it all manually." ]
+        , bodyText "Mar favors that kind of work: declarative language, one runtime, one binary, and operational features already present."
+        ]
+
+
+audienceOptionTwentyThree : Element Msg
+audienceOptionTwentyThree =
+    audienceOptionBlock "Option 23"
+        [ wrappedRow [ width fill, spacing 10 ]
+            [ whyMiniCard "MVPs" "Ship a first version without postponing auth and operations."
+            , whyMiniCard "Internal tools" "Get a usable backend surface early, including admin tools."
+            , whyMiniCard "Small products" "Keep the backend compact enough to maintain comfortably."
+            , whyMiniCard "Focused teams" "Trade endless configurability for stronger defaults."
+            ]
+        ]
+
+
+audienceOptionTwentyFour : Element Msg
+audienceOptionTwentyFour =
+    audienceOptionBlock "Option 24"
+        [ whyFeatureStrip "For teams that want less wiring" "Mar reduces the hand-built backend glue that usually grows around small systems."
+        , whyFeatureStrip "For teams that want deploys to stay boring" "One executable is easier to move, run, and update."
+        , whyFeatureStrip "For teams that want observability early" "Logs, monitoring, and admin tools are already there."
+        ]
+
+
+audienceOptionTwentyFive : Element Msg
+audienceOptionTwentyFive =
+    audienceOptionBlock "Option 25"
+        [ paragraph [ Font.size 27, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "Mar is especially appealing when the backend should stay small without feeling incomplete." ]
+        , wrappedRow [ width fill, spacing 12 ]
+            [ audiencePersonaCard "First product versions" "You need a backend that is ready to use, not just ready to extend." "Built-ins matter here."
+            , audiencePersonaCard "Pragmatic teams" "You want decisions made well enough once, not reopened every sprint." "Opinionated defaults help."
+            ]
+        ]
+
+
+audienceOptionTwentySix : Element Msg
+audienceOptionTwentySix =
+    audienceOptionBlock "Option 26"
+        [ audienceStatement "Best for backends that should be quick to build" "Mar keeps the language high level and the runtime complete."
+        , audienceStatement "Best for backends that should be quick to deploy" "One executable keeps the operational footprint smaller."
+        , audienceStatement "Best for backends that should stay easy to update" "Coherent structure helps the system resist drift."
+        ]
+
+
+audienceOptionTwentySeven : Element Msg
+audienceOptionTwentySeven =
+    audienceOptionBlock "Option 27"
+        [ paragraph [ Font.size 24, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "Use Mar if these are the words you want associated with the backend:" ]
+        , wrappedRow [ width fill, spacing 10 ]
+            [ audienceTag "Declarative"
+            , audienceTag "Opinionated"
+            , audienceTag "Traceable"
+            , audienceTag "Easy to deploy"
+            , audienceTag "Easy to maintain"
+            ]
+        ]
+
+
+audienceOptionTwentyEight : Element Msg
+audienceOptionTwentyEight =
+    audienceOptionBlock "Option 28"
+        [ wrappedRow [ width fill, spacing 16 ]
+            [ column [ width fill, spacing 10 ]
+                [ paragraph [ Font.size 28, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+                    [ text "Who is it really for?" ]
+                , bodyText "People who want a backend with stronger opinions and fewer seams."
+                ]
+            , column [ width fill, spacing 8 ]
+                [ whyChecklistItem "You want auth and authorization built in."
+                , whyChecklistItem "You want logs and monitoring from the start."
+                , whyChecklistItem "You want deployment to stay straightforward."
+                ]
+            ]
+        ]
+
+
+audienceOptionTwentyNine : Element Msg
+audienceOptionTwentyNine =
+    audienceOptionBlock "Option 29"
+        [ paragraph [ Font.size 26, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text "Mar is for projects where the backend should stay boring in the best way." ]
+        , bodyText "Clear language, one runtime, built-in operations, and less assembly work tend to matter most in small teams, internal tools, and early-stage products."
+        ]
+
+
+audienceOptionThirty : Element Msg
+audienceOptionThirty =
+    audienceOptionBlock "Option 30"
+        [ wrappedRow [ width fill, spacing 12 ]
+            [ audiencePersonaCard "If you want declarative backend code" "Mar keeps the main source of truth higher level." "Less imperative glue."
+            , audiencePersonaCard "If you want a complete runtime" "Mar bundles auth, admin tools, logs, monitoring, and backups." "Less missing infrastructure."
+            , audiencePersonaCard "If you want simpler operations" "Mar compiles to one executable that is easier to move and update." "Less deployment overhead."
+            ]
+        ]
+
+
+commandRowStyle : String -> String -> String -> Element Msg
+commandRowStyle number label description =
+    column
+        [ width fill
+        , spacing 6
+        , Background.color (rgb255 245 250 255)
+        , Border.width 1
+        , Border.color (rgb255 213 225 241)
+        , Border.rounded 10
+        , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
+        ]
+        [ wrappedRow [ width fill, spacing 10 ]
+            [ stepBadge number
+            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text label)
+            ]
+        , paragraph [ Font.size 14, Font.color (rgb255 83 105 132), width fill ]
+            [ text description ]
+        ]
+
+
+audienceHeadlineCopy : String
+audienceHeadlineCopy =
+    "For teams that want the backend to feel boring in the best way."
+
+
+audienceSummaryCopy : String
+audienceSummaryCopy =
+    "Predictable to run. Easy to reason about. Small enough to maintain without losing operational depth."
+
+
+audienceNeedOne : String
+audienceNeedOne =
+    "You want declarative backend code."
+
+
+audienceNeedTwo : String
+audienceNeedTwo =
+    "You want built-in auth, admin tools, logs, monitoring, and backups."
+
+
+audienceNeedThree : String
+audienceNeedThree =
+    "You want deployment to stay simple."
+
+
+audienceNeedCards : List (Element Msg)
+audienceNeedCards =
+    [ audienceNeedStrip audienceNeedOne
+    , audienceNeedStrip audienceNeedTwo
+    , audienceNeedStrip audienceNeedThree
+    ]
+
+
+audienceNeedChecks : List (Element Msg)
+audienceNeedChecks =
+    [ whyChecklistItem audienceNeedOne
+    , whyChecklistItem audienceNeedTwo
+    , whyChecklistItem audienceNeedThree
+    ]
+
+
+audienceVariantOne : Element Msg
+audienceVariantOne =
+    wrappedRow [ width fill, spacing 18 ]
+        [ column
+            [ width (fill |> maximum 380)
+            , spacing 10
+            , padding 22
+            , Background.color (rgb255 52 88 133)
+            , Border.width 1
+            , Border.color (rgb255 77 114 161)
+            , Border.rounded 16
+            ]
+            [ paragraph [ Font.size 30, Font.bold, Font.color (rgb255 246 250 255), width fill ]
+                [ text audienceHeadlineCopy ]
+            , paragraph [ Font.size 16, Font.color (rgb255 211 224 241), width fill ]
+                [ text audienceSummaryCopy ]
+            ]
+        , column [ width fill, spacing 10 ]
+            audienceNeedCards
+        ]
+
+
+audienceNeedStrip : String -> Element Msg
+audienceNeedStrip value =
+    row
+        [ width fill
+        , spacing 14
+        , padding 14
+        , Background.color (rgb255 248 251 255)
+        , Border.width 1
+        , Border.color (rgb255 214 225 239)
+        , Border.rounded 14
+        ]
+        [ el
+            [ Font.size 14
+            , Font.bold
+            , Font.color (rgb255 28 122 84)
+            , Background.color (rgb255 232 247 240)
+            , Border.rounded 999
+            , paddingEach { top = 3, right = 7, bottom = 3, left = 7 }
+            ]
+            (text "✓")
+        , paragraph [ Font.size 17, Font.color (rgb255 31 51 76), width fill ]
+            [ text value ]
+        ]
+
+
+audienceVariantTwo : Element Msg
+audienceVariantTwo =
+    column
+        [ width fill
+        , spacing 12
+        , padding 20
+        , Background.color (rgb255 245 249 255)
+        , Border.width 1
+        , Border.color (rgb255 214 225 239)
+        , Border.rounded 16
+        ]
+        [ paragraph [ Font.size 29, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text audienceHeadlineCopy ]
+        , paragraph [ Font.size 16, Font.color (rgb255 72 95 123), width fill ]
+            [ text audienceSummaryCopy ]
+        , wrappedRow [ width fill, spacing 12 ]
+            [ whyMiniCard "Declarative" audienceNeedOne
+            , whyMiniCard "Built-in runtime" audienceNeedTwo
+            , whyMiniCard "Simple deploy" audienceNeedThree
+            ]
+        ]
+
+
+audienceVariantThree : Element Msg
+audienceVariantThree =
+    wrappedRow [ width fill, spacing 18 ]
+        [ column
+            [ width (fill |> maximum 360)
+            , spacing 10
+            , padding 20
+            , Background.color (rgb255 237 244 252)
+            , Border.width 1
+            , Border.color (rgb255 203 218 238)
+            , Border.rounded 16
+            ]
+            [ paragraph [ Font.size 28, Font.bold, Font.color (rgb255 25 58 96), width fill ]
+                [ text audienceHeadlineCopy ]
+            , paragraph [ Font.size 16, Font.color (rgb255 74 97 124), width fill ]
+                [ text audienceSummaryCopy ]
+            ]
+        , column [ width fill, spacing 8 ]
+            audienceNeedChecks
+        ]
+
+
+audienceVariantFour : Element Msg
+audienceVariantFour =
+    wrappedRow [ width fill, spacing 18 ]
+        [ column [ width fill, spacing 10 ]
+            [ paragraph [ Font.size 29, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+                [ text audienceHeadlineCopy ]
+            , paragraph [ Font.size 16, Font.color (rgb255 72 95 123), width fill ]
+                [ text audienceSummaryCopy ]
+            ]
+        , column
+            [ width (fill |> maximum 360)
+            , spacing 10
+            , padding 18
+            , Background.color (rgb255 28 55 88)
+            , Border.width 1
+            , Border.color (rgb255 44 82 126)
+            , Border.rounded 16
+            ]
+            [ paragraph [ Font.size 16, Font.color (rgb255 230 240 251), width fill ]
+                [ text audienceNeedOne ]
+            , paragraph [ Font.size 16, Font.color (rgb255 230 240 251), width fill ]
+                [ text audienceNeedTwo ]
+            , paragraph [ Font.size 16, Font.color (rgb255 230 240 251), width fill ]
+                [ text audienceNeedThree ]
+            ]
+        ]
+
+
+audienceVariantFive : Element Msg
+audienceVariantFive =
+    column
+        [ width fill
+        , spacing 14
+        , padding 20
+        , Background.color (rgb255 249 251 255)
+        , Border.width 1
+        , Border.color (rgb255 214 225 239)
+        , Border.rounded 16
+        ]
+        [ paragraph [ Font.size 30, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+            [ text audienceHeadlineCopy ]
+        , paragraph [ Font.size 16, Font.color (rgb255 72 95 123), width fill ]
+            [ text audienceSummaryCopy ]
+        , column [ width fill, spacing 10 ]
+            audienceNeedCards
+        ]
+
+
+audienceVariantSix : Element Msg
+audienceVariantSix =
+    wrappedRow [ width fill, spacing 16 ]
+        [ column
+            [ width (fill |> maximum 320)
+            , spacing 8
+            ]
+            [ el
+                [ Font.size 14
+                , Font.semiBold
+                , Font.color (rgb255 34 76 122)
+                , Background.color (rgb255 226 237 252)
+                , Border.rounded 999
+                , paddingEach { top = 4, right = 8, bottom = 4, left = 8 }
+                ]
+                (text "A good fit when")
+            , paragraph [ Font.size 28, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+                [ text audienceHeadlineCopy ]
+            , paragraph [ Font.size 16, Font.color (rgb255 72 95 123), width fill ]
+                [ text audienceSummaryCopy ]
+            ]
+        , wrappedRow [ width fill, spacing 10 ]
+            [ whyBand "Declarative" audienceNeedOne
+            , whyBand "Complete runtime" audienceNeedTwo
+            , whyBand "Simple deploy" audienceNeedThree
+            ]
+        ]
+
+
+audienceVariantSeven : Element Msg
+audienceVariantSeven =
+    column
+        [ width fill
+        , spacing 12
+        ]
+        [ row
+            [ width fill
+            , spacing 14
+            , padding 18
+            , Background.color (rgb255 22 49 82)
+            , Border.width 1
+            , Border.color (rgb255 35 74 117)
+            , Border.rounded 16
+            ]
+            [ el [ Font.size 26, Font.color (rgb255 180 206 237), Font.bold ] (text "→")
+            , column [ width fill, spacing 8 ]
+                [ paragraph [ Font.size 28, Font.bold, Font.color (rgb255 246 250 255), width fill ]
+                    [ text audienceHeadlineCopy ]
+                , paragraph [ Font.size 16, Font.color (rgb255 205 220 238), width fill ]
+                    [ text audienceSummaryCopy ]
+                ]
+            ]
+        , wrappedRow [ width fill, spacing 12 ]
+            [ whyMiniCard "Declarative backend code" "A higher-level way to describe the system."
+            , whyMiniCard "Built-in operational depth" "Auth, admin tools, logs, monitoring, and backups."
+            , whyMiniCard "Simple deployment" "One executable and fewer moving parts."
+            ]
+        ]
+
+
+audienceVariantEight : Element Msg
+audienceVariantEight =
+    wrappedRow [ width fill, spacing 18 ]
+        [ column
+            [ width (fill |> maximum 400)
+            , spacing 12
+            , padding 18
+            , Background.color (rgb255 246 250 255)
+            , Border.width 1
+            , Border.color (rgb255 214 225 239)
+            , Border.rounded 16
+            ]
+            [ paragraph [ Font.size 29, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+                [ text audienceHeadlineCopy ]
+            , paragraph [ Font.size 16, Font.color (rgb255 72 95 123), width fill ]
+                [ text audienceSummaryCopy ]
+            ]
+        , column
+            [ width fill
+            , spacing 10
+            ]
+            [ audienceNeedStrip audienceNeedOne
+            , audienceNeedStrip audienceNeedTwo
+            , audienceNeedStrip audienceNeedThree
+            ]
+        ]
+
+
+audienceVariantNine : Element Msg
+audienceVariantNine =
+    column
+        [ width fill
+        , spacing 12
+        , padding 20
+        , Background.color (rgb255 250 252 255)
+        , Border.width 1
+        , Border.color (rgb255 214 225 239)
+        , Border.rounded 16
+        ]
+        [ wrappedRow [ width fill, spacing 18 ]
+            [ column [ width (fill |> maximum 420), spacing 8 ]
+                [ paragraph [ Font.size 30, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+                    [ text audienceHeadlineCopy ]
+                , paragraph [ Font.size 16, Font.color (rgb255 72 95 123), width fill ]
+                    [ text audienceSummaryCopy ]
+                ]
+            , el
+                [ width fill
+                , height fill
+                ]
+                (text "")
+            ]
+        , wrappedRow [ width fill, spacing 10 ]
+            [ audienceTag "Declarative"
+            , audienceTag "Built-in operations"
+            , audienceTag "Simple deploy"
+            ]
+        , column [ width fill, spacing 8 ]
+            audienceNeedChecks
+        ]
+
+
+audienceVariantTen : Element Msg
+audienceVariantTen =
+    wrappedRow [ width fill, spacing 16 ]
+        [ column
+            [ width (fill |> maximum 360)
+            , spacing 10
+            , padding 20
+            , Border.width 1
+            , Border.color (rgb255 214 225 239)
+            , Border.rounded 16
+            ]
+            [ paragraph [ Font.size 29, Font.bold, Font.color (rgb255 20 53 89), width fill ]
+                [ text audienceHeadlineCopy ]
+            , paragraph [ Font.size 16, Font.color (rgb255 72 95 123), width fill ]
+                [ text audienceSummaryCopy ]
+            ]
+        , column
+            [ width fill
+            , spacing 10
+            , padding 18
+            , Background.color (rgb255 242 248 255)
+            , Border.width 1
+            , Border.color (rgb255 206 222 242)
+            , Border.rounded 16
+            ]
+            audienceNeedChecks
+        ]
+
+
 commandRow : Model -> String -> String -> String -> String -> Element Msg
 commandRow model number label description command =
     column
@@ -1546,42 +2341,59 @@ sectionNavItem current target label =
 advancedPager : Maybe Route -> Maybe Route -> Element Msg
 advancedPager previous next =
     panel
-        [ column
+        [ wrappedRow
             [ width fill
             , spacing 10
             ]
-            (List.concat
-                [ case previous of
-                    Just route ->
-                        [ link
-                            (buttonAttributes
-                                (rgb255 230 239 250)
-                                (rgb255 36 82 132)
-                                ++ [ width (fill |> maximum 320), centerX ]
-                            )
-                            { url = routeHref route
-                            , label = text ("Previous: " ++ routeLabel route)
-                            }
-                        ]
+            (case ( previous, next ) of
+                ( Just previousRoute, Just nextRoute ) ->
+                    [ link
+                        (buttonAttributes
+                            (rgb255 230 239 250)
+                            (rgb255 36 82 132)
+                            ++ [ width (fill |> maximum 320) ]
+                        )
+                        { url = routeHref previousRoute
+                        , label = text ("Previous: " ++ routeLabel previousRoute)
+                        }
+                    , el [ width fill ] (text "")
+                    , link
+                        (buttonAttributes
+                            (rgb255 45 126 210)
+                            (rgb255 245 250 255)
+                            ++ [ width (fill |> maximum 320) ]
+                        )
+                        { url = routeHref nextRoute
+                        , label = text ("Next: " ++ routeLabel nextRoute)
+                        }
+                    ]
 
-                    Nothing ->
-                        []
-                , case next of
-                    Just route ->
-                        [ link
-                            (buttonAttributes
-                                (rgb255 45 126 210)
-                                (rgb255 245 250 255)
-                                ++ [ width (fill |> maximum 320), centerX ]
-                            )
-                            { url = routeHref route
-                            , label = text ("Next: " ++ routeLabel route)
-                            }
-                        ]
+                ( Just previousRoute, Nothing ) ->
+                    [ link
+                        (buttonAttributes
+                            (rgb255 230 239 250)
+                            (rgb255 36 82 132)
+                            ++ [ width (fill |> maximum 320), centerX ]
+                        )
+                        { url = routeHref previousRoute
+                        , label = text ("Previous: " ++ routeLabel previousRoute)
+                        }
+                    ]
 
-                    Nothing ->
-                        []
-                ]
+                ( Nothing, Just nextRoute ) ->
+                    [ link
+                        (buttonAttributes
+                            (rgb255 45 126 210)
+                            (rgb255 245 250 255)
+                            ++ [ width (fill |> maximum 320), centerX ]
+                        )
+                        { url = routeHref nextRoute
+                        , label = text ("Next: " ++ routeLabel nextRoute)
+                        }
+                    ]
+
+                ( Nothing, Nothing ) ->
+                    []
             )
         ]
 
