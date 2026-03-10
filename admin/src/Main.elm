@@ -417,7 +417,7 @@ update msg model =
                         ( nextModel, Cmd.none )
 
                 Err httpError ->
-                    ( { model | schema = Failed (httpErrorToString httpError), rows = Failed "schema unavailable" }, Cmd.none )
+                    ( { model | schema = Failed (httpErrorToString model httpError), rows = Failed "schema unavailable" }, Cmd.none )
 
         SelectEntity entityName ->
             let
@@ -483,7 +483,7 @@ update msg model =
                     ( { model | rows = Loaded rows }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | rows = Failed (httpErrorToString httpError) }, Cmd.none )
+                    ( { model | rows = Failed (httpErrorToString model httpError) }, Cmd.none )
 
         SelectPerformance ->
             if not (isAdminProfile model) then
@@ -597,7 +597,7 @@ update msg model =
                     ( { model | perf = Loaded perf }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | perf = Failed (httpErrorToString httpError) }, Cmd.none )
+                    ( { model | perf = Failed (httpErrorToString model httpError) }, Cmd.none )
 
         GotAdminVersion result ->
             case result of
@@ -605,7 +605,7 @@ update msg model =
                     ( { model | adminVersion = Loaded payload }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | adminVersion = Failed (httpErrorToString httpError) }, Cmd.none )
+                    ( { model | adminVersion = Failed (httpErrorToString model httpError) }, Cmd.none )
 
         GotRequestLogs result ->
             case result of
@@ -613,7 +613,7 @@ update msg model =
                     ( { model | requestLogs = Loaded payload }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | requestLogs = Failed (httpErrorToString httpError) }, Cmd.none )
+                    ( { model | requestLogs = Failed (httpErrorToString model httpError) }, Cmd.none )
 
         GotBackups result ->
             case result of
@@ -621,7 +621,7 @@ update msg model =
                     ( { model | backups = Loaded backups }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | backups = Failed (httpErrorToString httpError) }, Cmd.none )
+                    ( { model | backups = Failed (httpErrorToString model httpError) }, Cmd.none )
 
         SetAuthEmail email ->
             ( { model | authEmail = email }, Cmd.none )
@@ -717,7 +717,7 @@ update msg model =
                             )
 
                 Err httpError ->
-                    ( { model | authSubmitting = Nothing, flash = Just (authRequestCodeErrorToString httpError) }, Cmd.none )
+                    ( { model | authSubmitting = Nothing, flash = Just (authRequestCodeErrorToString model httpError) }, Cmd.none )
 
         BootstrapFirstAdmin ->
             if String.trim model.authEmail == "" then
@@ -753,7 +753,7 @@ update msg model =
                             ( { model | authStage = AuthStageCode, authSubmitting = Nothing, firstAdminCodeRequested = True, flash = Nothing }, loadSchema model.apiBase )
 
                 Err httpError ->
-                    ( { model | authSubmitting = Nothing, flash = Just (authRequestCodeErrorToString httpError) }, Cmd.none )
+                    ( { model | authSubmitting = Nothing, flash = Just (authRequestCodeErrorToString model httpError) }, Cmd.none )
 
         LoginWithCode ->
             if String.trim model.authEmail == "" || String.trim model.authCode == "" then
@@ -838,7 +838,7 @@ update msg model =
                             ( nextModel, Cmd.batch [ refreshCmd, saveSessionFromModel nextModel ] )
 
                 Err httpError ->
-                    ( { model | authSubmitting = Nothing, flash = Just (authLoginErrorToString httpError) }, Cmd.none )
+                    ( { model | authSubmitting = Nothing, flash = Just (authLoginErrorToString model httpError) }, Cmd.none )
 
         LoadAuthMe ->
             let
@@ -976,7 +976,7 @@ update msg model =
                                     Nothing
 
                                 else
-                                    Just (httpErrorToString httpError)
+                                    Just (httpErrorToString model httpError)
                           }
                         , Cmd.none
                         )
@@ -1015,7 +1015,7 @@ update msg model =
                             ( finalModel, saveSessionFromModel finalModel )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                    ( { model | flash = Just (httpErrorToString model httpError) }, Cmd.none )
 
         TriggerBackup ->
             if not (isAdminProfile model) then
@@ -1045,7 +1045,7 @@ update msg model =
                     ( nextModel, Cmd.batch [ loadBackups nextModel, loadPerformance nextModel ] )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                    ( { model | flash = Just (httpErrorToString model httpError) }, Cmd.none )
 
         ToggleAuthTools ->
             let
@@ -1155,7 +1155,7 @@ update msg model =
                     ( { model | rows = nextRows, formMode = FormHidden, formValues = Dict.empty, flash = Just "Created successfully" }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                    ( { model | flash = Just (httpErrorToString model httpError) }, Cmd.none )
 
         GotUpdate result ->
             case result of
@@ -1172,7 +1172,7 @@ update msg model =
                     ( { model | rows = nextRows, selectedRow = Just updatedRow, formMode = FormHidden, formValues = Dict.empty, flash = Just "Updated successfully" }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                    ( { model | flash = Just (httpErrorToString model httpError) }, Cmd.none )
 
         RequestDeleteRow rowValue ->
             case model.selectedEntity of
@@ -1215,7 +1215,7 @@ update msg model =
                     ( { nextModel | rows = Loading }, loadRows nextModel )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError), pendingDelete = Nothing }, Cmd.none )
+                    ( { model | flash = Just (httpErrorToString model httpError), pendingDelete = Nothing }, Cmd.none )
 
         RunAction ->
             case model.selectedAction of
@@ -1236,7 +1236,7 @@ update msg model =
                     ( { model | actionResult = Just response, flash = Just "Action executed successfully" }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                    ( { model | flash = Just (httpErrorToString model httpError) }, Cmd.none )
 
         ClearFlash ->
             ( { model | flash = Nothing }, Cmd.none )
@@ -5051,8 +5051,13 @@ viewSelectedRow model =
                         )
 
 
-httpErrorToString : Http.Error -> String
-httpErrorToString httpError =
+networkErrorMessage : String
+networkErrorMessage =
+    "We could not reach the app right now. Please try again in a moment."
+
+
+httpErrorToString : Model -> Http.Error -> String
+httpErrorToString model httpError =
     case httpError of
         Http.BadUrl message ->
             "Bad URL: " ++ message
@@ -5061,7 +5066,7 @@ httpErrorToString httpError =
             "Request timeout"
 
         Http.NetworkError ->
-            "Network error"
+            networkErrorMessage
 
         Http.BadStatus statusCode ->
             "HTTP error: " ++ String.fromInt statusCode
@@ -5070,14 +5075,14 @@ httpErrorToString httpError =
             message
 
 
-authRequestCodeErrorToString : Http.Error -> String
-authRequestCodeErrorToString httpError =
+authRequestCodeErrorToString : Model -> Http.Error -> String
+authRequestCodeErrorToString model httpError =
     case httpError of
         Http.Timeout ->
             "We could not send the code in time. Please try again."
 
         Http.NetworkError ->
-            "We could not reach the server. Check your connection and try again."
+            networkErrorMessage
 
         Http.BadBody message ->
             if String.contains "Too many request-code attempts" message then
@@ -5087,17 +5092,17 @@ authRequestCodeErrorToString httpError =
                 message
 
         _ ->
-            httpErrorToString httpError
+            httpErrorToString model httpError
 
 
-authLoginErrorToString : Http.Error -> String
-authLoginErrorToString httpError =
+authLoginErrorToString : Model -> Http.Error -> String
+authLoginErrorToString model httpError =
     case httpError of
         Http.Timeout ->
             "We could not complete the sign-in in time. Please try again."
 
         Http.NetworkError ->
-            "We could not reach the server. Check your connection and try again."
+            networkErrorMessage
 
         Http.BadBody message ->
             if String.contains "Invalid or expired code" message then
@@ -5107,7 +5112,7 @@ authLoginErrorToString httpError =
                 message
 
         _ ->
-            httpErrorToString httpError
+            httpErrorToString model httpError
 
 
 shouldReloadCrudAfterLogin : Model -> Bool
