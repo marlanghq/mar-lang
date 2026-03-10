@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -21,7 +22,22 @@ var (
 	cliVersion   = "dev"
 	cliCommit    = ""
 	cliBuildTime = ""
+
+	parseErrorQuotedTokenRe = regexp.MustCompile(`"[^"\n]*"`)
+	parseErrorUnknownInputRe = regexp.MustCompile(`unknown input field ("[^"\n]*")`)
+	parseErrorActionRe      = regexp.MustCompile(`\baction\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	parseErrorFieldRe       = regexp.MustCompile(`\bfield\s+([A-Za-z_][A-Za-z0-9_.]*)`)
 )
+
+type styledCLIError string
+
+func (e styledCLIError) Error() string {
+	return string(e)
+}
+
+func (e styledCLIError) StyledCLI() string {
+	return string(e)
+}
 
 // Run dispatches Mar CLI subcommands.
 func Run(binaryName string, args []string) error {
@@ -189,7 +205,76 @@ func parseMarFile(path string) (*model.App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parser.Parse(string(content))
+	app, err := parser.Parse(string(content))
+	if err != nil {
+		return nil, formatParseCLIError(err)
+	}
+	return app, nil
+}
+
+func formatParseCLIError(err error) error {
+	useColor := cliSupportsANSIStream(os.Stderr)
+	message := strings.TrimSpace(err.Error())
+	baseMessage, hint := splitSuggestionHint(message)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n", colorizeCLI(useColor, "\033[1;31m", "Parse error"))
+	fmt.Fprintf(&b, "  %s\n", highlightParseCLIMessage(useColor, baseMessage))
+	if hint != "" {
+		fmt.Fprintf(&b, "\n%s\n", colorizeCLI(useColor, "\033[1;33m", "Hint:"))
+		fmt.Fprintf(&b, "  %s\n", highlightParseCLIMessage(useColor, hint))
+	}
+	return styledCLIError(strings.TrimRight(b.String(), "\n") + "\n")
+}
+
+func splitSuggestionHint(message string) (string, string) {
+	marker := ". Did you mean "
+	idx := strings.LastIndex(message, marker)
+	if idx < 0 {
+		return message, ""
+	}
+	base := strings.TrimSpace(message[:idx+1])
+	hint := strings.TrimSpace(message[idx+2:])
+	return base, hint
+}
+
+func highlightParseCLIMessage(useColor bool, message string) string {
+	if !useColor {
+		return message
+	}
+
+	const unknownInputPlaceholder = "__MAR_UNKNOWN_INPUT__"
+
+	unknownInputToken := ""
+	message = parseErrorUnknownInputRe.ReplaceAllStringFunc(message, func(match string) string {
+		parts := parseErrorUnknownInputRe.FindStringSubmatch(match)
+		if len(parts) != 2 {
+			return match
+		}
+		unknownInputToken = parts[1]
+		return "unknown input field " + unknownInputPlaceholder
+	})
+	message = parseErrorActionRe.ReplaceAllStringFunc(message, func(match string) string {
+		parts := parseErrorActionRe.FindStringSubmatch(match)
+		if len(parts) != 2 {
+			return match
+		}
+		return "action " + colorizeCLI(true, "\033[1;36m", parts[1])
+	})
+	message = parseErrorFieldRe.ReplaceAllStringFunc(message, func(match string) string {
+		parts := parseErrorFieldRe.FindStringSubmatch(match)
+		if len(parts) != 2 {
+			return match
+		}
+		return "field " + colorizeCLI(true, "\033[1;36m", parts[1])
+	})
+	message = parseErrorQuotedTokenRe.ReplaceAllStringFunc(message, func(match string) string {
+		return colorizeCLI(true, "\033[1;32m", match)
+	})
+	if unknownInputToken != "" {
+		message = strings.Replace(message, unknownInputPlaceholder, colorizeCLI(true, "\033[1;31m", unknownInputToken), 1)
+	}
+	return message
 }
 
 type buildOptions struct {
@@ -296,6 +381,18 @@ func colorizeCLI(enabled bool, colorCode, value string) string {
 		return value
 	}
 	return colorCode + value + "\033[0m"
+}
+
+func PrintError(err error) {
+	fmt.Fprintln(os.Stderr)
+	type styled interface {
+		StyledCLI() string
+	}
+	if styledErr, ok := err.(styled); ok {
+		fmt.Fprintln(os.Stderr, styledErr.StyledCLI())
+		return
+	}
+	fmt.Fprintln(os.Stderr, "error:", err)
 }
 
 type versionInfo struct {
