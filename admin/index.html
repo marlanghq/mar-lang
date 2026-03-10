@@ -41,54 +41,27 @@
     <script>
       const sessionStorageKey = 'mar.admin.session';
 
-      function normalizeToken(value) {
-        return typeof value === 'string' ? value.trim() : '';
-      }
-
-      function readSession() {
+      function clearLegacySessionStorage() {
         try {
-          const raw = window.localStorage.getItem(sessionStorageKey);
-          if (!raw) {
-            return { authToken: '', systemAuthToken: '' };
-          }
-          const parsed = JSON.parse(raw);
-          return {
-            authToken: normalizeToken(parsed.authToken),
-            systemAuthToken: normalizeToken(parsed.systemAuthToken)
-          };
-        } catch (_) {
-          return { authToken: '', systemAuthToken: '' };
-        }
-      }
-
-      function writeSession(session) {
-        const authToken = normalizeToken(session && session.authToken);
-        const systemAuthToken = normalizeToken(session && session.systemAuthToken);
-        if (!authToken && !systemAuthToken) {
           window.localStorage.removeItem(sessionStorageKey);
-          return;
-        }
-        window.localStorage.setItem(
-          sessionStorageKey,
-          JSON.stringify({ authToken, systemAuthToken })
-        );
+        } catch (_) {}
       }
 
       const params = new URLSearchParams(window.location.search);
       const apiBase = params.get('api') || window.location.origin;
-      const session = readSession();
+      clearLegacySessionStorage();
 
       const app = Elm.Main.init({
         node: document.getElementById('app'),
         flags: {
           apiBase,
-          authToken: session.authToken,
-          systemAuthToken: session.systemAuthToken
+          authToken: '',
+          systemAuthToken: ''
         }
       });
 
       if (app.ports && app.ports.saveSession) {
-        app.ports.saveSession.subscribe(writeSession);
+        app.ports.saveSession.subscribe(() => {});
       }
     </script>
   </body>

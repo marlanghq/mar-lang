@@ -23,6 +23,7 @@ type SystemConfig struct {
 	HTTPMaxRequestBodyMB     *int    `json:"httpMaxRequestBodyMb,omitempty"`
 	AuthRequestCodeRateLimit *int    `json:"authRequestCodeRateLimitPerMinute,omitempty"`
 	AuthLoginRateLimit       *int    `json:"authLoginRateLimitPerMinute,omitempty"`
+	AdminUISessionTTLHours   *int    `json:"adminUiSessionTtlHours,omitempty"`
 	SecurityFramePolicy      *string `json:"securityFramePolicy,omitempty"`
 	SecurityReferrerPolicy   *string `json:"securityReferrerPolicy,omitempty"`
 	SecurityContentNoSniff   *bool   `json:"securityContentTypeNosniff,omitempty"`

@@ -17,6 +17,8 @@ import (
 )
 
 const internalAuthUsersTable = "mar_auth_users"
+const sessionCookieName = "mar_session"
+const adminUISessionHeader = "X-Mar-Admin-UI"
 
 func (r *Runtime) authConfig() model.AuthConfig {
 	if r.App.Auth != nil {
@@ -42,6 +44,9 @@ func (r *Runtime) usesAppAuthEntity() bool {
 // resolveAuth resolves a bearer token into an active session and hydrated auth user.
 func (r *Runtime) resolveAuth(req *http.Request, requestID string) (authSession, error) {
 	token := parseBearerToken(req.Header.Get("Authorization"))
+	if token == "" {
+		token = readSessionCookie(req)
+	}
 	if token == "" {
 		return authSession{}, nil
 	}
@@ -109,6 +114,65 @@ func parseBearerToken(header string) string {
 		return ""
 	}
 	return strings.TrimSpace(header[len("Bearer "):])
+}
+
+func readSessionCookie(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	cookie, err := req.Cookie(sessionCookieName)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cookie.Value)
+}
+
+func sessionCookieSecure(req *http.Request) bool {
+	if req != nil && req.TLS != nil {
+		return true
+	}
+	if req == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(req.Header.Get("X-Forwarded-Proto")), "https")
+}
+
+func writeSessionCookie(w http.ResponseWriter, req *http.Request, token string, expiresAtMillis int64) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    strings.TrimSpace(token),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   sessionCookieSecure(req),
+		Expires:  time.UnixMilli(expiresAtMillis).UTC(),
+		MaxAge:   max(1, int(time.Until(time.UnixMilli(expiresAtMillis)).Seconds())),
+	})
+}
+
+func clearSessionCookie(w http.ResponseWriter, req *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   sessionCookieSecure(req),
+		Expires:  time.Unix(0, 0).UTC(),
+		MaxAge:   -1,
+	})
+}
+
+func (r *Runtime) requestedAdminUISessionTTLHours(req *http.Request) int {
+	cfg := r.authConfig()
+	defaultHours := cfg.SessionTTLHours
+	if req == nil || !strings.EqualFold(strings.TrimSpace(req.Header.Get(adminUISessionHeader)), "true") {
+		return defaultHours
+	}
+	if r.App != nil && r.App.System != nil && r.App.System.AdminUISessionTTLHours != nil {
+		return *r.App.System.AdminUISessionTTLHours
+	}
+	return defaultHours
 }
 
 func (r *Runtime) loadAuthUserByEmail(requestID, email string) (map[string]any, bool, error) {
@@ -420,7 +484,7 @@ func (r *Runtime) tryAutoCreateAuthUserWithRole(requestID, email, roleValue stri
 }
 
 // handleAuthLogin verifies an email+code pair and issues a session token.
-func (r *Runtime) handleAuthLogin(w http.ResponseWriter, requestID string, payload map[string]any) error {
+func (r *Runtime) handleAuthLogin(w http.ResponseWriter, req *http.Request, requestID string, payload map[string]any) error {
 	email, err := parseAuthEmail(payload)
 	if err != nil {
 		return err
@@ -482,10 +546,12 @@ func (r *Runtime) handleAuthLogin(w http.ResponseWriter, requestID string, paylo
 	}
 	tokenHash := hashAuthSecret(token)
 	cfg := r.authConfig()
-	sessionExpiresAt := now + int64(cfg.SessionTTLHours)*60*60*1000
+	sessionTTLHours := r.requestedAdminUISessionTTLHours(req)
+	sessionExpiresAt := now + int64(sessionTTLHours)*60*60*1000
 	if _, err := r.DB.ExecTagged(requestID, `INSERT INTO mar_sessions (token, user_id, email, expires_at, revoked, created_at) VALUES (?, ?, ?, ?, 0, ?)`, tokenHash, userID, email, sessionExpiresAt, now); err != nil {
 		return err
 	}
+	writeSessionCookie(w, req, token, sessionExpiresAt)
 
 	loginRole := any(nil)
 	if cfg.RoleField != "" {
@@ -549,13 +615,14 @@ func (r *Runtime) promoteAuthUserToAdmin(requestID string, user map[string]any) 
 }
 
 // handleAuthLogout revokes the caller session token.
-func (r *Runtime) handleAuthLogout(w http.ResponseWriter, requestID string, auth authSession) error {
+func (r *Runtime) handleAuthLogout(w http.ResponseWriter, req *http.Request, requestID string, auth authSession) error {
 	if !auth.Authenticated || auth.Token == "" {
 		return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
 	}
 	if _, err := r.DB.ExecTagged(requestID, `UPDATE mar_sessions SET revoked = 1 WHERE token = ? OR token = ?`, auth.Token, hashAuthSecret(auth.Token)); err != nil {
 		return err
 	}
+	clearSessionCookie(w, req)
 	r.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	return nil
 }

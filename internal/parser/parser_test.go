@@ -181,6 +181,66 @@ auth {
 	}
 }
 
+func TestParseSystemAdminUISessionTTL(t *testing.T) {
+	src := `
+app AuthApi
+
+system {
+  admin_ui_session_ttl_hours 6
+}
+
+entity User {
+  email: String
+  role: String
+}
+
+auth {
+  user_entity User
+}
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if app.System == nil {
+		t.Fatal("expected system block to be parsed")
+	}
+	if app.System.AdminUISessionTTLHours == nil {
+		t.Fatal("expected admin_ui_session_ttl_hours to be parsed")
+	}
+	if *app.System.AdminUISessionTTLHours != 6 {
+		t.Fatalf("unexpected admin_ui_session_ttl_hours: %d", *app.System.AdminUISessionTTLHours)
+	}
+}
+
+func TestParseSystemAdminUISessionTTLRejectsOutOfRange(t *testing.T) {
+	src := `
+app AuthApi
+
+system {
+  admin_ui_session_ttl_hours 0
+}
+
+entity User {
+  email: String
+  role: String
+}
+
+auth {
+  user_entity User
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for out-of-range system.admin_ui_session_ttl_hours")
+	}
+	if !strings.Contains(err.Error(), "system.admin_ui_session_ttl_hours must be between") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
 func TestParseActionTypeMismatchShowsFriendlyError(t *testing.T) {
 	src := `
 app Demo

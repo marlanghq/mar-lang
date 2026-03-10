@@ -78,6 +78,7 @@ type alias Model =
     , authCode : String
     , authStage : AuthStage
     , authSubmitting : Maybe AuthSubmitState
+    , sessionRestorePending : Bool
     , firstAdminCodeRequested : Bool
     , authToolsOpen : Bool
     , workspace : WorkspaceMode
@@ -314,6 +315,7 @@ init flags =
             , authCode = ""
             , authStage = AuthStageEmail
             , authSubmitting = Nothing
+            , sessionRestorePending = True
             , firstAdminCodeRequested = False
             , authToolsOpen = String.trim flags.authToken == "" && String.trim flags.systemAuthToken == ""
             , workspace = AppWorkspace
@@ -340,24 +342,12 @@ init flags =
             }
 
         restoreAppAuthCmd =
-            if initialModel.authToken /= "" then
-                loadAuthMe AppAuthScope initialModel
-
-            else
-                Cmd.none
-
-        restoreSystemAuthCmd =
-            if initialModel.systemAuthToken /= "" then
-                loadAuthMe SystemAuthScope initialModel
-
-            else
-                Cmd.none
+            loadAuthMe AppAuthScope initialModel
     in
     ( initialModel
     , Cmd.batch
         [ loadSchema flags.apiBase
         , restoreAppAuthCmd
-        , restoreSystemAuthCmd
         ]
     )
 
@@ -783,13 +773,14 @@ update msg model =
                             let
                                 nextModel =
                                     { model
-                                        | authToken = response.token
+                                        | authToken = ""
                                         , currentRole = response.role
                                         , currentEmail = response.email
                                         , authEmail = ""
                                         , authCode = ""
                                         , authStage = AuthStageSession
                                         , authSubmitting = Nothing
+                                        , sessionRestorePending = False
                                         , firstAdminCodeRequested = False
                                         , authToolsOpen = False
                                         , flash = Just "Login successful."
@@ -818,13 +809,14 @@ update msg model =
                             let
                                 nextModel =
                                     { model
-                                        | systemAuthToken = response.token
+                                        | systemAuthToken = ""
                                         , currentSystemRole = response.role
                                         , currentSystemEmail = response.email
                                         , authEmail = ""
                                         , authCode = ""
                                         , authStage = AuthStageSession
                                         , authSubmitting = Nothing
+                                        , sessionRestorePending = False
                                         , authToolsOpen = False
                                         , flash = Just "Admin login successful."
                                     }
@@ -851,20 +843,8 @@ update msg model =
             let
                 scope =
                     activeAuthScope model
-
-                hasToken =
-                    case scope of
-                        AppAuthScope ->
-                            String.trim model.authToken /= ""
-
-                        SystemAuthScope ->
-                            String.trim model.systemAuthToken /= ""
             in
-            if not hasToken then
-                ( { model | flash = Just "Provide a bearer token first" }, Cmd.none )
-
-            else
-                ( { model | flash = Nothing }, loadAuthMe scope model )
+            ( { model | flash = Nothing }, loadAuthMe scope model )
 
         GotAuthMe scope result ->
             case result of
@@ -899,6 +879,7 @@ update msg model =
                                         | currentEmail = Just response.email
                                         , currentRole = response.role
                                         , authStage = AuthStageSession
+                                        , sessionRestorePending = False
                                         , authToolsOpen = False
                                         , selectedEntity =
                                             if model.selectedEntity == Nothing then
@@ -931,6 +912,7 @@ update msg model =
                                 | currentSystemEmail = Just response.email
                                 , currentSystemRole = response.role
                                 , authStage = AuthStageSession
+                                , sessionRestorePending = False
                                 , authToolsOpen = False
                                 , flash =
                                     if currentWorkspace model == AppWorkspace then
@@ -953,8 +935,14 @@ update msg model =
                                             , currentEmail = Nothing
                                             , currentRole = Nothing
                                             , authStage = AuthStageEmail
+                                            , sessionRestorePending = False
                                             , authToolsOpen = True
-                                            , flash = Just "Session expired. Please login again."
+                                            , flash =
+                                                if model.sessionRestorePending then
+                                                    Nothing
+
+                                                else
+                                                    Just "Session expired. Please login again."
                                         }
                                 in
                                 ( nextModel, saveSessionFromModel nextModel )
@@ -967,33 +955,37 @@ update msg model =
                                             , currentSystemEmail = Nothing
                                             , currentSystemRole = Nothing
                                             , authStage = AuthStageEmail
+                                            , sessionRestorePending = False
                                             , authToolsOpen = True
-                                            , flash = Just "Session expired. Please login again."
+                                            , flash =
+                                                if model.sessionRestorePending then
+                                                    Nothing
+
+                                                else
+                                                    Just "Session expired. Please login again."
                                         }
                                 in
                                 ( nextModel, saveSessionFromModel nextModel )
 
                     else
-                        ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                        ( { model
+                            | sessionRestorePending = False
+                            , flash =
+                                if model.sessionRestorePending then
+                                    Nothing
+
+                                else
+                                    Just (httpErrorToString httpError)
+                          }
+                        , Cmd.none
+                        )
 
         LogoutSession ->
             let
                 scope =
                     activeAuthScope model
-
-                hasToken =
-                    case scope of
-                        AppAuthScope ->
-                            String.trim model.authToken /= ""
-
-                        SystemAuthScope ->
-                            String.trim model.systemAuthToken /= ""
             in
-            if not hasToken then
-                ( { model | flash = Just "Provide a bearer token first" }, Cmd.none )
-
-            else
-                ( { model | flash = Nothing }, logoutSession scope model )
+            ( { model | flash = Nothing }, logoutSession scope model )
 
         GotLogoutSession scope result ->
             case result of
@@ -1002,7 +994,7 @@ update msg model =
                         AppAuthScope ->
                             let
                                 nextModel =
-                                    { model | authToken = "", currentEmail = Nothing, currentRole = Nothing, authEmail = "", authCode = "", authStage = AuthStageEmail, authSubmitting = Nothing, flash = Just "User session logged out. Token cleared." }
+                                    { model | authToken = "", currentEmail = Nothing, currentRole = Nothing, authEmail = "", authCode = "", authStage = AuthStageEmail, authSubmitting = Nothing, sessionRestorePending = False, flash = Just "User session logged out." }
                             in
                             let
                                 finalModel =
@@ -1013,7 +1005,7 @@ update msg model =
                         SystemAuthScope ->
                             let
                                 nextModel =
-                                    { model | systemAuthToken = "", currentSystemEmail = Nothing, currentSystemRole = Nothing, authEmail = "", authCode = "", authStage = AuthStageEmail, authSubmitting = Nothing, flash = Just "Admin session logged out. Token cleared." }
+                                    { model | systemAuthToken = "", currentSystemEmail = Nothing, currentSystemRole = Nothing, authEmail = "", authCode = "", authStage = AuthStageEmail, authSubmitting = Nothing, sessionRestorePending = False, flash = Just "Admin session logged out." }
                             in
                             let
                                 finalModel =
@@ -1440,7 +1432,7 @@ loginWithCode scope model =
     in
     Http.request
         { method = "POST"
-        , headers = []
+        , headers = [ Http.header "X-Mar-Admin-UI" "true" ]
         , url = model.apiBase ++ endpoint
         , body =
             Http.jsonBody

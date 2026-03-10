@@ -59,6 +59,7 @@ var (
 		"role_field":                              "Sets the user entity field used for role checks. Example: `role_field role`.",
 		"code_ttl_minutes":                        "Sets login code lifetime in minutes. Default `10`, range `1..1440`.",
 		"session_ttl_hours":                       "Sets session lifetime in hours. Default `24`, range `1..8760`.",
+		"admin_ui_session_ttl_hours":              "Sets the generated admin UI session lifetime in hours. Falls back to `auth.session_ttl_hours` when omitted.",
 		"email_transport":                         "Sets email delivery transport. Options: `console` or `sendmail`.",
 		"email_from":                              "Sets the sender email used by auth code messages.",
 		"email_subject":                           "Sets the subject used by auth code messages.",

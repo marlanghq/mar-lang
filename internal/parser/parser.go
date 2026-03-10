@@ -436,6 +436,20 @@ func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
 			(*idx)++
 			continue
 		}
+		if m := match(`^admin_ui_session_ttl_hours\s+([0-9]{1,4})$`, trimmed); m != nil {
+			value := mustInt(m[1])
+			if value < minSessionTTLHours || value > maxSessionTTLHours {
+				return nil, fmt.Errorf(
+					"line %d: system.admin_ui_session_ttl_hours must be between %d and %d",
+					ln.number,
+					minSessionTTLHours,
+					maxSessionTTLHours,
+				)
+			}
+			cfg.AdminUISessionTTLHours = intPtr(value)
+			(*idx)++
+			continue
+		}
 		if m := match(`^security_frame_policy\s+(deny|sameorigin)$`, trimmed); m != nil {
 			cfg.SecurityFramePolicy = stringPtr(m[1])
 			(*idx)++

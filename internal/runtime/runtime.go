@@ -428,9 +428,9 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 					Message: "Too many login attempts. Try again in one minute.",
 				}
 			}
-			return r.handleAuthLogin(w, requestID, payload)
+			return r.handleAuthLogin(w, req, requestID, payload)
 		case method == http.MethodPost && path == "/auth/logout":
-			return r.handleAuthLogout(w, requestID, auth)
+			return r.handleAuthLogout(w, req, requestID, auth)
 		case method == http.MethodGet && path == "/auth/me":
 			if !auth.Authenticated {
 				return &apiError{Status: http.StatusUnauthorized, Message: "Authentication required"}
@@ -552,7 +552,7 @@ func quoteIdentifier(name string) (string, error) {
 func setCORSHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Mar-Admin-UI")
 }
 
 func setSecurityHeaders(w http.ResponseWriter, app *model.App) {

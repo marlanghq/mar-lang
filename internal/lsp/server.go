@@ -432,6 +432,7 @@ func keywordCompletionItems() []map[string]any {
 		"role_field",
 		"code_ttl_minutes",
 		"session_ttl_hours",
+		"admin_ui_session_ttl_hours",
 		"email_transport",
 		"email_from",
 		"email_subject",
