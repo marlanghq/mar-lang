@@ -13,6 +13,7 @@ website/dist/
 firebase.json
 .firebaserc
 .firebase*
+**/node_modules/
 mar
 mar.exe
 internal/cli/compiler_assets/
