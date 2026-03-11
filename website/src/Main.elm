@@ -712,11 +712,70 @@ advancedToolingPage model =
             , commandRow model "3" "Fly init" "Prepares Fly.io deployment files for your app." "mar fly init store.mar"
             , commandRow model "4" "Fly deploy" "Rebuilds the Linux executable for the current app and runs fly deploy with the generated Fly config." "mar fly deploy store.mar"
             , commandRow model "5" "Format" "Applies Mar's official formatting style to source files." "mar format store.mar"
-            , commandRow model "6" "LSP" "Starts the language server used by the VSCode extension for diagnostics, hovers, and navigation. Usually started by the editor plugin." "mar lsp"
+            , commandRow model "6" "Completion" "Generates shell completion scripts for terminals such as zsh." "mar completion zsh"
+            , commandRow model "7" "LSP" "Starts the language server used by the VSCode extension for diagnostics, hovers, and navigation. Usually started by the editor plugin." "mar lsp"
             , paragraphWithEmphasis
                 [ text "For a production walkthrough, see the "
                 , link [ Font.color (rgb255 36 82 132), Font.semiBold ] { url = routeHref AdvancedDeploy, label = text "Deploy" }
                 , text " guide."
+                ]
+            , docSubsectionTitle "Shell completion"
+            , paragraphWithEmphasis
+                [ text "Mar can generate shell completion for "
+                , emphasisText "zsh"
+                , text ", "
+                , emphasisText "bash"
+                , text ", and "
+                , emphasisText "fish"
+                , text " so commands like "
+                , inlineCommand "mar fly"
+                , text " and "
+                , inlineCommand "mar compile"
+                , text " are suggested as you type."
+                ]
+            , bodyText "Add the command below to your shell's startup file."
+            , column
+                [ width fill
+                , spacing 16
+                ]
+                [ column
+                    [ width fill
+                    , spacing 8
+                    ]
+                    [ paragraphWithEmphasis
+                        [ emphasisText "Zsh"
+                        , text " — add this line to "
+                        , inlineCommand "~/.zshrc"
+                        , text "."
+                        ]
+                    , terminalFromString model "eval \"$(mar completion zsh)\""
+                    ]
+                , column
+                    [ width fill
+                    , spacing 8
+                    ]
+                    [ paragraphWithEmphasis
+                        [ emphasisText "Bash"
+                        , text " — add this line to "
+                        , inlineCommand "~/.bashrc"
+                        , text " or "
+                        , inlineCommand "~/.bash_profile"
+                        , text "."
+                        ]
+                    , terminalFromString model "source <(mar completion bash)"
+                    ]
+                , column
+                    [ width fill
+                    , spacing 8
+                    ]
+                    [ paragraphWithEmphasis
+                        [ emphasisText "Fish"
+                        , text " — add this line to "
+                        , inlineCommand "~/.config/fish/config.fish"
+                        , text "."
+                        ]
+                    , terminalFromString model "mar completion fish | source"
+                    ]
                 ]
             , docSubsectionTitle "Generated Client Output"
             , bodyText "When you compile an app, Mar also generates frontend clients for Elm and TypeScript. These clients wrap the generated HTTP API with named functions, so you do not need to hand-write fetch calls, URLs, or request payload shapes."
@@ -2819,7 +2878,7 @@ codeInline source =
                 , HtmlAttr.style "font-size" "14px"
                 , HtmlAttr.style "color" "#D8E7F8"
                 ]
-                [ Html.text source ]
+                (highlightCLICommandLine source)
             )
         )
 
@@ -2840,7 +2899,7 @@ codeInlineSmall source =
                 , HtmlAttr.style "font-size" "12px"
                 , HtmlAttr.style "color" "#D8E7F8"
                 ]
-                [ Html.text source ]
+                (highlightCLICommandLine source)
             )
         )
 
@@ -2896,55 +2955,177 @@ terminalLineView lineText =
 
 highlightTerminalLine : String -> List (Html.Html msg)
 highlightTerminalLine lineText =
+    highlightTerminalSegments lineText
+
+
+highlightTerminalSegments : String -> List (Html.Html msg)
+highlightTerminalSegments remaining =
+    if String.isEmpty remaining then
+        []
+
+    else
+        case findTerminalHighlight remaining of
+            Nothing ->
+                [ Html.text remaining ]
+
+            Just ( before, matched, after ) ->
+                let
+                    beforeNode =
+                        if String.isEmpty before then
+                            []
+
+                        else
+                            [ Html.text before ]
+                in
+                beforeNode
+                    ++ [ Html.span [ HtmlAttr.style "color" (terminalHighlightColor matched) ] [ Html.text matched ] ]
+                    ++ highlightTerminalSegments after
+
+
+findTerminalHighlight : String -> Maybe ( String, String, String )
+findTerminalHighlight value =
+    terminalHighlightWords
+        |> List.filterMap (\word -> findFirstTerminalMatch word value)
+        |> List.sortBy .index
+        |> List.head
+        |> Maybe.map
+            (\match ->
+                ( String.left match.index value
+                , match.word
+                , String.dropLeft (match.index + String.length match.word) value
+                )
+            )
+
+
+terminalHighlightWords : List String
+terminalHighlightWords =
+    [ "eval", "source", "mar", "zsh", "bash", "fish" ]
+
+
+terminalHighlightColor : String -> String
+terminalHighlightColor value =
+    case value of
+        "mar" ->
+            "#A6E3A1"
+
+        "zsh" ->
+            "#C792EA"
+
+        "bash" ->
+            "#C792EA"
+
+        "fish" ->
+            "#C792EA"
+
+        _ ->
+            "#8BE9FD"
+
+
+highlightCLICommandLine : String -> List (Html.Html msg)
+highlightCLICommandLine lineText =
+    lineText
+        |> String.words
+        |> List.indexedMap cliCommandTokenView
+        |> intersperseCommandSpaces
+
+
+cliCommandTokenView : Int -> String -> Html.Html msg
+cliCommandTokenView _ chunk =
     let
-        tokens =
-            String.words lineText
+        color =
+            if isMarBinaryToken chunk then
+                "#A6E3A1"
+
+            else if String.endsWith ".mar" chunk then
+                "#F6C177"
+
+            else
+                "#D8E7F8"
     in
-    case tokens of
-        [] ->
-            [ Html.text lineText ]
-
-        first :: rest ->
-            highlightTerminalTokens 0 (first :: rest)
+    Html.span [ HtmlAttr.style "color" color ] [ Html.text chunk ]
 
 
-highlightTerminalTokens : Int -> List String -> List (Html.Html msg)
-highlightTerminalTokens index tokens =
-    case tokens of
+isMarBinaryToken : String -> Bool
+isMarBinaryToken chunk =
+    let
+        normalized =
+            chunk
+                |> String.trim
+                |> String.split "/"
+                |> List.reverse
+                |> List.head
+                |> Maybe.withDefault chunk
+    in
+    normalized == "mar"
+
+
+isCLICommandToken : String -> Bool
+isCLICommandToken chunk =
+    List.member chunk
+        [ "dev"
+        , "compile"
+        , "fly"
+        , "init"
+        , "deploy"
+        , "format"
+        , "completion"
+        , "lsp"
+        , "version"
+        ]
+
+
+intersperseCommandSpaces : List (Html.Html msg) -> List (Html.Html msg)
+intersperseCommandSpaces nodes =
+    case nodes of
         [] ->
             []
 
-        chunk :: rest ->
-            let
-                tokenColor =
-                    if String.startsWith "--" chunk || String.startsWith "-" chunk then
-                        "#7ED0FF"
+        first :: rest ->
+            first
+                :: List.concatMap (\node -> [ Html.text " ", node ]) rest
 
-                    else if index == 0 then
-                        "#8BE9FD"
 
-                    else if index == 1 then
-                        "#7AA2F7"
+type alias TerminalMatch =
+    { index : Int
+    , word : String
+    }
 
-                    else if String.contains "=" chunk || String.endsWith ".mar" chunk then
-                        "#F6C177"
 
-                    else if String.all (\c -> Char.isUpper c || Char.isDigit c || c == '_') chunk then
-                        "#A6E3A1"
+findFirstTerminalMatch : String -> String -> Maybe TerminalMatch
+findFirstTerminalMatch word value =
+    let
+        indexes =
+            String.indexes word value
+    in
+    findMatchingTerminalIndex word value indexes
 
-                    else
-                        "#D8E7F8"
-            in
-            Html.span
-                [ HtmlAttr.style "color" tokenColor ]
-                [ Html.text chunk ]
-                :: (case rest of
-                        [] ->
-                            []
 
-                        _ ->
-                            Html.text " " :: highlightTerminalTokens (index + 1) rest
-                   )
+findMatchingTerminalIndex : String -> String -> List Int -> Maybe TerminalMatch
+findMatchingTerminalIndex word value indexes =
+    case indexes of
+        [] ->
+            Nothing
+
+        index :: rest ->
+            if terminalWordBoundary value index (index - 1) && terminalWordBoundary value (index + String.length word) (index + String.length word) then
+                Just { index = index, word = word }
+
+            else
+                findMatchingTerminalIndex word value rest
+
+
+terminalWordBoundary : String -> Int -> Int -> Bool
+terminalWordBoundary value probeIndex charIndex =
+    if probeIndex <= 0 || probeIndex >= String.length value then
+        True
+
+    else
+        case String.uncons (String.dropLeft charIndex value) of
+            Just ( char, _ ) ->
+                not (Char.isAlpha char || Char.isDigit char || char == '_')
+
+            Nothing ->
+                True
 
 
 copyLink : Model -> String -> Element Msg

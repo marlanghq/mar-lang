@@ -77,6 +77,8 @@ func Run(binaryName string, args []string) error {
 		return runDev(binaryName, args[1], outputPath)
 	case "fly":
 		return runFly(binaryName, args[1:])
+	case "completion":
+		return runCompletion(binaryName, args[1:])
 	case "format":
 		return runFormat(binaryName, args[1:])
 	case "lsp":
@@ -332,6 +334,7 @@ func printUsage(binaryName string) {
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s compile <app.mar> [output-name]", binaryName), "Compile a .mar app into executables for all supported platforms and generate its frontend clients.")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s fly init <app.mar> [fly-app-name]", binaryName), "Prepares Fly.io deployment files for your app.")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s fly deploy <app.mar>", binaryName), "Rebuild the Linux executable for Fly.io and run fly deploy.")
+	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s completion <zsh|bash|fish>", binaryName), "Generate shell completion scripts.")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s format [--check] [--stdin] [files...]", binaryName), "Format Mar source files.")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s lsp", binaryName), "Start the Mar Language Server (for editors).")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s version", binaryName), "Show version and build information.")
@@ -349,6 +352,7 @@ func unknownCommandError(binaryName, provided string) error {
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s compile <app.mar> [output-name]", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly init <app.mar> [fly-app-name]", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly deploy <app.mar>", binaryName))
+	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s completion <zsh|bash|fish>", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s format [--check] [--stdin] [files...]", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s lsp", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s version", binaryName))

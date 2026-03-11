@@ -2,6 +2,8 @@ package cli
 
 import (
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -89,5 +91,62 @@ func TestFlyUsageErrorUsesStyledCLIFormat(t *testing.T) {
 	}
 	if !strings.HasSuffix(msg, "\n") {
 		t.Fatalf("expected fly usage message to end with newline, got %q", msg)
+	}
+}
+
+func TestRenderCompletionScriptSupportsZsh(t *testing.T) {
+	script, err := renderCompletionScript("mar", "zsh")
+	if err != nil {
+		t.Fatalf("expected zsh completion script, got error: %v", err)
+	}
+	if !strings.Contains(script, "compdef _mar mar") {
+		t.Fatalf("expected zsh compdef registration, got %q", script)
+	}
+	if !strings.Contains(script, "fly") || !strings.Contains(script, "completion") {
+		t.Fatalf("expected script to include CLI commands, got %q", script)
+	}
+}
+
+func TestRenderCompletionScriptRejectsUnsupportedShell(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+
+	_, err := renderCompletionScript("mar", "pwsh")
+	if err == nil {
+		t.Fatal("expected unsupported shell error")
+	}
+
+	msg := err.Error()
+	if !strings.Contains(msg, `Unsupported shell "pwsh"`) {
+		t.Fatalf("expected unsupported shell message, got %q", msg)
+	}
+	if !strings.Contains(msg, "Use one of: zsh, bash, fish") {
+		t.Fatalf("expected supported shells hint, got %q", msg)
+	}
+}
+
+func TestRunCompletionPrintsBashScript(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	runErr := runCompletion("mar", []string{"bash"})
+	_ = w.Close()
+	if runErr != nil {
+		t.Fatalf("runCompletion returned error: %v", runErr)
+	}
+
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "complete -F _mar_completion mar") {
+		t.Fatalf("expected bash completion output, got %q", got)
 	}
 }
