@@ -29,7 +29,7 @@ all:
 	@$(MAKE) --no-print-directory mar
 	$(call print_title,Mar compiler ready)
 	$(call print_ok,./mar)
-	@$(MAKE) --no-print-directory website
+	@$(MAKE) --no-print-directory CHAINED=1 website
 	@$(MAKE) --no-print-directory vscode-plugin
 	@printf "\n"
 
@@ -93,7 +93,7 @@ check-python3:
 check-node:
 	@command -v node >/dev/null 2>&1 || { \
 		printf "\n"; \
-		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "%s\n" "Node.js is required to package the VS Code extension. Install Node.js and try again."; else printf "\033[1;31m%s\033[0m\n" "Node.js is required to package the VS Code extension. Install Node.js and try again."; fi; \
+		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "%s\n" "Node.js is required for JS minification and VS Code extension packaging. Install Node.js and try again."; else printf "\033[1;31m%s\033[0m\n" "Node.js is required for JS minification and VS Code extension packaging. Install Node.js and try again."; fi; \
 		printf "\n"; \
 		exit 1; \
 	}
@@ -109,23 +109,49 @@ check-npm: check-node
 check-npx: check-node
 	@command -v npx >/dev/null 2>&1 || { \
 		printf "\n"; \
-		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "%s\n" "npx is required to package the VS Code extension. Install Node.js and try again."; else printf "\033[1;31m%s\033[0m\n" "npx is required to package the VS Code extension. Install Node.js and try again."; fi; \
+		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "%s\n" "npx is required for JS minification and VS Code extension packaging. Install Node.js and try again."; else printf "\033[1;31m%s\033[0m\n" "npx is required for JS minification and VS Code extension packaging. Install Node.js and try again."; fi; \
 		printf "\n"; \
 		exit 1; \
 	}
 
-admin: check-elm
+admin: check-elm check-npx
 	$(call print_title,Admin UI)
 	$(call print_info,Building admin/dist/app.js with Elm $(ELM_REQUIRED_VERSION))
-	@cd admin && elm make src/Main.elm --output=dist/app.js
-	@sh -c 'if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "  %s\n" "Output: admin/dist/app.js"; else printf "  Output: \033[1;32madmin/dist/app.js\033[0m\n"; fi'
+	$(call print_info,Minifying admin/dist/app.js with esbuild)
+	@cd admin && sh -c '\
+		elm_output=$$(elm make src/Main.elm --optimize --output=dist/app.unminified.js 2>&1) || { printf "%s\n" "$$elm_output"; exit 1; }; \
+		before_bytes=$$(wc -c < dist/app.unminified.js | tr -d " "); \
+		esbuild_output=$$(npx --yes esbuild dist/app.unminified.js --minify --outfile=dist/app.js 2>&1) || { printf "%s\n" "$$esbuild_output"; exit 1; }; \
+		after_bytes=$$(wc -c < dist/app.js | tr -d " "); \
+		before_kb=$$(awk "BEGIN { printf \"%.1f\", $$before_bytes / 1024 }"); \
+		after_kb=$$(awk "BEGIN { printf \"%.1f\", $$after_bytes / 1024 }"); \
+		reduction=$$(awk "BEGIN { if ($$before_bytes > 0) printf \"%.0f\", (( $$before_bytes - $$after_bytes ) / $$before_bytes) * 100; else printf \"0\" }"); \
+		rm -f dist/app.unminified.js; \
+		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then \
+			printf "  %s\n" "Output: admin/dist/app.js ($$after_kb KB, down from $$before_kb KB, -$$reduction%%)"; \
+		else \
+			printf "  Output: \033[1;32m%s\033[0m \033[38;5;245m(%s KB, down from %s KB, -%s%%)\033[0m\n" "admin/dist/app.js" "$$after_kb" "$$before_kb" "$$reduction"; \
+		fi'
 
-website: check-elm
+website: check-elm check-npx
 	$(call print_title,Website)
 	$(call print_info,Building website/dist/app.js with Elm $(ELM_REQUIRED_VERSION))
-	@cd website && elm make src/Main.elm --output=dist/app.js
-	@sh -c 'if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "  %s\n" "Output: website/dist/app.js"; else printf "  Output: \033[1;32mwebsite/dist/app.js\033[0m\n"; fi'
-	@printf "\n"
+	$(call print_info,Minifying website/dist/app.js with esbuild)
+	@cd website && sh -c '\
+		elm_output=$$(elm make src/Main.elm --optimize --output=dist/app.unminified.js 2>&1) || { printf "%s\n" "$$elm_output"; exit 1; }; \
+		before_bytes=$$(wc -c < dist/app.unminified.js | tr -d " "); \
+		esbuild_output=$$(npx --yes esbuild dist/app.unminified.js --minify --outfile=dist/app.js 2>&1) || { printf "%s\n" "$$esbuild_output"; exit 1; }; \
+		after_bytes=$$(wc -c < dist/app.js | tr -d " "); \
+		before_kb=$$(awk "BEGIN { printf \"%.1f\", $$before_bytes / 1024 }"); \
+		after_kb=$$(awk "BEGIN { printf \"%.1f\", $$after_bytes / 1024 }"); \
+		reduction=$$(awk "BEGIN { if ($$before_bytes > 0) printf \"%.0f\", (( $$before_bytes - $$after_bytes ) / $$before_bytes) * 100; else printf \"0\" }"); \
+		rm -f dist/app.unminified.js; \
+		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then \
+			printf "  %s\n" "Output: website/dist/app.js ($$after_kb KB, down from $$before_kb KB, -$$reduction%%)"; \
+		else \
+			printf "  Output: \033[1;32m%s\033[0m \033[38;5;245m(%s KB, down from %s KB, -%s%%)\033[0m\n" "website/dist/app.js" "$$after_kb" "$$before_kb" "$$reduction"; \
+		fi'
+	@if [ -z "$(CHAINED)" ]; then printf "\n"; fi
 
 website-serve: website check-python3
 	$(call print_title,Website)
