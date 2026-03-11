@@ -439,21 +439,6 @@ gettingStartedPage model =
                 , "Access monitoring, logs, and database tools with an admin account."
                 ]
             ]
-        , panel
-            [ sectionTitle "Deploy on Fly.io"
-            , paragraph [ Font.size 16, Font.color (rgb255 72 95 123), width fill ]
-                [ text "Mar can prepare Fly.io deployment files for you. The generated setup keeps the app as a single executable, mounts SQLite at /data on Fly, and leaves SMTP secrets in environment variables." ]
-            , codeFromString model "fly-init.sh" 0 flyInitSource
-            , bulletList
-                [ "`mar fly init todo.mar` generates deploy/fly/Dockerfile and deploy/fly/fly.toml."
-                , "Choose a Fly region during init. That region is written into fly.toml and reused in the volume command."
-                , "Fly uses a persistent volume for SQLite, and Mar rewrites a relative database like todo.db to /data/todo.db for that deployment."
-                , "If auth uses SMTP, set the configured password env var on Fly, such as RESEND_API_KEY."
-                ]
-            , codeFromString model "fly-deploy.sh" 0 flyDeploySource
-            , paragraph [ Font.size 14, Font.color (rgb255 96 116 140), width fill ]
-                [ text "If auth.email_from still uses a placeholder value, mar fly init warns before you deploy. Use a real sender address from a verified domain in your email provider." ]
-            ]
         , gettingStartedAdvancedCta
         ]
 
@@ -554,6 +539,7 @@ advancedLanguagePage model =
                 [ "Authentication endpoints are always available."
                 , "Every Mar app includes a built-in User entity that you may extend."
                 , "Entity access is deny-by-default unless you declare authorize rules."
+                , "Admin always has read-only access to the built-in User entity, even without explicit authorize rules."
                 , "`authorize all when ...` sets a default rule for list, get, create, update, and delete, and specific operations can still override it."
                 , "System features use the same session and require role == \"admin\"."
                 ]
@@ -609,7 +595,7 @@ advancedLanguageReferencePage =
                 , languageReferenceItem "create" "Adds a create step inside an action."
                 ]
             , languageReferenceGroup "Auth config"
-                [ languageReferenceItem "User" "Built-in user entity present in every Mar app. You may extend it with extra fields and authorization rules."
+                [ languageReferenceItem "User" "Built-in user entity present in every Mar app. You may extend it with extra fields and authorization rules. Admin always has read-only access to it."
                 , languageReferenceItem "code_ttl_minutes" "Sets how long login codes remain valid."
                 , languageReferenceItem "session_ttl_hours" "Sets the default session lifetime."
                 , languageReferenceItem "email_transport, email_from, email_subject, smtp_host, smtp_port, smtp_username, smtp_password_env, smtp_starttls" "Configure how login codes are delivered."
@@ -3442,14 +3428,14 @@ auth {
 
 flyInitSource : String
 flyInitSource =
-    """# Prepare Fly.io deployment files
+    """# Prepare Fly.io deployment files for your app
 mar fly init todo.mar
 """
 
 
 flyDeploySource : String
 flyDeploySource =
-    """# Follow the generated next steps
+    """# Follow the commands printed by mar fly init
 fly auth login
 fly apps create todo
 fly volumes create todo_data --region gru --size 1 -a todo
@@ -3464,6 +3450,8 @@ authorizeExampleSource =
 entity User {
   displayName: String optional
 
+  -- Admin always has read-only access to User, even without explicit rules.
+  -- These rules are still useful when non-admin user access should be allowed.
   authorize all when isRole(\"admin\")
   authorize get when auth_authenticated and (id == auth_user_id or isRole(\"admin\"))
   authorize delete when isRole(\"admin\")

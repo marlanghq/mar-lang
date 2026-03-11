@@ -330,7 +330,7 @@ func printUsage(binaryName string) {
 	fmt.Printf("%s\n", colorizeCLI(useColor, "\033[1;36m", "Available commands"))
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s dev <app.mar> [output-name]", binaryName), "Run development mode with hot reload.")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s compile <app.mar> [output-name]", binaryName), "Compile a .mar app into executables for all supported platforms and generate its frontend clients.")
-	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s fly init <app.mar> [fly-app-name]", binaryName), "Prepare Fly.io deployment files and a Linux executable.")
+	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s fly init <app.mar> [fly-app-name]", binaryName), "Prepares Fly.io deployment files for your app.")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s fly deploy <app.mar>", binaryName), "Rebuild the Linux executable for Fly.io and run fly deploy.")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s format [--check] [--stdin] [files...]", binaryName), "Format Mar source files.")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s lsp", binaryName), "Start the Mar Language Server (for editors).")

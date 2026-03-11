@@ -220,6 +220,9 @@ func (r *Runtime) ensureAuthorized(entity *model.Entity, action string, auth aut
 	if !r.appAuthEnabled() {
 		return nil
 	}
+	if r.allowAdminBuiltInUserAccess(entity, action, auth) {
+		return nil
+	}
 	authorizers := r.authorizers[entity.Name]
 	rule, hasRule := authorizers[action]
 	if !hasRule {
@@ -252,6 +255,25 @@ func (r *Runtime) ensureAuthorized(entity *model.Entity, action string, auth aut
 		return newAPIError(http.StatusForbidden, "not_authorized", fmt.Sprintf("Not authorized to %s %s", action, entity.Name))
 	}
 	return nil
+}
+
+func (r *Runtime) allowAdminBuiltInUserAccess(entity *model.Entity, action string, auth authSession) bool {
+	if r == nil || entity == nil || r.authUser == nil {
+		return false
+	}
+	if entity.Name != r.authUser.Name {
+		return false
+	}
+	if !auth.Authenticated || !isAdminRole(auth.Role) {
+		return false
+	}
+
+	switch action {
+	case "list", "get":
+		return true
+	default:
+		return false
+	}
 }
 
 type insertBuild struct {
