@@ -3,13 +3,15 @@ port module Main exposing (main)
 import Browser
 import Browser.Navigation as Nav
 import Char
-import Element exposing (Attribute, Element, centerX, column, el, fill, height, html, htmlAttribute, link, maximum, minimum, newTabLink, padding, paddingEach, paragraph, px, rgb255, row, scrollbarX, scrollbarY, spacing, text, width, wrappedRow)
+import Element exposing (Attribute, Element, centerX, column, el, fill, height, html, htmlAttribute, inFront, link, maximum, minimum, newTabLink, none, padding, paddingEach, paragraph, px, rgb255, row, scrollbarX, scrollbarY, spacing, text, width, wrappedRow)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
+import Element.Input as Input
 import Html
 import Html.Attributes as HtmlAttr
 import Html.Events as HtmlEvents
+import Json.Decode as Decode
 import String
 import Url exposing (Url)
 
@@ -31,6 +33,7 @@ type alias Model =
     { key : Nav.Key
     , route : Route
     , copiedText : Maybe String
+    , docsSearch : String
     }
 
 
@@ -38,6 +41,17 @@ type Msg
     = LinkClicked Browser.UrlRequest
     | UrlChanged Url
     | CopyText String
+    | UpdateDocsSearch String
+    | DismissDocsSearch
+    | NoOp
+
+
+type alias DocSearchEntry =
+    { title : String
+    , route : Route
+    , summary : String
+    , keywords : List String
+    }
 
 
 port copyToClipboard : String -> Cmd msg
@@ -63,6 +77,7 @@ init _ url key =
     ( { key = key
       , route = routeFromUrl url
       , copiedText = Nothing
+      , docsSearch = ""
       }
     , Cmd.none
     )
@@ -80,10 +95,19 @@ update msg model =
                     ( model, Nav.load href )
 
         UrlChanged url ->
-            ( { model | route = routeFromUrl url, copiedText = Nothing }, scrollToTop () )
+            ( { model | route = routeFromUrl url, copiedText = Nothing, docsSearch = "" }, scrollToTop () )
 
         CopyText source ->
             ( { model | copiedText = Just source }, copyToClipboard source )
+
+        UpdateDocsSearch value ->
+            ( { model | docsSearch = value }, Cmd.none )
+
+        DismissDocsSearch ->
+            ( { model | docsSearch = "" }, Cmd.none )
+
+        NoOp ->
+            ( model, Cmd.none )
 
 
 routeFromUrl : Url -> Route
@@ -226,31 +250,90 @@ view model =
 
 page : Model -> Element Msg
 page model =
-    column
+    el
         [ width fill
-        , spacing 20
-        , paddingEach { top = 20, right = 20, bottom = 28, left = 20 }
+        , inFront
+            (if String.trim model.docsSearch == "" then
+                none
+
+             else
+                pageSearchOverlay model
+            )
         ]
-        [ topBar model.route
-        , warningBanner
-        , routeView model
-        , footer
-        ]
+        (column
+            [ width fill
+            , spacing 20
+            , paddingEach { top = 20, right = 20, bottom = 28, left = 20 }
+            ]
+            [ topBar model
+            , warningBanner
+            , routeView model
+            , footer
+            ]
+        )
 
 
-topBar : Route -> Element Msg
-topBar route =
+topBar : Model -> Element Msg
+topBar model =
     panel
         [ column [ width fill, spacing 12 ]
-            [ el [ Font.size 28, Font.bold, Font.color (rgb255 22 57 96) ] (text "Mar")
+            [ wrappedRow [ width fill, spacing 12 ]
+                [ el [ Font.size 28, Font.bold, Font.color (rgb255 22 57 96) ] (text "Mar")
+                , el [ width fill ] none
+                , topSearchArea model
+                ]
             , wrappedRow [ width fill, spacing 8 ]
-                [ navItem route Home "Home"
-                , navItem route GettingStarted "Getting Started"
-                , navItem route AdvancedGuide "Advanced"
-                , navItem route Examples "Examples"
+                [ navItem model.route Home "Home"
+                , navItem model.route GettingStarted "Getting Started"
+                , navItem model.route AdvancedGuide "Advanced"
+                , navItem model.route Examples "Examples"
                 ]
             ]
         ]
+
+
+topSearchArea : Model -> Element Msg
+topSearchArea model =
+    el
+        [ width (fill |> maximum 190)
+        ]
+        (topSearch model)
+
+
+pageSearchOverlay : Model -> Element Msg
+pageSearchOverlay model =
+    el
+        [ width fill
+        , height fill
+        , htmlAttribute (HtmlAttr.style "position" "fixed")
+        , htmlAttribute (HtmlAttr.style "top" "0")
+        , htmlAttribute (HtmlAttr.style "left" "0")
+        , htmlAttribute (HtmlAttr.style "right" "0")
+        , htmlAttribute (HtmlAttr.style "bottom" "0")
+        , htmlAttribute (HtmlAttr.style "z-index" "20")
+        , htmlAttribute (HtmlEvents.onClick DismissDocsSearch)
+        , inFront
+            (el
+                [ width (fill |> maximum 1040)
+                , centerX
+                , paddingEach { top = 86, right = 16, bottom = 0, left = 16 }
+                ]
+                (row
+                    [ width fill ]
+                    [ el [ width fill ] none
+                    , el
+                        [ width (fill |> maximum 320)
+                        , htmlAttribute
+                            (HtmlEvents.stopPropagationOn "click"
+                                (Decode.succeed ( NoOp, True ))
+                            )
+                        ]
+                        (topSearchResults model)
+                    ]
+                )
+            )
+        ]
+        none
 
 
 navItem : Route -> Route -> String -> Element Msg
@@ -299,7 +382,7 @@ routeView model =
             advancedLanguagePage model
 
         AdvancedLanguageReference ->
-            advancedLanguageReferencePage
+            advancedLanguageReferencePage model
 
         AdvancedRuntime ->
             advancedRuntimePage model
@@ -311,7 +394,7 @@ routeView model =
             advancedDeployPage model
 
         AdvancedCompiler ->
-            advancedCompilerPage
+            advancedCompilerPage model
 
         Examples ->
             examplesPage model
@@ -341,6 +424,301 @@ warningBanner =
                 [ text "For now, Mar does not guarantee backward compatibility for language syntax or database schema. That guarantee is planned for a future stable release." ]
             ]
         ]
+
+
+topSearch : Model -> Element Msg
+topSearch model =
+    Input.text
+        [ width (fill |> maximum 190)
+        , Background.color (rgb255 248 251 255)
+        , Border.width 1
+        , Border.color (rgb255 209 222 239)
+        , Border.rounded 10
+        , paddingEach { top = 12, right = 12, bottom = 12, left = 12 }
+        , Font.size 16
+        ]
+        { onChange = UpdateDocsSearch
+        , text = model.docsSearch
+        , placeholder = Just (Input.placeholder [] (text "Search"))
+        , label = Input.labelHidden "Search"
+        }
+
+
+topSearchResults : Model -> Element Msg
+topSearchResults model =
+    let
+        query =
+            String.trim model.docsSearch
+
+        results =
+            if query == "" then
+                []
+
+            else
+                matchingDocSearchEntries query
+    in
+    if query == "" then
+        none
+
+    else
+        column
+            [ width fill
+            , spacing 8
+            , Background.color (rgb255 255 255 255)
+            , Border.width 1
+            , Border.color (rgb255 209 222 239)
+            , Border.rounded 10
+            , paddingEach { top = 10, right = 10, bottom = 10, left = 10 }
+            ]
+            (if List.isEmpty results then
+                [ paragraph [ Font.size 14, Font.color (rgb255 86 107 133), width fill ] [ text "Nothing matched your search." ] ]
+
+             else
+                List.map docSearchResultView (List.take 5 results)
+            )
+
+
+docSearchResultView : DocSearchEntry -> Element Msg
+docSearchResultView entry =
+    link
+        [ width fill
+        , Background.color (rgb255 246 250 255)
+        , Border.width 1
+        , Border.color (rgb255 213 225 241)
+        , Border.rounded 8
+        , paddingEach { top = 10, right = 10, bottom = 10, left = 10 }
+        , htmlAttribute (HtmlAttr.style "cursor" "pointer")
+        ]
+        { url = routeHref entry.route
+        , label =
+            column [ width fill, spacing 4 ]
+                [ paragraph [ Font.size 16, Font.bold, Font.color (rgb255 28 66 108), width fill ] [ text entry.title ]
+                , paragraph [ Font.size 14, Font.color (rgb255 86 107 133), width fill ] [ text entry.summary ]
+                ]
+        }
+
+
+matchingDocSearchEntries : String -> List DocSearchEntry
+matchingDocSearchEntries query =
+    let
+        normalizedQuery =
+            String.toLower (String.trim query)
+
+        searchableText entry =
+            String.toLower
+                (entry.title
+                    ++ " "
+                    ++ entry.summary
+                    ++ " "
+                    ++ String.join " " entry.keywords
+                    ++ " "
+                    ++ docSearchRouteText entry.route
+                )
+
+        scoreText weight textValue =
+            let
+                normalizedText =
+                    String.toLower textValue
+
+                exactWordMatch =
+                    List.member normalizedQuery (String.words normalizedText)
+            in
+            if normalizedText == normalizedQuery then
+                weight + 8
+
+            else if String.startsWith normalizedQuery normalizedText then
+                weight + 4
+
+            else if exactWordMatch then
+                weight + 3
+
+            else if String.contains normalizedQuery normalizedText then
+                weight
+
+            else
+                0
+
+        entryScore entry =
+            scoreText 12 entry.title
+                + scoreText 7 entry.summary
+                + scoreText 5 (String.join " " entry.keywords)
+                + scoreText 2 (searchableText entry)
+
+        compareByScore left right =
+            compare (entryScore right) (entryScore left)
+    in
+    docSearchEntries
+        |> List.filter (\entry -> entryScore entry > 0)
+        |> List.sortWith compareByScore
+
+
+docSearchRouteText : Route -> String
+docSearchRouteText route =
+    case route of
+        Home ->
+            "Mar compiles declarative source into a self-contained server executable with API authentication authorization admin tools request logs monitoring and database backups. Less glue code. More backend. Declarative at its core. Opinionated on purpose. Everything bundled. Search docs getting started advanced guide examples."
+
+        GettingStarted ->
+            "Getting started install Mar run mar dev app.mar run mar compile app.mar open the Admin UI while developing use the printed admin URL in production sign in through Authentication navigate entities from the left sidebar manage records with built-in CRUD actions access monitoring logs and database tools with an admin account."
+
+        AdvancedGuide ->
+            "Advanced guide fundamentals language reference runtime tooling deploy compiler."
+
+        AdvancedFundamentals ->
+            "Fundamentals syntax model top-level statements app port database public system auth entity type alias action comments fields primary auto optional built-in User entity email-code login deny-by-default access authorize rules authorize all when list get create update delete rule expect validation typed actions transactional actions input create helpers auth_authenticated auth_user_id auth_role."
+
+        AdvancedLanguageReference ->
+            "Language reference app port database public system auth entity type alias action primary auto optional rule expect when authorize all list get create update delete input create User code_ttl_minutes session_ttl_hours email_transport email_from email_subject smtp_host smtp_port smtp_username smtp_password_env smtp_starttls request_logs_buffer http_max_request_body_mb auth_request_code_rate_limit_per_minute auth_login_rate_limit_per_minute admin_ui_session_ttl_hours security_frame_policy security_referrer_policy security_content_type_nosniff sqlite_journal_mode sqlite_synchronous sqlite_foreign_keys sqlite_busy_timeout_ms sqlite_wal_autocheckpoint sqlite_journal_size_limit_mb sqlite_mmap_size_mb sqlite_cache_size_kb dir mount spa_fallback len contains startsWith endsWith matches isRole auth_email auth_user_id auth_role true false null."
+
+        AdvancedRuntime ->
+            "Runtime system configuration request logging body limits auth rate limits admin UI session lifetime security headers SQLite pragmas public static frontend embedded static files SPA fallback generated endpoints CRUD actions POST /actions health /health schema /_mar/schema version /_mar/version admin /_mar/admin monitoring request logs backups migrations safe schema changes blocked schema changes startup."
+
+        AdvancedTooling ->
+            "Tooling mar dev mar compile mar fly init mar fly deploy mar format mar completion mar lsp compiler and runtime commands shell completion zsh bash fish autocomplete eval source ~/.zshrc ~/.bashrc ~/.bash_profile ~/.config/fish/config.fish generated client output Elm TypeScript admin UI VSCode extension syntax highlighting hover docs go to definition references rename formatting language server."
+
+        AdvancedDeploy ->
+            "Deploy Fly.io single executable persistent SQLite storage SMTP Resend email delivery smtp_password_env RESEND_API_KEY app.mar mar fly init mar fly deploy fly auth login fly apps create fly volumes create --region <fly-region-code> --size <size-in-gb> fly secrets set persistent disk restarts redeploys production limitations single-machine setup."
+
+        AdvancedCompiler ->
+            "Compiler parse validate generate clients build bundle stamp prebuilt runtimes runtime stubs executables single executable per target platform typed clients packaged executables."
+
+        Examples ->
+            "Examples store todo examples examples of Mar apps."
+
+
+docSearchEntries : List DocSearchEntry
+docSearchEntries =
+    [ { title = "Getting Started"
+      , route = GettingStarted
+      , summary = "Install Mar, run your first app, and open the Admin UI while developing."
+      , keywords = [ "install", "quick start", "admin ui", "mar dev" ]
+      }
+    , { title = "Admin UI while developing"
+      , route = GettingStarted
+      , summary = "Use the built-in Admin UI during development and open the printed admin URL in production."
+      , keywords = [ "admin", "admin ui", "_mar/admin", "browser", "dev", "serve" ]
+      }
+    , { title = "Advanced Fundamentals"
+      , route = AdvancedFundamentals
+      , summary = "Understand the core syntax, built-in User model, rules, and authorization."
+      , keywords = [ "language", "entities", "rules", "authorize", "user", "auth" ]
+      }
+    , { title = "Syntax model"
+      , route = AdvancedFundamentals
+      , summary = "Top-level statements, fields, comments, and the basic shape of a Mar app."
+      , keywords = [ "app", "port", "database", "public", "system", "auth", "entity", "type alias", "action", "comments" ]
+      }
+    , { title = "Authentication and authorization"
+      , route = AdvancedFundamentals
+      , summary = "Built-in User entity, email-code login, deny-by-default access, and authorize rules."
+      , keywords = [ "authentication", "authorization", "auth", "user", "authorize", "all", "list", "get", "create", "update", "delete" ]
+      }
+    , { title = "Rules and typed actions"
+      , route = AdvancedFundamentals
+      , summary = "Entity validation with rule/expect and multi-step transactional actions."
+      , keywords = [ "rule", "expect", "validation", "typed actions", "transactions", "input", "create" ]
+      }
+    , { title = "Language Reference"
+      , route = AdvancedLanguageReference
+      , summary = "Browse the current keywords, built-in names, functions, and configuration options."
+      , keywords = [ "reference", "keywords", "functions", "system", "auth", "public" ]
+      }
+    , { title = "Validation and authorization reference"
+      , route = AdvancedLanguageReference
+      , summary = "Reference for rule, expect, when, authorize, and CRUD operations."
+      , keywords = [ "rule", "expect", "when", "authorize", "all", "list", "get", "create", "update", "delete" ]
+      }
+    , { title = "Auth config reference"
+      , route = AdvancedLanguageReference
+      , summary = "Reference for User, code/session TTL, and SMTP email configuration."
+      , keywords = [ "user", "code_ttl_minutes", "session_ttl_hours", "email_transport", "smtp_host", "smtp_port", "smtp_username", "smtp_password_env", "smtp_starttls" ]
+      }
+    , { title = "System config reference"
+      , route = AdvancedLanguageReference
+      , summary = "Reference for request logs, body limits, rate limits, admin UI session lifetime, and SQLite tuning."
+      , keywords = [ "system", "request_logs_buffer", "http_max_request_body_mb", "admin_ui_session_ttl_hours", "sqlite", "security headers" ]
+      }
+    , { title = "Runtime"
+      , route = AdvancedRuntime
+      , summary = "See generated endpoints, auth flow, system settings, migrations, and runtime behavior."
+      , keywords = [ "runtime", "endpoints", "migrations", "system", "auth", "sqlite" ]
+      }
+    , { title = "System configuration"
+      , route = AdvancedRuntime
+      , summary = "Tune runtime behavior such as request logging, body limits, rate limits, admin sessions, and SQLite settings."
+      , keywords = [ "system", "runtime", "request logs", "body limits", "rate limits", "admin session", "sqlite" ]
+      }
+    , { title = "Public static frontend"
+      , route = AdvancedRuntime
+      , summary = "Embed static frontend files into the final executable and optionally serve an SPA fallback."
+      , keywords = [ "public", "frontend", "spa", "embedded", "static files", "mount", "dir", "spa_fallback" ]
+      }
+    , { title = "Generated endpoints"
+      , route = AdvancedRuntime
+      , summary = "Understand generated CRUD, auth, action, health, schema, version, and admin endpoints."
+      , keywords = [ "endpoints", "crud", "auth", "actions", "health", "schema", "version", "request logs", "backups" ]
+      }
+    , { title = "Migrations"
+      , route = AdvancedRuntime
+      , summary = "Automatic migrations on startup with safe changes applied and unsafe changes blocked."
+      , keywords = [ "migrations", "startup", "schema changes", "blocked changes", "safe changes" ]
+      }
+    , { title = "Tooling"
+      , route = AdvancedTooling
+      , summary = "Use dev, compile, fly, format, completion, and LSP commands."
+      , keywords = [ "tooling", "cli", "completion", "lsp", "fly", "format", "compile", "shell", "zsh", "bash", "fish", "autocomplete" ]
+      }
+    , { title = "Compiler and runtime commands"
+      , route = AdvancedTooling
+      , summary = "Use mar dev, mar compile, mar fly init, mar fly deploy, mar format, mar completion, and mar lsp."
+      , keywords = [ "mar dev", "mar compile", "mar fly init", "mar fly deploy", "mar format", "mar completion", "mar lsp", "version" ]
+      }
+    , { title = "Shell completion"
+      , route = AdvancedTooling
+      , summary = "Enable shell completion for zsh, bash, and fish."
+      , keywords = [ "shell completion", "zsh", "bash", "fish", "autocomplete", "eval", "source", ".zshrc", ".bashrc", "config.fish" ]
+      }
+    , { title = "Generated client output"
+      , route = AdvancedTooling
+      , summary = "Generated Elm and TypeScript clients for CRUD, actions, auth, and version endpoints."
+      , keywords = [ "clients", "elm", "typescript", "generated client", "frontend", "api client" ]
+      }
+    , { title = "Admin UI and editor support"
+      , route = AdvancedTooling
+      , summary = "Embedded Admin UI plus VS Code support with syntax highlighting, hovers, navigation, rename, and formatting."
+      , keywords = [ "admin ui", "editor", "vscode", "lsp", "hover", "rename", "formatting", "syntax highlighting" ]
+      }
+    , { title = "Deploy"
+      , route = AdvancedDeploy
+      , summary = "Deploy Mar apps with a single executable, persistent SQLite storage, SMTP, and Fly.io."
+      , keywords = [ "deploy", "fly", "smtp", "resend", "sqlite", "volume" ]
+      }
+    , { title = "Email delivery"
+      , route = AdvancedDeploy
+      , summary = "Configure a real SMTP provider and set the SMTP password as an environment variable before production deploys."
+      , keywords = [ "email delivery", "smtp", "resend", "smtp_password_env", "RESEND_API_KEY", "login codes" ]
+      }
+    , { title = "Deploy on Fly.io"
+      , route = AdvancedDeploy
+      , summary = "Use mar fly init and mar fly deploy to prepare files, create the app, attach a volume, set secrets, and deploy."
+      , keywords = [ "fly", "fly.io", "fly init", "fly deploy", "volume", "secret", "persistent disk", "region" ]
+      }
+    , { title = "Current limitations"
+      , route = AdvancedDeploy
+      , summary = "SQLite needs persistent disk storage, and single-machine deployments are the simplest path today."
+      , keywords = [ "limitations", "sqlite", "persistent disk", "restarts", "redeploys", "single machine" ]
+      }
+    , { title = "Compiler"
+      , route = AdvancedCompiler
+      , summary = "Learn how Mar turns a single .mar file into typed clients and packaged executables."
+      , keywords = [ "compiler", "clients", "bundle", "executables", "runtime stubs" ]
+      }
+    , { title = "Compiler pipeline"
+      , route = AdvancedCompiler
+      , summary = "Parse, validate, generate clients, build the bundle, and stamp prebuilt runtimes."
+      , keywords = [ "parse", "validate", "generate clients", "bundle", "runtime executables", "prebuilt runtime" ]
+      }
+    ]
 
 
 footer : Element Msg
@@ -573,8 +951,8 @@ advancedLanguagePage model =
         ]
 
 
-advancedLanguageReferencePage : Element Msg
-advancedLanguageReferencePage =
+advancedLanguageReferencePage : Model -> Element Msg
+advancedLanguageReferencePage model =
     column
         [ width fill
         , spacing 20
@@ -878,8 +1256,8 @@ advancedDeployPage model =
         ]
 
 
-advancedCompilerPage : Element Msg
-advancedCompilerPage =
+advancedCompilerPage : Model -> Element Msg
+advancedCompilerPage model =
     column
         [ width fill
         , spacing 20
