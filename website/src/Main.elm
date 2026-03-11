@@ -788,30 +788,32 @@ homeGetStartedCta =
         [ column
             [ width fill
             , spacing 12
-            , centerX
             ]
             [ paragraph
                 [ Font.size 24
                 , Font.bold
                 , Font.color (rgb255 20 53 89)
-                , centerX
+                , width fill
                 ]
                 [ text "Ready to try Mar?" ]
             , paragraph
                 [ Font.size 16
                 , Font.color (rgb255 72 95 123)
-                , centerX
+                , width fill
                 ]
                 [ text "Start with the setup guide and run your first app locally." ]
-            , link
-                (buttonAttributes
-                    (rgb255 45 126 210)
-                    (rgb255 245 250 255)
-                    ++ [ centerX ]
-                )
-                { url = routeHref GettingStarted
-                , label = text "Get Started"
-                }
+            , row [ width fill ]
+                [ el [ width fill ] none
+                , link
+                    (buttonAttributes
+                        (rgb255 45 126 210)
+                        (rgb255 245 250 255)
+                        ++ [ width (fill |> maximum 320) ]
+                    )
+                    { url = routeHref GettingStarted
+                    , label = text "Next: Getting Started"
+                    }
+                ]
             ]
         ]
 
