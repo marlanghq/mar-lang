@@ -2009,6 +2009,11 @@ fieldLabel =
     humanizeIdentifier
 
 
+fieldPlaceholder : String -> String
+fieldPlaceholder fieldName =
+    "Enter " ++ String.toLower (fieldLabel fieldName)
+
+
 entityDisplayName : Entity -> String
 entityDisplayName entity =
     humanizeIdentifier entity.name
@@ -4072,14 +4077,7 @@ viewActionPanel model actionInfo =
                             , placeholder =
                                 Just
                                     (Input.placeholder []
-                                        (text
-                                            (if workspace == AppWorkspace then
-                                                "Enter a value"
-
-                                             else
-                                                field.fieldType
-                                            )
-                                        )
+                                        (text (fieldPlaceholder field.name))
                                     )
                             , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name))
                             }
@@ -5376,14 +5374,7 @@ formCard model entity titleText =
                         , placeholder =
                             Just
                                 (Input.placeholder []
-                                    (text
-                                        (if workspace == AppWorkspace then
-                                            "Enter a value"
-
-                                         else
-                                            fieldTypeLabel field.fieldType
-                                        )
-                                    )
+                                    (text (fieldPlaceholder field.name))
                                 )
                         , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name))
                         }
