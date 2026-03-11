@@ -2,9 +2,10 @@ port module Main exposing (main)
 
 import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), InputAliasField, InputAliasInfo, Row, Schema, SystemAuthInfo, decodeRows, decodeSchema, encodePayload, fieldTypeLabel, rowDecoder, valueToString)
 import Browser
+import Browser.Events
 import Char
 import Dict exposing (Dict)
-import Element exposing (Element, alignLeft, centerX, centerY, column, el, fill, fillPortion, height, htmlAttribute, inFront, minimum, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarY, spacing, text, width, wrappedRow)
+import Element exposing (Element, alignLeft, centerX, centerY, column, el, fill, fillPortion, height, htmlAttribute, inFront, maximum, minimum, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarY, spacing, text, width, wrappedRow)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
@@ -21,6 +22,7 @@ type alias Flags =
     { apiBase : String
     , authToken : String
     , systemAuthToken : String
+    , viewportWidth : Int
     }
 
 
@@ -103,6 +105,8 @@ type alias Model =
     , lastBackup : Maybe BackupResponse
     , pendingDelete : Maybe PendingDelete
     , flash : Maybe String
+    , viewportWidth : Int
+    , mobileSidebarOpen : Bool
     }
 
 
@@ -163,6 +167,9 @@ type Msg
     | RunAction
     | GotRunAction (Result ApiHttpError Row)
     | ClearFlash
+    | ViewportResized Int Int
+    | ToggleMobileSidebar
+    | CloseMobileSidebar
 
 
 type ApiHttpError
@@ -309,7 +316,7 @@ main =
     Browser.document
         { init = init
         , update = update
-        , subscriptions = \_ -> Sub.none
+        , subscriptions = \_ -> Browser.Events.onResize ViewportResized
         , view = view
         }
 
@@ -353,6 +360,8 @@ init flags =
             , lastBackup = Nothing
             , pendingDelete = Nothing
             , flash = Nothing
+            , viewportWidth = max 320 flags.viewportWidth
+            , mobileSidebarOpen = False
             }
 
         restoreAppAuthCmd =
@@ -451,6 +460,7 @@ update msg model =
                         , formValues = Dict.empty
                         , actionResult = Nothing
                         , flash = Nothing
+                        , mobileSidebarOpen = False
                     }
             in
             ( nextModel, loadRows nextModel )
@@ -479,6 +489,7 @@ update msg model =
                         , actionFormValues = actionFormDefaults model actionInfo
                         , actionResult = Nothing
                         , flash = Nothing
+                        , mobileSidebarOpen = False
                       }
                     , Cmd.none
                     )
@@ -521,6 +532,7 @@ update msg model =
                             , adminVersion = Loading
                             , monitoringVersionDetailsOpen = False
                             , flash = Nothing
+                            , mobileSidebarOpen = False
                         }
                 in
                 ( nextModel, Cmd.batch [ loadPerformance nextModel, loadAdminVersion nextModel ] )
@@ -546,6 +558,7 @@ update msg model =
                             , actionResult = Nothing
                             , requestLogs = Loading
                             , flash = Nothing
+                            , mobileSidebarOpen = False
                         }
                 in
                 ( nextModel, loadRequestLogs nextModel )
@@ -572,6 +585,7 @@ update msg model =
                             , perf = Loading
                             , backups = Loading
                             , flash = Nothing
+                            , mobileSidebarOpen = False
                         }
                 in
                 ( nextModel, Cmd.batch [ loadPerformance nextModel, loadBackups nextModel ] )
@@ -643,7 +657,7 @@ update msg model =
             ( { model | authCode = code }, Cmd.none )
 
         BackToAuthEmail ->
-            ( { model | authStage = AuthStageEmail, authCode = "", authSubmitting = Nothing, flash = Nothing }, Cmd.none )
+            ( { model | authStage = AuthStageEmail, authCode = "", authSubmitting = Nothing, flash = Nothing, mobileSidebarOpen = False }, Cmd.none )
 
         SwitchWorkspace workspace ->
             let
@@ -684,6 +698,7 @@ update msg model =
                         , actionFormValues = Dict.empty
                         , actionResult = Nothing
                         , flash = Nothing
+                        , mobileSidebarOpen = False
                     }
             in
             if shouldLoadRows then
@@ -1052,6 +1067,7 @@ update msg model =
                         , actionFormValues = Dict.empty
                         , actionResult = Nothing
                         , flash = Nothing
+                        , mobileSidebarOpen = False
                     }
             in
             if model.authToolsOpen then
@@ -1061,7 +1077,7 @@ update msg model =
                 ( nextModel, Cmd.none )
 
         SelectRow rowValue ->
-            ( { model | selectedRow = Just rowValue }, Cmd.none )
+            ( { model | selectedRow = Just rowValue, mobileSidebarOpen = False }, Cmd.none )
 
         StartCreate ->
             let
@@ -1218,6 +1234,15 @@ update msg model =
 
         ClearFlash ->
             ( { model | flash = Nothing }, Cmd.none )
+
+        ViewportResized widthPx _ ->
+            ( { model | viewportWidth = max 320 widthPx, mobileSidebarOpen = if widthPx >= 900 then False else model.mobileSidebarOpen }, Cmd.none )
+
+        ToggleMobileSidebar ->
+            ( { model | mobileSidebarOpen = not model.mobileSidebarOpen }, Cmd.none )
+
+        CloseMobileSidebar ->
+            ( { model | mobileSidebarOpen = False }, Cmd.none )
 
 
 loadSchema : String -> Cmd Msg
@@ -2162,23 +2187,73 @@ view model =
 viewLayout : Model -> Element Msg
 viewLayout model =
     if hasActiveSession model then
-        row
-            [ width fill
-            , height fill
-            , htmlAttribute (HtmlAttr.style "height" "100vh")
-            , htmlAttribute (HtmlAttr.style "overflow" "hidden")
-            ]
-            [ viewSidebar model
-            , viewContent model
-            ]
+        if isCompactLayout model then
+            column
+                [ width fill
+                , height fill
+                , htmlAttribute (HtmlAttr.style "min-height" "100vh")
+                ]
+                [ viewMobileTopBar model
+                , if model.mobileSidebarOpen then
+                    viewSidebar model
+
+                  else
+                    none
+                , viewContent model
+                ]
+
+        else
+            row
+                [ width fill
+                , height fill
+                , htmlAttribute (HtmlAttr.style "height" "100vh")
+                , htmlAttribute (HtmlAttr.style "overflow" "hidden")
+                ]
+                [ viewSidebar model
+                , viewContent model
+                ]
 
     else
         viewAuthGate model
 
 
+viewMobileTopBar : Model -> Element Msg
+viewMobileTopBar model =
+    row
+        [ width fill
+        , spacing 12
+        , Background.color (rgb255 18 22 28)
+        , padding 16
+        ]
+        [ column [ width fill, spacing 4 ]
+            [ el [ Font.size 22, Font.bold, Font.color (rgb255 240 245 250) ] (text (currentAppName model))
+            , el [ Font.size 12, Font.color (rgb255 144 158 179) ] (text (currentSectionTitle model))
+            ]
+        , Input.button
+            [ Background.color (rgb255 54 94 217)
+            , Font.color (rgb255 246 248 252)
+            , Border.rounded 10
+            , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+            ]
+            { onPress = Just ToggleMobileSidebar
+            , label =
+                text
+                    (if model.mobileSidebarOpen then
+                        "Close menu"
+
+                     else
+                        "Menu"
+                    )
+            }
+        ]
+
+
 viewAuthGate : Model -> Element Msg
 viewAuthGate model =
     let
+        compact =
+            isCompactLayout model
+
         authDisplayAppName =
             currentAppName model
                 |> humanizeIdentifier
@@ -2226,12 +2301,12 @@ viewAuthGate model =
     el
         [ width fill
         , height fill
-        , padding 24
+        , padding (if compact then 16 else 24)
         ]
         (el
             [ centerX
             , centerY
-            , width (px 460)
+            , width (fill |> maximum 460)
             ]
             (column
                 [ width fill
@@ -2298,6 +2373,9 @@ viewAuthGate model =
 viewSidebar : Model -> Element Msg
 viewSidebar model =
     let
+        compact =
+            isCompactLayout model
+
         workspace =
             currentWorkspace model
 
@@ -2542,16 +2620,46 @@ viewSidebar model =
                 }
     in
     column
-        [ width (px 280)
-        , height fill
-        , scrollbarY
-        , Background.color (rgb255 18 22 28)
-        , padding 20
-        , spacing 16
-        ]
+        ([ width
+                (if compact then
+                    fill
+
+                 else
+                    px 280
+                )
+         , Background.color (rgb255 18 22 28)
+         , padding (if compact then 16 else 20)
+         , spacing 16
+         ]
+            ++ (if compact then
+                    []
+
+                else
+                    [ height fill, scrollbarY ]
+               )
+        )
         (List.concat
             [ [ row [ width fill, spacing 8 ]
-                    [ el [ Font.size 24, Font.bold, Font.color (rgb255 240 245 250) ] (text appName) ]
+                    [ el [ Font.size 24, Font.bold, Font.color (rgb255 240 245 250) ] (text appName)
+                    , if compact then
+                        el [ width fill ] none
+
+                      else
+                        none
+                    , if compact then
+                        Input.button
+                            [ Background.color (rgb255 24 29 36)
+                            , Font.color (rgb255 244 246 248)
+                            , Border.rounded 10
+                            , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+                            ]
+                            { onPress = Just CloseMobileSidebar
+                            , label = text "Close"
+                            }
+
+                      else
+                        none
+                    ]
               , el [ Font.size 13, Font.color (rgb255 144 158 179) ]
                     (text
                         (if workspace == AppWorkspace then
@@ -2634,11 +2742,15 @@ viewSidebar model =
 
 viewContent : Model -> Element Msg
 viewContent model =
+    let
+        compact =
+            isCompactLayout model
+    in
     column
         [ width fill
         , height fill
         , scrollbarY
-        , padding 24
+        , padding (if compact then 16 else 24)
         , spacing 16
         ]
         [ viewAuthToolsPanel model
@@ -2661,10 +2773,17 @@ viewContent model =
                     viewDataPanel model
 
                 Nothing ->
-                    row [ width fill, height fill, spacing 16 ]
-                        [ viewDataPanel model
-                        , viewInspector model
-                        ]
+                    if compact then
+                        column [ width fill, spacing 16 ]
+                            [ viewDataPanel model
+                            , viewInspector model
+                            ]
+
+                    else
+                        row [ width fill, height fill, spacing 16 ]
+                            [ viewDataPanel model
+                            , viewInspector model
+                            ]
         ]
 
 viewAuthToolsPanel : Model -> Element Msg
@@ -2917,7 +3036,7 @@ viewAuthToolsPanel model =
                 , Border.width 1
                 , Border.color (rgb255 226 232 239)
                 ]
-                [ viewPanelHeader
+                [ viewPanelHeader (isCompactLayout model)
                     (if workspace == AppWorkspace then
                         "Account"
 
@@ -2935,7 +3054,7 @@ viewAuthToolsPanel model =
                     none
 
                   else
-                    row [ width fill, spacing 8 ] activeBadgeText
+                    wrappedRow [ width fill, spacing 8 ] activeBadgeText
                 , if List.isEmpty authFlowSteps then
                     none
 
@@ -3079,7 +3198,7 @@ viewAuthCodeStage model firstAdminMode resendLabel resendMsg loginLoading resend
             , placeholder = Just (Input.placeholder [] (text "6-digit code"))
             , label = Input.labelAbove [ Font.size 12 ] (text "Login code")
             }
-        , row [ width fill, spacing 10 ]
+        , wrappedRow [ width fill, spacing 10 ]
             [ if firstAdminMode then
                 none
 
@@ -3177,8 +3296,12 @@ viewAuthSessionStage model =
               else
                 el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text ("Role: " ++ roleText))
             ]
-        , row [ width fill, spacing 10 ]
-            [ authDangerButton (Just LogoutSession) "Logout" ]
+        , (if isCompactLayout model then
+            wrappedRow [ width fill, spacing 10 ] [ authDangerButton (Just LogoutSession) "Logout" ]
+
+           else
+            row [ width fill, spacing 10 ] [ authDangerButton (Just LogoutSession) "Logout" ]
+          )
         ]
 
 
@@ -3563,14 +3686,51 @@ hasActiveSession model =
         || (model.currentSystemEmail /= Nothing)
 
 
+isCompactLayout : Model -> Bool
+isCompactLayout model =
+    model.viewportWidth < 900
+
+
+currentSectionTitle : Model -> String
+currentSectionTitle model =
+    if model.authToolsOpen then
+        if currentWorkspace model == AppWorkspace then
+            "Account"
+
+        else
+            "Authorization"
+
+    else if model.performanceMode then
+        "Monitoring"
+
+    else if model.requestLogsMode then
+        "Logs"
+
+    else if model.databaseMode then
+        "Database"
+
+    else
+        case model.selectedAction of
+            Just actionInfo ->
+                humanizeIdentifier actionInfo.name
+
+            Nothing ->
+                case model.selectedEntity of
+                    Just entity ->
+                        entityDisplayName entity
+
+                    Nothing ->
+                        "Overview"
+
+
 viewPanelTitle : String -> List (Element msg) -> Element msg
 viewPanelTitle title details =
     column [ width fill, spacing 6 ]
         (el [ Font.bold, Font.size 20 ] (text title) :: details)
 
 
-viewPanelHeader : String -> List (Element msg) -> List (Element msg) -> Element msg
-viewPanelHeader title details actions =
+viewPanelHeader : Bool -> String -> List (Element msg) -> List (Element msg) -> Element msg
+viewPanelHeader compact title details actions =
     let
         titleBlock =
             if List.isEmpty actions then
@@ -3583,14 +3743,26 @@ viewPanelHeader title details actions =
             else
                 viewPanelTitle title details
     in
-    row [ width fill, spacing 10 ]
-        [ titleBlock
-        , if List.isEmpty actions then
-            none
+    if compact then
+        column
+            [ width fill, spacing 10 ]
+            [ titleBlock
+            , if List.isEmpty actions then
+                none
 
-          else
-            row [ spacing 10 ] actions
-        ]
+              else
+                wrappedRow [ width fill, spacing 10 ] actions
+            ]
+
+    else
+        row [ width fill, spacing 10 ]
+            [ titleBlock
+            , if List.isEmpty actions then
+                none
+
+              else
+                row [ spacing 10 ] actions
+            ]
 
 
 onEnter : msg -> Element.Attribute msg
@@ -3618,6 +3790,9 @@ viewFlash model =
 
         Just message ->
             let
+                compact =
+                    isCompactLayout model
+
                 titleText =
                     if not (hasActiveSession model) then
                         "Something went wrong"
@@ -3635,26 +3810,49 @@ viewFlash model =
                 , spacing 10
                 ]
                 [ el [ Font.size 11, Font.bold, Font.color (rgb255 70 89 120) ] (text titleText)
-                , row
-                    [ width fill
-                    , spacing 12
-                    , htmlAttribute (HtmlAttr.style "align-items" "flex-start")
-                    ]
-                    [ paragraph
+                , (if compact then
+                    column
                         [ width fill
-                        , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
-                        , htmlAttribute (HtmlAttr.style "word-break" "break-word")
+                        , spacing 12
                         ]
-                        [ text message ]
-                    , Input.button
-                        [ Background.color (rgb255 217 229 250)
-                        , Border.rounded 8
-                        , paddingEach { top = 6, right = 10, bottom = 6, left = 10 }
+                        [ paragraph
+                            [ width fill
+                            , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
+                            , htmlAttribute (HtmlAttr.style "word-break" "break-word")
+                            ]
+                            [ text message ]
+                        , Input.button
+                            [ Background.color (rgb255 217 229 250)
+                            , Border.rounded 8
+                            , paddingEach { top = 6, right = 10, bottom = 6, left = 10 }
+                            ]
+                            { onPress = Just ClearFlash
+                            , label = text "Close"
+                            }
                         ]
-                        { onPress = Just ClearFlash
-                        , label = text "Close"
-                        }
-                    ]
+
+                   else
+                    row
+                        [ width fill
+                        , spacing 12
+                        , htmlAttribute (HtmlAttr.style "align-items" "flex-start")
+                        ]
+                        [ paragraph
+                            [ width fill
+                            , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
+                            , htmlAttribute (HtmlAttr.style "word-break" "break-word")
+                            ]
+                            [ text message ]
+                        , Input.button
+                            [ Background.color (rgb255 217 229 250)
+                            , Border.rounded 8
+                            , paddingEach { top = 6, right = 10, bottom = 6, left = 10 }
+                            ]
+                            { onPress = Just ClearFlash
+                            , label = text "Close"
+                            }
+                        ]
+                   )
                 ]
 
 
@@ -3669,11 +3867,12 @@ viewDeleteConfirmation model =
                 [ width fill
                 , height fill
                 , Background.color (rgba255 18 24 33 0.36)
+                , padding 16
                 ]
                 (el
                     [ centerX
                     , centerY
-                    , width (px 480)
+                    , width (fill |> maximum 480)
                     , Background.color (rgb255 255 255 255)
                     , Border.rounded 14
                     , Border.width 1
@@ -3691,29 +3890,54 @@ viewDeleteConfirmation model =
                             , Font.color (rgb255 82 92 108)
                             ]
                             [ text pendingDelete.message ]
-                        , row
-                            [ width fill
-                            , spacing 10
-                            ]
-                            [ el [ width fill ] none
-                            , Input.button
-                                [ Background.color (rgb255 224 231 241)
-                                , Border.rounded 10
-                                , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                        , if isCompactLayout model then
+                            wrappedRow
+                                [ width fill
+                                , spacing 10
                                 ]
-                                { onPress = Just CancelDelete
-                                , label = text "Cancel"
-                                }
-                            , Input.button
-                                [ Background.color (rgb255 176 60 46)
-                                , Font.color (rgb255 252 247 246)
-                                , Border.rounded 10
-                                , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                [ Input.button
+                                    [ Background.color (rgb255 224 231 241)
+                                    , Border.rounded 10
+                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                    ]
+                                    { onPress = Just CancelDelete
+                                    , label = text "Cancel"
+                                    }
+                                , Input.button
+                                    [ Background.color (rgb255 176 60 46)
+                                    , Font.color (rgb255 252 247 246)
+                                    , Border.rounded 10
+                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                    ]
+                                    { onPress = Just ConfirmDelete
+                                    , label = text "Delete"
+                                    }
                                 ]
-                                { onPress = Just ConfirmDelete
-                                , label = text "Delete"
-                                }
-                            ]
+
+                          else
+                            row
+                                [ width fill
+                                , spacing 10
+                                ]
+                                [ el [ width fill ] none
+                                , Input.button
+                                    [ Background.color (rgb255 224 231 241)
+                                    , Border.rounded 10
+                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                    ]
+                                    { onPress = Just CancelDelete
+                                    , label = text "Cancel"
+                                    }
+                                , Input.button
+                                    [ Background.color (rgb255 176 60 46)
+                                    , Font.color (rgb255 252 247 246)
+                                    , Border.rounded 10
+                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                    ]
+                                    { onPress = Just ConfirmDelete
+                                    , label = text "Delete"
+                                    }
+                                ]
                         ]
                     )
                 )
@@ -3763,16 +3987,28 @@ viewDataPanel model =
                                 "New"
             in
             column
-                [ width (fillPortion 3)
-                , height fill
-                , spacing 14
-                , Background.color (rgb255 255 255 255)
-                , Border.rounded 14
-                , Border.width 1
-                , Border.color (rgb255 226 232 239)
-                , padding 16
-                ]
-                [ viewPanelHeader
+                ([ width
+                        (if isCompactLayout model then
+                            fill
+
+                         else
+                            fillPortion 3
+                        )
+                 , spacing 14
+                 , Background.color (rgb255 255 255 255)
+                 , Border.rounded 14
+                 , Border.width 1
+                 , Border.color (rgb255 226 232 239)
+                 , padding 16
+                 ]
+                    ++ (if isCompactLayout model then
+                            []
+
+                        else
+                            [ height fill ]
+                       )
+                )
+                [ viewPanelHeader (isCompactLayout model)
                     headerTitle
                     []
                     [ Input.button
@@ -3811,7 +4047,7 @@ viewActionPanel model actionInfo =
                 , Border.color (rgb255 226 232 239)
                 , padding 16
                 ]
-                [ viewPanelHeader ("Action: " ++ actionInfo.name) [] []
+                [ viewPanelHeader (isCompactLayout model) ("Action: " ++ actionInfo.name) [] []
                 , paragraph [ Font.color (rgb255 176 60 46) ] [ text ("Input alias not found: " ++ actionInfo.inputAlias) ]
                 ]
 
@@ -3859,7 +4095,7 @@ viewActionPanel model actionInfo =
                 , padding 16
                 ]
                 (List.concat
-                    [ [ viewPanelHeader
+                    [ [ viewPanelHeader (isCompactLayout model)
                             (if workspace == AppWorkspace then
                                 actionInfo.name
 
@@ -3877,18 +4113,32 @@ viewActionPanel model actionInfo =
                             []
                       ]
                     , List.map fieldInput aliasInfo.fields
-                    , [ row [ width fill ]
-                            [ el [ width fill ] none
-                            , Input.button
-                                [ Background.color (rgb255 34 124 95)
-                                , Font.color (rgb255 248 252 250)
-                                , Border.rounded 10
-                                , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                    , [ if isCompactLayout model then
+                            wrappedRow [ width fill, spacing 10 ]
+                                [ Input.button
+                                    [ Background.color (rgb255 34 124 95)
+                                    , Font.color (rgb255 248 252 250)
+                                    , Border.rounded 10
+                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                    ]
+                                    { onPress = Just RunAction
+                                    , label = text (if workspace == AppWorkspace then "Continue" else "Run action")
+                                    }
                                 ]
-                                { onPress = Just RunAction
-                                , label = text (if workspace == AppWorkspace then "Continue" else "Run action")
-                                }
-                            ]
+
+                        else
+                            row [ width fill ]
+                                [ el [ width fill ] none
+                                , Input.button
+                                    [ Background.color (rgb255 34 124 95)
+                                    , Font.color (rgb255 248 252 250)
+                                    , Border.rounded 10
+                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                    ]
+                                    { onPress = Just RunAction
+                                    , label = text (if workspace == AppWorkspace then "Continue" else "Run action")
+                                    }
+                                ]
                       ]
                     , [ case model.actionResult of
                             Nothing ->
@@ -3950,11 +4200,11 @@ viewRows model =
 
             else
                 column [ width fill, spacing 8 ]
-                    (List.map (viewRowCard (currentWorkspace model) entity) records)
+                    (List.map (viewRowCard (isCompactLayout model) (currentWorkspace model) entity) records)
 
 
-viewRowCard : WorkspaceMode -> Entity -> Row -> Element Msg
-viewRowCard workspace entity rowValue =
+viewRowCard : Bool -> WorkspaceMode -> Entity -> Row -> Element Msg
+viewRowCard compact workspace entity rowValue =
     let
         previewFields =
             displayFieldsForEntity workspace entity
@@ -3985,42 +4235,84 @@ viewRowCard workspace entity rowValue =
             else
                 entity.name ++ " #" ++ (rowId entity rowValue |> Maybe.withDefault "?")
     in
-    row
-        [ width fill
-        , spacing 12
-        , Background.color (rgb255 248 250 252)
-        , Border.rounded 10
-        , padding 12
-        ]
-        [ column [ width fill, spacing 6 ]
-            [ el [ Font.bold ] (text headingText)
-            , el [ Font.size 13, Font.color (rgb255 90 103 120) ] (text summary)
+    if compact then
+        column
+            [ width fill
+            , spacing 12
+            , Background.color (rgb255 248 250 252)
+            , Border.rounded 10
+            , padding 12
             ]
-        , Input.button
-            [ Background.color (rgb255 222 232 248)
-            , Border.rounded 8
-            , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+            [ column [ width fill, spacing 6 ]
+                [ el [ Font.bold ] (text headingText)
+                , el [ Font.size 13, Font.color (rgb255 90 103 120) ] (text summary)
+                ]
+            , wrappedRow
+                [ width fill, spacing 8 ]
+                [ Input.button
+                    [ Background.color (rgb255 222 232 248)
+                    , Border.rounded 8
+                    , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+                    ]
+                    { onPress = Just (SelectRow rowValue)
+                    , label = text (if workspace == AppWorkspace then "Open" else "View")
+                    }
+                , Input.button
+                    [ Background.color (rgb255 223 244 238)
+                    , Border.rounded 8
+                    , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+                    ]
+                    { onPress = Just (StartEdit rowValue)
+                    , label = text "Edit"
+                    }
+                , Input.button
+                    [ Background.color (rgb255 248 226 226)
+                    , Border.rounded 8
+                    , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+                    ]
+                    { onPress = Just (RequestDeleteRow rowValue)
+                    , label = text "Delete"
+                    }
+                ]
             ]
-            { onPress = Just (SelectRow rowValue)
-            , label = text (if workspace == AppWorkspace then "Open" else "View")
-            }
-        , Input.button
-            [ Background.color (rgb255 223 244 238)
-            , Border.rounded 8
-            , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+
+    else
+        row
+            [ width fill
+            , spacing 12
+            , Background.color (rgb255 248 250 252)
+            , Border.rounded 10
+            , padding 12
             ]
-            { onPress = Just (StartEdit rowValue)
-            , label = text "Edit"
-            }
-        , Input.button
-            [ Background.color (rgb255 248 226 226)
-            , Border.rounded 8
-            , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+            [ column [ width fill, spacing 6 ]
+                [ el [ Font.bold ] (text headingText)
+                , el [ Font.size 13, Font.color (rgb255 90 103 120) ] (text summary)
+                ]
+            , Input.button
+                [ Background.color (rgb255 222 232 248)
+                , Border.rounded 8
+                , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+                ]
+                { onPress = Just (SelectRow rowValue)
+                , label = text (if workspace == AppWorkspace then "Open" else "View")
+                }
+            , Input.button
+                [ Background.color (rgb255 223 244 238)
+                , Border.rounded 8
+                , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+                ]
+                { onPress = Just (StartEdit rowValue)
+                , label = text "Edit"
+                }
+            , Input.button
+                [ Background.color (rgb255 248 226 226)
+                , Border.rounded 8
+                , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+                ]
+                { onPress = Just (RequestDeleteRow rowValue)
+                , label = text "Delete"
+                }
             ]
-            { onPress = Just (RequestDeleteRow rowValue)
-            , label = text "Delete"
-            }
-        ]
 
 
 viewInspector : Model -> Element Msg
@@ -4032,18 +4324,42 @@ viewInspector model =
 
             else
                 column
-                    [ width (fillPortion 2)
-                    , height fill
-                    , spacing 14
-                    ]
+                    ([ width
+                            (if isCompactLayout model then
+                                fill
+
+                             else
+                                fillPortion 2
+                            )
+                     , spacing 14
+                     ]
+                        ++ (if isCompactLayout model then
+                                []
+
+                            else
+                                [ height fill ]
+                           )
+                    )
                     [ viewActionInfo actionInfo ]
 
         Nothing ->
             column
-                [ width (fillPortion 2)
-                , height fill
-                , spacing 14
-                ]
+                ([ width
+                        (if isCompactLayout model then
+                            fill
+
+                         else
+                            fillPortion 2
+                        )
+                 , spacing 14
+                 ]
+                    ++ (if isCompactLayout model then
+                            []
+
+                        else
+                            [ height fill ]
+                       )
+                )
                 [ viewEntitySchema model
                 , viewFormPanel model
                 , viewSelectedRow model
@@ -4069,6 +4385,9 @@ viewPerformancePanel model =
 
     else
         let
+            compact =
+                isCompactLayout model
+
             routeRow perfRoute =
                 let
                     hasErrors =
@@ -4081,22 +4400,42 @@ viewPerformancePanel model =
                         else
                             rgb255 34 124 95
                 in
-                row
-                    [ width fill
-                    , spacing 12
-                    , Background.color (rgb255 248 250 252)
-                    , Border.rounded 10
-                    , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
-                    ]
-                    [ el [ width (fillPortion 1), Font.bold ] (text perfRoute.method)
-                    , el [ width (fillPortion 3) ] (text perfRoute.route)
-                    , el [ width (fillPortion 1) ] (text ("count: " ++ String.fromInt perfRoute.count))
-                    , el [ width (fillPortion 1) ] (text ("avg: " ++ formatMs perfRoute.avgMs))
-                    , el [ width (fillPortion 1), Font.color statusColor ] (text ("4xx/5xx: " ++ String.fromInt perfRoute.errors4xx ++ "/" ++ String.fromInt perfRoute.errors5xx))
-                    ]
+                if compact then
+                    column
+                        [ width fill
+                        , spacing 8
+                        , Background.color (rgb255 248 250 252)
+                        , Border.rounded 10
+                        , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
+                        ]
+                        [ wrappedRow [ width fill, spacing 8 ]
+                            [ el [ Font.bold ] (text perfRoute.method)
+                            , el [] (text perfRoute.route)
+                            ]
+                        , wrappedRow [ width fill, spacing 8 ]
+                            [ el [] (text ("count: " ++ String.fromInt perfRoute.count))
+                            , el [] (text ("avg: " ++ formatMs perfRoute.avgMs))
+                            , el [ Font.color statusColor ] (text ("4xx/5xx: " ++ String.fromInt perfRoute.errors4xx ++ "/" ++ String.fromInt perfRoute.errors5xx))
+                            ]
+                        ]
+
+                else
+                    row
+                        [ width fill
+                        , spacing 12
+                        , Background.color (rgb255 248 250 252)
+                        , Border.rounded 10
+                        , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
+                        ]
+                        [ el [ width (fillPortion 1), Font.bold ] (text perfRoute.method)
+                        , el [ width (fillPortion 3) ] (text perfRoute.route)
+                        , el [ width (fillPortion 1) ] (text ("count: " ++ String.fromInt perfRoute.count))
+                        , el [ width (fillPortion 1) ] (text ("avg: " ++ formatMs perfRoute.avgMs))
+                        , el [ width (fillPortion 1), Font.color statusColor ] (text ("4xx/5xx: " ++ String.fromInt perfRoute.errors4xx ++ "/" ++ String.fromInt perfRoute.errors5xx))
+                        ]
 
             cards perf =
-                row [ width fill, spacing 12 ]
+                wrappedRow [ width fill, spacing 12 ]
                     [ performanceCard "Uptime" (formatSeconds perf.uptimeSeconds)
                     , performanceCard "Memory (heap)" (formatBytes perf.memoryBytes)
                     , performanceCard "SQLite file" (formatBytes perf.sqliteBytes)
@@ -4113,7 +4452,7 @@ viewPerformancePanel model =
             , Border.color (rgb255 226 232 239)
             , padding 16
             ]
-            [ viewPanelHeader
+            [ viewPanelHeader (isCompactLayout model)
                 "Monitoring"
                 []
                 [ Input.button
@@ -4125,7 +4464,7 @@ viewPerformancePanel model =
                     , label = text "Refresh"
                     }
                 ]
-            , viewMonitoringVersion model.adminVersion model.monitoringVersionDetailsOpen
+            , viewMonitoringVersion compact model.adminVersion model.monitoringVersionDetailsOpen
             , el
                 [ width fill
                 , height (px 1)
@@ -4145,7 +4484,7 @@ viewPerformancePanel model =
                 Loaded perf ->
                     column [ width fill, spacing 12 ]
                         [ cards perf
-                        , row [ width fill, spacing 12 ]
+                        , wrappedRow [ width fill, spacing 12 ]
                             [ performanceCard "2xx responses" (String.fromInt perf.http.success2xx)
                             , performanceCard "4xx errors" (String.fromInt perf.http.errors4xx)
                             , performanceCard "5xx errors" (String.fromInt perf.http.errors5xx)
@@ -4163,8 +4502,8 @@ viewPerformancePanel model =
             ]
 
 
-viewMonitoringVersion : Remote AdminVersionPayload -> Bool -> Element Msg
-viewMonitoringVersion versionRemote detailsOpen =
+viewMonitoringVersion : Bool -> Remote AdminVersionPayload -> Bool -> Element Msg
+viewMonitoringVersion compact versionRemote detailsOpen =
     case versionRemote of
         NotAsked ->
             none
@@ -4208,11 +4547,11 @@ viewMonitoringVersion versionRemote detailsOpen =
                         [ width fill
                         , spacing 12
                         ]
-                        [ row [ width fill, spacing 12 ]
+                        [ wrappedRow [ width fill, spacing 12 ]
                             [ databaseInfoCard "App build time" versionPayload.app.buildTime
                             , databaseInfoCardWithHint "Manifest hash" versionPayload.app.manifestHash "Changes when the app definition changes."
                             ]
-                        , row [ width fill, spacing 12 ]
+                        , wrappedRow [ width fill, spacing 12 ]
                             [ compactInfoCard "Mar commit" versionPayload.mar.commit
                             , compactInfoCard "Mar build time" versionPayload.mar.buildTime
                             , compactInfoCard "Go version" versionPayload.runtimeInfo.goVersion
@@ -4265,7 +4604,7 @@ viewRequestLogsPanel model =
             , Border.color (rgb255 226 232 239)
             , padding 16
             ]
-            [ viewPanelHeader
+            [ viewPanelHeader (isCompactLayout model)
                 "Recent request logs"
                 (if logsSubtitle == "" then
                     []
@@ -4356,12 +4695,12 @@ viewRequestLogEntry entry =
                     [ el [ Font.size 12, Font.bold, Font.color (rgb255 70 80 96) ] (text ("Date: " ++ dateText))
                     , el [ Font.size 12, Font.bold, Font.color (rgb255 70 80 96) ] (text ("Time: " ++ timeText))
                     ]
-              , row [ width fill, spacing 10 ]
+              , wrappedRow [ width fill, spacing 10 ]
                     [ el [ Font.bold ] (text (entry.method ++ " " ++ entry.path))
                     , el [ Font.color statusColor, Font.bold ] (text (String.fromInt entry.status))
                     , el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text (formatMs entry.durationMs))
                     ]
-              , row [ width fill, spacing 10 ]
+              , wrappedRow [ width fill, spacing 10 ]
                     [ el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text ("Route: " ++ entry.route))
                     , el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text querySummary)
                     ]
@@ -4455,6 +4794,9 @@ viewDatabasePanel model =
 viewDatabasePanelAdmin : Model -> Element Msg
 viewDatabasePanelAdmin model =
     let
+        compact =
+            isCompactLayout model
+
         dbPath =
             currentDatabasePath model
 
@@ -4534,7 +4876,7 @@ viewDatabasePanelAdmin model =
                                         , el [ width (fillPortion 4), Font.bold ] (text "File")
                                         ]
                                   ]
-                                , List.map backupRow payload.backups
+                                , List.map (backupRow compact) payload.backups
                                 ]
                             )
     in
@@ -4547,7 +4889,7 @@ viewDatabasePanelAdmin model =
         , Border.color (rgb255 226 232 239)
         , padding 16
         ]
-        [ viewPanelHeader
+        [ viewPanelHeader (isCompactLayout model)
             "Database"
             []
             [ Input.button
@@ -4568,7 +4910,7 @@ viewDatabasePanelAdmin model =
                 , label = text "Create backup"
                 }
             ]
-        , row [ width fill, spacing 12 ]
+        , wrappedRow [ width fill, spacing 12 ]
             [ performanceCard "SQLite database size" sqliteSizeText
             , databaseInfoCard "File" dbPath
             , databaseInfoCard "Backups directory" backupDirText
@@ -4621,21 +4963,37 @@ databaseBackupDir databasePath =
         folderPath ++ "/backups"
 
 
-backupRow : BackupFile -> Element Msg
-backupRow backup =
-    row
-        [ width fill
-        , spacing 12
-        , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
-        , Background.color (rgb255 248 250 252)
-        , Border.rounded 8
-        , Border.width 1
-        , Border.color (rgb255 226 232 239)
-        ]
-        [ el [ width (fillPortion 2) ] (text backup.createdAt)
-        , el [ width (fillPortion 1), Font.bold ] (text (formatBytes backup.sizeBytes))
-        , el [ width (fillPortion 4), Font.size 13, Font.color (rgb255 93 103 120) ] (text (backupDisplayName backup))
-        ]
+backupRow : Bool -> BackupFile -> Element Msg
+backupRow compact backup =
+    if compact then
+        column
+            [ width fill
+            , spacing 6
+            , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+            , Background.color (rgb255 248 250 252)
+            , Border.rounded 8
+            , Border.width 1
+            , Border.color (rgb255 226 232 239)
+            ]
+            [ el [ Font.bold ] (text backup.createdAt)
+            , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text (backupDisplayName backup))
+            , el [ Font.bold ] (text (formatBytes backup.sizeBytes))
+            ]
+
+    else
+        row
+            [ width fill
+            , spacing 12
+            , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+            , Background.color (rgb255 248 250 252)
+            , Border.rounded 8
+            , Border.width 1
+            , Border.color (rgb255 226 232 239)
+            ]
+            [ el [ width (fillPortion 2) ] (text backup.createdAt)
+            , el [ width (fillPortion 1), Font.bold ] (text (formatBytes backup.sizeBytes))
+            , el [ width (fillPortion 4), Font.size 13, Font.color (rgb255 93 103 120) ] (text (backupDisplayName backup))
+            ]
 
 
 backupDisplayName : BackupFile -> String
@@ -4827,19 +5185,19 @@ viewActionInfo actionInfo =
         , padding 14
         ]
         [ el [ Font.bold, Font.size 18 ] (text "Action details")
-        , row [ width fill, spacing 8 ]
+        , wrappedRow [ width fill, spacing 8 ]
             [ badge "ACTION"
             , badge "POST"
             ]
-        , row [ width fill, spacing 8 ]
+        , wrappedRow [ width fill, spacing 8 ]
             [ el [ Font.bold ] (text "Name")
             , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text actionInfo.name)
             ]
-        , row [ width fill, spacing 8 ]
+        , wrappedRow [ width fill, spacing 8 ]
             [ el [ Font.bold ] (text "Input")
             , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text actionInfo.inputAlias)
             ]
-        , row [ width fill, spacing 8 ]
+        , wrappedRow [ width fill, spacing 8 ]
             [ el [ Font.bold ] (text "Steps")
             , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text (String.fromInt actionInfo.steps))
             ]
@@ -5042,7 +5400,33 @@ formCard model entity titleText =
         (List.concat
             [ [ el [ Font.bold, Font.size 18 ] (text (if workspace == AppWorkspace then titleText else titleText)) ]
             , List.map fieldInput formFields
-            , [ row [ spacing 10 ]
+            , [ (if isCompactLayout model then
+                    wrappedRow [ width fill, spacing 10 ]
+
+                 else
+                    row [ spacing 10 ]
+                )
+                    (if isCompactLayout model then
+                        [ Input.button
+                            [ Background.color (rgb255 34 124 95)
+                            , Font.color (rgb255 247 252 249)
+                            , Border.rounded 8
+                            , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
+                            ]
+                            { onPress = Just SubmitForm
+                            , label = text "Save"
+                            }
+                        , Input.button
+                            [ Background.color (rgb255 233 236 242)
+                            , Border.rounded 8
+                            , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
+                            ]
+                            { onPress = Just CancelForm
+                            , label = text "Cancel"
+                            }
+                        ]
+
+                     else
                     [ Input.button
                         [ Background.color (rgb255 34 124 95)
                         , Font.color (rgb255 247 252 249)
@@ -5061,6 +5445,7 @@ formCard model entity titleText =
                         , label = text "Cancel"
                         }
                     ]
+                    )
               ]
             ]
         )
