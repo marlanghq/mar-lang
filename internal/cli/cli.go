@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"runtime/debug"
 	"sort"
 	"strings"
 
+	marversion "mar"
 	"mar/internal/formatter"
 	"mar/internal/lsp"
 	"mar/internal/model"
@@ -19,7 +19,6 @@ import (
 )
 
 var (
-	cliVersion   = "dev"
 	cliCommit    = ""
 	cliBuildTime = ""
 
@@ -467,7 +466,7 @@ func printVersion(binaryName string) error {
 
 func readVersionInfo(binaryName string) versionInfo {
 	info := versionInfo{
-		Version:   "dev",
+		Version:   marversion.Version(),
 		Commit:    "unknown",
 		BuildTime: "unknown",
 		GoVersion: runtime.Version(),
@@ -479,35 +478,11 @@ func readVersionInfo(binaryName string) versionInfo {
 		info.Binary = exe
 	}
 
-	if strings.TrimSpace(cliVersion) != "" {
-		info.Version = strings.TrimSpace(cliVersion)
-	}
 	if strings.TrimSpace(cliCommit) != "" {
 		info.Commit = shortCommit(strings.TrimSpace(cliCommit))
 	}
 	if strings.TrimSpace(cliBuildTime) != "" {
 		info.BuildTime = strings.TrimSpace(cliBuildTime)
-	}
-
-	buildInfo, ok := debug.ReadBuildInfo()
-	if !ok {
-		return info
-	}
-	if info.Version == "dev" && buildInfo.Main.Version != "" && buildInfo.Main.Version != "(devel)" {
-		info.Version = buildInfo.Main.Version
-	}
-
-	for _, setting := range buildInfo.Settings {
-		switch setting.Key {
-		case "vcs.revision":
-			if info.Commit == "unknown" && strings.TrimSpace(setting.Value) != "" {
-				info.Commit = shortCommit(setting.Value)
-			}
-		case "vcs.time":
-			if info.BuildTime == "unknown" && strings.TrimSpace(setting.Value) != "" {
-				info.BuildTime = setting.Value
-			}
-		}
 	}
 
 	return info

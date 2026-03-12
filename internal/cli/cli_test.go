@@ -200,3 +200,20 @@ func TestRunCompletionPrintsBashScript(t *testing.T) {
 		t.Fatalf("expected bash completion output, got %q", got)
 	}
 }
+
+func TestReadVersionInfoUsesEmbeddedVersion(t *testing.T) {
+	originalCommit := cliCommit
+	originalBuildTime := cliBuildTime
+	t.Cleanup(func() {
+		cliCommit = originalCommit
+		cliBuildTime = originalBuildTime
+	})
+
+	cliCommit = ""
+	cliBuildTime = ""
+
+	info := readVersionInfo("mar")
+	if info.Version != "0.0.1" {
+		t.Fatalf("expected VERSION file version 0.0.1, got %q", info.Version)
+	}
+}

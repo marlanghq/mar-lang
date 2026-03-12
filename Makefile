@@ -2,6 +2,7 @@ GOCACHE ?= $(CURDIR)/.gocache
 GO_MIN_VERSION := 1.26
 ELM_REQUIRED_VERSION := 0.19.1
 GO_VERSION := $(shell go version | awk '{print $$3}' 2>/dev/null | sed 's/^go//')
+MAR_VERSION := $(shell tr -d '\r\n' < VERSION 2>/dev/null)
 
 .PHONY: all check check-go check-elm check-elm-live check-python3 check-node check-npm check-npx check-zip admin website website-serve website-dev vscode-plugin compiler-assets mar mar-release mar-release-zip test clean distclean
 
@@ -259,14 +260,14 @@ mar-release-zip: check-zip mar-release
 	$(call print_title,Mar release archives)
 	$(call print_info,Packaging release binaries into .zip archives)
 	@sh -c '\
-		printf "  Release version: "; \
-		IFS= read -r version; \
+		version="$(MAR_VERSION)"; \
 		if [ -z "$$version" ]; then \
 			printf "\n"; \
-			if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "%s\n" "Release version is required."; else printf "\033[1;31m%s\033[0m\n" "Release version is required."; fi; \
+			if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "%s\n" "VERSION is missing or empty."; else printf "\033[1;31m%s\033[0m\n" "VERSION is missing or empty."; fi; \
 			printf "\n"; \
 			exit 1; \
 		fi; \
+		printf "  %s %s\n" "Release version:" "$$version"; \
 		mkdir -p dist/releases/mar; \
 		rm -f "dist/releases/mar/mar-$$version-darwin-arm64.zip"; \
 		rm -f "dist/releases/mar/mar-$$version-darwin-amd64.zip"; \
