@@ -549,7 +549,6 @@ func (e *marEditor) processKey(key int) (bool, error) {
 			e.clearSelection()
 		}
 		e.moveCursor(key)
-		e.normalizeSelection()
 	case editorKeyPageUp:
 		e.quitArmed = false
 		if !e.selecting {
@@ -558,7 +557,6 @@ func (e *marEditor) processKey(key int) (bool, error) {
 		for i := 0; i < e.screenRows; i++ {
 			e.moveCursor(editorKeyArrowUp)
 		}
-		e.normalizeSelection()
 	case editorKeyPageDown:
 		e.quitArmed = false
 		if !e.selecting {
@@ -567,7 +565,6 @@ func (e *marEditor) processKey(key int) (bool, error) {
 		for i := 0; i < e.screenRows; i++ {
 			e.moveCursor(editorKeyArrowDown)
 		}
-		e.normalizeSelection()
 	case editorKeyMouseWheelUp:
 		e.quitArmed = false
 		e.clearSelection()
@@ -586,14 +583,12 @@ func (e *marEditor) processKey(key int) (bool, error) {
 			e.clearSelection()
 		}
 		e.cx = 0
-		e.normalizeSelection()
 	case editorKeyEnd:
 		e.quitArmed = false
 		if !e.selecting {
 			e.clearSelection()
 		}
 		e.cx = len([]rune(e.currentLine()))
-		e.normalizeSelection()
 	case editorKeyDelete:
 		e.quitArmed = false
 		if e.hasSelection() {
@@ -786,12 +781,6 @@ func (e *marEditor) clearSelection() {
 
 func (e *marEditor) hasSelection() bool {
 	return e.selecting && (e.selectX != e.cx || e.selectY != e.cy)
-}
-
-func (e *marEditor) normalizeSelection() {
-	// Keep selection mode active even when the cursor returns to the anchor.
-	// This makes Ctrl-Space behave predictably while extending and shrinking
-	// the selection with arrow keys.
 }
 
 func (e *marEditor) selectionBounds() (editorPos, editorPos, bool) {
