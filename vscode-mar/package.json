@@ -1,9 +1,9 @@
 {
   "name": "mar-language-support",
-  "displayName": "Mar Language Support",
+  "displayName": "Mar Developer Tools",
   "description": "Syntax highlighting, snippets, and LSP support for modern Mar (.mar) files.",
   "version": "0.0.1",
-  "publisher": "marciofrayze",
+  "publisher": "mar-lang",
   "repository": {
     "type": "git",
     "url": "https://github.com/marciofrayze/mar-lang.git"

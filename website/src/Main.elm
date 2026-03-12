@@ -453,7 +453,7 @@ warningBanner =
                 , text "."
                 ]
             , paragraph [ Font.size 16, Font.color (rgb255 107 62 0), width fill ]
-                [ text "For now, Mar does not guarantee backward compatibility for language syntax or database schema. That guarantee is planned for a future stable release." ]
+                [ text "For now, Mar does not guarantee backward compatibility for language syntax or database schema." ]
             ]
         ]
 
@@ -611,7 +611,7 @@ docSearchSectionText maybeSectionId =
                     "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable."
 
                 "install" ->
-                    "Install. Mar is currently in a closed alpha stage and is not available to the general public yet. Move mar to a directory in your PATH. Check mar version. Code editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Open VSCode Extensions. Search for Mar Language Support and click Install. The VSCode extension requires mar on your PATH to start LSP and formatting."
+                    "Install. Download Mar from the GitHub releases page. Move mar to a directory in your PATH. Check mar version. Code editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Install Mar Developer Tools from Visual Studio Marketplace. The VSCode extension requires mar on your PATH to work correctly."
 
                 "quick-start" ->
                     "Quick Start. Create todo.mar. Develop. Runs the app locally with hot reload and opens the Admin UI while you edit todo.mar. Compile. Packages production executables for all supported platforms and generates the frontend clients. Run. Choose the target folder for your platform, start that executable, and open the printed Admin URL. Mar compile produces a single self-contained executable per target platform. Each one already includes API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
@@ -714,7 +714,7 @@ docSearchRouteText route =
             "Home. A simple declarative backend language. Mar compiles declarative source into a self-contained server executable with API, authentication, authorization, admin tools, monitoring, logs, and database backups. Inspired by Elm and PocketBase. Mar syntax example. Get Started. Advanced Guide. Examples. Why Mar. Less glue code. More backend. Declarative at its core. Opinionated on purpose. Everything bundled. Authentication, authorization, admin tools, logs, monitoring, and built-in database backups come together. Who Mar Is For. Strong fit for teams that want the backend to stay boring in the best way: simple to run, easy to update, operational from day one. People who want the backend to stay coherent, operational, and easy to update without a lot of handwritten glue. Ready to try Mar. Next: Getting Started."
 
         GettingStarted ->
-            "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable. Install. Download. Path. Check. Code editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Open VSCode Extensions. Search for Mar Language Support and click Install. The VSCode extension requires mar on your PATH to start LSP and formatting. Quick Start. Create a starter app with mar init todo. This creates a new todo folder with todo.mar, .gitignore, and README. Develop by entering the project folder and running mar dev todo.mar. Compile by entering the project folder and running mar compile todo.mar. Run the target executable from todo/dist/todo/<target>. Open the printed Admin URL. Mar compile produces a self-contained executable per target platform with API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
+            "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable. Install. Download. Path. Check. Code editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Install Mar Developer Tools from Visual Studio Marketplace. The VSCode extension requires mar on your PATH to start LSP and formatting. Quick Start. Create a starter app with mar init todo. This creates a new todo folder with todo.mar, .gitignore, and README. Develop by entering the project folder and running mar dev todo.mar. Compile by entering the project folder and running mar compile todo.mar. Run the target executable from todo/dist/todo/<target>. Open the printed Admin URL. Mar compile produces a self-contained executable per target platform with API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
 
         AdvancedGuide ->
             "Advanced guide fundamentals language reference runtime tooling deploy compiler."
@@ -783,7 +783,7 @@ docSearchEntries =
       , route = GettingStarted
       , sectionId = Just "install"
       , summary = "Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension."
-      , keywords = [ "vscode", "editor", "extension", "formatting", "lsp", "syntax highlighting", "Mar Language Support", "mar edit", "terminal editor", "experimental" ]
+      , keywords = [ "vscode", "editor", "extension", "formatting", "lsp", "syntax highlighting", "Mar Developer Tools", "marketplace", "mar edit", "terminal editor", "experimental" ]
       }
     , { title = "Advanced Fundamentals"
       , route = AdvancedFundamentals
@@ -1679,7 +1679,14 @@ downloadInstallRow =
             [ stepBadge "1"
             , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Download")
             ]
-        , instructionText "Mar is currently in a closed alpha stage and is not available to the general public yet."
+        , paragraph [ Font.size 16, Font.color (rgb255 70 93 121), width fill ]
+            [ text "Download the latest release from "
+            , newTabLink [ Font.color (rgb255 28 66 108), Font.underline ]
+                { url = "https://github.com/marciofrayze/mar-lang/releases"
+                , label = text "GitHub Releases"
+                }
+            , text ", then extract the .zip file into a folder on your machine."
+            ]
         ]
 
 
@@ -1697,7 +1704,11 @@ pathInstallRow model =
         [ wrappedRow [ width fill, spacing 10 ]
             [ stepBadge "2"
             , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Path")
-            , instructionText "Move mar to a directory in your PATH."
+            ]
+        , paragraph [ Font.size 16, Font.color (rgb255 70 93 121), width fill ]
+            [ text "Move "
+            , inlineCommand "mar"
+            , text " to a directory in your PATH."
             ]
         , column
             [ width fill
@@ -1705,7 +1716,24 @@ pathInstallRow model =
             ]
             [ installSubitem model "macOS/Linux" """mv mar /usr/local/bin/mar
 chmod +x /usr/local/bin/mar"""
-            , installSubitem model "Windows" "setx PATH \"%PATH%;C:\\Tools\\mar\""
+            , column
+                [ width fill
+                , spacing 6
+                , Background.color (rgb255 250 252 255)
+                , Border.width 1
+                , Border.color (rgb255 223 232 244)
+                , Border.rounded 10
+                , paddingEach { top = 10, right = 10, bottom = 10, left = 10 }
+                ]
+                [ el [ Font.size 13, Font.semiBold, Font.color (rgb255 70 93 121) ] (text "Windows")
+                , paragraph [ Font.size 15, Font.color (rgb255 72 95 123), width fill ]
+                    [ text "Extract "
+                    , inlineCommand "mar.exe"
+                    , text " to a folder such as "
+                    , inlineCommand "C:\\Tools\\mar"
+                    , text ", then add that folder to PATH in Windows Environment Variables."
+                    ]
+                ]
             ]
         ]
 
@@ -1774,12 +1802,13 @@ pluginInstallRow model =
                         , Border.rounded 10
                         , padding 12
                         ]
-                        [ paragraph [ Font.size 14, Font.color (rgb255 70 93 121) ]
-                            [ text "In VSCode, open Extensions (Cmd+Shift+X on macOS, Ctrl+Shift+X on Windows/Linux)." ]
-                        , paragraph [ Font.size 14, Font.color (rgb255 70 93 121) ]
-                            [ text "Search for "
-                            , el [ Font.semiBold ] (text "\"Mar Language Support\"")
-                            , text " and install it."
+                        [ paragraph [ Font.size 14, Font.color (rgb255 70 93 121), width fill ]
+                            [ text "Install "
+                            , newTabLink [ Font.semiBold, Font.color (rgb255 28 66 108), Font.underline ]
+                                { url = "https://marketplace.visualstudio.com/items?itemName=mar-lang.mar-language-support"
+                                , label = text "Mar Developer Tools"
+                                }
+                            , text " from Visual Studio Marketplace."
                             ]
                         , paragraph
                             [ Font.size 14

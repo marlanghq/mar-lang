@@ -63,7 +63,7 @@ If needed, set `mar.languageServer.path` in VSCode settings (examples: `mar`, `/
 ```json
 {
   "[mar]": {
-    "editor.defaultFormatter": "marciofrayze.mar-language-support",
+    "editor.defaultFormatter": "mar-lang.mar-language-support",
     "editor.formatOnSave": true
   }
 }
