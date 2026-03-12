@@ -4208,6 +4208,12 @@ viewRows model =
 viewRowCard : Bool -> WorkspaceMode -> Entity -> Row -> Element Msg
 viewRowCard compact workspace entity rowValue =
     let
+        wrappingTextAttrs =
+            [ width fill
+            , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
+            , htmlAttribute (HtmlAttr.style "word-break" "break-word")
+            ]
+
         previewFields =
             displayFieldsForEntity workspace entity
                 |> List.take 4
@@ -4246,8 +4252,8 @@ viewRowCard compact workspace entity rowValue =
             , padding 12
             ]
             [ column [ width fill, spacing 6 ]
-                [ el [ Font.bold ] (text headingText)
-                , el [ Font.size 13, Font.color (rgb255 90 103 120) ] (text summary)
+                [ paragraph (Font.bold :: wrappingTextAttrs) [ text headingText ]
+                , paragraph ([ Font.size 13, Font.color (rgb255 90 103 120) ] ++ wrappingTextAttrs) [ text summary ]
                 ]
             , wrappedRow
                 [ width fill, spacing 8 ]
@@ -4287,8 +4293,8 @@ viewRowCard compact workspace entity rowValue =
             , padding 12
             ]
             [ column [ width fill, spacing 6 ]
-                [ el [ Font.bold ] (text headingText)
-                , el [ Font.size 13, Font.color (rgb255 90 103 120) ] (text summary)
+                [ paragraph (Font.bold :: wrappingTextAttrs) [ text headingText ]
+                , paragraph ([ Font.size 13, Font.color (rgb255 90 103 120) ] ++ wrappingTextAttrs) [ text summary ]
                 ]
             , Input.button
                 [ Background.color (rgb255 222 232 248)
@@ -4866,7 +4872,11 @@ viewDatabasePanelAdmin model =
                             , spacing 8
                             ]
                             (List.concat
-                                [ [ row
+                                [ if compact then
+                                    []
+
+                                  else
+                                    [ row
                                         [ width fill
                                         , spacing 12
                                         , paddingEach { top = 6, right = 10, bottom = 6, left = 10 }
@@ -4877,7 +4887,7 @@ viewDatabasePanelAdmin model =
                                         , el [ width (fillPortion 1), Font.bold ] (text "Size")
                                         , el [ width (fillPortion 4), Font.bold ] (text "File")
                                         ]
-                                  ]
+                                    ]
                                 , List.map (backupRow compact) payload.backups
                                 ]
                             )
@@ -4970,16 +4980,16 @@ backupRow compact backup =
     if compact then
         column
             [ width fill
-            , spacing 6
+            , spacing 10
             , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
             , Background.color (rgb255 248 250 252)
             , Border.rounded 8
             , Border.width 1
             , Border.color (rgb255 226 232 239)
             ]
-            [ el [ Font.bold ] (text backup.createdAt)
-            , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text (backupDisplayName backup))
-            , el [ Font.bold ] (text (formatBytes backup.sizeBytes))
+            [ backupRowField "Backup time" backup.createdAt
+            , backupRowField "Size" (formatBytes backup.sizeBytes)
+            , backupRowField "File" (backupDisplayName backup)
             ]
 
     else
@@ -4996,6 +5006,24 @@ backupRow compact backup =
             , el [ width (fillPortion 1), Font.bold ] (text (formatBytes backup.sizeBytes))
             , el [ width (fillPortion 4), Font.size 13, Font.color (rgb255 93 103 120) ] (text (backupDisplayName backup))
             ]
+
+
+backupRowField : String -> String -> Element Msg
+backupRowField label value =
+    column
+        [ width fill
+        , spacing 4
+        ]
+        [ el [ Font.size 12, Font.color (rgb255 93 103 120), Font.semiBold ] (text label)
+        , paragraph
+            [ width fill
+            , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
+            , htmlAttribute (HtmlAttr.style "word-break" "break-word")
+            , Font.size 14
+            , Font.color (rgb255 44 56 72)
+            ]
+            [ text value ]
+        ]
 
 
 backupDisplayName : BackupFile -> String
