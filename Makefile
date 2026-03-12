@@ -3,7 +3,7 @@ GO_MIN_VERSION := 1.26
 ELM_REQUIRED_VERSION := 0.19.1
 GO_VERSION := $(shell go version | awk '{print $$3}' 2>/dev/null | sed 's/^go//')
 
-.PHONY: all check check-go check-elm check-elm-live check-python3 check-node check-npm check-npx admin website website-serve website-dev vscode-plugin compiler-assets mar test clean distclean
+.PHONY: all check check-go check-elm check-elm-live check-python3 check-node check-npm check-npx admin website website-serve website-dev vscode-plugin compiler-assets mar mar-release test clean distclean
 
 define print_title
 	@sh -c 'if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "\n%s\n" "$(1)"; else printf "\n\033[1;36m%s\033[0m\n" "$(1)"; fi'
@@ -208,6 +208,44 @@ mar: check-go compiler-assets
 	$(call print_info,Building ./mar with Go $(GO_VERSION))
 	@GOCACHE="$(GOCACHE)" go build -trimpath -ldflags="-s -w" -o mar ./cmd/mar
 	@sh -c 'if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "  %s\n" "Output: ./mar"; else printf "  Output: \033[1;32m./mar\033[0m\n"; fi'
+
+mar-release: check-go compiler-assets
+	$(call print_title,Mar release)
+	$(call print_info,Building release binaries for all supported platforms)
+	@mkdir -p dist/releases/mar/darwin-arm64
+	@mkdir -p dist/releases/mar/darwin-amd64
+	@mkdir -p dist/releases/mar/linux-amd64
+	@mkdir -p dist/releases/mar/linux-arm64
+	@mkdir -p dist/releases/mar/windows-amd64
+	$(call print_info,Building darwin-arm64)
+	@env GOCACHE="$(GOCACHE)" CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+		go build -trimpath -ldflags="-s -w" -o dist/releases/mar/darwin-arm64/mar ./cmd/mar
+	$(call print_info,Building darwin-amd64)
+	@env GOCACHE="$(GOCACHE)" CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 \
+		go build -trimpath -ldflags="-s -w" -o dist/releases/mar/darwin-amd64/mar ./cmd/mar
+	$(call print_info,Building linux-amd64)
+	@env GOCACHE="$(GOCACHE)" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+		go build -trimpath -ldflags="-s -w" -o dist/releases/mar/linux-amd64/mar ./cmd/mar
+	$(call print_info,Building linux-arm64)
+	@env GOCACHE="$(GOCACHE)" CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+		go build -trimpath -ldflags="-s -w" -o dist/releases/mar/linux-arm64/mar ./cmd/mar
+	$(call print_info,Building windows-amd64)
+	@env GOCACHE="$(GOCACHE)" CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+		go build -trimpath -ldflags="-s -w" -o dist/releases/mar/windows-amd64/mar.exe ./cmd/mar
+	@sh -c '\
+		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then \
+			printf "  %s\n" "Output: dist/releases/mar/darwin-arm64/mar"; \
+			printf "  %s\n" "Output: dist/releases/mar/darwin-amd64/mar"; \
+			printf "  %s\n" "Output: dist/releases/mar/linux-amd64/mar"; \
+			printf "  %s\n" "Output: dist/releases/mar/linux-arm64/mar"; \
+			printf "  %s\n" "Output: dist/releases/mar/windows-amd64/mar.exe"; \
+		else \
+			printf "  Output: \033[1;32m%s\033[0m\n" "dist/releases/mar/darwin-arm64/mar"; \
+			printf "  Output: \033[1;32m%s\033[0m\n" "dist/releases/mar/darwin-amd64/mar"; \
+			printf "  Output: \033[1;32m%s\033[0m\n" "dist/releases/mar/linux-amd64/mar"; \
+			printf "  Output: \033[1;32m%s\033[0m\n" "dist/releases/mar/linux-arm64/mar"; \
+			printf "  Output: \033[1;32m%s\033[0m\n" "dist/releases/mar/windows-amd64/mar.exe"; \
+		fi'
 
 test: check-go
 	$(call print_title,Tests)
