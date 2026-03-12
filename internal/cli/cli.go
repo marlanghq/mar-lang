@@ -50,6 +50,8 @@ func Run(binaryName string, args []string) error {
 	}
 
 	switch args[0] {
+	case "init":
+		return runInit(binaryName, args[1:])
 	case "compile":
 		if len(args) != 2 && len(args) != 3 {
 			return fmt.Errorf("usage: %s compile <app.mar> [output-name]", binaryName)
@@ -330,6 +332,7 @@ func printUsage(binaryName string) {
 
 	fmt.Println()
 	fmt.Printf("%s\n", colorizeCLI(useColor, "\033[1;36m", "Available commands"))
+	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s init [project-name]", binaryName), "Create a new Mar project with a starter app.")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s dev <app.mar> [output-name]", binaryName), "Run development mode with hot reload.")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s compile <app.mar> [output-name]", binaryName), "Compile a .mar app into executables for all supported platforms and generate its frontend clients.")
 	fmt.Printf("  %-45s %s\n", fmt.Sprintf("%s fly init <app.mar> [fly-app-name]", binaryName), "Prepares Fly.io deployment files for your app.")
@@ -348,6 +351,7 @@ func unknownCommandError(binaryName, provided string) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %q\n\n", colorizeCLI(useColor, "\033[1;31m", "unknown command"), provided)
 	fmt.Fprintf(&b, "%s\n", colorizeCLI(useColor, "\033[1;36m", "Available commands:"))
+	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s init [project-name]", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s dev <app.mar> [output-name]", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s compile <app.mar> [output-name]", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly init <app.mar> [fly-app-name]", binaryName))

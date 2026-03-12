@@ -51,6 +51,7 @@ func renderZshCompletion(binaryName string) string {
 	return fmt.Sprintf(`_%s() {
   local -a commands
   commands=(
+    'init:Create a new Mar project with a starter app'
     'dev:Run development mode with hot reload'
     'compile:Compile a .mar app into executables for all supported platforms'
     'fly:Prepare and deploy a Fly.io app'
@@ -108,7 +109,7 @@ func renderBashCompletion(binaryName string) string {
   prev2="${COMP_WORDS[COMP_CWORD-2]}"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "dev compile fly completion format lsp version" -- "${cur}") )
+    COMPREPLY=( $(compgen -W "init dev compile fly completion format lsp version" -- "${cur}") )
     return 0
   fi
 
@@ -142,6 +143,7 @@ complete -F _%s_completion %s
 
 func renderFishCompletion(binaryName string) string {
 	return fmt.Sprintf(`complete -c %s -f
+complete -c %s -n '__fish_use_subcommand' -a init -d 'Create a new Mar project with a starter app'
 complete -c %s -n '__fish_use_subcommand' -a dev -d 'Run development mode with hot reload'
 complete -c %s -n '__fish_use_subcommand' -a compile -d 'Compile a .mar app into executables for all supported platforms'
 complete -c %s -n '__fish_use_subcommand' -a fly -d 'Prepare and deploy a Fly.io app'
@@ -157,5 +159,5 @@ complete -c %s -n '__fish_seen_subcommand_from dev compile' -a '(__fish_complete
 complete -c %s -n '__fish_seen_subcommand_from fly; and __fish_seen_subcommand_from init deploy' -a '(__fish_complete_suffix .mar)'
 complete -c %s -n '__fish_seen_subcommand_from format' -a '(__fish_complete_suffix .mar)'
 complete -c %s -n '__fish_seen_subcommand_from completion' -a 'zsh bash fish'
-`, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName)
+`, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName)
 }
