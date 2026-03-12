@@ -74,7 +74,3 @@ If needed, set `mar.languageServer.path` in VSCode settings (examples: `mar`, `/
 ## Notes
 
 - Keep `mar` available in your `PATH` so the extension can start LSP and formatting.
-- `User` is built into every Mar app. Use `entity User { ... }` only to extend it with extra fields, rules, or authorization.
-- Entity CRUD is deny-by-default. Add explicit `authorize` rules for every operation you want to expose.
-- Admin always has read-only access to the built-in `User` entity, even without explicit `authorize` rules.
-- `authorize all when ...` is available as a shorthand for applying the same rule to `list`, `get`, `create`, `update`, and `delete`.
