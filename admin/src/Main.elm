@@ -3124,11 +3124,15 @@ viewAuthEmailStage model firstAdminMode actionLabel submitMsg isLoading =
         ]
         [ Input.text
             (width fill
-                :: if isLoading then
-                    []
+                :: htmlAttribute (HtmlAttr.type_ "email")
+                :: htmlAttribute (HtmlAttr.attribute "autocomplete" "email")
+                :: htmlAttribute (HtmlAttr.attribute "inputmode" "email")
+                :: (if isLoading then
+                        []
 
-                   else
-                    [ onEnter submitMsg ]
+                    else
+                        [ onEnter submitMsg ]
+                   )
             )
             { onChange = SetAuthEmail
             , text = model.authEmail
