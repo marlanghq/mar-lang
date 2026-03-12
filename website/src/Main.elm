@@ -1726,12 +1726,23 @@ chmod +x /usr/local/bin/mar"""
                 , paddingEach { top = 10, right = 10, bottom = 10, left = 10 }
                 ]
                 [ el [ Font.size 13, Font.semiBold, Font.color (rgb255 70 93 121) ] (text "Windows")
-                , paragraph [ Font.size 15, Font.color (rgb255 72 95 123), width fill ]
-                    [ text "Extract "
-                    , inlineCommand "mar.exe"
-                    , text " to a folder such as "
-                    , inlineCommand "C:\\Tools\\mar"
-                    , text ", then add that folder to PATH in Windows Environment Variables."
+                , column [ width fill, spacing 6 ]
+                    [ paragraph [ Font.size 15, Font.color (rgb255 72 95 123), width fill ]
+                        [ text "1. Extract "
+                        , inlineCommand "mar.exe"
+                        , text " to a folder such as "
+                        , inlineCommand "C:\\Tools\\mar"
+                        , text "."
+                        ]
+                    , paragraph [ Font.size 15, Font.color (rgb255 72 95 123), width fill ]
+                        [ text "2. Open "
+                        , el [ Font.color (rgb255 28 66 108), Font.semiBold ] (text "Windows Environment Variables")
+                        , text ", edit "
+                        , inlineCommand "Path"
+                        , text ", and add that folder (for example, "
+                        , inlineCommand "C:\\Tools\\mar"
+                        , text ")."
+                        ]
                     ]
                 ]
             ]
