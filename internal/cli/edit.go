@@ -25,6 +25,7 @@ const (
 	editorKeyPageDown
 	editorKeyMouseWheelUp
 	editorKeyMouseWheelDown
+	editorKeyRedo
 )
 
 type marEditor struct {
@@ -41,6 +42,24 @@ type marEditor struct {
 	statusTime time.Time
 	quitArmed  bool
 	useColor   bool
+	clipboard  string
+	selecting  bool
+	selectX    int
+	selectY    int
+	undoStack  []editorSnapshot
+	redoStack  []editorSnapshot
+}
+
+type editorPos struct {
+	x int
+	y int
+}
+
+type editorSnapshot struct {
+	lines []string
+	cx    int
+	cy    int
+	dirty bool
 }
 
 var (
@@ -120,7 +139,7 @@ func openMarEditor(path string) (*marEditor, error) {
 		screenRows: rows,
 		screenCols: cols,
 		useColor:   cliSupportsANSIStream(os.Stdout),
-		status:     "Ctrl-S save | Ctrl-Q quit | Arrows move",
+		status:     "",
 		statusTime: time.Now(),
 	}, nil
 }
@@ -221,38 +240,38 @@ func editorReadKey() (int, error) {
 		return int(b), nil
 	}
 
-	b1, err := editorReadByte()
+	b1, ok, err := editorReadByteWithTimeout(25 * time.Millisecond)
 	if err != nil {
+		return 0, err
+	}
+	if !ok {
 		return int('\x1b'), nil
 	}
 	if b1 == '[' {
-		b2, err := editorReadByte()
+		b2, ok, err := editorReadByteWithTimeout(25 * time.Millisecond)
 		if err != nil {
+			return 0, err
+		}
+		if !ok {
 			return int('\x1b'), nil
 		}
 		if b2 == '<' {
 			return editorReadMouseEvent()
 		}
 		if b2 >= '0' && b2 <= '9' {
-			b3, err := editorReadByte()
-			if err != nil {
-				return int('\x1b'), nil
-			}
-			if b3 == '~' {
-				switch b2 {
-				case '1', '7':
-					return editorKeyHome, nil
-				case '3':
-					return editorKeyDelete, nil
-				case '4', '8':
-					return editorKeyEnd, nil
-				case '5':
-					return editorKeyPageUp, nil
-				case '6':
-					return editorKeyPageDown, nil
+			var seq strings.Builder
+			seq.WriteByte(b2)
+			for {
+				b, err := editorReadByte()
+				if err != nil {
+					return int('\x1b'), nil
+				}
+				seq.WriteByte(b)
+				if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '~' {
+					break
 				}
 			}
-			return int('\x1b'), nil
+			return editorParseCSISequence(seq.String()), nil
 		}
 		switch b2 {
 		case 'A':
@@ -270,8 +289,11 @@ func editorReadKey() (int, error) {
 		}
 	}
 	if b1 == 'O' {
-		b2, err := editorReadByte()
+		b2, ok, err := editorReadByteWithTimeout(25 * time.Millisecond)
 		if err != nil {
+			return 0, err
+		}
+		if !ok {
 			return int('\x1b'), nil
 		}
 		switch b2 {
@@ -282,6 +304,61 @@ func editorReadKey() (int, error) {
 		}
 	}
 	return int('\x1b'), nil
+}
+
+func editorReadByteWithTimeout(timeout time.Duration) (byte, bool, error) {
+	fd := int(os.Stdin.Fd())
+	poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+	ms := int(timeout / time.Millisecond)
+	n, err := unix.Poll(poll, ms)
+	if err != nil {
+		return 0, false, err
+	}
+	if n == 0 || poll[0].Revents&unix.POLLIN == 0 {
+		return 0, false, nil
+	}
+	b, err := editorReadByte()
+	if err != nil {
+		return 0, false, err
+	}
+	return b, true, nil
+}
+
+func editorParseCSISequence(seq string) int {
+	if strings.HasSuffix(seq, "~") {
+		switch strings.TrimSuffix(seq, "~") {
+		case "1", "7":
+			return editorKeyHome
+		case "3":
+			return editorKeyDelete
+		case "4", "8":
+			return editorKeyEnd
+		case "5":
+			return editorKeyPageUp
+		case "6":
+			return editorKeyPageDown
+		}
+		return int('\x1b')
+	}
+
+	if len(seq) == 0 {
+		return int('\x1b')
+	}
+
+	final := seq[len(seq)-1]
+	body := seq[:len(seq)-1]
+	parts := strings.Split(body, ";")
+	switch final {
+	case 'u':
+		if len(parts) == 2 {
+			code, _ := strconv.Atoi(parts[0])
+			mod, _ := strconv.Atoi(parts[1])
+			if mod == 6 && (code == 90 || code == 122) {
+				return editorKeyRedo
+			}
+		}
+	}
+	return int('\x1b')
 }
 
 func editorReadMouseEvent() (int, error) {
@@ -329,6 +406,16 @@ func editorCtrlKey(r byte) int {
 
 func (e *marEditor) processKey(key int) (bool, error) {
 	switch key {
+	case 0:
+		e.quitArmed = false
+		if e.selecting {
+			e.clearSelection()
+			e.setStatusMessage("Selection cleared")
+		} else {
+			e.beginSelection()
+			e.setStatusMessage("Selection started")
+		}
+		return false, nil
 	case editorCtrlKey('q'):
 		if e.dirty && !e.quitArmed {
 			e.quitArmed = true
@@ -342,50 +429,146 @@ func (e *marEditor) processKey(key int) (bool, error) {
 			return false, nil
 		}
 		return false, nil
+	case editorCtrlKey('c'):
+		e.quitArmed = false
+		if !e.hasSelection() {
+			e.setStatusMessage("No selection to copy")
+			return false, nil
+		}
+		e.clipboard = e.selectedText()
+		e.setStatusMessage("Selection copied")
+		return false, nil
+	case editorCtrlKey('x'):
+		e.quitArmed = false
+		if !e.hasSelection() {
+			e.setStatusMessage("No selection to cut")
+			return false, nil
+		}
+		e.clipboard = e.selectedText()
+		e.deleteSelection()
+		e.setStatusMessage("Selection cut")
+		return false, nil
+	case editorCtrlKey('v'):
+		e.quitArmed = false
+		if e.clipboard == "" {
+			e.setStatusMessage("Clipboard is empty")
+			return false, nil
+		}
+		e.beginUndoGroup()
+		if e.hasSelection() {
+			e.deleteSelection()
+		}
+		e.insertText(e.clipboard)
+		e.setStatusMessage("Pasted")
+		return false, nil
+	case editorCtrlKey('z'):
+		e.quitArmed = false
+		e.undo()
+		return false, nil
+	case editorCtrlKey('y'):
+		e.quitArmed = false
+		e.redo()
+		return false, nil
+	case editorKeyRedo:
+		e.quitArmed = false
+		e.redo()
+		return false, nil
 	case editorKeyArrowUp, editorKeyArrowDown, editorKeyArrowLeft, editorKeyArrowRight:
 		e.quitArmed = false
+		if !e.selecting {
+			e.clearSelection()
+		}
 		e.moveCursor(key)
+		e.normalizeSelection()
 	case editorKeyPageUp:
 		e.quitArmed = false
+		if !e.selecting {
+			e.clearSelection()
+		}
 		for i := 0; i < e.screenRows; i++ {
 			e.moveCursor(editorKeyArrowUp)
 		}
+		e.normalizeSelection()
 	case editorKeyPageDown:
 		e.quitArmed = false
+		if !e.selecting {
+			e.clearSelection()
+		}
 		for i := 0; i < e.screenRows; i++ {
 			e.moveCursor(editorKeyArrowDown)
 		}
+		e.normalizeSelection()
 	case editorKeyMouseWheelUp:
 		e.quitArmed = false
+		e.clearSelection()
 		for i := 0; i < 1; i++ {
 			e.moveCursor(editorKeyArrowUp)
 		}
 	case editorKeyMouseWheelDown:
 		e.quitArmed = false
+		e.clearSelection()
 		for i := 0; i < 1; i++ {
 			e.moveCursor(editorKeyArrowDown)
 		}
 	case editorKeyHome:
 		e.quitArmed = false
+		if !e.selecting {
+			e.clearSelection()
+		}
 		e.cx = 0
+		e.normalizeSelection()
 	case editorKeyEnd:
 		e.quitArmed = false
+		if !e.selecting {
+			e.clearSelection()
+		}
 		e.cx = len([]rune(e.currentLine()))
+		e.normalizeSelection()
 	case editorKeyDelete:
 		e.quitArmed = false
+		if e.hasSelection() {
+			e.beginUndoGroup()
+			e.deleteSelection()
+			return false, nil
+		}
+		e.beginUndoGroup()
 		e.deleteCharForward()
 	case 127, 8:
 		e.quitArmed = false
+		if e.hasSelection() {
+			e.beginUndoGroup()
+			e.deleteSelection()
+			return false, nil
+		}
+		e.beginUndoGroup()
 		e.backspace()
+	case '\x1b':
+		e.quitArmed = false
+		if e.selecting {
+			e.clearSelection()
+			e.setStatusMessage("Selection canceled")
+		}
 	case '\r':
 		e.quitArmed = false
+		e.beginUndoGroup()
+		if e.hasSelection() {
+			e.deleteSelection()
+		}
 		e.insertNewline()
 	case '\t':
 		e.quitArmed = false
+		e.beginUndoGroup()
+		if e.hasSelection() {
+			e.deleteSelection()
+		}
 		e.insertString("    ")
 	default:
 		if key >= 32 && key <= 126 {
 			e.quitArmed = false
+			e.beginUndoGroup()
+			if e.hasSelection() {
+				e.deleteSelection()
+			}
 			e.insertRune(rune(key))
 		}
 	}
@@ -422,6 +605,16 @@ func (e *marEditor) insertRune(r rune) {
 
 func (e *marEditor) insertString(value string) {
 	for _, r := range value {
+		e.insertRune(r)
+	}
+}
+
+func (e *marEditor) insertText(value string) {
+	for _, r := range value {
+		if r == '\n' {
+			e.insertNewline()
+			continue
+		}
 		e.insertRune(r)
 	}
 }
@@ -506,6 +699,98 @@ func (e *marEditor) moveCursor(key int) {
 	}
 }
 
+func (e *marEditor) beginSelection() {
+	if e.selecting {
+		return
+	}
+	e.selecting = true
+	e.selectX = e.cx
+	e.selectY = e.cy
+}
+
+func (e *marEditor) clearSelection() {
+	e.selecting = false
+}
+
+func (e *marEditor) hasSelection() bool {
+	return e.selecting && (e.selectX != e.cx || e.selectY != e.cy)
+}
+
+func (e *marEditor) normalizeSelection() {
+	// Keep selection mode active even when the cursor returns to the anchor.
+	// This makes Ctrl-Space behave predictably while extending and shrinking
+	// the selection with arrow keys.
+}
+
+func (e *marEditor) selectionBounds() (editorPos, editorPos, bool) {
+	if !e.hasSelection() {
+		return editorPos{}, editorPos{}, false
+	}
+	start := editorPos{x: e.selectX, y: e.selectY}
+	end := editorPos{x: e.cx, y: e.cy}
+	if editorPosCompare(start, end) > 0 {
+		start, end = end, start
+	}
+	return start, end, true
+}
+
+func editorPosCompare(a, b editorPos) int {
+	if a.y < b.y {
+		return -1
+	}
+	if a.y > b.y {
+		return 1
+	}
+	if a.x < b.x {
+		return -1
+	}
+	if a.x > b.x {
+		return 1
+	}
+	return 0
+}
+
+func (e *marEditor) selectedText() string {
+	start, end, ok := e.selectionBounds()
+	if !ok {
+		return ""
+	}
+	if start.y == end.y {
+		line := []rune(e.lines[start.y])
+		return string(line[start.x:end.x])
+	}
+
+	var parts []string
+	first := []rune(e.lines[start.y])
+	parts = append(parts, string(first[start.x:]))
+	for row := start.y + 1; row < end.y; row++ {
+		parts = append(parts, e.lines[row])
+	}
+	last := []rune(e.lines[end.y])
+	parts = append(parts, string(last[:end.x]))
+	return strings.Join(parts, "\n")
+}
+
+func (e *marEditor) deleteSelection() {
+	start, end, ok := e.selectionBounds()
+	if !ok {
+		return
+	}
+	if start.y == end.y {
+		line := []rune(e.lines[start.y])
+		e.lines[start.y] = string(append(line[:start.x], line[end.x:]...))
+	} else {
+		first := []rune(e.lines[start.y])
+		last := []rune(e.lines[end.y])
+		merged := string(first[:start.x]) + string(last[end.x:])
+		e.lines = append(e.lines[:start.y], append([]string{merged}, e.lines[end.y+1:]...)...)
+	}
+	e.cx = start.x
+	e.cy = start.y
+	e.clearSelection()
+	e.dirty = true
+}
+
 func (e *marEditor) save() error {
 	data := strings.Join(e.lines, "\n") + "\n"
 	if err := os.WriteFile(e.filePath, []byte(data), 0o644); err != nil {
@@ -515,6 +800,64 @@ func (e *marEditor) save() error {
 	e.quitArmed = false
 	e.setStatusMessage(fmt.Sprintf("Saved %s", filepath.Base(e.filePath)))
 	return nil
+}
+
+func (e *marEditor) beginUndoGroup() {
+	e.undoStack = append(e.undoStack, editorSnapshot{
+		lines: cloneEditorLines(e.lines),
+		cx:    e.cx,
+		cy:    e.cy,
+		dirty: e.dirty,
+	})
+	e.redoStack = nil
+}
+
+func cloneEditorLines(lines []string) []string {
+	cloned := make([]string, len(lines))
+	copy(cloned, lines)
+	return cloned
+}
+
+func (e *marEditor) restoreSnapshot(snapshot editorSnapshot) {
+	e.lines = cloneEditorLines(snapshot.lines)
+	e.cx = snapshot.cx
+	e.cy = snapshot.cy
+	e.dirty = snapshot.dirty
+	e.clearSelection()
+}
+
+func (e *marEditor) undo() {
+	if len(e.undoStack) == 0 {
+		e.setStatusMessage("Nothing to undo")
+		return
+	}
+	e.redoStack = append(e.redoStack, editorSnapshot{
+		lines: cloneEditorLines(e.lines),
+		cx:    e.cx,
+		cy:    e.cy,
+		dirty: e.dirty,
+	})
+	snapshot := e.undoStack[len(e.undoStack)-1]
+	e.undoStack = e.undoStack[:len(e.undoStack)-1]
+	e.restoreSnapshot(snapshot)
+	e.setStatusMessage("Last change undone")
+}
+
+func (e *marEditor) redo() {
+	if len(e.redoStack) == 0 {
+		e.setStatusMessage("Nothing to redo")
+		return
+	}
+	e.undoStack = append(e.undoStack, editorSnapshot{
+		lines: cloneEditorLines(e.lines),
+		cx:    e.cx,
+		cy:    e.cy,
+		dirty: e.dirty,
+	})
+	snapshot := e.redoStack[len(e.redoStack)-1]
+	e.redoStack = e.redoStack[:len(e.redoStack)-1]
+	e.restoreSnapshot(snapshot)
+	e.setStatusMessage("Last change restored")
 }
 
 func (e *marEditor) setStatusMessage(message string) {
@@ -579,7 +922,8 @@ func (e *marEditor) drawLine(out *bytes.Buffer, fileRow int) {
 
 	rendered := editorExpandTabs(e.lines[fileRow])
 	visible := editorVisibleRunes(rendered, e.colOffset, max(0, e.screenCols-lineNumberWidth-3))
-	out.WriteString(editorHighlightLine(visible, e.useColor))
+	selectFrom, selectTo, hasSelection := e.selectionForLine(fileRow)
+	out.WriteString(editorHighlightLine(visible, e.useColor, selectFrom, selectTo, hasSelection))
 }
 
 func (e *marEditor) drawStatusBar(out *bytes.Buffer) {
@@ -609,11 +953,61 @@ func (e *marEditor) drawStatusBar(out *bytes.Buffer) {
 
 func (e *marEditor) drawMessageBar(out *bytes.Buffer) {
 	out.WriteString("\x1b[2K")
-	message := e.status
-	if time.Since(e.statusTime) > 10*time.Second {
-		message = ""
+	help := e.helpText()
+	message := ""
+	if time.Since(e.statusTime) <= 10*time.Second {
+		message = e.status
 	}
-	out.WriteString(truncateString(message, e.screenCols))
+	if message == "" {
+		out.WriteString(truncateString(help, e.screenCols))
+		return
+	}
+
+	right := truncateString(message, max(0, e.screenCols/3))
+	leftWidth := e.screenCols - len(right) - 1
+	if leftWidth < 0 {
+		leftWidth = 0
+	}
+	left := truncateString(help, leftWidth)
+	padding := e.screenCols - len(left) - len(right)
+	if padding < 1 {
+		padding = 1
+	}
+	out.WriteString(left)
+	out.WriteString(strings.Repeat(" ", padding))
+	out.WriteString(right)
+}
+
+func (e *marEditor) helpText() string {
+	var items []string
+	if e.selecting {
+		items = append(items, "Ctrl-Space cancel selection", "Arrows extend", "Ctrl-C copy", "Ctrl-X cut")
+		if e.clipboard != "" {
+			items = append(items, "Ctrl-V paste")
+		}
+		items = append(items, "Esc cancel")
+		if e.dirty {
+			items = append(items, "Ctrl-S save")
+		}
+		if len(e.undoStack) > 0 {
+			items = append(items, "Ctrl-Z undo")
+		}
+		if len(e.redoStack) > 0 {
+			items = append(items, "Ctrl-Y redo")
+		}
+		return strings.Join(items, " | ")
+	}
+	items = append(items, "Ctrl-Q quit", "Ctrl-Space select")
+	if e.dirty {
+		items = append(items, "Ctrl-S save")
+	}
+	if len(e.undoStack) > 0 {
+		items = append(items, "Ctrl-Z undo")
+	}
+	if len(e.redoStack) > 0 {
+		items = append(items, "Ctrl-Y redo")
+	}
+	return strings.Join(items, " | ")
 }
 
 func (e *marEditor) lineNumberWidth() int {
@@ -665,18 +1059,45 @@ func editorVisibleRunes(value string, start, width int) string {
 	return string(runes[start:end])
 }
 
-func editorHighlightLine(line string, useColor bool) string {
-	if line == "" || !useColor {
+func (e *marEditor) selectionForLine(fileRow int) (int, int, bool) {
+	start, end, ok := e.selectionBounds()
+	if !ok || fileRow < start.y || fileRow > end.y {
+		return 0, 0, false
+	}
+	line := []rune(editorExpandTabs(e.lines[fileRow]))
+	from := 0
+	to := len(line)
+	if fileRow == start.y {
+		from = len([]rune(editorExpandTabs(string([]rune(e.lines[fileRow])[:start.x]))))
+	}
+	if fileRow == end.y {
+		to = len([]rune(editorExpandTabs(string([]rune(e.lines[fileRow])[:end.x]))))
+	}
+	from -= e.colOffset
+	to -= e.colOffset
+	if from < 0 {
+		from = 0
+	}
+	visibleWidth := max(0, e.screenCols-e.lineNumberWidth()-3)
+	if to > visibleWidth {
+		to = visibleWidth
+	}
+	if from > to {
+		from = to
+	}
+	return from, to, true
+}
+
+func editorHighlightLine(line string, useColor bool, selectFrom, selectTo int, hasSelection bool) string {
+	if line == "" {
 		return line
 	}
 
 	var out strings.Builder
 	runes := []rune(line)
 	for i := 0; i < len(runes); {
-		if i+1 < len(runes) && runes[i] == '-' && runes[i+1] == '-' {
-			out.WriteString(colorizeCLI(true, "\033[38;5;244m", string(runes[i:])))
-			break
-		}
+		style := ""
+		tokenStart := i
 		if runes[i] == '"' {
 			j := i + 1
 			for j < len(runes) {
@@ -686,7 +1107,8 @@ func editorHighlightLine(line string, useColor bool) string {
 				}
 				j++
 			}
-			out.WriteString(colorizeCLI(true, "\033[38;5;114m", string(runes[i:j])))
+			style = "\033[38;5;114m"
+			out.WriteString(editorColorizeSegment(useColor, string(runes[i:j]), style, tokenStart, selectFrom, selectTo, hasSelection))
 			i = j
 			continue
 		}
@@ -695,7 +1117,7 @@ func editorHighlightLine(line string, useColor bool) string {
 			for j < len(runes) && (unicode.IsDigit(runes[j]) || runes[j] == '.') {
 				j++
 			}
-			out.WriteString(colorizeCLI(true, "\033[38;5;179m", string(runes[i:j])))
+			out.WriteString(editorColorizeSegment(useColor, string(runes[i:j]), "\033[38;5;179m", tokenStart, selectFrom, selectTo, hasSelection))
 			i = j
 			continue
 		}
@@ -707,23 +1129,59 @@ func editorHighlightLine(line string, useColor bool) string {
 			token := string(runes[i:j])
 			switch {
 			case token == "input" || strings.HasPrefix(token, "input.") || strings.HasPrefix(token, "auth_"):
-				out.WriteString(colorizeCLI(true, "\033[38;5;81m", token))
+				style = "\033[38;5;81m"
 			case tokenInSet(token, marEditorKeywords):
-				out.WriteString(colorizeCLI(true, "\033[38;5;75m", token))
+				style = "\033[38;5;75m"
 			case tokenInSet(token, marEditorTypes):
-				out.WriteString(colorizeCLI(true, "\033[38;5;141m", token))
+				style = "\033[38;5;141m"
 			case tokenInSet(token, marEditorFieldModifiers):
-				out.WriteString(colorizeCLI(true, "\033[38;5;110m", token))
+				style = "\033[38;5;110m"
 			case tokenInSet(token, marEditorBooleans):
-				out.WriteString(colorizeCLI(true, "\033[38;5;179m", token))
+				style = "\033[38;5;179m"
 			default:
-				out.WriteString(token)
+				style = ""
 			}
+			out.WriteString(editorColorizeSegment(useColor, token, style, tokenStart, selectFrom, selectTo, hasSelection))
 			i = j
 			continue
 		}
-		out.WriteRune(runes[i])
+		if i+1 < len(runes) && runes[i] == '-' && runes[i+1] == '-' {
+			style = "\033[38;5;244m"
+			out.WriteString(editorColorizeSegment(useColor, string(runes[i:]), style, tokenStart, selectFrom, selectTo, hasSelection))
+			break
+		}
+		out.WriteString(editorColorizeSegment(useColor, string(runes[i]), "", tokenStart, selectFrom, selectTo, hasSelection))
 		i++
+	}
+	return out.String()
+}
+
+func editorColorizeSegment(useColor bool, segment, style string, tokenStart, selectFrom, selectTo int, hasSelection bool) string {
+	if !useColor {
+		return segment
+	}
+
+	runes := []rune(segment)
+	var out strings.Builder
+	for idx, r := range runes {
+		inSelection := hasSelection && tokenStart+idx >= selectFrom && tokenStart+idx < selectTo
+		switch {
+		case inSelection && style != "":
+			out.WriteString("\033[7m")
+			out.WriteString(style)
+			out.WriteRune(r)
+			out.WriteString("\033[0m")
+		case inSelection:
+			out.WriteString("\033[7m")
+			out.WriteRune(r)
+			out.WriteString("\033[0m")
+		case style != "":
+			out.WriteString(style)
+			out.WriteRune(r)
+			out.WriteString("\033[0m")
+		default:
+			out.WriteRune(r)
+		}
 	}
 	return out.String()
 }
