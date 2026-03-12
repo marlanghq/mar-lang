@@ -3,7 +3,7 @@ port module Main exposing (main)
 import Browser
 import Browser.Navigation as Nav
 import Char
-import Element exposing (Attribute, Element, below, centerX, column, el, fill, height, html, htmlAttribute, link, maximum, moveDown, newTabLink, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarX, scrollbarY, spacing, text, width, wrappedRow)
+import Element exposing (Attribute, Element, alignTop, below, centerX, column, el, fill, height, html, htmlAttribute, link, maximum, moveDown, newTabLink, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarX, scrollbarY, spacing, text, width, wrappedRow)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
@@ -611,7 +611,7 @@ docSearchSectionText maybeSectionId =
                     "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable."
 
                 "install" ->
-                    "Install. Mar is currently in a closed alpha stage and is not available to the general public yet. Move mar to a directory in your PATH. Check mar version. Code editor. Currently, Mar supports only VSCode. Open VSCode Extensions. Search for Mar Language Support and click Install. The VSCode extension requires mar on your PATH to start LSP and formatting."
+                    "Install. Mar is currently in a closed alpha stage and is not available to the general public yet. Move mar to a directory in your PATH. Check mar version. Code editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Open VSCode Extensions. Search for Mar Language Support and click Install. The VSCode extension requires mar on your PATH to start LSP and formatting."
 
                 "quick-start" ->
                     "Quick Start. Create todo.mar. Develop. Runs the app locally with hot reload and opens the Admin UI while you edit todo.mar. Compile. Packages production executables for all supported platforms and generates the frontend clients. Run. Choose the target folder for your platform, start that executable, and open the printed Admin URL. Mar compile produces a single self-contained executable per target platform. Each one already includes API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
@@ -656,19 +656,16 @@ docSearchSectionText maybeSectionId =
                     "Migrations. Automatic migrations run on startup. Safe changes are applied. Unsafe changes are blocked with clear errors."
 
                 "tooling" ->
-                    "Tooling. mar hosts the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned."
+                    "Tooling. The mar CLI supports the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned."
 
                 "compiler-and-runtime-commands" ->
-                    "Compiler and runtime commands. mar init store-app. mar edit store.mar. mar dev store.mar. mar compile store.mar. mar fly init store.mar. mar fly deploy store.mar. mar format store.mar. mar completion zsh. mar lsp."
+                    "Compiler and runtime commands. mar init store-app. mar dev store.mar. Edit with code store.mar or mar edit store.mar. mar edit is extremely experimental. mar compile store.mar. mar fly init store.mar. mar fly deploy store.mar. mar format store.mar. mar completion zsh. mar lsp."
 
                 "shell-completion" ->
                     "Shell completion. Mar can generate shell completion for zsh, bash, and fish so commands like mar fly and mar compile are suggested as you type. Add the command below to your shell's startup file. Zsh add this line to ~/.zshrc. eval $(mar completion zsh). Bash add this line to ~/.bashrc or ~/.bash_profile. source <(mar completion bash). Fish add this line to ~/.config/fish/config.fish. mar completion fish | source."
 
                 "generated-client-output" ->
                     "Generated client output. When you compile an app, Mar also generates frontend clients for Elm and TypeScript. These clients wrap the generated HTTP API with named functions, so you do not need to hand-write fetch calls, URLs, or request payload shapes. Elm client. TypeScript client."
-
-                "admin-ui-and-editor-support" ->
-                    "Admin UI and editor support. Mar ships with an embedded Admin UI for operating the app you compiled. VSCode extension provides syntax highlighting, hover docs, go to definition, references, rename, formatting, and LSP diagnostics."
 
                 "deploy" ->
                     "Deploy. Mar is intentionally simple to deploy. In production, you usually need just two things: the executable for your target platform and a persistent place to store the SQLite database."
@@ -717,7 +714,7 @@ docSearchRouteText route =
             "Home. A simple declarative backend language. Mar compiles declarative source into a self-contained server executable with API, authentication, authorization, admin tools, monitoring, logs, and database backups. Inspired by Elm and PocketBase. Mar syntax example. Get Started. Advanced Guide. Examples. Why Mar. Less glue code. More backend. Declarative at its core. Opinionated on purpose. Everything bundled. Authentication, authorization, admin tools, logs, monitoring, and built-in database backups come together. Who Mar Is For. Strong fit for teams that want the backend to stay boring in the best way: simple to run, easy to update, operational from day one. People who want the backend to stay coherent, operational, and easy to update without a lot of handwritten glue. Ready to try Mar. Next: Getting Started."
 
         GettingStarted ->
-            "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable. Install. Download. Path. Check. Code editor. Currently Mar supports only VSCode. Open VSCode Extensions. Search for Mar Language Support and click Install. The VSCode extension requires mar on your PATH to start LSP and formatting. Quick Start. Create a starter app with mar init todo. This creates a new todo folder with todo.mar, .gitignore, and README. Develop by entering the project folder and running mar dev todo.mar. Compile by entering the project folder and running mar compile todo.mar. Run the target executable from todo/dist/todo/<target>. Open the printed Admin URL. Mar compile produces a self-contained executable per target platform with API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
+            "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable. Install. Download. Path. Check. Code editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Open VSCode Extensions. Search for Mar Language Support and click Install. The VSCode extension requires mar on your PATH to start LSP and formatting. Quick Start. Create a starter app with mar init todo. This creates a new todo folder with todo.mar, .gitignore, and README. Develop by entering the project folder and running mar dev todo.mar. Compile by entering the project folder and running mar compile todo.mar. Run the target executable from todo/dist/todo/<target>. Open the printed Admin URL. Mar compile produces a self-contained executable per target platform with API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
 
         AdvancedGuide ->
             "Advanced guide fundamentals language reference runtime tooling deploy compiler."
@@ -732,7 +729,7 @@ docSearchRouteText route =
             "Advanced Guide Runtime. The runtime generated by Mar is meant to be practical by default: HTTP endpoints, SQLite storage, authentication, admin tooling, and migrations come from the same source file. System Configuration. Use system when you need to tune runtime behavior. This is where request logging, body limits, auth rate limits, admin UI session lifetime, security headers, and SQLite pragmas are configured. request_logs_buffer controls how many recent requests stay in memory for monitoring. http_max_request_body_mb limits request body size and returns HTTP 413 when exceeded. Auth rate limits control request-code and login attempts per minute. admin_ui_session_ttl_hours can shorten the embedded admin UI session without changing REST client sessions. Security settings apply response headers such as frame policy, referrer policy, and nosniff. SQLite settings are performance-first by default and can be overridden per app. Public Static Frontend. Mar can embed static frontend files into the final executable and optionally serve an SPA fallback. Generated Endpoints. CRUD, actions, auth, health, schema, version, and admin-related endpoints are generated automatically. Each entity gets REST CRUD endpoints. Typed actions are exposed as POST /actions/<name>. System endpoints include /health, /_mar/admin, /_mar/schema, and /_mar/version. Admin-only system endpoints include /_mar/version/admin, /_mar/perf, /_mar/request-logs, and /_mar/backups. Migrations. Automatic migrations run on startup. Safe changes are applied. Unsafe changes are blocked with clear errors."
 
         AdvancedTooling ->
-            "Advanced Guide Tooling. mar hosts the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned. Compiler and Runtime Commands. mar init store-app. mar edit store.mar. mar dev store.mar. mar compile store.mar. mar fly init store.mar. mar fly deploy store.mar. mar format store.mar. mar completion zsh. mar lsp. Shell completion. Mar can generate shell completion for zsh, bash, and fish so commands like mar fly and mar compile are suggested as you type. Add the command below to your shell's startup file. Zsh add this line to ~/.zshrc: eval \"$(mar completion zsh)\". Bash add this line to ~/.bashrc or ~/.bash_profile: source <(mar completion bash). Fish add this line to ~/.config/fish/config.fish: mar completion fish | source. Generated Client Output. Mar generates frontend clients for Elm and TypeScript. Elm client: dist/<name>/clients/<AppName>Client.elm. TypeScript client: dist/<name>/clients/<AppName>Client.ts. Both include CRUD functions, action functions, auth endpoints, and backend version access."
+            "Advanced Guide Tooling. The mar CLI supports the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned. Compiler and Runtime Commands. mar init store-app. mar dev store.mar. Edit with code store.mar or mar edit store.mar. mar edit is extremely experimental. mar compile store.mar. mar fly init store.mar. mar fly deploy store.mar. mar format store.mar. mar completion zsh. mar lsp. Shell completion. Mar can generate shell completion for zsh, bash, and fish so commands like mar fly and mar compile are suggested as you type. Add the command below to your shell's startup file. Zsh add this line to ~/.zshrc: eval \"$(mar completion zsh)\". Bash add this line to ~/.bashrc or ~/.bash_profile: source <(mar completion bash). Fish add this line to ~/.config/fish/config.fish: mar completion fish | source. Generated Client Output. Mar generates frontend clients for Elm and TypeScript. Elm client: dist/<name>/clients/<AppName>Client.elm. TypeScript client: dist/<name>/clients/<AppName>Client.ts. Both include CRUD functions, action functions, auth endpoints, and backend version access."
 
         AdvancedDeploy ->
             "Advanced Guide Deploy. Mar is intentionally simple to deploy. In production, you usually need just two things: the executable for your target platform and a persistent place to store the SQLite database. Why deployment is simple. Mar compile produces a single executable per target platform. The runtime already includes the API, authentication, admin tools, logs, monitoring, and backup features. SQLite keeps the data model simple: one database file, no separate database service required. Email delivery. If your app uses email login codes, configure a real SMTP provider before deploying. We currently recommend Resend because it is simple to set up and works well with Mar's SMTP configuration. Set the SMTP password as an environment variable on your provider. Any SMTP-compatible provider can work, but Resend is the simplest place to start. In this example, smtp_password_env points to RESEND_API_KEY. That means your deploy environment must define a RESEND_API_KEY variable with the SMTP password before the app starts. What production still needs. A persistent disk for the SQLite database. A real email provider to send login codes. Where you can deploy it. You can deploy a Mar app on any provider that can run a binary and give you persistent storage for the database file. Today, we recommend Fly.io. Deploy on Fly.io. Start with mar fly init, and Mar will prepare the Fly deployment files for your app. After that, follow the commands Mar shows you: create the Fly app, create its volume, set the SMTP secret, and deploy. fly auth login. fly apps create app. fly volumes create app_data --region <fly-region-code> --size <size-in-gb> -a app. fly secrets set RESEND_API_KEY=... -a app. mar fly deploy app.mar. Current limitations. SQLite needs persistent disk storage so your data survives restarts and redeploys in production. A single-machine setup is the simplest path when using SQLite."
@@ -785,8 +782,8 @@ docSearchEntries =
     , { title = "Code editor"
       , route = GettingStarted
       , sectionId = Just "install"
-      , summary = "Use the VSCode extension for syntax highlighting, LSP, and formatting."
-      , keywords = [ "vscode", "editor", "extension", "formatting", "lsp", "syntax highlighting", "Mar Language Support" ]
+      , summary = "Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension."
+      , keywords = [ "vscode", "editor", "extension", "formatting", "lsp", "syntax highlighting", "Mar Language Support", "mar edit", "terminal editor", "experimental" ]
       }
     , { title = "Advanced Fundamentals"
       , route = AdvancedFundamentals
@@ -875,8 +872,8 @@ docSearchEntries =
     , { title = "Compiler and runtime commands"
       , route = AdvancedTooling
       , sectionId = Just "compiler-and-runtime-commands"
-      , summary = "Use mar init, mar dev, mar compile, mar fly init, mar fly deploy, mar format, mar completion, and mar lsp."
-      , keywords = [ "mar init", "mar edit", "mar dev", "mar compile", "mar fly init", "mar fly deploy", "mar format", "mar completion", "mar lsp", "version", "editor", "terminal editor" ]
+      , summary = "Use mar init, mar dev, code, mar edit, mar compile, mar fly init, mar fly deploy, mar format, mar completion, and mar lsp."
+      , keywords = [ "mar init", "mar edit", "mar dev", "code", "vscode", "mar compile", "mar fly init", "mar fly deploy", "mar format", "mar completion", "mar lsp", "version", "editor", "terminal editor", "experimental editor" ]
       }
     , { title = "Shell completion"
       , route = AdvancedTooling
@@ -889,12 +886,6 @@ docSearchEntries =
       , sectionId = Just "generated-client-output"
       , summary = "Generated Elm and TypeScript clients for CRUD, actions, auth, and version endpoints."
       , keywords = [ "clients", "elm", "typescript", "generated client", "frontend", "api client" ]
-      }
-    , { title = "Admin UI and editor support"
-      , route = AdvancedTooling
-      , sectionId = Just "admin-ui-and-editor-support"
-      , summary = "Embedded Admin UI plus VS Code support with syntax highlighting, hovers, navigation, rename, and formatting."
-      , keywords = [ "admin ui", "editor", "vscode", "lsp", "hover", "rename", "formatting", "syntax highlighting" ]
       }
     , { title = "Deploy"
       , route = AdvancedDeploy
@@ -1285,7 +1276,7 @@ advancedRuntimePage model =
             , anchoredSection "public-static-frontend"
                 [ docSubsectionTitle "Public Static Frontend"
                 , bodyText "Mar can embed static frontend files into the final executable. This is useful when you want one deployable binary that serves both the backend and a compiled frontend."
-                , codeFromString model "public.mar" 260 publicConfigSource
+                , codeFromString model "public.mar" 0 publicConfigSource
                 ]
             , anchoredSection "generated-endpoints"
                 [ docSubsectionTitle "Generated Endpoints"
@@ -1324,15 +1315,16 @@ advancedToolingPage model =
                 [ sectionTitle "Advanced Guide"
                 , docSubsectionTitle "Tooling"
                 , paragraphWithEmphasis
-                    [ emphasisText "mar"
-                    , text " hosts the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned."
+                    [ text "The "
+                    , inlineCommand "mar"
+                    , text " CLI supports the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned."
                     ]
                 ]
             , anchoredSection "compiler-and-runtime-commands"
                 [ docSubsectionTitle "Compiler and Runtime Commands"
                 , commandRow model "1" "Init" "Creates a new Mar project with a starter app, .gitignore, and README." "mar init store-app"
-                , commandRow model "2" "Edit" "Opens a Mar file in a built-in terminal editor with line numbers, colors, and save shortcuts." "mar edit store.mar"
-                , commandRow model "3" "Dev" "Runs the app in development mode with hot reload when the .mar file changes." "mar dev store.mar"
+                , commandRow model "2" "Dev" "Runs the app in development mode with hot reload." "mar dev store.mar"
+                , editCommandRow model "3"
                 , commandRow model "4" "Compile" "Packages self-contained executables for all supported platforms and generates frontend clients." "mar compile store.mar"
                 , commandRow model "5" "Fly init" "Prepares Fly.io deployment files for your app." "mar fly init store.mar"
                 , commandRow model "6" "Fly deploy" "Rebuilds the Linux executable for the current app and runs fly deploy with the generated Fly config." "mar fly deploy store.mar"
@@ -1628,7 +1620,7 @@ install model =
         , downloadInstallRow
         , pathInstallRow model
         , installCommandRow model "3" "Check" "mar version"
-        , pluginInstallRow
+        , pluginInstallRow model
         ]
 
 
@@ -1718,8 +1710,8 @@ chmod +x /usr/local/bin/mar"""
         ]
 
 
-pluginInstallRow : Element Msg
-pluginInstallRow =
+pluginInstallRow : Model -> Element Msg
+pluginInstallRow model =
     column
         [ spacing 10
         , width fill
@@ -1732,37 +1724,86 @@ pluginInstallRow =
         [ wrappedRow [ width fill, spacing 10 ]
             [ stepBadge "4"
             , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Code editor")
-            , paragraph [ Font.size 16, Font.color (rgb255 70 93 121), width fill ]
-                [ text "Currently, Mar supports only "
-                , newTabLink
-                    [ Font.color (rgb255 36 82 132)
-                    , Font.semiBold
-                    , htmlAttribute (HtmlAttr.style "cursor" "pointer")
+            ]
+        , row
+            [ width fill
+            , spacing 10
+            ]
+            [ el
+                [ width fill
+                , alignTop
+                ]
+                (column
+                    [ width fill
+                    , spacing 10
                     ]
-                    { url = "https://code.visualstudio.com/"
-                    , label = text "VSCode"
-                    }
-                , text "."
+                    [ column
+                        [ width fill
+                        , spacing 8
+                        , Background.color (rgb255 255 255 255)
+                        , Border.width 1
+                        , Border.color (rgb255 213 225 241)
+                        , Border.rounded 10
+                        , padding 12
+                        ]
+                        [ wrappedRow
+                            [ width fill
+                            , spacing 8
+                            ]
+                            [ editBadge "Recommended" False
+                            , el [ Font.bold, Font.size 16, Font.color (rgb255 28 66 108) ] (text "VSCode")
+                            ]
+                        , wrappedRow
+                            [ width fill
+                            , spacing 8
+                            ]
+                            [ commandSnippet model "code todo.mar" ]
+                        , paragraph
+                            [ Font.size 14
+                            , Font.color (rgb255 83 105 132)
+                            , width fill
+                            ]
+                            [ text "Use the VSCode extension for the fuller editing experience." ]
+                        ]
+                    , column
+                        [ width fill
+                        , spacing 6
+                        , Background.color (rgb255 250 253 255)
+                        , Border.width 1
+                        , Border.color (rgb255 222 232 244)
+                        , Border.rounded 10
+                        , padding 12
+                        ]
+                        [ paragraph [ Font.size 14, Font.color (rgb255 70 93 121) ]
+                            [ text "In VSCode, open Extensions (Cmd+Shift+X on macOS, Ctrl+Shift+X on Windows/Linux)." ]
+                        , paragraph [ Font.size 14, Font.color (rgb255 70 93 121) ]
+                            [ text "Search for "
+                            , el [ Font.semiBold ] (text "\"Mar Language Support\"")
+                            , text " and install it."
+                            ]
+                        , paragraph
+                            [ Font.size 14
+                            , Font.color (rgb255 72 95 123)
+                            , width fill
+                            ]
+                            [ text "Make sure "
+                            , inlineCommand "mar"
+                            , text " is on your PATH so the extension works correctly."
+                            ]
+                        ]
+                    ]
+                )
+            , el
+                [ width fill
+                , alignTop
                 ]
+                (column
+                    [ width fill
+                    , spacing 10
+                    ]
+                    [ editOptionCard model "Experimental" "Terminal editor" [ text "Feeling adventurous? Try the built-in experimental terminal editor." ] "mar edit todo.mar" True ]
+                )
             ]
-        , column
-            [ spacing 6
-            , width fill
-            ]
-            [ paragraph [ Font.size 14, Font.color (rgb255 70 93 121) ]
-                [ text "Open VSCode Extensions (Cmd+Shift+X on macOS, Ctrl+Shift+X on Windows/Linux)." ]
-            , paragraph [ Font.size 14, Font.color (rgb255 70 93 121) ]
-                [ text "Search for "
-                , el [ Font.semiBold ] (text "\"Mar Language Support\"")
-                , text " and click Install."
-                ]
-            ]
-        , paragraph
-            [ Font.size 14
-            , Font.color (rgb255 72 95 123)
-            , width fill
-            ]
-            [ text "The VSCode extension requires mar on your PATH to start LSP and formatting." ]
         ]
 
 
@@ -1777,6 +1818,31 @@ stepBadge value =
         , paddingEach { top = 3, right = 8, bottom = 3, left = 8 }
         ]
         (text value)
+
+
+editBadge : String -> Bool -> Element Msg
+editBadge badge isExperimental =
+    el
+        [ Background.color
+            (if isExperimental then
+                rgb255 255 244 229
+
+             else
+                rgb255 232 243 255
+            )
+        , Font.color
+            (if isExperimental then
+                rgb255 128 85 24
+
+             else
+                rgb255 36 82 132
+            )
+        , Font.size 12
+        , Font.semiBold
+        , Border.rounded 999
+        , paddingEach { top = 4, right = 8, bottom = 4, left = 8 }
+        ]
+        (text badge)
 
 
 features : Element Msg
@@ -1892,7 +1958,7 @@ subsectionLabel label =
 docSubsectionTitle : String -> Element Msg
 docSubsectionTitle label =
     paragraph
-        [ Font.size 20
+        [ Font.size 23
         , Font.bold
         , Font.color (rgb255 28 66 108)
         , paddingEach { top = 6, right = 0, bottom = 0, left = 0 }
@@ -2142,6 +2208,100 @@ commandRow model number label description command =
         ]
 
 
+editCommandRow : Model -> String -> Element Msg
+editCommandRow model number =
+    column
+        [ width fill
+        , spacing 10
+        , Background.color (rgb255 245 250 255)
+        , Border.width 1
+        , Border.color (rgb255 213 225 241)
+        , Border.rounded 10
+        , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
+        ]
+        [ wrappedRow
+            [ width fill
+            , spacing 10
+            ]
+            [ stepBadge number
+            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Edit")
+            ]
+        , row
+            [ width fill
+            , spacing 10
+            ]
+            [ el
+                [ width fill
+                , alignTop
+                ]
+                (editOptionCard model "Recommended" "VSCode" [ text "Open the app in VSCode while ", inlineCommand "mar dev", text " keeps rebuilding in the background." ] "code store.mar" False)
+            , el
+                [ width fill
+                , alignTop
+                ]
+                (editOptionCard model "Experimental" "Terminal editor" [ text "Feeling adventurous? Try the built-in experimental terminal editor." ] "mar edit store.mar" True)
+            ]
+        ]
+
+
+editOptionCard : Model -> String -> String -> List (Element Msg) -> String -> Bool -> Element Msg
+editOptionCard model badge label description command isExperimental =
+    column
+        [ width fill
+        , spacing 8
+        , Background.color (rgb255 255 255 255)
+        , Border.width 1
+        , Border.color
+            (if isExperimental then
+                rgb255 237 214 175
+
+             else
+                rgb255 213 225 241
+            )
+        , Border.rounded 10
+        , padding 12
+        ]
+        [ wrappedRow
+            [ width fill
+            , spacing 8
+            ]
+            [ el
+                [ Background.color
+                    (if isExperimental then
+                        rgb255 255 244 229
+
+                     else
+                        rgb255 232 243 255
+                    )
+                , Font.color
+                    (if isExperimental then
+                        rgb255 128 85 24
+
+                     else
+                        rgb255 36 82 132
+                    )
+                , Font.size 12
+                , Font.semiBold
+                , Border.rounded 999
+                , paddingEach { top = 4, right = 8, bottom = 4, left = 8 }
+                ]
+                (text badge)
+            , el [ Font.bold, Font.size 16, Font.color (rgb255 28 66 108) ] (text label)
+            ]
+        , wrappedRow
+            [ width fill
+            , spacing 8
+            ]
+            [ commandSnippet model command ]
+        , paragraph
+            [ Font.size 14
+            , Font.color (rgb255 83 105 132)
+            , width fill
+            ]
+            description
+        ]
+
+
 commandSnippet : Model -> String -> Element Msg
 commandSnippet model command =
     if String.contains "\n" command then
@@ -2386,7 +2546,7 @@ bulletList items =
 bulletItem : String -> Element Msg
 bulletItem value =
     row [ spacing 8, width fill ]
-        [ el [ Element.alignTop, Font.color (rgb255 93 107 126), Font.bold ] (text "•")
+        [ el [ Element.alignTop, moveDown -2, Font.color (rgb255 93 107 126), Font.bold ] (text "•")
         , paragraph [ Element.alignTop, Font.size 16, Font.color (rgb255 72 95 123), width fill ] [ text value ]
         ]
 
@@ -2407,9 +2567,10 @@ docListItem value =
         [ spacing 8
         , width fill
         ]
-        [ el [ Font.color (rgb255 93 107 126), Font.bold ] (text "•")
+        [ el [ Element.alignTop, moveDown -2, Font.color (rgb255 93 107 126), Font.bold ] (text "•")
         , paragraph
-            [ Font.size 15
+            [ Element.alignTop
+            , Font.size 15
             , Font.color (rgb255 72 95 123)
             , width fill
             ]
@@ -2441,9 +2602,10 @@ languageReferenceItem keyword description =
         , width fill
         , paddingEach { top = 0, right = 0, bottom = 0, left = 16 }
         ]
-        [ el [ Font.color (rgb255 93 107 126), Font.bold ] (text "•")
+        [ el [ Element.alignTop, moveDown -2, Font.color (rgb255 93 107 126), Font.bold ] (text "•")
         , paragraph
-            [ Font.size 15
+            [ Element.alignTop
+            , Font.size 15
             , Font.color (rgb255 72 95 123)
             , width fill
             ]
@@ -2606,6 +2768,7 @@ terminalHighlightWords =
     , "mv"
     , "chmod"
     , "mar"
+    , "code"
     , "zsh"
     , "bash"
     , "fish"
@@ -2623,6 +2786,9 @@ terminalHighlightColor : String -> String
 terminalHighlightColor value =
     case value of
         "mar" ->
+            "#A6E3A1"
+
+        "code" ->
             "#A6E3A1"
 
         "./todo" ->
@@ -2694,7 +2860,7 @@ isMarBinaryToken chunk =
                 |> List.head
                 |> Maybe.withDefault chunk
     in
-    normalized == "mar"
+    List.member normalized [ "mar", "code" ]
 
 
 isCLICommandToken : String -> Bool
