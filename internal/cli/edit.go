@@ -489,7 +489,7 @@ func (e *marEditor) processKey(key int) (bool, error) {
 	case editorCtrlKey('q'):
 		if e.dirty && !e.quitArmed {
 			e.quitArmed = true
-			e.setStatusMessage("Unsaved changes. Press Ctrl-Q again to quit.")
+			e.setStatusMessage("Unsaved changes. Press Ctrl-q again to quit.")
 			return false, nil
 		}
 		return true, nil
@@ -614,10 +614,6 @@ func (e *marEditor) processKey(key int) (bool, error) {
 		e.backspace()
 	case '\x1b':
 		e.quitArmed = false
-		if e.selecting {
-			e.clearSelection()
-			e.setStatusMessage("Selection canceled")
-		}
 	case '\r':
 		e.quitArmed = false
 		e.beginUndoGroup()
@@ -957,7 +953,7 @@ func (e *marEditor) refreshScreen() {
 		if fileRow >= len(e.lines) {
 			out.WriteString("\x1b[2K")
 			if len(e.lines) == 1 && e.lines[0] == "" && y == e.screenRows/3 {
-				welcome := "Mar editor — Ctrl-S save | Ctrl-Q quit"
+				welcome := "Mar editor — Ctrl-s save | Ctrl-q quit"
 				if len(welcome) > e.screenCols {
 					welcome = welcome[:e.screenCols]
 				}
@@ -1064,31 +1060,30 @@ func (e *marEditor) drawMessageBar(out *bytes.Buffer) {
 func (e *marEditor) helpText() string {
 	var items []string
 	if e.selecting {
-		items = append(items, "Ctrl-Space cancel selection", "Arrows extend", "Ctrl-C copy", "Ctrl-X cut")
+		items = append(items, "Ctrl-Space cancel selection", "Arrows extend", "Ctrl-c copy", "Ctrl-x cut")
 		if e.clipboard != "" {
-			items = append(items, "Ctrl-V paste")
+			items = append(items, "Ctrl-v paste")
 		}
-		items = append(items, "Esc cancel")
 		if e.dirty {
-			items = append(items, "Ctrl-S save")
+			items = append(items, "Ctrl-s save")
 		}
 		if len(e.undoStack) > 0 {
-			items = append(items, "Ctrl-Z undo")
+			items = append(items, "Ctrl-z undo")
 		}
 		if len(e.redoStack) > 0 {
-			items = append(items, "Ctrl-Y redo")
+			items = append(items, "Ctrl-y redo")
 		}
 		return strings.Join(items, " | ")
 	}
-	items = append(items, "Ctrl-Q quit", "Ctrl-Space select")
+	items = append(items, "Ctrl-q quit", "Ctrl-Space select")
 	if e.dirty {
-		items = append(items, "Ctrl-S save")
+		items = append(items, "Ctrl-s save")
 	}
 	if len(e.undoStack) > 0 {
-		items = append(items, "Ctrl-Z undo")
+		items = append(items, "Ctrl-z undo")
 	}
 	if len(e.redoStack) > 0 {
-		items = append(items, "Ctrl-Y redo")
+		items = append(items, "Ctrl-y redo")
 	}
 	return strings.Join(items, " | ")
 }
