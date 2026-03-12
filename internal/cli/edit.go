@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	editorKeyNone = -1
 	editorKeyArrowLeft = 1000 + iota
 	editorKeyArrowRight
 	editorKeyArrowUp
@@ -34,6 +35,9 @@ type marEditor struct {
 	lines      []string
 	gitBase    []string
 	gitSigns   map[int]rune
+	gitStart   bool
+	gitLoading bool
+	gitLoadCh  chan []string
 	cx         int
 	cy         int
 	rowOffset  int
@@ -139,20 +143,18 @@ func openMarEditor(path string) (*marEditor, error) {
 	editor := &marEditor{
 		filePath:   trimmed,
 		lines:      lines,
-		gitBase:    gitBaseLines(trimmed),
+		gitBase:    nil,
 		gitSigns:   nil,
+		gitStart:   true,
+		gitLoading: false,
+		gitLoadCh:  nil,
 		screenRows: rows,
 		screenCols: cols,
 		useColor:   cliSupportsANSIStream(os.Stdout),
 		status:     "",
 		statusTime: time.Now(),
 	}
-	return editor.withGitSigns(), nil
-}
-
-func (e *marEditor) withGitSigns() *marEditor {
-	e.updateGitSigns()
-	return e
+	return editor, nil
 }
 
 func splitEditorLines(content string) []string {
@@ -204,15 +206,48 @@ func (e *marEditor) run() error {
 
 	for {
 		e.refreshScreen()
-		key, err := editorReadKey()
+		e.startGitLoadIfNeeded()
+		e.pollGitLoad()
+		key, err := editorReadKeyWithTimeout(50 * time.Millisecond)
 		if err != nil {
 			return err
+		}
+		if key == editorKeyNone {
+			continue
 		}
 		if shouldQuit, err := e.processKey(key); err != nil {
 			return err
 		} else if shouldQuit {
 			return nil
 		}
+	}
+}
+
+func (e *marEditor) startGitLoadIfNeeded() {
+	if !e.gitStart {
+		return
+	}
+	e.gitStart = false
+	e.gitLoading = true
+	e.gitLoadCh = make(chan []string, 1)
+	filePath := e.filePath
+	ch := e.gitLoadCh
+	go func() {
+		ch <- gitBaseLines(filePath)
+	}()
+}
+
+func (e *marEditor) pollGitLoad() {
+	if !e.gitLoading || e.gitLoadCh == nil {
+		return
+	}
+	select {
+	case base := <-e.gitLoadCh:
+		e.gitBase = base
+		e.gitLoading = false
+		e.gitLoadCh = nil
+		e.updateGitSigns()
+	default:
 	}
 }
 
@@ -317,22 +352,46 @@ func editorReadKey() (int, error) {
 	return int('\x1b'), nil
 }
 
+func editorReadKeyWithTimeout(timeout time.Duration) (int, error) {
+	fd := int(os.Stdin.Fd())
+	poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+	ms := int(timeout / time.Millisecond)
+	for {
+		n, err := unix.Poll(poll, ms)
+		if err != nil {
+			if err == unix.EINTR {
+				continue
+			}
+			return 0, err
+		}
+		if n == 0 || poll[0].Revents&unix.POLLIN == 0 {
+			return editorKeyNone, nil
+		}
+		return editorReadKey()
+	}
+}
+
 func editorReadByteWithTimeout(timeout time.Duration) (byte, bool, error) {
 	fd := int(os.Stdin.Fd())
 	poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
 	ms := int(timeout / time.Millisecond)
-	n, err := unix.Poll(poll, ms)
-	if err != nil {
-		return 0, false, err
+	for {
+		n, err := unix.Poll(poll, ms)
+		if err != nil {
+			if err == unix.EINTR {
+				continue
+			}
+			return 0, false, err
+		}
+		if n == 0 || poll[0].Revents&unix.POLLIN == 0 {
+			return 0, false, nil
+		}
+		b, err := editorReadByte()
+		if err != nil {
+			return 0, false, err
+		}
+		return b, true, nil
 	}
-	if n == 0 || poll[0].Revents&unix.POLLIN == 0 {
-		return 0, false, nil
-	}
-	b, err := editorReadByte()
-	if err != nil {
-		return 0, false, err
-	}
-	return b, true, nil
 }
 
 func editorParseCSISequence(seq string) int {
@@ -925,7 +984,7 @@ func (e *marEditor) refreshScreen() {
 	e.drawMessageBar(&out)
 
 	cursorRow := e.cy - e.rowOffset + 1
-	cursorCol := e.renderCursorX() - e.colOffset + e.lineNumberWidth() + e.gutterExtraWidth()
+	cursorCol := e.renderCursorX() - e.colOffset + e.lineNumberWidth() + e.gutterExtraWidth() + 1
 	out.WriteString(fmt.Sprintf("\x1b[%d;%dH", cursorRow, cursorCol))
 	out.WriteString("\x1b[?25h")
 	fmt.Print(out.String())
@@ -978,6 +1037,9 @@ func (e *marEditor) drawMessageBar(out *bytes.Buffer) {
 	message := ""
 	if time.Since(e.statusTime) <= 10*time.Second {
 		message = e.status
+	}
+	if message == "" && e.gitLoading {
+		message = "Loading Git..."
 	}
 	if message == "" {
 		out.WriteString(truncateString(help, e.screenCols))
