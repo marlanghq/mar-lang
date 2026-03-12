@@ -23,6 +23,8 @@ const (
 	editorKeyEnd
 	editorKeyPageUp
 	editorKeyPageDown
+	editorKeyMouseWheelUp
+	editorKeyMouseWheelDown
 )
 
 type marEditor struct {
@@ -167,8 +169,8 @@ func (e *marEditor) run() error {
 	}
 	defer editorDisableRawMode(oldState)
 
-	fmt.Print("\x1b[?1049h\x1b[?25l")
-	defer fmt.Print("\x1b[?25h\x1b[?1049l")
+	fmt.Print("\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?25l")
+	defer fmt.Print("\x1b[?25h\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l")
 
 	for {
 		e.refreshScreen()
@@ -228,6 +230,9 @@ func editorReadKey() (int, error) {
 		if err != nil {
 			return int('\x1b'), nil
 		}
+		if b2 == '<' {
+			return editorReadMouseEvent()
+		}
 		if b2 >= '0' && b2 <= '9' {
 			b3, err := editorReadByte()
 			if err != nil {
@@ -279,6 +284,39 @@ func editorReadKey() (int, error) {
 	return int('\x1b'), nil
 }
 
+func editorReadMouseEvent() (int, error) {
+	var seq strings.Builder
+	for {
+		b, err := editorReadByte()
+		if err != nil {
+			return int('\x1b'), nil
+		}
+		seq.WriteByte(b)
+		if b == 'M' || b == 'm' {
+			break
+		}
+	}
+
+	body := strings.TrimSuffix(strings.TrimSuffix(seq.String(), "M"), "m")
+	parts := strings.Split(body, ";")
+	if len(parts) < 3 {
+		return int('\x1b'), nil
+	}
+	button, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return int('\x1b'), nil
+	}
+
+	switch button {
+	case 64:
+		return editorKeyMouseWheelUp, nil
+	case 65:
+		return editorKeyMouseWheelDown, nil
+	default:
+		return int('\x1b'), nil
+	}
+}
+
 func editorReadByte() (byte, error) {
 	var buf [1]byte
 	_, err := os.Stdin.Read(buf[:])
@@ -315,6 +353,16 @@ func (e *marEditor) processKey(key int) (bool, error) {
 	case editorKeyPageDown:
 		e.quitArmed = false
 		for i := 0; i < e.screenRows; i++ {
+			e.moveCursor(editorKeyArrowDown)
+		}
+	case editorKeyMouseWheelUp:
+		e.quitArmed = false
+		for i := 0; i < 1; i++ {
+			e.moveCursor(editorKeyArrowUp)
+		}
+	case editorKeyMouseWheelDown:
+		e.quitArmed = false
+		for i := 0; i < 1; i++ {
 			e.moveCursor(editorKeyArrowDown)
 		}
 	case editorKeyHome:
