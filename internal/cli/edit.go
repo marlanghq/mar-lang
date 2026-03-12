@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -31,6 +32,8 @@ const (
 type marEditor struct {
 	filePath   string
 	lines      []string
+	gitBase    []string
+	gitSigns   map[int]rune
 	cx         int
 	cy         int
 	rowOffset  int
@@ -133,15 +136,23 @@ func openMarEditor(path string) (*marEditor, error) {
 	}
 
 	rows, cols := editorTerminalSize()
-	return &marEditor{
+	editor := &marEditor{
 		filePath:   trimmed,
 		lines:      lines,
+		gitBase:    gitBaseLines(trimmed),
+		gitSigns:   nil,
 		screenRows: rows,
 		screenCols: cols,
 		useColor:   cliSupportsANSIStream(os.Stdout),
 		status:     "",
 		statusTime: time.Now(),
-	}, nil
+	}
+	return editor.withGitSigns(), nil
+}
+
+func (e *marEditor) withGitSigns() *marEditor {
+	e.updateGitSigns()
+	return e
 }
 
 func splitEditorLines(content string) []string {
@@ -601,6 +612,7 @@ func (e *marEditor) insertRune(r rune) {
 	e.setCurrentLine(string(line))
 	e.cx++
 	e.dirty = true
+	e.updateGitSigns()
 }
 
 func (e *marEditor) insertString(value string) {
@@ -628,6 +640,7 @@ func (e *marEditor) insertNewline() {
 	e.cy++
 	e.cx = 0
 	e.dirty = true
+	e.updateGitSigns()
 }
 
 func (e *marEditor) backspace() {
@@ -642,6 +655,7 @@ func (e *marEditor) backspace() {
 		e.lines = append(e.lines[:e.cy], e.lines[e.cy+1:]...)
 		e.cy--
 		e.dirty = true
+		e.updateGitSigns()
 		return
 	}
 	line := []rune(e.currentLine())
@@ -649,6 +663,7 @@ func (e *marEditor) backspace() {
 	e.setCurrentLine(string(line))
 	e.cx--
 	e.dirty = true
+	e.updateGitSigns()
 }
 
 func (e *marEditor) deleteCharForward() {
@@ -660,11 +675,13 @@ func (e *marEditor) deleteCharForward() {
 		e.lines[e.cy] += e.lines[e.cy+1]
 		e.lines = append(e.lines[:e.cy+1], e.lines[e.cy+2:]...)
 		e.dirty = true
+		e.updateGitSigns()
 		return
 	}
 	line = append(line[:e.cx], line[e.cx+1:]...)
 	e.setCurrentLine(string(line))
 	e.dirty = true
+	e.updateGitSigns()
 }
 
 func (e *marEditor) moveCursor(key int) {
@@ -789,6 +806,7 @@ func (e *marEditor) deleteSelection() {
 	e.cy = start.y
 	e.clearSelection()
 	e.dirty = true
+	e.updateGitSigns()
 }
 
 func (e *marEditor) save() error {
@@ -824,6 +842,7 @@ func (e *marEditor) restoreSnapshot(snapshot editorSnapshot) {
 	e.cy = snapshot.cy
 	e.dirty = snapshot.dirty
 	e.clearSelection()
+	e.updateGitSigns()
 }
 
 func (e *marEditor) undo() {
@@ -906,7 +925,7 @@ func (e *marEditor) refreshScreen() {
 	e.drawMessageBar(&out)
 
 	cursorRow := e.cy - e.rowOffset + 1
-	cursorCol := e.renderCursorX() - e.colOffset + e.lineNumberWidth() + 4
+	cursorCol := e.renderCursorX() - e.colOffset + e.lineNumberWidth() + e.gutterExtraWidth()
 	out.WriteString(fmt.Sprintf("\x1b[%d;%dH", cursorRow, cursorCol))
 	out.WriteString("\x1b[?25h")
 	fmt.Print(out.String())
@@ -918,10 +937,12 @@ func (e *marEditor) drawLine(out *bytes.Buffer, fileRow int) {
 	padding := strings.Repeat(" ", lineNumberWidth-len(lineNo))
 	out.WriteString("\x1b[2K")
 	out.WriteString(colorizeCLI(e.useColor, "\033[38;5;244m", padding+lineNo))
+	out.WriteString(" ")
+	out.WriteString(e.gitSign(fileRow))
 	out.WriteString(colorizeCLI(e.useColor, "\033[38;5;240m", " │ "))
 
 	rendered := editorExpandTabs(e.lines[fileRow])
-	visible := editorVisibleRunes(rendered, e.colOffset, max(0, e.screenCols-lineNumberWidth-3))
+	visible := editorVisibleRunes(rendered, e.colOffset, max(0, e.screenCols-lineNumberWidth-e.gutterExtraWidth()))
 	selectFrom, selectTo, hasSelection := e.selectionForLine(fileRow)
 	out.WriteString(editorHighlightLine(visible, e.useColor, selectFrom, selectTo, hasSelection))
 }
@@ -1022,6 +1043,10 @@ func (e *marEditor) renderCursorX() int {
 	return len([]rune(editorExpandTabs(string([]rune(e.currentLine())[:min(e.cx, len([]rune(e.currentLine())))]))))
 }
 
+func (e *marEditor) gutterExtraWidth() int {
+	return 5
+}
+
 func (e *marEditor) scroll() {
 	renderX := e.renderCursorX()
 
@@ -1031,7 +1056,7 @@ func (e *marEditor) scroll() {
 	if e.cy >= e.rowOffset+e.screenRows {
 		e.rowOffset = e.cy - e.screenRows + 1
 	}
-	lineAreaWidth := max(0, e.screenCols-e.lineNumberWidth()-3)
+	lineAreaWidth := max(0, e.screenCols-e.lineNumberWidth()-e.gutterExtraWidth())
 	if renderX < e.colOffset {
 		e.colOffset = renderX
 	}
@@ -1078,7 +1103,7 @@ func (e *marEditor) selectionForLine(fileRow int) (int, int, bool) {
 	if from < 0 {
 		from = 0
 	}
-	visibleWidth := max(0, e.screenCols-e.lineNumberWidth()-3)
+	visibleWidth := max(0, e.screenCols-e.lineNumberWidth()-e.gutterExtraWidth())
 	if to > visibleWidth {
 		to = visibleWidth
 	}
@@ -1086,6 +1111,176 @@ func (e *marEditor) selectionForLine(fileRow int) (int, int, bool) {
 		from = to
 	}
 	return from, to, true
+}
+
+func (e *marEditor) gitSign(fileRow int) string {
+	if e.gitSigns == nil {
+		return " "
+	}
+	sign := e.gitSigns[fileRow]
+	switch sign {
+	case '+':
+		return colorizeCLI(e.useColor, "\033[38;5;70m", "+")
+	case '~':
+		return colorizeCLI(e.useColor, "\033[38;5;179m", "~")
+	case '-':
+		return colorizeCLI(e.useColor, "\033[38;5;203m", "-")
+	default:
+		return " "
+	}
+}
+
+func (e *marEditor) updateGitSigns() {
+	if len(e.gitBase) == 0 {
+		e.gitSigns = nil
+		return
+	}
+	e.gitSigns = computeEditorGitSigns(e.gitBase, e.lines)
+	if len(e.gitSigns) == 0 {
+		e.gitSigns = nil
+	}
+}
+
+func gitBaseLines(path string) []string {
+	if _, err := exec.LookPath("git"); err != nil {
+		return nil
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil
+	}
+	dir := filepath.Dir(absPath)
+	rootCmd := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel")
+	rootOut, err := rootCmd.Output()
+	if err != nil {
+		return nil
+	}
+	root := strings.TrimSpace(string(rootOut))
+	if root == "" {
+		return nil
+	}
+
+	relPath, err := filepath.Rel(root, absPath)
+	if err != nil {
+		return nil
+	}
+	relPath = filepath.ToSlash(relPath)
+
+	trackedCmd := exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "--", relPath)
+	if err := trackedCmd.Run(); err != nil {
+		return nil
+	}
+
+	showCmd := exec.Command("git", "-C", root, "show", "HEAD:"+relPath)
+	content, err := showCmd.Output()
+	if err != nil {
+		return nil
+	}
+	return splitEditorLines(string(content))
+}
+
+func computeEditorGitSigns(base, current []string) map[int]rune {
+	n := len(base)
+	m := len(current)
+	dp := make([][]int, n+1)
+	for i := range dp {
+		dp[i] = make([]int, m+1)
+	}
+
+	for i := n - 1; i >= 0; i-- {
+		for j := m - 1; j >= 0; j-- {
+			if base[i] == current[j] {
+				dp[i][j] = dp[i+1][j+1] + 1
+			} else if dp[i+1][j] >= dp[i][j+1] {
+				dp[i][j] = dp[i+1][j]
+			} else {
+				dp[i][j] = dp[i][j+1]
+			}
+		}
+	}
+
+	type diffOp int
+	const (
+		diffEqual diffOp = iota
+		diffDelete
+		diffInsert
+	)
+	type op struct {
+		kind     diffOp
+		currLine int
+	}
+
+	var ops []op
+	i, j := 0, 0
+	for i < n && j < m {
+		if base[i] == current[j] {
+			ops = append(ops, op{kind: diffEqual, currLine: j})
+			i++
+			j++
+			continue
+		}
+		if dp[i+1][j] >= dp[i][j+1] {
+			ops = append(ops, op{kind: diffDelete, currLine: j})
+			i++
+		} else {
+			ops = append(ops, op{kind: diffInsert, currLine: j})
+			j++
+		}
+	}
+	for i < n {
+		ops = append(ops, op{kind: diffDelete, currLine: j})
+		i++
+	}
+	for j < m {
+		ops = append(ops, op{kind: diffInsert, currLine: j})
+		j++
+	}
+
+	signs := make(map[int]rune)
+	currentPos := 0
+	for idx := 0; idx < len(ops); {
+		if ops[idx].kind == diffEqual {
+			currentPos = ops[idx].currLine + 1
+			idx++
+			continue
+		}
+
+		startCurrentPos := currentPos
+		var inserts []int
+		deletes := 0
+		for idx < len(ops) && ops[idx].kind != diffEqual {
+			switch ops[idx].kind {
+			case diffDelete:
+				deletes++
+			case diffInsert:
+				inserts = append(inserts, ops[idx].currLine)
+				currentPos = ops[idx].currLine + 1
+			}
+			idx++
+		}
+
+		switch {
+		case deletes > 0 && len(inserts) > 0:
+			for _, line := range inserts {
+				signs[line] = '~'
+			}
+		case deletes == 0 && len(inserts) > 0:
+			for _, line := range inserts {
+				signs[line] = '+'
+			}
+		case deletes > 0 && len(inserts) == 0:
+			target := startCurrentPos
+			if target >= len(current) {
+				target = len(current) - 1
+			}
+			if target >= 0 {
+				signs[target] = '-'
+			}
+		}
+	}
+
+	return signs
 }
 
 func editorHighlightLine(line string, useColor bool, selectFrom, selectTo int, hasSelection bool) string {
