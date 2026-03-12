@@ -462,12 +462,12 @@ topSearch : Model -> Element Msg
 topSearch model =
     Input.text
         [ width (fill |> maximum 170)
-        , Background.color (rgb255 248 251 255)
+        , Background.color (rgb255 250 252 255)
         , Border.width 1
-        , Border.color (rgb255 209 222 239)
-        , Border.rounded 10
-        , paddingEach { top = 10, right = 10, bottom = 10, left = 10 }
-        , Font.size 14
+        , Border.color (rgb255 216 226 238)
+        , Border.rounded 8
+        , paddingEach { top = 7, right = 8, bottom = 7, left = 8 }
+        , Font.size 12
         , htmlAttribute (HtmlEvents.onFocus FocusDocsSearch)
         , htmlAttribute (HtmlEvents.onBlur BlurDocsSearch)
         ]
@@ -1562,6 +1562,7 @@ examplesPage model =
             ]
         ]
 
+
 hero : Element Msg
 hero =
     panelWithAttributes [ htmlAttribute (HtmlAttr.id "home-hero") ]
@@ -2174,6 +2175,7 @@ commandSnippet model command =
             [ codeInline command
             , copyLink model command
             ]
+
 
 advancedSubmenu : Route -> Element Msg
 advancedSubmenu current =
