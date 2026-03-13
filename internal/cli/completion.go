@@ -68,8 +68,17 @@ func renderZshCompletion(binaryName string) string {
   fi
 
   case "${words[2]}" in
-    edit|dev|compile)
-      _files -g '*.mar'
+    edit)
+      if (( CURRENT == 3 )); then
+        _files -g '*.mar'
+      fi
+      ;;
+    dev|compile)
+      if (( CURRENT == 3 )); then
+        _files -g '*.mar'
+      elif (( CURRENT == 4 )); then
+        _message 'output name'
+      fi
       ;;
     fly)
       if (( CURRENT == 3 )); then
@@ -92,6 +101,24 @@ func renderZshCompletion(binaryName string) string {
       fi
       ;;
     format)
+      local has_stdin=0
+      if (( ${words[(I)--stdin]} )); then
+        has_stdin=1
+      fi
+      if [[ "${PREFIX}" == -* ]]; then
+        if (( has_stdin )); then
+          _describe 'format flag' '--check:Check formatting without writing files'
+        else
+          _describe 'format flag' \
+            '--check:Check formatting without writing files' \
+            '--stdin:Read Mar source from stdin'
+        fi
+        return
+      fi
+      if (( has_stdin )); then
+        _describe 'format flag' '--check:Check formatting without writing files'
+        return
+      fi
       _files -g '*.mar'
       ;;
   esac
@@ -115,8 +142,15 @@ func renderBashCompletion(binaryName string) string {
   fi
 
   case "${COMP_WORDS[1]}" in
-    edit|dev|compile)
-      COMPREPLY=( $(compgen -f -X '!*.mar' -- "${cur}") )
+    edit)
+      if [[ ${COMP_CWORD} -eq 2 ]]; then
+        COMPREPLY=( $(compgen -f -X '!*.mar' -- "${cur}") )
+      fi
+      ;;
+    dev|compile)
+      if [[ ${COMP_CWORD} -eq 2 ]]; then
+        COMPREPLY=( $(compgen -f -X '!*.mar' -- "${cur}") )
+      fi
       ;;
     fly)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
@@ -133,7 +167,32 @@ func renderBashCompletion(binaryName string) string {
       COMPREPLY=( $(compgen -W "zsh bash fish" -- "${cur}") )
       ;;
     format)
-      COMPREPLY=( $(compgen -f -X '!*.mar' -- "${cur}") )
+      local has_stdin=0
+      local word
+      for word in "${COMP_WORDS[@]}"; do
+        if [[ "${word}" == "--stdin" ]]; then
+          has_stdin=1
+          break
+        fi
+      done
+
+      if [[ "${cur}" == -* ]]; then
+        if [[ ${has_stdin} -eq 1 ]]; then
+          COMPREPLY=( $(compgen -W "--check" -- "${cur}") )
+        else
+          COMPREPLY=( $(compgen -W "--check --stdin" -- "${cur}") )
+        fi
+        return 0
+      fi
+
+      if [[ ${has_stdin} -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "--check" -- "${cur}") )
+      else
+        COMPREPLY=(
+          $(compgen -W "--check --stdin" -- "${cur}")
+          $(compgen -f -X '!*.mar' -- "${cur}")
+        )
+      fi
       ;;
   esac
 }
@@ -157,9 +216,13 @@ complete -c %s -n '__fish_use_subcommand' -a version -d 'Show version and build 
 complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init deploy' -a init -d 'Prepare Fly.io deployment files for your app'
 complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init deploy' -a deploy -d 'Rebuild the Linux executable for Fly.io and run fly deploy'
 
-complete -c %s -n '__fish_seen_subcommand_from edit dev compile' -a '(__fish_complete_suffix .mar)'
+complete -c %s -n '__fish_seen_subcommand_from edit; and test (count (commandline -opc)) -eq 2' -a '(__fish_complete_suffix .mar)'
+complete -c %s -n '__fish_seen_subcommand_from dev compile; and test (count (commandline -opc)) -eq 2' -a '(__fish_complete_suffix .mar)'
 complete -c %s -n '__fish_seen_subcommand_from fly; and __fish_seen_subcommand_from init deploy' -a '(__fish_complete_suffix .mar)'
-complete -c %s -n '__fish_seen_subcommand_from format' -a '(__fish_complete_suffix .mar)'
+complete -c %s -n '__fish_seen_subcommand_from format; and not __fish_seen_subcommand_from --stdin' -l check -d 'Check formatting without writing files'
+complete -c %s -n '__fish_seen_subcommand_from format; and not __fish_seen_subcommand_from --stdin' -l stdin -d 'Read Mar source from stdin'
+complete -c %s -n '__fish_seen_subcommand_from format; and not __fish_seen_subcommand_from --stdin' -a '(__fish_complete_suffix .mar)'
+complete -c %s -n '__fish_seen_subcommand_from format; and __fish_seen_subcommand_from --stdin' -l check -d 'Check formatting without writing files'
 complete -c %s -n '__fish_seen_subcommand_from completion' -a 'zsh bash fish'
-`, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName)
+`, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName, binaryName)
 }

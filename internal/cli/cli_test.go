@@ -155,6 +155,12 @@ func TestRenderCompletionScriptSupportsZsh(t *testing.T) {
 	if !strings.Contains(script, "fly") || !strings.Contains(script, "completion") {
 		t.Fatalf("expected script to include CLI commands, got %q", script)
 	}
+	if !strings.Contains(script, "_message 'output name'") {
+		t.Fatalf("expected zsh completion to describe dev/compile output name, got %q", script)
+	}
+	if !strings.Contains(script, "--check:Check formatting without writing files") || !strings.Contains(script, "--stdin:Read Mar source from stdin") {
+		t.Fatalf("expected zsh completion to include format flags, got %q", script)
+	}
 }
 
 func TestRenderCompletionScriptRejectsUnsupportedShell(t *testing.T) {
@@ -198,6 +204,25 @@ func TestRunCompletionPrintsBashScript(t *testing.T) {
 	got := string(out)
 	if !strings.Contains(got, "complete -F _mar_completion mar") {
 		t.Fatalf("expected bash completion output, got %q", got)
+	}
+	if !strings.Contains(got, "--check --stdin") {
+		t.Fatalf("expected bash completion output to include format flags, got %q", got)
+	}
+	if !strings.Contains(got, `if [[ ${COMP_CWORD} -eq 2 ]]; then`) {
+		t.Fatalf("expected bash completion output to limit .mar suggestions to the first dev/compile argument, got %q", got)
+	}
+}
+
+func TestRenderCompletionScriptSupportsFishFormatFlags(t *testing.T) {
+	script, err := renderCompletionScript("mar", "fish")
+	if err != nil {
+		t.Fatalf("expected fish completion script, got error: %v", err)
+	}
+	if !strings.Contains(script, "-l check -d 'Check formatting without writing files'") {
+		t.Fatalf("expected fish completion to include --check flag, got %q", script)
+	}
+	if !strings.Contains(script, "-l stdin -d 'Read Mar source from stdin'") {
+		t.Fatalf("expected fish completion to include --stdin flag, got %q", script)
 	}
 }
 
