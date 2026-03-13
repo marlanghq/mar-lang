@@ -3,7 +3,7 @@ port module Main exposing (main)
 import Browser
 import Browser.Navigation as Nav
 import Char
-import Element exposing (Attribute, Element, alignTop, below, centerX, column, el, fill, height, html, htmlAttribute, link, maximum, moveDown, newTabLink, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarX, scrollbarY, spacing, text, width, wrappedRow)
+import Element exposing (Attribute, Element, alignTop, below, centerX, column, el, fill, height, html, htmlAttribute, link, maximum, minimum, moveDown, newTabLink, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarX, scrollbarY, spacing, text, width, wrappedRow)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
@@ -13,6 +13,8 @@ import Html.Attributes as HtmlAttr
 import Html.Events as HtmlEvents
 import Json.Decode as Decode
 import String
+import Svg exposing (path, svg)
+import Svg.Attributes as SvgAttr
 import Url exposing (Url)
 
 
@@ -35,6 +37,7 @@ type alias Model =
     , copiedText : Maybe String
     , docsSearch : String
     , docsSearchOpen : Bool
+    , docsSearchSelectedIndex : Maybe Int
     }
 
 
@@ -45,6 +48,10 @@ type Msg
     | UpdateDocsSearch String
     | FocusDocsSearch
     | BlurDocsSearch
+    | MoveDocsSearchSelection Int
+    | ActivateDocsSearchSelection
+    | ClearDocsSearchSelection
+    | HoverDocsSearchResult Int
 
 
 type alias DocSearchEntry =
@@ -84,6 +91,7 @@ init _ url key =
       , copiedText = Nothing
       , docsSearch = ""
       , docsSearchOpen = False
+      , docsSearchSelectedIndex = Nothing
       }
     , Cmd.none
     )
@@ -113,19 +121,72 @@ update msg model =
                         Nothing ->
                             scrollToTop ()
             in
-            ( { model | route = location.route, copiedText = Nothing, docsSearch = "", docsSearchOpen = False }, scrollCmd )
+            ( { model | route = location.route, copiedText = Nothing, docsSearch = "", docsSearchOpen = False, docsSearchSelectedIndex = Nothing }, scrollCmd )
 
         CopyText source ->
             ( { model | copiedText = Just source }, copyToClipboard source )
 
         UpdateDocsSearch value ->
-            ( { model | docsSearch = value, docsSearchOpen = String.trim value /= "" }, Cmd.none )
+            ( { model | docsSearch = value, docsSearchOpen = String.trim value /= "", docsSearchSelectedIndex = Nothing }, Cmd.none )
 
         FocusDocsSearch ->
-            ( { model | docsSearchOpen = String.trim model.docsSearch /= "" }, Cmd.none )
+            ( { model | docsSearchOpen = String.trim model.docsSearch /= "", docsSearchSelectedIndex = Nothing }, Cmd.none )
 
         BlurDocsSearch ->
-            ( { model | docsSearchOpen = False }, Cmd.none )
+            ( { model | docsSearchOpen = False, docsSearchSelectedIndex = Nothing }, Cmd.none )
+
+        MoveDocsSearchSelection direction ->
+            let
+                results =
+                    currentDocSearchResults model
+            in
+            case List.length results of
+                0 ->
+                    ( model, Cmd.none )
+
+                count ->
+                    let
+                        nextIndex =
+                            case model.docsSearchSelectedIndex of
+                                Just currentIndex ->
+                                    modBy count (currentIndex + direction)
+
+                                Nothing ->
+                                    if direction < 0 then
+                                        count - 1
+
+                                    else
+                                        0
+                    in
+                    ( { model | docsSearchOpen = True, docsSearchSelectedIndex = Just nextIndex }, Cmd.none )
+
+        ActivateDocsSearchSelection ->
+            let
+                results =
+                    currentDocSearchResults model
+
+                maybeEntry =
+                    case model.docsSearchSelectedIndex of
+                        Just selectedIndex ->
+                            getAt selectedIndex results
+
+                        Nothing ->
+                            List.head results
+            in
+            case maybeEntry of
+                Just entry ->
+                    ( { model | docsSearchOpen = False, docsSearchSelectedIndex = Nothing }
+                    , Nav.pushUrl model.key (routeHrefWithSection entry.route entry.sectionId)
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ClearDocsSearchSelection ->
+            ( { model | docsSearchOpen = False, docsSearchSelectedIndex = Nothing }, Cmd.none )
+
+        HoverDocsSearchResult index ->
+            ( { model | docsSearchSelectedIndex = Just index }, Cmd.none )
 
 
 type alias RouteLocation =
@@ -349,12 +410,18 @@ topBar model =
 
 topSearchArea : Model -> Element Msg
 topSearchArea model =
+    el [ width (fill |> maximum 190), alignTop ]
+        (searchFieldWithDropdown model)
+
+
+searchFieldWithDropdown : Model -> Element Msg
+searchFieldWithDropdown model =
     el
-        [ width (fill |> maximum 170)
+        [ width fill
         , below
             (if model.docsSearchOpen && String.trim model.docsSearch /= "" then
                 el
-                    [ width (px 520)
+                    [ width (fill |> minimum 420 |> maximum 560)
                     , htmlAttribute (HtmlAttr.style "position" "absolute")
                     , htmlAttribute (HtmlAttr.style "right" "0")
                     , moveDown 8
@@ -366,6 +433,31 @@ topSearchArea model =
             )
         ]
         (topSearch model)
+
+
+githubRepoLink : Element Msg
+githubRepoLink =
+    newTabLink
+        [ Font.color (rgb255 22 57 96)
+        , htmlAttribute (HtmlAttr.style "line-height" "0")
+        , htmlAttribute (HtmlAttr.style "opacity" "0.78")
+        , htmlAttribute (HtmlAttr.style "cursor" "pointer")
+        , htmlAttribute (HtmlAttr.attribute "aria-label" "GitHub repository")
+        ]
+        { url = "https://github.com/marciofrayze/mar-lang"
+        , label = html githubIcon
+        }
+
+githubIcon : Html.Html msg
+githubIcon =
+    svg
+        [ SvgAttr.width "18"
+        , SvgAttr.height "18"
+        , SvgAttr.viewBox "0 0 16 16"
+        , SvgAttr.fill "currentColor"
+        , HtmlAttr.attribute "aria-hidden" "true"
+        ]
+        [ path [ SvgAttr.d "M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" ] [] ]
 
 
 navItem : Route -> Route -> String -> Element Msg
@@ -461,15 +553,16 @@ warningBanner =
 topSearch : Model -> Element Msg
 topSearch model =
     Input.text
-        [ width (fill |> maximum 170)
+        [ width fill
         , Background.color (rgb255 250 252 255)
         , Border.width 1
         , Border.color (rgb255 216 226 238)
         , Border.rounded 8
         , paddingEach { top = 7, right = 8, bottom = 7, left = 8 }
-        , Font.size 12
+        , Font.size 13
         , htmlAttribute (HtmlEvents.onFocus FocusDocsSearch)
         , htmlAttribute (HtmlEvents.onBlur BlurDocsSearch)
+        , htmlAttribute (HtmlEvents.preventDefaultOn "keydown" docsSearchKeyDecoder)
         ]
         { onChange = UpdateDocsSearch
         , text = model.docsSearch
@@ -481,17 +574,10 @@ topSearch model =
 topSearchResults : Model -> Element Msg
 topSearchResults model =
     let
-        query =
-            String.trim model.docsSearch
-
         results =
-            if query == "" then
-                []
-
-            else
-                matchingDocSearchEntries query
+            currentDocSearchResults model
     in
-    if query == "" then
+    if String.trim model.docsSearch == "" then
         none
 
     else
@@ -515,26 +601,105 @@ topSearchResults model =
                 [ paragraph [ Font.size 14, Font.color (rgb255 86 107 133), width fill ] [ text "Nothing matched your search." ] ]
 
              else
-                List.map docSearchResultView (List.take 6 results)
+                List.indexedMap (docSearchResultView model.docsSearchSelectedIndex) results
             )
 
 
-docSearchResultView : DocSearchEntry -> Element Msg
-docSearchResultView entry =
+currentDocSearchResults : Model -> List DocSearchEntry
+currentDocSearchResults model =
+    let
+        query =
+            String.trim model.docsSearch
+    in
+    if query == "" then
+        []
+
+    else
+        matchingDocSearchEntries query |> List.take 6
+
+
+docsSearchKeyDecoder : Decode.Decoder ( Msg, Bool )
+docsSearchKeyDecoder =
+    Decode.field "key" Decode.string
+        |> Decode.map docsSearchKeyToMessage
+
+
+docsSearchKeyToMessage : String -> ( Msg, Bool )
+docsSearchKeyToMessage key =
+    case key of
+        "ArrowDown" ->
+            ( MoveDocsSearchSelection 1, True )
+
+        "ArrowUp" ->
+            ( MoveDocsSearchSelection -1, True )
+
+        "Enter" ->
+            ( ActivateDocsSearchSelection, True )
+
+        "Escape" ->
+            ( ClearDocsSearchSelection, True )
+
+        _ ->
+            ( FocusDocsSearch, False )
+
+
+docSearchResultView : Maybe Int -> Int -> DocSearchEntry -> Element Msg
+docSearchResultView selectedIndex index entry =
+    let
+        isSelected =
+            selectedIndex == Just index
+    in
     link
         [ width fill
-        , Background.color (rgb255 248 251 255)
+        , Background.color
+            (if isSelected then
+                rgb255 232 243 255
+
+             else
+                rgb255 248 251 255
+            )
+        , Border.width 1
+        , Border.color
+            (if isSelected then
+                rgb255 163 197 235
+
+             else
+                rgba255 255 255 255 0
+            )
         , Border.rounded 8
         , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
         , htmlAttribute (HtmlAttr.style "cursor" "pointer")
+        , htmlAttribute (HtmlEvents.onMouseEnter (HoverDocsSearchResult index))
+        , htmlAttribute (HtmlEvents.preventDefaultOn "mousedown" (Decode.succeed ( HoverDocsSearchResult index, True )))
         ]
         { url = routeHrefWithSection entry.route entry.sectionId
         , label =
             column [ width fill, spacing 2 ]
-                [ paragraph [ Font.size 16, Font.bold, Font.color (rgb255 28 66 108), width fill ] [ text entry.title ]
+                [ paragraph
+                    [ Font.size 16
+                    , Font.bold
+                    , Font.color
+                        (if isSelected then
+                            rgb255 20 58 99
+
+                         else
+                            rgb255 28 66 108
+                        )
+                    , width fill
+                    ]
+                    [ text entry.title ]
                 , paragraph [ Font.size 14, Font.color (rgb255 86 107 133), width fill ] [ text entry.summary ]
                 ]
         }
+
+
+getAt : Int -> List a -> Maybe a
+getAt index items =
+    if index < 0 then
+        Nothing
+
+    else
+        List.drop index items |> List.head
 
 
 matchingDocSearchEntries : String -> List DocSearchEntry
@@ -552,8 +717,6 @@ matchingDocSearchEntries query =
                     ++ String.join " " entry.keywords
                     ++ " "
                     ++ docSearchSectionText entry.sectionId
-                    ++ " "
-                    ++ docSearchRouteText entry.route
                 )
 
         scoreText weight textValue =
@@ -614,7 +777,7 @@ docSearchSectionText maybeSectionId =
                     "Install. Download Mar from the GitHub releases page. Move mar to a directory in your PATH. Check mar version. Code editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Install Mar Developer Tools from Visual Studio Marketplace. The VSCode extension requires mar on your PATH to work correctly."
 
                 "quick-start" ->
-                    "Quick Start. Create todo.mar. Develop. Runs the app locally with hot reload and opens the Admin UI while you edit todo.mar. Compile. Packages production executables for all supported platforms and generates the frontend clients. Run. Choose the target folder for your platform, start that executable, and open the printed Admin URL. Mar compile produces a single self-contained executable per target platform. Each one already includes API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
+                    "Quick Start. Create todo.mar. Develop. Runs the app locally with hot reload and opens the Admin UI while you edit todo.mar. Publish. When you are ready to publish your app to production, run mar compile to package self-contained executables for all supported platforms and generate frontend clients. Run. Choose the target folder for your platform, start that executable, and open the printed Admin URL. Mar compile produces a single self-contained executable per target platform. Each one already includes API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
 
                 "advanced-fundamentals" ->
                     "Advanced Guide. Core concepts of the language. Mar is a declarative backend DSL inspired by Elm and PocketBase, implemented in Go with focus on readability, maintainability, and simple deployment."
@@ -653,7 +816,7 @@ docSearchSectionText maybeSectionId =
                     "Generated endpoints. CRUD, actions, auth, health, schema, version, and admin-related endpoints are generated automatically. Each entity gets REST CRUD endpoints. Typed actions are exposed as POST /actions/<name>. System endpoints include /health, /_mar/admin, /_mar/schema, and /_mar/version. Admin-only system endpoints include /_mar/version/admin, /_mar/perf, /_mar/request-logs, and /_mar/backups."
 
                 "migrations" ->
-                    "Migrations. Automatic migrations run on startup. Safe changes are applied. Unsafe changes are blocked with clear errors."
+                    "Database Schema Migrations. Automatic migrations run on startup. Safe changes are applied. Unsafe changes are blocked with clear errors."
 
                 "tooling" ->
                     "Tooling. The mar CLI supports the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned."
@@ -665,13 +828,13 @@ docSearchSectionText maybeSectionId =
                     "Shell completion. Mar can generate shell completion for zsh, bash, and fish so commands like mar fly and mar compile are suggested as you type. Add the command below to your shell's startup file. Zsh add this line to ~/.zshrc. eval $(mar completion zsh). Bash add this line to ~/.bashrc or ~/.bash_profile. source <(mar completion bash). Fish add this line to ~/.config/fish/config.fish. mar completion fish | source."
 
                 "generated-client-output" ->
-                    "Generated client output. When you compile an app, Mar also generates frontend clients for Elm and TypeScript. These clients wrap the generated HTTP API with named functions, so you do not need to hand-write fetch calls, URLs, or request payload shapes. Elm client. TypeScript client."
+                    "Generated client output. When you publish an app with mar compile, Mar also generates frontend clients for Elm and TypeScript. These clients wrap the generated HTTP API with named functions, so you do not need to hand-write fetch calls, URLs, or request payload shapes. Elm client. TypeScript client."
 
                 "deploy" ->
                     "Deploy. Mar is intentionally simple to deploy. In production, you usually need just two things: the executable for your target platform and a persistent place to store the SQLite database."
 
                 "email-delivery" ->
-                    "Email delivery. If your app uses email login codes, configure a real SMTP provider before deploying. We currently recommend Resend because it is simple to set up and works well with Mar's SMTP configuration. Set the SMTP password as an environment variable on your provider. Any SMTP-compatible provider can work, but Resend is the simplest place to start. In this example, smtp_password_env points to RESEND_API_KEY. That means your deploy environment must define a RESEND_API_KEY variable with the SMTP password before the app starts."
+                    "Email delivery. If your app uses email login codes, configure a real SMTP provider before deploying. We currently recommend Resend because it is simple to set up and works well with Mar's SMTP configuration, but any SMTP-compatible provider should work. Set the SMTP password as an environment variable on your provider. In this example, smtp_password_env points to RESEND_API_KEY. That means your deploy environment must define a RESEND_API_KEY variable with the SMTP password before the app starts."
 
                 "what-production-still-needs" ->
                     "What production still needs. Mar keeps deployment lightweight, but production still has a few practical requirements. A persistent disk for the SQLite database. A real email provider to send login codes."
@@ -680,7 +843,7 @@ docSearchSectionText maybeSectionId =
                     "Where you can deploy it. You can deploy a Mar app on any provider that can run a binary and give you persistent storage for the database file. Today, we recommend Fly.io because it fits that model well and keeps the setup small."
 
                 "deploy-on-fly-io" ->
-                    "Deploy on Fly.io. Mar already has a dedicated Fly.io workflow. Start with mar fly init, and Mar will prepare the Fly deployment files for your app. Choose the Fly app name you want to create on Fly.io. Choose the Fly region closest to your users. Let Mar generate the Fly deployment files for you. After that, follow the commands Mar shows you: create the Fly app, create its volume, set the SMTP secret, and deploy. fly auth login. fly apps create app. fly volumes create app_data --region <fly-region-code> --size <size-in-gb> -a app. fly secrets set RESEND_API_KEY=... -a app. mar fly deploy app.mar."
+                    "Deploy on Fly.io. Mar already has a dedicated Fly.io workflow. Start with mar fly init, and Mar will prepare the Fly deployment files for your app. Choose the Fly app name you want to create on Fly.io. Choose the Fly region closest to your users. Let Mar generate the Fly deployment files for you. After that, follow the commands Mar shows you: create the Fly app, create its volume, set the SMTP secret, and deploy. fly auth login. fly apps create app. fly volumes create app_data --region <fly-region-code> --size <size-in-gb> -a app. fly secrets set RESEND_API_KEY=<your-api-key> -a app. mar fly deploy app.mar."
 
                 "current-limitations" ->
                     "Current limitations. SQLite needs persistent disk storage so your data survives restarts and redeploys in production. A single-machine setup is the simplest path when using SQLite. If your provider cannot run a binary with persistent storage, it is not a good fit for Mar today."
@@ -714,7 +877,7 @@ docSearchRouteText route =
             "Home. A simple declarative backend language. Mar compiles declarative source into a self-contained server executable with API, authentication, authorization, admin tools, monitoring, logs, and database backups. Inspired by Elm and PocketBase. Mar syntax example. Get Started. Advanced Guide. Examples. Why Mar. Less glue code. More backend. Declarative at its core. Opinionated on purpose. Everything bundled. Authentication, authorization, admin tools, logs, monitoring, and built-in database backups come together. Who Mar Is For. Strong fit for teams that want the backend to stay boring in the best way: simple to run, easy to update, operational from day one. People who want the backend to stay coherent, operational, and easy to update without a lot of handwritten glue. Ready to try Mar. Next: Getting Started."
 
         GettingStarted ->
-            "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable. Install. Download. Path. Check. Code editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Install Mar Developer Tools from Visual Studio Marketplace. The VSCode extension requires mar on your PATH to start LSP and formatting. Quick Start. Create a starter app with mar init todo. This creates a new todo folder with todo.mar, .gitignore, and README. Develop by entering the project folder and running mar dev todo.mar. Compile by entering the project folder and running mar compile todo.mar. Run the target executable from todo/dist/todo/<target>. Open the printed Admin URL. Mar compile produces a self-contained executable per target platform with API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
+            "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable. Install. Download. Path. Check. Code editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Install Mar Developer Tools from Visual Studio Marketplace. The VSCode extension requires mar on your PATH to start LSP and formatting. Quick Start. Create a starter app with mar init todo. This creates a new todo folder with todo.mar, .gitignore, and README. Develop by entering the project folder and running mar dev todo.mar. Production build by entering the project folder and running mar compile todo.mar when you are ready to publish your app to production. Run the target executable from todo/dist/todo/<target>. Open the printed Admin URL. Mar compile produces a self-contained executable per target platform with API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
 
         AdvancedGuide ->
             "Advanced guide fundamentals language reference runtime tooling deploy compiler."
@@ -726,13 +889,13 @@ docSearchRouteText route =
             "Advanced Guide Language Reference. This reference lists the current keywords and built-in names used by the language. Top-level declarations: app, port, database, public, system, auth, entity, type alias, action. Entity fields and modifiers: primary, auto, optional. Validation and authorization: rule, expect, when, authorize, all, list, get, create, update, delete. Actions: input, create. Auth config: User, code_ttl_minutes, session_ttl_hours, email_transport, email_from, email_subject, smtp_host, smtp_port, smtp_username, smtp_password_env, smtp_starttls. System config: request_logs_buffer, http_max_request_body_mb, auth_request_code_rate_limit_per_minute, auth_login_rate_limit_per_minute, admin_ui_session_ttl_hours, security_frame_policy, security_referrer_policy, security_content_type_nosniff, sqlite_journal_mode, sqlite_synchronous, sqlite_foreign_keys, sqlite_busy_timeout_ms, sqlite_wal_autocheckpoint, sqlite_journal_size_limit_mb, sqlite_mmap_size_mb, sqlite_cache_size_kb. Public frontend config: dir, mount, spa_fallback. Built-in functions and values: len, contains, startsWith, endsWith, matches, isRole, auth_authenticated, auth_email, auth_user_id, auth_role, true, false, null."
 
         AdvancedRuntime ->
-            "Advanced Guide Runtime. The runtime generated by Mar is meant to be practical by default: HTTP endpoints, SQLite storage, authentication, admin tooling, and migrations come from the same source file. System Configuration. Use system when you need to tune runtime behavior. This is where request logging, body limits, auth rate limits, admin UI session lifetime, security headers, and SQLite pragmas are configured. request_logs_buffer controls how many recent requests stay in memory for monitoring. http_max_request_body_mb limits request body size and returns HTTP 413 when exceeded. Auth rate limits control request-code and login attempts per minute. admin_ui_session_ttl_hours can shorten the embedded admin UI session without changing REST client sessions. Security settings apply response headers such as frame policy, referrer policy, and nosniff. SQLite settings are performance-first by default and can be overridden per app. Public Static Frontend. Mar can embed static frontend files into the final executable and optionally serve an SPA fallback. Generated Endpoints. CRUD, actions, auth, health, schema, version, and admin-related endpoints are generated automatically. Each entity gets REST CRUD endpoints. Typed actions are exposed as POST /actions/<name>. System endpoints include /health, /_mar/admin, /_mar/schema, and /_mar/version. Admin-only system endpoints include /_mar/version/admin, /_mar/perf, /_mar/request-logs, and /_mar/backups. Migrations. Automatic migrations run on startup. Safe changes are applied. Unsafe changes are blocked with clear errors."
+            "Advanced Guide Runtime. The runtime generated by Mar is meant to be practical by default: HTTP endpoints, SQLite storage, authentication, admin tooling, and migrations come from the same source file. System Configuration. Use system when you need to tune runtime behavior. This is where request logging, body limits, auth rate limits, admin UI session lifetime, security headers, and SQLite pragmas are configured. request_logs_buffer controls how many recent requests stay in memory for monitoring. http_max_request_body_mb limits request body size and returns HTTP 413 when exceeded. Auth rate limits control request-code and login attempts per minute. admin_ui_session_ttl_hours can shorten the embedded admin UI session without changing REST client sessions. Security settings apply response headers such as frame policy, referrer policy, and nosniff. SQLite settings are performance-first by default and can be overridden per app. Public Static Frontend. Mar can embed static frontend files into the final executable and optionally serve an SPA fallback. Generated Endpoints. CRUD, actions, auth, health, schema, version, and admin-related endpoints are generated automatically. Each entity gets REST CRUD endpoints. Typed actions are exposed as POST /actions/<name>. System endpoints include /health, /_mar/admin, /_mar/schema, and /_mar/version. Admin-only system endpoints include /_mar/version/admin, /_mar/perf, /_mar/request-logs, and /_mar/backups. Database Schema Migrations. Automatic migrations run on startup. Safe changes are applied. Unsafe changes are blocked with clear errors."
 
         AdvancedTooling ->
-            "Advanced Guide Tooling. The mar CLI supports the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned. Compiler and Runtime Commands. mar init store-app. mar dev store.mar. Edit with code store.mar or mar edit store.mar. mar edit is extremely experimental. mar compile store.mar. mar fly init store.mar. mar fly deploy store.mar. mar format store.mar. mar completion zsh. mar lsp. Shell completion. Mar can generate shell completion for zsh, bash, and fish so commands like mar fly and mar compile are suggested as you type. Add the command below to your shell's startup file. Zsh add this line to ~/.zshrc: eval \"$(mar completion zsh)\". Bash add this line to ~/.bashrc or ~/.bash_profile: source <(mar completion bash). Fish add this line to ~/.config/fish/config.fish: mar completion fish | source. Generated Client Output. Mar generates frontend clients for Elm and TypeScript. Elm client: dist/<name>/clients/<AppName>Client.elm. TypeScript client: dist/<name>/clients/<AppName>Client.ts. Both include CRUD functions, action functions, auth endpoints, and backend version access."
+            "Advanced Guide Tooling. The mar CLI supports the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned. Compiler and Runtime Commands. mar init store-app. mar dev store.mar. Edit with code store.mar or mar edit store.mar. mar edit is extremely experimental. mar compile store.mar. mar fly init store.mar. mar fly deploy store.mar. mar format store.mar. mar completion zsh. mar lsp. Shell completion. Mar can generate shell completion for zsh, bash, and fish so commands like mar fly and mar compile are suggested as you type. Add the command below to your shell's startup file. Zsh add this line to ~/.zshrc: eval \"$(mar completion zsh)\". Bash add this line to ~/.bashrc or ~/.bash_profile: source <(mar completion bash). Fish add this line to ~/.config/fish/config.fish: mar completion fish | source. Generated Client Output. When you publish an app with mar compile, Mar generates frontend clients for Elm and TypeScript. Elm client: dist/<name>/clients/<AppName>Client.elm. TypeScript client: dist/<name>/clients/<AppName>Client.ts. Both include CRUD functions, action functions, auth endpoints, and backend version access."
 
         AdvancedDeploy ->
-            "Advanced Guide Deploy. Mar is intentionally simple to deploy. In production, you usually need just two things: the executable for your target platform and a persistent place to store the SQLite database. Why deployment is simple. Mar compile produces a single executable per target platform. The runtime already includes the API, authentication, admin tools, logs, monitoring, and backup features. SQLite keeps the data model simple: one database file, no separate database service required. Email delivery. If your app uses email login codes, configure a real SMTP provider before deploying. We currently recommend Resend because it is simple to set up and works well with Mar's SMTP configuration. Set the SMTP password as an environment variable on your provider. Any SMTP-compatible provider can work, but Resend is the simplest place to start. In this example, smtp_password_env points to RESEND_API_KEY. That means your deploy environment must define a RESEND_API_KEY variable with the SMTP password before the app starts. What production still needs. A persistent disk for the SQLite database. A real email provider to send login codes. Where you can deploy it. You can deploy a Mar app on any provider that can run a binary and give you persistent storage for the database file. Today, we recommend Fly.io. Deploy on Fly.io. Start with mar fly init, and Mar will prepare the Fly deployment files for your app. After that, follow the commands Mar shows you: create the Fly app, create its volume, set the SMTP secret, and deploy. fly auth login. fly apps create app. fly volumes create app_data --region <fly-region-code> --size <size-in-gb> -a app. fly secrets set RESEND_API_KEY=... -a app. mar fly deploy app.mar. Current limitations. SQLite needs persistent disk storage so your data survives restarts and redeploys in production. A single-machine setup is the simplest path when using SQLite."
+            "Advanced Guide Deploy. Mar is intentionally simple to deploy. In production, you usually need just two things: the executable for your target platform and a persistent place to store the SQLite database. Why deployment is simple. Mar compile produces a single executable per target platform. The runtime already includes the API, authentication, admin tools, logs, monitoring, and backup features. SQLite keeps the data model simple: one database file, no separate database service required. Email delivery. If your app uses email login codes, configure a real SMTP provider before deploying. We currently recommend Resend because it is simple to set up and works well with Mar's SMTP configuration, but any SMTP-compatible provider should work. Set the SMTP password as an environment variable on your provider. In this example, smtp_password_env points to RESEND_API_KEY. That means your deploy environment must define a RESEND_API_KEY variable with the SMTP password before the app starts. What production still needs. A persistent disk for the SQLite database. A real email provider to send login codes. Where you can deploy it. You can deploy a Mar app on any provider that can run a binary and give you persistent storage for the database file. Today, we recommend Fly.io. Deploy on Fly.io. Start with mar fly init, and Mar will prepare the Fly deployment files for your app. After that, follow the commands Mar shows you: create the Fly app, create its volume, set the SMTP secret, and deploy. fly auth login. fly apps create app. fly volumes create app_data --region <fly-region-code> --size <size-in-gb> -a app. fly secrets set RESEND_API_KEY=<your-api-key> -a app. mar fly deploy app.mar. Current limitations. SQLite needs persistent disk storage so your data survives restarts and redeploys in production. A single-machine setup is the simplest path when using SQLite."
 
         AdvancedCompiler ->
             "Advanced Guide Compiler. The compiler parses a single .mar file into a typed app model, validates it, generates clients, packages a manifest bundle with admin/public assets, and stamps that bundle into prebuilt runtime executables for all supported platforms. Compiler pipeline. Parse. Validate. Generate clients. Build bundle. Stamp prebuilt runtimes. Single executable per target platform. Typed clients. Packaged executables."
@@ -857,11 +1020,11 @@ docSearchEntries =
       , summary = "Understand generated CRUD, auth, action, health, schema, version, and admin endpoints."
       , keywords = [ "endpoints", "crud", "auth", "actions", "health", "schema", "version", "request logs", "backups" ]
       }
-    , { title = "Migrations"
+    , { title = "Database Schema Migrations"
       , route = AdvancedRuntime
       , sectionId = Just "migrations"
-      , summary = "Automatic migrations on startup with safe changes applied and unsafe changes blocked."
-      , keywords = [ "migrations", "startup", "schema changes", "blocked changes", "safe changes" ]
+      , summary = "Automatic database schema migrations on startup with safe changes applied and unsafe changes blocked."
+      , keywords = [ "migrations", "database schema", "startup", "schema changes", "blocked changes", "safe changes" ]
       }
     , { title = "Tooling"
       , route = AdvancedTooling
@@ -951,20 +1114,27 @@ footer =
         , paddingEach { top = 0, right = 0, bottom = 0, left = 0 }
         ]
         (row
-            [ centerX
-            , spacing 4
+            [ width fill
             , Font.size 14
             , Font.color (rgb255 98 116 139)
             ]
-            [ text "Copyright © 2026"
-            , newTabLink
-                [ Font.color (rgb255 36 82 132)
-                , Font.semiBold
-                , htmlAttribute (HtmlAttr.style "cursor" "pointer")
-                ]
-                { url = "https://segunda.tech/about"
-                , label = text "Marcio Frayze David"
-                }
+            [ el [ width fill ] none
+            , el [ centerX ]
+                (row
+                    [ spacing 4 ]
+                    [ text "Copyright © 2026"
+                    , newTabLink
+                        [ Font.color (rgb255 36 82 132)
+                        , Font.semiBold
+                        , htmlAttribute (HtmlAttr.style "cursor" "pointer")
+                        ]
+                        { url = "https://segunda.tech/about"
+                        , label = text "Marcio Frayze David"
+                        }
+                    ]
+                )
+            , el [ width fill ] none
+            , el [] githubRepoLink
             ]
         )
 
@@ -1289,7 +1459,7 @@ advancedRuntimePage model =
                     ]
                 ]
             , anchoredSection "migrations"
-                [ docSubsectionTitle "Migrations"
+                [ docSubsectionTitle "Database Schema Migrations"
                 , bodyText "Mar applies schema migration logic automatically on startup. Safe changes are handled for you, while unsafe changes are blocked instead of being applied silently."
                 , docList
                     [ "Migrations run automatically on startup."
@@ -1325,7 +1495,7 @@ advancedToolingPage model =
                 , commandRow model "1" "Init" "Creates a new Mar project with a starter app, .gitignore, and README." "mar init store-app"
                 , commandRow model "2" "Dev" "Runs the app in development mode with hot reload." "mar dev store.mar"
                 , editCommandRow model "3"
-                , commandRow model "4" "Compile" "Packages self-contained executables for all supported platforms and generates frontend clients." "mar compile store.mar"
+                , commandRow model "4" "Publish" "When you are ready to publish your app to production, run mar compile to package self-contained executables for all supported platforms and generate frontend clients." "mar compile store.mar"
                 , commandRow model "5" "Fly init" "Prepares Fly.io deployment files for your app." "mar fly init store.mar"
                 , commandRow model "6" "Fly deploy" "Rebuilds the Linux executable for the current app and runs fly deploy with the generated Fly config." "mar fly deploy store.mar"
                 , commandRow model "7" "Format" "Applies Mar's official formatting style to source files." "mar format store.mar"
@@ -1399,7 +1569,7 @@ advancedToolingPage model =
                 ]
             , anchoredSection "generated-client-output"
                 [ docSubsectionTitle "Generated Client Output"
-                , bodyText "When you compile an app, Mar also generates frontend clients for Elm and TypeScript. These clients wrap the generated HTTP API with named functions, so you do not need to hand-write fetch calls, URLs, or request payload shapes."
+            , bodyText "When you publish an app with mar compile, Mar also generates frontend clients for Elm and TypeScript. These clients wrap the generated HTTP API with named functions, so you do not need to hand-write fetch calls, URLs, or request payload shapes."
                 , docList
                     [ "Elm client: dist/<name>/clients/<AppName>Client.elm"
                     , "TypeScript client: dist/<name>/clients/<AppName>Client.ts"
@@ -1444,11 +1614,10 @@ advancedDeployPage model =
                         { url = "https://resend.com"
                         , label = text "Resend"
                         }
-                    , text " because it is simple to set up and works well with Mar's SMTP configuration."
+                    , text " because it is simple to set up and works well with Mar's SMTP configuration, but any SMTP-compatible provider should work."
                     ]
                 , docList
                     [ "Set the SMTP password as an environment variable on your provider."
-                    , "Any SMTP-compatible provider can work, but Resend is the simplest place to start."
                     ]
                 , codeFromString model "app.mar" 0 smtpDeploySource
                 , bodyText "In this example, smtp_password_env points to RESEND_API_KEY. That means your deploy environment must define a RESEND_API_KEY variable with the SMTP password before the app starts."
@@ -1632,7 +1801,7 @@ quickStart model =
             , commandRow model "1" "Init" "Creates a new Todo starter app in a new folder with todo.mar, .gitignore, and README." "mar init todo"
             , commandRow model "2" "Develop" "Enter the project folder, run the app locally with hot reload, and open the Admin UI." """cd todo
 mar dev todo.mar"""
-            , commandRow model "3" "Compile" "Packages production executables for all supported platforms and generates the frontend clients." """cd todo
+            , commandRow model "3" "Publish" "When you are ready to publish your app to production, run mar compile to package self-contained executables for all supported platforms and generate frontend clients." """cd todo
 mar compile todo.mar"""
             , commandRow model "4" "Run" "Choose the target folder for your platform, start that executable, and open the printed Admin URL." """cd todo/dist/todo/darwin-arm64
 ./todo serve"""
@@ -1764,12 +1933,12 @@ pluginInstallRow model =
             [ stepBadge "4"
             , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Code editor")
             ]
-        , row
+        , wrappedRow
             [ width fill
             , spacing 10
             ]
             [ el
-                [ width fill
+                [ width (fill |> minimum 300 |> maximum 520)
                 , alignTop
                 ]
                 (column
@@ -1834,7 +2003,7 @@ pluginInstallRow model =
                     ]
                 )
             , el
-                [ width fill
+                [ width (fill |> minimum 300 |> maximum 520)
                 , alignTop
                 ]
                 (column
@@ -2266,17 +2435,17 @@ editCommandRow model number =
             [ stepBadge number
             , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Edit")
             ]
-        , row
+        , wrappedRow
             [ width fill
             , spacing 10
             ]
             [ el
-                [ width fill
+                [ width (fill |> minimum 300 |> maximum 520)
                 , alignTop
                 ]
                 (editOptionCard model "Recommended" "VSCode" [ text "Open the app in VSCode while ", inlineCommand "mar dev", text " keeps rebuilding in the background." ] "code store.mar" False)
             , el
-                [ width fill
+                [ width (fill |> minimum 300 |> maximum 520)
                 , alignTop
                 ]
                 (editOptionCard model "Experimental" "Terminal editor" [ text "Feeling adventurous? Try the built-in experimental terminal editor." ] "mar edit store.mar" True)
@@ -2752,52 +2921,8 @@ terminalLineView lineText =
             [ Html.text " " ]
 
          else
-            highlightTerminalLine lineText
+            highlightCLICommandLine lineText
         )
-
-
-highlightTerminalLine : String -> List (Html.Html msg)
-highlightTerminalLine lineText =
-    highlightTerminalSegments lineText
-
-
-highlightTerminalSegments : String -> List (Html.Html msg)
-highlightTerminalSegments remaining =
-    if String.isEmpty remaining then
-        []
-
-    else
-        case findTerminalHighlight remaining of
-            Nothing ->
-                [ Html.text remaining ]
-
-            Just ( before, matched, after ) ->
-                let
-                    beforeNode =
-                        if String.isEmpty before then
-                            []
-
-                        else
-                            [ Html.text before ]
-                in
-                beforeNode
-                    ++ [ Html.span [ HtmlAttr.style "color" (terminalHighlightColor matched) ] [ Html.text matched ] ]
-                    ++ highlightTerminalSegments after
-
-
-findTerminalHighlight : String -> Maybe ( String, String, String )
-findTerminalHighlight value =
-    terminalHighlightWords
-        |> List.filterMap (\word -> findFirstTerminalMatch word value)
-        |> List.sortBy .index
-        |> List.head
-        |> Maybe.map
-            (\match ->
-                ( String.left match.index value
-                , match.word
-                , String.dropLeft (match.index + String.length match.word) value
-                )
-            )
 
 
 terminalHighlightWords : List String
@@ -2812,8 +2937,10 @@ terminalHighlightWords =
     , "zsh"
     , "bash"
     , "fish"
+    , "todo.mar"
     , "./todo"
     , "./todo.exe"
+    , "todo/dist/todo/darwin-arm64"
     , "dist/todo/darwin-arm64"
     , "dist/todo/linux-<your-arch>"
     , "dist/todo/windows-amd64"
@@ -2846,6 +2973,12 @@ terminalHighlightColor value =
         "fish" ->
             "#C792EA"
 
+        "todo.mar" ->
+            "#F6C177"
+
+        "todo/dist/todo/darwin-arm64" ->
+            "#F6C177"
+
         "dist/todo/darwin-arm64" ->
             "#F6C177"
 
@@ -2868,25 +3001,40 @@ terminalHighlightColor value =
 highlightCLICommandLine : String -> List (Html.Html msg)
 highlightCLICommandLine lineText =
     lineText
-        |> String.words
-        |> List.indexedMap cliCommandTokenView
-        |> intersperseCommandSpaces
+        |> tokenizeTerminalLine
+        |> List.map terminalChunkView
 
 
-cliCommandTokenView : Int -> String -> Html.Html msg
-cliCommandTokenView _ chunk =
+terminalChunkView : TerminalChunk -> Html.Html msg
+terminalChunkView chunk =
+    case chunk of
+        TerminalWhitespace value ->
+            Html.text value
+
+        TerminalToken value ->
+            Html.span [ HtmlAttr.style "color" (terminalTokenColor value) ] [ Html.text value ]
+
+
+terminalTokenColor : String -> String
+terminalTokenColor chunk =
     let
-        color =
-            if isMarBinaryToken chunk then
-                "#A6E3A1"
-
-            else if String.endsWith ".mar" chunk then
-                "#F6C177"
-
-            else
-                "#D8E7F8"
+        normalized =
+            String.trim chunk
     in
-    Html.span [ HtmlAttr.style "color" color ] [ Html.text chunk ]
+    if isMarBinaryToken normalized then
+        "#A6E3A1"
+
+    else if String.endsWith ".mar" normalized then
+        "#F6C177"
+
+    else if List.member normalized terminalHighlightWords then
+        terminalHighlightColor normalized
+
+    else if isCLICommandToken normalized then
+        "#8BE9FD"
+
+    else
+        "#D8E7F8"
 
 
 isMarBinaryToken : String -> Bool
@@ -2918,58 +3066,69 @@ isCLICommandToken chunk =
         ]
 
 
-intersperseCommandSpaces : List (Html.Html msg) -> List (Html.Html msg)
-intersperseCommandSpaces nodes =
-    case nodes of
+type TerminalChunk
+    = TerminalWhitespace String
+    | TerminalToken String
+
+
+tokenizeTerminalLine : String -> List TerminalChunk
+tokenizeTerminalLine value =
+    tokenizeTerminalChars [] [] False (String.toList value)
+        |> List.reverse
+
+
+tokenizeTerminalChars : List TerminalChunk -> List Char -> Bool -> List Char -> List TerminalChunk
+tokenizeTerminalChars chunks current isWhitespace remaining =
+    case remaining of
         [] ->
-            []
+            flushTerminalChunk chunks current isWhitespace
 
-        first :: rest ->
-            first
-                :: List.concatMap (\node -> [ Html.text " ", node ]) rest
+        char :: rest ->
+            let
+                charIsWhitespace =
+                    isTerminalWhitespace char
+            in
+            if List.isEmpty current then
+                tokenizeTerminalChars chunks [ char ] charIsWhitespace rest
 
-
-type alias TerminalMatch =
-    { index : Int
-    , word : String
-    }
-
-
-findFirstTerminalMatch : String -> String -> Maybe TerminalMatch
-findFirstTerminalMatch word value =
-    let
-        indexes =
-            String.indexes word value
-    in
-    findMatchingTerminalIndex word value indexes
-
-
-findMatchingTerminalIndex : String -> String -> List Int -> Maybe TerminalMatch
-findMatchingTerminalIndex word value indexes =
-    case indexes of
-        [] ->
-            Nothing
-
-        index :: rest ->
-            if terminalWordBoundary value index (index - 1) && terminalWordBoundary value (index + String.length word) (index + String.length word) then
-                Just { index = index, word = word }
+            else if charIsWhitespace == isWhitespace then
+                tokenizeTerminalChars chunks (char :: current) isWhitespace rest
 
             else
-                findMatchingTerminalIndex word value rest
+                tokenizeTerminalChars
+                    (terminalChunkFromChars isWhitespace current :: chunks)
+                    [ char ]
+                    charIsWhitespace
+                    rest
 
 
-terminalWordBoundary : String -> Int -> Int -> Bool
-terminalWordBoundary value probeIndex charIndex =
-    if probeIndex <= 0 || probeIndex >= String.length value then
-        True
+flushTerminalChunk : List TerminalChunk -> List Char -> Bool -> List TerminalChunk
+flushTerminalChunk chunks current isWhitespace =
+    if List.isEmpty current then
+        chunks
 
     else
-        case String.uncons (String.dropLeft charIndex value) of
-            Just ( char, _ ) ->
-                not (Char.isAlpha char || Char.isDigit char || char == '_')
+        terminalChunkFromChars isWhitespace current :: chunks
 
-            Nothing ->
-                True
+
+terminalChunkFromChars : Bool -> List Char -> TerminalChunk
+terminalChunkFromChars isWhitespace chars =
+    let
+        value =
+            chars
+                |> List.reverse
+                |> String.fromList
+    in
+    if isWhitespace then
+        TerminalWhitespace value
+
+    else
+        TerminalToken value
+
+
+isTerminalWhitespace : Char -> Bool
+isTerminalWhitespace char =
+    char == ' ' || char == '\t'
 
 
 copyLink : Model -> String -> Element Msg
@@ -3698,7 +3857,7 @@ flyDeploySource =
     """fly auth login
 fly apps create app
 fly volumes create app_data --region <fly-region-code> --size <size-in-gb> -a app
-fly secrets set RESEND_API_KEY=... -a app
+fly secrets set RESEND_API_KEY=<your-api-key> -a app
 mar fly deploy app.mar
 """
 
