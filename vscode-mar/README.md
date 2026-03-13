@@ -1,4 +1,4 @@
-# Mar Language Support (VS Code)
+# Mar Developer Tools
 
 This extension adds syntax highlighting, snippets/autocomplete, and LSP features for `.mar` files.
 
@@ -51,7 +51,7 @@ Mar has a built-in `User` entity in every app, and entity operations are protect
 ## Install in VSCode
 
 1. Open Extensions in VSCode.
-2. Search for `Mar Language Support`.
+2. Search for `Mar Developer Tools`.
 3. Click `Install`.
 
 If needed, set `mar.languageServer.path` in VSCode settings (examples: `mar`, `/abs/path/to/mar`).
