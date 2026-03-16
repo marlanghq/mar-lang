@@ -155,6 +155,7 @@ type Msg
     | SelectRow Row
     | StartCreate
     | StartEdit Row
+    | CloseSelectedRow
     | CancelForm
     | SetFormField String String
     | SubmitForm
@@ -1092,6 +1093,9 @@ update msg model =
                     formFromRow model rowValue
             in
             ( { model | formMode = FormEdit rowValue, formValues = defaults, selectedRow = Just rowValue, flash = Nothing }, Cmd.none )
+
+        CloseSelectedRow ->
+            ( { model | selectedRow = Nothing, flash = Nothing }, Cmd.none )
 
         CancelForm ->
             ( { model | formMode = FormHidden, formValues = Dict.empty, flash = Nothing }, Cmd.none )
@@ -2750,6 +2754,10 @@ viewContent model =
     let
         compact =
             isCompactLayout model
+
+        showInspectorAsScreen =
+            compact
+                && (model.formMode /= FormHidden || model.selectedRow /= Nothing)
     in
     column
         [ width fill
@@ -2778,7 +2786,10 @@ viewContent model =
                     viewDataPanel model
 
                 Nothing ->
-                    if compact then
+                    if showInspectorAsScreen then
+                        viewInspector model
+
+                    else if compact then
                         column [ width fill, spacing 16 ]
                             [ viewDataPanel model
                             , viewInspector model
@@ -4293,85 +4304,45 @@ viewRowCard compact workspace entity rowValue =
 
             else
                 entity.name ++ " #" ++ (rowId entity rowValue |> Maybe.withDefault "?")
-    in
-    if compact then
-        column
-            [ width fill
-            , spacing 12
-            , Background.color (rgb255 248 250 252)
-            , Border.rounded 10
-            , padding 12
-            ]
-            [ column [ width fill, spacing 6 ]
-                [ paragraph (Font.bold :: wrappingTextAttrs) [ text headingText ]
-                , paragraph ([ Font.size 13, Font.color (rgb255 90 103 120) ] ++ wrappingTextAttrs) [ text summary ]
-                ]
-            , wrappedRow
-                [ width fill, spacing 8 ]
-                [ Input.button
-                    [ Background.color (rgb255 222 232 248)
-                    , Border.rounded 8
-                    , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
-                    ]
-                    { onPress = Just (SelectRow rowValue)
-                    , label = text (if workspace == AppWorkspace then "Open" else "View")
-                    }
-                , Input.button
-                    [ Background.color (rgb255 223 244 238)
-                    , Border.rounded 8
-                    , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
-                    ]
-                    { onPress = Just (StartEdit rowValue)
-                    , label = text "Edit"
-                    }
-                , Input.button
-                    [ Background.color (rgb255 248 226 226)
-                    , Border.rounded 8
-                    , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
-                    ]
-                    { onPress = Just (RequestDeleteRow rowValue)
-                    , label = text "Delete"
-                    }
-                ]
-            ]
 
-    else
-        row
-            [ width fill
-            , spacing 12
-            , Background.color (rgb255 248 250 252)
-            , Border.rounded 10
-            , padding 12
-            ]
-            [ column [ width fill, spacing 6 ]
-                [ paragraph (Font.bold :: wrappingTextAttrs) [ text headingText ]
-                , paragraph ([ Font.size 13, Font.color (rgb255 90 103 120) ] ++ wrappingTextAttrs) [ text summary ]
-                ]
-            , Input.button
-                [ Background.color (rgb255 222 232 248)
-                , Border.rounded 8
-                , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
-                ]
-                { onPress = Just (SelectRow rowValue)
-                , label = text (if workspace == AppWorkspace then "Open" else "View")
-                }
-            , Input.button
-                [ Background.color (rgb255 223 244 238)
-                , Border.rounded 8
-                , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
-                ]
-                { onPress = Just (StartEdit rowValue)
-                , label = text "Edit"
-                }
-            , Input.button
-                [ Background.color (rgb255 248 226 226)
-                , Border.rounded 8
-                , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
-                ]
-                { onPress = Just (RequestDeleteRow rowValue)
-                , label = text "Delete"
-                }
-            ]
+        cardBody =
+            if compact then
+                column
+                    [ width fill
+                    , spacing 12
+                    ]
+                    [ column [ width fill, spacing 6 ]
+                        [ paragraph (Font.bold :: wrappingTextAttrs) [ text headingText ]
+                        , paragraph ([ Font.size 13, Font.color (rgb255 90 103 120) ] ++ wrappingTextAttrs) [ text summary ]
+                        ]
+                    , row [ width fill ]
+                        [ el [ width fill ] none
+                        , el [ Font.size 18, Font.color (rgb255 132 145 162) ] (text "›")
+                        ]
+                    ]
+
+            else
+                row
+                    [ width fill
+                    , spacing 12
+                    ]
+                    [ column [ width fill, spacing 6 ]
+                        [ paragraph (Font.bold :: wrappingTextAttrs) [ text headingText ]
+                        , paragraph ([ Font.size 13, Font.color (rgb255 90 103 120) ] ++ wrappingTextAttrs) [ text summary ]
+                        ]
+                    , el [ Font.size 18, Font.color (rgb255 132 145 162), centerY ] (text "›")
+                    ]
+    in
+    Input.button
+        [ width fill
+        , Background.color (rgb255 248 250 252)
+        , Border.rounded 10
+        , padding 12
+        , htmlAttribute (HtmlAttr.style "cursor" "pointer")
+        ]
+        { onPress = Just (SelectRow rowValue)
+        , label = cardBody
+        }
 
 
 viewInspector : Model -> Element Msg
@@ -4396,12 +4367,26 @@ viewInspector model =
                                 []
 
                             else
-                                [ height fill ]
-                           )
+                           [ height fill ]
+                       )
                     )
                     [ viewActionInfo actionInfo ]
 
         Nothing ->
+            let
+                inspectorContent =
+                    case model.formMode of
+                        FormHidden ->
+                            case model.selectedRow of
+                                Just _ ->
+                                    [ viewSelectedRow model ]
+
+                                Nothing ->
+                                    [ viewEntitySchema model ]
+
+                        _ ->
+                            [ viewFormPanel model ]
+            in
             column
                 ([ width
                         (if isCompactLayout model then
@@ -4419,10 +4404,7 @@ viewInspector model =
                             [ height fill ]
                        )
                 )
-                [ viewEntitySchema model
-                , viewFormPanel model
-                , viewSelectedRow model
-                ]
+                inspectorContent
 
 
 viewPerformancePanel : Model -> Element Msg
@@ -5527,50 +5509,118 @@ formCard model entity titleText =
 
 viewSelectedRow : Model -> Element Msg
 viewSelectedRow model =
-    if currentWorkspace model == AppWorkspace then
-        none
+    case model.selectedRow of
+        Nothing ->
+            none
 
-    else
-        case model.selectedRow of
-            Nothing ->
-                none
+        Just rowValue ->
+            case model.selectedEntity of
+                Nothing ->
+                    none
 
-            Just rowValue ->
-                case model.selectedEntity of
-                    Nothing ->
-                        none
+                Just entity ->
+                    let
+                        workspace =
+                            currentWorkspace model
 
-                    Just entity ->
-                        let
-                            visibleFieldNames =
-                                displayFieldsForEntity AdminWorkspace entity
-                                    |> List.map .name
+                        compact =
+                            isCompactLayout model
 
-                            visibleRows =
-                                rowValue
-                                    |> Dict.toList
-                                    |> List.filter (\( key, _ ) -> List.member key visibleFieldNames)
-                        in
-                        column
-                            [ width fill
-                            , spacing 8
-                            , Background.color (rgb255 255 255 255)
-                            , Border.rounded 14
-                            , Border.width 1
-                            , Border.color (rgb255 226 232 239)
-                            , padding 14
-                            ]
-                            (el [ Font.bold, Font.size 18 ] (text "Record detail")
-                                :: (visibleRows
-                                        |> List.map
-                                            (\( key, value ) ->
-                                                row [ width fill, spacing 8 ]
-                                                    [ el [ Font.bold ] (text (fieldLabel key))
-                                                    , paragraph [ Font.size 13, Font.color (rgb255 82 92 108) ] [ text (valueToString value) ]
+                        visibleFieldNames =
+                            displayFieldsForEntity workspace entity
+                                |> List.map .name
+
+                        visibleRows =
+                            rowValue
+                                |> Dict.toList
+                                |> List.filter (\( key, _ ) -> List.member key visibleFieldNames)
+
+                        detailTitle =
+                            if workspace == AppWorkspace then
+                                displayLabelForRow workspace entity rowValue
+
+                            else
+                                entityDisplayName entity ++ " details"
+
+                        detailSubtitle =
+                            case rowId entity rowValue of
+                                Just idValue ->
+                                    [ el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("ID " ++ idValue)) ]
+
+                                Nothing ->
+                                    []
+
+                        detailActions =
+                            List.filterMap identity
+                                [ if compact then
+                                    Just
+                                        (Input.button
+                                            [ Background.color (rgb255 233 236 242)
+                                            , Border.rounded 10
+                                            , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                            ]
+                                            { onPress = Just CloseSelectedRow
+                                            , label = text "Back"
+                                            }
+                                        )
+
+                                  else
+                                    Nothing
+                                , Just
+                                    (Input.button
+                                        [ Background.color (rgb255 223 244 238)
+                                        , Border.rounded 10
+                                        , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                        ]
+                                        { onPress = Just (StartEdit rowValue)
+                                        , label = text "Edit"
+                                        }
+                                    )
+                                , Just
+                                    (Input.button
+                                        [ Background.color (rgb255 248 226 226)
+                                        , Border.rounded 10
+                                        , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                        ]
+                                        { onPress = Just (RequestDeleteRow rowValue)
+                                        , label = text "Delete"
+                                        }
+                                    )
+                                ]
+                    in
+                    column
+                        [ width fill
+                        , spacing 12
+                        , Background.color (rgb255 255 255 255)
+                        , Border.rounded 14
+                        , Border.width 1
+                        , Border.color (rgb255 226 232 239)
+                        , padding 14
+                        ]
+                        ([ viewPanelHeader compact detailTitle detailSubtitle detailActions ]
+                            ++ (visibleRows
+                                    |> List.map
+                                        (\( key, value ) ->
+                                            column
+                                                [ width fill
+                                                , spacing 4
+                                                , Background.color (rgb255 248 250 252)
+                                                , Border.rounded 10
+                                                , padding 12
+                                                ]
+                                                [ el [ Font.bold, Font.size 12, Font.color (rgb255 84 96 112) ] (text (fieldLabel key))
+                                                , paragraph
+                                                    [ Font.size 14
+                                                    , Font.color (rgb255 36 47 61)
+                                                    , width fill
+                                                    , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
+                                                    , htmlAttribute (HtmlAttr.style "word-break" "break-word")
                                                     ]
-                                            )
-                                   )
-                            )
+                                                    [ text (valueToString value) ]
+                                                ]
+                                        )
+                               )
+                        )
 
 
 networkErrorMessage : String
