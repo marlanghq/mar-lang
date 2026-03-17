@@ -50,6 +50,10 @@ func renderCompletionScript(binaryName, shell string) (string, error) {
 func renderZshCompletion(binaryName string) string {
 	return fmt.Sprintf(`_%s() {
   local -a commands
+  local -a fly_commands
+  local -a shells
+  local -a format_flags
+  local -a format_check_flags
   commands=(
     'init:Create a new Mar project with a starter app'
     'edit:Edit a Mar file directly in the terminal'
@@ -60,6 +64,22 @@ func renderZshCompletion(binaryName string) string {
     'format:Format Mar source files'
     'lsp:Start the Mar Language Server'
     'version:Show version and build information'
+  )
+  fly_commands=(
+    'init:Prepare Fly.io deployment files for your app'
+    'deploy:Rebuild the Linux executable for Fly.io and run fly deploy'
+  )
+  shells=(
+    'zsh:zsh shell'
+    'bash:bash shell'
+    'fish:fish shell'
+  )
+  format_flags=(
+    '--check:Check formatting without writing files'
+    '--stdin:Read Mar source from stdin'
+  )
+  format_check_flags=(
+    '--check:Check formatting without writing files'
   )
 
   if (( CURRENT == 2 )); then
@@ -82,9 +102,7 @@ func renderZshCompletion(binaryName string) string {
       ;;
     fly)
       if (( CURRENT == 3 )); then
-        _describe 'fly command' \
-          'init:Prepare Fly.io deployment files for your app' \
-          'deploy:Rebuild the Linux executable for Fly.io and run fly deploy'
+        _describe 'fly command' fly_commands
         return
       fi
       case "${words[3]}" in
@@ -97,7 +115,7 @@ func renderZshCompletion(binaryName string) string {
       ;;
     completion)
       if (( CURRENT == 3 )); then
-        _describe 'shell' 'zsh:zsh shell' 'bash:bash shell' 'fish:fish shell'
+        _describe 'shell' shells
       fi
       ;;
     format)
@@ -107,16 +125,14 @@ func renderZshCompletion(binaryName string) string {
       fi
       if [[ "${PREFIX}" == -* ]]; then
         if (( has_stdin )); then
-          _describe 'format flag' '--check:Check formatting without writing files'
+          _describe 'format flag' format_check_flags
         else
-          _describe 'format flag' \
-            '--check:Check formatting without writing files' \
-            '--stdin:Read Mar source from stdin'
+          _describe 'format flag' format_flags
         fi
         return
       fi
       if (( has_stdin )); then
-        _describe 'format flag' '--check:Check formatting without writing files'
+        _describe 'format flag' format_check_flags
         return
       fi
       _files -g '*.mar'

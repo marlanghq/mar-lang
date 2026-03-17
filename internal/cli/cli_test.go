@@ -166,6 +166,15 @@ func TestRenderCompletionScriptSupportsZsh(t *testing.T) {
 	if !strings.Contains(script, "fly") || !strings.Contains(script, "completion") {
 		t.Fatalf("expected script to include CLI commands, got %q", script)
 	}
+	if !strings.Contains(script, "fly_commands=(") || !strings.Contains(script, "_describe 'fly command' fly_commands") {
+		t.Fatalf("expected zsh completion to describe fly subcommands via a named array, got %q", script)
+	}
+	if !strings.Contains(script, "shells=(") || !strings.Contains(script, "_describe 'shell' shells") {
+		t.Fatalf("expected zsh completion to describe shells via a named array, got %q", script)
+	}
+	if !strings.Contains(script, "format_check_flags=(") {
+		t.Fatalf("expected zsh completion to define format_check_flags, got %q", script)
+	}
 	if !strings.Contains(script, "_message 'output name'") {
 		t.Fatalf("expected zsh completion to describe dev/compile output name, got %q", script)
 	}
