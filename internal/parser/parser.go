@@ -12,10 +12,12 @@ import (
 )
 
 var (
-	upperNameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
-	fieldNameRe = regexp.MustCompile(`^[a-z][A-Za-z0-9_]*$`)
+	upperNameRe  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
+	fieldNameRe  = regexp.MustCompile(`^[a-z][A-Za-z0-9_]*$`)
 	envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
+
+const marTypePattern = `Int|String|Bool|Float|Posix`
 
 var (
 	topLevelStatementCandidates = []string{
@@ -400,7 +402,7 @@ func parseUserExtensionBlock(lines []line, idx *int) (*model.Entity, error) {
 			continue
 		}
 
-		if m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float)(?:\s+(.*))?$`, trimmed); m != nil {
+		if m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(`+marTypePattern+`)(?:\s+(.*))?$`, trimmed); m != nil {
 			fieldName := m[1]
 			field := model.Field{Name: fieldName, Type: m[2]}
 			attrs := strings.Fields(strings.TrimSpace(m[3]))
@@ -836,7 +838,7 @@ func parseEntityBlock(lines []line, idx *int, name string) (*model.Entity, error
 			continue
 		}
 
-		if m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float)(?:\s+(.*))?$`, trimmed); m != nil {
+		if m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(`+marTypePattern+`)(?:\s+(.*))?$`, trimmed); m != nil {
 			field := model.Field{Name: m[1], Type: m[2]}
 			attrs := strings.Fields(strings.TrimSpace(m[3]))
 			for _, attr := range attrs {
@@ -1047,7 +1049,7 @@ func parseAliasFieldToken(alias *model.TypeAlias, seen map[string]bool, token st
 	if token == "" {
 		return nil
 	}
-	m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float)$`, token)
+	m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(`+marTypePattern+`)$`, token)
 	if m == nil {
 		return fmt.Errorf("line %d: invalid field in type alias %s. Expected `name : Type` with Int/String/Bool/Float", lineNo, alias.Name)
 	}
@@ -1418,6 +1420,9 @@ func isTypeAssignable(targetType, sourceType string) bool {
 		return true
 	}
 	if targetType == "Float" && sourceType == "Int" {
+		return true
+	}
+	if targetType == "Posix" && sourceType == "Int" {
 		return true
 	}
 	return false

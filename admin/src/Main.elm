@@ -1,6 +1,6 @@
 port module Main exposing (main)
 
-import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), InputAliasField, InputAliasInfo, Row, Schema, SystemAuthInfo, decodeRows, decodeSchema, encodePayload, fieldTypeLabel, rowDecoder, valueToString)
+import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), InputAliasField, InputAliasInfo, Row, Schema, SystemAuthInfo, decodeRows, decodeSchema, encodePayload, fieldTypeLabel, rowDecoder, valueToDisplayString, valueToString)
 import Browser
 import Browser.Navigation as Nav
 import Browser.Events
@@ -2407,6 +2407,14 @@ encodeActionField valuesByName field partialResult =
                             Nothing ->
                                 Err (fieldLabel field.name ++ " expects a decimal number")
 
+                    "Posix" ->
+                        case parsePosixMillis rawValue of
+                            Just value ->
+                                Ok (( field.name, Encode.float value ) :: items)
+
+                            Nothing ->
+                                Err (fieldLabel field.name ++ " expects Unix milliseconds")
+
                     "Bool" ->
                         let
                             lowered =
@@ -2449,14 +2457,13 @@ rowDisplayLabel entity rowValue =
     in
     preferredFields
         |> uniqueStrings
-        |> List.filterMap (\fieldName -> rowFieldLabel fieldName rowValue)
+        |> List.filterMap (\fieldName -> rowFieldLabel entity fieldName rowValue)
         |> List.head
 
 
-rowFieldLabel : String -> Row -> Maybe String
-rowFieldLabel fieldName rowValue =
-    Dict.get fieldName rowValue
-        |> Maybe.map valueToString
+rowFieldLabel : Entity -> String -> Row -> Maybe String
+rowFieldLabel entity fieldName rowValue =
+    rowFieldValue entity fieldName rowValue
         |> Maybe.map String.trim
         |> Maybe.andThen
             (\value ->
@@ -2483,6 +2490,48 @@ fieldLabel =
 fieldPlaceholder : String -> String
 fieldPlaceholder fieldName =
     "Enter " ++ String.toLower (fieldLabel fieldName)
+
+
+placeholderForType : String -> String -> String
+placeholderForType fieldName fieldType =
+    if fieldType == "Posix" then
+        "Unix milliseconds since epoch"
+
+    else
+        fieldPlaceholder fieldName
+
+
+parsePosixMillis : String -> Maybe Float
+parsePosixMillis rawValue =
+    String.toFloat rawValue
+        |> Maybe.andThen
+            (\value ->
+                if isWholeNumber value then
+                    Just value
+
+                else
+                    Nothing
+            )
+
+
+isWholeNumber : Float -> Bool
+isWholeNumber value =
+    toFloat (round value) == value
+
+
+rowFieldValue : Entity -> String -> Row -> Maybe String
+rowFieldValue entity fieldName rowValue =
+    let
+        displayValue value =
+            case List.filter (\field -> field.name == fieldName) entity.fields |> List.head of
+                Just field ->
+                    valueToDisplayString field.fieldType value
+
+                Nothing ->
+                    valueToString value
+    in
+    Dict.get fieldName rowValue
+        |> Maybe.map displayValue
 
 
 entityDisplayName : Entity -> String
@@ -5345,7 +5394,7 @@ viewActionPanel model actionInfo =
                             , placeholder =
                                 Just
                                     (Input.placeholder []
-                                        (text (fieldPlaceholder field.name))
+                                        (text (placeholderForType field.name field.fieldType))
                                     )
                             , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name))
                             }
@@ -6601,7 +6650,7 @@ rowPreviewSummary workspace entity rowValue =
                 |> List.filterMap
                     (\field ->
                         if shouldIncludePreviewMetadata entity primaryFieldName field then
-                            rowFieldLabel field.name rowValue
+                            rowFieldLabel entity field.name rowValue
                                 |> Maybe.map (\value -> fieldLabel field.name ++ ": " ++ value)
 
                         else
@@ -6644,7 +6693,7 @@ rowVisibleFieldValues workspace entity rowValue =
     displayFieldsForEntity workspace entity
         |> List.filterMap
             (\field ->
-                rowFieldLabel field.name rowValue
+                rowFieldLabel entity field.name rowValue
                     |> Maybe.map (\value -> ( field, value ))
             )
 
@@ -6675,19 +6724,8 @@ rowPreviewStatusBadge field rowValue =
 
 rowBooleanValue : String -> Row -> Maybe Bool
 rowBooleanValue fieldName rowValue =
-    rowFieldLabel fieldName rowValue
-        |> Maybe.map String.toLower
-        |> Maybe.andThen
-            (\value ->
-                if value == "true" then
-                    Just True
-
-                else if value == "false" then
-                    Just False
-
-                else
-                    Nothing
-            )
+    Dict.get fieldName rowValue
+        |> Maybe.andThen (\value -> Decode.decodeValue Decode.bool value |> Result.toMaybe)
 
 
 statusBadgeForBoolean : String -> Bool -> Element Msg
@@ -6828,7 +6866,7 @@ formCard model entity titleText =
                         , placeholder =
                             Just
                                 (Input.placeholder []
-                                    (text (fieldPlaceholder field.name))
+                                    (text (placeholderForType field.name (fieldTypeLabel field.fieldType)))
                                 )
                         , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name))
                         }
@@ -6915,14 +6953,13 @@ viewSelectedRow model =
                         compact =
                             isCompactLayout model
 
-                        visibleFieldNames =
-                            displayFieldsForEntity workspace entity
-                                |> List.map .name
-
                         visibleRows =
-                            rowValue
-                                |> Dict.toList
-                                |> List.filter (\( key, _ ) -> List.member key visibleFieldNames)
+                            displayFieldsForEntity workspace entity
+                                |> List.filterMap
+                                    (\field ->
+                                        Dict.get field.name rowValue
+                                            |> Maybe.map (\value -> ( field, value ))
+                                    )
 
                         detailTitle =
                             entityDisplayName entity ++ " details"
@@ -6998,7 +7035,7 @@ viewSelectedRow model =
                         ([ viewPanelHeader compact detailTitle detailSubtitle detailActions ]
                             ++ (visibleRows
                                     |> List.map
-                                        (\( key, value ) ->
+                                        (\( field, value ) ->
                                             column
                                                 [ width fill
                                                 , spacing 4
@@ -7006,7 +7043,7 @@ viewSelectedRow model =
                                                 , Border.rounded 10
                                                 , padding 12
                                                 ]
-                                                [ el [ Font.bold, Font.size 12, Font.color (rgb255 84 96 112) ] (text (fieldLabel key))
+                                                [ el [ Font.bold, Font.size 12, Font.color (rgb255 84 96 112) ] (text (fieldLabel field.name))
                                                 , paragraph
                                                     [ Font.size 14
                                                     , Font.color (rgb255 36 47 61)
@@ -7014,7 +7051,7 @@ viewSelectedRow model =
                                                     , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
                                                     , htmlAttribute (HtmlAttr.style "word-break" "break-word")
                                                     ]
-                                                    [ text (valueToString value) ]
+                                                    [ text (valueToDisplayString field.fieldType value) ]
                                                 ]
                                         )
                                )

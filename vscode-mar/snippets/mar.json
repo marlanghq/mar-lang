@@ -61,7 +61,7 @@
   "Mar Field": {
     "prefix": "field",
     "description": "Create a field declaration",
-    "body": "${1:fieldName}: ${2|Int,String,Bool,Float|}${3|, optional, primary, auto, primary auto|}"
+    "body": "${1:fieldName}: ${2|Int,String,Bool,Float,Posix|}${3|, optional, primary, auto, primary auto|}"
   },
   "Mar Rule": {
     "prefix": "rule",

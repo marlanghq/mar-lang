@@ -58,6 +58,12 @@ func normalizeInputValue(field *model.Field, value any) (dbValue any, apiValue a
 			return nil, nil, fmt.Errorf("field %s must be Int", field.Name)
 		}
 		return n, float64(n), nil
+	case "Posix":
+		n, ok := toInt64(value)
+		if !ok {
+			return nil, nil, fmt.Errorf("field %s must be Posix (Unix milliseconds)", field.Name)
+		}
+		return n, float64(n), nil
 	case "Float":
 		f, ok := toFloat64(value)
 		if !ok {
@@ -98,6 +104,12 @@ func decodeDBValue(field *model.Field, value any) any {
 			return nil
 		}
 		return float64(n)
+	case "Posix":
+		n, ok := toInt64(value)
+		if !ok {
+			return nil
+		}
+		return float64(n)
 	case "Float":
 		f, ok := toFloat64(value)
 		if !ok {
@@ -119,6 +131,12 @@ func parsePrimaryValue(entity *model.Entity, raw string) (any, bool) {
 	}
 	switch pk.Type {
 	case "Int":
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		return n, true
+	case "Posix":
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return nil, false

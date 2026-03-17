@@ -774,16 +774,16 @@ docSearchSectionText maybeSectionId =
                     "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable."
 
                 "install" ->
-                    "Install. Download Mar from the GitHub releases page. Move mar to a directory in your PATH. Check mar version. Code editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Install Mar Developer Tools from Visual Studio Marketplace. The VSCode extension requires mar on your PATH to work correctly."
+                    "Install. Download Mar from the GitHub releases page. Add mar to your PATH. Check mar version. Choose an editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Install Mar Developer Tools from Visual Studio Marketplace. The VSCode extension requires mar on your PATH to work correctly."
 
                 "quick-start" ->
-                    "Quick Start. Create todo.mar. Develop. Runs the app locally with hot reload and opens the Admin UI while you edit todo.mar. Publish. When you are ready to publish your app to production, run mar compile to package self-contained executables for all supported platforms and generate frontend clients. Run. Choose the target folder for your platform, start that executable, and open the printed Admin URL. Mar compile produces a single self-contained executable per target platform. Each one already includes API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
+                    "Quick Start. Create todo.mar. Develop. Runs the app locally with hot reload and opens the Admin UI while you edit todo.mar. Compile. Run mar compile to package self-contained executables for all supported platforms and generate frontend clients. Serve. Choose the target folder for your platform, start that executable, and open the printed Admin URL. Mar compile produces a single self-contained executable per target platform. Each one already includes API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
 
                 "advanced-fundamentals" ->
                     "Advanced Guide. Core concepts of the language. Mar is a declarative backend DSL inspired by Elm, PocketBase, and Rails, implemented in Go with focus on readability, maintainability, and simple deployment."
 
                 "syntax-model" ->
-                    "Syntax model. Top-level statements: app, port, database, public, system, auth, entity, type alias, action. Fields use the form fieldName: Type with modifiers such as primary, auto, and optional. Comments use Elm-style line comments."
+                    "Syntax model. Top-level statements: app, port, database, public, system, auth, entity, type alias, action. Fields use the form fieldName: Type with modifiers such as primary, auto, and optional. Built-in field types include Int, String, Bool, Float, and Posix. Posix follows Elm Time.Posix and stores Unix milliseconds. Comments use Elm-style line comments."
 
                 "authentication-and-authorization" ->
                     "Authentication and authorization. Mar includes a built-in email-code login flow and per-operation authorization rules. Authentication endpoints are always available. Every Mar app includes a built-in User entity that you may extend. Entity access is deny-by-default unless you declare authorize rules. Admin always has read-only access to the built-in User entity, even without explicit authorize rules. authorize all when sets a default rule for list, get, create, update, and delete, and specific operations can still override it. System features use the same session and require role equals admin."
@@ -792,7 +792,7 @@ docSearchSectionText maybeSectionId =
                     "Rules and typed actions. Rules are for validation close to the entity definition. Actions are for multi-step writes that must succeed or fail together. rule validates entity data and returns HTTP 422 when validation fails. Actions run in a single atomic transaction. Mar checks input types and assigned entity fields at compile time. Current limitations. Single .mar entry file per app. No multi-file projects or imports."
 
                 "language-reference" ->
-                    "Language Reference. Browse the current keywords, built-in names, functions, and configuration options."
+                    "Language Reference. Browse the current keywords, built-in names, functions, primitive types, and configuration options. Built-in primitive types include Int, String, Bool, Float, and Posix. Posix stores Unix milliseconds and follows Elm Time.Posix."
 
                 "validation-and-authorization-reference" ->
                     "Validation and authorization reference. rule, expect, when, authorize, all, list, get, create, update, delete."
@@ -877,7 +877,7 @@ docSearchRouteText route =
             "Home. A simple declarative backend language. Mar compiles declarative source into a self-contained server executable with API, authentication, authorization, admin tools, monitoring, logs, and database backups. Inspired by Elm, PocketBase, and Rails. Mar syntax example. Get Started. Advanced Guide. Examples. Why Mar. Less glue code. More backend. Declarative at its core. Opinionated on purpose. Everything bundled. Authentication, authorization, admin tools, logs, monitoring, and built-in database backups come together. Who Mar Is For. Strong fit for teams that want the backend to stay boring in the best way: simple to run, easy to update, operational from day one. People who want the backend to stay coherent, operational, and easy to update without a lot of handwritten glue. Ready to try Mar. Next: Getting Started."
 
         GettingStarted ->
-            "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable. Install. Download. Path. Check. Code editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Install Mar Developer Tools from Visual Studio Marketplace. The VSCode extension requires mar on your PATH to start LSP and formatting. Quick Start. Create a starter app with mar init todo. This creates a new todo folder with todo.mar, .gitignore, and README. Develop by entering the project folder and running mar dev todo.mar. Production build by entering the project folder and running mar compile todo.mar when you are ready to publish your app to production. Run the target executable from todo/dist/todo/<target>. Open the printed Admin URL. Mar compile produces a self-contained executable per target platform with API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
+            "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable. Install. Download. Add to your PATH. Check. Choose an editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Install Mar Developer Tools from Visual Studio Marketplace. The VSCode extension requires mar on your PATH to start LSP and formatting. Quick Start. Create a starter app with mar init todo. This creates a new todo folder with todo.mar, .gitignore, and README. Develop by entering the project folder and running mar dev todo.mar. Compile by entering the project folder and running mar compile todo.mar to package executables and generate clients. Serve by running the target executable from todo/dist/todo/<target>. Open the printed Admin URL. Mar compile produces a self-contained executable per target platform with API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
 
         AdvancedGuide ->
             "Advanced guide fundamentals language reference runtime tooling deploy compiler."
@@ -886,7 +886,7 @@ docSearchRouteText route =
             "Advanced Guide Fundamentals. Mar is a declarative backend DSL inspired by Elm, PocketBase, and Rails, implemented in Go with focus on readability, maintainability, and simple deployment. Fundamentals. Mar reads top-to-bottom as a declarative app definition. A Mar app is centered around entities, rules, authorization, auth configuration, and typed actions. Quick examples. Syntax model. Top-level statements: app, port, database, public, system, auth, entity, type alias, action. Fields use the form fieldName: Type with modifiers such as primary, auto, and optional. Comments use Elm-style line comments. Authentication and Authorization. Mar includes a built-in email-code login flow and per-operation authorization rules. Authentication endpoints are always available. Every Mar app includes a built-in User entity that you may extend. Entity access is deny-by-default unless you declare authorize rules. Admin always has read-only access to the built-in User entity, even without explicit authorize rules. authorize all when sets a default rule for list, get, create, update, and delete, and specific operations can still override it. System features use the same session and require role equals admin. Rules and Typed Actions. Rules are for validation close to the entity definition. Actions are for multi-step writes that must succeed or fail together. rule validates entity data and returns HTTP 422 when validation fails. Actions run in a single atomic transaction. Mar checks input types and assigned entity fields at compile time. Current limitations. Single .mar entry file per app. No multi-file projects or imports."
 
         AdvancedLanguageReference ->
-            "Advanced Guide Language Reference. This reference lists the current keywords and built-in names used by the language. Top-level declarations: app, port, database, public, system, auth, entity, type alias, action. Entity fields and modifiers: primary, auto, optional. Validation and authorization: rule, expect, when, authorize, all, list, get, create, update, delete. Actions: input, create. Auth config: User, code_ttl_minutes, session_ttl_hours, email_transport, email_from, email_subject, smtp_host, smtp_port, smtp_username, smtp_password_env, smtp_starttls. System config: request_logs_buffer, http_max_request_body_mb, auth_request_code_rate_limit_per_minute, auth_login_rate_limit_per_minute, admin_ui_session_ttl_hours, security_frame_policy, security_referrer_policy, security_content_type_nosniff, sqlite_journal_mode, sqlite_synchronous, sqlite_foreign_keys, sqlite_busy_timeout_ms, sqlite_wal_autocheckpoint, sqlite_journal_size_limit_mb, sqlite_mmap_size_mb, sqlite_cache_size_kb. Public frontend config: dir, mount, spa_fallback. Built-in functions and values: len, contains, startsWith, endsWith, matches, isRole, auth_authenticated, auth_email, auth_user_id, auth_role, true, false, null."
+            "Advanced Guide Language Reference. This reference lists the current keywords, built-in names, and primitive types used by the language. Top-level declarations: app, port, database, public, system, auth, entity, type alias, action. Entity fields and modifiers: primary, auto, optional. Built-in primitive types: Int, String, Bool, Float, Posix. Posix is a Unix-milliseconds timestamp aligned with Elm Time.Posix. Validation and authorization: rule, expect, when, authorize, all, list, get, create, update, delete. Actions: input, create. Auth config: User, code_ttl_minutes, session_ttl_hours, email_transport, email_from, email_subject, smtp_host, smtp_port, smtp_username, smtp_password_env, smtp_starttls. System config: request_logs_buffer, http_max_request_body_mb, auth_request_code_rate_limit_per_minute, auth_login_rate_limit_per_minute, admin_ui_session_ttl_hours, security_frame_policy, security_referrer_policy, security_content_type_nosniff, sqlite_journal_mode, sqlite_synchronous, sqlite_foreign_keys, sqlite_busy_timeout_ms, sqlite_wal_autocheckpoint, sqlite_journal_size_limit_mb, sqlite_mmap_size_mb, sqlite_cache_size_kb. Public frontend config: dir, mount, spa_fallback. Built-in functions and values: len, contains, startsWith, endsWith, matches, isRole, auth_authenticated, auth_email, auth_user_id, auth_role, true, false, null."
 
         AdvancedRuntime ->
             "Advanced Guide Runtime. The runtime generated by Mar is meant to be practical by default: HTTP endpoints, SQLite storage, authentication, admin tooling, and migrations come from the same source file. System Configuration. Use system when you need to tune runtime behavior. This is where request logging, body limits, auth rate limits, admin UI session lifetime, security headers, and SQLite pragmas are configured. request_logs_buffer controls how many recent requests stay in memory for monitoring. http_max_request_body_mb limits request body size and returns HTTP 413 when exceeded. Auth rate limits control request-code and login attempts per minute. admin_ui_session_ttl_hours can shorten the embedded admin UI session without changing REST client sessions. Security settings apply response headers such as frame policy, referrer policy, and nosniff. SQLite settings are performance-first by default and can be overridden per app. Public Static Frontend. Mar can embed static frontend files into the final executable and optionally serve an SPA fallback. Generated Endpoints. CRUD, actions, auth, health, schema, version, and admin-related endpoints are generated automatically. Each entity gets REST CRUD endpoints. Typed actions are exposed as POST /actions/<name>. System endpoints include /health, /_mar/admin, /_mar/schema, and /_mar/version. Admin-only system endpoints include /_mar/version/admin, /_mar/perf, /_mar/request-logs, and /_mar/backups. Database Schema Migrations. Automatic migrations run on startup. Safe changes are applied. Unsafe changes are blocked with clear errors."
@@ -942,7 +942,7 @@ docSearchEntries =
       , summary = "Create a starter app with mar init, then develop, compile, and run it."
       , keywords = [ "quick start", "mar init", "starter app", "admin", "admin ui", "_mar/admin", "browser", "dev", "serve" ]
       }
-    , { title = "Code editor"
+    , { title = "Choose an editor"
       , route = GettingStarted
       , sectionId = Just "install"
       , summary = "Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension."
@@ -952,13 +952,13 @@ docSearchEntries =
       , route = AdvancedFundamentals
       , sectionId = Just "advanced-fundamentals"
       , summary = "Understand the core syntax, built-in User model, rules, and authorization."
-      , keywords = [ "language", "entities", "rules", "authorize", "user", "auth" ]
+      , keywords = [ "language", "entities", "rules", "authorize", "user", "auth", "Posix", "timestamp", "Unix milliseconds" ]
       }
     , { title = "Syntax model"
       , route = AdvancedFundamentals
       , sectionId = Just "syntax-model"
       , summary = "Top-level statements, fields, comments, and the basic shape of a Mar app."
-      , keywords = [ "app", "port", "database", "public", "system", "auth", "entity", "type alias", "action", "comments" ]
+      , keywords = [ "app", "port", "database", "public", "system", "auth", "entity", "type alias", "action", "comments", "Posix", "Int", "String", "Bool", "Float" ]
       }
     , { title = "Authentication and authorization"
       , route = AdvancedFundamentals
@@ -975,8 +975,8 @@ docSearchEntries =
     , { title = "Language Reference"
       , route = AdvancedLanguageReference
       , sectionId = Just "language-reference"
-      , summary = "Browse the current keywords, built-in names, functions, and configuration options."
-      , keywords = [ "reference", "keywords", "functions", "system", "auth", "public" ]
+      , summary = "Browse the current keywords, built-in names, primitive types, functions, and configuration options."
+      , keywords = [ "reference", "keywords", "functions", "system", "auth", "public", "Posix", "Int", "String", "Bool", "Float", "primitive types" ]
       }
     , { title = "Validation and authorization reference"
       , route = AdvancedLanguageReference
@@ -1295,7 +1295,7 @@ advancedLanguagePage model =
                     , text " with focus on readability, maintainability, and simple deployment."
                     ]
                 , docSubsectionTitle "Fundamentals"
-                , bodyText "Mar reads top-to-bottom as a declarative app definition. A Mar app is centered around entities, rules, authorization, optional auth configuration, and typed actions."
+                , bodyText "Mar reads top-to-bottom as a declarative app definition. A Mar app is centered around entities, rules, authorization, optional auth configuration, and typed actions. Built-in field types are Int, String, Bool, Float, and Posix."
                 , docSubsectionTitle "Quick Examples"
                 , codeFromString model "todo.mar" 450 todoExampleSource
                 , codeFromString model "action.mar" 575 actionExampleSource
@@ -1305,6 +1305,7 @@ advancedLanguagePage model =
                 , docList
                     [ "Top-level statements: app, port, database, public, system, auth, entity, type alias, action."
                     , "Fields use the form fieldName: Type with optional modifiers such as primary, auto, and optional."
+                    , "Built-in field types are Int, String, Bool, Float, and Posix. `Posix` follows Elm `Time.Posix` and stores Unix milliseconds."
                     , "Comments use Elm-style line comments: -- this is a comment."
                     ]
                 ]
@@ -1372,6 +1373,13 @@ advancedLanguageReferencePage model =
                     [ languageReferenceItem "primary" "Marks a field as the primary key."
                     , languageReferenceItem "auto" "Marks a field as auto-generated."
                     , languageReferenceItem "optional" "Marks a field as nullable."
+                    ]
+                , languageReferenceGroup "Built-in primitive types"
+                    [ languageReferenceItem "Int" "Whole-number field type."
+                    , languageReferenceItem "String" "Text field type."
+                    , languageReferenceItem "Bool" "Boolean field type."
+                    , languageReferenceItem "Float" "Decimal-number field type."
+                    , languageReferenceItem "Posix" "Timestamp field type stored as Unix milliseconds, aligned with Elm `Time.Posix`."
                     ]
                 ]
             , anchoredSection "validation-and-authorization-reference"
@@ -1504,7 +1512,7 @@ advancedToolingPage model =
                 , commandRow model "1" "Init" "Creates a new Mar project with a starter app, .gitignore, and README." "mar init store-app"
                 , commandRow model "2" "Dev" "Runs the app in development mode with hot reload." "mar dev store.mar"
                 , editCommandRow model "3"
-                , commandRow model "4" "Publish" "When you are ready to publish your app to production, run mar compile to package self-contained executables for all supported platforms and generate frontend clients." "mar compile store.mar"
+                , commandRow model "4" "Compile" "Packages self-contained executables for all supported platforms and generates frontend clients." "mar compile store.mar"
                 , commandRow model "5" "Fly init" "Prepares Fly.io deployment files for your app." "mar fly init store.mar"
                 , commandRow model "6" "Fly deploy" "Rebuilds the Linux executable for the current app and runs fly deploy with the generated Fly config." "mar fly deploy store.mar"
                 , commandRow model "7" "Format" "Applies Mar's official formatting style to source files." "mar format store.mar"
@@ -1819,12 +1827,10 @@ quickStart model =
             , commandRow model "1" "Init" "Creates a new Todo starter app in a new folder with todo.mar, .gitignore, and README." "mar init todo"
             , commandRow model "2" "Develop" "Enter the project folder, run the app locally with hot reload, and open the Admin UI." """cd todo
 mar dev todo.mar"""
-            , commandRow model "3" "Publish" "When you are ready to publish your app to production, run mar compile to package self-contained executables for all supported platforms and generate frontend clients." """cd todo
+            , commandRow model "3" "Compile" "Package self-contained executables for all supported platforms and generate frontend clients." """cd todo
 mar compile todo.mar"""
-            , commandRow model "4" "Run" "Choose the target folder for your platform, start that executable, and open the printed Admin URL." """cd todo/dist/todo/darwin-arm64
+            , commandRow model "4" "Serve" "Choose the target folder for your platform, start that executable, and open the printed Admin URL." """cd todo/dist/todo/darwin-arm64
 ./todo serve"""
-            , paragraph [ Font.size 16, Font.color (rgb255 72 95 123), width fill ]
-                [ text "The generated project already includes a small Todo app. Mar compile produces a single self-contained executable per target platform, with API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools." ]
             ]
         ]
 
@@ -1890,7 +1896,7 @@ pathInstallRow model =
         ]
         [ wrappedRow [ width fill, spacing 10 ]
             [ stepBadge "2"
-            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Path")
+            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Add to your PATH")
             ]
         , paragraph [ Font.size 16, Font.color (rgb255 70 93 121), width fill ]
             [ text "Move "
@@ -1949,7 +1955,7 @@ pluginInstallRow model =
         ]
         [ wrappedRow [ width fill, spacing 10 ]
             [ stepBadge "4"
-            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Code editor")
+            , el [ Font.bold, Font.size 18, Font.color (rgb255 28 66 108) ] (text "Choose an editor")
             ]
         , wrappedRow
             [ width fill
@@ -3752,16 +3758,13 @@ todoExampleSource : String
 todoExampleSource =
     """-- A minimal CRUD application.
 -- This example shows the basic Mar structure:
--- app, port, database, entity, rule, and authorization.
+-- app, entity, rule, and authorization.
 
 -- Application
 app TodoApi
-port 4100
-database "todo.db"
 
 -- Entity
 entity Todo {
-  id: Int primary auto
   title: String
   done: Bool
 
@@ -3904,7 +3907,6 @@ entity User {
 storeExampleSource : String
 storeExampleSource =
     """app BookStoreApi
-port 4100
 database "bookstore.db"
 
 auth {
@@ -3925,7 +3927,6 @@ entity User {
 }
 
 entity Book {
-  id: Int primary auto
   title: String
   authorName: String
   isbn: String

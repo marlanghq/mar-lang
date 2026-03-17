@@ -174,7 +174,7 @@
         },
         {
           "name": "meta.field.declaration.mar",
-          "match": "\\b([a-z][A-Za-z0-9_]*)\\s*(:)\\s*(Int|String|Bool|Float)\\b",
+          "match": "\\b([a-z][A-Za-z0-9_]*)\\s*(:)\\s*(Int|String|Bool|Float|Posix)\\b",
           "captures": {
             "1": {
               "name": "variable.other.member.mar"
@@ -280,7 +280,7 @@
       "patterns": [
         {
           "name": "storage.type.mar",
-          "match": "\\b(Int|String|Bool|Float)\\b"
+          "match": "\\b(Int|String|Bool|Float|Posix)\\b"
         }
       ]
     },

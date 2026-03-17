@@ -34,6 +34,7 @@ app TodoApi
 entity Todo{
 -- user-facing title
 title:String
+published_at:Posix optional
 done:Bool optional
 }
 `
@@ -48,6 +49,7 @@ done:Bool optional
 		"entity Todo {\n" +
 		"  -- user-facing title\n" +
 		"  title: String\n" +
+		"  published_at: Posix optional\n" +
 		"  done: Bool optional\n" +
 		"}\n"
 

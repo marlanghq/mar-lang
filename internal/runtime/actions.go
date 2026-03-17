@@ -114,6 +114,12 @@ func normalizeActionInputValue(name, typ string, raw any) (any, error) {
 			return nil, fmt.Errorf("input.%s must be Int", name)
 		}
 		return n, nil
+	case "Posix":
+		n, ok := toInt64(raw)
+		if !ok {
+			return nil, fmt.Errorf("input.%s must be Posix (Unix milliseconds)", name)
+		}
+		return n, nil
 	case "Float":
 		f, ok := toFloat64(raw)
 		if !ok {

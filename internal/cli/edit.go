@@ -73,7 +73,7 @@ var (
 		"rule": {}, "expect": {}, "authorize": {}, "when": {}, "all": {}, "list": {}, "get": {}, "create": {}, "update": {}, "delete": {},
 	}
 	marEditorTypes = map[string]struct{}{
-		"String": {}, "Int": {}, "Bool": {}, "Float": {},
+		"String": {}, "Int": {}, "Bool": {}, "Float": {}, "Posix": {},
 	}
 	marEditorFieldModifiers = map[string]struct{}{
 		"primary": {}, "auto": {}, "optional": {},

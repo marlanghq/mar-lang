@@ -86,6 +86,7 @@ var (
 		"String":                                  "Mar primitive type for text values.",
 		"Bool":                                    "Mar primitive type for booleans (`true`/`false`).",
 		"Float":                                   "Mar primitive type for decimal numbers.",
+		"Posix":                                   "Mar primitive type for timestamps in Unix milliseconds, aligned with Elm `Time.Posix`.",
 	}
 )
 

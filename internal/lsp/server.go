@@ -459,12 +459,20 @@ func keywordCompletionItems() []map[string]any {
 		"sqlite_mmap_size_mb",
 		"sqlite_cache_size_kb",
 	}
-	out := make([]map[string]any, 0, len(keywords))
+	types := []string{"Int", "String", "Bool", "Float", "Posix"}
+	out := make([]map[string]any, 0, len(keywords)+len(types))
 	for _, kw := range keywords {
 		out = append(out, map[string]any{
 			"label":  kw,
 			"kind":   14, // CompletionItemKind.Keyword
 			"detail": "Mar keyword",
+		})
+	}
+	for _, typ := range types {
+		out = append(out, map[string]any{
+			"label":  typ,
+			"kind":   25, // CompletionItemKind.TypeParameter
+			"detail": "Mar type",
 		})
 	}
 	return out

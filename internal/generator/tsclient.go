@@ -88,9 +88,9 @@ func GenerateTSClient(app *model.App) (*TSClientOutput, error) {
 	writeTSLine(buf, "  auth: AuthMeta | null;")
 	writeTSLine(buf, "}")
 	writeTSLine(buf, "")
-writeTSLine(buf, "export interface RequestCodeResponse {")
-writeTSLine(buf, "  message: string;")
-writeTSLine(buf, "}")
+	writeTSLine(buf, "export interface RequestCodeResponse {")
+	writeTSLine(buf, "  message: string;")
+	writeTSLine(buf, "}")
 	writeTSLine(buf, "")
 	writeTSLine(buf, "export interface LoginRequest {")
 	writeTSLine(buf, "  email: string;")
@@ -368,7 +368,7 @@ func sanitizeTSFieldName(value string) string {
 
 func marTypeToTSType(typ string) string {
 	switch typ {
-	case "Int", "Float":
+	case "Int", "Float", "Posix":
 		return "number"
 	case "String":
 		return "string"

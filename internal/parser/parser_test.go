@@ -147,6 +147,87 @@ entity Todo {
 	}
 }
 
+func TestParseSupportsPosixEntityFields(t *testing.T) {
+	src := `
+app TodoApi
+
+entity Todo {
+  title: String
+  due_at: Posix optional
+}
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	var todo *model.Entity
+	for i := range app.Entities {
+		if app.Entities[i].Name == "Todo" {
+			todo = &app.Entities[i]
+			break
+		}
+	}
+	if todo == nil {
+		t.Fatal("expected Todo entity to be present")
+	}
+
+	var dueAt *model.Field
+	for i := range todo.Fields {
+		if todo.Fields[i].Name == "due_at" {
+			dueAt = &todo.Fields[i]
+			break
+		}
+	}
+	if dueAt == nil {
+		t.Fatal("expected due_at field to be present")
+	}
+	if dueAt.Type != "Posix" {
+		t.Fatalf("expected due_at type Posix, got %q", dueAt.Type)
+	}
+	if !dueAt.Optional {
+		t.Fatal("expected due_at to be optional")
+	}
+}
+
+func TestParseSupportsPosixAliasFields(t *testing.T) {
+	src := `
+app TodoApi
+
+entity Todo {
+  title: String
+}
+
+type alias ScheduleTodoInput =
+  { due_at: Posix
+  }
+
+action scheduleTodo {
+  input: ScheduleTodoInput
+
+  create Todo {
+    title: "Scheduled"
+  }
+}
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if len(app.InputAliases) != 1 {
+		t.Fatalf("expected 1 type alias, got %d", len(app.InputAliases))
+	}
+	field := app.InputAliases[0].Fields[0]
+	if field.Name != "due_at" {
+		t.Fatalf("expected alias field due_at, got %q", field.Name)
+	}
+	if field.Type != "Posix" {
+		t.Fatalf("expected alias field type Posix, got %q", field.Type)
+	}
+}
+
 func TestParseRejectsHashComments(t *testing.T) {
 	src := `
 # application
