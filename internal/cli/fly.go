@@ -663,7 +663,7 @@ func printFlyInitSummary(inputPath string, result flyInitResult) {
 		fmt.Println()
 		fmt.Printf("%s\n", colorizeCLI(useColor, "\033[1;36m", "Notes"))
 		for _, note := range result.Notes {
-			fmt.Printf("  %s\n", note)
+			fmt.Printf("  %s\n", formatFlyInitNote(useColor, result, note))
 		}
 	}
 
@@ -688,6 +688,14 @@ func printFlyInitSummary(inputPath string, result flyInitResult) {
 		printStep(4, "mar fly deploy "+colorizeCLI(useColor, cliValueAccent, inputPath))
 	}
 	fmt.Println()
+}
+
+func formatFlyInitNote(useColor bool, result flyInitResult, note string) string {
+	formatted := note
+	if result.SMTPPasswordEnv != "" {
+		formatted = strings.ReplaceAll(formatted, result.SMTPPasswordEnv, colorizeCLI(useColor, "\033[1;36m", result.SMTPPasswordEnv))
+	}
+	return formatted
 }
 
 func readFlyAppName(flyTomlPath string) (string, error) {
