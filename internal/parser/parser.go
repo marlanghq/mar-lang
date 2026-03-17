@@ -110,10 +110,10 @@ func Parse(source string) (*model.App, error) {
 	idx := 0
 	var userExtension *model.Entity
 	seenEntities := map[string]bool{}
+	explicitDatabase := false
 
 	app := &model.App{
-		Port:     3000,
-		Database: "app.db",
+		Port: 4200,
 	}
 
 	next := func() *line {
@@ -139,6 +139,9 @@ func Parse(source string) (*model.App, error) {
 
 		if m := match(`^app\s+([A-Za-z][A-Za-z0-9_]*)$`, trimmed); m != nil {
 			app.AppName = m[1]
+			if !explicitDatabase {
+				app.Database = defaultDatabaseName(app.AppName)
+			}
 			advance()
 			continue
 		}
@@ -155,6 +158,7 @@ func Parse(source string) (*model.App, error) {
 
 		if m := match(`^database\s+"([^"]+)"$`, trimmed); m != nil {
 			app.Database = m[1]
+			explicitDatabase = true
 			advance()
 			continue
 		}
@@ -1478,6 +1482,42 @@ func mustInt(s string) int {
 		n = n*10 + int(ch-'0')
 	}
 	return n
+}
+
+func defaultDatabaseName(appName string) string {
+	return toKebab(appName) + ".db"
+}
+
+func toKebab(v string) string {
+	var b strings.Builder
+	var prevLowerOrDigit bool
+	var prevWasDash bool
+
+	for _, ch := range v {
+		switch {
+		case ch == '_' || ch == '-' || ch == ' ':
+			if b.Len() > 0 && !prevWasDash {
+				b.WriteByte('-')
+				prevWasDash = true
+			}
+			prevLowerOrDigit = false
+
+		case ch >= 'A' && ch <= 'Z':
+			if b.Len() > 0 && prevLowerOrDigit && !prevWasDash {
+				b.WriteByte('-')
+			}
+			b.WriteByte(byte(ch + 32))
+			prevLowerOrDigit = false
+			prevWasDash = false
+
+		default:
+			b.WriteRune(ch)
+			prevLowerOrDigit = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')
+			prevWasDash = false
+		}
+	}
+
+	return strings.Trim(b.String(), "-")
 }
 
 func toSnake(v string) string {

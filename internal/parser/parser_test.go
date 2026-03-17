@@ -91,6 +91,62 @@ entity Todo {
 	}
 }
 
+func TestParseUsesDefaultPortWhenPortIsOmitted(t *testing.T) {
+	src := `
+app TodoApi
+database "./todo.db"
+
+entity Todo {
+  title: String
+}
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if app.Port != 4200 {
+		t.Fatalf("expected default port 4200, got %d", app.Port)
+	}
+}
+
+func TestParseUsesDefaultDatabaseWhenDatabaseIsOmitted(t *testing.T) {
+	src := `
+app TodoApi
+
+entity Todo {
+  title: String
+}
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if app.Database != "todo-api.db" {
+		t.Fatalf("expected default database todo-api.db, got %q", app.Database)
+	}
+}
+
+func TestParseKeepsExplicitDatabaseWhenProvided(t *testing.T) {
+	src := `
+app TodoApi
+database "./custom.db"
+
+entity Todo {
+  title: String
+}
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if app.Database != "./custom.db" {
+		t.Fatalf("expected explicit database to be preserved, got %q", app.Database)
+	}
+}
+
 func TestParseRejectsHashComments(t *testing.T) {
 	src := `
 # application
