@@ -1187,7 +1187,7 @@ update msg model =
                         AppAuthScope ->
                             let
                                 nextWorkspace =
-                                    workspaceForRole response.role
+                                    workspaceForCurrentRoute response.role model.currentRoute
 
                                 nextModel =
                                     { model
@@ -1227,7 +1227,7 @@ update msg model =
                         SystemAuthScope ->
                             let
                                 nextWorkspace =
-                                    workspaceForRole response.role
+                                    workspaceForCurrentRoute response.role model.currentRoute
 
                                 nextModel =
                                     { model
@@ -1276,7 +1276,7 @@ update msg model =
                         AppAuthScope ->
                             let
                                 nextWorkspace =
-                                    workspaceForRole response.role
+                                    workspaceForCurrentRoute response.role model.currentRoute
 
                                 preferredEntity =
                                     case model.schema of
@@ -1332,7 +1332,7 @@ update msg model =
                                 , authStage = AuthStageSession
                                 , sessionRestorePending = False
                                 , authToolsOpen = False
-                                , workspace = workspaceForRole response.role
+                                , workspace = workspaceForCurrentRoute response.role model.currentRoute
                                 , flash = Nothing
                               }
                             , Cmd.none
@@ -2632,7 +2632,10 @@ view model =
 
 viewLayout : Model -> Element Msg
 viewLayout model =
-    if hasActiveSession model then
+    if model.sessionRestorePending then
+        viewLoadingGate model
+
+    else if hasActiveSession model then
         if isCompactLayout model then
             column
                 [ width fill
@@ -2668,6 +2671,15 @@ viewLayout model =
 
     else
         viewAuthGate model
+
+
+viewLoadingGate : Model -> Element Msg
+viewLoadingGate _ =
+    el
+        [ width fill
+        , height fill
+        ]
+        (el [ centerX, centerY ] (text "Loading..."))
 
 
 mobileTopBarSubtitle : Model -> String
@@ -4193,6 +4205,80 @@ workspaceForRole maybeRole =
 
     else
         AppWorkspace
+
+
+workspaceForCurrentRoute : Maybe String -> Route -> WorkspaceMode
+workspaceForCurrentRoute maybeRole route =
+    case route of
+        RouteDefault workspace ->
+            if workspace == AdminWorkspace && isAdminRole maybeRole then
+                AdminWorkspace
+
+            else
+                AppWorkspace
+
+        RouteAuthTools workspace ->
+            if workspace == AdminWorkspace && isAdminRole maybeRole then
+                AdminWorkspace
+
+            else
+                AppWorkspace
+
+        RouteEntity workspace _ ->
+            if workspace == AdminWorkspace && isAdminRole maybeRole then
+                AdminWorkspace
+
+            else
+                AppWorkspace
+
+        RouteEntityCreate workspace _ ->
+            if workspace == AdminWorkspace && isAdminRole maybeRole then
+                AdminWorkspace
+
+            else
+                AppWorkspace
+
+        RouteEntityDetail workspace _ _ ->
+            if workspace == AdminWorkspace && isAdminRole maybeRole then
+                AdminWorkspace
+
+            else
+                AppWorkspace
+
+        RouteEntityEdit workspace _ _ ->
+            if workspace == AdminWorkspace && isAdminRole maybeRole then
+                AdminWorkspace
+
+            else
+                AppWorkspace
+
+        RouteAction workspace _ ->
+            if workspace == AdminWorkspace && isAdminRole maybeRole then
+                AdminWorkspace
+
+            else
+                AppWorkspace
+
+        RoutePerformance ->
+            if isAdminRole maybeRole then
+                AdminWorkspace
+
+            else
+                AppWorkspace
+
+        RouteRequestLogs ->
+            if isAdminRole maybeRole then
+                AdminWorkspace
+
+            else
+                AppWorkspace
+
+        RouteDatabase ->
+            if isAdminRole maybeRole then
+                AdminWorkspace
+
+            else
+                AppWorkspace
 
 
 currentAppName : Model -> String
