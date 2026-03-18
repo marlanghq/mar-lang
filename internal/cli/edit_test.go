@@ -239,3 +239,47 @@ func TestEditorCtrlCCopiesAndClearsSelection(t *testing.T) {
 		t.Fatalf("expected copied text %q, got %q", "To", got)
 	}
 }
+
+func TestEditorCtrlXCanBeUndone(t *testing.T) {
+	editor := &marEditor{
+		filePath: "todo.mar",
+		lines: []string{
+			"app Todo",
+		},
+		savedLines: []string{
+			"app Todo",
+		},
+		cx: 4,
+		cy: 0,
+	}
+
+	editor.beginSelection()
+	editor.moveCursor(editorKeyArrowRight)
+	editor.moveCursor(editorKeyArrowRight)
+
+	if !editor.hasSelection() {
+		t.Fatal("expected selection before pressing Ctrl-x")
+	}
+
+	quit, err := editor.processKey(editorCtrlKey('x'))
+	if err != nil {
+		t.Fatalf("processKey returned error: %v", err)
+	}
+	if quit {
+		t.Fatal("Ctrl-x should not quit the editor")
+	}
+	if got := editor.lines[0]; got != "app do" {
+		t.Fatalf("expected cut text to be removed, got %q", got)
+	}
+
+	quit, err = editor.processKey(editorCtrlKey('z'))
+	if err != nil {
+		t.Fatalf("undo returned error: %v", err)
+	}
+	if quit {
+		t.Fatal("Ctrl-z should not quit the editor")
+	}
+	if got := editor.lines[0]; got != "app Todo" {
+		t.Fatalf("expected undo to restore text, got %q", got)
+	}
+}

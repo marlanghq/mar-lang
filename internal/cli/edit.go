@@ -468,6 +468,7 @@ func (e *marEditor) processKey(key int) (bool, error) {
 		}
 		e.clipboard = e.selectedText()
 		systemClipboardErr := writeSystemClipboard(e.clipboard)
+		e.beginUndoGroup()
 		e.deleteSelection()
 		if systemClipboardErr != nil {
 			e.setStatusMessage("Selection cut (editor clipboard only)")
