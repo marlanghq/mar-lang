@@ -429,6 +429,7 @@ func keywordCompletionItems() []map[string]any {
 		"action",
 		"input",
 		"create",
+		"default",
 		"code_ttl_minutes",
 		"session_ttl_hours",
 		"admin_ui_session_ttl_hours",

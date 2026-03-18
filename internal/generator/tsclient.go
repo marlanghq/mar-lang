@@ -44,6 +44,7 @@ func GenerateTSClient(app *model.App) (*TSClientOutput, error) {
 	writeTSLine(buf, "  primary: boolean;")
 	writeTSLine(buf, "  auto: boolean;")
 	writeTSLine(buf, "  optional: boolean;")
+	writeTSLine(buf, "  defaultValue?: unknown;")
 	writeTSLine(buf, "}")
 	writeTSLine(buf, "")
 	writeTSLine(buf, "export interface EntityMeta {")
@@ -183,6 +184,9 @@ func GenerateTSClient(app *model.App) (*TSClientOutput, error) {
 			writeTSLine(buf, "          primary: "+fmt.Sprintf("%t", field.Primary)+",")
 			writeTSLine(buf, "          auto: "+fmt.Sprintf("%t", field.Auto)+",")
 			writeTSLine(buf, "          optional: "+fmt.Sprintf("%t", field.Optional)+",")
+			if field.Default != nil {
+				writeTSLine(buf, "          defaultValue: "+tsLiteralFromValue(field.Default)+",")
+			}
 			writeTSLine(buf, "        },")
 		}
 		writeTSLine(buf, "      ],")
@@ -376,5 +380,25 @@ func marTypeToTSType(typ string) string {
 		return "boolean"
 	default:
 		return "unknown"
+	}
+}
+
+func tsLiteralFromValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strconv.Quote(v)
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	default:
+		return "null"
 	}
 }

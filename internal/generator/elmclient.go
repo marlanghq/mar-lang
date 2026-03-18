@@ -79,6 +79,7 @@ func GenerateElmClient(app *model.App) (*ElmClientOutput, error) {
 	writeLine(buf, "    , primary : Bool")
 	writeLine(buf, "    , auto : Bool")
 	writeLine(buf, "    , optional : Bool")
+	writeLine(buf, "    , defaultValue : Maybe Encode.Value")
 	writeLine(buf, "    }")
 	writeLine(buf, "")
 	writeLine(buf, "")
@@ -167,6 +168,7 @@ func GenerateElmClient(app *model.App) (*ElmClientOutput, error) {
 			writeLine(buf, "                , primary = "+elmBool(field.Primary))
 			writeLine(buf, "                , auto = "+elmBool(field.Auto))
 			writeLine(buf, "                , optional = "+elmBool(field.Optional))
+			writeLine(buf, "                , defaultValue = "+elmMaybeValue(field.Default))
 			writeLine(buf, "                }"+fieldComma)
 		}
 		writeLine(buf, "              ]")
@@ -390,6 +392,28 @@ func elmBool(value bool) string {
 		return "True"
 	}
 	return "False"
+}
+
+func elmMaybeValue(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return "Nothing"
+	case string:
+		return "Just (Encode.string " + elmString(v) + ")"
+	case bool:
+		if v {
+			return "Just (Encode.bool True)"
+		}
+		return "Just (Encode.bool False)"
+	case int:
+		return "Just (Encode.int " + fmt.Sprintf("%d", v) + ")"
+	case int64:
+		return "Just (Encode.float " + fmt.Sprintf("%d.0", v) + ")"
+	case float64:
+		return "Just (Encode.float " + fmt.Sprintf("%g", v) + ")"
+	default:
+		return "Nothing"
+	}
 }
 
 // sanitizeModuleName converts arbitrary app names into valid Elm module identifiers.

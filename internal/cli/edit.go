@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode"
 
+	"mar/internal/formatter"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -76,7 +78,7 @@ var (
 		"String": {}, "Int": {}, "Bool": {}, "Float": {}, "Posix": {},
 	}
 	marEditorFieldModifiers = map[string]struct{}{
-		"primary": {}, "auto": {}, "optional": {},
+		"primary": {}, "auto": {}, "optional": {}, "default": {},
 	}
 	marEditorBooleans = map[string]struct{}{
 		"true": {}, "false": {},
@@ -812,12 +814,27 @@ func (e *marEditor) deleteSelection() {
 
 func (e *marEditor) save() error {
 	data := strings.Join(e.lines, "\n") + "\n"
-	if err := os.WriteFile(e.filePath, []byte(data), 0o644); err != nil {
+	formatted, formatErr := formatter.Format(data)
+	toWrite := data
+	if formatErr == nil {
+		toWrite = formatted
+		e.lines = splitEditorLines(formatted)
+		lineLen := len([]rune(e.currentLine()))
+		if e.cx > lineLen {
+			e.cx = lineLen
+		}
+	}
+	if err := os.WriteFile(e.filePath, []byte(toWrite), 0o644); err != nil {
 		return err
 	}
 	e.savedLines = cloneEditorLines(e.lines)
 	e.updateDirty()
+	e.updateGitSigns()
 	e.quitArmed = false
+	if formatErr != nil {
+		e.setStatusMessage(fmt.Sprintf("Saved %s (format failed: %s)", filepath.Base(e.filePath), formatErr.Error()))
+		return nil
+	}
 	e.setStatusMessage(fmt.Sprintf("Saved %s", filepath.Base(e.filePath)))
 	return nil
 }
@@ -964,15 +981,7 @@ func (e *marEditor) drawLine(out *bytes.Buffer, fileRow int) {
 
 func (e *marEditor) drawStatusBar(out *bytes.Buffer) {
 	out.WriteString("\x1b[7m")
-	fileName := filepath.Base(e.filePath)
-	if fileName == "" {
-		fileName = "[No Name]"
-	}
-	modified := ""
-	if e.dirty {
-		modified = " (modified)"
-	}
-	left := fmt.Sprintf(" %s%s", fileName, modified)
+	left := " " + e.statusBarLeftText()
 	right := fmt.Sprintf(" %d/%d ", e.cy+1, len(e.lines))
 	if len(left)+len(right) > e.screenCols {
 		left = truncateString(left, max(0, e.screenCols-len(right)))
@@ -990,28 +999,29 @@ func (e *marEditor) drawStatusBar(out *bytes.Buffer) {
 func (e *marEditor) drawMessageBar(out *bytes.Buffer) {
 	out.WriteString("\x1b[2K")
 	help := e.helpText()
-	message := ""
+	out.WriteString(truncateString(help, e.screenCols))
+}
+
+func (e *marEditor) activeStatusMessage() string {
 	if time.Since(e.statusTime) <= 10*time.Second {
-		message = e.status
+		return strings.TrimSpace(e.status)
 	}
-	if message == "" {
-		out.WriteString(truncateString(help, e.screenCols))
-		return
+	return ""
+}
+
+func (e *marEditor) statusBarLeftText() string {
+	if message := e.activeStatusMessage(); message != "" {
+		return message
 	}
 
-	right := truncateString(message, max(0, e.screenCols/3))
-	leftWidth := e.screenCols - len(right) - 1
-	if leftWidth < 0 {
-		leftWidth = 0
+	fileName := filepath.Base(e.filePath)
+	if fileName == "" {
+		fileName = "[No Name]"
 	}
-	left := truncateString(help, leftWidth)
-	padding := e.screenCols - len(left) - len(right)
-	if padding < 1 {
-		padding = 1
+	if e.dirty {
+		return fileName + " (modified)"
 	}
-	out.WriteString(left)
-	out.WriteString(strings.Repeat(" ", padding))
-	out.WriteString(right)
+	return fileName
 }
 
 func (e *marEditor) helpText() string {

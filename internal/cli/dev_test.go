@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestResolveDevDatabaseOverrideUsesMarDirectory(t *testing.T) {
@@ -40,5 +42,23 @@ func TestResolveDevDatabaseOverrideSkipsAbsoluteDatabasePath(t *testing.T) {
 	got := resolveDevDatabaseOverride(sourcePath, absoluteDatabasePath)
 	if got != "" {
 		t.Fatalf("expected no override for absolute database path, got %q", got)
+	}
+}
+
+func TestWaitForDevServerStopsWhenProcessExits(t *testing.T) {
+	t.Parallel()
+
+	done := make(chan error, 1)
+	done <- errors.New("startup failed")
+
+	ready, exited, err := waitForDevServer("http://127.0.0.1:1/health", 200*time.Millisecond, done)
+	if ready {
+		t.Fatal("expected server to be reported as not ready")
+	}
+	if !exited {
+		t.Fatal("expected process exit to be reported")
+	}
+	if err == nil || err.Error() != "startup failed" {
+		t.Fatalf("expected startup error to be returned, got %v", err)
 	}
 }

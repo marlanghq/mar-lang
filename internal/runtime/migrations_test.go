@@ -138,6 +138,69 @@ entity Book {
 	}
 }
 
+func TestMigrationsAutoAddRequiredFieldWithDefault(t *testing.T) {
+	requireSQLite3(t)
+
+	dbPath := filepath.Join(t.TempDir(), "migration-required-default.db")
+
+	appV1 := mustParseApp(t, `
+app MigrationApi
+
+entity Book {
+  title: String
+}
+`)
+	appV1.Database = dbPath
+	r1, err := New(appV1)
+	if err != nil {
+		t.Fatalf("runtime.New(v1) failed: %v", err)
+	}
+	if _, err := r1.DB.Exec(`INSERT INTO books (title) VALUES (?)`, "First book"); err != nil {
+		t.Fatalf("seed insert failed: %v", err)
+	}
+
+	appV2 := mustParseApp(t, `
+app MigrationApi
+
+entity Book {
+  title: String
+  stock: Int default 0
+}
+`)
+	appV2.Database = dbPath
+
+	if _, err := New(appV2); err != nil {
+		t.Fatalf("runtime.New(v2) failed: %v", err)
+	}
+
+	db := sqlitecli.Open(dbPath)
+	rows, err := db.QueryRows(`PRAGMA table_info("books")`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info failed: %v", err)
+	}
+	stock, ok := findColumn(rows, "stock")
+	if !ok {
+		t.Fatalf("expected stock column in books table, got rows: %+v", rows)
+	}
+	if got := int64Value(stock["notnull"]); got != 1 {
+		t.Fatalf("expected stock to be not null, got notnull=%d", got)
+	}
+	if fmt.Sprintf("%v", stock["dflt_value"]) != "0" {
+		t.Fatalf("expected stock default 0, got %#v", stock["dflt_value"])
+	}
+
+	row, ok, err := db.QueryRow(`SELECT title, stock FROM books WHERE title = ?`, "First book")
+	if err != nil {
+		t.Fatalf("select migrated row failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected migrated row to exist")
+	}
+	if int64Value(row["stock"]) != 0 {
+		t.Fatalf("expected migrated row stock default 0, got %#v", row["stock"])
+	}
+}
+
 func TestMigrationsCreateAuthEmailUniqueIndexForInternalUsers(t *testing.T) {
 	requireSQLite3(t)
 

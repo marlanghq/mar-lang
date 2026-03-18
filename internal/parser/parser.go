@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"mar/internal/expr"
 	"mar/internal/model"
@@ -405,19 +406,8 @@ func parseUserExtensionBlock(lines []line, idx *int) (*model.Entity, error) {
 		if m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(`+marTypePattern+`)(?:\s+(.*))?$`, trimmed); m != nil {
 			fieldName := m[1]
 			field := model.Field{Name: fieldName, Type: m[2]}
-			attrs := strings.Fields(strings.TrimSpace(m[3]))
-			for _, attr := range attrs {
-				switch attr {
-				case "primary":
-					field.Primary = true
-				case "auto":
-					field.Auto = true
-				case "optional":
-					field.Optional = true
-				case "":
-				default:
-					return nil, fmt.Errorf("line %d: unknown field attribute %q", ln.number, attr)
-				}
+			if err := parseFieldAttributes(&field, strings.TrimSpace(m[3]), ln.number); err != nil {
+				return nil, err
 			}
 			if isBuiltInUserField(fieldName) {
 				if !matchesBuiltInUserField(field) {
@@ -444,11 +434,11 @@ func isBuiltInUserField(name string) bool {
 func matchesBuiltInUserField(field model.Field) bool {
 	switch field.Name {
 	case "id":
-		return field.Type == "Int" && field.Primary && field.Auto && !field.Optional
+		return field.Type == "Int" && field.Primary && field.Auto && !field.Optional && field.Default == nil
 	case "email":
-		return field.Type == "String" && !field.Primary && !field.Auto && !field.Optional
+		return field.Type == "String" && !field.Primary && !field.Auto && !field.Optional && field.Default == nil
 	case "role":
-		return field.Type == "String" && !field.Primary && !field.Auto && !field.Optional
+		return field.Type == "String" && !field.Primary && !field.Auto && !field.Optional && field.Default == nil
 	default:
 		return false
 	}
@@ -840,20 +830,8 @@ func parseEntityBlock(lines []line, idx *int, name string) (*model.Entity, error
 
 		if m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(`+marTypePattern+`)(?:\s+(.*))?$`, trimmed); m != nil {
 			field := model.Field{Name: m[1], Type: m[2]}
-			attrs := strings.Fields(strings.TrimSpace(m[3]))
-			for _, attr := range attrs {
-				switch attr {
-				case "primary":
-					field.Primary = true
-				case "auto":
-					field.Auto = true
-				case "optional":
-					field.Optional = true
-				case "":
-					// no-op
-				default:
-					return nil, fmt.Errorf("line %d: unknown field attribute %q", ln.number, attr)
-				}
+			if err := parseFieldAttributes(&field, strings.TrimSpace(m[3]), ln.number); err != nil {
+				return nil, err
 			}
 			ent.Fields = append(ent.Fields, field)
 			(*idx)++
@@ -882,6 +860,12 @@ func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.A
 			return fmt.Errorf("duplicate field %q in %s", f.Name, ent.Name)
 		}
 		seenFields[f.Name] = true
+		if f.Default != nil && f.Primary {
+			return fmt.Errorf("field %s in %s cannot use default together with primary", f.Name, ent.Name)
+		}
+		if f.Default != nil && f.Auto {
+			return fmt.Errorf("field %s in %s cannot use default together with auto", f.Name, ent.Name)
+		}
 		if f.Primary {
 			primaryCount++
 		}
@@ -1051,7 +1035,7 @@ func parseAliasFieldToken(alias *model.TypeAlias, seen map[string]bool, token st
 	}
 	m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(`+marTypePattern+`)$`, token)
 	if m == nil {
-		return fmt.Errorf("line %d: invalid field in type alias %s. Expected `name : Type` with Int/String/Bool/Float", lineNo, alias.Name)
+		return fmt.Errorf("line %d: invalid field in type alias %s. Expected `name : Type` with Int/String/Bool/Float/Posix", lineNo, alias.Name)
 	}
 	name := m[1]
 	if seen[name] {
@@ -1491,6 +1475,121 @@ func mustInt(s string) int {
 
 func defaultDatabaseName(appName string) string {
 	return toKebab(appName) + ".db"
+}
+
+func parseFieldAttributes(field *model.Field, raw string, lineNo int) error {
+	tokens, err := tokenizeFieldAttributes(raw)
+	if err != nil {
+		return fmt.Errorf("line %d: %w", lineNo, err)
+	}
+	for i := 0; i < len(tokens); i++ {
+		switch tokens[i] {
+		case "":
+			continue
+		case "primary":
+			field.Primary = true
+		case "auto":
+			field.Auto = true
+		case "optional":
+			field.Optional = true
+		case "default":
+			if i+1 >= len(tokens) {
+				return fmt.Errorf("line %d: default requires a literal value", lineNo)
+			}
+			defaultValue, err := parseFieldDefaultLiteral(field.Type, tokens[i+1], lineNo)
+			if err != nil {
+				return err
+			}
+			field.Default = defaultValue
+			i++
+		default:
+			return fmt.Errorf("line %d: unknown field attribute %q", lineNo, tokens[i])
+		}
+	}
+	return nil
+}
+
+func tokenizeFieldAttributes(raw string) ([]string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	var tokens []string
+	var current strings.Builder
+	inString := false
+	escaped := false
+
+	for _, r := range trimmed {
+		switch {
+		case inString:
+			current.WriteRune(r)
+			if escaped {
+				escaped = false
+			} else if r == '\\' {
+				escaped = true
+			} else if r == '"' {
+				inString = false
+			}
+		case unicode.IsSpace(r):
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(r)
+			if r == '"' {
+				inString = true
+			}
+		}
+	}
+
+	if inString {
+		return nil, fmt.Errorf("unterminated string literal in field attributes")
+	}
+	if current.Len() > 0 {
+		tokens = append(tokens, current.String())
+	}
+	return tokens, nil
+}
+
+func parseFieldDefaultLiteral(fieldType string, raw string, lineNo int) (any, error) {
+	switch fieldType {
+	case "String":
+		if !(strings.HasPrefix(raw, "\"") && strings.HasSuffix(raw, "\"")) {
+			return nil, fmt.Errorf("line %d: field default for %s must be a string literal", lineNo, fieldType)
+		}
+		unquoted, err := strconv.Unquote(raw)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: invalid string literal %q", lineNo, raw)
+		}
+		return unquoted, nil
+	case "Bool":
+		if raw == "true" {
+			return true, nil
+		}
+		if raw == "false" {
+			return false, nil
+		}
+		return nil, fmt.Errorf("line %d: field default for %s must be true or false", lineNo, fieldType)
+	case "Int", "Posix":
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: field default for %s must be an integer literal", lineNo, fieldType)
+		}
+		return n, nil
+	case "Float":
+		if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			return float64(n), nil
+		}
+		f, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: field default for %s must be a numeric literal", lineNo, fieldType)
+		}
+		return f, nil
+	default:
+		return nil, fmt.Errorf("line %d: unsupported field type %s", lineNo, fieldType)
+	}
 }
 
 func toKebab(v string) string {

@@ -73,6 +73,7 @@ var (
 		"action":                                  "Declares an action endpoint with `input` and one or more `create` steps.",
 		"create":                                  "Adds one create step inside an action block.",
 		"optional":                                "Marks a field as nullable.",
+		"default":                                 "Sets a literal default value for a field. New required fields with defaults can be added automatically during migration.",
 		"primary":                                 "Marks a field as primary key.",
 		"auto":                                    "Marks a field as auto-generated.",
 		"input":                                   "References the action input record (e.g. `input.userId`).",

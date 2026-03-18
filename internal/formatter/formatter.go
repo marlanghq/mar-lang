@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"mar/internal/parser"
 )
@@ -239,7 +240,7 @@ func normalizeLine(trimmed string, state *formatState) string {
 			if attrs == "" {
 				return m[1] + ": " + m[2]
 			}
-			return m[1] + ": " + m[2] + " " + collapseSpaces(attrs)
+			return m[1] + ": " + m[2] + " " + normalizeFieldAttributes(attrs)
 		}
 		if m := ruleRe.FindStringSubmatch(trimmed); m != nil {
 			return `rule "` + m[1] + `" expect ` + strings.TrimSpace(m[2])
@@ -334,6 +335,58 @@ func bracketDelta(line string) int {
 
 func collapseSpaces(value string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+}
+
+func normalizeFieldAttributes(value string) string {
+	tokens, err := tokenizeFieldAttributes(value)
+	if err != nil {
+		return collapseSpaces(value)
+	}
+	return strings.Join(tokens, " ")
+}
+
+func tokenizeFieldAttributes(raw string) ([]string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	var tokens []string
+	var current strings.Builder
+	inString := false
+	escaped := false
+
+	for _, r := range trimmed {
+		switch {
+		case inString:
+			current.WriteRune(r)
+			if escaped {
+				escaped = false
+			} else if r == '\\' {
+				escaped = true
+			} else if r == '"' {
+				inString = false
+			}
+		case unicode.IsSpace(r):
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(r)
+			if r == '"' {
+				inString = true
+			}
+		}
+	}
+
+	if inString {
+		return nil, fmt.Errorf("unterminated string literal in field attributes")
+	}
+	if current.Len() > 0 {
+		tokens = append(tokens, current.String())
+	}
+	return tokens, nil
 }
 
 func isCommentLine(trimmed string) bool {

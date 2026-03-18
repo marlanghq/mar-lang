@@ -2492,6 +2492,25 @@ fieldPlaceholder fieldName =
     "Enter " ++ String.toLower (fieldLabel fieldName)
 
 
+fieldDefaultText : Field -> String
+fieldDefaultText field =
+    case field.defaultValue of
+        Just defaultValue ->
+            valueToString defaultValue
+
+        Nothing ->
+            case field.fieldType of
+                BoolType ->
+                    if field.optional then
+                        ""
+
+                    else
+                        "false"
+
+                _ ->
+                    ""
+
+
 placeholderForType : String -> String -> String
 placeholderForType fieldName fieldType =
     if fieldType == "Posix" then
@@ -2653,16 +2672,7 @@ formDefaults model =
                 |> List.map
                     (\field ->
                         ( field.name
-                        , case field.fieldType of
-                            BoolType ->
-                                if field.optional then
-                                    ""
-
-                                else
-                                    "false"
-
-                            _ ->
-                                ""
+                        , fieldDefaultText field
                         )
                     )
                 |> Dict.fromList
@@ -6803,6 +6813,12 @@ viewEntitySchema model =
 
                               else
                                 none
+                            , case field.defaultValue of
+                                Just _ ->
+                                    badge "default"
+
+                                Nothing ->
+                                    none
                             ]
                     )
                     rowsForEntity

@@ -147,6 +147,92 @@ entity Todo {
 	}
 }
 
+func TestParseSupportsFieldDefaults(t *testing.T) {
+	src := `
+app TodoApi
+
+entity Todo {
+  title: String default "Untitled task"
+  done: Bool default false
+  points: Int default 0
+  progress: Float default 0.5
+  due_at: Posix default 1742203200000
+}
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	var todo *model.Entity
+	for i := range app.Entities {
+		if app.Entities[i].Name == "Todo" {
+			todo = &app.Entities[i]
+			break
+		}
+	}
+	if todo == nil {
+		t.Fatal("expected Todo entity to be present")
+	}
+
+	assertFieldDefault := func(name string, expected any) {
+		t.Helper()
+		for _, field := range todo.Fields {
+			if field.Name == name {
+				if field.Default != expected {
+					t.Fatalf("expected default for %s to be %#v, got %#v", name, expected, field.Default)
+				}
+				return
+			}
+		}
+		t.Fatalf("expected field %s to be present", name)
+	}
+
+	assertFieldDefault("title", "Untitled task")
+	assertFieldDefault("done", false)
+	assertFieldDefault("points", int64(0))
+	assertFieldDefault("progress", 0.5)
+	assertFieldDefault("due_at", int64(1742203200000))
+}
+
+func TestParseRejectsInvalidFieldDefaultType(t *testing.T) {
+	src := `
+app TodoApi
+
+entity Todo {
+  done: Bool default "nope"
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for invalid field default")
+	}
+	if !strings.Contains(err.Error(), "field default for Bool must be true or false") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsDefaultOnAutoPrimaryField(t *testing.T) {
+	src := `
+app TodoApi
+
+entity Todo {
+  id: Int primary auto default 1
+  title: String
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for default on auto primary field")
+	}
+	if !strings.Contains(err.Error(), "cannot use default together with primary") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParseSupportsPosixEntityFields(t *testing.T) {
 	src := `
 app TodoApi

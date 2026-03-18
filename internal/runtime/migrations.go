@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"mar/internal/model"
@@ -158,8 +159,8 @@ func (r *Runtime) migrateEntityTable(entity *model.Entity) error {
 			if field.Primary || field.Auto {
 				return fmt.Errorf("migration blocked for entity %s: cannot auto-add primary/auto field %q to existing table %s", entity.Name, field.Name, entity.Table)
 			}
-			if !field.Optional {
-				return fmt.Errorf("migration blocked for entity %s: cannot auto-add required field %q to existing table %s", entity.Name, field.Name, entity.Table)
+			if !field.Optional && field.Default == nil {
+				return fmt.Errorf("migration blocked for entity %s: cannot auto-add required field %q (%s) to existing table %s", entity.Name, field.Name, field.Type, entity.Table)
 			}
 			table, _ := quoteIdentifier(entity.Table)
 			sqlText := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", table, entityColumnDefinition(&field))
@@ -341,7 +342,47 @@ func entityColumnDefinition(field *model.Field) string {
 	if !field.Optional && !field.Primary {
 		parts = append(parts, "NOT NULL")
 	}
+	if defaultSQL, ok := fieldDefaultSQL(field); ok {
+		parts = append(parts, "DEFAULT "+defaultSQL)
+	}
 	return strings.Join(parts, " ")
+}
+
+func fieldDefaultSQL(field *model.Field) (string, bool) {
+	if field.Default == nil {
+		return "", false
+	}
+	switch field.Type {
+	case "String":
+		text, ok := field.Default.(string)
+		if !ok {
+			return "", false
+		}
+		return "'" + strings.ReplaceAll(text, "'", "''") + "'", true
+	case "Bool":
+		boolean, ok := field.Default.(bool)
+		if !ok {
+			return "", false
+		}
+		if boolean {
+			return "1", true
+		}
+		return "0", true
+	case "Int", "Posix":
+		number, ok := toInt64(field.Default)
+		if !ok {
+			return "", false
+		}
+		return strconv.FormatInt(number, 10), true
+	case "Float":
+		number, ok := toFloat64(field.Default)
+		if !ok {
+			return "", false
+		}
+		return strconv.FormatFloat(number, 'f', -1, 64), true
+	default:
+		return "", false
+	}
 }
 
 func staticColumnDefinition(column staticColumn) string {

@@ -99,16 +99,24 @@ func runDev(binaryName, inputPath, outputPath string) error {
 			return
 		}
 		process = nextProcess
-		if !adminOpened {
-			adminURL := fmt.Sprintf("http://127.0.0.1:%d/_mar/admin", app.Port)
-			healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", app.Port)
-			if err := waitForDevServer(healthURL, 8*time.Second); err != nil {
-				fmt.Printf("%s %s\n", colorizeCLI(useColor, "\033[1;33m", "Warning:"), "server is still starting; open "+adminURL+" manually if needed.")
-			} else if err := openBrowser(adminURL); err != nil {
+		adminURL := fmt.Sprintf("http://127.0.0.1:%d/_mar/admin", app.Port)
+		healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", app.Port)
+		ready, exited, processErr := waitForDevServer(healthURL, 8*time.Second, process.done)
+		if exited {
+			process = nil
+			if processErr != nil {
+				fmt.Printf("%s %s\n", colorizeCLI(useColor, "\033[1;31m", "App exited:"), processErr)
+			}
+			return
+		}
+		if !ready {
+			fmt.Printf("%s %s\n", colorizeCLI(useColor, "\033[1;33m", "Warning:"), "server is still starting; open "+adminURL+" manually if needed.")
+		} else if !adminOpened {
+			if err := openBrowser(adminURL); err != nil {
 				fmt.Printf("%s %s\n", colorizeCLI(useColor, "\033[1;33m", "Warning:"), "could not open browser: "+err.Error())
 			}
-			adminOpened = true
 		}
+		adminOpened = true
 
 		fmt.Printf(
 			"\n%s %s (%d ms)\n",
@@ -281,20 +289,32 @@ func resolveDevDatabaseOverride(sourcePath string, databasePath string) string {
 	return filepath.Join(filepath.Dir(absoluteSource), cleanedDatabase)
 }
 
-func waitForDevServer(url string, timeout time.Duration) error {
+func waitForDevServer(url string, timeout time.Duration, processDone <-chan error) (bool, bool, error) {
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
+		select {
+		case err := <-processDone:
+			return false, true, err
+		default:
+		}
+
 		resp, err := client.Get(url)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 500 {
-				return nil
+				return true, false, nil
 			}
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
 
-	return fmt.Errorf("timed out waiting for %s", url)
+	select {
+	case err := <-processDone:
+		return false, true, err
+	default:
+	}
+
+	return false, false, nil
 }

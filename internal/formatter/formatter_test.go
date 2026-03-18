@@ -58,6 +58,32 @@ done:Bool optional
 	}
 }
 
+func TestFormatKeepsStringDefaultLiteralsIntact(t *testing.T) {
+	src := `
+app TodoApi
+entity Todo{
+title:String default   "hello   world"
+done:Bool default false
+}
+`
+
+	formatted, err := Format(src)
+	if err != nil {
+		t.Fatalf("format failed: %v", err)
+	}
+
+	expected := "" +
+		"app TodoApi\n" +
+		"entity Todo {\n" +
+		"  title: String default \"hello   world\"\n" +
+		"  done: Bool default false\n" +
+		"}\n"
+
+	if formatted != expected {
+		t.Fatalf("unexpected formatted output\n--- expected ---\n%s\n--- got ---\n%s", expected, formatted)
+	}
+}
+
 func TestFormatInvalidSourceReturnsParserError(t *testing.T) {
 	src := `
 app Broken

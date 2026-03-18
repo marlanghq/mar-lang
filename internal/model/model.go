@@ -69,6 +69,7 @@ type Field struct {
 	Primary  bool   `json:"primary"`
 	Auto     bool   `json:"auto"`
 	Optional bool   `json:"optional"`
+	Default  any    `json:"default,omitempty"`
 }
 
 type Rule struct {

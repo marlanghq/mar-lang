@@ -12,7 +12,7 @@ var (
 	typeChangeRe   = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): type changed from ([^ ]+) to ([^ ]+) in table ([^ ]+)$`)
 	pkChangeRe     = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): primary key shape changed in table ([^ ]+)$`)
 	nullChangeRe   = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): nullability changed in table ([^ ]+)$`)
-	addRequiredRe  = regexp.MustCompile(`^migration blocked for entity ([^:]+): cannot auto-add required field "([^"]+)" to existing table ([^ ]+)$`)
+	addRequiredRe  = regexp.MustCompile(`^migration blocked for entity ([^:]+): cannot auto-add required field "([^"]+)" \(([^)]+)\) to existing table ([^ ]+)$`)
 	addPrimaryRe   = regexp.MustCompile(`^migration blocked for entity ([^:]+): cannot auto-add primary/auto field "([^"]+)" to existing table ([^ ]+)$`)
 	internalStrict = regexp.MustCompile(`^migration blocked for internal table ([^:]+): cannot auto-add strict column "([^"]+)"$`)
 	uniqueIndexRe  = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): duplicate values prevent unique index creation in table ([^ ]+)$`)
@@ -106,10 +106,64 @@ func PrintStartupError(err error, _ string) {
 	fmt.Fprintln(os.Stderr, colorize(useColor, yellow, "Hint:"))
 	if info.Kind == blockedUniqueIndex {
 		fmt.Fprintln(os.Stderr, "  Remove duplicate values for this field in the current database.")
+	} else if info.Kind == blockedAddRequired && info.Field != "" && info.ExpectedType != "" {
+		optionalExample := colorizedFieldExample(useColor, info.Field, info.ExpectedType, "optional", "")
+		defaultExample := colorizedFieldExample(useColor, info.Field, info.ExpectedType, "default", suggestedDefaultLiteral(info.ExpectedType))
+		fmt.Fprintln(os.Stderr, "  You have a few options:")
+		fmt.Fprintln(os.Stderr, "  1. Run a manual SQL migration to update the current database schema.")
+		fmt.Fprintf(os.Stderr, "  2. Make the new field optional, for example: %s\n", optionalExample)
+		fmt.Fprintf(os.Stderr, "  3. Keep the field required and give it a default, for example: %s\n", defaultExample)
 	} else {
 		fmt.Fprintln(os.Stderr, "  Run a manual SQL migration, or update your Mar schema to match the current database.")
 	}
 	fmt.Fprintln(os.Stderr)
+}
+
+func colorizedFieldExample(useColor bool, fieldName, fieldType, modifier, literal string) string {
+	example := fieldName + ": " + fieldType + " " + modifier
+	if literal != "" {
+		example += " " + literal
+	}
+	if !useColor {
+		return example
+	}
+
+	fieldColor := "\033[1;97m"
+	typeColor := "\033[38;5;141m"
+	modifierColor := "\033[38;5;110m"
+	literalColor := marEditLiteralColor(literal)
+
+	colored := colorize(useColor, fieldColor, fieldName+":") + " " + colorize(useColor, typeColor, fieldType) + " " + colorize(useColor, modifierColor, modifier)
+	if literal != "" {
+		colored += " " + colorize(useColor, literalColor, literal)
+	}
+	return colored
+}
+
+func suggestedDefaultLiteral(fieldType string) string {
+	switch strings.TrimSpace(fieldType) {
+	case "String":
+		return `""`
+	case "Bool":
+		return "false"
+	case "Float":
+		return "0.0"
+	case "Int", "Posix":
+		return "0"
+	default:
+		return "0"
+	}
+}
+
+func marEditLiteralColor(literal string) string {
+	trimmed := strings.TrimSpace(literal)
+	if trimmed == "" {
+		return "\033[38;5;110m"
+	}
+	if strings.HasPrefix(trimmed, `"`) && strings.HasSuffix(trimmed, `"`) {
+		return "\033[38;5;114m"
+	}
+	return "\033[38;5;179m"
 }
 
 func printFriendlyStartupError(err *startupFriendlyError) {
@@ -175,12 +229,13 @@ func parseMigrationBlocked(msg string) (migrationBlockedInfo, bool) {
 			Table:  m[3],
 		}, true
 	}
-	if m := addRequiredRe.FindStringSubmatch(msg); len(m) == 4 {
+	if m := addRequiredRe.FindStringSubmatch(msg); len(m) == 5 {
 		return migrationBlockedInfo{
-			Kind:   blockedAddRequired,
-			Entity: m[1],
-			Field:  m[2],
-			Table:  m[3],
+			Kind:         blockedAddRequired,
+			Entity:       m[1],
+			Field:        m[2],
+			ExpectedType: m[3],
+			Table:        m[4],
 		}, true
 	}
 	if m := addPrimaryRe.FindStringSubmatch(msg); len(m) == 4 {

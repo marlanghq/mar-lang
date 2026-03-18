@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"mar/internal/model"
 )
 
 func TestSlugifyFlyAppName(t *testing.T) {
@@ -81,5 +83,22 @@ func TestFormatFlyInitNoteHighlightsSMTPPasswordEnv(t *testing.T) {
 
 	if !strings.Contains(got, "\033[1;36mRESEND_API_KEY\033[0m") {
 		t.Fatalf("expected SMTPPasswordEnv to be cyan, got %q", got)
+	}
+}
+
+func TestValidateFlyInitPrereqsBlocksPlaceholderEmailBeforePrompts(t *testing.T) {
+	err := validateFlyInitPrereqs(&model.App{
+		Auth: &model.AuthConfig{
+			EmailFrom: "no-reply@mar.local",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected placeholder email to block fly init")
+	}
+	if !strings.Contains(err.Error(), "Fly init blocked") {
+		t.Fatalf("expected fly init blocked message, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "auth.email_from is still using a placeholder value") {
+		t.Fatalf("expected placeholder email explanation, got %q", err.Error())
 	}
 }

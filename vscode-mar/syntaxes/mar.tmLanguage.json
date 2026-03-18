@@ -252,7 +252,7 @@
         },
         {
           "name": "storage.modifier.mar",
-          "match": "\\b(primary|auto|optional)\\b"
+          "match": "\\b(primary|auto|optional|default)\\b"
         },
         {
           "name": "keyword.operator.logical.mar",

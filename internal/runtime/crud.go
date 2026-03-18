@@ -305,6 +305,16 @@ func buildInsert(entity *model.Entity, payload map[string]any) (*insertBuild, er
 		}
 		value, ok := payload[field.Name]
 		if !ok {
+			if field.Default != nil {
+				dbValue, apiValue, err := normalizeInputValue(&field, field.Default)
+				if err != nil {
+					return nil, err
+				}
+				out.Columns = append(out.Columns, field.Name)
+				out.Values = append(out.Values, dbValue)
+				out.Context[field.Name] = apiValue
+				continue
+			}
 			if !field.Optional {
 				return nil, fmt.Errorf("missing required field %s", field.Name)
 			}

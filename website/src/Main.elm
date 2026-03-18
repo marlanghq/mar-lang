@@ -401,8 +401,8 @@ topBar model =
             , wrappedRow [ width fill, spacing 8 ]
                 [ navItem model.route Home "Home"
                 , navItem model.route GettingStarted "Getting Started"
-                , navItem model.route AdvancedGuide "Advanced"
                 , navItem model.route Examples "Examples"
+                , navItem model.route AdvancedGuide "Advanced"
                 ]
             ]
         ]
@@ -783,7 +783,7 @@ docSearchSectionText maybeSectionId =
                     "Advanced Guide. Core concepts of the language. Mar is a declarative backend DSL inspired by Elm, PocketBase, and Rails, implemented in Go with focus on readability, maintainability, and simple deployment."
 
                 "syntax-model" ->
-                    "Syntax model. Top-level statements: app, port, database, public, system, auth, entity, type alias, action. Fields use the form fieldName: Type with modifiers such as primary, auto, and optional. Built-in field types include Int, String, Bool, Float, and Posix. Posix follows Elm Time.Posix and stores Unix milliseconds. Comments use Elm-style line comments."
+                    "Syntax model. Top-level statements: app, port, database, public, system, auth, entity, type alias, action. Fields use the form fieldName: Type with modifiers such as primary, auto, optional, and default. Built-in field types include Int, String, Bool, Float, and Posix. Posix follows Elm Time.Posix and stores Unix milliseconds. Comments use Elm-style line comments."
 
                 "authentication-and-authorization" ->
                     "Authentication and authorization. Mar includes a built-in email-code login flow and per-operation authorization rules. Authentication endpoints are always available. Every Mar app includes a built-in User entity that you may extend. Entity access is deny-by-default unless you declare authorize rules. Admin always has read-only access to the built-in User entity, even without explicit authorize rules. authorize all when sets a default rule for list, get, create, update, and delete, and specific operations can still override it. System features use the same session and require role equals admin."
@@ -816,7 +816,7 @@ docSearchSectionText maybeSectionId =
                     "Generated endpoints. CRUD, actions, auth, health, schema, version, and admin-related endpoints are generated automatically. Each entity gets REST CRUD endpoints. Typed actions are exposed as POST /actions/<name>. System endpoints include /health, /_mar/admin, /_mar/schema, and /_mar/version. Admin-only system endpoints include /_mar/version/admin, /_mar/perf, /_mar/request-logs, and /_mar/backups."
 
                 "migrations" ->
-                    "Database Schema Migrations. Automatic migrations run on startup. Safe changes are applied. Unsafe changes are blocked with clear errors."
+                    "Database Schema Migrations. Automatic migrations run on startup. Safe changes such as new optional columns and new required columns with literal defaults are applied. Unsafe changes are blocked with clear errors."
 
                 "tooling" ->
                     "Tooling. The mar CLI supports the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned."
@@ -883,13 +883,13 @@ docSearchRouteText route =
             "Advanced guide fundamentals language reference runtime tooling deploy compiler."
 
         AdvancedFundamentals ->
-            "Advanced Guide Fundamentals. Mar is a declarative backend DSL inspired by Elm, PocketBase, and Rails, implemented in Go with focus on readability, maintainability, and simple deployment. Fundamentals. Mar reads top-to-bottom as a declarative app definition. A Mar app is centered around entities, rules, authorization, auth configuration, and typed actions. Quick examples. Syntax model. Top-level statements: app, port, database, public, system, auth, entity, type alias, action. Fields use the form fieldName: Type with modifiers such as primary, auto, and optional. Comments use Elm-style line comments. Authentication and Authorization. Mar includes a built-in email-code login flow and per-operation authorization rules. Authentication endpoints are always available. Every Mar app includes a built-in User entity that you may extend. Entity access is deny-by-default unless you declare authorize rules. Admin always has read-only access to the built-in User entity, even without explicit authorize rules. authorize all when sets a default rule for list, get, create, update, and delete, and specific operations can still override it. System features use the same session and require role equals admin. Rules and Typed Actions. Rules are for validation close to the entity definition. Actions are for multi-step writes that must succeed or fail together. rule validates entity data and returns HTTP 422 when validation fails. Actions run in a single atomic transaction. Mar checks input types and assigned entity fields at compile time. Current limitations. Single .mar entry file per app. No multi-file projects or imports."
+            "Advanced Guide Fundamentals. Mar is a declarative backend DSL inspired by Elm, PocketBase, and Rails, implemented in Go with focus on readability, maintainability, and simple deployment. Fundamentals. Mar reads top-to-bottom as a declarative app definition. A Mar app is centered around entities, rules, authorization, auth configuration, and typed actions. Quick examples. Syntax model. Top-level statements: app, port, database, public, system, auth, entity, type alias, action. Fields use the form fieldName: Type with modifiers such as primary, auto, optional, and default. Comments use Elm-style line comments. Authentication and Authorization. Mar includes a built-in email-code login flow and per-operation authorization rules. Authentication endpoints are always available. Every Mar app includes a built-in User entity that you may extend. Entity access is deny-by-default unless you declare authorize rules. Admin always has read-only access to the built-in User entity, even without explicit authorize rules. authorize all when sets a default rule for list, get, create, update, and delete, and specific operations can still override it. System features use the same session and require role equals admin. Rules and Typed Actions. Rules are for validation close to the entity definition. Actions are for multi-step writes that must succeed or fail together. rule validates entity data and returns HTTP 422 when validation fails. Actions run in a single atomic transaction. Mar checks input types and assigned entity fields at compile time. Current limitations. Single .mar entry file per app. No multi-file projects or imports."
 
         AdvancedLanguageReference ->
-            "Advanced Guide Language Reference. This reference lists the current keywords, built-in names, and primitive types used by the language. Top-level declarations: app, port, database, public, system, auth, entity, type alias, action. Entity fields and modifiers: primary, auto, optional. Built-in primitive types: Int, String, Bool, Float, Posix. Posix is a Unix-milliseconds timestamp aligned with Elm Time.Posix. Validation and authorization: rule, expect, when, authorize, all, list, get, create, update, delete. Actions: input, create. Auth config: User, code_ttl_minutes, session_ttl_hours, email_transport, email_from, email_subject, smtp_host, smtp_port, smtp_username, smtp_password_env, smtp_starttls. System config: request_logs_buffer, http_max_request_body_mb, auth_request_code_rate_limit_per_minute, auth_login_rate_limit_per_minute, admin_ui_session_ttl_hours, security_frame_policy, security_referrer_policy, security_content_type_nosniff, sqlite_journal_mode, sqlite_synchronous, sqlite_foreign_keys, sqlite_busy_timeout_ms, sqlite_wal_autocheckpoint, sqlite_journal_size_limit_mb, sqlite_mmap_size_mb, sqlite_cache_size_kb. Public frontend config: dir, mount, spa_fallback. Built-in functions and values: len, contains, startsWith, endsWith, matches, isRole, auth_authenticated, auth_email, auth_user_id, auth_role, true, false, null."
+            "Advanced Guide Language Reference. This reference lists the current keywords, built-in names, and primitive types used by the language. Top-level declarations: app, port, database, public, system, auth, entity, type alias, action. Entity fields and modifiers: primary, auto, optional, default. Built-in primitive types: Int, String, Bool, Float, Posix. Posix is a Unix-milliseconds timestamp aligned with Elm Time.Posix. Validation and authorization: rule, expect, when, authorize, all, list, get, create, update, delete. Actions: input, create. Auth config: User, code_ttl_minutes, session_ttl_hours, email_transport, email_from, email_subject, smtp_host, smtp_port, smtp_username, smtp_password_env, smtp_starttls. System config: request_logs_buffer, http_max_request_body_mb, auth_request_code_rate_limit_per_minute, auth_login_rate_limit_per_minute, admin_ui_session_ttl_hours, security_frame_policy, security_referrer_policy, security_content_type_nosniff, sqlite_journal_mode, sqlite_synchronous, sqlite_foreign_keys, sqlite_busy_timeout_ms, sqlite_wal_autocheckpoint, sqlite_journal_size_limit_mb, sqlite_mmap_size_mb, sqlite_cache_size_kb. Public frontend config: dir, mount, spa_fallback. Built-in functions and values: len, contains, startsWith, endsWith, matches, isRole, auth_authenticated, auth_email, auth_user_id, auth_role, true, false, null."
 
         AdvancedRuntime ->
-            "Advanced Guide Runtime. The runtime generated by Mar is meant to be practical by default: HTTP endpoints, SQLite storage, authentication, admin tooling, and migrations come from the same source file. System Configuration. Use system when you need to tune runtime behavior. This is where request logging, body limits, auth rate limits, admin UI session lifetime, security headers, and SQLite pragmas are configured. request_logs_buffer controls how many recent requests stay in memory for monitoring. http_max_request_body_mb limits request body size and returns HTTP 413 when exceeded. Auth rate limits control request-code and login attempts per minute. admin_ui_session_ttl_hours can shorten the embedded admin UI session without changing REST client sessions. Security settings apply response headers such as frame policy, referrer policy, and nosniff. SQLite settings are performance-first by default and can be overridden per app. Public Static Frontend. Mar can embed static frontend files into the final executable and optionally serve an SPA fallback. Generated Endpoints. CRUD, actions, auth, health, schema, version, and admin-related endpoints are generated automatically. Each entity gets REST CRUD endpoints. Typed actions are exposed as POST /actions/<name>. System endpoints include /health, /_mar/admin, /_mar/schema, and /_mar/version. Admin-only system endpoints include /_mar/version/admin, /_mar/perf, /_mar/request-logs, and /_mar/backups. Database Schema Migrations. Automatic migrations run on startup. Safe changes are applied. Unsafe changes are blocked with clear errors."
+            "Advanced Guide Runtime. The runtime generated by Mar is meant to be practical by default: HTTP endpoints, SQLite storage, authentication, admin tooling, and migrations come from the same source file. System Configuration. Use system when you need to tune runtime behavior. This is where request logging, body limits, auth rate limits, admin UI session lifetime, security headers, and SQLite pragmas are configured. request_logs_buffer controls how many recent requests stay in memory for monitoring. http_max_request_body_mb limits request body size and returns HTTP 413 when exceeded. Auth rate limits control request-code and login attempts per minute. admin_ui_session_ttl_hours can shorten the embedded admin UI session without changing REST client sessions. Security settings apply response headers such as frame policy, referrer policy, and nosniff. SQLite settings are performance-first by default and can be overridden per app. Public Static Frontend. Mar can embed static frontend files into the final executable and optionally serve an SPA fallback. Generated Endpoints. CRUD, actions, auth, health, schema, version, and admin-related endpoints are generated automatically. Each entity gets REST CRUD endpoints. Typed actions are exposed as POST /actions/<name>. System endpoints include /health, /_mar/admin, /_mar/schema, and /_mar/version. Admin-only system endpoints include /_mar/version/admin, /_mar/perf, /_mar/request-logs, and /_mar/backups. Database Schema Migrations. Automatic migrations run on startup. Safe changes such as new optional columns and new required columns with literal defaults are applied. Unsafe changes are blocked with clear errors."
 
         AdvancedTooling ->
             "Advanced Guide Tooling. The mar CLI supports the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned. Compiler and Runtime Commands. mar init store-app. mar dev store.mar. Edit with code store.mar or mar edit store.mar. mar edit is extremely experimental. mar compile store.mar. mar fly init store.mar. mar fly deploy store.mar. mar format store.mar. mar completion zsh. mar lsp. Shell completion. Mar can generate shell completion for zsh, bash, and fish so commands like mar fly and mar compile are suggested as you type. Add the command below to your shell's startup file. Zsh add this line to ~/.zshrc: eval \"$(mar completion zsh)\". Bash add this line to ~/.bashrc or ~/.bash_profile: source <(mar completion bash). Fish add this line to ~/.config/fish/config.fish: mar completion fish | source. Generated Client Output. When you publish an app with mar compile, Mar generates frontend clients for Elm and TypeScript. Elm client: dist/<name>/clients/<AppName>Client.elm. TypeScript client: dist/<name>/clients/<AppName>Client.ts. Both include CRUD functions, action functions, auth endpoints, and backend version access."
@@ -952,13 +952,13 @@ docSearchEntries =
       , route = AdvancedFundamentals
       , sectionId = Just "advanced-fundamentals"
       , summary = "Understand the core syntax, built-in User model, rules, and authorization."
-      , keywords = [ "language", "entities", "rules", "authorize", "user", "auth", "Posix", "timestamp", "Unix milliseconds" ]
+      , keywords = [ "language", "entities", "rules", "authorize", "user", "auth", "Posix", "timestamp", "Unix milliseconds", "default" ]
       }
     , { title = "Syntax model"
       , route = AdvancedFundamentals
       , sectionId = Just "syntax-model"
       , summary = "Top-level statements, fields, comments, and the basic shape of a Mar app."
-      , keywords = [ "app", "port", "database", "public", "system", "auth", "entity", "type alias", "action", "comments", "Posix", "Int", "String", "Bool", "Float" ]
+      , keywords = [ "app", "port", "database", "public", "system", "auth", "entity", "type alias", "action", "comments", "Posix", "Int", "String", "Bool", "Float", "default" ]
       }
     , { title = "Authentication and authorization"
       , route = AdvancedFundamentals
@@ -976,7 +976,7 @@ docSearchEntries =
       , route = AdvancedLanguageReference
       , sectionId = Just "language-reference"
       , summary = "Browse the current keywords, built-in names, primitive types, functions, and configuration options."
-      , keywords = [ "reference", "keywords", "functions", "system", "auth", "public", "Posix", "Int", "String", "Bool", "Float", "primitive types" ]
+      , keywords = [ "reference", "keywords", "functions", "system", "auth", "public", "Posix", "Int", "String", "Bool", "Float", "primitive types", "default" ]
       }
     , { title = "Validation and authorization reference"
       , route = AdvancedLanguageReference
@@ -1023,8 +1023,8 @@ docSearchEntries =
     , { title = "Database Schema Migrations"
       , route = AdvancedRuntime
       , sectionId = Just "migrations"
-      , summary = "Automatic database schema migrations on startup with safe changes applied and unsafe changes blocked."
-      , keywords = [ "migrations", "database schema", "startup", "schema changes", "blocked changes", "safe changes" ]
+      , summary = "Automatic database schema migrations on startup with optional columns and defaulted required columns applied safely."
+      , keywords = [ "migrations", "database schema", "startup", "schema changes", "blocked changes", "safe changes", "default", "optional columns" ]
       }
     , { title = "Tooling"
       , route = AdvancedTooling
@@ -1304,7 +1304,7 @@ advancedLanguagePage model =
                 [ docSubsectionTitle "Syntax Model"
                 , docList
                     [ "Top-level statements: app, port, database, public, system, auth, entity, type alias, action."
-                    , "Fields use the form fieldName: Type with optional modifiers such as primary, auto, and optional."
+                    , "Fields use the form fieldName: Type with optional modifiers such as primary, auto, optional, and default."
                     , "Built-in field types are Int, String, Bool, Float, and Posix. `Posix` follows Elm `Time.Posix` and stores Unix milliseconds."
                     , "Comments use Elm-style line comments: -- this is a comment."
                     ]
@@ -1373,6 +1373,7 @@ advancedLanguageReferencePage model =
                     [ languageReferenceItem "primary" "Marks a field as the primary key."
                     , languageReferenceItem "auto" "Marks a field as auto-generated."
                     , languageReferenceItem "optional" "Marks a field as nullable."
+                    , languageReferenceItem "default" "Assigns a literal default value to a field, such as `done: Bool default false`."
                     ]
                 , languageReferenceGroup "Built-in primitive types"
                     [ languageReferenceItem "Int" "Whole-number field type."
@@ -1480,8 +1481,8 @@ advancedRuntimePage model =
                 , bodyText "Mar applies schema migration logic automatically on startup. Safe changes are handled for you, while unsafe changes are blocked instead of being applied silently."
                 , docList
                     [ "Migrations run automatically on startup."
-                    , "Mar creates missing tables, adds new optional columns, and keeps auth/session storage ready."
-                    , "Unsafe changes such as type changes, primary key changes, nullability changes, and new required fields are blocked."
+                    , "Mar creates missing tables, adds new optional columns, adds new required columns when they define a literal default, and keeps auth/session storage ready."
+                    , "Unsafe changes such as type changes, primary key changes, nullability changes, and new required fields without defaults are blocked."
                     , "When blocked, startup fails with a clear migration error."
                     ]
                 ]
@@ -3579,10 +3580,10 @@ wordToken word =
     else if List.member word [ "app", "port", "database", "entity", "rule", "expect", "when", "authorize", "auth", "type", "alias", "action", "input", "create", "public", "system", "dir", "mount", "spa_fallback", "code_ttl_minutes", "session_ttl_hours", "email_transport", "email_from", "email_subject", "smtp_host", "smtp_port", "smtp_username", "smtp_password_env", "smtp_starttls", "request_logs_buffer", "http_max_request_body_mb", "auth_request_code_rate_limit_per_minute", "auth_login_rate_limit_per_minute", "admin_ui_session_ttl_hours", "security_frame_policy", "security_referrer_policy", "security_content_type_nosniff", "sqlite_journal_mode", "sqlite_synchronous", "sqlite_foreign_keys", "sqlite_busy_timeout_ms", "sqlite_wal_autocheckpoint", "sqlite_journal_size_limit_mb", "sqlite_mmap_size_mb", "sqlite_cache_size_kb" ] then
         token "#7AB8FF" word
 
-    else if List.member word [ "Int", "String", "Bool", "Float" ] then
+    else if List.member word [ "Int", "String", "Bool", "Float", "Posix" ] then
         token "#4FD1C5" word
 
-    else if List.member word [ "primary", "auto", "optional" ] then
+    else if List.member word [ "primary", "auto", "optional", "default" ] then
         token "#B7C5D9" word
 
     else if List.member word [ "len", "contains", "startsWith", "endsWith", "matches", "isRole" ] then

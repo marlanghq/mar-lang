@@ -369,6 +369,15 @@ func (r *Runtime) tryAutoCreateAuthUserWithRole(requestID, email, roleValue stri
 			placeholders = append(placeholders, "?")
 			values = append(values, roleValue)
 			ctx[field.Name] = roleValue
+		case field.Default != nil:
+			dbValue, apiValue, normalizeErr := normalizeInputValue(&field, field.Default)
+			if normalizeErr != nil {
+				return nil, false, normalizeErr
+			}
+			columns = append(columns, quoted)
+			placeholders = append(placeholders, "?")
+			values = append(values, dbValue)
+			ctx[field.Name] = apiValue
 		case field.Optional:
 			// Keep optional fields nil for auto-provisioned users.
 		default:

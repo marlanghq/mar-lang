@@ -6,13 +6,17 @@ func (r *Runtime) schemaPayload(requestID string) map[string]any {
 	for _, entity := range r.App.Entities {
 		fields := make([]map[string]any, 0, len(entity.Fields))
 		for _, field := range entity.Fields {
-			fields = append(fields, map[string]any{
+			fieldPayload := map[string]any{
 				"name":     field.Name,
 				"type":     field.Type,
 				"primary":  field.Primary,
 				"auto":     field.Auto,
 				"optional": field.Optional,
-			})
+			}
+			if field.Default != nil {
+				fieldPayload["default"] = field.Default
+			}
+			fields = append(fields, fieldPayload)
 		}
 		entities = append(entities, map[string]any{
 			"name":       entity.Name,
