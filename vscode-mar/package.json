@@ -12,6 +12,7 @@
   "engines": {
     "vscode": "^1.85.0"
   },
+  "icon": "media/icon.png",
   "main": "./extension.js",
   "categories": [
     "Programming Languages",
