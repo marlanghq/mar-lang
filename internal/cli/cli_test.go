@@ -145,7 +145,7 @@ func TestFlyUsageErrorUsesStyledCLIFormat(t *testing.T) {
 	if !strings.Contains(msg, "mar fly provision <app.mar>") {
 		t.Fatalf("expected fly provision usage command, got %q", msg)
 	}
-	if !strings.Contains(msg, "mar fly deploy <app.mar>") {
+	if !strings.Contains(msg, "mar fly deploy <app.mar> [--yes]") {
 		t.Fatalf("expected fly deploy usage command, got %q", msg)
 	}
 	if !strings.Contains(msg, "mar fly destroy <app.mar>") {
@@ -157,7 +157,7 @@ func TestFlyUsageErrorUsesStyledCLIFormat(t *testing.T) {
 	if !strings.Contains(msg, "Create the Fly app, volume, and secrets with: mar fly provision <app.mar>") {
 		t.Fatalf("expected fly provision hint, got %q", msg)
 	}
-	if !strings.Contains(msg, "Deploy the current app with: mar fly deploy <app.mar>") {
+	if !strings.Contains(msg, "Deploy the current app with: mar fly deploy <app.mar> [--yes]") {
 		t.Fatalf("expected fly deploy hint, got %q", msg)
 	}
 	if !strings.Contains(msg, "Permanently destroy the Fly.io app with: mar fly destroy <app.mar>") {

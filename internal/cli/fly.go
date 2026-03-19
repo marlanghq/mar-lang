@@ -84,10 +84,11 @@ func runFly(binaryName string, args []string) error {
 		}
 		return runFlyProvision(binaryName, args[1])
 	case "deploy":
-		if len(args) != 2 {
+		inputPath, assumeYes, ok := parseFlyDeployArgs(args[1:])
+		if !ok {
 			return flyUsageError(binaryName)
 		}
-		return runFlyDeploy(args[1])
+		return runFlyDeploy(inputPath, assumeYes)
 	case "destroy":
 		if len(args) != 2 {
 			return flyUsageError(binaryName)
@@ -104,14 +105,29 @@ func flyUsageError(binaryName string) error {
 	fmt.Fprintf(&b, "%s\n", colorizeCLI(useColor, "\033[1;31m", "Fly usage"))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly init <app.mar>", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly provision <app.mar>", binaryName))
-	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly deploy <app.mar>", binaryName))
+	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly deploy <app.mar> [--yes]", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly destroy <app.mar>", binaryName))
 	fmt.Fprintf(&b, "\n%s\n", colorizeCLI(useColor, "\033[1;33m", "Hint:"))
 	fmt.Fprintf(&b, "  Prepare Fly.io deployment files with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s fly init <app.mar>", binaryName)))
 	fmt.Fprintf(&b, "  Create the Fly app, volume, and secrets with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s fly provision <app.mar>", binaryName)))
-	fmt.Fprintf(&b, "  Deploy the current app with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s fly deploy <app.mar>", binaryName)))
+	fmt.Fprintf(&b, "  Deploy the current app with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s fly deploy <app.mar> [--yes]", binaryName)))
 	fmt.Fprintf(&b, "  Permanently destroy the Fly.io app with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s fly destroy <app.mar>", binaryName)))
 	return styledCLIError(strings.TrimRight(b.String(), "\n") + "\n")
+}
+
+func parseFlyDeployArgs(args []string) (inputPath string, assumeYes bool, ok bool) {
+	if len(args) == 1 && args[0] != "--yes" {
+		return args[0], false, true
+	}
+	if len(args) == 2 {
+		if args[0] == "--yes" && args[1] != "--yes" {
+			return args[1], true, true
+		}
+		if args[1] == "--yes" && args[0] != "--yes" {
+			return args[0], true, true
+		}
+	}
+	return "", false, false
 }
 
 func runFlyInit(binaryName, inputPath string) error {
@@ -523,27 +539,29 @@ func runFlyProvision(binaryName, inputPath string) error {
 	return nil
 }
 
-func runFlyDeploy(inputPath string) error {
+func runFlyDeploy(inputPath string, assumeYes bool) error {
 	useColor := cliSupportsANSIStream(os.Stdout)
 
 	app, err := parseMarFile(inputPath)
 	if err != nil {
 		return err
 	}
-	confirmed, err := confirmFlyAction(
-		"Fly deploy",
-		[]string{
-			"This step publishes the current version of your app to Fly.io.",
-			"It will rebuild the Linux executable, use the generated " + colorizeCLI(cliSupportsANSIStream(os.Stdout), "\033[1;35m", "deploy/fly/fly.toml") + " config, and run " + colorizeCLI(cliSupportsANSIStream(os.Stdout), "\033[1;32m", "fly deploy") + ".",
-			"If the deploy succeeds, the Fly.io app URL will be opened automatically.",
-		},
-		"Fly deploy canceled",
-	)
-	if err != nil {
-		return err
-	}
-	if !confirmed {
-		return nil
+	if !assumeYes {
+		confirmed, err := confirmFlyAction(
+			"Fly deploy",
+			[]string{
+				"This step publishes the current version of your app to Fly.io.",
+				"It will rebuild the Linux executable, use the generated " + colorizeCLI(cliSupportsANSIStream(os.Stdout), "\033[1;35m", "deploy/fly/fly.toml") + " config, and run " + colorizeCLI(cliSupportsANSIStream(os.Stdout), "\033[1;32m", "fly deploy") + ".",
+				"If the deploy succeeds, the Fly.io app URL will be opened automatically.",
+			},
+			"Fly deploy canceled",
+		)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return nil
+		}
 	}
 
 	buildRoot, outputName := defaultBuildLayout(inputPath, "")

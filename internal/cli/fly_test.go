@@ -238,3 +238,28 @@ func TestReadMaskedSecretInputTreatsCtrlCAsInterrupt(t *testing.T) {
 		t.Fatalf("expected interrupt error, got %v", err)
 	}
 }
+
+func TestParseFlyDeployArgsSupportsOptionalYes(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantPath  string
+		wantYes   bool
+		wantValid bool
+	}{
+		{name: "path only", args: []string{"todo.mar"}, wantPath: "todo.mar", wantYes: false, wantValid: true},
+		{name: "yes after path", args: []string{"todo.mar", "--yes"}, wantPath: "todo.mar", wantYes: true, wantValid: true},
+		{name: "yes before path", args: []string{"--yes", "todo.mar"}, wantPath: "todo.mar", wantYes: true, wantValid: true},
+		{name: "missing path", args: []string{"--yes"}, wantValid: false},
+		{name: "too many args", args: []string{"todo.mar", "--yes", "extra"}, wantValid: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotPath, gotYes, gotValid := parseFlyDeployArgs(tt.args)
+			if gotPath != tt.wantPath || gotYes != tt.wantYes || gotValid != tt.wantValid {
+				t.Fatalf("parseFlyDeployArgs(%q) = (%q, %v, %v), want (%q, %v, %v)", tt.args, gotPath, gotYes, gotValid, tt.wantPath, tt.wantYes, tt.wantValid)
+			}
+		})
+	}
+}
