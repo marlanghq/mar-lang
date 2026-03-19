@@ -2,7 +2,6 @@ port module Main exposing (main)
 
 import Browser
 import Browser.Navigation as Nav
-import Char
 import Element exposing (Attribute, Element, alignTop, below, centerX, column, el, fill, height, html, htmlAttribute, link, maximum, minimum, moveDown, newTabLink, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarX, scrollbarY, spacing, text, width, wrappedRow)
 import Element.Background as Background
 import Element.Border as Border
@@ -12,7 +11,6 @@ import Html
 import Html.Attributes as HtmlAttr
 import Html.Events as HtmlEvents
 import Json.Decode as Decode
-import String
 import Svg exposing (path, svg)
 import Svg.Attributes as SvgAttr
 import Url exposing (Url)
@@ -448,6 +446,7 @@ githubRepoLink =
         , label = html githubIcon
         }
 
+
 githubIcon : Html.Html msg
 githubIcon =
     svg
@@ -506,7 +505,7 @@ routeView model =
             advancedLanguagePage model
 
         AdvancedLanguageReference ->
-            advancedLanguageReferencePage model
+            advancedLanguageReferencePage
 
         AdvancedRuntime ->
             advancedRuntimePage model
@@ -518,7 +517,7 @@ routeView model =
             advancedDeployPage model
 
         AdvancedCompiler ->
-            advancedCompilerPage model
+            advancedCompilerPage
 
         Examples ->
             examplesPage model
@@ -868,40 +867,6 @@ docSearchSectionText maybeSectionId =
 
         Nothing ->
             ""
-
-
-docSearchRouteText : Route -> String
-docSearchRouteText route =
-    case route of
-        Home ->
-            "Home. A simple declarative backend language. Mar compiles declarative source into a self-contained server executable with API, authentication, authorization, admin tools, monitoring, logs, and database backups. Inspired by Elm, PocketBase, and Rails. Mar syntax example. Get Started. Advanced Guide. Examples. Why Mar. Less glue code. More backend. Declarative at its core. Opinionated on purpose. Everything bundled. Authentication, authorization, admin tools, logs, monitoring, and built-in database backups come together. Who Mar Is For. Strong fit for teams that want the backend to stay boring in the best way: simple to run, easy to update, operational from day one. People who want the backend to stay coherent, operational, and easy to update without a lot of handwritten glue. Ready to try Mar. Next: Getting Started."
-
-        GettingStarted ->
-            "Getting Started. Install Mar, iterate quickly with hot reload, and deploy as a single executable. Install. Download. Add to your PATH. Check. Choose an editor. Try mar edit in the terminal for quick experiments. It is extremely experimental. For a fuller editing experience, use the VSCode extension. Install Mar Developer Tools from Visual Studio Marketplace. The VSCode extension requires mar on your PATH to start LSP and formatting. Quick Start. Create a starter app with mar init todo. This creates a new todo folder with todo.mar, .gitignore, and README. Develop by entering the project folder and running mar dev todo.mar. Compile by entering the project folder and running mar compile todo.mar to package executables and generate clients. Serve by running the target executable from todo/dist/todo/<target>. Open the printed Admin URL. Mar compile produces a self-contained executable per target platform with API, auth, embedded Admin UI, monitoring dashboards, request logs, and SQLite backup tools. Ready for the next step. Next: Advanced Guide."
-
-        AdvancedGuide ->
-            "Advanced guide fundamentals language reference runtime tooling deploy compiler."
-
-        AdvancedFundamentals ->
-            "Advanced Guide Fundamentals. Mar is a declarative backend DSL inspired by Elm, PocketBase, and Rails, implemented in Go with focus on readability, maintainability, and simple deployment. Fundamentals. Mar reads top-to-bottom as a declarative app definition. A Mar app is centered around entities, rules, authorization, auth configuration, and typed actions. Quick examples. Syntax model. Top-level statements: app, port, database, public, system, auth, entity, type alias, action. Fields use the form fieldName: Type with modifiers such as primary, auto, optional, and default. Comments use Elm-style line comments. Authentication and Authorization. Mar includes a built-in email-code login flow and per-operation authorization rules. Authentication endpoints are always available. Every Mar app includes a built-in User entity that you may extend. Entity access is deny-by-default unless you declare authorize rules. Admin always has read-only access to the built-in User entity, even without explicit authorize rules. authorize all when sets a default rule for list, get, create, update, and delete, and specific operations can still override it. System features use the same session and require role equals admin. Rules and Typed Actions. Rules are for validation close to the entity definition. Actions are for multi-step reads and writes that must succeed or fail together. Action steps can load, create, update, and delete rows inside the same transaction. Steps may bind aliases such as order = create Order or todo = load Todo, and later steps may reference alias fields like order.id. rule validates entity data and returns HTTP 422 when validation fails. Actions run in a single atomic transaction. Mar checks input types and assigned entity fields at compile time. Current limitations. Single .mar entry file per app. No multi-file projects or imports."
-
-        AdvancedLanguageReference ->
-            "Advanced Guide Language Reference. This reference lists the current keywords, built-in names, and primitive types used by the language. Top-level declarations: app, port, database, public, system, auth, entity, type alias, action. Entity fields and modifiers: primary, auto, optional, default. Built-in primitive types: Int, String, Bool, Float, Posix. Posix is a Unix-milliseconds timestamp aligned with Elm Time.Posix. Validation and authorization: rule, expect, when, authorize, all, list, get, create, update, delete. Actions: input, load, create, update, delete, alias.field. Auth config: User, code_ttl_minutes, session_ttl_hours, email_transport, email_from, email_subject, smtp_host, smtp_port, smtp_username, smtp_password_env, smtp_starttls. System config: request_logs_buffer, http_max_request_body_mb, auth_request_code_rate_limit_per_minute, auth_login_rate_limit_per_minute, admin_ui_session_ttl_hours, security_frame_policy, security_referrer_policy, security_content_type_nosniff, sqlite_journal_mode, sqlite_synchronous, sqlite_foreign_keys, sqlite_busy_timeout_ms, sqlite_wal_autocheckpoint, sqlite_journal_size_limit_mb, sqlite_mmap_size_mb, sqlite_cache_size_kb. Public frontend config: dir, mount, spa_fallback. Built-in functions and values: len, contains, startsWith, endsWith, matches, isRole, auth_authenticated, auth_email, auth_user_id, auth_role, true, false, null."
-
-        AdvancedRuntime ->
-            "Advanced Guide Runtime. The runtime generated by Mar is meant to be practical by default: HTTP endpoints, SQLite storage, authentication, admin tooling, and migrations come from the same source file. System Configuration. Use system when you need to tune runtime behavior. This is where request logging, body limits, auth rate limits, admin UI session lifetime, security headers, and SQLite pragmas are configured. request_logs_buffer controls how many recent requests stay in memory for monitoring. http_max_request_body_mb limits request body size and returns HTTP 413 when exceeded. Auth rate limits control request-code and login attempts per minute. admin_ui_session_ttl_hours can shorten the embedded admin UI session without changing REST client sessions. Security settings apply response headers such as frame policy, referrer policy, and nosniff. SQLite settings are performance-first by default and can be overridden per app. Public Static Frontend. Mar can embed static frontend files into the final executable and optionally serve an SPA fallback. Generated Endpoints. CRUD, actions, auth, health, schema, version, and admin-related endpoints are generated automatically. Each entity gets REST CRUD endpoints. Typed actions are exposed as POST /actions/<name>. System endpoints include /health, /_mar/admin, /_mar/schema, and /_mar/version. Admin-only system endpoints include /_mar/version/admin, /_mar/perf, /_mar/request-logs, and /_mar/backups. Database Schema Migrations. Automatic migrations run on startup. Safe changes such as new optional columns and new required columns with literal defaults are applied. Unsafe changes are blocked with clear errors."
-
-        AdvancedTooling ->
-            "Advanced Guide Tooling. The mar CLI supports the day-to-day developer workflow, while the generated clients and editor support help keep frontend and backend aligned. Compiler and Runtime Commands. mar init store-app. mar dev store.mar. Edit with code store.mar or mar edit store.mar. mar edit is extremely experimental. mar compile store.mar. mar fly init store.mar. mar fly provision store.mar. mar fly deploy store.mar. mar fly destroy store.mar. mar format store.mar. mar completion zsh. mar lsp. Shell completion. Mar can generate shell completion for zsh, bash, and fish so commands like mar fly and mar compile are suggested as you type. Add the command below to your shell's startup file. Zsh add this line to ~/.zshrc: eval \"$(mar completion zsh)\". Bash add this line to ~/.bashrc or ~/.bash_profile: source <(mar completion bash). Fish add this line to ~/.config/fish/config.fish: mar completion fish | source. Generated Client Output. When you publish an app with mar compile, Mar generates frontend clients for Elm and TypeScript. Elm client: dist/<name>/clients/<AppName>Client.elm. TypeScript client: dist/<name>/clients/<AppName>Client.ts. Both include CRUD functions, action functions, auth endpoints, and backend version access."
-
-        AdvancedDeploy ->
-            "Advanced Guide Deploy. Mar is intentionally simple to deploy. In production, you usually need just two things: the executable for your target platform and a persistent place to store the SQLite database. Why deployment is simple. Mar compile produces a single executable per target platform. The runtime already includes the API, authentication, admin tools, logs, monitoring, and backup features. SQLite keeps the data model simple: one database file, no separate database service required. Email delivery. If your app uses email login codes, configure a real SMTP provider before deploying. We currently recommend Resend because it is simple to set up and works well with Mar's SMTP configuration, but any SMTP-compatible provider should work. Set the SMTP password as an environment variable on your provider. In this example, smtp_password_env points to RESEND_API_KEY. That means your deploy environment must define a RESEND_API_KEY variable with the SMTP password before the app starts. What production still needs. A persistent disk for the SQLite database. A real email provider to send login codes. Where you can deploy it. You can deploy a Mar app on any provider that can run a binary and give you persistent storage for the database file. Today, we recommend Fly.io. Deploy on Fly.io. Start with mar fly init, and Mar will prepare the Fly deployment files for your app. Then run mar fly provision to create the Fly app, create its volume, and set the SMTP secret. Finally, run mar fly deploy. Current limitations. SQLite needs persistent disk storage so your data survives restarts and redeploys in production. A single-machine setup is the simplest path when using SQLite."
-
-        AdvancedCompiler ->
-            "Advanced Guide Compiler. The compiler parses a single .mar file into a typed app model, validates it, generates clients, packages a manifest bundle with admin/public assets, and stamps that bundle into prebuilt runtime executables for all supported platforms. Compiler pipeline. Parse. Validate. Generate clients. Build bundle. Stamp prebuilt runtimes. Single executable per target platform. Typed clients. Packaged executables."
-
-        Examples ->
-            "Examples. Todo API. Minimal CRUD example. todo.mar. BookStore API. Auth, roles, and transactional action. store.mar. placeBookOrder. Examples of Mar apps."
 
 
 docSearchEntries : List DocSearchEntry
@@ -1348,8 +1313,8 @@ advancedLanguagePage model =
         ]
 
 
-advancedLanguageReferencePage : Model -> Element Msg
-advancedLanguageReferencePage model =
+advancedLanguageReferencePage : Element Msg
+advancedLanguageReferencePage =
     column
         [ width fill
         , spacing 20
@@ -1594,7 +1559,7 @@ advancedToolingPage model =
                 ]
             , anchoredSection "generated-client-output"
                 [ docSubsectionTitle "Generated Client Output"
-            , bodyText "When you publish an app with mar compile, Mar also generates frontend clients for Elm and TypeScript. These clients wrap the generated HTTP API with named functions, so you do not need to hand-write fetch calls, URLs, or request payload shapes."
+                , bodyText "When you publish an app with mar compile, Mar also generates frontend clients for Elm and TypeScript. These clients wrap the generated HTTP API with named functions, so you do not need to hand-write fetch calls, URLs, or request payload shapes."
                 , docList
                     [ "Elm client: dist/<name>/clients/<AppName>Client.elm"
                     , "TypeScript client: dist/<name>/clients/<AppName>Client.ts"
@@ -1700,8 +1665,8 @@ advancedDeployPage model =
         ]
 
 
-advancedCompilerPage : Model -> Element Msg
-advancedCompilerPage model =
+advancedCompilerPage : Element Msg
+advancedCompilerPage =
     column
         [ width fill
         , spacing 20
@@ -2180,21 +2145,6 @@ inlineCommand value =
         , Font.color (rgb255 28 66 108)
         ]
         (text value)
-
-
-subsectionLabel : String -> Element Msg
-subsectionLabel label =
-    el
-        [ Font.size 14
-        , Font.semiBold
-        , Font.color (rgb255 61 91 125)
-        , Background.color (rgb255 242 247 255)
-        , Border.width 1
-        , Border.color (rgb255 215 226 241)
-        , Border.rounded 999
-        , paddingEach { top = 5, right = 10, bottom = 5, left = 10 }
-        ]
-        (text label)
 
 
 docSubsectionTitle : String -> Element Msg
@@ -2681,30 +2631,6 @@ routeLabel route =
             "Home"
 
 
-primaryButton : String -> String -> Element Msg
-primaryButton label target =
-    link
-        (buttonAttributes
-            (rgb255 45 126 210)
-            (rgb255 245 250 255)
-        )
-        { url = target
-        , label = text label
-        }
-
-
-secondaryButton : String -> String -> Element Msg
-secondaryButton label target =
-    link
-        (buttonAttributes
-            (rgb255 230 239 250)
-            (rgb255 36 82 132)
-        )
-        { url = target
-        , label = text label
-        }
-
-
 buttonAttributes : Element.Color -> Element.Color -> List (Attribute Msg)
 buttonAttributes bg fg =
     [ Background.color bg
@@ -2747,11 +2673,6 @@ navLink label target isCurrent =
         }
 
 
-instructionText : String -> Element Msg
-instructionText value =
-    paragraph [ Font.size 16, Font.color (rgb255 70 93 121), width fill ] [ text value ]
-
-
 installSubitem : Model -> String -> String -> Element Msg
 installSubitem model platform command =
     column
@@ -2778,19 +2699,6 @@ installCommandSnippet model command =
             [ codeInlineSmall command
             , copyLink model command
             ]
-
-
-bulletList : List String -> Element Msg
-bulletList items =
-    column [ spacing 8, width fill ] (List.map bulletItem items)
-
-
-bulletItem : String -> Element Msg
-bulletItem value =
-    row [ spacing 8, width fill ]
-        [ el [ Element.alignTop, moveDown -2, Font.color (rgb255 93 107 126), Font.bold ] (text "•")
-        , paragraph [ Element.alignTop, Font.size 16, Font.color (rgb255 72 95 123), width fill ] [ text value ]
-        ]
 
 
 docList : List String -> Element Msg
@@ -3630,140 +3538,9 @@ codeBlock model =
     codeFromString model "todo.mar" 340 todoExampleSource
 
 
-codeSnippet : List (Html.Html msg)
-codeSnippet =
-    [ codeKeyword "app"
-    , Html.text " "
-    , codeEntity "TodoApi"
-    , Html.text "\n"
-    , codeKeyword "port"
-    , Html.text " "
-    , codeNumber "4100"
-    , Html.text "\n"
-    , codeKeyword "database"
-    , Html.text " "
-    , codeString "\"todo.db\""
-    , Html.text "\n\n"
-    , codeKeyword "entity"
-    , Html.text " "
-    , codeEntity "Todo"
-    , Html.text " "
-    , codePunctuation "{"
-    , Html.text "\n"
-    , Html.text "  "
-    , codeField "title"
-    , codePunctuation ":"
-    , Html.text " "
-    , codeType "String"
-    , Html.text "\n"
-    , Html.text "  "
-    , codeField "done"
-    , codePunctuation ":"
-    , Html.text " "
-    , codeType "Bool"
-    , Html.text "\n\n"
-    , Html.text "  "
-    , codeKeyword "rule"
-    , Html.text " "
-    , codeString "\"Title must have at least 3 chars\""
-    , Html.text " "
-    , codeKeyword "expect"
-    , Html.text " "
-    , codeFunction "len"
-    , codePunctuation "("
-    , codeField "title"
-    , codePunctuation ")"
-    , Html.text " "
-    , codeOperator ">="
-    , Html.text " "
-    , codeNumber "3"
-    , Html.text "\n"
-    , Html.text "  "
-    , codeKeyword "authorize"
-    , Html.text " "
-    , codeCrud "list"
-    , Html.text " "
-    , codeKeyword "when"
-    , Html.text " "
-    , codeContext "auth_authenticated"
-    , Html.text "\n"
-    , Html.text "  "
-    , codeKeyword "authorize"
-    , Html.text " "
-    , codeCrud "create"
-    , Html.text " "
-    , codeKeyword "when"
-    , Html.text " "
-    , codeContext "auth_authenticated"
-    , Html.text "\n"
-    , codePunctuation "}"
-    , Html.text "\n"
-    ]
-
-
 token : String -> String -> Html.Html msg
 token color value =
     Html.span [ HtmlAttr.style "color" color ] [ Html.text value ]
-
-
-codeKeyword : String -> Html.Html msg
-codeKeyword value =
-    token "#7AB8FF" value
-
-
-codeType : String -> Html.Html msg
-codeType value =
-    token "#4FD1C5" value
-
-
-codeModifier : String -> Html.Html msg
-codeModifier value =
-    token "#B7C5D9" value
-
-
-codeField : String -> Html.Html msg
-codeField value =
-    token "#DCE8F8" value
-
-
-codeEntity : String -> Html.Html msg
-codeEntity value =
-    token "#92C4FF" value
-
-
-codeCrud : String -> Html.Html msg
-codeCrud value =
-    token "#93D7FF" value
-
-
-codeString : String -> Html.Html msg
-codeString value =
-    token "#F7C97F" value
-
-
-codeNumber : String -> Html.Html msg
-codeNumber value =
-    token "#F5A97F" value
-
-
-codeFunction : String -> Html.Html msg
-codeFunction value =
-    token "#82E0AA" value
-
-
-codeContext : String -> Html.Html msg
-codeContext value =
-    token "#C3D7FF" value
-
-
-codeOperator : String -> Html.Html msg
-codeOperator value =
-    token "#D8E9FF" value
-
-
-codePunctuation : String -> Html.Html msg
-codePunctuation value =
-    token "#AFC7E6" value
 
 
 todoExampleSource : String
