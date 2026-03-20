@@ -1353,25 +1353,26 @@ update msg model =
             let
                 scope =
                     activeAuthScope
+
+                nextModel =
+                    clearLocalSession model
             in
-            ( { model | flash = Nothing }, logoutSession scope model )
+            ( nextModel
+            , Cmd.batch
+                [ saveSessionFromModel nextModel
+                , logoutSession scope model
+                ]
+            )
 
         GotLogoutSession scope result ->
             case result of
                 Ok _ ->
                     case scope of
                         AppAuthScope ->
-                            let
-                                nextModel =
-                                    { model | authToken = "", currentEmail = Nothing, currentRole = Nothing, authEmail = "", authCode = "", authStage = AuthStageEmail, authSubmitting = Nothing, sessionRestorePending = False, flash = Nothing }
+                            ( model, Cmd.none )
 
-                                finalModel =
-                                    { nextModel | authToolsOpen = True }
-                            in
-                            ( finalModel, saveSessionFromModel finalModel )
-
-                Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                Err _ ->
+                    ( model, Cmd.none )
 
         TriggerBackup ->
             if not (isAdminProfile model) then
@@ -4744,6 +4745,26 @@ isAdminRole maybeRole =
 
         Nothing ->
             False
+
+
+clearLocalSession : Model -> Model
+clearLocalSession model =
+    { model
+        | authToken = ""
+        , systemAuthToken = ""
+        , currentEmail = Nothing
+        , currentRole = Nothing
+        , currentSystemEmail = Nothing
+        , currentSystemRole = Nothing
+        , authEmail = ""
+        , authCode = ""
+        , authStage = AuthStageEmail
+        , authSubmitting = Nothing
+        , sessionRestorePending = False
+        , authInlineMessage = Nothing
+        , flash = Nothing
+        , authToolsOpen = True
+    }
 
 
 saveSessionFromModel : Model -> Cmd Msg
