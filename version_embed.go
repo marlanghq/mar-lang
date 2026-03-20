@@ -11,7 +11,7 @@ var embeddedVersion string
 func Version() string {
 	version := strings.TrimSpace(embeddedVersion)
 	if version == "" {
-		return "dev"
+		return "unknown"
 	}
 	return version
 }
