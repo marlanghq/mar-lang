@@ -6329,7 +6329,48 @@ formatMs ms =
 
 formatSeconds : Float -> String
 formatSeconds seconds =
-    String.fromFloat (roundTo1 seconds) ++ " s"
+    let
+        totalSeconds =
+            max 0 (round seconds)
+
+        days =
+            totalSeconds // (24 * 60 * 60)
+
+        hours =
+            modBy 24 (totalSeconds // (60 * 60))
+
+        minutes =
+            modBy 60 (totalSeconds // 60)
+
+        remainingSeconds =
+            modBy 60 totalSeconds
+
+        parts =
+            [ if days > 0 then
+                Just (String.fromInt days ++ " d")
+
+              else
+                Nothing
+            , if hours > 0 then
+                Just (String.fromInt hours ++ " h")
+
+              else
+                Nothing
+            , if minutes > 0 then
+                Just (String.fromInt minutes ++ " min")
+
+              else
+                Nothing
+            , if remainingSeconds > 0 || totalSeconds == 0 then
+                Just (String.fromInt remainingSeconds ++ " s")
+
+              else
+                Nothing
+            ]
+                |> List.filterMap identity
+                |> List.take 3
+    in
+    String.join " " parts
 
 
 formatBytes : Float -> String
