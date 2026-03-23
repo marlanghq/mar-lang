@@ -3,6 +3,7 @@ package runtime
 import (
 	"os"
 	goruntime "runtime"
+	"sort"
 	"time"
 )
 
@@ -19,30 +20,33 @@ func (r *Runtime) perfPayload() map[string]any {
 	routes := make([]map[string]any, 0, len(snapshot.Series))
 	total2xx := uint64(0)
 	for _, series := range snapshot.Series {
-		status4xx := uint64(0)
-		status5xx := uint64(0)
+		countsByCode := make([]map[string]any, 0, len(series.StatusCount))
+		statuses := make([]int, 0, len(series.StatusCount))
+		for status := range series.StatusCount {
+			statuses = append(statuses, status)
+		}
+		sort.Ints(statuses)
 		for status, count := range series.StatusCount {
 			if status >= 200 && status < 300 {
 				total2xx += count
 			}
-			if status >= 400 && status < 500 {
-				status4xx += count
-			}
-			if status >= 500 {
-				status5xx += count
-			}
+		}
+		for _, status := range statuses {
+			countsByCode = append(countsByCode, map[string]any{
+				"code":  status,
+				"count": series.StatusCount[status],
+			})
 		}
 		avgMs := 0.0
 		if series.Count > 0 {
 			avgMs = (series.SumSeconds / float64(series.Count)) * 1000
 		}
 		routes = append(routes, map[string]any{
-			"method":    series.Method,
-			"route":     series.Route,
-			"count":     series.Count,
-			"errors4xx": status4xx,
-			"errors5xx": status5xx,
-			"avgMs":     avgMs,
+			"method":       series.Method,
+			"route":        series.Route,
+			"count":        series.Count,
+			"avgMs":        avgMs,
+			"countsByCode": countsByCode,
 		})
 	}
 

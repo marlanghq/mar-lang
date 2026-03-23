@@ -300,9 +300,14 @@ type alias PerfRoute =
     { method : String
     , route : String
     , count : Int
-    , errors4xx : Int
-    , errors5xx : Int
     , avgMs : Float
+    , countsByCode : List PerfStatusCount
+    }
+
+
+type alias PerfStatusCount =
+    { code : Int
+    , count : Int
     }
 
 
@@ -2025,13 +2030,23 @@ perfHttpDecoder =
 
 perfRouteDecoder : Decode.Decoder PerfRoute
 perfRouteDecoder =
-    Decode.map6 PerfRoute
+    Decode.map5 PerfRoute
         (Decode.field "method" Decode.string)
         (Decode.field "route" Decode.string)
         (Decode.field "count" Decode.int)
-        (Decode.field "errors4xx" Decode.int)
-        (Decode.field "errors5xx" Decode.int)
         (Decode.field "avgMs" Decode.float)
+        (Decode.oneOf
+            [ Decode.field "countsByCode" (Decode.list perfStatusCountDecoder)
+            , Decode.succeed []
+            ]
+        )
+
+
+perfStatusCountDecoder : Decode.Decoder PerfStatusCount
+perfStatusCountDecoder =
+    Decode.map2 PerfStatusCount
+        (Decode.field "code" Decode.int)
+        (Decode.field "count" Decode.int)
 
 
 adminVersionDecoder : Decode.Decoder AdminVersionPayload
@@ -4460,7 +4475,7 @@ cupertinoButton backgroundColor textColor borderColor onPress labelText =
         , Border.rounded 12
         , Border.width 1
         , Border.color borderColor
-        , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+        , paddingEach { top = 8, right = 14, bottom = 8, left = 14 }
         , cupertinoFocusRing
         , htmlAttribute (HtmlAttr.style "outline" "none")
         , htmlAttribute (HtmlAttr.style "box-shadow" "0 1px 3px rgba(31,41,55,0.08), inset 0 1px 0 rgba(255,255,255,0.58)")
@@ -4580,6 +4595,7 @@ boolToggleButton state onPress =
     Input.button
         [ cupertinoFocusRing
         , htmlAttribute (HtmlAttr.style "outline" "none")
+        , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
         ]
         { onPress = onPress
         , label =
@@ -4676,6 +4692,7 @@ boolUnsetButton selected onPress =
         , paddingEach { top = 8, right = 12, bottom = 8, left = 12 }
         , cupertinoFocusRing
         , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)")
+        , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
         ]
         { onPress = onPress
         , label = text "Unset"
@@ -5070,11 +5087,17 @@ viewDeleteConfirmation model =
                 , htmlAttribute (HtmlAttr.style "-webkit-backdrop-filter" "blur(16px)")
                 ]
                 (el
-                    ([ centerX
-                     , centerY
-                     , width (fill |> maximum 480)
-                     ]
-                        ++ cupertinoPanelAttrs 16 18
+                    (cupertinoPanelAttrs 16 18
+                        ++ [ centerX
+                           , centerY
+                           , width
+                                (if isCompactLayout model then
+                            fill
+
+                         else
+                                    fill |> maximum 520
+                                )
+                           ]
                     )
                     (column
                         [ width fill
@@ -5599,16 +5622,6 @@ viewPerformancePanel model =
 
             routeRow perfRoute =
                 let
-                    hasErrors =
-                        perfRoute.errors4xx > 0 || perfRoute.errors5xx > 0
-
-                    statusColor =
-                        if hasErrors then
-                            rgb255 176 60 46
-
-                        else
-                            rgb255 34 124 95
-
                     routeTextAttrs =
                         [ Font.size 13
                         , Font.color (rgb255 41 52 68)
@@ -5617,11 +5630,6 @@ viewPerformancePanel model =
                     routeMetaAttrs =
                         [ Font.size 12
                         , Font.color (rgb255 93 103 120)
-                        ]
-
-                    routeStatusAttrs =
-                        [ Font.size 12
-                        , Font.color statusColor
                         ]
                 in
                 if compact then
@@ -5634,7 +5642,10 @@ viewPerformancePanel model =
                         , wrappedRow [ width fill, spacing 8 ]
                             [ el routeMetaAttrs (text ("count: " ++ String.fromInt perfRoute.count))
                             , el routeMetaAttrs (text ("avg: " ++ formatMs perfRoute.avgMs))
-                            , el routeStatusAttrs (text ("4xx/5xx: " ++ String.fromInt perfRoute.errors4xx ++ "/" ++ String.fromInt perfRoute.errors5xx))
+                            ]
+                        , wrappedRow [ width fill, spacing 6 ]
+                            [ el routeMetaAttrs (text "Counts by code:")
+                            , viewCountsByCode perfRoute.countsByCode
                             ]
                         ]
 
@@ -5645,7 +5656,7 @@ viewPerformancePanel model =
                         , el ([ width (fillPortion 3) ] ++ routeTextAttrs) (text perfRoute.route)
                         , el ([ width (fillPortion 1) ] ++ routeMetaAttrs) (text ("count: " ++ String.fromInt perfRoute.count))
                         , el ([ width (fillPortion 1) ] ++ routeMetaAttrs) (text ("avg: " ++ formatMs perfRoute.avgMs))
-                        , el ([ width (fillPortion 1) ] ++ routeStatusAttrs) (text ("4xx/5xx: " ++ String.fromInt perfRoute.errors4xx ++ "/" ++ String.fromInt perfRoute.errors5xx))
+                        , el [ width (fillPortion 2), centerY ] (viewCountsByCode perfRoute.countsByCode)
                         ]
 
             cards perf =
@@ -5694,7 +5705,26 @@ viewPerformancePanel model =
                                         [ paragraph [] [ text "No requests captured yet." ] ]
 
                                     else
-                                        List.map routeRow perf.http.routes
+                                        (if compact then
+                                            []
+
+                                         else
+                                            [ row
+                                                (cupertinoInsetCardAttrs 10
+                                                    ++ [ width fill
+                                                       , spacing 12
+                                                       , Background.color (rgb255 245 248 253)
+                                                       ]
+                                                )
+                                                [ el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Method")
+                                                , el [ width (fillPortion 3), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Path")
+                                                , el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Count")
+                                                , el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Avg")
+                                                , el [ width (fillPortion 2), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Counts by code")
+                                                ]
+                                            ]
+                                        )
+                                            ++ List.map routeRow perf.http.routes
                                    )
                             )
                         ]
@@ -6192,8 +6222,53 @@ performanceCard title value =
     column
         (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 6 ])
         [ el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text title)
-        , el [ Font.size 15, Font.bold ] (text value)
+        , el [ Font.size 14, Font.bold ] (text value)
         ]
+
+
+viewCountsByCode : List PerfStatusCount -> Element Msg
+viewCountsByCode countsByCode =
+    if List.isEmpty countsByCode then
+        el [ Font.size 12, Font.color (rgb255 138 148 162) ] (text "-")
+
+    else
+        wrappedRow [ width fill, spacing 0 ]
+            (List.indexedMap viewStatusCountSegment countsByCode)
+
+
+viewStatusCountSegment : Int -> PerfStatusCount -> Element Msg
+viewStatusCountSegment index statusCount =
+    row [ spacing 0 ]
+        [ if index == 0 then
+            none
+
+          else
+            el [ Font.size 12, Font.color (rgb255 152 166 188) ] (text ", ")
+        , el
+            [ Font.size 12
+            , Font.bold
+            , Font.color (statusCodeColor statusCount.code)
+            ]
+            (text (String.fromInt statusCount.code ++ ": " ++ String.fromInt statusCount.count))
+        ]
+
+
+statusCodeColor : Int -> Element.Color
+statusCodeColor code =
+    if code >= 500 then
+        rgb255 211 76 67
+
+    else if code >= 400 then
+        rgb255 198 123 24
+
+    else if code >= 300 then
+        rgb255 61 119 212
+
+    else if code >= 200 then
+        rgb255 47 143 78
+
+    else
+        rgb255 93 103 120
 
 
 databaseInfoCard : String -> String -> Element Msg
