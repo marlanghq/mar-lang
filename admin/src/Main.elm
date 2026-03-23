@@ -4294,30 +4294,10 @@ viewAuthSessionStage : Model -> Element Msg
 viewAuthSessionStage model =
     let
         emailText =
-            case model.currentEmail of
-                Just email ->
-                    email
-
-                Nothing ->
-                    case model.currentSystemEmail of
-                        Just email ->
-                            email
-
-                        Nothing ->
-                            "Authenticated session"
+            currentAuthSessionEmailText model
 
         roleText =
-            case model.currentRole of
-                Just role ->
-                    String.trim role
-
-                Nothing ->
-                    case model.currentSystemRole of
-                        Just role ->
-                            String.trim role
-
-                        Nothing ->
-                            ""
+            currentAuthSessionRoleText model
     in
     column
         [ width fill
@@ -4341,11 +4321,7 @@ viewAuthSessionStage model =
               else
                 el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text ("Role: " ++ roleText))
             ]
-        , if isCompactLayout model then
-            wrappedRow [ width fill, spacing 10 ] [ authDangerButton (Just LogoutSession) "Logout" ]
-
-          else
-            row [ width fill, spacing 10 ] [ authDangerButton (Just LogoutSession) "Logout" ]
+        , wrappedRow [ width fill, spacing 10 ] [ authDangerButton (Just LogoutSession) "Logout" ]
         ]
 
 
@@ -4415,22 +4391,19 @@ authStatusLine maybeErrorMessage maybeStatusMessage =
 
 authSecondaryButton : Maybe Msg -> String -> Element Msg
 authSecondaryButton onPress labelText =
-    Input.button
-        [ Background.color (rgb255 224 231 241)
-        , Font.color (rgb255 55 68 87)
-        , Border.rounded 10
-        , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-        ]
-        { onPress = onPress
-        , label = text labelText
-        }
+    authUtilityButton (rgb255 224 231 241) (rgb255 55 68 87) onPress labelText
 
 
 authDangerButton : Maybe Msg -> String -> Element Msg
 authDangerButton onPress labelText =
+    authUtilityButton (rgb255 248 226 226) (rgb255 126 43 43) onPress labelText
+
+
+authUtilityButton : Element.Color -> Element.Color -> Maybe Msg -> String -> Element Msg
+authUtilityButton backgroundColor textColor onPress labelText =
     Input.button
-        [ Background.color (rgb255 248 226 226)
-        , Font.color (rgb255 126 43 43)
+        [ Background.color backgroundColor
+        , Font.color textColor
         , Border.rounded 10
         , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
         ]
@@ -4745,6 +4718,28 @@ isAdminRole maybeRole =
 
         Nothing ->
             False
+
+
+currentAuthSessionEmailText : Model -> String
+currentAuthSessionEmailText model =
+    case model.currentEmail of
+        Just email ->
+            email
+
+        Nothing ->
+            Maybe.withDefault "Authenticated session" model.currentSystemEmail
+
+
+currentAuthSessionRoleText : Model -> String
+currentAuthSessionRoleText model =
+    case model.currentRole of
+        Just role ->
+            String.trim role
+
+        Nothing ->
+            model.currentSystemRole
+                |> Maybe.map String.trim
+                |> Maybe.withDefault ""
 
 
 clearLocalSession : Model -> Model
