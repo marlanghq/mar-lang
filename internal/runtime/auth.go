@@ -192,24 +192,6 @@ func (r *Runtime) countAuthUsers(requestID string) (int64, error) {
 	return total, nil
 }
 
-func (r *Runtime) countAuthUsersByRole(requestID, role string) (int64, error) {
-	cfg := r.authConfig()
-	if strings.TrimSpace(cfg.RoleField) == "" {
-		return r.countAuthUsers(requestID)
-	}
-	table, _ := quoteIdentifier(r.authUser.Table)
-	roleField, _ := quoteIdentifier(cfg.RoleField)
-	row, ok, err := queryRowForRequest(r.DB, requestID, fmt.Sprintf("SELECT COUNT(*) AS total FROM %s WHERE lower(%s) = lower(?)", table, roleField), role)
-	if err != nil {
-		return 0, err
-	}
-	if !ok {
-		return 0, nil
-	}
-	total, _ := toInt64(row["total"])
-	return total, nil
-}
-
 func parseAuthEmail(payload map[string]any) (string, error) {
 	emailRaw, ok := payload["email"].(string)
 	if !ok {

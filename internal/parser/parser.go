@@ -1155,41 +1155,6 @@ func parseActionFieldExpr(raw string, lineNo int) (*model.ActionFieldExpr, error
 	}, nil
 }
 
-func splitCSV(value string) ([]string, error) {
-	parts := make([]string, 0, 8)
-	var b strings.Builder
-	inString := false
-	escaped := false
-	for _, ch := range value {
-		if escaped {
-			b.WriteRune(ch)
-			escaped = false
-			continue
-		}
-		if ch == '\\' && inString {
-			b.WriteRune(ch)
-			escaped = true
-			continue
-		}
-		if ch == '"' {
-			inString = !inString
-			b.WriteRune(ch)
-			continue
-		}
-		if ch == ',' && !inString {
-			parts = append(parts, b.String())
-			b.Reset()
-			continue
-		}
-		b.WriteRune(ch)
-	}
-	if inString {
-		return nil, fmt.Errorf("unterminated string")
-	}
-	parts = append(parts, b.String())
-	return parts, nil
-}
-
 // validateAuthConfig ensures auth settings reference valid fields in the selected user entity.
 func validateAuthConfig(app *model.App) error {
 	if app.Auth == nil {

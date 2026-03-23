@@ -30,7 +30,3 @@ func editUsageError(binaryName string) error {
 	fmt.Fprintf(&b, "  Open a Mar file in the terminal with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s edit app.mar", binaryName)))
 	return styledCLIError(strings.TrimRight(b.String(), "\n") + "\n")
 }
-
-func openMarEditorForTest(string) (*marEditor, error) {
-	return nil, editUsageError("mar")
-}

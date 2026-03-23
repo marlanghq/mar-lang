@@ -86,15 +86,6 @@ func (c *dbQueryCollector) record(event sqlitecli.QueryEvent) {
 	}
 }
 
-func (c *dbQueryCollector) latestSeq() uint64 {
-	if c == nil {
-		return 0
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.nextSeq
-}
-
 func (c *dbQueryCollector) rangeByRequestID(requestID string) []dbQueryTrace {
 	if c == nil {
 		return nil
