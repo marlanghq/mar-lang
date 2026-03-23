@@ -327,10 +327,6 @@ type buildOptions struct {
 	SourcePath   string
 }
 
-func buildExecutable(app *model.App, outputPath string) error {
-	return buildExecutableWithOptions(app, outputPath, buildOptions{PrintSummary: true})
-}
-
 func defaultBuildLayout(inputPath, fallback string) (string, string) {
 	name := ""
 	override := strings.TrimSpace(fallback)
