@@ -1018,10 +1018,18 @@ update msg model =
                     ( { model | schema = Failed (httpErrorToString httpError), rows = Failed "schema unavailable" }, Cmd.none )
 
         SelectEntity entityName ->
-            ( model, pushRoute (RouteEntity (currentWorkspace model) entityName) model )
+            let
+                nextModel =
+                    closeMobileSidebarForNavigation model
+            in
+            ( nextModel, pushRoute (RouteEntity (currentWorkspace nextModel) entityName) nextModel )
 
         SelectAction actionName ->
-            ( model, pushRoute (RouteAction (currentWorkspace model) actionName) model )
+            let
+                nextModel =
+                    closeMobileSidebarForNavigation model
+            in
+            ( nextModel, pushRoute (RouteAction (currentWorkspace nextModel) actionName) nextModel )
 
         ReloadRows ->
             let
@@ -1043,21 +1051,33 @@ update msg model =
                 ( { model | flash = Just "Admin role required to access monitoring tools." }, Cmd.none )
 
             else
-                ( model, pushRoute RoutePerformance model )
+                let
+                    nextModel =
+                        closeMobileSidebarForNavigation model
+                in
+                ( nextModel, pushRoute RoutePerformance nextModel )
 
         SelectRequestLogs ->
             if not (isAdminProfile model) then
                 ( { model | flash = Just "Admin role required to access request logs." }, Cmd.none )
 
             else
-                ( model, pushRoute RouteRequestLogs model )
+                let
+                    nextModel =
+                        closeMobileSidebarForNavigation model
+                in
+                ( nextModel, pushRoute RouteRequestLogs nextModel )
 
         SelectDatabase ->
             if not (isAdminProfile model) then
                 ( { model | flash = Just "Admin role required to access database tools." }, Cmd.none )
 
             else
-                ( model, pushRoute RouteDatabase model )
+                let
+                    nextModel =
+                        closeMobileSidebarForNavigation model
+                in
+                ( nextModel, pushRoute RouteDatabase nextModel )
 
         ReloadDatabase ->
             if not (isAdminProfile model) then
@@ -1131,11 +1151,7 @@ update msg model =
         SwitchWorkspace workspace ->
             let
                 nextModel =
-                    if isCompactLayout model && model.mobileSidebarOpen then
-                        { model | keepMobileSidebarOpenOnNextRoute = True }
-
-                    else
-                        model
+                    closeMobileSidebarForNavigation model
             in
             ( nextModel, pushRoute (routeForWorkspaceSwitch workspace nextModel) nextModel )
 
@@ -1404,7 +1420,11 @@ update msg model =
                     ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
 
         ToggleAuthTools ->
-            ( model, pushRoute (RouteAuthTools (currentWorkspace model)) model )
+            let
+                nextModel =
+                    closeMobileSidebarForNavigation model
+            in
+            ( nextModel, pushRoute (RouteAuthTools (currentWorkspace nextModel)) nextModel )
 
         SelectRow rowValue ->
             case ( model.selectedEntity, rowIdForCurrentSelection model rowValue ) of
@@ -2794,10 +2814,10 @@ mobileNavEntries model =
             else
                 []
     in
-    authEntries
-        ++ List.map entityEntry crudEntities
+    List.map entityEntry crudEntities
         ++ List.map actionEntry actions
         ++ systemEntries
+        ++ authEntries
 
 
 mobileWorkspaceEntries : Model -> List MobileNavEntry
@@ -2877,20 +2897,21 @@ viewMobileBottomNav model =
                 [ width fill
                 , Background.color
                     (if buttonSelected then
-                        rgb255 229 238 255
+                        rgb255 236 243 255
 
                      else
                         rgba255 255 255 0 0
                     )
                 , Font.color
                     (if buttonSelected then
-                        rgb255 45 97 209
+                        rgb255 53 84 138
 
                      else
                         rgb255 104 116 134
                     )
                 , Border.rounded 14
                 , paddingEach { top = 9, right = 8, bottom = 9, left = 8 }
+                , cupertinoFocusRing
                 , htmlAttribute (HtmlAttr.style "outline" "none")
                 , htmlAttribute (HtmlAttr.style "box-shadow" "none")
                 , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
@@ -2914,20 +2935,21 @@ viewMobileBottomNav model =
                 [ width fill
                 , Background.color
                     (if moreSelected then
-                        rgb255 229 238 255
+                        rgb255 236 243 255
 
                      else
                         rgba255 255 255 0 0
                     )
                 , Font.color
                     (if moreSelected then
-                        rgb255 45 97 209
+                        rgb255 53 84 138
 
                      else
                         rgb255 104 116 134
                     )
                 , Border.rounded 14
                 , paddingEach { top = 9, right = 8, bottom = 9, left = 8 }
+                , cupertinoFocusRing
                 , htmlAttribute (HtmlAttr.style "outline" "none")
                 , htmlAttribute (HtmlAttr.style "box-shadow" "none")
                 , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
@@ -2956,13 +2978,14 @@ viewMobileBottomNav model =
             [ row
                 [ width fill
                 , spacing 6
-                , Background.color (rgba255 248 250 254 232)
+                , Background.color (rgba255 250 252 255 226)
                 , Border.rounded 22
                 , Border.width 1
-                , Border.color (rgba255 210 220 236 220)
+                , Border.color (rgba255 226 234 244 220)
                 , paddingEach { top = 8, right = 8, bottom = 8, left = 8 }
                 , htmlAttribute (HtmlAttr.style "backdrop-filter" "blur(24px)")
                 , htmlAttribute (HtmlAttr.style "-webkit-backdrop-filter" "blur(24px)")
+                , htmlAttribute (HtmlAttr.style "box-shadow" "0 12px 30px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.72)")
                 ]
                 (List.map navButton visibleEntries
                     ++ (if shouldShowMore then
@@ -3003,6 +3026,7 @@ viewMobileMoreSheet model =
                         rgb255 43 56 74
                     )
                 , paddingEach { top = 13, right = 14, bottom = 13, left = 14 }
+                , cupertinoFocusRing
                 , htmlAttribute (HtmlAttr.style "outline" "none")
                 , htmlAttribute (HtmlAttr.style "box-shadow" "none")
                 , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
@@ -3023,24 +3047,40 @@ viewMobileMoreSheet model =
                 [ width fill
                 , Border.rounded 14
                 , Border.width 2
-                , Border.color (rgba255 255 255 0 0)
+                , Border.color
+                    (if entry.selected then
+                        rgb255 225 232 242
+
+                     else
+                        rgba255 255 255 0 0
+                    )
                 , Background.color
                     (if entry.selected then
-                        rgb255 54 94 217
+                        rgb255 248 251 255
 
                      else
                         rgba255 255 255 0 0
                     )
                 , Font.color
                     (if entry.selected then
-                        rgb255 246 248 252
+                        rgb255 53 84 138
 
                      else
                         rgb255 78 92 112
                     )
                 , paddingEach { top = 11, right = 10, bottom = 11, left = 10 }
+                , cupertinoFocusRing
                 , htmlAttribute (HtmlAttr.style "outline" "none")
-                , htmlAttribute (HtmlAttr.style "box-shadow" "none")
+                , htmlAttribute
+                    (HtmlAttr.style
+                        "box-shadow"
+                        (if entry.selected then
+                            "0 1px 3px rgba(31,41,55,0.10), inset 0 1px 0 rgba(255,255,255,0.72)"
+
+                         else
+                            "none"
+                        )
+                    )
                 ]
                 { onPress =
                     Just
@@ -3072,13 +3112,14 @@ viewMobileMoreSheet model =
             , column
                 [ width fill
                 , spacing 12
-                , Background.color (rgba255 248 250 254 242)
+                , Background.color (rgba255 250 252 255 240)
                 , padding 16
                 , Border.roundEach { topLeft = 24, topRight = 24, bottomLeft = 0, bottomRight = 0 }
                 , Border.width 1
-                , Border.color (rgba255 214 222 235 242)
+                , Border.color (rgba255 226 234 244 236)
                 , htmlAttribute (HtmlAttr.style "backdrop-filter" "blur(28px)")
                 , htmlAttribute (HtmlAttr.style "-webkit-backdrop-filter" "blur(28px)")
+                , htmlAttribute (HtmlAttr.style "box-shadow" "0 -10px 30px rgba(15,23,42,0.10), inset 0 1px 0 rgba(255,255,255,0.72)")
                 ]
                 (row [ width fill, spacing 12 ]
                     [ el [ Font.size 20, Font.bold, Font.color (rgb255 34 47 64) ] (text "More")
@@ -3088,6 +3129,7 @@ viewMobileMoreSheet model =
                         , Font.color (rgb255 62 74 92)
                         , Border.rounded 12
                         , paddingEach { top = 8, right = 12, bottom = 8, left = 12 }
+                        , cupertinoFocusRing
                         , htmlAttribute (HtmlAttr.style "outline" "none")
                         , htmlAttribute (HtmlAttr.style "box-shadow" "none")
                         , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
@@ -3103,16 +3145,21 @@ viewMobileMoreSheet model =
                             [ column
                                 [ width fill
                                 , spacing 10
-                                , Background.color (rgb255 236 240 246)
+                                , Background.color (rgb255 233 239 247)
                                 , Border.rounded 18
+                                , Border.width 1
+                                , Border.color (rgb255 219 228 240)
                                 , padding 12
+                                , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)")
                                 ]
                                 [ el [ Font.size 11, Font.bold, Font.color (rgb255 109 121 139) ] (text "WORKSPACE")
                                 , row
                                     [ width fill
                                     , spacing 8
-                                    , Background.color (rgb255 248 250 253)
+                                    , Background.color (rgb255 246 249 253)
                                     , Border.rounded 16
+                                    , Border.width 1
+                                    , Border.color (rgb255 228 235 244)
                                     , padding 6
                                     ]
                                     (List.map workspaceButton workspaceEntries)
@@ -3226,15 +3273,9 @@ viewAuthGate model =
                 , spacing 14
                 ]
                 [ column
-                    [ width fill
-                    , spacing 18
-                    , padding 28
-                    , Background.color (rgb255 255 255 255)
-                    , Border.rounded 18
-                    , Border.width 1
-                    , Border.color (rgb255 226 232 239)
-                    , htmlAttribute (HtmlAttr.class "auth-stage auth-gate-card")
-                    ]
+                    (cupertinoPanelAttrs 18 28
+                        ++ [ htmlAttribute (HtmlAttr.class "auth-stage auth-gate-card") ]
+                    )
                     [ column
                         [ width fill
                         , spacing 8
@@ -3342,7 +3383,7 @@ viewSidebar model =
                 rgb255 118 136 160
 
             else
-                rgb255 126 138 156
+                rgb255 132 143 159
 
         sidebarItemBackground selected =
             if compact then
@@ -3353,7 +3394,7 @@ viewSidebar model =
                     rgb255 24 29 36
 
             else if selected then
-                rgb255 225 236 255
+                rgb255 238 244 255
 
             else
                 rgb255 247 249 252
@@ -3363,7 +3404,7 @@ viewSidebar model =
                 rgb255 244 246 248
 
             else if selected then
-                rgb255 41 96 214
+                rgb255 45 77 136
 
             else
                 rgb255 45 57 75
@@ -3380,7 +3421,7 @@ viewSidebar model =
                 sidebarItemBackground selected
 
             else if selected then
-                rgb255 54 94 217
+                rgb255 233 241 255
 
             else
                 rgba255 255 255 0 0
@@ -3390,39 +3431,62 @@ viewSidebar model =
                 sidebarItemTextColor selected
 
             else if selected then
-                rgb255 246 248 252
+                rgb255 45 77 136
 
             else
                 rgb255 78 92 112
 
         workspaceToggleBorderColor =
-            rgba255 255 255 0 0
+            rgb255 220 228 240
 
-        sidebarBorderColor =
-            rgba255 255 255 0 0
-
-        sidebarButtonAttrs backgroundColor textColor paddingValues =
+        sidebarButtonAttrs selected backgroundColor textColor paddingValues =
             [ width fill
             , Border.rounded 10
-            , Border.width 2
-            , Border.color sidebarBorderColor
+            , Border.width 1
+            , Border.color
+                (if selected then
+                    rgb255 227 235 246
+
+                 else
+                    rgba255 255 255 0 0
+                )
             , Background.color backgroundColor
             , Font.color textColor
             , paddingEach paddingValues
+            , cupertinoFocusRing
             , htmlAttribute (HtmlAttr.style "outline" "none")
-            , htmlAttribute (HtmlAttr.style "box-shadow" "none")
+            , htmlAttribute
+                (HtmlAttr.style
+                    "box-shadow"
+                    (if selected && not compact then
+                        "0 8px 20px rgba(110, 139, 196, 0.10), inset 0 1px 0 rgba(255,255,255,0.55)"
+
+                     else
+                        "none"
+                    )
+                )
             ]
 
         workspaceToggleAttrs backgroundColor textColor paddingValues =
             [ width fill
             , Border.rounded 10
-            , Border.width 2
+            , Border.width 1
             , Border.color workspaceToggleBorderColor
             , Background.color backgroundColor
             , Font.color textColor
             , paddingEach paddingValues
+            , cupertinoFocusRing
             , htmlAttribute (HtmlAttr.style "outline" "none")
-            , htmlAttribute (HtmlAttr.style "box-shadow" "none")
+            , htmlAttribute
+                (HtmlAttr.style
+                    "box-shadow"
+                    (if backgroundColor == rgb255 233 241 255 then
+                        "0 1px 3px rgba(31, 41, 55, 0.10), inset 0 1px 0 rgba(255,255,255,0.72)"
+
+                     else
+                        "none"
+                    )
+                )
             ]
 
         ( authEntities, crudEntities, actions ) =
@@ -3459,9 +3523,12 @@ viewSidebar model =
             if isAdminProfile model then
                 [ el
                     [ width fill
-                    , Background.color (rgb255 236 240 246)
+                    , Background.color (rgb255 229 236 246)
                     , Border.rounded 14
+                    , Border.width 1
+                    , Border.color (rgb255 210 220 235)
                     , padding 3
+                    , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.7)")
                     ]
                     (row [ width fill, spacing 4 ]
                         [ Input.button
@@ -3506,6 +3573,7 @@ viewSidebar model =
             in
             Input.button
                 (sidebarButtonAttrs
+                    selected
                     (sidebarItemBackground selected)
                     (sidebarItemTextColor selected)
                     { top = 12, right = 12, bottom = 12, left = 12 }
@@ -3533,6 +3601,7 @@ viewSidebar model =
             in
             Input.button
                 (sidebarButtonAttrs
+                    selected
                     (sidebarItemBackground selected)
                     (sidebarItemTextColor selected)
                     { top = 12, right = 12, bottom = 12, left = 12 }
@@ -3550,6 +3619,7 @@ viewSidebar model =
             in
             Input.button
                 (sidebarButtonAttrs
+                    selected
                     (sidebarItemBackground selected)
                     (sidebarItemTextColor selected)
                     { top = 12, right = 12, bottom = 12, left = 12 }
@@ -3567,6 +3637,7 @@ viewSidebar model =
             in
             Input.button
                 (sidebarButtonAttrs
+                    selected
                     (sidebarItemBackground selected)
                     (sidebarItemTextColor selected)
                     { top = 12, right = 12, bottom = 12, left = 12 }
@@ -3584,6 +3655,7 @@ viewSidebar model =
             in
             Input.button
                 (sidebarButtonAttrs
+                    selected
                     (sidebarItemBackground selected)
                     (sidebarItemTextColor selected)
                     { top = 12, right = 12, bottom = 12, left = 12 }
@@ -3601,6 +3673,7 @@ viewSidebar model =
             in
             Input.button
                 (sidebarButtonAttrs
+                    selected
                     (sidebarItemBackground selected)
                     (sidebarItemTextColor selected)
                     { top = 12, right = 12, bottom = 12, left = 12 }
@@ -3669,7 +3742,7 @@ viewSidebar model =
                 ]
             , workspaceSwitch
             , if hasAnyAuthInfo model then
-                el [ Font.size 11, Font.bold, Font.color sidebarSectionColor ]
+                el (cupertinoSectionHeaderAttrs ++ [ Font.color sidebarSectionColor ])
                     (text
                         (if workspace == AppWorkspace then
                             "ACCOUNT"
@@ -3693,11 +3766,11 @@ viewSidebar model =
 
               else
                 el
-                    [ paddingEach { top = 4, right = 0, bottom = 0, left = 0 }
-                    , Font.size 11
-                    , Font.bold
-                    , Font.color sidebarSectionColor
-                    ]
+                    ([ paddingEach { top = 4, right = 0, bottom = 0, left = 0 }
+                     , Font.color sidebarSectionColor
+                     ]
+                        ++ cupertinoSectionHeaderAttrs
+                    )
                     (text
                         (if workspace == AppWorkspace then
                             "EXPLORE"
@@ -3712,11 +3785,11 @@ viewSidebar model =
 
               else
                 el
-                    [ paddingEach { top = 4, right = 0, bottom = 0, left = 0 }
-                    , Font.size 11
-                    , Font.bold
-                    , Font.color sidebarSectionColor
-                    ]
+                    ([ paddingEach { top = 4, right = 0, bottom = 0, left = 0 }
+                     , Font.color sidebarSectionColor
+                     ]
+                        ++ cupertinoSectionHeaderAttrs
+                    )
                     (text
                         (if workspace == AppWorkspace then
                             "FLOWS"
@@ -3728,11 +3801,11 @@ viewSidebar model =
                     :: List.map actionEndpointCard actions
             , if isAdminProfile model && workspace == AdminWorkspace then
                 [ el
-                    [ paddingEach { top = 4, right = 0, bottom = 0, left = 0 }
-                    , Font.size 11
-                    , Font.bold
-                    , Font.color sidebarSectionColor
-                    ]
+                    ([ paddingEach { top = 4, right = 0, bottom = 0, left = 0 }
+                     , Font.color sidebarSectionColor
+                     ]
+                        ++ cupertinoSectionHeaderAttrs
+                    )
                     (text "SYSTEM")
                 , performanceButton
                 , requestLogsButton
@@ -4077,14 +4150,7 @@ viewAuthToolsPanel model =
 
         else
             column
-                [ width fill
-                , spacing 12
-                , padding 16
-                , Background.color (rgb255 255 255 255)
-                , Border.rounded 14
-                , Border.width 1
-                , Border.color (rgb255 226 232 239)
-                ]
+                (cupertinoPanelAttrs 12 16)
                 [ viewPanelHeader (isCompactLayout model)
                     authPanelTitle
                     (if String.trim transportText == "" then
@@ -4156,11 +4222,12 @@ viewAuthEmailStage model firstAdminMode actionLabel submitMsg isLoading =
         , htmlAttribute (HtmlAttr.class "auth-stage auth-stage-email")
         ]
         [ Input.text
-            (width fill
-                :: htmlAttribute (HtmlAttr.type_ "email")
-                :: htmlAttribute (HtmlAttr.attribute "autocomplete" "email")
-                :: htmlAttribute (HtmlAttr.attribute "inputmode" "email")
-                :: (if isLoading then
+            (cupertinoTextInputAttrs
+                ++ [ htmlAttribute (HtmlAttr.type_ "email")
+                   , htmlAttribute (HtmlAttr.attribute "autocomplete" "email")
+                   , htmlAttribute (HtmlAttr.attribute "inputmode" "email")
+                   ]
+                ++ (if isLoading then
                         []
 
                     else
@@ -4217,20 +4284,13 @@ viewAuthCodeStage model firstAdminMode resendLabel resendMsg loginLoading resend
         , htmlAttribute (HtmlAttr.class "auth-stage auth-stage-code")
         ]
         [ column
-            [ width fill
-            , spacing 6
-            , Background.color (rgb255 247 249 253)
-            , Border.rounded 10
-            , Border.width 1
-            , Border.color (rgb255 226 232 239)
-            , padding 10
-            ]
+            (cupertinoInsetCardAttrs 10 ++ [ width fill, spacing 6 ])
             [ el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text "Code sent to")
             , el [ Font.bold, Font.size 14, Font.color (rgb255 44 56 72) ] (text emailText)
             ]
         , Input.text
-            (width fill
-                :: (if loginLoading || resendLoading then
+            (cupertinoTextInputAttrs
+                ++ (if loginLoading || resendLoading then
                         []
 
                     else
@@ -4305,14 +4365,7 @@ viewAuthSessionStage model =
         , htmlAttribute (HtmlAttr.class "auth-stage auth-stage-session")
         ]
         [ column
-            [ width fill
-            , spacing 6
-            , Background.color (rgb255 243 248 245)
-            , Border.rounded 10
-            , Border.width 1
-            , Border.color (rgb255 198 222 209)
-            , padding 10
-            ]
+            (cupertinoInsetCardAttrs 10 ++ [ width fill, spacing 6 ])
             [ el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text "Authenticated as")
             , el [ Font.bold, Font.size 14, Font.color (rgb255 44 56 72) ] (text emailText)
             , if roleText == "" then
@@ -4335,7 +4388,7 @@ authActionButton backgroundColor textColor onPress labelText =
         ([ width fill
          , Background.color
             (if isDisabled then
-                rgb255 214 221 231
+                rgb255 232 237 245
 
              else
                 backgroundColor
@@ -4347,17 +4400,29 @@ authActionButton backgroundColor textColor onPress labelText =
              else
                 textColor
             )
-         , Border.rounded 10
-         , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-         ]
-            ++ (if isDisabled then
-                    [ Border.width 1
-                    , Border.color (rgb255 196 204 216)
-                    ]
+         , Border.rounded 12
+         , Border.width 1
+         , Border.color
+            (if isDisabled then
+                rgb255 214 222 233
 
-                else
-                    []
-               )
+             else
+                rgba255 255 255 0 0
+            )
+         , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+         , htmlAttribute (HtmlAttr.style "outline" "none")
+         , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
+         , htmlAttribute
+            (HtmlAttr.style
+                "box-shadow"
+                (if isDisabled then
+                    "none"
+
+                 else
+                    "0 10px 24px rgba(84, 121, 224, 0.14), inset 0 1px 0 rgba(255,255,255,0.30)"
+                )
+            )
+         ]
         )
         { onPress = onPress
         , label = text labelText
@@ -4391,25 +4456,120 @@ authStatusLine maybeErrorMessage maybeStatusMessage =
 
 authSecondaryButton : Maybe Msg -> String -> Element Msg
 authSecondaryButton onPress labelText =
-    authUtilityButton (rgb255 224 231 241) (rgb255 55 68 87) onPress labelText
+    cupertinoNeutralButton onPress labelText
 
 
 authDangerButton : Maybe Msg -> String -> Element Msg
 authDangerButton onPress labelText =
-    authUtilityButton (rgb255 248 226 226) (rgb255 126 43 43) onPress labelText
+    cupertinoDangerButton onPress labelText
 
 
 authUtilityButton : Element.Color -> Element.Color -> Maybe Msg -> String -> Element Msg
 authUtilityButton backgroundColor textColor onPress labelText =
+    cupertinoButton backgroundColor textColor (rgba255 255 255 0 0) onPress labelText
+
+
+cupertinoPrimaryButton : Maybe Msg -> String -> Element Msg
+cupertinoPrimaryButton onPress labelText =
+    cupertinoButton
+        (rgb255 231 239 255)
+        (rgb255 47 97 209)
+        (rgb255 205 220 244)
+        onPress
+        labelText
+
+
+cupertinoNeutralButton : Maybe Msg -> String -> Element Msg
+cupertinoNeutralButton onPress labelText =
+    cupertinoButton
+        (rgb255 240 244 250)
+        (rgb255 62 74 92)
+        (rgb255 220 228 240)
+        onPress
+        labelText
+
+
+cupertinoDangerButton : Maybe Msg -> String -> Element Msg
+cupertinoDangerButton onPress labelText =
+    cupertinoButton
+        (rgb255 255 239 239)
+        (rgb255 176 60 46)
+        (rgb255 245 210 210)
+        onPress
+        labelText
+
+
+cupertinoButton : Element.Color -> Element.Color -> Element.Color -> Maybe Msg -> String -> Element Msg
+cupertinoButton backgroundColor textColor borderColor onPress labelText =
     Input.button
         [ Background.color backgroundColor
         , Font.color textColor
-        , Border.rounded 10
+        , Border.rounded 12
+        , Border.width 1
+        , Border.color borderColor
         , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+        , cupertinoFocusRing
+        , htmlAttribute (HtmlAttr.style "outline" "none")
+        , htmlAttribute (HtmlAttr.style "box-shadow" "0 1px 3px rgba(31,41,55,0.08), inset 0 1px 0 rgba(255,255,255,0.58)")
+        , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
         ]
         { onPress = onPress
         , label = text labelText
         }
+
+
+cupertinoFocusRing : Element.Attribute msg
+cupertinoFocusRing =
+    Element.focused
+        [ Border.glow (rgba255 94 135 218 0.45) 3
+        ]
+
+
+cupertinoPanelAttrs : Int -> Int -> List (Element.Attribute msg)
+cupertinoPanelAttrs spacingValue paddingValue =
+    [ width fill
+    , spacing spacingValue
+    , Background.color (rgb255 252 253 255)
+    , Border.rounded 18
+    , Border.width 1
+    , Border.color (rgb255 232 238 246)
+    , padding paddingValue
+    , htmlAttribute (HtmlAttr.style "box-shadow" "0 14px 32px rgba(15,23,42,0.06), inset 0 1px 0 rgba(255,255,255,0.72)")
+    ]
+
+
+cupertinoInsetCardAttrs : Int -> List (Element.Attribute msg)
+cupertinoInsetCardAttrs paddingValue =
+    [ Background.color (rgb255 247 250 254)
+    , Border.rounded 14
+    , Border.width 1
+    , Border.color (rgb255 232 238 246)
+    , padding paddingValue
+    , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.7)")
+    ]
+
+
+cupertinoSectionHeaderAttrs : List (Element.Attribute msg)
+cupertinoSectionHeaderAttrs =
+    [ Font.size 10
+    , Font.bold
+    , Font.letterSpacing 0.8
+    , Font.color (rgb255 132 143 159)
+    ]
+
+
+cupertinoTextInputAttrs : List (Element.Attribute msg)
+cupertinoTextInputAttrs =
+    [ width fill
+    , Background.color (rgb255 248 250 254)
+    , Border.rounded 12
+    , Border.width 1
+    , Border.color (rgb255 222 230 241)
+    , padding 12
+    , cupertinoFocusRing
+    , htmlAttribute (HtmlAttr.style "outline" "none")
+    , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)")
+    ]
 
 
 formBooleanField : String -> Bool -> String -> (String -> Msg) -> Element Msg
@@ -4475,28 +4635,30 @@ boolToggleButton state onPress =
                 , Background.color
                     (case state of
                         BooleanTrue ->
-                            rgb255 84 121 224
+                            rgb255 207 222 252
 
                         BooleanFalse ->
-                            rgb255 212 219 229
+                            rgb255 232 238 246
 
                         BooleanUnset ->
-                            rgb255 234 238 244
+                            rgb255 242 245 250
                     )
                 , Border.width 1
                 , Border.color
                     (case state of
                         BooleanTrue ->
-                            rgb255 70 106 206
+                            rgb255 182 203 242
 
                         BooleanFalse ->
-                            rgb255 197 205 217
+                            rgb255 214 223 235
 
                         BooleanUnset ->
-                            rgb255 214 221 231
+                            rgb255 224 230 239
                     )
                 , Border.rounded 999
                 , paddingEach { top = 3, right = 3, bottom = 3, left = 3 }
+                , cupertinoFocusRing
+                , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)")
                 ]
                 (case state of
                     BooleanTrue ->
@@ -4536,14 +4698,14 @@ boolUnsetButton selected onPress =
     Input.button
         [ Background.color
             (if selected then
-                rgb255 233 236 242
+                rgb255 232 239 251
 
              else
-                rgb255 246 247 250
+                rgb255 247 249 252
             )
         , Font.color
             (if selected then
-                rgb255 55 68 87
+                rgb255 63 86 130
 
              else
                 rgb255 109 121 138
@@ -4551,13 +4713,15 @@ boolUnsetButton selected onPress =
         , Border.width 1
         , Border.color
             (if selected then
-                rgb255 205 212 222
+                rgb255 206 220 242
 
              else
                 rgb255 225 230 237
             )
         , Border.rounded 999
         , paddingEach { top = 8, right = 12, bottom = 8, left = 12 }
+        , cupertinoFocusRing
+        , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)")
         ]
         { onPress = onPress
         , label = text "Unset"
@@ -4793,6 +4957,15 @@ isCompactLayout model =
     model.viewportWidth < 900
 
 
+closeMobileSidebarForNavigation : Model -> Model
+closeMobileSidebarForNavigation model =
+    if isCompactLayout model then
+        { model | mobileSidebarOpen = False, keepMobileSidebarOpenOnNextRoute = False }
+
+    else
+        model
+
+
 viewPanelTitle : String -> List (Element msg) -> Element msg
 viewPanelTitle title details =
     column [ width fill, spacing 6 ]
@@ -4800,6 +4973,7 @@ viewPanelTitle title details =
             [ width fill
             , Font.bold
             , Font.size 20
+            , Font.color (rgb255 34 47 64)
             , htmlAttribute (HtmlAttr.style "min-width" "0")
             , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
             , htmlAttribute (HtmlAttr.style "word-break" "break-word")
@@ -4906,14 +5080,7 @@ viewFlash model =
                             , htmlAttribute (HtmlAttr.style "word-break" "break-word")
                             ]
                             [ text message ]
-                        , Input.button
-                            [ Background.color (rgb255 217 229 250)
-                            , Border.rounded 8
-                            , paddingEach { top = 6, right = 10, bottom = 6, left = 10 }
-                            ]
-                            { onPress = Just ClearFlash
-                            , label = text "Close"
-                            }
+                        , cupertinoPrimaryButton (Just ClearFlash) "Close"
                         ]
 
                   else
@@ -4928,14 +5095,7 @@ viewFlash model =
                             , htmlAttribute (HtmlAttr.style "word-break" "break-word")
                             ]
                             [ text message ]
-                        , Input.button
-                            [ Background.color (rgb255 217 229 250)
-                            , Border.rounded 8
-                            , paddingEach { top = 6, right = 10, bottom = 6, left = 10 }
-                            ]
-                            { onPress = Just ClearFlash
-                            , label = text "Close"
-                            }
+                        , cupertinoPrimaryButton (Just ClearFlash) "Close"
                         ]
                 ]
 
@@ -4952,17 +5112,16 @@ viewDeleteConfirmation model =
                 , height fill
                 , Background.color (rgba255 18 24 33 0.36)
                 , padding 16
+                , htmlAttribute (HtmlAttr.style "backdrop-filter" "blur(16px)")
+                , htmlAttribute (HtmlAttr.style "-webkit-backdrop-filter" "blur(16px)")
                 ]
                 (el
-                    [ centerX
-                    , centerY
-                    , width (fill |> maximum 480)
-                    , Background.color (rgb255 255 255 255)
-                    , Border.rounded 14
-                    , Border.width 1
-                    , Border.color (rgb255 226 232 239)
-                    , padding 18
-                    ]
+                    ([ centerX
+                     , centerY
+                     , width (fill |> maximum 480)
+                     ]
+                        ++ cupertinoPanelAttrs 16 18
+                    )
                     (column
                         [ width fill
                         , spacing 16
@@ -4979,23 +5138,8 @@ viewDeleteConfirmation model =
                                 [ width fill
                                 , spacing 10
                                 ]
-                                [ Input.button
-                                    [ Background.color (rgb255 224 231 241)
-                                    , Border.rounded 10
-                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                                    ]
-                                    { onPress = Just CancelDelete
-                                    , label = text "Cancel"
-                                    }
-                                , Input.button
-                                    [ Background.color (rgb255 176 60 46)
-                                    , Font.color (rgb255 252 247 246)
-                                    , Border.rounded 10
-                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                                    ]
-                                    { onPress = Just ConfirmDelete
-                                    , label = text "Delete"
-                                    }
+                                [ cupertinoNeutralButton (Just CancelDelete) "Cancel"
+                                , cupertinoDangerButton (Just ConfirmDelete) "Delete"
                                 ]
 
                           else
@@ -5004,23 +5148,8 @@ viewDeleteConfirmation model =
                                 , spacing 10
                                 ]
                                 [ el [ width fill ] none
-                                , Input.button
-                                    [ Background.color (rgb255 224 231 241)
-                                    , Border.rounded 10
-                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                                    ]
-                                    { onPress = Just CancelDelete
-                                    , label = text "Cancel"
-                                    }
-                                , Input.button
-                                    [ Background.color (rgb255 176 60 46)
-                                    , Font.color (rgb255 252 247 246)
-                                    , Border.rounded 10
-                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                                    ]
-                                    { onPress = Just ConfirmDelete
-                                    , label = text "Delete"
-                                    }
+                                , cupertinoNeutralButton (Just CancelDelete) "Cancel"
+                                , cupertinoDangerButton (Just ConfirmDelete) "Delete"
                                 ]
                         ]
                     )
@@ -5058,23 +5187,8 @@ viewDataPanel model =
 
                 actionsBar =
                     wrappedRow [ width fill, spacing 10 ]
-                        [ Input.button
-                            [ Background.color (rgb255 34 124 95)
-                            , Font.color (rgb255 248 252 250)
-                            , Border.rounded 10
-                            , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                            ]
-                            { onPress = Just StartCreate
-                            , label = text createLabel
-                            }
-                        , Input.button
-                            [ Background.color (rgb255 224 231 241)
-                            , Border.rounded 10
-                            , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                            ]
-                            { onPress = Just ReloadRows
-                            , label = text "Refresh"
-                            }
+                        [ cupertinoPrimaryButton (Just StartCreate) createLabel
+                        , cupertinoNeutralButton (Just ReloadRows) "Refresh"
                         ]
 
                 rowsBlock =
@@ -5122,13 +5236,10 @@ viewDataPanel model =
             else
                 column
                     ([ width
-                        (fillPortion 3)
-                     , spacing 10
-                     , Background.color (rgb255 255 255 255)
-                     , Border.rounded 14
-                     , Border.width 1
-                     , Border.color (rgb255 226 232 239)
-                     , paddingEach { top = 10, right = 16, bottom = 4, left = 16 }
+                        (fillPortion 4)
+                     ]
+                        ++ cupertinoPanelAttrs 10 16
+                        ++ [ paddingEach { top = 10, right = 16, bottom = 4, left = 16 }
                      , htmlAttribute (HtmlAttr.style "min-height" "0")
                      , htmlAttribute (HtmlAttr.style "min-width" "0")
                      ]
@@ -5144,15 +5255,7 @@ viewActionPanel model actionInfo =
     case findInputAlias actionInfo.inputAlias model of
         Nothing ->
             column
-                [ width fill
-                , height fill
-                , spacing 12
-                , Background.color (rgb255 255 255 255)
-                , Border.rounded 14
-                , Border.width 1
-                , Border.color (rgb255 226 232 239)
-                , padding 16
-                ]
+                ([ height fill ] ++ cupertinoPanelAttrs 12 16)
                 [ viewPanelHeader (isCompactLayout model) ("Action: " ++ actionInfo.name) [] []
                 , paragraph [ Font.color (rgb255 176 60 46) ] [ text ("Input alias not found: " ++ actionInfo.inputAlias) ]
                 ]
@@ -5172,7 +5275,7 @@ viewActionPanel model actionInfo =
                             (SetActionField field.name)
 
                     else
-                        Input.text [ width fill ]
+                        Input.text cupertinoTextInputAttrs
                             { onChange = SetActionField field.name
                             , text = Dict.get field.name model.actionFormValues |> Maybe.withDefault ""
                             , placeholder =
@@ -5184,15 +5287,9 @@ viewActionPanel model actionInfo =
                             }
             in
             column
-                [ width fill
-                , height fill
-                , spacing 12
-                , Background.color (rgb255 255 255 255)
-                , Border.rounded 14
-                , Border.width 1
-                , Border.color (rgb255 226 232 239)
-                , padding 16
-                ]
+                ([ height fill ]
+                    ++ cupertinoPanelAttrs 12 16
+                )
                 (List.concat
                     [ [ viewPanelHeader (isCompactLayout model)
                             (if workspace == AppWorkspace then
@@ -5214,43 +5311,27 @@ viewActionPanel model actionInfo =
                     , List.map fieldInput aliasInfo.fields
                     , [ if isCompactLayout model then
                             wrappedRow [ width fill, spacing 10 ]
-                                [ Input.button
-                                    [ Background.color (rgb255 34 124 95)
-                                    , Font.color (rgb255 248 252 250)
-                                    , Border.rounded 10
-                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                                    ]
-                                    { onPress = Just RunAction
-                                    , label =
-                                        text
-                                            (if workspace == AppWorkspace then
-                                                "Continue"
+                                [ cupertinoPrimaryButton
+                                    (Just RunAction)
+                                    (if workspace == AppWorkspace then
+                                        "Continue"
 
-                                             else
-                                                "Run action"
-                                            )
-                                    }
+                                     else
+                                        "Run action"
+                                    )
                                 ]
 
                         else
                             row [ width fill ]
                                 [ el [ width fill ] none
-                                , Input.button
-                                    [ Background.color (rgb255 34 124 95)
-                                    , Font.color (rgb255 248 252 250)
-                                    , Border.rounded 10
-                                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                                    ]
-                                    { onPress = Just RunAction
-                                    , label =
-                                        text
-                                            (if workspace == AppWorkspace then
-                                                "Continue"
+                                , cupertinoPrimaryButton
+                                    (Just RunAction)
+                                    (if workspace == AppWorkspace then
+                                        "Continue"
 
-                                             else
-                                                "Run action"
-                                            )
-                                    }
+                                     else
+                                        "Run action"
+                                    )
                                 ]
                       ]
                     , [ case model.actionResult of
@@ -5259,14 +5340,7 @@ viewActionPanel model actionInfo =
 
                             Just response ->
                                 column
-                                    [ width fill
-                                    , spacing 8
-                                    , Background.color (rgb255 248 250 252)
-                                    , Border.rounded 10
-                                    , Border.width 1
-                                    , Border.color (rgb255 226 232 239)
-                                    , padding 12
-                                    ]
+                                    (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 8 ])
                                     (el [ Font.bold ]
                                         (text
                                             (if workspace == AppWorkspace then
@@ -5378,6 +5452,13 @@ viewRowCard workspace entity isSelected rowValue =
             , htmlAttribute (HtmlAttr.style "word-break" "break-word")
             ]
 
+        headingColor =
+            if isSelected then
+                rgb255 43 76 136
+
+            else
+                rgb255 35 50 71
+
         headingText =
             rowCardTitle workspace entity rowValue
 
@@ -5389,7 +5470,7 @@ viewRowCard workspace entity isSelected rowValue =
 
         bodyContent =
             List.filterMap identity
-                [ Just (paragraph (Font.bold :: wrappingTextAttrs) [ text headingText ])
+                [ Just (paragraph (Font.bold :: Font.color headingColor :: wrappingTextAttrs) [ text headingText ])
                 , if List.isEmpty statusBadges then
                     Nothing
 
@@ -5412,25 +5493,52 @@ viewRowCard workspace entity isSelected rowValue =
                 , spacing 12
                 ]
                 [ column [ width fill, spacing 8 ] bodyContent
-                , el [ Font.size 18, Font.color (rgb255 132 145 162), centerY ] (text "›")
+                , el
+                    [ Font.size 18
+                    , Font.color
+                        (if isSelected then
+                            rgb255 94 135 218
+
+                         else
+                            rgb255 132 145 162
+                        )
+                    , centerY
+                    ]
+                    (text "›")
                 ]
     in
     Input.button
         [ width fill
         , Background.color
             (if isSelected then
-                rgb255 229 239 255
+                rgb255 237 244 255
 
              else
                 rgb255 250 252 255
             )
         , Border.rounded 12
         , Border.width 1
-        , Border.color (rgb255 226 232 239)
+        , Border.color
+            (if isSelected then
+                rgb255 227 235 246
+
+             else
+                rgb255 226 232 239
+            )
         , padding 14
         , htmlAttribute (HtmlAttr.style "cursor" "pointer")
+        , cupertinoFocusRing
         , htmlAttribute (HtmlAttr.style "outline" "none")
-        , htmlAttribute (HtmlAttr.style "box-shadow" "none")
+        , htmlAttribute
+            (HtmlAttr.style
+                "box-shadow"
+                (if isSelected then
+                    "0 8px 20px rgba(110, 139, 196, 0.12), inset 0 1px 0 rgba(255,255,255,0.55)"
+
+                 else
+                    "none"
+                )
+            )
         , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
         ]
         { onPress = Just (SelectRow rowValue)
@@ -5452,7 +5560,7 @@ viewInspector model =
                             fill
 
                          else
-                            fillPortion 2
+                            fillPortion 1 |> maximum 420
                         )
                      , spacing 14
                      , htmlAttribute (HtmlAttr.style "min-height" "0")
@@ -5491,7 +5599,7 @@ viewInspector model =
                         fill
 
                      else
-                        fillPortion 2
+                        fillPortion 1 |> maximum 420
                     )
                  , spacing 14
                  , htmlAttribute (HtmlAttr.style "min-height" "0")
@@ -5511,14 +5619,7 @@ viewPerformancePanel : Model -> Element Msg
 viewPerformancePanel model =
     let
         panelAttrs =
-            [ width fill
-            , spacing 14
-            , Background.color (rgb255 255 255 255)
-            , Border.rounded 14
-            , Border.width 1
-            , Border.color (rgb255 226 232 239)
-            , padding 16
-            ]
+            cupertinoPanelAttrs 14 16
                 ++ (if isCompactLayout model then
                         []
 
@@ -5553,39 +5654,44 @@ viewPerformancePanel model =
 
                         else
                             rgb255 34 124 95
+
+                    routeTextAttrs =
+                        [ Font.size 13
+                        , Font.color (rgb255 41 52 68)
+                        ]
+
+                    routeMetaAttrs =
+                        [ Font.size 12
+                        , Font.color (rgb255 93 103 120)
+                        ]
+
+                    routeStatusAttrs =
+                        [ Font.size 12
+                        , Font.color statusColor
+                        ]
                 in
                 if compact then
                     column
-                        [ width fill
-                        , spacing 8
-                        , Background.color (rgb255 248 250 252)
-                        , Border.rounded 10
-                        , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
-                        ]
+                        (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 8 ])
                         [ wrappedRow [ width fill, spacing 8 ]
-                            [ el [ Font.bold ] (text perfRoute.method)
-                            , el [] (text perfRoute.route)
+                            [ el (Font.bold :: routeTextAttrs) (text perfRoute.method)
+                            , el routeTextAttrs (text perfRoute.route)
                             ]
                         , wrappedRow [ width fill, spacing 8 ]
-                            [ el [] (text ("count: " ++ String.fromInt perfRoute.count))
-                            , el [] (text ("avg: " ++ formatMs perfRoute.avgMs))
-                            , el [ Font.color statusColor ] (text ("4xx/5xx: " ++ String.fromInt perfRoute.errors4xx ++ "/" ++ String.fromInt perfRoute.errors5xx))
+                            [ el routeMetaAttrs (text ("count: " ++ String.fromInt perfRoute.count))
+                            , el routeMetaAttrs (text ("avg: " ++ formatMs perfRoute.avgMs))
+                            , el routeStatusAttrs (text ("4xx/5xx: " ++ String.fromInt perfRoute.errors4xx ++ "/" ++ String.fromInt perfRoute.errors5xx))
                             ]
                         ]
 
                 else
                     row
-                        [ width fill
-                        , spacing 12
-                        , Background.color (rgb255 248 250 252)
-                        , Border.rounded 10
-                        , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
-                        ]
-                        [ el [ width (fillPortion 1), Font.bold ] (text perfRoute.method)
-                        , el [ width (fillPortion 3) ] (text perfRoute.route)
-                        , el [ width (fillPortion 1) ] (text ("count: " ++ String.fromInt perfRoute.count))
-                        , el [ width (fillPortion 1) ] (text ("avg: " ++ formatMs perfRoute.avgMs))
-                        , el [ width (fillPortion 1), Font.color statusColor ] (text ("4xx/5xx: " ++ String.fromInt perfRoute.errors4xx ++ "/" ++ String.fromInt perfRoute.errors5xx))
+                        (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 12 ])
+                        [ el ([ width (fillPortion 1), Font.bold ] ++ routeTextAttrs) (text perfRoute.method)
+                        , el ([ width (fillPortion 3) ] ++ routeTextAttrs) (text perfRoute.route)
+                        , el ([ width (fillPortion 1) ] ++ routeMetaAttrs) (text ("count: " ++ String.fromInt perfRoute.count))
+                        , el ([ width (fillPortion 1) ] ++ routeMetaAttrs) (text ("avg: " ++ formatMs perfRoute.avgMs))
+                        , el ([ width (fillPortion 1) ] ++ routeStatusAttrs) (text ("4xx/5xx: " ++ String.fromInt perfRoute.errors4xx ++ "/" ++ String.fromInt perfRoute.errors5xx))
                         ]
 
             cards perf =
@@ -5602,15 +5708,7 @@ viewPerformancePanel model =
             [ viewPanelHeader (isCompactLayout model)
                 "Monitoring"
                 []
-                [ Input.button
-                    [ Background.color (rgb255 224 231 241)
-                    , Border.rounded 10
-                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                    ]
-                    { onPress = Just ReloadPerformance
-                    , label = text "Refresh"
-                    }
-                ]
+                [ cupertinoNeutralButton (Just ReloadPerformance) "Refresh" ]
             , viewMonitoringVersion model.adminVersion model.monitoringVersionDetailsOpen
             , el
                 [ width fill
@@ -5715,14 +5813,7 @@ viewRequestLogsPanel : Model -> Element Msg
 viewRequestLogsPanel model =
     let
         panelAttrs =
-            [ width fill
-            , spacing 14
-            , Background.color (rgb255 255 255 255)
-            , Border.rounded 14
-            , Border.width 1
-            , Border.color (rgb255 226 232 239)
-            , padding 16
-            ]
+            cupertinoPanelAttrs 14 16
                 ++ (if isCompactLayout model then
                         []
 
@@ -5765,15 +5856,7 @@ viewRequestLogsPanel model =
                  else
                     [ el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text logsSubtitle) ]
                 )
-                [ Input.button
-                    [ Background.color (rgb255 224 231 241)
-                    , Border.rounded 10
-                    , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                    ]
-                    { onPress = Just ReloadRequestLogs
-                    , label = text "Refresh"
-                    }
-                ]
+                [ cupertinoNeutralButton (Just ReloadRequestLogs) "Refresh" ]
             , paragraph [ Font.size 13, Font.color (rgb255 93 103 120) ]
                 [ text "Sensitive values are masked by the server in this view (tokens, login codes, and emails)." ]
             , viewRequestLogsSection model.requestLogs
@@ -5835,22 +5918,15 @@ viewRequestLogEntry entry =
             String.fromInt entry.queryCount ++ " " ++ queryLabel ++ ", " ++ formatMs entry.queryTimeMs
     in
     column
-        [ width fill
-        , spacing 8
-        , Background.color (rgb255 248 250 252)
-        , Border.rounded 10
-        , Border.width 1
-        , Border.color (rgb255 226 232 239)
-        , padding 12
-        ]
+        (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 8 ])
         (List.concat
             [ [ row [ width fill, spacing 10 ]
                     [ el [ Font.size 12, Font.bold, Font.color (rgb255 70 80 96) ] (text ("Date: " ++ dateText))
                     , el [ Font.size 12, Font.bold, Font.color (rgb255 70 80 96) ] (text ("Time: " ++ timeText))
                     ]
               , wrappedRow [ width fill, spacing 10 ]
-                    [ el [ Font.bold ] (text (entry.method ++ " " ++ entry.path))
-                    , el [ Font.color statusColor, Font.bold ] (text (String.fromInt entry.status))
+                    [ el [ Font.size 13, Font.bold, Font.color (rgb255 44 56 72) ] (text (entry.method ++ " " ++ entry.path))
+                    , el [ Font.size 13, Font.color statusColor, Font.bold ] (text (String.fromInt entry.status))
                     , el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text (formatMs entry.durationMs))
                     ]
               , wrappedRow [ width fill, spacing 10 ]
@@ -5883,12 +5959,7 @@ viewRequestLogQuery query =
             formatMs query.durationMs ++ " | rows: " ++ String.fromInt query.rowCount
     in
     column
-        [ width fill
-        , spacing 4
-        , Background.color (rgb255 243 247 252)
-        , Border.rounded 8
-        , padding 8
-        ]
+        (cupertinoInsetCardAttrs 8 ++ [ width fill, spacing 4 ])
         (List.concat
             [ case query.reason of
                 Just reasonText ->
@@ -5926,14 +5997,7 @@ viewDatabasePanel : Model -> Element Msg
 viewDatabasePanel model =
     if not (isAdminProfile model) then
         column
-            [ width fill
-            , spacing 14
-            , Background.color (rgb255 255 255 255)
-            , Border.rounded 14
-            , Border.width 1
-            , Border.color (rgb255 226 232 239)
-            , padding 16
-            ]
+            (cupertinoPanelAttrs 14 16)
             [ el [ Font.bold, Font.size 20 ] (text "Database")
             , paragraph [ Font.size 14, Font.color (rgb255 93 103 120) ]
                 [ text "Admin role required to view database and backup information." ]
@@ -6024,8 +6088,10 @@ viewDatabasePanelAdmin model =
                                         [ width fill
                                         , spacing 12
                                         , paddingEach { top = 6, right = 10, bottom = 6, left = 10 }
-                                        , Background.color (rgb255 244 247 252)
+                                        , Background.color (rgb255 247 250 254)
                                         , Border.rounded 8
+                                        , Border.width 1
+                                        , Border.color (rgb255 232 238 246)
                                         ]
                                         [ el [ width (fillPortion 2), Font.bold ] (text "Backup time")
                                         , el [ width (fillPortion 1), Font.bold ] (text "Size")
@@ -6037,34 +6103,12 @@ viewDatabasePanelAdmin model =
                             )
     in
     column
-        [ width fill
-        , spacing 14
-        , Background.color (rgb255 255 255 255)
-        , Border.rounded 14
-        , Border.width 1
-        , Border.color (rgb255 226 232 239)
-        , padding 16
-        ]
+        (cupertinoPanelAttrs 14 16)
         [ viewPanelHeader (isCompactLayout model)
             "Database"
             []
-            [ Input.button
-                [ Background.color (rgb255 224 231 241)
-                , Border.rounded 10
-                , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                ]
-                { onPress = Just ReloadDatabase
-                , label = text "Refresh"
-                }
-            , Input.button
-                [ Background.color (rgb255 34 124 95)
-                , Font.color (rgb255 248 252 250)
-                , Border.rounded 10
-                , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                ]
-                { onPress = Just TriggerBackup
-                , label = text "Create backup"
-                }
+            [ cupertinoNeutralButton (Just ReloadDatabase) "Refresh"
+            , cupertinoPrimaryButton (Just TriggerBackup) "Create backup"
             ]
         , wrappedRow [ width fill, spacing 12 ]
             [ performanceCard "SQLite database size" sqliteSizeText
@@ -6072,7 +6116,7 @@ viewDatabasePanelAdmin model =
             , databaseInfoCard "Backups directory" backupDirText
             ]
         , lastBackupInfo
-        , el [ Font.bold, Font.size 18 ] (text "Available backups")
+        , el [ Font.bold, Font.size 18, Font.color (rgb255 39 51 68) ] (text "Available backups")
         , backupsSection
         ]
 
@@ -6123,14 +6167,12 @@ backupRow : Bool -> BackupFile -> Element Msg
 backupRow compact backup =
     if compact then
         column
-            [ width fill
-            , spacing 10
-            , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
-            , Background.color (rgb255 248 250 252)
-            , Border.rounded 8
-            , Border.width 1
-            , Border.color (rgb255 226 232 239)
-            ]
+            ([ width fill
+             , spacing 10
+             ]
+                ++ cupertinoInsetCardAttrs 10
+                ++ [ paddingEach { top = 8, right = 10, bottom = 8, left = 10 } ]
+            )
             [ backupRowField "Backup time" backup.createdAt
             , backupRowField "Size" (formatBytes backup.sizeBytes)
             , backupRowField "File" (backupDisplayName backup)
@@ -6138,14 +6180,12 @@ backupRow compact backup =
 
     else
         row
-            [ width fill
-            , spacing 12
-            , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
-            , Background.color (rgb255 248 250 252)
-            , Border.rounded 8
-            , Border.width 1
-            , Border.color (rgb255 226 232 239)
-            ]
+            ([ width fill
+             , spacing 12
+             ]
+                ++ cupertinoInsetCardAttrs 10
+                ++ [ paddingEach { top = 8, right = 10, bottom = 8, left = 10 } ]
+            )
             [ el [ width (fillPortion 2) ] (text backup.createdAt)
             , el [ width (fillPortion 1), Font.bold ] (text (formatBytes backup.sizeBytes))
             , el [ width (fillPortion 4), Font.size 13, Font.color (rgb255 93 103 120) ] (text (backupDisplayName backup))
@@ -6196,16 +6236,9 @@ lastPathSegment rawPath =
 performanceCard : String -> String -> Element Msg
 performanceCard title value =
     column
-        [ width fill
-        , spacing 6
-        , Background.color (rgb255 248 250 252)
-        , Border.rounded 10
-        , Border.width 1
-        , Border.color (rgb255 226 232 239)
-        , padding 12
-        ]
+        (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 6 ])
         [ el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text title)
-        , el [ Font.size 20, Font.bold ] (text value)
+        , el [ Font.size 15, Font.bold ] (text value)
         ]
 
 
@@ -6217,14 +6250,7 @@ databaseInfoCard title value =
 databaseInfoCardWithHint : String -> String -> String -> Element Msg
 databaseInfoCardWithHint title value hint =
     column
-        [ width (fill |> minimum 220)
-        , spacing 6
-        , Background.color (rgb255 248 250 252)
-        , Border.rounded 10
-        , Border.width 1
-        , Border.color (rgb255 226 232 239)
-        , padding 12
-        ]
+        (cupertinoInsetCardAttrs 12 ++ [ width (fill |> minimum 220), spacing 6 ])
         [ el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text title)
         , paragraph [ Font.size 13, Font.color (rgb255 41 52 68) ] [ text value ]
         , if String.trim hint == "" then
@@ -6238,14 +6264,7 @@ databaseInfoCardWithHint title value hint =
 compactInfoCard : String -> String -> Element Msg
 compactInfoCard title value =
     column
-        [ width fill
-        , spacing 4
-        , Background.color (rgb255 248 250 252)
-        , Border.rounded 10
-        , Border.width 1
-        , Border.color (rgb255 226 232 239)
-        , padding 10
-        ]
+        (cupertinoInsetCardAttrs 10 ++ [ width fill, spacing 4 ])
         [ el [ Font.size 11, Font.color (rgb255 93 103 120) ] (text title)
         , paragraph [ Font.size 12, Font.color (rgb255 41 52 68) ] [ text value ]
         ]
@@ -6391,14 +6410,7 @@ roundTo1 value =
 viewActionInfo : ActionInfo -> Element Msg
 viewActionInfo actionInfo =
     column
-        [ width fill
-        , spacing 10
-        , Background.color (rgb255 255 255 255)
-        , Border.rounded 14
-        , Border.width 1
-        , Border.color (rgb255 226 232 239)
-        , padding 14
-        ]
+        (cupertinoPanelAttrs 10 14)
         [ el [ Font.bold, Font.size 18 ] (text "Action details")
         , wrappedRow [ width fill, spacing 8 ]
             [ badge "ACTION"
@@ -6605,7 +6617,10 @@ statusBadge backgroundColor textColor labelText =
         , Font.color textColor
         , Border.rounded 999
         , Font.size 11
+        , Border.width 1
+        , Border.color (rgba255 255 255 255 0.45)
         , paddingEach { top = 4, right = 8, bottom = 4, left = 8 }
+        , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.62)")
         ]
         (text labelText)
 
@@ -6625,16 +6640,9 @@ viewEntitySchema model =
                     Just entity ->
                         entity.fields
         in
-        column
-            [ width fill
-            , spacing 8
-            , Background.color (rgb255 255 255 255)
-            , Border.rounded 14
-            , Border.width 1
-            , Border.color (rgb255 226 232 239)
-            , padding 14
-            ]
-            (el [ Font.bold, Font.size 18 ] (text "Schema")
+    column
+        (cupertinoPanelAttrs 8 14)
+        (el [ Font.bold, Font.size 18 ] (text "Schema")
                 :: List.map
                     (\field ->
                         row [ width fill, spacing 8 ]
@@ -6670,10 +6678,14 @@ viewEntitySchema model =
 badge : String -> Element Msg
 badge labelText =
     el
-        [ Background.color (rgb255 234 240 250)
+        [ Background.color (rgb255 240 245 252)
+        , Font.color (rgb255 88 101 123)
         , Border.rounded 999
         , Font.size 11
+        , Border.width 1
+        , Border.color (rgb255 223 231 241)
         , paddingEach { top = 4, right = 8, bottom = 4, left = 8 }
+        , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.68)")
         ]
         (text labelText)
 
@@ -6715,7 +6727,7 @@ formCard model entity titleText =
                         (SetFormField field.name)
 
                 _ ->
-                    Input.text [ width fill ]
+                    Input.text cupertinoTextInputAttrs
                         { onChange = SetFormField field.name
                         , text = Dict.get field.name model.formValues |> Maybe.withDefault ""
                         , placeholder =
@@ -6727,14 +6739,7 @@ formCard model entity titleText =
                         }
     in
     column
-        [ width fill
-        , spacing 10
-        , Background.color (rgb255 255 255 255)
-        , Border.rounded 14
-        , Border.width 1
-        , Border.color (rgb255 226 232 239)
-        , padding 14
-        ]
+        (cupertinoPanelAttrs 10 14)
         (List.concat
             [ [ el [ Font.bold, Font.size 18 ]
                     (text
@@ -6748,23 +6753,8 @@ formCard model entity titleText =
                  else
                     row [ spacing 10 ]
                 )
-                    [ Input.button
-                        [ Background.color (rgb255 34 124 95)
-                        , Font.color (rgb255 247 252 249)
-                        , Border.rounded 8
-                        , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
-                        ]
-                        { onPress = Just SubmitForm
-                        , label = text "Save"
-                        }
-                    , Input.button
-                        [ Background.color (rgb255 233 236 242)
-                        , Border.rounded 8
-                        , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
-                        ]
-                        { onPress = Just CancelForm
-                        , label = text "Cancel"
-                        }
+                    [ cupertinoPrimaryButton (Just SubmitForm) "Save"
+                    , cupertinoNeutralButton (Just CancelForm) "Cancel"
                     ]
               ]
             ]
@@ -6826,49 +6816,18 @@ viewSelectedRow model =
                             List.filterMap identity
                                 [ if compact then
                                     Just
-                                        (Input.button
-                                            [ Background.color (rgb255 233 236 242)
-                                            , Border.rounded 10
-                                            , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                                            ]
-                                            { onPress = Just CloseSelectedRow
-                                            , label = text "Back"
-                                            }
-                                        )
+                                        (cupertinoNeutralButton (Just CloseSelectedRow) "Back")
 
                                   else
                                     Nothing
                                 , Just
-                                    (Input.button
-                                        [ Background.color (rgb255 223 244 238)
-                                        , Border.rounded 10
-                                        , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                                        ]
-                                        { onPress = Just (StartEdit rowValue)
-                                        , label = text "Edit"
-                                        }
-                                    )
+                                    (cupertinoPrimaryButton (Just (StartEdit rowValue)) "Edit")
                                 , Just
-                                    (Input.button
-                                        [ Background.color (rgb255 248 226 226)
-                                        , Border.rounded 10
-                                        , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
-                                        ]
-                                        { onPress = Just (RequestDeleteRow rowValue)
-                                        , label = text "Delete"
-                                        }
-                                    )
+                                    (cupertinoDangerButton (Just (RequestDeleteRow rowValue)) "Delete")
                                 ]
                     in
                     column
-                        [ width fill
-                        , spacing 12
-                        , Background.color (rgb255 255 255 255)
-                        , Border.rounded 14
-                        , Border.width 1
-                        , Border.color (rgb255 226 232 239)
-                        , padding 14
-                        ]
+                        (cupertinoPanelAttrs 12 14)
                         (viewPanelHeader compact detailTitle detailSubtitle detailActions
                             :: (visibleRows
                                     |> List.map
