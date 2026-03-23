@@ -32,7 +32,7 @@ type BackupFile struct {
 }
 
 // CreateSQLiteBackup creates a timestamped SQLite snapshot and rotates old backups.
-func CreateSQLiteBackup(databasePath string, keepLast int) (BackupResult, error) {
+func CreateSQLiteBackup(databasePath string, cfg sqlitecli.Config, keepLast int) (BackupResult, error) {
 	if keepLast <= 0 {
 		keepLast = 20
 	}
@@ -52,7 +52,7 @@ func CreateSQLiteBackup(databasePath string, keepLast int) (BackupResult, error)
 	timestamp := time.Now().UTC().Format("20060102T150405Z")
 	backupPath := filepath.Join(backupDir, prefix+"-"+timestamp+".db")
 	quotedPath := strings.ReplaceAll(backupPath, "'", "''")
-	db := sqlitecli.Open(databasePath)
+	db := sqlitecli.OpenWithConfig(databasePath, cfg)
 	defer db.Close()
 	if _, err := db.Exec("VACUUM INTO '" + quotedPath + "'"); err != nil {
 		return BackupResult{}, fmt.Errorf("backup failed: %w", err)

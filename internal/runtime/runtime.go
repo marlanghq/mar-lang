@@ -202,6 +202,11 @@ func sqliteConfigForApp(app *model.App) sqlitecli.Config {
 	return cfg
 }
 
+// SQLiteConfigForApp returns the effective SQLite config for a Mar app.
+func SQLiteConfigForApp(app *model.App) sqlitecli.Config {
+	return sqliteConfigForApp(app)
+}
+
 // Close releases runtime resources.
 func (r *Runtime) Close() error {
 	if r == nil || r.DB == nil {
@@ -404,7 +409,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		if !isAdminRole(auth.Role) {
 			return newAPIError(http.StatusForbidden, "admin_role_required", "Admin role required")
 		}
-		result, err := CreateSQLiteBackup(r.App.Database, 20)
+		result, err := CreateSQLiteBackup(r.App.Database, sqliteConfigForApp(r.App), 20)
 		if err != nil {
 			return err
 		}

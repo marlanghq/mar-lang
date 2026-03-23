@@ -148,7 +148,7 @@ func runServe(app *model.App, bundle *appbundle.Bundle) error {
 }
 
 func runBackup(app *model.App) error {
-	result, err := marruntime.CreateSQLiteBackup(app.Database, backupKeepLast)
+	result, err := marruntime.CreateSQLiteBackup(app.Database, marruntime.SQLiteConfigForApp(app), backupKeepLast)
 	if err != nil {
 		return err
 	}
