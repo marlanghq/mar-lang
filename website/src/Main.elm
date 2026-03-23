@@ -416,22 +416,15 @@ websiteLogoBlock =
         , height (px 86)
         ]
         (html
-            (Html.div
-                [ HtmlAttr.style "width" "100%"
-                , HtmlAttr.style "height" "100%"
-                , HtmlAttr.style "display" "flex"
-                , HtmlAttr.style "align-items" "center"
-                , HtmlAttr.style "justify-content" "center"
+            (Html.img
+                [ HtmlAttr.src "mar.svg"
+                , HtmlAttr.alt "Mar"
+                , HtmlAttr.style "width" "58px"
+                , HtmlAttr.style "height" "58px"
+                , HtmlAttr.style "display" "block"
+                , HtmlAttr.style "margin" "14px"
                 ]
-                [ Html.img
-                    [ HtmlAttr.src "mar.svg"
-                    , HtmlAttr.alt "Mar"
-                    , HtmlAttr.style "width" "58px"
-                    , HtmlAttr.style "height" "58px"
-                    , HtmlAttr.style "display" "block"
-                    ]
-                    []
-                ]
+                []
             )
         )
 
