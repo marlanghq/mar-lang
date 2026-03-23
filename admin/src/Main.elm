@@ -3420,8 +3420,6 @@ viewSidebar model =
             , Background.color backgroundColor
             , Font.color textColor
             , paddingEach paddingValues
-            , cupertinoFocusRing
-            , htmlAttribute (HtmlAttr.style "outline" "none")
             , htmlAttribute
                 (HtmlAttr.style
                     "box-shadow"
@@ -3433,6 +3431,7 @@ viewSidebar model =
                     )
                 )
             ]
+                ++ buttonInteractionAttrs
 
         workspaceToggleAttrs backgroundColor textColor paddingValues =
             [ width fill
@@ -3442,8 +3441,6 @@ viewSidebar model =
             , Background.color backgroundColor
             , Font.color textColor
             , paddingEach paddingValues
-            , cupertinoFocusRing
-            , htmlAttribute (HtmlAttr.style "outline" "none")
             , htmlAttribute
                 (HtmlAttr.style
                     "box-shadow"
@@ -3455,6 +3452,7 @@ viewSidebar model =
                     )
                 )
             ]
+                ++ buttonInteractionAttrs
 
         ( authEntities, crudEntities, actions ) =
             case model.schema of
@@ -4470,20 +4468,31 @@ cupertinoDangerButton onPress labelText =
 cupertinoButton : Element.Color -> Element.Color -> Element.Color -> Maybe Msg -> String -> Element Msg
 cupertinoButton backgroundColor textColor borderColor onPress labelText =
     Input.button
-        [ Background.color backgroundColor
-        , Font.color textColor
-        , Border.rounded 12
-        , Border.width 1
-        , Border.color borderColor
-        , paddingEach { top = 8, right = 14, bottom = 8, left = 14 }
-        , cupertinoFocusRing
-        , htmlAttribute (HtmlAttr.style "outline" "none")
-        , htmlAttribute (HtmlAttr.style "box-shadow" "0 1px 3px rgba(31,41,55,0.08), inset 0 1px 0 rgba(255,255,255,0.58)")
-        , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
-        ]
+        ([ Background.color backgroundColor
+         , Font.color textColor
+         , Border.rounded 12
+         , Border.width 1
+         , Border.color borderColor
+         , paddingEach { top = 8, right = 14, bottom = 8, left = 14 }
+         , htmlAttribute (HtmlAttr.style "box-shadow" "0 1px 3px rgba(31,41,55,0.08), inset 0 1px 0 rgba(255,255,255,0.58)")
+         ]
+            ++ buttonInteractionAttrs
+        )
         { onPress = onPress
         , label = text labelText
         }
+
+
+buttonInteractionAttrs : List (Element.Attribute msg)
+buttonInteractionAttrs =
+    [ cupertinoFocusRing ]
+
+
+unstyledButtonAttrs : List (Element.Attribute msg)
+unstyledButtonAttrs =
+    [ htmlAttribute (HtmlAttr.style "box-shadow" "none")
+    , htmlAttribute (HtmlAttr.style "appearance" "none")
+    ]
 
 
 cupertinoFocusRing : Element.Attribute msg
@@ -4593,10 +4602,7 @@ nextBooleanRawValue rawValue =
 boolToggleButton : BooleanFieldState -> Maybe Msg -> Element Msg
 boolToggleButton state onPress =
     Input.button
-        [ cupertinoFocusRing
-        , htmlAttribute (HtmlAttr.style "outline" "none")
-        , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
-        ]
+        (unstyledButtonAttrs ++ buttonInteractionAttrs)
         { onPress = onPress
         , label =
             row
@@ -4666,34 +4672,34 @@ boolToggleKnob color =
 boolUnsetButton : Bool -> Maybe Msg -> Element Msg
 boolUnsetButton selected onPress =
     Input.button
-        [ Background.color
+        ([ Background.color
             (if selected then
                 rgb255 232 239 251
 
              else
                 rgb255 247 249 252
             )
-        , Font.color
+         , Font.color
             (if selected then
                 rgb255 63 86 130
 
              else
                 rgb255 109 121 138
             )
-        , Border.width 1
-        , Border.color
+         , Border.width 1
+         , Border.color
             (if selected then
                 rgb255 206 220 242
 
              else
                 rgb255 225 230 237
             )
-        , Border.rounded 999
-        , paddingEach { top = 8, right = 12, bottom = 8, left = 12 }
-        , cupertinoFocusRing
-        , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)")
-        , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
-        ]
+         , Border.rounded 999
+         , paddingEach { top = 8, right = 12, bottom = 8, left = 12 }
+         , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)")
+         ]
+            ++ buttonInteractionAttrs
+        )
         { onPress = onPress
         , label = text "Unset"
         }
@@ -5654,9 +5660,9 @@ viewPerformancePanel model =
                         (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 12 ])
                         [ el ([ width (fillPortion 1), Font.bold ] ++ routeTextAttrs) (text perfRoute.method)
                         , el ([ width (fillPortion 3) ] ++ routeTextAttrs) (text perfRoute.route)
-                        , el ([ width (fillPortion 1) ] ++ routeMetaAttrs) (text ("count: " ++ String.fromInt perfRoute.count))
-                        , el ([ width (fillPortion 1) ] ++ routeMetaAttrs) (text ("avg: " ++ formatMs perfRoute.avgMs))
+                        , el ([ width (fillPortion 1) ] ++ routeMetaAttrs) (text (String.fromInt perfRoute.count))
                         , el [ width (fillPortion 2), centerY ] (viewCountsByCode perfRoute.countsByCode)
+                        , el ([ width (fillPortion 1) ] ++ routeMetaAttrs) (text (formatMs perfRoute.avgMs))
                         ]
 
             cards perf =
@@ -5719,8 +5725,8 @@ viewPerformancePanel model =
                                                 [ el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Method")
                                                 , el [ width (fillPortion 3), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Path")
                                                 , el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Count")
-                                                , el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Avg")
                                                 , el [ width (fillPortion 2), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Counts by code")
+                                                , el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Average")
                                                 ]
                                             ]
                                         )
