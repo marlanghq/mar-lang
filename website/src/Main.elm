@@ -3519,27 +3519,102 @@ isPunctuationChar char =
     List.member char [ '{', '}', '(', ')', '[', ']', ':', ',', '.' ]
 
 
+marCrudOperationWords : List String
+marCrudOperationWords =
+    [ "all", "list", "get", "load", "create", "update", "delete" ]
+
+
+marKeywordWords : List String
+marKeywordWords =
+    [ "app"
+    , "port"
+    , "database"
+    , "entity"
+    , "rule"
+    , "expect"
+    , "when"
+    , "authorize"
+    , "auth"
+    , "type"
+    , "alias"
+    , "action"
+    , "load"
+    , "create"
+    , "public"
+    , "system"
+    , "dir"
+    , "mount"
+    , "spa_fallback"
+    , "code_ttl_minutes"
+    , "session_ttl_hours"
+    , "email_transport"
+    , "email_from"
+    , "email_subject"
+    , "smtp_host"
+    , "smtp_port"
+    , "smtp_username"
+    , "smtp_password_env"
+    , "smtp_starttls"
+    , "request_logs_buffer"
+    , "http_max_request_body_mb"
+    , "auth_request_code_rate_limit_per_minute"
+    , "auth_login_rate_limit_per_minute"
+    , "admin_ui_session_ttl_hours"
+    , "security_frame_policy"
+    , "security_referrer_policy"
+    , "security_content_type_nosniff"
+    , "sqlite_journal_mode"
+    , "sqlite_synchronous"
+    , "sqlite_foreign_keys"
+    , "sqlite_busy_timeout_ms"
+    , "sqlite_wal_autocheckpoint"
+    , "sqlite_journal_size_limit_mb"
+    , "sqlite_mmap_size_mb"
+    , "sqlite_cache_size_kb"
+    ]
+
+
+marTypeWords : List String
+marTypeWords =
+    [ "Int", "String", "Bool", "Float", "Posix" ]
+
+
+marFieldModifierWords : List String
+marFieldModifierWords =
+    [ "primary", "auto", "optional", "default" ]
+
+
+marHelperFunctionWords : List String
+marHelperFunctionWords =
+    [ "length", "contains", "starts_with", "ends_with", "matches" ]
+
+
+marBuiltinValueWords : List String
+marBuiltinValueWords =
+    [ "user_authenticated", "user_email", "user_id", "user_role", "true", "false", "null" ]
+
+
 wordToken : String -> Html.Html msg
 wordToken word =
     if word == "input" || String.startsWith "input." word || String.contains "." word then
         token "#93D7FF" word
 
-    else if List.member word [ "all", "list", "get", "load", "create", "update", "delete" ] then
+    else if List.member word marCrudOperationWords then
         token "#93D7FF" word
 
-    else if List.member word [ "app", "port", "database", "entity", "rule", "expect", "when", "authorize", "auth", "type", "alias", "action", "input", "load", "create", "public", "system", "dir", "mount", "spa_fallback", "code_ttl_minutes", "session_ttl_hours", "email_transport", "email_from", "email_subject", "smtp_host", "smtp_port", "smtp_username", "smtp_password_env", "smtp_starttls", "request_logs_buffer", "http_max_request_body_mb", "auth_request_code_rate_limit_per_minute", "auth_login_rate_limit_per_minute", "admin_ui_session_ttl_hours", "security_frame_policy", "security_referrer_policy", "security_content_type_nosniff", "sqlite_journal_mode", "sqlite_synchronous", "sqlite_foreign_keys", "sqlite_busy_timeout_ms", "sqlite_wal_autocheckpoint", "sqlite_journal_size_limit_mb", "sqlite_mmap_size_mb", "sqlite_cache_size_kb" ] then
+    else if List.member word marKeywordWords then
         token "#7AB8FF" word
 
-    else if List.member word [ "Int", "String", "Bool", "Float", "Posix" ] then
+    else if List.member word marTypeWords then
         token "#4FD1C5" word
 
-    else if List.member word [ "primary", "auto", "optional", "default" ] then
+    else if List.member word marFieldModifierWords then
         token "#B7C5D9" word
 
-    else if List.member word [ "length", "contains", "starts_with", "ends_with", "matches" ] then
+    else if List.member word marHelperFunctionWords then
         token "#82E0AA" word
 
-    else if List.member word [ "input", "user_authenticated", "user_email", "user_id", "user_role", "true", "false", "null" ] then
+    else if List.member word marBuiltinValueWords then
         token "#C3D7FF" word
 
     else
