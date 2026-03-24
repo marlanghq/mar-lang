@@ -124,7 +124,7 @@ func New(app *model.App) (*Runtime, error) {
 	if app == nil {
 		return nil, errors.New("app is nil")
 	}
-	db := sqlitecli.OpenWithConfig(app.Database, sqliteConfigForApp(app))
+	db := sqlitecli.OpenWithConfig(app.Database, SQLiteConfigForApp(app))
 
 	r := &Runtime{
 		App:            app,
@@ -168,7 +168,7 @@ func New(app *model.App) (*Runtime, error) {
 	return r, nil
 }
 
-func sqliteConfigForApp(app *model.App) sqlitecli.Config {
+func SQLiteConfigForApp(app *model.App) sqlitecli.Config {
 	cfg := sqlitecli.DefaultConfig()
 	if app == nil || app.System == nil {
 		return cfg
@@ -204,11 +204,6 @@ func sqliteConfigForApp(app *model.App) sqlitecli.Config {
 	}
 
 	return cfg
-}
-
-// SQLiteConfigForApp returns the effective SQLite config for a Mar app.
-func SQLiteConfigForApp(app *model.App) sqlitecli.Config {
-	return sqliteConfigForApp(app)
 }
 
 // Close releases runtime resources.
@@ -461,7 +456,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		if !isAdminRole(auth.Role) {
 			return newAPIError(http.StatusForbidden, "admin_role_required", "Admin role required")
 		}
-		result, err := CreateSQLiteBackup(r.App.Database, sqliteConfigForApp(r.App), 20)
+		result, err := CreateSQLiteBackup(r.App.Database, SQLiteConfigForApp(r.App), 20)
 		if err != nil {
 			return err
 		}

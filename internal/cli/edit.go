@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode"
 
+	"mar/internal/expr"
 	"mar/internal/formatter"
 
 	"golang.org/x/sys/unix"
@@ -1361,7 +1362,7 @@ func editorHighlightLine(line string, useColor bool, selectFrom, selectTo int, h
 			}
 			declaresAlias := k < len(runes) && runes[k] == '='
 			switch {
-			case token == "input" || strings.HasPrefix(token, "input.") || strings.HasPrefix(token, "user_") || strings.HasPrefix(token, "auth_"):
+			case token == "input" || strings.HasPrefix(token, "input.") || expr.IsBuiltinValueName(token):
 				style = "\033[38;5;81m"
 			case declaresAlias:
 				style = "\033[38;5;81m"

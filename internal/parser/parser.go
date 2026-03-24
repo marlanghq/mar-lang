@@ -912,15 +912,7 @@ func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.A
 		ent.Rules = append(ent.Rules, rule)
 	}
 
-	authVars := map[string]struct{}{
-		"user_authenticated": {},
-		"user_email":         {},
-		"user_id":            {},
-		"user_role":          {},
-	}
-	for name := range allowedVars {
-		authVars[name] = struct{}{}
-	}
+	exprVars := expr.AllowedVariablesWithBuiltins(allowedVars)
 	authorizeOps := []string{"list", "get", "create", "update", "delete"}
 	seenAction := map[string]bool{}
 	var allExpression string
@@ -930,7 +922,7 @@ func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.A
 			return fmt.Errorf("duplicate authorize rule for %q", authz.Action)
 		}
 		seenAction[authz.Action] = true
-		if _, err := expr.Parse(authz.Expression, expr.ParserOptions{AllowedVariables: authVars}); err != nil {
+		if _, err := expr.Parse(authz.Expression, expr.ParserOptions{AllowedVariables: exprVars}); err != nil {
 			return fmt.Errorf("invalid authorization expression %q (%w)", authz.Expression, err)
 		}
 		if authz.Action == "all" {

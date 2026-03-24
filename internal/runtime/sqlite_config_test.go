@@ -9,7 +9,7 @@ import (
 
 func TestSQLiteConfigForAppDefaults(t *testing.T) {
 	app := &model.App{}
-	got := sqliteConfigForApp(app)
+	got := SQLiteConfigForApp(app)
 	want := sqlitecli.DefaultConfig()
 
 	if got != want {
@@ -40,7 +40,7 @@ func TestSQLiteConfigForAppOverrides(t *testing.T) {
 		},
 	}
 
-	got := sqliteConfigForApp(app)
+	got := SQLiteConfigForApp(app)
 	if got.JournalMode != "delete" {
 		t.Fatalf("unexpected journal mode: %q", got.JournalMode)
 	}

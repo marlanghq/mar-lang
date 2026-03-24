@@ -29,18 +29,10 @@ func (r *Runtime) compileExpressions() error {
 		}
 		r.rules[entity.Name] = compiledRules
 
-		authVars := map[string]struct{}{
-			"user_authenticated": {},
-			"user_email":         {},
-			"user_id":            {},
-			"user_role":          {},
-		}
-		for name := range fieldVars {
-			authVars[name] = struct{}{}
-		}
+		exprVars := expr.AllowedVariablesWithBuiltins(fieldVars)
 		authorizers := map[string]expr.Expr{}
 		for _, rule := range entity.Authorizations {
-			node, err := expr.Parse(rule.Expression, expr.ParserOptions{AllowedVariables: authVars})
+			node, err := expr.Parse(rule.Expression, expr.ParserOptions{AllowedVariables: exprVars})
 			if err != nil {
 				return fmt.Errorf("compile authorization %s.%s: %w", entity.Name, rule.Action, err)
 			}

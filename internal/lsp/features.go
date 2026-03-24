@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"mar/internal/expr"
 )
 
 type lspDocumentSymbol struct {
@@ -80,10 +82,6 @@ var (
 		"primary":                                 "Marks a field as primary key.",
 		"auto":                                    "Marks a field as auto-generated.",
 		"input":                                   "References the action input record (for example `input.userId`). Action step aliases may also be referenced like `todo.id`.",
-		"user_authenticated":                      "Returns true when the current request is authenticated.",
-		"user_email":                              "Returns the authenticated user's email for the current request.",
-		"user_id":                                 "Returns the authenticated user's id for the current request.",
-		"user_role":                               "Returns the authenticated user's role for the current request.",
 		"length":                                  "Returns the string length. Example: `length title >= 3`.",
 		"contains":                                "Returns true when text contains a substring. Example: `contains \"@\" email`.",
 		"starts_with":                             "Returns true when text starts with a prefix. Example: `starts_with \"SKU-\" code`.",
@@ -124,6 +122,19 @@ func (s *server) handleHover(id json.RawMessage, params textDocumentPositionPara
 	}
 
 	doc, ok := keywordHoverDescriptions[word]
+	if !ok && expr.IsBuiltinValueName(word) {
+		switch word {
+		case "user_authenticated":
+			doc = "Returns true when the current request is authenticated."
+		case "user_email":
+			doc = "Returns the authenticated user's email for the current request."
+		case "user_id":
+			doc = "Returns the authenticated user's id for the current request."
+		case "user_role":
+			doc = "Returns the authenticated user's role for the current request."
+		}
+		ok = doc != ""
+	}
 	if !ok {
 		s.respond(id, nil)
 		return

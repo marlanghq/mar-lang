@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"mar/internal/expr"
 	"mar/internal/formatter"
 	"mar/internal/parser"
 )
@@ -462,8 +463,7 @@ func keywordCompletionItems() []map[string]any {
 	}
 	types := []string{"Int", "String", "Bool", "Float", "Posix"}
 	functions := []string{"length", "contains", "starts_with", "ends_with", "matches"}
-	values := []string{"user_authenticated", "user_email", "user_id", "user_role"}
-	out := make([]map[string]any, 0, len(keywords)+len(types)+len(functions)+len(values))
+	out := make([]map[string]any, 0, len(keywords)+len(types)+len(functions)+len(expr.BuiltinValueNames))
 	for _, kw := range keywords {
 		out = append(out, map[string]any{
 			"label":  kw,
@@ -485,7 +485,7 @@ func keywordCompletionItems() []map[string]any {
 			"detail": "Mar built-in function",
 		})
 	}
-	for _, value := range values {
+	for _, value := range expr.BuiltinValueNames {
 		out = append(out, map[string]any{
 			"label":  value,
 			"kind":   6, // CompletionItemKind.Variable
