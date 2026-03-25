@@ -9,6 +9,7 @@ import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
 import Element.Input as Input
+import Html
 import Html.Attributes as HtmlAttr
 import Html.Events as HtmlEvents
 import Http
@@ -108,6 +109,7 @@ type alias Model =
     , selectedRow : Maybe Row
     , formMode : FormMode
     , formValues : Dict String String
+    , relationRows : Dict String (Remote (List Row))
     , actionFormValues : Dict String String
     , actionResult : Maybe Row
     , perf : Remote PerfPayload
@@ -150,6 +152,7 @@ type Msg
     | SelectAction String
     | ReloadRows
     | GotRows (Result ApiHttpError (List Row))
+    | GotRelationRows String (Result ApiHttpError (List Row))
     | SelectPerformance
     | SelectRequestLogs
     | SelectDatabase
@@ -531,6 +534,7 @@ init flags url navKey =
             , selectedRow = Nothing
             , formMode = FormHidden
             , formValues = Dict.empty
+            , relationRows = Dict.empty
             , actionFormValues = Dict.empty
             , actionResult = Nothing
             , perf = NotAsked
@@ -803,10 +807,10 @@ applyEntityRoute workspace entityName routeMode model =
                     applyEntityRouteMode routeMode baseModel
             in
             if shouldLoadRows then
-                ( nextModel, loadRows nextModel )
+                ( nextModel, Cmd.batch [ loadRows nextModel, ensureRelationRowsForEntity nextModel entity ] )
 
             else
-                ( nextModel, Cmd.none )
+                ( nextModel, ensureRelationRowsForEntity nextModel entity )
 
 
 applyEntityRouteMode : EntityRouteMode -> Model -> Model
@@ -1051,10 +1055,30 @@ update msg model =
         GotRows result ->
             case result of
                 Ok rows ->
-                    ( syncRouteSelection { model | rows = Loaded rows }, Cmd.none )
+                    let
+                        nextModel =
+                            case model.selectedEntity of
+                                Just entity ->
+                                    { model
+                                        | rows = Loaded rows
+                                        , relationRows = Dict.insert entity.name (Loaded rows) model.relationRows
+                                    }
+
+                                Nothing ->
+                                    { model | rows = Loaded rows }
+                    in
+                    ( syncRouteSelection nextModel, Cmd.none )
 
                 Err httpError ->
                     ( { model | rows = Failed (httpErrorToString httpError) }, Cmd.none )
+
+        GotRelationRows entityName result ->
+            case result of
+                Ok rows ->
+                    ( { model | relationRows = Dict.insert entityName (Loaded rows) model.relationRows }, Cmd.none )
+
+                Err httpError ->
+                    ( { model | relationRows = Dict.insert entityName (Failed (httpErrorToString httpError)) model.relationRows }, Cmd.none )
 
         SelectPerformance ->
             if not (isAdminProfile model) then
@@ -1514,7 +1538,13 @@ update msg model =
                                     model.rows
 
                         nextModel =
-                            { model | rows = nextRows, formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
+                            case model.selectedEntity of
+                                Just entity ->
+                                    updateRelationCacheForEntity entity (prependRowIfMissing entity createdRow)
+                                        { model | rows = nextRows, formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
+
+                                Nothing ->
+                                    { model | rows = nextRows, formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
                     in
                     case ( model.selectedEntity, rowIdForCurrentSelection nextModel createdRow ) of
                         ( Just entity, Just rowKey ) ->
@@ -1539,7 +1569,13 @@ update msg model =
                                     model.rows
 
                         nextModel =
-                            { model | rows = nextRows, selectedRow = Just updatedRow, formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
+                            case model.selectedEntity of
+                                Just entity ->
+                                    updateRelationCacheForEntity entity (replaceRow entity updatedRow)
+                                        { model | rows = nextRows, selectedRow = Just updatedRow, formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
+
+                                Nothing ->
+                                    { model | rows = nextRows, selectedRow = Just updatedRow, formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
                     in
                     case ( model.selectedEntity, rowIdForCurrentSelection nextModel updatedRow ) of
                         ( Just entity, Just rowKey ) ->
@@ -1587,7 +1623,13 @@ update msg model =
                 Ok _ ->
                     let
                         nextModel =
-                            { model | flash = Nothing, selectedRow = Nothing, formMode = FormHidden, formValues = Dict.empty, pendingDelete = Nothing, rows = NotAsked }
+                            case model.pendingDelete of
+                                Just pendingDelete ->
+                                    updateRelationCacheForEntity pendingDelete.entity (removeRowById pendingDelete.entity pendingDelete.idValue)
+                                        { model | flash = Nothing, selectedRow = Nothing, formMode = FormHidden, formValues = Dict.empty, pendingDelete = Nothing, rows = NotAsked }
+
+                                Nothing ->
+                                    { model | flash = Nothing, selectedRow = Nothing, formMode = FormHidden, formValues = Dict.empty, pendingDelete = Nothing, rows = NotAsked }
                     in
                     case routeForCurrentEntityList nextModel of
                         Just route ->
@@ -1670,6 +1712,45 @@ loadRows model =
                 , url = model.apiBase ++ entity.resource
                 , body = Http.emptyBody
                 , expect = expectJsonWithApiError GotRows decodeRows
+                , timeout = Nothing
+                , tracker = Nothing
+                }
+
+
+ensureRelationRowsForEntity : Model -> Entity -> Cmd Msg
+ensureRelationRowsForEntity model entity =
+    entity.fields
+        |> List.filterMap .relationEntity
+        |> uniqueStrings
+        |> List.filter
+            (\entityName ->
+                case Dict.get entityName model.relationRows of
+                    Just Loading ->
+                        False
+
+                    Just (Loaded _) ->
+                        False
+
+                    _ ->
+                        True
+            )
+        |> List.map (loadRelationRows model)
+        |> Cmd.batch
+
+
+loadRelationRows : Model -> String -> Cmd Msg
+loadRelationRows model entityName =
+    case findEntity entityName model of
+        Nothing ->
+            Cmd.none
+
+        Just entity ->
+            Http.request
+                { method = "GET"
+                , headers = appAuthHeaders model
+                , url = model.apiBase ++ entity.resource
+                , body = Http.emptyBody
+                , expect = expectJsonWithApiError (GotRelationRows entityName) decodeRows
                 , timeout = Nothing
                 , tracker = Nothing
                 }
@@ -2578,19 +2659,45 @@ deleteConfirmationMessage entity rowValue =
 
 rowDisplayLabel : Entity -> Row -> Maybe String
 rowDisplayLabel entity rowValue =
+    case preferredDisplayFieldFromFields entity.fields of
+        Just field ->
+            rowFieldValue entity field.name rowValue
+                |> Maybe.map String.trim
+                |> Maybe.andThen
+                    (\value ->
+                        if value == "" || value == "null" then
+                            Nothing
+
+                        else
+                            Just value
+                    )
+
+        Nothing ->
+            rowId entity rowValue
+                |> Maybe.map (\idValue -> entityDisplayName entity ++ " #" ++ idValue)
+
+
+rowFieldLabel : Model -> Entity -> String -> Row -> Maybe String
+rowFieldLabel model entity fieldName rowValue =
     let
-        preferredFields =
-            [ "name", "title", "email", "slug", "id", entity.primaryKey ]
+        displayValue =
+            case List.filter (\field -> field.name == fieldName) entity.fields |> List.head of
+                Just field ->
+                    Dict.get fieldName rowValue
+                        |> Maybe.map
+                            (\value ->
+                                case field.relationEntity of
+                                    Just _ ->
+                                        relationFieldValueLabel model field value
+
+                                    Nothing ->
+                                        valueToDisplayString field.fieldType value
+                            )
+
+                Nothing ->
+                    rowFieldValue entity fieldName rowValue
     in
-    preferredFields
-        |> uniqueStrings
-        |> List.filterMap (\fieldName -> rowFieldLabel entity fieldName rowValue)
-        |> List.head
-
-
-rowFieldLabel : Entity -> String -> Row -> Maybe String
-rowFieldLabel entity fieldName rowValue =
-    rowFieldValue entity fieldName rowValue
+    displayValue
         |> Maybe.map String.trim
         |> Maybe.andThen
             (\value ->
@@ -2660,7 +2767,7 @@ placeholderForField : Field -> String
 placeholderForField field =
     case field.relationEntity of
         Just entityName ->
-            entityName ++ " id"
+            "Select " ++ humanizeIdentifier entityName
 
         Nothing ->
             placeholderForType field.name (fieldTypeLabel field.fieldType)
@@ -2684,6 +2791,122 @@ rowFieldValue entity fieldName rowValue =
     in
     Dict.get fieldName rowValue
         |> Maybe.map displayValue
+
+
+preferredDisplayFieldNames : List String
+preferredDisplayFieldNames =
+    [ "name", "title", "email", "label", "slug" ]
+
+
+candidateDisplayFields : List Field -> List Field
+candidateDisplayFields fields =
+    fields
+        |> List.filter
+            (\field ->
+                String.toLower field.name /= "id"
+                    && not field.primary
+                    && not field.auto
+                    && field.relationEntity == Nothing
+            )
+
+
+preferredDisplayFieldFromFields : List Field -> Maybe Field
+preferredDisplayFieldFromFields fields =
+    let
+        candidates =
+            candidateDisplayFields fields
+
+        findByName targetName =
+            candidates
+                |> List.filter (\field -> String.toLower field.name == targetName)
+                |> List.head
+
+        firstPreferred =
+            preferredDisplayFieldNames
+                |> List.filterMap findByName
+                |> List.head
+
+        firstStringCandidate =
+            candidates
+                |> List.filter (\field -> field.fieldType == StringType)
+                |> List.head
+    in
+    case firstPreferred of
+        Just field ->
+            Just field
+
+        Nothing ->
+            case firstStringCandidate of
+                Just field ->
+                    Just field
+
+                Nothing ->
+                    List.head candidates
+
+
+fallbackRelationLabel : String -> String -> String
+fallbackRelationLabel entityName rawId =
+    humanizeIdentifier entityName ++ " #" ++ rawId
+
+
+relatedRowLabel : Entity -> Row -> String
+relatedRowLabel entity rowValue =
+    case preferredDisplayFieldFromFields entity.fields of
+        Just field ->
+            rowFieldValue entity field.name rowValue
+                |> Maybe.map String.trim
+                |> Maybe.andThen
+                    (\value ->
+                        if value == "" || value == "null" then
+                            Nothing
+
+                        else
+                            Just value
+                    )
+                |> Maybe.withDefault
+                    (case rowId entity rowValue of
+                        Just idValue ->
+                            entityDisplayName entity ++ " #" ++ idValue
+
+                        Nothing ->
+                            entityDisplayName entity
+                    )
+
+        Nothing ->
+            case rowId entity rowValue of
+                Just idValue ->
+                    entityDisplayName entity ++ " #" ++ idValue
+
+                Nothing ->
+                    entityDisplayName entity
+
+
+relationFieldValueLabel : Model -> Field -> Decode.Value -> String
+relationFieldValueLabel model field value =
+    let
+        rawId =
+            valueToString value |> String.trim
+    in
+    case field.relationEntity of
+        Just entityName ->
+            if rawId == "" || rawId == "null" then
+                ""
+
+            else
+                case ( findEntity entityName model, Dict.get entityName model.relationRows ) of
+                    ( Just relatedEntity, Just (Loaded relatedRows) ) ->
+                        case findRowById relatedEntity rawId relatedRows of
+                            Just relatedRow ->
+                                relatedRowLabel relatedEntity relatedRow
+
+                            Nothing ->
+                                fallbackRelationLabel entityName rawId
+
+                    _ ->
+                        fallbackRelationLabel entityName rawId
+
+        Nothing ->
+            valueToDisplayString field.fieldType value
 
 
 entityDisplayName : Entity -> String
@@ -2791,6 +3014,36 @@ replaceRow entity updated rows =
                             Nothing ->
                                 rowValue
                     )
+
+
+prependRowIfMissing : Entity -> Row -> List Row -> List Row
+prependRowIfMissing entity newRow rows =
+    case rowId entity newRow of
+        Nothing ->
+            rows
+
+        Just targetId ->
+            if List.any (\rowValue -> rowId entity rowValue == Just targetId) rows then
+                rows
+
+            else
+                newRow :: rows
+
+
+removeRowById : Entity -> String -> List Row -> List Row
+removeRowById entity targetId rows =
+    rows
+        |> List.filter (\rowValue -> rowId entity rowValue /= Just targetId)
+
+
+updateRelationCacheForEntity : Entity -> (List Row -> List Row) -> Model -> Model
+updateRelationCacheForEntity entity transform model =
+    case Dict.get entity.name model.relationRows of
+        Just (Loaded rows) ->
+            { model | relationRows = Dict.insert entity.name (Loaded (transform rows)) model.relationRows }
+
+        _ ->
+            model
 
 
 formDefaults : Model -> Dict String String
@@ -4860,6 +5113,163 @@ cupertinoTextInputAttrs =
     ]
 
 
+relationFormField : Model -> Field -> String -> Element Msg
+relationFormField model field relationEntityName =
+    let
+        currentValue =
+            Dict.get field.name model.formValues |> Maybe.withDefault ""
+
+        helperText =
+            case Dict.get relationEntityName model.relationRows of
+                Just Loading ->
+                    Just ("Loading " ++ humanizeIdentifier relationEntityName ++ " options...")
+
+                Just (Failed _) ->
+                    Just ("Could not load " ++ humanizeIdentifier relationEntityName ++ " options. Enter the id manually.")
+
+                _ ->
+                    Nothing
+    in
+    case Dict.get relationEntityName model.relationRows of
+        Just (Loaded relatedRows) ->
+            relationSelectField model field relationEntityName currentValue relatedRows
+
+        _ ->
+            column
+                [ width fill, spacing 6 ]
+                [ Input.text cupertinoTextInputAttrs
+                    { onChange = SetFormField field.name
+                    , text = currentValue
+                    , placeholder =
+                        Just
+                            (Input.placeholder []
+                                (text (humanizeIdentifier relationEntityName ++ " id"))
+                            )
+                    , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name))
+                    }
+                , case helperText of
+                    Just message ->
+                        el [ Font.size 12, Font.color (rgb255 108 119 133) ] (text message)
+
+                    Nothing ->
+                        none
+                ]
+
+
+relationSelectField : Model -> Field -> String -> String -> List Row -> Element Msg
+relationSelectField model field relationEntityName currentValue relatedRows =
+    let
+        options =
+            relationOptions (findEntity relationEntityName model) relationEntityName relatedRows
+
+        optionExists =
+            List.any (\( optionValue, _ ) -> optionValue == currentValue) options
+
+        promptLabel =
+            if field.optional then
+                "No selection"
+
+            else
+                "Select " ++ humanizeIdentifier relationEntityName
+
+        missingCurrentOption =
+            if String.trim currentValue /= "" && not optionExists then
+                [ ( currentValue, fallbackRelationLabel relationEntityName currentValue ++ " (unavailable)" ) ]
+
+            else
+                []
+    in
+    column
+        [ width fill, spacing 0 ]
+        [ el
+            [ Font.size 12
+            , paddingEach { top = 0, right = 0, bottom = 6, left = 0 }
+            ]
+            (text (fieldLabel field.name))
+        , Element.html <|
+            Html.div
+                [ HtmlAttr.style "position" "relative"
+                , HtmlAttr.style "width" "100%"
+                ]
+                [ Html.select
+                    [ HtmlAttr.value currentValue
+                    , HtmlEvents.onInput (SetFormField field.name)
+                    , HtmlAttr.style "width" "100%"
+                    , HtmlAttr.style "padding" "12px 42px 12px 12px"
+                    , HtmlAttr.style "border-radius" "12px"
+                    , HtmlAttr.style "border" "1px solid rgb(222,230,241)"
+                    , HtmlAttr.style "background" "rgb(248,250,254)"
+                    , HtmlAttr.style "color" "rgb(29,36,44)"
+                    , HtmlAttr.style "font-size" "15px"
+                    , HtmlAttr.style "font-family" "\"IBM Plex Sans\", \"Space Grotesk\", sans-serif"
+                    , HtmlAttr.style "outline" "none"
+                    , HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)"
+                    , HtmlAttr.style "appearance" "none"
+                    , HtmlAttr.style "-webkit-appearance" "none"
+                    , HtmlAttr.style "-moz-appearance" "none"
+                    ]
+                    (List.map
+                        (\( optionValue, optionLabel ) ->
+                            Html.option [ HtmlAttr.value optionValue ] [ Html.text optionLabel ]
+                        )
+                        (List.concat
+                            [ [ ( "", promptLabel ) ]
+                            , missingCurrentOption
+                            , options
+                            ]
+                        )
+                    )
+                , Html.div
+                    [ HtmlAttr.style "position" "absolute"
+                    , HtmlAttr.style "right" "14px"
+                    , HtmlAttr.style "top" "50%"
+                    , HtmlAttr.style "transform" "translateY(-50%)"
+                    , HtmlAttr.style "pointer-events" "none"
+                    , HtmlAttr.style "color" "rgb(125,138,156)"
+                    , HtmlAttr.style "font-size" "12px"
+                    ]
+                    [ Html.text "▼" ]
+                ]
+        ]
+
+
+relationOptions : Maybe Entity -> String -> List Row -> List ( String, String )
+relationOptions maybeEntity relationEntityName relatedRows =
+    relatedRows
+        |> List.filterMap
+            (\rowValue ->
+                case rowIdForRelation maybeEntity rowValue of
+                    Just idValue ->
+                        Just ( idValue, relationOptionLabel maybeEntity relationEntityName rowValue )
+
+                    Nothing ->
+                        Nothing
+            )
+        |> List.sortBy (\( _, labelText ) -> String.toLower labelText)
+
+
+relationOptionLabel : Maybe Entity -> String -> Row -> String
+relationOptionLabel maybeEntity relationEntityName rowValue =
+    case maybeEntity of
+        Just relatedEntity ->
+            relatedRowLabel relatedEntity rowValue
+
+        Nothing ->
+            rowIdForRelation Nothing rowValue
+                |> Maybe.map (\idValue -> fallbackRelationLabel relationEntityName idValue)
+                |> Maybe.withDefault (humanizeIdentifier relationEntityName)
+
+
+rowIdForRelation : Maybe Entity -> Row -> Maybe String
+rowIdForRelation maybeEntity rowValue =
+    case maybeEntity of
+        Just entity ->
+            rowId entity rowValue
+
+        Nothing ->
+            Dict.get "id" rowValue |> Maybe.map valueToString
+
+
 formBooleanField : String -> Bool -> String -> (String -> Msg) -> Element Msg
 formBooleanField labelText isOptional rawValue toMsg =
     let
@@ -5743,6 +6153,7 @@ viewRows model =
                     (List.map
                         (\record ->
                             viewRowCard
+                                model
                                 (currentWorkspace model)
                                 entity
                                 (rowId entity record == selectedRowId && selectedRowId /= Nothing)
@@ -5753,8 +6164,8 @@ viewRows model =
                     )
 
 
-viewRowCard : WorkspaceMode -> Entity -> Bool -> Row -> Element Msg
-viewRowCard workspace entity isSelected rowValue =
+viewRowCard : Model -> WorkspaceMode -> Entity -> Bool -> Row -> Element Msg
+viewRowCard model workspace entity isSelected rowValue =
     let
         wrappingTextAttrs =
             [ width fill
@@ -5770,13 +6181,13 @@ viewRowCard workspace entity isSelected rowValue =
                 rgb255 35 50 71
 
         headingText =
-            rowCardTitle workspace entity rowValue
+            rowCardTitle model workspace entity rowValue
 
         statusBadges =
             rowPreviewStatusBadges entity rowValue
 
         summary =
-            rowPreviewSummary workspace entity rowValue
+            rowPreviewSummary model workspace entity rowValue
 
         bodyContent =
             List.filterMap identity
@@ -6843,9 +7254,9 @@ displayFieldsForEntity workspace entity =
         entity.fields
 
 
-rowCardTitle : WorkspaceMode -> Entity -> Row -> String
-rowCardTitle workspace entity rowValue =
-    case rowPrimaryFieldValue workspace entity rowValue of
+rowCardTitle : Model -> WorkspaceMode -> Entity -> Row -> String
+rowCardTitle model workspace entity rowValue =
+    case rowPrimaryFieldValue model workspace entity rowValue of
         Just ( _, value ) ->
             value
 
@@ -6858,19 +7269,18 @@ rowCardTitle workspace entity rowValue =
                     entityDisplayName entity
 
 
-rowPrimaryFieldValue : WorkspaceMode -> Entity -> Row -> Maybe ( Field, String )
-rowPrimaryFieldValue workspace entity rowValue =
+rowPrimaryFieldValue : Model -> WorkspaceMode -> Entity -> Row -> Maybe ( Field, String )
+rowPrimaryFieldValue model workspace entity rowValue =
     let
-        preferredNames =
-            [ "name", "title", "email", "slug" ]
-
         visibleFieldValues =
-            rowVisibleFieldValues workspace entity rowValue
+            rowVisibleFieldValues model workspace entity rowValue
 
         firstPreferred =
-            preferredNames
-                |> List.filterMap (\fieldName -> findFieldValueByName fieldName visibleFieldValues)
-                |> List.head
+            preferredDisplayFieldFromFields (displayFieldsForEntity workspace entity)
+                |> Maybe.andThen
+                    (\field ->
+                        findFieldValueByName field.name visibleFieldValues
+                    )
     in
     case firstPreferred of
         Just pair ->
@@ -6880,11 +7290,11 @@ rowPrimaryFieldValue workspace entity rowValue =
             List.head visibleFieldValues
 
 
-rowPreviewSummary : WorkspaceMode -> Entity -> Row -> String
-rowPreviewSummary workspace entity rowValue =
+rowPreviewSummary : Model -> WorkspaceMode -> Entity -> Row -> String
+rowPreviewSummary model workspace entity rowValue =
     let
         primaryFieldName =
-            rowPrimaryFieldValue workspace entity rowValue
+            rowPrimaryFieldValue model workspace entity rowValue
                 |> Maybe.map (\( field, _ ) -> field.name)
 
         metadataPieces =
@@ -6892,7 +7302,7 @@ rowPreviewSummary workspace entity rowValue =
                 |> List.filterMap
                     (\field ->
                         if shouldIncludePreviewMetadata entity primaryFieldName field then
-                            rowFieldLabel entity field.name rowValue
+                            rowFieldLabel model entity field.name rowValue
                                 |> Maybe.map (\value -> fieldLabel field.name ++ ": " ++ value)
 
                         else
@@ -6933,12 +7343,12 @@ shouldIncludePreviewMetadata entity primaryFieldName field =
         && not (List.member lowerName [ "createdat", "updatedat", "deletedat", "created_at", "updated_at", "deleted_at" ])
 
 
-rowVisibleFieldValues : WorkspaceMode -> Entity -> Row -> List ( Field, String )
-rowVisibleFieldValues workspace entity rowValue =
+rowVisibleFieldValues : Model -> WorkspaceMode -> Entity -> Row -> List ( Field, String )
+rowVisibleFieldValues model workspace entity rowValue =
     displayFieldsForEntity workspace entity
         |> List.filterMap
             (\field ->
-                rowFieldLabel entity field.name rowValue
+                rowFieldLabel model entity field.name rowValue
                     |> Maybe.map (\value -> ( field, value ))
             )
 
@@ -7099,48 +7509,53 @@ formCard model entity titleText =
             appVisibleFields entity
 
         fieldInput field =
-            case field.fieldType of
-                BoolType ->
-                    formBooleanField
-                        (fieldLabel field.name)
-                        field.optional
-                        (Dict.get field.name model.formValues
-                            |> Maybe.withDefault
-                                (if field.optional then
-                                    ""
+            case field.relationEntity of
+                Just relationEntityName ->
+                    relationFormField model field relationEntityName
 
-                                 else
-                                    "false"
-                                )
-                        )
-                        (SetFormField field.name)
+                Nothing ->
+                    case field.fieldType of
+                        BoolType ->
+                            formBooleanField
+                                (fieldLabel field.name)
+                                field.optional
+                                (Dict.get field.name model.formValues
+                                    |> Maybe.withDefault
+                                        (if field.optional then
+                                            ""
 
-                PosixType ->
-                    Input.text
-                        (cupertinoTextInputAttrs
-                            ++ [ htmlAttribute (HtmlAttr.type_ "datetime-local") ]
-                        )
-                        { onChange = SetFormField field.name
-                        , text = Dict.get field.name model.formValues |> Maybe.withDefault ""
-                        , placeholder =
-                            Just
-                                (Input.placeholder []
-                                    (text (placeholderForField field))
+                                         else
+                                            "false"
+                                        )
                                 )
-                        , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name ++ " (UTC)"))
-                        }
+                                (SetFormField field.name)
 
-                _ ->
-                    Input.text cupertinoTextInputAttrs
-                        { onChange = SetFormField field.name
-                        , text = Dict.get field.name model.formValues |> Maybe.withDefault ""
-                        , placeholder =
-                            Just
-                                (Input.placeholder []
-                                    (text (placeholderForField field))
+                        PosixType ->
+                            Input.text
+                                (cupertinoTextInputAttrs
+                                    ++ [ htmlAttribute (HtmlAttr.type_ "datetime-local") ]
                                 )
-                        , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name))
-                        }
+                                { onChange = SetFormField field.name
+                                , text = Dict.get field.name model.formValues |> Maybe.withDefault ""
+                                , placeholder =
+                                    Just
+                                        (Input.placeholder []
+                                            (text (placeholderForField field))
+                                        )
+                                , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name ++ " (UTC)"))
+                                }
+
+                        _ ->
+                            Input.text cupertinoTextInputAttrs
+                                { onChange = SetFormField field.name
+                                , text = Dict.get field.name model.formValues |> Maybe.withDefault ""
+                                , placeholder =
+                                    Just
+                                        (Input.placeholder []
+                                            (text (placeholderForField field))
+                                        )
+                                , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name))
+                                }
     in
     column
         (cupertinoPanelAttrs 10 14)
@@ -7188,7 +7603,7 @@ viewSelectedRow model =
                             displayFieldsForEntity workspace entity
                                 |> List.filterMap
                                     (\field ->
-                                        Dict.get field.name rowValue
+                                        rowFieldLabel model entity field.name rowValue
                                             |> Maybe.map (\value -> ( field, value ))
                                     )
 
@@ -7251,7 +7666,7 @@ viewSelectedRow model =
                                                     , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
                                                     , htmlAttribute (HtmlAttr.style "word-break" "break-word")
                                                     ]
-                                                    [ text (valueToDisplayString field.fieldType value) ]
+                                                    [ text value ]
                                                 ]
                                         )
                                )
