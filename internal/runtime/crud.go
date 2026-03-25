@@ -19,10 +19,11 @@ func (r *Runtime) handleList(w http.ResponseWriter, requestID string, entity *mo
 		return newAPIError(http.StatusForbidden, "not_authorized", fmt.Sprintf("Not authorized to read %s", entity.Name))
 	}
 
-	table, _ := quoteIdentifier(entity.Table)
-	pk, _ := quoteIdentifier(entity.PrimaryKey)
-	query := fmt.Sprintf("SELECT * FROM %s ORDER BY %s DESC", table, pk)
-	rows, err := queryRowsForRequest(r.DB, requestID, query)
+	query, queryArgs, err := r.buildListQuery(entity, auth)
+	if err != nil {
+		return err
+	}
+	rows, err := queryRowsForRequest(r.DB, requestID, query, queryArgs...)
 	if err != nil {
 		return err
 	}

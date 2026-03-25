@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -166,6 +167,98 @@ func TestRequestLogsGiveReasonsToAllQueriesInEntityRequest(t *testing.T) {
 	}
 	if !foundListReason {
 		t.Fatalf("expected entity-list reason for /todos queries, got logs: %+v", payload.Logs)
+	}
+}
+
+func TestRequestLogsShowReadAuthorizationFilterPushedIntoListQuery(t *testing.T) {
+	requireSQLite3(t)
+
+	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "request-logs-read-pushdown.db"), `
+app TodoReadFilter
+
+auth {
+  email_transport console
+}
+
+entity Todo {
+  title: String
+  belongs_to User
+
+  authorize read when user_authenticated and (user == user_id or user_role == "admin")
+  authorize create when user_authenticated and user == user_id
+  authorize update when user_authenticated and (user == user_id or user_role == "admin")
+  authorize delete when user_authenticated and (user == user_id or user_role == "admin")
+}
+`)
+
+	adminCode := requestCodeAndUseKnownCode(t, r, "owner@example.com")
+	adminToken := loginWithCodeAndReadToken(t, r, "owner@example.com", adminCode)
+
+	memberCode := requestCodeAndUseKnownCode(t, r, "member@example.com")
+	memberToken := loginWithCodeAndReadToken(t, r, "member@example.com", memberCode)
+
+	memberRow, found, err := r.loadAuthUserByEmail("", "member@example.com")
+	if err != nil {
+		t.Fatalf("load member user failed: %v", err)
+	}
+	if !found {
+		t.Fatal("expected member user to exist")
+	}
+
+	memberID := memberRow[r.authUser.PrimaryKey]
+
+	if rec := doRuntimeRequest(r, http.MethodPost, "/todos", fmt.Sprintf(`{"title":"Member todo","user":%v}`, memberID), memberToken); rec.Code != http.StatusCreated {
+		t.Fatalf("expected member todo create to succeed, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	listRec := doRuntimeRequest(r, http.MethodGet, "/todos", "", memberToken)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for GET /todos, got %d body=%s", listRec.Code, listRec.Body.String())
+	}
+
+	logsRec := doRuntimeRequest(r, http.MethodGet, "/_mar/request-logs?limit=20", "", adminToken)
+	if logsRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for request logs, got %d body=%s", logsRec.Code, logsRec.Body.String())
+	}
+
+	type loggedQuery struct {
+		SQL    string `json:"sql"`
+		Reason string `json:"reason"`
+	}
+	type loggedRequest struct {
+		Path    string        `json:"path"`
+		Queries []loggedQuery `json:"queries"`
+	}
+	type requestLogsPayload struct {
+		Logs []loggedRequest `json:"logs"`
+	}
+
+	var payload requestLogsPayload
+	if err := json.Unmarshal(logsRec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode request logs payload failed: %v body=%s", err, logsRec.Body.String())
+	}
+
+	foundTodoList := false
+	foundFilteredSelect := false
+	for _, requestLog := range payload.Logs {
+		if requestLog.Path != "/todos" {
+			continue
+		}
+		foundTodoList = true
+		for _, query := range requestLog.Queries {
+			sqlUpper := strings.ToUpper(query.SQL)
+			if strings.Contains(sqlUpper, `FROM "TODOS"`) && strings.Contains(sqlUpper, `WHERE`) {
+				if strings.Contains(query.SQL, `"user_id"`) {
+					foundFilteredSelect = true
+				}
+			}
+		}
+	}
+	if !foundTodoList {
+		t.Fatalf("expected request log for /todos, got logs: %+v", payload.Logs)
+	}
+	if !foundFilteredSelect {
+		t.Fatalf("expected /todos list query to include pushed authorization filter, got logs: %+v", payload.Logs)
 	}
 }
 
