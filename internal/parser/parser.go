@@ -266,6 +266,7 @@ func Parse(source string) (*model.App, error) {
 	if err := validateActions(app); err != nil {
 		return nil, err
 	}
+	app.Warnings = append(app.Warnings, authBootstrapWarnings(app)...)
 
 	return app, nil
 }
@@ -1527,6 +1528,69 @@ func validateActions(app *model.App) error {
 		}
 	}
 	return nil
+}
+
+func authBootstrapWarnings(app *model.App) []string {
+	if app == nil || app.Auth == nil {
+		return nil
+	}
+
+	var userEntity *model.Entity
+	for i := range app.Entities {
+		if app.Entities[i].Name == app.Auth.UserEntity {
+			userEntity = &app.Entities[i]
+			break
+		}
+	}
+	if userEntity == nil {
+		return nil
+	}
+
+	blockingFields := make([]string, 0, len(userEntity.Fields))
+	for _, field := range userEntity.Fields {
+		if field.Primary && field.Auto {
+			continue
+		}
+		if field.Name == app.Auth.EmailField {
+			continue
+		}
+		if app.Auth.RoleField != "" && field.Name == app.Auth.RoleField {
+			continue
+		}
+		if field.Default != nil || field.Optional {
+			continue
+		}
+		if field.RelationEntity == "" {
+			continue
+		}
+		blockingFields = append(blockingFields, field.Name)
+	}
+	if len(blockingFields) == 0 {
+		return nil
+	}
+
+	fieldLabel := "fields"
+	defaultLabel := "defaults"
+	optionLabel := "these fields"
+	if len(blockingFields) == 1 {
+		fieldLabel = "field"
+		defaultLabel = "default"
+		optionLabel = "this field"
+	}
+	for i := range blockingFields {
+		blockingFields[i] = "`" + blockingFields[i] + "`"
+	}
+
+	return []string{
+		fmt.Sprintf(
+			"Automatic creation of the first admin will not be possible.\nAuth user entity %s has required relation %s without %s: %s.\nYou can make %s optional, or create the first admin manually in the database.",
+			userEntity.Name,
+			fieldLabel,
+			defaultLabel,
+			strings.Join(blockingFields, ", "),
+			optionLabel,
+		),
+	}
 }
 
 func resolveActionExprType(raw string, variableTypes map[string]string, aliasFieldNames []string) (string, error) {

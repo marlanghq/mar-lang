@@ -98,6 +98,133 @@ func TestBootstrapAdminBlockedWhenAnyUserAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestBootstrapAdminAcceptsRequiredScalarFields(t *testing.T) {
+	requireSQLite3(t)
+
+	r := mustNewAuthRuntimeFromSource(t, filepath.Join(t.TempDir(), "bootstrap-required-scalars.db"), `
+app AuthBootstrapApi
+
+entity User {
+  id: Int primary auto
+  email: String
+  role: String
+  name: String
+  surname: String
+}
+
+auth {
+  email_transport console
+}
+`)
+
+	rec := httptest.NewRecorder()
+	if err := r.handleBootstrapAdmin(rec, "", map[string]any{
+		"email":   "owner@example.com",
+		"name":    "Ada",
+		"surname": "Lovelace",
+	}); err != nil {
+		t.Fatalf("bootstrap failed: %v", err)
+	}
+
+	user, found, err := r.loadAuthUserByEmail("", "owner@example.com")
+	if err != nil {
+		t.Fatalf("load user failed: %v", err)
+	}
+	if !found {
+		t.Fatal("expected bootstrap user to exist")
+	}
+	if got, _ := user["name"].(string); got != "Ada" {
+		t.Fatalf("expected name Ada, got %#v", user["name"])
+	}
+	if got, _ := user["surname"].(string); got != "Lovelace" {
+		t.Fatalf("expected surname Lovelace, got %#v", user["surname"])
+	}
+}
+
+func TestBootstrapAdminReportsMissingRequiredScalarFields(t *testing.T) {
+	requireSQLite3(t)
+
+	r := mustNewAuthRuntimeFromSource(t, filepath.Join(t.TempDir(), "bootstrap-missing-required.db"), `
+app AuthBootstrapApi
+
+entity User {
+  id: Int primary auto
+  email: String
+  role: String
+  name: String
+  surname: String
+}
+
+auth {
+  email_transport console
+}
+`)
+
+	rec := httptest.NewRecorder()
+	err := r.handleBootstrapAdmin(rec, "", map[string]any{"email": "owner@example.com"})
+	if err == nil {
+		t.Fatal("expected bootstrap to fail when required scalar fields are missing")
+	}
+
+	apiErr, ok := err.(*apiError)
+	if !ok {
+		t.Fatalf("expected apiError, got %T: %v", err, err)
+	}
+	if apiErr.Status != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", apiErr.Status)
+	}
+	if apiErr.Code != "bootstrap_fields_required" {
+		t.Fatalf("expected bootstrap_fields_required, got %q", apiErr.Code)
+	}
+	if !strings.Contains(apiErr.Message, "name, surname") {
+		t.Fatalf("unexpected error message: %q", apiErr.Message)
+	}
+}
+
+func TestBootstrapAdminBlocksRequiredRelationFields(t *testing.T) {
+	requireSQLite3(t)
+
+	r := mustNewAuthRuntimeFromSource(t, filepath.Join(t.TempDir(), "bootstrap-required-relation.db"), `
+app AuthBootstrapApi
+
+entity Team {
+  id: Int primary auto
+  name: String
+}
+
+entity User {
+  id: Int primary auto
+  email: String
+  role: String
+  belongs_to Team
+}
+
+auth {
+  email_transport console
+}
+`)
+
+	rec := httptest.NewRecorder()
+	err := r.handleBootstrapAdmin(rec, "", map[string]any{"email": "owner@example.com"})
+	if err == nil {
+		t.Fatal("expected bootstrap to fail for required relation field")
+	}
+
+	apiErr, ok := err.(*apiError)
+	if !ok {
+		t.Fatalf("expected apiError, got %T: %v", err, err)
+	}
+	if apiErr.Status != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status 422, got %d", apiErr.Status)
+	}
+	if apiErr.Code != "bootstrap_relation_not_supported" {
+		t.Fatalf("expected bootstrap_relation_not_supported, got %q", apiErr.Code)
+	}
+	if !strings.Contains(apiErr.Message, "team") {
+		t.Fatalf("unexpected error message: %q", apiErr.Message)
+	}
+}
+
 func TestRequestCodeCreatesAdminWhenNoUsersExist(t *testing.T) {
 	requireSQLite3(t)
 
@@ -158,6 +285,21 @@ auth {
   email_transport console
 }
 `) + "\n")
+	if err != nil {
+		t.Fatalf("failed to parse app: %v", err)
+	}
+	app.Database = dbPath
+
+	r, err := New(app)
+	if err != nil {
+		t.Fatalf("runtime.New failed: %v", err)
+	}
+	return r
+}
+
+func mustNewAuthRuntimeFromSource(t *testing.T, dbPath string, source string) *Runtime {
+	t.Helper()
+	app, err := parser.Parse(strings.TrimSpace(source) + "\n")
 	if err != nil {
 		t.Fatalf("failed to parse app: %v", err)
 	}

@@ -240,12 +240,9 @@ func (r *Runtime) handleBootstrapAdmin(w http.ResponseWriter, requestID string, 
 		return err
 	}
 
-	user, found, err := r.tryAutoCreateAuthUser(requestID, email)
+	user, err := r.createBootstrapAdminUser(requestID, email, payload)
 	if err != nil {
 		return err
-	}
-	if !found {
-		return newAPIError(http.StatusUnprocessableEntity, "bootstrap_user_creation_failed", "Could not create first user. Add optional/default fields or create one manually.")
 	}
 	userID := user["id"]
 	return r.issueAuthCode(w, requestID, email, userID, "First admin verification code sent. Complete login with this code to finish setup.", "admin")
@@ -311,6 +308,148 @@ func (r *Runtime) loadOrCreateAuthUserForRequestCode(requestID, email string) (m
 // It only succeeds when all required fields can be safely inferred from auth config.
 func (r *Runtime) tryAutoCreateAuthUser(requestID, email string) (map[string]any, bool, error) {
 	return r.tryAutoCreateAuthUserWithRole(requestID, email, "user")
+}
+
+func (r *Runtime) createBootstrapAdminUser(requestID, email string, payload map[string]any) (map[string]any, error) {
+	if r.authUser == nil {
+		return nil, newAPIError(http.StatusUnprocessableEntity, "bootstrap_user_creation_failed", "Auth user entity is not available.")
+	}
+	if err := assertNoUnknownFields(r.authUser, payload, "create"); err != nil {
+		return nil, newAPIError(http.StatusBadRequest, "invalid_bootstrap_payload", err.Error())
+	}
+
+	cfg := r.authConfig()
+	if cfg.RoleField != "" {
+		if _, ok := payload[cfg.RoleField]; ok {
+			return nil, newAPIError(http.StatusBadRequest, "invalid_bootstrap_payload", fmt.Sprintf("Field %s is managed automatically during first admin setup", cfg.RoleField))
+		}
+	}
+
+	columns := make([]string, 0, len(r.authUser.Fields))
+	placeholders := make([]string, 0, len(r.authUser.Fields))
+	values := make([]any, 0, len(r.authUser.Fields))
+	ctx := entityNullContext(r.authUser)
+	missingFields := make([]string, 0, 4)
+	blockedRelationFields := make([]string, 0, 2)
+
+	addValue := func(field model.Field, rawValue any) error {
+		quoted, err := quoteIdentifier(model.FieldStorageName(&field))
+		if err != nil {
+			return err
+		}
+		dbValue, apiValue, err := normalizeInputValue(&field, rawValue)
+		if err != nil {
+			return err
+		}
+		columns = append(columns, quoted)
+		placeholders = append(placeholders, "?")
+		values = append(values, dbValue)
+		ctx[field.Name] = apiValue
+		return nil
+	}
+
+	for _, field := range r.authUser.Fields {
+		if field.Primary && field.Auto {
+			continue
+		}
+
+		switch {
+		case field.Name == cfg.EmailField:
+			if err := addValue(field, email); err != nil {
+				return nil, err
+			}
+
+		case cfg.RoleField != "" && field.Name == cfg.RoleField:
+			if field.Type != "String" {
+				return nil, newAPIError(http.StatusUnprocessableEntity, "bootstrap_user_creation_failed", fmt.Sprintf("Field %s must be String for auth role management", field.Name))
+			}
+			if err := addValue(field, "user"); err != nil {
+				return nil, err
+			}
+
+		default:
+			rawValue, hasValue := payload[field.Name]
+			if hasValue && field.RelationEntity != "" {
+				return nil, newAPIError(http.StatusUnprocessableEntity, "bootstrap_relation_not_supported", fmt.Sprintf("First admin setup does not support relation field %s. Make this field optional or create the first admin manually in the database.", field.Name))
+			}
+			if hasValue {
+				if err := addValue(field, rawValue); err != nil {
+					return nil, newAPIError(http.StatusBadRequest, "invalid_bootstrap_payload", err.Error())
+				}
+				continue
+			}
+			if field.Default != nil {
+				if err := addValue(field, field.Default); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if field.Optional {
+				ctx[field.Name] = nil
+				continue
+			}
+			if field.RelationEntity != "" {
+				blockedRelationFields = append(blockedRelationFields, field.Name)
+				continue
+			}
+			missingFields = append(missingFields, field.Name)
+		}
+	}
+
+	if len(blockedRelationFields) > 0 {
+		fieldLabel := "fields"
+		pronoun := "these fields"
+		if len(blockedRelationFields) == 1 {
+			fieldLabel = "field"
+			pronoun = "this field"
+		}
+		return nil, newAPIError(
+			http.StatusUnprocessableEntity,
+			"bootstrap_relation_not_supported",
+			fmt.Sprintf(
+				"First admin setup cannot fill required relation %s automatically: %s. Make %s optional, or create the first admin manually in the database.",
+				fieldLabel,
+				strings.Join(blockedRelationFields, ", "),
+				pronoun,
+			),
+		)
+	}
+
+	if len(missingFields) > 0 {
+		fieldLabel := "fields"
+		verb := "values"
+		if len(missingFields) == 1 {
+			fieldLabel = "field"
+			verb = "a value"
+		}
+		return nil, newAPIError(
+			http.StatusBadRequest,
+			"bootstrap_fields_required",
+			fmt.Sprintf("First admin setup requires %s for %s: %s.", verb, fieldLabel, strings.Join(missingFields, ", ")),
+		)
+	}
+
+	if err := r.validateEntityRules(r.authUser, ctx); err != nil {
+		return nil, err
+	}
+
+	table, err := quoteIdentifier(r.authUser.Table)
+	if err != nil {
+		return nil, err
+	}
+	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", table, strings.Join(columns, ", "), strings.Join(placeholders, ", "))
+	if _, err := r.DB.ExecTagged(requestID, insertSQL, values...); err != nil {
+		return nil, err
+	}
+
+	user, found, err := r.loadAuthUserByEmail(requestID, email)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, newAPIError(http.StatusUnprocessableEntity, "bootstrap_user_creation_failed", "Could not create first user.")
+	}
+	return user, nil
 }
 
 func (r *Runtime) tryAutoCreateAuthUserWithRole(requestID, email, roleValue string) (map[string]any, bool, error) {

@@ -1,0 +1,89 @@
+{
+  "scope": "source.mar",
+  "completions": [
+    {
+      "trigger": "app",
+      "annotation": "Mar app scaffold",
+      "kind": "snippet",
+      "contents": "app ${1:MyApi}\nport ${2:4100}\ndatabase \"${3:app.db}\"\n\nentity ${4:Todo} {\n  ${5:title}: String\n  authorize all when ${6:user_authenticated}\n}"
+    },
+    {
+      "trigger": "entity",
+      "annotation": "Entity block",
+      "kind": "snippet",
+      "contents": "entity ${1:EntityName} {\n  ${2:name}: ${3:String}\n  authorize all when ${4:user_authenticated}\n}"
+    },
+    {
+      "trigger": "field",
+      "annotation": "Field declaration",
+      "kind": "snippet",
+      "contents": "${1:fieldName}: ${2:String}"
+    },
+    {
+      "trigger": "fielddefault",
+      "annotation": "Field with default",
+      "kind": "snippet",
+      "contents": "${1:fieldName}: ${2:String} default ${3:\"value\"}"
+    },
+    {
+      "trigger": "belongs_to",
+      "annotation": "belongs_to relation",
+      "kind": "snippet",
+      "contents": "belongs_to ${1:User}"
+    },
+    {
+      "trigger": "belongs_to_named",
+      "annotation": "Named belongs_to relation",
+      "kind": "snippet",
+      "contents": "belongs_to ${1:owner}: ${2:User}${3: optional}"
+    },
+    {
+      "trigger": "rule",
+      "annotation": "Rule",
+      "kind": "snippet",
+      "contents": "rule \"${1:Validation message}\" expect ${2:expression}"
+    },
+    {
+      "trigger": "authorize",
+      "annotation": "Authorize rule",
+      "kind": "snippet",
+      "contents": "authorize ${1:read} when ${2:user_authenticated}"
+    },
+    {
+      "trigger": "auth",
+      "annotation": "Auth block",
+      "kind": "snippet",
+      "contents": "auth {\n  code_ttl_minutes ${1:10}\n  session_ttl_hours ${2:24}\n  email_transport ${3:console}\n  email_from \"${4:no-reply@example.local}\"\n  email_subject \"${5:Your login code}\"\n}"
+    },
+    {
+      "trigger": "public",
+      "annotation": "Public block",
+      "kind": "snippet",
+      "contents": "public {\n  dir \"${1:./frontend/dist}\"\n  mount \"${2:/}\"\n  spa_fallback \"${3:index.html}\"\n}"
+    },
+    {
+      "trigger": "system",
+      "annotation": "System block",
+      "kind": "snippet",
+      "contents": "system {\n  request_logs_buffer ${1:200}\n  http_max_request_body_mb ${2:1}\n  sqlite_journal_mode ${3:wal}\n  sqlite_foreign_keys ${4:true}\n}"
+    },
+    {
+      "trigger": "typealias",
+      "annotation": "Type alias",
+      "kind": "snippet",
+      "contents": "type alias ${1:CreateInput} =\n  { ${2:name} : ${3:String}\n  }"
+    },
+    {
+      "trigger": "action",
+      "annotation": "Action block",
+      "kind": "snippet",
+      "contents": "action ${1:doSomething} {\n  input: ${2:InputAlias}\n\n  ${3:result} = create ${4:Todo} {\n    ${5:title}: input.${6:title}\n  }\n}"
+    },
+    {
+      "trigger": "authzcrud",
+      "annotation": "CRUD auth pack",
+      "kind": "snippet",
+      "contents": "authorize all when ${1:user_authenticated}\nauthorize read when ${2:user_authenticated and (id == user_id or user_role == \"admin\")}\nauthorize delete when ${3:user_role == \"admin\"}"
+    }
+  ]
+}

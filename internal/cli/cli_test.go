@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"mar/internal/model"
 )
 
 func TestUnknownCommandErrorSuggestsDevForMarFile(t *testing.T) {
@@ -70,7 +72,7 @@ func TestFormatParseCLIErrorAddsHintForMissingAppDeclaration(t *testing.T) {
 	if !strings.Contains(msg, "missing app declaration") {
 		t.Fatalf("expected base parse message, got %q", msg)
 	}
-	if !strings.Contains(msg, "Hint:\n  Add an app declaration near the top of the file, for example: app Todo") {
+	if !strings.Contains(msg, "Hint:\n  Add an app declaration near the top of the file. Example: app Todo") {
 		t.Fatalf("expected missing app declaration hint, got %q", msg)
 	}
 }
@@ -95,7 +97,7 @@ func TestHighlightParseCLIMessageColorsOtherDeclarations(t *testing.T) {
 }
 
 func TestHighlightParseCLIMessageColorsAppDeclarationExample(t *testing.T) {
-	msg := highlightParseCLIMessage(true, "Add an app declaration near the top of the file, for example: app Todo")
+	msg := highlightParseCLIMessage(true, "Add an app declaration near the top of the file. Example: app Todo")
 
 	if !strings.Contains(msg, "an \033[1mapp\033[0m declaration") {
 		t.Fatalf("expected app keyword in prose to be bold, got %q", msg)
@@ -124,6 +126,53 @@ func TestHighlightParseCLIMessageColorsAuthSmtpConfigReference(t *testing.T) {
 	}
 	if !strings.Contains(msg, "\033[1memail_transport\033[0m \033[1;32msmtp\033[0m") {
 		t.Fatalf("expected email_transport smtp to be highlighted, got %q", msg)
+	}
+}
+
+func TestHighlightAppWarningColorsBacktickedFields(t *testing.T) {
+	msg := highlightAppWarning(true, "Missing required fields: `name`, `surname`")
+
+	if !strings.Contains(msg, "\033[1;36mname\033[0m") {
+		t.Fatalf("expected name to be highlighted, got %q", msg)
+	}
+	if !strings.Contains(msg, "\033[1;36msurname\033[0m") {
+		t.Fatalf("expected surname to be highlighted, got %q", msg)
+	}
+}
+
+func TestHighlightAppWarningRemovesBackticksWithoutColor(t *testing.T) {
+	msg := highlightAppWarning(false, "Missing required field: `name`")
+
+	if msg != "Missing required field: name" {
+		t.Fatalf("expected backticks to be removed without color, got %q", msg)
+	}
+}
+
+func TestPrintAppWarningsUsesSingularHeaderAndLeadingBlankLine(t *testing.T) {
+	original := os.Stdout
+	reader, writer, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatalf("pipe failed: %v", pipeErr)
+	}
+	os.Stdout = writer
+	t.Cleanup(func() {
+		os.Stdout = original
+	})
+
+	t.Setenv("NO_COLOR", "1")
+	printAppWarnings(&model.App{
+		Warnings: []string{"Automatic creation of the first admin will not be possible."},
+	})
+
+	_ = writer.Close()
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+
+	got := string(output)
+	if !strings.HasPrefix(got, "\nWarning\n") {
+		t.Fatalf("expected leading blank line and singular header, got %q", got)
 	}
 }
 

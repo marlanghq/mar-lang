@@ -98,6 +98,7 @@ type alias Model =
     , authSubmitting : Maybe AuthSubmitState
     , sessionRestorePending : Bool
     , firstAdminCodeRequested : Bool
+    , bootstrapFormValues : Dict String String
     , authToolsOpen : Bool
     , workspace : WorkspaceMode
     , schema : Remote Schema
@@ -164,6 +165,7 @@ type Msg
     | GotBackup (Result ApiHttpError BackupResponse)
     | SetAuthEmail String
     | SetAuthCode String
+    | SetBootstrapField String String
     | BackToAuthEmail
     | SwitchWorkspace WorkspaceMode
     | SetActionField String String
@@ -517,6 +519,7 @@ init flags url navKey =
             , authSubmitting = Nothing
             , sessionRestorePending = True
             , firstAdminCodeRequested = False
+            , bootstrapFormValues = Dict.empty
             , authToolsOpen = storedAuthToken == "" && storedSystemAuthToken == ""
             , workspace = AppWorkspace
             , schema = Loading
@@ -1154,6 +1157,9 @@ update msg model =
         SetAuthCode code ->
             ( { model | authCode = code }, Cmd.none )
 
+        SetBootstrapField fieldName value ->
+            ( { model | bootstrapFormValues = Dict.insert fieldName value model.bootstrapFormValues }, Cmd.none )
+
         BackToAuthEmail ->
             ( { model | authStage = AuthStageEmail, authCode = "", authSubmitting = Nothing, authInlineMessage = Nothing, flash = Nothing, mobileSidebarOpen = False }, Cmd.none )
 
@@ -1204,11 +1210,16 @@ update msg model =
                 ( { model | authInlineMessage = authEmailValidationMessage model.authEmail, flash = Nothing }, Cmd.none )
 
             else
-                let
-                    scope =
-                        activeAuthScope
-                in
-                ( { model | authInlineMessage = Nothing, flash = Nothing, authSubmitting = Just AuthSubmitSendingCode }, bootstrapFirstAdmin scope model )
+                case bootstrapPayloadFromModel model of
+                    Err message ->
+                        ( { model | authInlineMessage = Nothing, flash = Just message, authSubmitting = Nothing }, Cmd.none )
+
+                    Ok payload ->
+                        let
+                            scope =
+                                activeAuthScope
+                        in
+                        ( { model | authInlineMessage = Nothing, flash = Nothing, authSubmitting = Just AuthSubmitSendingCode }, bootstrapFirstAdmin scope model payload )
 
         GotBootstrapFirstAdmin _ result ->
             case result of
@@ -1248,6 +1259,7 @@ update msg model =
                                         , currentEmail = response.email
                                         , authEmail = ""
                                         , authCode = ""
+                                        , bootstrapFormValues = Dict.empty
                                         , authStage = AuthStageSession
                                         , authSubmitting = Nothing
                                         , sessionRestorePending = False
@@ -1796,8 +1808,8 @@ requestAuthCode scope model =
         }
 
 
-bootstrapFirstAdmin : AuthScope -> Model -> Cmd Msg
-bootstrapFirstAdmin scope model =
+bootstrapFirstAdmin : AuthScope -> Model -> Encode.Value -> Cmd Msg
+bootstrapFirstAdmin scope model payload =
     let
         endpoint =
             "/_mar/bootstrap-admin"
@@ -1807,15 +1819,191 @@ bootstrapFirstAdmin scope model =
         , headers = []
         , url = model.apiBase ++ endpoint
         , body =
-            Http.jsonBody
-                (Encode.object
-                    [ ( "email", Encode.string (String.trim model.authEmail) )
-                    ]
-                )
+            Http.jsonBody payload
         , expect = expectJsonWithApiError (GotBootstrapFirstAdmin scope) requestCodeDecoder
         , timeout = Nothing
         , tracker = Nothing
         }
+
+
+bootstrapPayloadFromModel : Model -> Result String Encode.Value
+bootstrapPayloadFromModel model =
+    case bootstrapBlockingRelationFields model of
+        blockingField :: rest ->
+            let
+                blockingNames =
+                    List.map .name (blockingField :: rest)
+
+                fieldLabelText =
+                    if List.length blockingNames == 1 then
+                        "field"
+
+                    else
+                        "fields"
+
+                pronoun =
+                    if List.length blockingNames == 1 then
+                        "this field"
+
+                    else
+                        "these fields"
+            in
+            Err ("First admin setup cannot fill required relation " ++ fieldLabelText ++ " automatically: " ++ String.join ", " blockingNames ++ ". Make " ++ pronoun ++ " optional, or create the first admin manually in the database.")
+
+        [] ->
+            bootstrapSupportedFields model
+                |> List.foldl (encodeBootstrapField model.bootstrapFormValues) (Ok [ ( "email", Encode.string (String.trim model.authEmail) ) ])
+                |> Result.map Encode.object
+
+
+encodeBootstrapField : Dict String String -> Field -> Result String (List ( String, Encode.Value )) -> Result String (List ( String, Encode.Value ))
+encodeBootstrapField valuesByName field partialResult =
+    case partialResult of
+        Err message ->
+            Err message
+
+        Ok items ->
+            let
+                rawValue =
+                    Dict.get field.name valuesByName
+                        |> Maybe.withDefault ""
+                        |> String.trim
+            in
+            if rawValue == "" then
+                Err (fieldLabel field.name ++ " is required")
+
+            else
+                case encodeBootstrapFieldValue field rawValue of
+                    Ok encoded ->
+                        Ok (( field.name, encoded ) :: items)
+
+                    Err message ->
+                        Err message
+
+
+encodeBootstrapFieldValue : Field -> String -> Result String Encode.Value
+encodeBootstrapFieldValue field rawValue =
+    case field.fieldType of
+        StringType ->
+            Ok (Encode.string rawValue)
+
+        IntType ->
+            case String.toInt rawValue of
+                Just value ->
+                    Ok (Encode.int value)
+
+                Nothing ->
+                    Err (fieldLabel field.name ++ " expects a whole number")
+
+        FloatType ->
+            case String.toFloat rawValue of
+                Just value ->
+                    Ok (Encode.float value)
+
+                Nothing ->
+                    Err (fieldLabel field.name ++ " expects a decimal number")
+
+        PosixType ->
+            case parsePosixInput rawValue of
+                Just value ->
+                    Ok (Encode.float value)
+
+                Nothing ->
+                    Err (fieldLabel field.name ++ " expects a date/time or Unix milliseconds")
+
+        BoolType ->
+            case rawValue of
+                "true" ->
+                    Ok (Encode.bool True)
+
+                "false" ->
+                    Ok (Encode.bool False)
+
+                _ ->
+                    Err (fieldLabel field.name ++ " expects true or false")
+
+
+bootstrapUserEntity : Model -> Maybe Entity
+bootstrapUserEntity model =
+    case ( model.schema, schemaAuthInfo model ) of
+        ( Loaded schema, Just authInfo ) ->
+            List.filter (\entity -> entity.name == authInfo.userEntity) schema.entities
+                |> List.head
+
+        _ ->
+            Nothing
+
+
+schemaAuthInfo : Model -> Maybe AuthInfo
+schemaAuthInfo model =
+    case model.schema of
+        Loaded schema ->
+            schema.auth
+
+        _ ->
+            Nothing
+
+
+bootstrapSupportedFields : Model -> List Field
+bootstrapSupportedFields model =
+    bootstrapUserEntity model
+        |> Maybe.map
+            (\entity ->
+                entity.fields
+                    |> List.filter (isBootstrapSupportedField model)
+            )
+        |> Maybe.withDefault []
+
+
+bootstrapBlockingRelationFields : Model -> List Field
+bootstrapBlockingRelationFields model =
+    bootstrapUserEntity model
+        |> Maybe.map
+            (\entity ->
+                entity.fields
+                    |> List.filter (isBootstrapBlockingRelationField model)
+            )
+        |> Maybe.withDefault []
+
+
+isBootstrapSupportedField : Model -> Field -> Bool
+isBootstrapSupportedField model field =
+    isBootstrapRequiredField model field
+        && field.relationEntity == Nothing
+
+
+isBootstrapBlockingRelationField : Model -> Field -> Bool
+isBootstrapBlockingRelationField model field =
+    isBootstrapRequiredField model field
+        && field.relationEntity /= Nothing
+
+
+isBootstrapRequiredField : Model -> Field -> Bool
+isBootstrapRequiredField model field =
+    let
+        managedFieldNames =
+            case schemaAuthInfo model of
+                Just authInfo ->
+                    [ authInfo.emailField, authInfo.roleField ]
+
+                Nothing ->
+                    []
+    in
+    not field.primary
+        && not field.auto
+        && not field.optional
+        && not (fieldHasDefault field)
+        && not (List.member field.name managedFieldNames)
+
+
+fieldHasDefault : Field -> Bool
+fieldHasDefault field =
+    case field.defaultValue of
+        Just _ ->
+            True
+
+        Nothing ->
+            False
 
 
 loginWithCode : AuthScope -> Model -> Cmd Msg
@@ -4216,13 +4404,90 @@ viewAuthEmailStage model firstAdminMode actionLabel submitMsg isLoading =
 
             else
                 "user@email.com"
+
+        bootstrapFields =
+            if firstAdminMode then
+                bootstrapSupportedFields model
+
+            else
+                []
+
+        blockingRelationFields =
+            if firstAdminMode then
+                bootstrapBlockingRelationFields model
+
+            else
+                []
+
+        blockingMessage =
+            case blockingRelationFields of
+                [] ->
+                    Nothing
+
+                fields ->
+                    let
+                        names =
+                            fields |> List.map (.name >> fieldLabel)
+
+                        fieldLabelText =
+                            if List.length names == 1 then
+                                "field"
+
+                            else
+                                "fields"
+
+                        pronoun =
+                            if List.length names == 1 then
+                                "this field"
+
+                            else
+                                "these fields"
+                    in
+                    Just ("First admin setup cannot fill required relation " ++ fieldLabelText ++ " automatically: " ++ String.join ", " names ++ ". Make " ++ pronoun ++ " optional, or create the first admin manually in the database.")
+
+        bootstrapFieldInput field =
+            case field.fieldType of
+                BoolType ->
+                    formBooleanField
+                        (fieldLabel field.name)
+                        False
+                        (Dict.get field.name model.bootstrapFormValues
+                            |> Maybe.withDefault "false"
+                        )
+                        (SetBootstrapField field.name)
+
+                PosixType ->
+                    Input.text
+                        (cupertinoTextInputAttrs
+                            ++ [ htmlAttribute (HtmlAttr.type_ "datetime-local") ]
+                        )
+                        { onChange = SetBootstrapField field.name
+                        , text = Dict.get field.name model.bootstrapFormValues |> Maybe.withDefault ""
+                        , placeholder = Just (Input.placeholder [] (text (placeholderForField field)))
+                        , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name ++ " (UTC)"))
+                        }
+
+                _ ->
+                    Input.text cupertinoTextInputAttrs
+                        { onChange = SetBootstrapField field.name
+                        , text = Dict.get field.name model.bootstrapFormValues |> Maybe.withDefault ""
+                        , placeholder = Just (Input.placeholder [] (text (placeholderForField field)))
+                        , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name))
+                        }
+
+        submitAction =
+            if isLoading || (not (List.isEmpty blockingRelationFields)) then
+                Nothing
+
+            else
+                Just submitMsg
     in
     column
         [ width fill
         , spacing 12
         , htmlAttribute (HtmlAttr.class "auth-stage auth-stage-email")
         ]
-        [ Input.text
+        ([ Input.text
             (cupertinoTextInputAttrs
                 ++ [ htmlAttribute (HtmlAttr.type_ "email")
                    , htmlAttribute (HtmlAttr.attribute "autocomplete" "email")
@@ -4241,7 +4506,30 @@ viewAuthEmailStage model firstAdminMode actionLabel submitMsg isLoading =
             , placeholder = Just (Input.placeholder [] (text emailPlaceholder))
             , label = Input.labelAbove [ Font.size 12 ] (text "Email")
             }
-        , el [ width fill ]
+         ]
+            ++ (if firstAdminMode && not (List.isEmpty bootstrapFields) then
+                    [ paragraph [ width fill, Font.size 12, Font.color (rgb255 93 103 120) ]
+                        [ text "Complete the required profile fields for the first admin." ]
+                    ]
+
+                else
+                    []
+               )
+            ++ List.map bootstrapFieldInput bootstrapFields
+            ++ (case blockingMessage of
+                    Just message ->
+                        [ paragraph
+                            [ width fill
+                            , Font.size 12
+                            , Font.color (rgb255 156 69 27)
+                            ]
+                            [ text message ]
+                        ]
+
+                    Nothing ->
+                        []
+               )
+            ++ [ el [ width fill ]
             (authActionButton
                 (if firstAdminMode then
                     rgb255 242 180 42
@@ -4255,12 +4543,7 @@ viewAuthEmailStage model firstAdminMode actionLabel submitMsg isLoading =
                  else
                     rgb255 246 248 252
                 )
-                (if isLoading then
-                    Nothing
-
-                 else
-                    Just submitMsg
-                )
+                submitAction
                 actionLabel
             )
         , authStatusLine
@@ -4271,7 +4554,8 @@ viewAuthEmailStage model firstAdminMode actionLabel submitMsg isLoading =
              else
                 Nothing
             )
-        ]
+          ]
+        )
 
 
 viewAuthCodeStage : Model -> Bool -> String -> Msg -> Bool -> Bool -> Element Msg
@@ -4911,6 +5195,7 @@ clearLocalSession model =
         , currentSystemRole = Nothing
         , authEmail = ""
         , authCode = ""
+        , bootstrapFormValues = Dict.empty
         , authStage = AuthStageEmail
         , authSubmitting = Nothing
         , sessionRestorePending = False

@@ -29,6 +29,7 @@ var (
 	parseErrorDeclWordRe      = regexp.MustCompile(`\b(app|auth|public|system)\s+declaration\b`)
 	parseErrorConfigPathRe    = regexp.MustCompile(`\b(auth|system|public)\.([A-Za-z_][A-Za-z0-9_.]*)\b`)
 	parseErrorAuthTransportRe = regexp.MustCompile(`\b(email_transport)\s+(smtp|console)\b`)
+	appWarningFieldRe         = regexp.MustCompile("`[^`\\n]+`")
 )
 
 type styledCLIError string
@@ -64,6 +65,7 @@ func Run(binaryName string, args []string) error {
 		if err != nil {
 			return err
 		}
+		printAppWarnings(app)
 		buildRoot, binaryOutputName := defaultBuildLayout(args[1], "")
 		if len(args) == 3 {
 			buildRoot, binaryOutputName = defaultBuildLayout(args[1], args[2])
@@ -222,6 +224,41 @@ func parseMarFile(path string) (*model.App, error) {
 	return app, nil
 }
 
+func printAppWarnings(app *model.App) {
+	if app == nil || len(app.Warnings) == 0 {
+		return
+	}
+
+	useColor := cliSupportsANSIStream(os.Stdout)
+	fmt.Println()
+	fmt.Printf("%s\n", colorizeCLI(useColor, "\033[1;33m", "Warning"))
+	for _, warning := range app.Warnings {
+		warning = strings.TrimSpace(warning)
+		if warning == "" {
+			continue
+		}
+		for _, line := range strings.Split(warning, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			fmt.Printf("  %s\n", highlightAppWarning(useColor, line))
+		}
+	}
+	fmt.Println()
+}
+
+func highlightAppWarning(useColor bool, message string) string {
+	if !useColor {
+		return strings.ReplaceAll(message, "`", "")
+	}
+
+	return appWarningFieldRe.ReplaceAllStringFunc(message, func(match string) string {
+		trimmed := strings.Trim(match, "`")
+		return colorizeCLI(true, "\033[1;36m", trimmed)
+	})
+}
+
 func formatParseCLIError(err error) error {
 	useColor := cliSupportsANSIStream(os.Stderr)
 	message := strings.TrimSpace(err.Error())
@@ -243,7 +280,7 @@ func formatParseCLIError(err error) error {
 func parseCLIHintForMessage(message string) string {
 	switch strings.TrimSpace(message) {
 	case "missing app declaration":
-		return "Add an app declaration near the top of the file, for example: app Todo"
+		return "Add an app declaration near the top of the file. Example: app Todo"
 	default:
 		return ""
 	}

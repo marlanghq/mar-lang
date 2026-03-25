@@ -98,6 +98,16 @@ func belongsToFieldDeclaration(line string) (string, int, int, bool) {
 	return "", 0, 0, false
 }
 
+func belongsToEntityReference(line string) (string, int, int, bool) {
+	if match := belongsToNamedRe.FindStringSubmatchIndex(line); match != nil {
+		return line[match[4]:match[5]], match[4], match[5], true
+	}
+	if match := belongsToShortRe.FindStringSubmatchIndex(line); match != nil {
+		return line[match[2]:match[3]], match[2], match[3], true
+	}
+	return "", 0, 0, false
+}
+
 func toSnakeIdentifier(value string) string {
 	var b strings.Builder
 	for i, r := range value {
@@ -193,11 +203,6 @@ func resolveWorkspaceRoots(params initializeParams) []string {
 	if len(roots) == 0 && strings.TrimSpace(params.RootPath) != "" {
 		addPath(params.RootPath)
 	}
-	if len(roots) == 0 {
-		if cwd, err := os.Getwd(); err == nil {
-			addPath(cwd)
-		}
-	}
 	return roots
 }
 
@@ -216,7 +221,7 @@ func (s *server) collectWorkspaceDocuments() map[string]string {
 		}
 	}
 
-	for _, root := range s.workspaceRoots {
+	for _, root := range s.effectiveWorkspaceRoots() {
 		root = strings.TrimSpace(root)
 		if root == "" {
 			continue
@@ -254,6 +259,38 @@ func (s *server) collectWorkspaceDocuments() map[string]string {
 	}
 
 	return out
+}
+
+func (s *server) effectiveWorkspaceRoots() []string {
+	if len(s.workspaceRoots) > 0 {
+		return s.workspaceRoots
+	}
+	return inferWorkspaceRootsFromDocuments(s.documents)
+}
+
+func inferWorkspaceRootsFromDocuments(documents map[string]string) []string {
+	roots := make([]string, 0, len(documents))
+	seen := map[string]struct{}{}
+
+	addRoot := func(path string) {
+		clean := filepath.Clean(path)
+		if _, ok := seen[clean]; ok {
+			return
+		}
+		seen[clean] = struct{}{}
+		roots = append(roots, clean)
+	}
+
+	for uri := range documents {
+		path, err := fileURIToPath(uri)
+		if err != nil {
+			continue
+		}
+		addRoot(filepath.Dir(path))
+	}
+
+	sort.Strings(roots)
+	return roots
 }
 
 func shouldSkipWorkspaceDir(root, path, name string) bool {
@@ -459,6 +496,17 @@ func indexReferences(uri, text string, catalog *symbolCatalog, index *workspaceS
 			if trimmed == "}" {
 				currentEntity = ""
 				continue
+			}
+			if entityName, start, end, ok := belongsToEntityReference(line); ok {
+				if key, ok := catalog.entities[entityName]; ok {
+					index.add(symbolOccurrence{
+						URI:   uri,
+						Range: makeRange(lineNo, start, end),
+						Key:   key,
+						Name:  entityName,
+						Kind:  symbolEntity,
+					})
+				}
 			}
 			if match := ruleLineRe.FindStringSubmatchIndex(line); match != nil {
 				indexExpressionFieldReferences(uri, lineNo, line, match[2], match[3], currentEntity, catalog, index)

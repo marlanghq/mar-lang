@@ -101,10 +101,10 @@ entity Book {
 	}
 }
 
-func TestMigrationsBlockAddingRequiredField(t *testing.T) {
+func TestMigrationsAllowAddingRequiredFieldToEmptyTable(t *testing.T) {
 	requireSQLite3(t)
 
-	dbPath := filepath.Join(t.TempDir(), "migration-required-block.db")
+	dbPath := filepath.Join(t.TempDir(), "migration-required-empty.db")
 
 	appV1 := mustParseApp(t, `
 app MigrationApi
@@ -127,7 +127,55 @@ entity Book {
 }
 `)
 	appV2.Database = dbPath
-	_, err := New(appV2)
+	if _, err := New(appV2); err != nil {
+		t.Fatalf("runtime.New(v2) failed: %v", err)
+	}
+
+	db := sqlitecli.Open(dbPath)
+	rows, err := db.QueryRows(`PRAGMA table_info("books")`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info failed: %v", err)
+	}
+	stock, ok := findColumn(rows, "stock")
+	if !ok {
+		t.Fatalf("expected stock column in books table, got rows: %+v", rows)
+	}
+	if got := int64Value(stock["notnull"]); got != 1 {
+		t.Fatalf("expected stock to be not null, got notnull=%d", got)
+	}
+}
+
+func TestMigrationsBlockAddingRequiredFieldWhenTableHasRows(t *testing.T) {
+	requireSQLite3(t)
+
+	dbPath := filepath.Join(t.TempDir(), "migration-required-block.db")
+
+	appV1 := mustParseApp(t, `
+app MigrationApi
+
+entity Book {
+  title: String
+}
+`)
+	appV1.Database = dbPath
+	r1, err := New(appV1)
+	if err != nil {
+		t.Fatalf("runtime.New(v1) failed: %v", err)
+	}
+	if _, err := r1.DB.Exec(`INSERT INTO books (title) VALUES (?)`, "First book"); err != nil {
+		t.Fatalf("seed insert failed: %v", err)
+	}
+
+	appV2 := mustParseApp(t, `
+app MigrationApi
+
+entity Book {
+  title: String
+  stock: Int
+}
+`)
+	appV2.Database = dbPath
+	_, err = New(appV2)
 	if err == nil {
 		t.Fatal("expected migration to block required field addition")
 	}

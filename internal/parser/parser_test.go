@@ -91,6 +91,92 @@ entity Todo {
 	}
 }
 
+func TestParseDoesNotWarnWhenBootstrapCanPromptForRequiredScalarFields(t *testing.T) {
+	src := `
+app TodoOwned
+
+entity User {
+  teste: String
+}
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if len(app.Warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", app.Warnings)
+	}
+}
+
+func TestParseDoesNotWarnWhenBootstrapCanPromptForMultipleRequiredScalarFields(t *testing.T) {
+	src := `
+app TodoOwned
+
+entity User {
+  name: String
+  surname: String
+}
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if len(app.Warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", app.Warnings)
+	}
+}
+
+func TestParseWarnsWhenRequiredRelationBlocksFirstAdminBootstrap(t *testing.T) {
+	src := `
+app TodoOwned
+
+entity Team {
+  name: String
+}
+
+entity User {
+  belongs_to Team
+}
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if len(app.Warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d (%v)", len(app.Warnings), app.Warnings)
+	}
+	if !strings.Contains(app.Warnings[0], "required relation field without default") {
+		t.Fatalf("expected singular relation wording in warning, got %q", app.Warnings[0])
+	}
+	if !strings.Contains(app.Warnings[0], "`team`") {
+		t.Fatalf("expected warning to mention blocking field, got %q", app.Warnings[0])
+	}
+	if !strings.Contains(app.Warnings[0], "You can make this field optional") {
+		t.Fatalf("expected optional hint in warning, got %q", app.Warnings[0])
+	}
+}
+
+func TestParseDoesNotWarnWhenFirstAdminCanBeAutoCreated(t *testing.T) {
+	src := `
+app TodoOwned
+
+entity User {
+  displayName: String optional
+}
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if len(app.Warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", app.Warnings)
+	}
+}
+
 func TestParseUsesDefaultPortWhenPortIsOmitted(t *testing.T) {
 	src := `
 app TodoApi

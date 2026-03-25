@@ -111,8 +111,8 @@ func PrintStartupError(err error, _ string) {
 		defaultExample := colorizedFieldExample(useColor, info.Field, info.ExpectedType, "default", suggestedDefaultLiteral(info.ExpectedType))
 		fmt.Fprintln(os.Stderr, "  You have a few options:")
 		fmt.Fprintln(os.Stderr, "  1. Run a manual SQL migration to update the current database schema.")
-		fmt.Fprintf(os.Stderr, "  2. Make the new field optional, for example: %s\n", optionalExample)
-		fmt.Fprintf(os.Stderr, "  3. Keep the field required and give it a default, for example: %s\n", defaultExample)
+		fmt.Fprintf(os.Stderr, "  2. Make the new field optional. Example: %s\n", optionalExample)
+		fmt.Fprintf(os.Stderr, "  3. Keep the field required and give it a default. Example: %s\n", defaultExample)
 	} else {
 		fmt.Fprintln(os.Stderr, "  Run a manual SQL migration, or update your Mar schema to match the current database.")
 	}
@@ -143,7 +143,7 @@ func colorizedFieldExample(useColor bool, fieldName, fieldType, modifier, litera
 func suggestedDefaultLiteral(fieldType string) string {
 	switch strings.TrimSpace(fieldType) {
 	case "String":
-		return `""`
+		return `"Unknown"`
 	case "Bool":
 		return "false"
 	case "Float":

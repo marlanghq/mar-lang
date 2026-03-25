@@ -135,6 +135,7 @@ func runFlyInit(binaryName, inputPath string) error {
 	if err != nil {
 		return err
 	}
+	printAppWarnings(app)
 	if err := validateFlyInitPrereqs(app); err != nil {
 		return err
 	}
@@ -421,6 +422,7 @@ func runFlyProvision(binaryName, inputPath string) error {
 	if err != nil {
 		return err
 	}
+	printAppWarnings(app)
 	flyDir := filepath.Join("deploy", "fly")
 	dockerfilePath := filepath.Join(flyDir, "Dockerfile")
 	flyTomlPath := filepath.Join(flyDir, "fly.toml")
@@ -559,6 +561,7 @@ func runFlyDeploy(inputPath string, assumeYes bool) error {
 	if err != nil {
 		return err
 	}
+	printAppWarnings(app)
 	buildRoot, outputName := defaultBuildLayout(inputPath, "")
 	outputPath := targetOutputPath(buildRoot, outputName, runtimeTarget{OS: "linux", Arch: "amd64"})
 	flyDir := filepath.Join("deploy", "fly")

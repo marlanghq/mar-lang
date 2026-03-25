@@ -12,7 +12,7 @@ MACOS_DEVELOPER_ID_APP ?=
 MACOS_DEVELOPER_ID_INSTALLER ?=
 MACOS_NOTARY_PROFILE ?=
 
-.PHONY: all check check-go check-elm check-elm-live check-python3 check-node check-npm check-npx check-zip check-codesign check-pkgbuild check-notarytool check-stapler check-macos-release-config admin website website-serve website-dev vscode-plugin compiler-assets mar mar-release mar-release-zip mar-release-macos _mar-release-macos-sign _mar-release-macos-pkg _mar-release-macos-notarize _mar-release-macos-validate test clean distclean
+.PHONY: all check check-go check-elm check-elm-live check-python3 check-node check-npm check-npx check-zip check-codesign check-pkgbuild check-notarytool check-stapler check-macos-release-config admin website website-serve website-dev vscode-plugin sublime-plugin compiler-assets mar mar-release mar-release-zip mar-release-macos _mar-release-macos-sign _mar-release-macos-pkg _mar-release-macos-notarize _mar-release-macos-validate test clean distclean
 
 define print_title
 	@sh -c 'if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "\n%s\n" "$(1)"; else printf "\n\033[1;36m%s\033[0m\n" "$(1)"; fi'
@@ -265,6 +265,22 @@ vscode-plugin: check-npx check-npm
 		else \
 			printf "  Output: \033[1;32m%s\033[0m\n" "$${out#../}"; \
 			printf "  Install in VS Code with: \033[1;32mcode --install-extension %s --force\033[0m\n" "$${out#../}"; \
+		fi'
+
+sublime-plugin: check-zip
+	$(call print_title,Sublime Text package)
+	$(call print_info,Packaging sublime-mar into a .sublime-package)
+	@sh -c '\
+		out="dist/sublime/Mar.sublime-package"; \
+		mkdir -p dist/sublime; \
+		rm -f "$$out"; \
+		cd sublime-mar && zip -qr "../$$out" .; \
+		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then \
+			printf "  %s\n" "Output: $$out"; \
+			printf "  %s\n" "Install in Sublime Text by copying it to Installed Packages/"; \
+		else \
+			printf "  Output: \033[1;32m%s\033[0m\n" "$$out"; \
+			printf "  Install in Sublime Text by copying it to \033[1;32mInstalled Packages/\033[0m\n"; \
 		fi'
 
 compiler-assets: check-go admin

@@ -10,6 +10,7 @@ type App struct {
 	Auth         *AuthConfig   `json:"auth,omitempty"`
 	InputAliases []TypeAlias   `json:"inputAliases,omitempty"`
 	Actions      []Action      `json:"actions,omitempty"`
+	Warnings     []string      `json:"warnings,omitempty"`
 }
 
 type PublicConfig struct {

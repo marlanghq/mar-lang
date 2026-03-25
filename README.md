@@ -3,6 +3,7 @@
 - Official website: [https://mar-lang.dev](https://mar-lang.dev)
 - Website source: [website/index.html](website/index.html)
 - VSCode Extension Guide: [vscode-mar/README.md](vscode-mar/README.md)
+- Official Sublime Text plugin: [marlanghq/mar-sublime](https://github.com/marlanghq/mar-sublime)
 
 Examples:
 

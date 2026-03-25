@@ -164,9 +164,6 @@ func RunStdio() error {
 		out:       os.Stdout,
 		documents: map[string]string{},
 	}
-	if cwd, err := os.Getwd(); err == nil && strings.TrimSpace(cwd) != "" {
-		srv.workspaceRoots = []string{cwd}
-	}
 	return srv.loop()
 }
 

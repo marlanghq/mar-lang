@@ -70,6 +70,7 @@ func runDev(binaryName, inputPath, outputPath string) error {
 			fmt.Printf("%s %s\n", colorizeCLI(useColor, "\033[1;31m", "Build failed:"), parseErr)
 			return
 		}
+		printAppWarnings(app)
 		if app.Auth != nil && strings.EqualFold(strings.TrimSpace(app.Auth.EmailTransport), "smtp") {
 			fmt.Printf(
 				"  %s %s %s %s %s\n",

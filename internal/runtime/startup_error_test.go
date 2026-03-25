@@ -39,6 +39,34 @@ func TestPrintStartupErrorSuggestsMakingNewRequiredFieldOptional(t *testing.T) {
 	}
 }
 
+func TestPrintStartupErrorSuggestsHumanStringDefault(t *testing.T) {
+	original := os.Stderr
+	reader, writer, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatalf("pipe failed: %v", pipeErr)
+	}
+	os.Stderr = writer
+	t.Cleanup(func() {
+		os.Stderr = original
+	})
+
+	PrintStartupError(
+		assertAsError(`migration blocked for entity User: cannot auto-add required field "name" (String) to existing table users`),
+		"",
+	)
+
+	_ = writer.Close()
+	var buf bytes.Buffer
+	if _, copyErr := io.Copy(&buf, reader); copyErr != nil {
+		t.Fatalf("copy failed: %v", copyErr)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, `name: String default "Unknown"`) {
+		t.Fatalf("expected human string default example in hint, got:\n%s", output)
+	}
+}
+
 func assertAsError(message string) error {
 	return startupErrorString(message)
 }

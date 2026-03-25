@@ -1,0 +1,10 @@
+{
+  "clients": {
+    "mar": {
+      "enabled": true,
+      "command": ["mar", "lsp"],
+      "selector": "source.mar",
+      "settings": {}
+    }
+  }
+}

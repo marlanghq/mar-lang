@@ -107,6 +107,18 @@ func (r *Runtime) indexExists(indexName string) (bool, error) {
 	return ok, nil
 }
 
+func (r *Runtime) tableHasRows(tableName string) (bool, error) {
+	quoted, err := quoteIdentifier(tableName)
+	if err != nil {
+		return false, err
+	}
+	_, ok, err := r.DB.QueryRow("SELECT 1 FROM " + quoted + " LIMIT 1")
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
 func (r *Runtime) readTableInfo(tableName string) ([]tableInfoRow, error) {
 	quoted, err := quoteIdentifier(tableName)
 	if err != nil {
@@ -201,7 +213,13 @@ func (r *Runtime) migrateEntityTable(entity *model.Entity) error {
 				return fmt.Errorf("migration blocked for entity %s: cannot auto-add primary/auto field %q to existing table %s", entity.Name, storageName, entity.Table)
 			}
 			if !field.Optional && field.Default == nil {
-				return fmt.Errorf("migration blocked for entity %s: cannot auto-add required field %q (%s) to existing table %s", entity.Name, storageName, field.Type, entity.Table)
+				hasRows, err := r.tableHasRows(entity.Table)
+				if err != nil {
+					return err
+				}
+				if hasRows {
+					return fmt.Errorf("migration blocked for entity %s: cannot auto-add required field %q (%s) to existing table %s", entity.Name, storageName, field.Type, entity.Table)
+				}
 			}
 			table, _ := quoteIdentifier(entity.Table)
 			sqlText := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", table, r.entityColumnDefinition(entity, &field))
