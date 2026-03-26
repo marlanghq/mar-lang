@@ -62,11 +62,12 @@ type symbolCatalog struct {
 }
 
 var (
-	entityDeclRe           = regexp.MustCompile(`^\s*entity\s+([A-Za-z][A-Za-z0-9_]*)\s*\{`)
-	fieldDeclRe            = regexp.MustCompile(`^\s*([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|Posix)\b`)
-	belongsToNamedRe       = regexp.MustCompile(`^\s*belongs_to\s+([a-z][A-Za-z0-9_]*)\s*:\s*([A-Za-z][A-Za-z0-9_]*)\b`)
-	belongsToCurrentUserRe = regexp.MustCompile(`^\s*belongs_to\s+(current_user)\b`)
-	belongsToShortRe       = regexp.MustCompile(`^\s*belongs_to\s+([A-Za-z][A-Za-z0-9_]*)\b`)
+	entityDeclRe                = regexp.MustCompile(`^\s*entity\s+([A-Za-z][A-Za-z0-9_]*)\s*\{`)
+	fieldDeclRe                 = regexp.MustCompile(`^\s*([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|Posix)\b`)
+	belongsToNamedRe            = regexp.MustCompile(`^\s*belongs_to\s+([a-z][A-Za-z0-9_]*)\s*:\s*([A-Za-z][A-Za-z0-9_]*)\b`)
+	belongsToNamedCurrentUserRe = regexp.MustCompile(`^\s*belongs_to\s+([a-z][A-Za-z0-9_]*)\s*:\s*(current_user)\b`)
+	belongsToCurrentUserRe      = regexp.MustCompile(`^\s*belongs_to\s+(current_user)\b`)
+	belongsToShortRe            = regexp.MustCompile(`^\s*belongs_to\s+([A-Za-z][A-Za-z0-9_]*)\b`)
 
 	typeAliasDeclRe  = regexp.MustCompile(`^\s*type\s+alias\s+([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.*)$`)
 	aliasFieldDeclRe = regexp.MustCompile(`([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|Posix)\b`)
@@ -89,6 +90,9 @@ var (
 )
 
 func belongsToFieldDeclaration(line string) (string, int, int, bool) {
+	if match := belongsToNamedCurrentUserRe.FindStringSubmatchIndex(line); match != nil {
+		return line[match[2]:match[3]], match[2], match[3], true
+	}
 	if match := belongsToCurrentUserRe.FindStringSubmatchIndex(line); match != nil {
 		return "user", match[2], match[3], true
 	}
@@ -103,6 +107,9 @@ func belongsToFieldDeclaration(line string) (string, int, int, bool) {
 }
 
 func belongsToEntityReference(line string) (string, int, int, bool) {
+	if match := belongsToNamedCurrentUserRe.FindStringSubmatchIndex(line); match != nil {
+		return "User", match[4], match[5], true
+	}
 	if match := belongsToCurrentUserRe.FindStringSubmatchIndex(line); match != nil {
 		return "User", match[2], match[3], true
 	}

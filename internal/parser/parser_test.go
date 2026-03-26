@@ -561,22 +561,47 @@ entity Todo {
 	}
 }
 
-func TestParseRejectsBelongsToCurrentUserWithCustomFieldName(t *testing.T) {
+func TestParseSupportsNamedBelongsToCurrentUser(t *testing.T) {
 	src := `
 app PersonalTodo
 
 entity Todo {
   title: String
-  belongs_to owner: current_user
+  belongs_to reviewer: current_user
 }
 `
 
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for named belongs_to current_user")
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "belongs_to current_user does not support a custom field name") {
-		t.Fatalf("unexpected error: %v", err)
+
+	var todo *model.Entity
+	for i := range app.Entities {
+		if app.Entities[i].Name == "Todo" {
+			todo = &app.Entities[i]
+			break
+		}
+	}
+	if todo == nil {
+		t.Fatal("expected Todo entity to be present")
+	}
+
+	var reviewerField *model.Field
+	for i := range todo.Fields {
+		if todo.Fields[i].Name == "reviewer" {
+			reviewerField = &todo.Fields[i]
+			break
+		}
+	}
+	if reviewerField == nil {
+		t.Fatal("expected reviewer field to be present")
+	}
+	if reviewerField.RelationEntity != "User" {
+		t.Fatalf("expected relation entity User, got %q", reviewerField.RelationEntity)
+	}
+	if !reviewerField.CurrentUser {
+		t.Fatalf("expected current_user relation flag, got %+v", *reviewerField)
 	}
 }
 

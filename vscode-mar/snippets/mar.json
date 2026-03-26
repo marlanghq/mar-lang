@@ -78,6 +78,11 @@
     "description": "Create a belongs_to relationship managed by the authenticated user",
     "body": "belongs_to current_user"
   },
+  "Mar Named Belongs To Current User": {
+    "prefix": "belongs_to_named_current_user",
+    "description": "Create a named belongs_to relationship managed by the authenticated user",
+    "body": "belongs_to ${1:owner}: current_user"
+  },
   "Mar Named Belongs To": {
     "prefix": "belongs_to_named",
     "description": "Create a named belongs_to relationship inside an entity",

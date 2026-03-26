@@ -1176,9 +1176,6 @@ func parseBelongsToStatement(trimmed string, lineNo int) (*model.Field, bool, er
 			return nil, true, fmt.Errorf("line %d: belongs_to %s requires a target entity", lineNo, fieldName)
 		}
 		targetEntity = parts[0]
-		if targetEntity == "current_user" {
-			return nil, true, fmt.Errorf("line %d: belongs_to current_user does not support a custom field name", lineNo)
-		}
 		rawAttrs = strings.TrimSpace(strings.TrimPrefix(after, targetEntity))
 	} else {
 		parts := strings.Fields(rest)
@@ -1191,6 +1188,16 @@ func parseBelongsToStatement(trimmed string, lineNo int) (*model.Field, bool, er
 
 	if !fieldNameRe.MatchString(fieldName) {
 		return nil, true, fmt.Errorf("line %d: belongs_to field name %q is invalid", lineNo, fieldName)
+	}
+	if targetEntity == "current_user" {
+		if rawAttrs != "" {
+			return nil, true, fmt.Errorf("line %d: belongs_to current_user does not support modifiers", lineNo)
+		}
+		return &model.Field{
+			Name:           fieldName,
+			RelationEntity: "User",
+			CurrentUser:    true,
+		}, true, nil
 	}
 	if !upperNameRe.MatchString(targetEntity) {
 		return nil, true, fmt.Errorf("line %d: belongs_to target %q is invalid", lineNo, targetEntity)

@@ -292,6 +292,76 @@ entity Todo {
 	}
 }
 
+func TestEntityCRUDSupportsNamedBelongsToCurrentUser(t *testing.T) {
+	requireSQLite3(t)
+
+	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "belongs-to-named-current-user.db"), `
+app BookReviews
+
+auth {
+  email_transport console
+}
+
+entity Review {
+  rating: Int
+  belongs_to reviewer: current_user
+
+  authorize read when user_authenticated and reviewer == user_id
+  authorize create when user_authenticated
+  authorize update when user_authenticated and reviewer == user_id
+  authorize delete when user_authenticated and reviewer == user_id
+}
+`)
+
+	loginCode := requestCodeAndUseKnownCode(t, r, "reviewer@example.com")
+	token := loginWithCodeAndReadToken(t, r, "reviewer@example.com", loginCode)
+
+	userRow, found, err := r.loadAuthUserByEmail("", "reviewer@example.com")
+	if err != nil {
+		t.Fatalf("load auth user failed: %v", err)
+	}
+	if !found {
+		t.Fatal("expected auth user to exist")
+	}
+	userID := userRow[r.authUser.PrimaryKey]
+	userIDInt, ok := toInt64(userID)
+	if !ok {
+		t.Fatalf("expected auth user id to be Int, got %#v", userID)
+	}
+
+	createRec := doRuntimeRequest(r, http.MethodPost, "/reviews", `{"rating":5}`, token)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 when creating review, got %d body=%s", createRec.Code, createRec.Body.String())
+	}
+
+	var created map[string]any
+	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response failed: %v body=%s", err, createRec.Body.String())
+	}
+	if created["reviewer"] != float64(userIDInt) {
+		t.Fatalf("expected created review to belong to current reviewer, got %#v", created["reviewer"])
+	}
+
+	row, ok, err := queryRow(r.DB, `SELECT reviewer_id FROM reviews WHERE id = 1`)
+	if err != nil {
+		t.Fatalf("query review row failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected review row to exist")
+	}
+	if row["reviewer_id"] != userIDInt {
+		t.Fatalf("expected stored reviewer_id=%#v, got %#v", userIDInt, row["reviewer_id"])
+	}
+
+	updateRec := doRuntimeRequest(r, http.MethodPatch, "/reviews/1", `{"reviewer":999}`, token)
+	if updateRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when providing managed named field on update, got %d body=%s", updateRec.Code, updateRec.Body.String())
+	}
+	if !strings.Contains(updateRec.Body.String(), "managed automatically") {
+		t.Fatalf("expected managed field error on update, got body=%s", updateRec.Body.String())
+	}
+}
+
 func TestEntityCRUDAutoTimestamps(t *testing.T) {
 	requireSQLite3(t)
 

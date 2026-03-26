@@ -93,6 +93,7 @@ name:String
 entity Invoice{
 total:Float
 belongs_to customer:Customer optional
+belongs_to reviewer:current_user
 belongs_to current_user
 }
 `
@@ -110,6 +111,7 @@ belongs_to current_user
 		"entity Invoice {\n" +
 		"  total: Float\n" +
 		"  belongs_to customer: Customer optional\n" +
+		"  belongs_to reviewer: current_user\n" +
 		"  belongs_to current_user\n" +
 		"}\n"
 
