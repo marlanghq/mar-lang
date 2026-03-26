@@ -2058,7 +2058,7 @@ pluginInstallRow model =
                             , Font.color (rgb255 83 105 132)
                             , width fill
                             ]
-                            [ text "Use the official Sublime Text package for syntax highlighting, completions, and LSP integration." ]
+                            [ text "Use the official Sublime Text packages for syntax highlighting, completions, and LSP integration." ]
                         , paragraph
                             [ Font.size 14
                             , Font.color (rgb255 72 95 123)
@@ -2066,16 +2066,18 @@ pluginInstallRow model =
                             ]
                             [ text "Install "
                             , inlineCommand "Mar"
-                            , text " via Package Control."
+                            , text " via Package Control for syntax and completions."
                             ]
                         , paragraph
                             [ Font.size 14
                             , Font.color (rgb255 72 95 123)
                             , width fill
                             ]
-                            [ text "For LSP features, install the Sublime "
+                            [ text "For LSP features, install "
+                            , inlineCommand "LSP-mar"
+                            , text " and the Sublime "
                             , inlineCommand "LSP"
-                            , text " package and make sure "
+                            , text " package, and make sure "
                             , inlineCommand "mar"
                             , text " is on your PATH."
                             ]
