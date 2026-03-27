@@ -211,11 +211,8 @@ func projectNameToAppName(projectName string) string {
 func renderInitMar(projectName, appName string) string {
 	return strings.TrimSpace(fmt.Sprintf(`
 app %s
-port 4100
-database %q
 
 entity Todo {
-  id: Int primary auto
   title: String
   done: Bool
 
@@ -223,7 +220,7 @@ entity Todo {
 
   authorize all when user_authenticated
 }
-`, appName, projectName+".db")) + "\n"
+`, appName)) + "\n"
 }
 
 func renderInitGitIgnore() string {

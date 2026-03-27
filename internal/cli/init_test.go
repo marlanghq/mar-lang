@@ -45,8 +45,14 @@ func TestCreateInitProjectCreatesStarterFiles(t *testing.T) {
 	if !strings.Contains(marText, "app TodoApp") {
 		t.Fatalf("expected app declaration in starter .mar, got %q", marText)
 	}
-	if !strings.Contains(marText, `database "todo-app.db"`) {
-		t.Fatalf("expected database path in starter .mar, got %q", marText)
+	if strings.Contains(marText, "\nport ") {
+		t.Fatalf("did not expect explicit port in starter .mar, got %q", marText)
+	}
+	if strings.Contains(marText, "\ndatabase ") {
+		t.Fatalf("did not expect explicit database in starter .mar, got %q", marText)
+	}
+	if strings.Contains(marText, "\n  id: ") {
+		t.Fatalf("did not expect explicit id field in starter .mar, got %q", marText)
 	}
 	if !strings.Contains(marText, `authorize all when user_authenticated`) {
 		t.Fatalf("expected starter authorize rule in .mar, got %q", marText)
