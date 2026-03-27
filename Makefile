@@ -35,11 +35,12 @@ define print_error
 endef
 
 all:
-	@$(MAKE) --no-print-directory mar
+	@$(MAKE) --no-print-directory CHAINED=1 mar
 	$(call print_title,Mar compiler ready)
 	$(call print_ok,./mar)
 	@$(MAKE) --no-print-directory CHAINED=1 website
 	@$(MAKE) --no-print-directory CHAINED=1 vscode-plugin
+	@printf "\n"
 
 check: check-go check-elm
 
@@ -202,6 +203,7 @@ admin: check-elm check-npx
 		else \
 			printf "  Output: \033[1;32m%s\033[0m \033[38;5;245m(%s KB, down from %s KB, -%s%%)\033[0m\n" "admin/dist/app.js" "$$after_kb" "$$before_kb" "$$reduction"; \
 		fi'
+	@if [ -z "$(CHAINED)" ] && [ -n "$(filter admin,$(MAKECMDGOALS))" ]; then printf "\n"; fi
 
 website: check-elm check-npx
 	$(call print_title,Website)
@@ -279,6 +281,7 @@ compiler-assets: check-go admin
 		else \
 			printf "  Embedded admin bundle: \033[1;32m%s\033[0m \033[38;5;245m(%s KB, copied from minified admin/dist/app.js)\033[0m\n" "internal/cli/compiler_assets/admin/dist/app.js" "$$size_kb"; \
 		fi'
+	@if [ -z "$(CHAINED)" ] && [ -n "$(filter compiler-assets,$(MAKECMDGOALS))" ]; then printf "\n"; fi
 
 mar: check-go compiler-assets
 	$(call print_title,Mar compiler)
@@ -291,6 +294,7 @@ mar: check-go compiler-assets
 		else \
 			printf "  Output: \033[1;32m%s\033[0m \033[38;5;245m(%s)\033[0m\n" "./mar" "$$size"; \
 		fi'
+	@if [ -z "$(CHAINED)" ] && [ -n "$(filter mar,$(MAKECMDGOALS))" ]; then printf "\n"; fi
 
 mar-release: check-go compiler-assets
 	$(call print_title,Mar release)
@@ -329,6 +333,7 @@ mar-release: check-go compiler-assets
 			printf "  Output: \033[1;32m%s\033[0m\n" "dist/releases/mar/linux-arm64/mar"; \
 			printf "  Output: \033[1;32m%s\033[0m\n" "dist/releases/mar/windows-amd64/mar.exe"; \
 		fi'
+	@if [ -z "$(CHAINED)" ] && [ -n "$(filter mar-release,$(MAKECMDGOALS))" ]; then printf "\n"; fi
 
 mar-release-zip: check-zip mar-release
 	$(call print_title,Mar release archives)

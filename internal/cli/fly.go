@@ -20,8 +20,11 @@ import (
 
 const flyDatabasePathEnv = "MAR_DATABASE_PATH"
 const defaultFlyAppMemory = "256mb"
+const flyVolumeSuffix = "_data"
+const flyVolumeMaxLen = 30
 
 var flyAppNameRe = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+var flyVolumeNameRe = regexp.MustCompile(`^[a-z0-9_]{1,30}$`)
 var errFlySecretPromptInterrupted = errors.New("interrupted")
 var flyAppMemoryOptions = []string{"256mb", "512mb", "1gb", "2gb"}
 
@@ -198,7 +201,7 @@ func runFlyInit(binaryName, inputPath string) error {
 	}
 
 	dbLocal, dbFly := resolveFlyDatabasePaths(app.Database, outputName)
-	volumeName := outputName + "_data"
+	volumeName := flyVolumeNameFromOutputName(outputName)
 	result := flyInitResult{
 		FlyAppName:     flyAppName,
 		BuildRoot:      buildRoot,
@@ -496,6 +499,9 @@ func runFlyProvision(binaryName, inputPath string) error {
 	if err != nil {
 		return err
 	}
+	if !isValidFlyVolumeName(volumeName) {
+		return fmt.Errorf("invalid Fly volume name %q in deploy/fly/fly.toml: use lowercase letters, numbers, and underscores with at most 30 characters", volumeName)
+	}
 	flyCmd, err := findFlyCommand()
 	if err != nil {
 		return err
@@ -604,6 +610,9 @@ func runFlyDeploy(inputPath string, assumeYes bool) error {
 	volumeName, err := readFlyVolumeName(flyTomlPath)
 	if err != nil {
 		return err
+	}
+	if !isValidFlyVolumeName(volumeName) {
+		return fmt.Errorf("invalid Fly volume name %q in deploy/fly/fly.toml: use lowercase letters, numbers, and underscores with at most 30 characters", volumeName)
 	}
 	vmSize, err := readOptionalFlyTomlStringValue(flyTomlPath, "[vm]", "size")
 	if err != nil {
@@ -868,6 +877,57 @@ func slugifyFlyAppName(value string) string {
 
 func isValidFlyAppName(value string) bool {
 	return flyAppNameRe.MatchString(strings.TrimSpace(value))
+}
+
+func flyVolumeNameFromOutputName(value string) string {
+	const fallbackBase = "mar_app"
+
+	maxBaseLen := flyVolumeMaxLen - len(flyVolumeSuffix)
+	base := normalizeFlyVolumeNamePart(value)
+	if base == "" {
+		base = fallbackBase
+	}
+	if len(base) > maxBaseLen {
+		base = strings.Trim(base[:maxBaseLen], "_")
+	}
+	if base == "" {
+		base = fallbackBase
+		if len(base) > maxBaseLen {
+			base = base[:maxBaseLen]
+		}
+	}
+	return base + flyVolumeSuffix
+}
+
+func normalizeFlyVolumeNamePart(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return ""
+	}
+
+	var out []rune
+	prevUnderscore := false
+	for _, r := range trimmed {
+		switch {
+		case r >= 'a' && r <= 'z':
+			out = append(out, r)
+			prevUnderscore = false
+		case r >= '0' && r <= '9':
+			out = append(out, r)
+			prevUnderscore = false
+		default:
+			if len(out) > 0 && !prevUnderscore {
+				out = append(out, '_')
+				prevUnderscore = true
+			}
+		}
+	}
+
+	return strings.Trim(string(out), "_")
+}
+
+func isValidFlyVolumeName(value string) bool {
+	return flyVolumeNameRe.MatchString(strings.TrimSpace(value))
 }
 
 func resolveFlyRegion() (flyRegion, error) {

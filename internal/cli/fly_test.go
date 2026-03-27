@@ -19,6 +19,30 @@ func TestSlugifyFlyAppName(t *testing.T) {
 	}
 }
 
+func TestFlyVolumeNameFromOutputNameReplacesHyphens(t *testing.T) {
+	got := flyVolumeNameFromOutputName("sample-school")
+	if got != "sample_school_data" {
+		t.Fatalf("unexpected volume name: %q", got)
+	}
+}
+
+func TestFlyVolumeNameFromOutputNameTruncatesToFlyLimit(t *testing.T) {
+	got := flyVolumeNameFromOutputName("very-long-project-name-that-exceeds-thirty-characters")
+	if got != "very_long_project_name_th_data" {
+		t.Fatalf("unexpected truncated volume name: %q", got)
+	}
+	if !isValidFlyVolumeName(got) {
+		t.Fatalf("expected valid fly volume name, got %q", got)
+	}
+}
+
+func TestFlyVolumeNameFromOutputNameFallsBackWhenEmpty(t *testing.T) {
+	got := flyVolumeNameFromOutputName("!!!")
+	if got != "mar_app_data" {
+		t.Fatalf("unexpected fallback volume name: %q", got)
+	}
+}
+
 func TestResolveFlyDatabasePathsUsesDataMount(t *testing.T) {
 	local, fly := resolveFlyDatabasePaths("todo.db", "todo")
 	if local != "todo.db" {

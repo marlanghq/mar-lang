@@ -1006,6 +1006,66 @@ entity Student {
 	}
 }
 
+func TestParseRuleRejectsIncompatibleComparisonTypes(t *testing.T) {
+	src := `
+app Demo
+
+entity Student {
+  name: String
+
+  rule "Name must have between 3 and 100 chars" expect length name >= 3 and name <= 100
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for incompatible comparison types in rule")
+	}
+	if !strings.Contains(err.Error(), `operator <= expects comparable values, got String and Int`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRuleRejectsNonBooleanExpression(t *testing.T) {
+	src := `
+app Demo
+
+entity Student {
+  name: String
+
+  rule "Name length" expect length name
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for non-boolean rule expression")
+	}
+	if !strings.Contains(err.Error(), `expression must evaluate to Bool, got Int`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseAuthorizeRejectsIncompatibleBuiltinComparison(t *testing.T) {
+	src := `
+app Demo
+
+entity Student {
+  name: String
+
+  authorize read when user_role <= 10
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for incompatible authorization expression")
+	}
+	if !strings.Contains(err.Error(), `operator <= expects comparable values, got String and Int`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParseUnknownPublicStatementSuggestsClosestKeyword(t *testing.T) {
 	src := `
 app Demo

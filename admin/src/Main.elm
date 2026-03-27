@@ -173,9 +173,9 @@ type Msg
     | SwitchWorkspace WorkspaceMode
     | SetActionField String String
     | RequestAuthCode
-    | GotRequestAuthCode AuthScope (Result ApiHttpError RequestCodeResponse)
+    | GotRequestAuthCode (Result ApiHttpError RequestCodeResponse)
     | BootstrapFirstAdmin
-    | GotBootstrapFirstAdmin AuthScope (Result ApiHttpError RequestCodeResponse)
+    | GotBootstrapFirstAdmin (Result ApiHttpError RequestCodeResponse)
     | LoginWithCode
     | GotLoginWithCode AuthScope (Result ApiHttpError LoginResponse)
     | GotAuthMe AuthScope (Result ApiHttpError AuthMeResponse)
@@ -198,7 +198,7 @@ type Msg
     | RunAction
     | GotRunAction (Result ApiHttpError Row)
     | ClearFlash
-    | ViewportResized Int Int
+    | ViewportResized Int
     | ToggleMobileSidebar
     | CloseMobileSidebar
 
@@ -491,7 +491,7 @@ main =
     Browser.application
         { init = init
         , update = update
-        , subscriptions = \_ -> Browser.Events.onResize ViewportResized
+        , subscriptions = \_ -> Browser.Events.onResize (\widthPx _ -> ViewportResized widthPx)
         , view = view
         , onUrlRequest = UrlRequested
         , onUrlChange = UrlChanged
@@ -1207,13 +1207,9 @@ update msg model =
                 ( { model | authInlineMessage = authEmailValidationMessage model.authEmail, flash = Nothing }, Cmd.none )
 
             else
-                let
-                    scope =
-                        activeAuthScope
-                in
-                ( { model | authInlineMessage = Nothing, flash = Nothing, authSubmitting = Just AuthSubmitSendingCode }, requestAuthCode scope model )
+                ( { model | authInlineMessage = Nothing, flash = Nothing, authSubmitting = Just AuthSubmitSendingCode }, requestAuthCode model )
 
-        GotRequestAuthCode _ result ->
+        GotRequestAuthCode result ->
             case result of
                 Ok _ ->
                     ( { model
@@ -1241,13 +1237,9 @@ update msg model =
                         ( { model | authInlineMessage = Nothing, flash = Just message, authSubmitting = Nothing }, Cmd.none )
 
                     Ok payload ->
-                        let
-                            scope =
-                                activeAuthScope
-                        in
-                        ( { model | authInlineMessage = Nothing, flash = Nothing, authSubmitting = Just AuthSubmitSendingCode }, bootstrapFirstAdmin scope model payload )
+                        ( { model | authInlineMessage = Nothing, flash = Nothing, authSubmitting = Just AuthSubmitSendingCode }, bootstrapFirstAdmin model payload )
 
-        GotBootstrapFirstAdmin _ result ->
+        GotBootstrapFirstAdmin result ->
             case result of
                 Ok _ ->
                     ( { model | authStage = AuthStageCode, authSubmitting = Nothing, firstAdminCodeRequested = True, authInlineMessage = Nothing, flash = Nothing }, loadSchema model.apiBase )
@@ -1578,8 +1570,8 @@ update msg model =
                                     { model | rows = nextRows, selectedRow = Just updatedRow, formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
                     in
                     case ( model.selectedEntity, rowIdForCurrentSelection nextModel updatedRow ) of
-                        ( Just entity, Just rowKey ) ->
-                            ( nextModel, replaceRoute (RouteEntityDetail (currentWorkspace nextModel) entity.name rowKey) nextModel )
+                        ( Just _, Just _ ) ->
+                            ( nextModel, backRoute nextModel )
 
                         _ ->
                             ( nextModel, Cmd.none )
@@ -1665,7 +1657,7 @@ update msg model =
         ClearFlash ->
             ( { model | flash = Nothing }, Cmd.none )
 
-        ViewportResized widthPx _ ->
+        ViewportResized widthPx ->
             ( { model
                 | viewportWidth = max 320 widthPx
                 , mobileSidebarOpen =
@@ -1869,8 +1861,8 @@ appAuthHeaders model =
         [ Http.header "Authorization" ("Bearer " ++ String.trim model.authToken) ]
 
 
-requestAuthCode : AuthScope -> Model -> Cmd Msg
-requestAuthCode scope model =
+requestAuthCode : Model -> Cmd Msg
+requestAuthCode model =
     let
         endpoint =
             "/auth/request-code"
@@ -1885,14 +1877,14 @@ requestAuthCode scope model =
                     [ ( "email", Encode.string (String.trim model.authEmail) )
                     ]
                 )
-        , expect = expectJsonWithApiError (GotRequestAuthCode scope) requestCodeDecoder
+        , expect = expectJsonWithApiError GotRequestAuthCode requestCodeDecoder
         , timeout = Nothing
         , tracker = Nothing
         }
 
 
-bootstrapFirstAdmin : AuthScope -> Model -> Encode.Value -> Cmd Msg
-bootstrapFirstAdmin scope model payload =
+bootstrapFirstAdmin : Model -> Encode.Value -> Cmd Msg
+bootstrapFirstAdmin model payload =
     let
         endpoint =
             "/_mar/bootstrap-admin"
@@ -1903,7 +1895,7 @@ bootstrapFirstAdmin scope model payload =
         , url = model.apiBase ++ endpoint
         , body =
             Http.jsonBody payload
-        , expect = expectJsonWithApiError (GotBootstrapFirstAdmin scope) requestCodeDecoder
+        , expect = expectJsonWithApiError GotBootstrapFirstAdmin requestCodeDecoder
         , timeout = Nothing
         , tracker = Nothing
         }
@@ -2775,11 +2767,6 @@ placeholderForField field =
 
         Nothing ->
             placeholderForType field.name (fieldTypeLabel field.fieldType)
-
-
-isWholeNumber : Float -> Bool
-isWholeNumber value =
-    toFloat (round value) == value
 
 
 rowFieldValue : Entity -> String -> Row -> Maybe String
@@ -4722,15 +4709,10 @@ viewAuthEmailStage model firstAdminMode actionLabel submitMsg isLoading =
                         (SetBootstrapField field.name)
 
                 PosixType ->
-                    Input.text
-                        (cupertinoTextInputAttrs
-                            ++ [ htmlAttribute (HtmlAttr.type_ "datetime-local") ]
-                        )
-                        { onChange = SetBootstrapField field.name
-                        , text = Dict.get field.name model.bootstrapFormValues |> Maybe.withDefault ""
-                        , placeholder = Just (Input.placeholder [] (text (placeholderForField field)))
-                        , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name ++ " (UTC)"))
-                        }
+                    posixDateTimeField
+                        (fieldLabel field.name ++ " (UTC)")
+                        (Dict.get field.name model.bootstrapFormValues |> Maybe.withDefault "")
+                        (SetBootstrapField field.name)
 
                 _ ->
                     Input.text cupertinoTextInputAttrs
@@ -4752,7 +4734,7 @@ viewAuthEmailStage model firstAdminMode actionLabel submitMsg isLoading =
         , spacing 12
         , htmlAttribute (HtmlAttr.class "auth-stage auth-stage-email")
         ]
-        ([ Input.text
+        ((Input.text
             (cupertinoTextInputAttrs
                 ++ [ htmlAttribute (HtmlAttr.type_ "email")
                    , htmlAttribute (HtmlAttr.attribute "autocomplete" "email")
@@ -4770,9 +4752,8 @@ viewAuthEmailStage model firstAdminMode actionLabel submitMsg isLoading =
             , text = model.authEmail
             , placeholder = Just (Input.placeholder [] (text emailPlaceholder))
             , label = Input.labelAbove [ Font.size 12 ] (text "Email")
-            }
-         ]
-            ++ (if firstAdminMode && not (List.isEmpty bootstrapFields) then
+            })
+            :: (if firstAdminMode && not (List.isEmpty bootstrapFields) then
                     [ paragraph [ width fill, Font.size 12, Font.color (rgb255 93 103 120) ]
                         [ text "Complete the required profile fields for the first admin." ]
                     ]
@@ -5115,6 +5096,36 @@ cupertinoTextInputAttrs =
     ]
 
 
+posixDateTimeField : String -> String -> (String -> msg) -> Element msg
+posixDateTimeField labelText currentValue onChangeMsg =
+    column
+        [ width fill, spacing 0 ]
+        [ el
+            [ Font.size 12
+            , paddingEach { top = 0, right = 0, bottom = 6, left = 0 }
+            ]
+            (text labelText)
+        , Element.html <|
+            Html.input
+                [ HtmlAttr.type_ "datetime-local"
+                , HtmlAttr.value currentValue
+                , HtmlEvents.onInput onChangeMsg
+                , HtmlAttr.style "width" "100%"
+                , HtmlAttr.style "padding" "12px"
+                , HtmlAttr.style "border-radius" "12px"
+                , HtmlAttr.style "border" "1px solid rgb(222,230,241)"
+                , HtmlAttr.style "background" "rgb(248,250,254)"
+                , HtmlAttr.style "color" "rgb(29,36,44)"
+                , HtmlAttr.style "font-size" "15px"
+                , HtmlAttr.style "font-family" "\"IBM Plex Sans\", \"Space Grotesk\", sans-serif"
+                , HtmlAttr.style "outline" "none"
+                , HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)"
+                , HtmlAttr.style "box-sizing" "border-box"
+                ]
+                []
+        ]
+
+
 relationFormField : Model -> Field -> String -> Element Msg
 relationFormField model field relationEntityName =
     let
@@ -5212,7 +5223,11 @@ relationSelectField model field relationEntityName currentValue relatedRows =
                     ]
                     (List.map
                         (\( optionValue, optionLabel ) ->
-                            Html.option [ HtmlAttr.value optionValue ] [ Html.text optionLabel ]
+                            Html.option
+                                [ HtmlAttr.value optionValue
+                                , HtmlAttr.selected (optionValue == currentValue)
+                                ]
+                                [ Html.text optionLabel ]
                         )
                         (List.concat
                             [ [ ( "", promptLabel ) ]
@@ -5942,15 +5957,14 @@ viewDataPanel model =
 
             else
                 column
-                    ([ width
-                        (fillPortion 4)
-                     ]
-                        ++ cupertinoPanelAttrs 10 16
-                        ++ [ paddingEach { top = 10, right = 16, bottom = 4, left = 16 }
-                     , htmlAttribute (HtmlAttr.style "min-height" "0")
-                     , htmlAttribute (HtmlAttr.style "min-width" "0")
-                     ]
-                        ++ [ height fill ]
+                    ((width (fillPortion 4))
+                        :: (cupertinoPanelAttrs 10 16
+                                ++ [ paddingEach { top = 10, right = 16, bottom = 4, left = 16 }
+                                   , htmlAttribute (HtmlAttr.style "min-height" "0")
+                                   , htmlAttribute (HtmlAttr.style "min-width" "0")
+                                   , height fill
+                                   ]
+                           )
                     )
                     [ actionsBar
                     , rowsBlock
@@ -5962,7 +5976,7 @@ viewActionPanel model actionInfo =
     case findInputAlias actionInfo.inputAlias model of
         Nothing ->
             column
-                ([ height fill ] ++ cupertinoPanelAttrs 12 16)
+                ((height fill) :: cupertinoPanelAttrs 12 16)
                 [ viewPanelHeader (isCompactLayout model) ("Action: " ++ actionInfo.name) [] []
                 , paragraph [ Font.color (rgb255 176 60 46) ] [ text ("Input alias not found: " ++ actionInfo.inputAlias) ]
                 ]
@@ -5982,19 +5996,10 @@ viewActionPanel model actionInfo =
                             (SetActionField field.name)
 
                     else if field.fieldType == "Posix" then
-                        Input.text
-                            (cupertinoTextInputAttrs
-                                ++ [ htmlAttribute (HtmlAttr.type_ "datetime-local") ]
-                            )
-                            { onChange = SetActionField field.name
-                            , text = Dict.get field.name model.actionFormValues |> Maybe.withDefault ""
-                            , placeholder =
-                                Just
-                                    (Input.placeholder []
-                                        (text (placeholderForType field.name field.fieldType))
-                                    )
-                            , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name ++ " (UTC)"))
-                            }
+                        posixDateTimeField
+                            (fieldLabel field.name ++ " (UTC)")
+                            (Dict.get field.name model.actionFormValues |> Maybe.withDefault "")
+                            (SetActionField field.name)
 
                     else
                         Input.text cupertinoTextInputAttrs
@@ -6009,9 +6014,7 @@ viewActionPanel model actionInfo =
                             }
             in
             column
-                ([ height fill ]
-                    ++ cupertinoPanelAttrs 12 16
-                )
+                ((height fill) :: cupertinoPanelAttrs 12 16)
                 (List.concat
                     [ [ viewPanelHeader (isCompactLayout model)
                             (if workspace == AppWorkspace then
@@ -6399,10 +6402,10 @@ viewPerformancePanel model =
                     row
                         (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 12 ])
                         [ el ([ width (fillPortion 1), Font.bold ] ++ routeTextAttrs) (text perfRoute.method)
-                        , el ([ width (fillPortion 3) ] ++ routeTextAttrs) (text perfRoute.route)
-                        , el ([ width (fillPortion 1) ] ++ routeMetaAttrs) (text (String.fromInt perfRoute.count))
+                        , el ((width (fillPortion 3)) :: routeTextAttrs) (text perfRoute.route)
+                        , el ((width (fillPortion 1)) :: routeMetaAttrs) (text (String.fromInt perfRoute.count))
                         , el [ width (fillPortion 2), centerY ] (viewCountsByCode perfRoute.countsByCode)
-                        , el ([ width (fillPortion 1) ] ++ routeMetaAttrs) (text (formatMs perfRoute.avgMs))
+                        , el ((width (fillPortion 1)) :: routeMetaAttrs) (text (formatMs perfRoute.avgMs))
                         ]
 
             cards perf =
@@ -7539,19 +7542,10 @@ formCard model entity titleText =
                                 (SetFormField field.name)
 
                         PosixType ->
-                            Input.text
-                                (cupertinoTextInputAttrs
-                                    ++ [ htmlAttribute (HtmlAttr.type_ "datetime-local") ]
-                                )
-                                { onChange = SetFormField field.name
-                                , text = Dict.get field.name model.formValues |> Maybe.withDefault ""
-                                , placeholder =
-                                    Just
-                                        (Input.placeholder []
-                                            (text (placeholderForField field))
-                                        )
-                                , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name ++ " (UTC)"))
-                                }
+                            posixDateTimeField
+                                (fieldLabel field.name ++ " (UTC)")
+                                (Dict.get field.name model.formValues |> Maybe.withDefault "")
+                                (SetFormField field.name)
 
                         _ ->
                             Input.text cupertinoTextInputAttrs

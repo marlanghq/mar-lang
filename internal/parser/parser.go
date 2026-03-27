@@ -260,6 +260,9 @@ func Parse(source string) (*model.App, error) {
 	if err := resolveEntityRelations(app); err != nil {
 		return nil, err
 	}
+	if err := validateEntityPredicates(app); err != nil {
+		return nil, err
+	}
 	if err := validateAuthConfig(app); err != nil {
 		return nil, err
 	}
@@ -1015,6 +1018,36 @@ func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.A
 	return nil
 }
 
+func validateEntityPredicates(app *model.App) error {
+	if app == nil {
+		return nil
+	}
+	for i := range app.Entities {
+		ent := &app.Entities[i]
+		variableTypes := make(map[string]string, len(ent.Fields))
+		for _, field := range ent.Fields {
+			variableTypes[field.Name] = field.Type
+		}
+		for _, rule := range ent.Rules {
+			if err := validateBooleanExpr(rule.Expression, variableTypes, false); err != nil {
+				if rule.LineNo > 0 {
+					return fmt.Errorf("line %d: invalid rule expression %q (%w)", rule.LineNo, rule.Expression, err)
+				}
+				return fmt.Errorf("invalid rule expression %q (%w)", rule.Expression, err)
+			}
+		}
+		for _, authz := range ent.Authorizations {
+			if err := validateBooleanExpr(authz.Expression, variableTypes, true); err != nil {
+				if authz.LineNo > 0 {
+					return fmt.Errorf("line %d: invalid authorization expression %q (%w)", authz.LineNo, authz.Expression, err)
+				}
+				return fmt.Errorf("invalid authorization expression %q (%w)", authz.Expression, err)
+			}
+		}
+	}
+	return nil
+}
+
 func resolveEntityRelations(app *model.App) error {
 	if app == nil {
 		return nil
@@ -1625,13 +1658,8 @@ func authBootstrapWarnings(app *model.App) []string {
 }
 
 func resolveActionExprType(raw string, variableTypes map[string]string, aliasFieldNames []string) (string, error) {
-	parsed, err := expr.Parse(raw, expr.ParserOptions{AllowedVariables: allowedExprVariables(variableTypes)})
+	parsed, err := parseTypedExpr(raw, variableTypes, false, aliasFieldNames)
 	if err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "unknown identifier") {
-			name := strings.Trim(strings.TrimPrefix(msg, "unknown identifier "), `"`)
-			return "", fmt.Errorf("references unknown value %q%s", name, suggest.DidYouMeanSuffix(name, actionVariableNames(variableTypes, aliasFieldNames)))
-		}
 		return "", err
 	}
 	return inferActionExprType(parsed, variableTypes)
@@ -1641,6 +1669,52 @@ func allowedExprVariables(variableTypes map[string]string) map[string]struct{} {
 	out := make(map[string]struct{}, len(variableTypes))
 	for name := range variableTypes {
 		out[name] = struct{}{}
+	}
+	return out
+}
+
+func validateBooleanExpr(raw string, variableTypes map[string]string, includeBuiltins bool) error {
+	parsed, err := parseTypedExpr(raw, variableTypes, includeBuiltins, nil)
+	if err != nil {
+		return err
+	}
+	typ, err := inferActionExprType(parsed, typedExprVariables(variableTypes, includeBuiltins))
+	if err != nil {
+		return err
+	}
+	if typ != "Bool" {
+		return fmt.Errorf("expression must evaluate to Bool, got %s", typ)
+	}
+	return nil
+}
+
+func parseTypedExpr(raw string, variableTypes map[string]string, includeBuiltins bool, aliasFieldNames []string) (expr.Expr, error) {
+	allowed := allowedExprVariables(variableTypes)
+	if includeBuiltins {
+		allowed = expr.AllowedVariablesWithBuiltins(allowed)
+	}
+	parsed, err := expr.Parse(raw, expr.ParserOptions{AllowedVariables: allowed})
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "unknown identifier") {
+			name := strings.Trim(strings.TrimPrefix(msg, "unknown identifier "), `"`)
+			return nil, fmt.Errorf("references unknown value %q%s", name, suggest.DidYouMeanSuffix(name, actionVariableNames(typedExprVariables(variableTypes, includeBuiltins), aliasFieldNames)))
+		}
+		return nil, err
+	}
+	return parsed, nil
+}
+
+func typedExprVariables(variableTypes map[string]string, includeBuiltins bool) map[string]string {
+	out := make(map[string]string, len(variableTypes)+4)
+	for name, typ := range variableTypes {
+		out[name] = typ
+	}
+	if includeBuiltins {
+		out["user_authenticated"] = "Bool"
+		out["user_email"] = "String"
+		out["user_id"] = "Int"
+		out["user_role"] = "String"
 	}
 	return out
 }
@@ -1696,6 +1770,9 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 		}
 		switch n.Op {
 		case "not":
+			if rightType != "Bool" {
+				return "", fmt.Errorf("operator not expects Bool, got %s", rightType)
+			}
 			return "Bool", nil
 		case "-":
 			switch rightType {
@@ -1719,7 +1796,20 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 			return "", err
 		}
 		switch n.Op {
-		case "and", "or", "==", "!=", ">", ">=", "<", "<=":
+		case "and", "or":
+			if leftType != "Bool" || rightType != "Bool" {
+				return "", fmt.Errorf("operator %s expects Bool operands", n.Op)
+			}
+			return "Bool", nil
+		case "==", "!=":
+			if !areEqualityComparable(leftType, rightType) {
+				return "", fmt.Errorf("operator %s expects compatible values, got %s and %s", n.Op, leftType, rightType)
+			}
+			return "Bool", nil
+		case ">", ">=", "<", "<=":
+			if !areOrderedComparable(leftType, rightType) {
+				return "", fmt.Errorf("operator %s expects comparable values, got %s and %s", n.Op, leftType, rightType)
+			}
 			return "Bool", nil
 		case "+":
 			if leftType == "String" || rightType == "String" {
@@ -1769,16 +1859,60 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 			return "", fmt.Errorf("unknown operator %q", n.Op)
 		}
 	case expr.Call:
+		argTypes := make([]string, 0, len(n.Args))
+		for _, arg := range n.Args {
+			argType, err := inferActionExprType(arg, variableTypes)
+			if err != nil {
+				return "", err
+			}
+			argTypes = append(argTypes, argType)
+		}
 		switch n.Name {
 		case "contains", "starts_with", "ends_with", "matches":
+			if len(argTypes) != 2 || argTypes[0] != "String" || argTypes[1] != "String" {
+				return "", fmt.Errorf("function %s expects String arguments", n.Name)
+			}
 			return "Bool", nil
 		case "length":
+			if len(argTypes) != 1 || argTypes[0] != "String" {
+				return "", fmt.Errorf("function length expects a String argument")
+			}
 			return "Int", nil
 		default:
 			return "", fmt.Errorf("unsupported function %q", n.Name)
 		}
 	default:
 		return "", fmt.Errorf("unsupported expression type")
+	}
+}
+
+func areEqualityComparable(leftType, rightType string) bool {
+	if leftType == "Null" || rightType == "Null" {
+		return true
+	}
+	if leftType == rightType {
+		return true
+	}
+	return areNumericComparable(leftType, rightType)
+}
+
+func areOrderedComparable(leftType, rightType string) bool {
+	if leftType == "String" || rightType == "String" {
+		return leftType == "String" && rightType == "String"
+	}
+	return areNumericComparable(leftType, rightType)
+}
+
+func areNumericComparable(leftType, rightType string) bool {
+	return isNumericLikeType(leftType) && isNumericLikeType(rightType)
+}
+
+func isNumericLikeType(typ string) bool {
+	switch typ {
+	case "Int", "Float", "Posix":
+		return true
+	default:
+		return false
 	}
 }
 
