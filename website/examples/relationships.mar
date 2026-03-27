@@ -15,7 +15,7 @@ entity Course {
 entity Enrollment {
   belongs_to Student
   belongs_to Course
-  enrolled_at: Posix
+  enrolled_at: DateTime
 
   authorize all when true
 }

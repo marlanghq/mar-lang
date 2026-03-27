@@ -94,7 +94,8 @@ var (
 		"String":                                  "Mar primitive type for text values.",
 		"Bool":                                    "Mar primitive type for booleans (`true`/`false`).",
 		"Float":                                   "Mar primitive type for decimal numbers.",
-		"Posix":                                   "Mar primitive type for timestamps in Unix milliseconds, aligned with Elm `Time.Posix`.",
+		"Date":                                    "Mar primitive type for calendar dates. Internally stored as POSIX milliseconds normalized to 00:00 UTC, and returned in JSON as POSIX milliseconds.",
+		"DateTime":                                "Mar primitive type for timestamps. Internally stored as POSIX milliseconds and returned in JSON as POSIX milliseconds.",
 	}
 )
 

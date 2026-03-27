@@ -67,10 +67,10 @@ entity Book {
 	if book.Fields[0].Name != "id" || !book.Fields[0].Primary || !book.Fields[0].Auto {
 		t.Fatalf("expected first field to be derived auto primary id, got %+v", book.Fields[0])
 	}
-	if book.Fields[len(book.Fields)-2].Name != "created_at" || book.Fields[len(book.Fields)-2].Type != "Posix" || !book.Fields[len(book.Fields)-2].Auto {
+	if book.Fields[len(book.Fields)-2].Name != "created_at" || book.Fields[len(book.Fields)-2].Type != "DateTime" || !book.Fields[len(book.Fields)-2].Auto {
 		t.Fatalf("expected created_at timestamp field, got %+v", book.Fields[len(book.Fields)-2])
 	}
-	if book.Fields[len(book.Fields)-1].Name != "updated_at" || book.Fields[len(book.Fields)-1].Type != "Posix" || !book.Fields[len(book.Fields)-1].Auto {
+	if book.Fields[len(book.Fields)-1].Name != "updated_at" || book.Fields[len(book.Fields)-1].Type != "DateTime" || !book.Fields[len(book.Fields)-1].Auto {
 		t.Fatalf("expected updated_at timestamp field, got %+v", book.Fields[len(book.Fields)-1])
 	}
 }
@@ -248,7 +248,8 @@ entity Todo {
   done: Bool default false
   points: Int default 0
   progress: Float default 0.5
-  due_at: Posix default 1742203200000
+  due_on: Date default 1742234567890
+  due_at: DateTime default 1742203200000
 }
 `
 
@@ -285,6 +286,7 @@ entity Todo {
 	assertFieldDefault("done", false)
 	assertFieldDefault("points", int64(0))
 	assertFieldDefault("progress", 0.5)
+	assertFieldDefault("due_on", normalizeDateMillis(1742234567890))
 	assertFieldDefault("due_at", int64(1742203200000))
 }
 
@@ -325,13 +327,13 @@ entity Todo {
 	}
 }
 
-func TestParseSupportsPosixEntityFields(t *testing.T) {
+func TestParseSupportsDateEntityFields(t *testing.T) {
 	src := `
 app TodoApi
 
 entity Todo {
   title: String
-  due_at: Posix optional
+  due_on: Date optional
 }
 `
 
@@ -351,25 +353,25 @@ entity Todo {
 		t.Fatal("expected Todo entity to be present")
 	}
 
-	var dueAt *model.Field
+	var dueOn *model.Field
 	for i := range todo.Fields {
-		if todo.Fields[i].Name == "due_at" {
-			dueAt = &todo.Fields[i]
+		if todo.Fields[i].Name == "due_on" {
+			dueOn = &todo.Fields[i]
 			break
 		}
 	}
-	if dueAt == nil {
-		t.Fatal("expected due_at field to be present")
+	if dueOn == nil {
+		t.Fatal("expected due_on field to be present")
 	}
-	if dueAt.Type != "Posix" {
-		t.Fatalf("expected due_at type Posix, got %q", dueAt.Type)
+	if dueOn.Type != "Date" {
+		t.Fatalf("expected due_on type Date, got %q", dueOn.Type)
 	}
-	if !dueAt.Optional {
-		t.Fatal("expected due_at to be optional")
+	if !dueOn.Optional {
+		t.Fatal("expected due_on to be optional")
 	}
 }
 
-func TestParseSupportsPosixAliasFields(t *testing.T) {
+func TestParseSupportsDateTimeAliasFields(t *testing.T) {
 	src := `
 app TodoApi
 
@@ -378,7 +380,7 @@ entity Todo {
 }
 
 type alias ScheduleTodoInput =
-  { due_at: Posix
+  { due_at: DateTime
   }
 
 action scheduleTodo {
@@ -401,8 +403,8 @@ action scheduleTodo {
 	if field.Name != "due_at" {
 		t.Fatalf("expected alias field due_at, got %q", field.Name)
 	}
-	if field.Type != "Posix" {
-		t.Fatalf("expected alias field type Posix, got %q", field.Type)
+	if field.Type != "DateTime" {
+		t.Fatalf("expected alias field type DateTime, got %q", field.Type)
 	}
 }
 

@@ -20,7 +20,7 @@ func TestPrintStartupErrorSuggestsMakingNewRequiredFieldOptional(t *testing.T) {
 	})
 
 	PrintStartupError(
-		assertAsError(`migration blocked for entity Todo: cannot auto-add required field "posixTest" (Posix) to existing table todos`),
+		assertAsError(`migration blocked for entity Todo: cannot auto-add required field "publishedAt" (DateTime) to existing table todos`),
 		"",
 	)
 
@@ -31,10 +31,10 @@ func TestPrintStartupErrorSuggestsMakingNewRequiredFieldOptional(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "posixTest: Posix optional") {
+	if !strings.Contains(output, "publishedAt: DateTime optional") {
 		t.Fatalf("expected optional example in hint, got:\n%s", output)
 	}
-	if !strings.Contains(output, "posixTest: Posix default 0") {
+	if !strings.Contains(output, "publishedAt: DateTime default 0") {
 		t.Fatalf("expected default example in hint, got:\n%s", output)
 	}
 }

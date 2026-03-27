@@ -5,17 +5,18 @@ import (
 	"net/http"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
-func TestEntityCRUDSupportsPosixFields(t *testing.T) {
+func TestEntityCRUDSupportsDateTimeFields(t *testing.T) {
 	requireSQLite3(t)
 
-	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "posix-crud.db"), `
+	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "datetime-crud.db"), `
 app TodoApi
 
 entity Event {
   title: String
-  starts_at: Posix
+  starts_at: DateTime
   authorize all when true
 }
 `)
@@ -50,20 +51,49 @@ entity Event {
 	}
 }
 
-func TestActionsSupportPosixInputFields(t *testing.T) {
+func TestEntityCRUDNormalizesDateFieldsToUtcMidnight(t *testing.T) {
 	requireSQLite3(t)
 
-	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "posix-action.db"), `
+	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "date-crud.db"), `
+app TodoApi
+
+entity Student {
+  name: String
+  birthday: Date
+  authorize all when true
+}
+`)
+
+	rec := doRuntimeRequest(r, http.MethodPost, "/students", `{"name":"Ada","birthday":1742203500123}`, "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var created map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response failed: %v body=%s", err, rec.Body.String())
+	}
+
+	expected := float64(time.Date(2025, time.March, 17, 0, 0, 0, 0, time.UTC).UnixMilli())
+	if created["birthday"] != expected {
+		t.Fatalf("expected birthday to normalize to UTC midnight, got %#v", created["birthday"])
+	}
+}
+
+func TestActionsSupportDateTimeInputFields(t *testing.T) {
+	requireSQLite3(t)
+
+	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "datetime-action.db"), `
 app TodoApi
 
 entity Event {
   title: String
-  starts_at: Posix
+  starts_at: DateTime
   authorize all when true
 }
 
 type alias ScheduleEventInput =
-  { starts_at: Posix
+  { starts_at: DateTime
   }
 
 action scheduleEvent {

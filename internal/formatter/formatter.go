@@ -22,7 +22,7 @@ var (
 	actionInputRe = regexp.MustCompile(`^input\s*:\s*([A-Za-z][A-Za-z0-9_]*)$`)
 	actionStepRe  = regexp.MustCompile(`^(?:([a-z][A-Za-z0-9_]*)\s*=\s*)?(load|create|update|delete)\s+([A-Za-z][A-Za-z0-9_]*)\s*\{$`)
 
-	entityFieldRe               = regexp.MustCompile(`^([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|Posix)(?:\s+(.*))?$`)
+	entityFieldRe               = regexp.MustCompile(`^([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|DateTime|Date)(?:\s+(.*))?$`)
 	belongsToNamedCurrentUserRe = regexp.MustCompile(`^belongs_to\s+([a-z][A-Za-z0-9_]*)\s*:\s*(current_user)(?:\s+(.*))?$`)
 	belongsToNamedRe            = regexp.MustCompile(`^belongs_to\s+([a-z][A-Za-z0-9_]*)\s*:\s*([A-Za-z][A-Za-z0-9_]*)(?:\s+(.*))?$`)
 	belongsToShortRe            = regexp.MustCompile(`^belongs_to\s+([A-Za-z][A-Za-z0-9_]*)(?:\s+(.*))?$`)
@@ -41,7 +41,7 @@ var (
 	authStmtRe                  = regexp.MustCompile(`^(code_ttl_minutes|session_ttl_hours|email_transport|smtp_port|smtp_starttls)\s+(.+)$`)
 	authQuoteRe                 = regexp.MustCompile(`^(email_from|email_subject|smtp_host|smtp_username|smtp_password_env)\s+"([^"]+)"$`)
 
-	aliasFieldRe        = regexp.MustCompile(`^([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|Posix)\s*$`)
+	aliasFieldRe        = regexp.MustCompile(`^([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|DateTime|Date)\s*$`)
 	actionFieldAssignRe = regexp.MustCompile(`^([a-z][A-Za-z0-9_]*)\s*:\s*(.+)$`)
 )
 

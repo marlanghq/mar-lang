@@ -148,7 +148,7 @@ func suggestedDefaultLiteral(fieldType string) string {
 		return "false"
 	case "Float":
 		return "0.0"
-	case "Int", "Posix":
+	case "Int", "Date", "DateTime":
 		return "0"
 	default:
 		return "0"

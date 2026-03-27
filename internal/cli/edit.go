@@ -79,7 +79,7 @@ var (
 		"length": {}, "contains": {}, "starts_with": {}, "ends_with": {}, "matches": {},
 	}
 	marEditorTypes = map[string]struct{}{
-		"String": {}, "Int": {}, "Bool": {}, "Float": {}, "Posix": {},
+		"String": {}, "Int": {}, "Bool": {}, "Float": {}, "Date": {}, "DateTime": {},
 	}
 	marEditorFieldModifiers = map[string]struct{}{
 		"primary": {}, "auto": {}, "optional": {}, "default": {},

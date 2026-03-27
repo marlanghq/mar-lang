@@ -253,10 +253,16 @@ func normalizeActionInputValue(name, typ string, raw any) (any, error) {
 			return nil, fmt.Errorf("input.%s must be Int", name)
 		}
 		return n, nil
-	case "Posix":
+	case "Date":
 		n, ok := toInt64(raw)
 		if !ok {
-			return nil, fmt.Errorf("input.%s must be Posix (Unix milliseconds)", name)
+			return nil, fmt.Errorf("input.%s must be Date (Unix milliseconds)", name)
+		}
+		return normalizeDateMillis(n), nil
+	case "DateTime":
+		n, ok := toInt64(raw)
+		if !ok {
+			return nil, fmt.Errorf("input.%s must be DateTime (Unix milliseconds)", name)
 		}
 		return n, nil
 	case "Float":

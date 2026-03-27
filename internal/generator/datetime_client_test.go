@@ -7,7 +7,7 @@ import (
 	"mar/internal/model"
 )
 
-func TestGenerateTSClientMapsPosixToNumber(t *testing.T) {
+func TestGenerateTSClientMapsDateTimeToNumber(t *testing.T) {
 	app := &model.App{
 		AppName:  "TodoApi",
 		Port:     4200,
@@ -16,7 +16,7 @@ func TestGenerateTSClientMapsPosixToNumber(t *testing.T) {
 			{
 				Name: "ScheduleTodoInput",
 				Fields: []model.AliasField{
-					{Name: "due_at", Type: "Posix"},
+					{Name: "due_at", Type: "DateTime"},
 				},
 			},
 		},
@@ -32,11 +32,11 @@ func TestGenerateTSClientMapsPosixToNumber(t *testing.T) {
 		t.Fatalf("expected generated TypeScript client to include alias interface, source:\n%s", source)
 	}
 	if !strings.Contains(source, "due_at: number;") {
-		t.Fatalf("expected Posix to map to number in TypeScript client, source:\n%s", source)
+		t.Fatalf("expected DateTime to map to number in TypeScript client, source:\n%s", source)
 	}
 }
 
-func TestGenerateElmClientSchemaIncludesPosixFieldType(t *testing.T) {
+func TestGenerateElmClientSchemaIncludesDateFieldType(t *testing.T) {
 	app := &model.App{
 		AppName:  "TodoApi",
 		Port:     4200,
@@ -49,7 +49,7 @@ func TestGenerateElmClientSchemaIncludesPosixFieldType(t *testing.T) {
 				PrimaryKey: "id",
 				Fields: []model.Field{
 					{Name: "id", Type: "Int", Primary: true, Auto: true},
-					{Name: "due_at", Type: "Posix"},
+					{Name: "due_on", Type: "Date"},
 				},
 			},
 		},
@@ -61,8 +61,8 @@ func TestGenerateElmClientSchemaIncludesPosixFieldType(t *testing.T) {
 	}
 
 	source := string(out.Source)
-	if !strings.Contains(source, ", fieldType = \"Posix\"") {
-		t.Fatalf("expected generated Elm client schema metadata to include Posix field type, source:\n%s", source)
+	if !strings.Contains(source, ", fieldType = \"Date\"") {
+		t.Fatalf("expected generated Elm client schema metadata to include Date field type, source:\n%s", source)
 	}
 }
 
@@ -80,7 +80,7 @@ func TestGeneratedClientsIncludeFieldDefaultsInSchemaMetadata(t *testing.T) {
 				Fields: []model.Field{
 					{Name: "id", Type: "Int", Primary: true, Auto: true},
 					{Name: "title", Type: "String", Default: "Untitled"},
-					{Name: "due_at", Type: "Posix", Default: int64(1742203200000)},
+					{Name: "due_at", Type: "DateTime", Default: int64(1742203200000)},
 				},
 			},
 		},
@@ -95,7 +95,7 @@ func TestGeneratedClientsIncludeFieldDefaultsInSchemaMetadata(t *testing.T) {
 		t.Fatalf("expected TS schema metadata to include string default, source:\n%s", tsSource)
 	}
 	if !strings.Contains(tsSource, `defaultValue: 1742203200000`) {
-		t.Fatalf("expected TS schema metadata to include Posix default, source:\n%s", tsSource)
+		t.Fatalf("expected TS schema metadata to include DateTime default, source:\n%s", tsSource)
 	}
 
 	elmOut, err := GenerateElmClient(app)
@@ -107,7 +107,7 @@ func TestGeneratedClientsIncludeFieldDefaultsInSchemaMetadata(t *testing.T) {
 		t.Fatalf("expected Elm schema metadata to include string default, source:\n%s", elmSource)
 	}
 	if !strings.Contains(elmSource, `, defaultValue = Just (Encode.float 1742203200000.0)`) {
-		t.Fatalf("expected Elm schema metadata to include Posix default, source:\n%s", elmSource)
+		t.Fatalf("expected Elm schema metadata to include DateTime default, source:\n%s", elmSource)
 	}
 }
 

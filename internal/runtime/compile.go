@@ -72,7 +72,7 @@ func typeToSQLite(fieldType string) string {
 	switch fieldType {
 	case "Int":
 		return "INTEGER"
-	case "Posix":
+	case "Date", "DateTime":
 		return "INTEGER"
 	case "String":
 		return "TEXT"

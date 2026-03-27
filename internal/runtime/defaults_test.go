@@ -18,7 +18,7 @@ entity Todo {
   done: Bool default false
   order_index: Int default 0
   progress: Float default 0.5
-  due_at: Posix default 1742203200000
+  due_at: DateTime default 1742203200000
   authorize all when true
 }
 `)
@@ -45,6 +45,6 @@ entity Todo {
 		t.Fatalf("expected float default 0.5, got %#v", created["progress"])
 	}
 	if created["due_at"] != float64(1742203200000) {
-		t.Fatalf("expected Posix default, got %#v", created["due_at"])
+		t.Fatalf("expected DateTime default, got %#v", created["due_at"])
 	}
 }

@@ -61,12 +61,12 @@
   "Mar Field": {
     "prefix": "field",
     "description": "Create a field declaration",
-    "body": "${1:fieldName}: ${2|Int,String,Bool,Float,Posix|}${3|, optional, default, primary, auto, primary auto|}"
+    "body": "${1:fieldName}: ${2|Int,String,Bool,Float,Date,DateTime|}${3|, optional, default, primary, auto, primary auto|}"
   },
   "Mar Field With Default": {
     "prefix": "fielddefault",
     "description": "Create a field declaration with a literal default",
-    "body": "${1:fieldName}: ${2|Int,String,Bool,Float,Posix|} default ${3:value}"
+    "body": "${1:fieldName}: ${2|Int,String,Bool,Float,Date,DateTime|} default ${3:value}"
   },
   "Mar Belongs To": {
     "prefix": "belongs_to",

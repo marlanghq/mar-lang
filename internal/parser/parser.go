@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"mar/internal/expr"
@@ -18,7 +19,7 @@ var (
 	envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
-const marTypePattern = `Int|String|Bool|Float|Posix`
+const marTypePattern = `Int|String|Bool|Float|DateTime|Date`
 
 var (
 	topLevelStatementCandidates = []string{
@@ -898,8 +899,8 @@ func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.A
 		return fmt.Errorf("entity %s has no fields", ent.Name)
 	}
 	ent.Fields = append(ent.Fields,
-		model.Field{Name: "created_at", Type: "Posix", Auto: true},
-		model.Field{Name: "updated_at", Type: "Posix", Auto: true},
+		model.Field{Name: "created_at", Type: "DateTime", Auto: true},
+		model.Field{Name: "updated_at", Type: "DateTime", Auto: true},
 	)
 
 	primaryCount := 0
@@ -1165,7 +1166,7 @@ func parseAliasFieldToken(alias *model.TypeAlias, seen map[string]bool, token st
 	}
 	m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(`+marTypePattern+`)$`, token)
 	if m == nil {
-		return fmt.Errorf("line %d: invalid field in type alias %s. Expected `name : Type` with Int/String/Bool/Float/Posix", lineNo, alias.Name)
+		return fmt.Errorf("line %d: invalid field in type alias %s. Expected `name : Type` with Int/String/Bool/Float/Date/DateTime", lineNo, alias.Name)
 	}
 	name := m[1]
 	if seen[name] {
@@ -1815,11 +1816,11 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 			if leftType == "String" || rightType == "String" {
 				return "String", nil
 			}
-			if leftType == "Posix" && rightType == "Int" {
-				return "Posix", nil
+			if isTemporalType(leftType) && rightType == "Int" {
+				return leftType, nil
 			}
-			if leftType == "Int" && rightType == "Posix" {
-				return "Posix", nil
+			if leftType == "Int" && isTemporalType(rightType) {
+				return rightType, nil
 			}
 			if leftType == "Float" || rightType == "Float" {
 				return "Float", nil
@@ -1829,10 +1830,10 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 			}
 			return "", fmt.Errorf("operator + expects compatible values")
 		case "-":
-			if leftType == "Posix" && rightType == "Int" {
-				return "Posix", nil
+			if isTemporalType(leftType) && rightType == "Int" {
+				return leftType, nil
 			}
-			if leftType == "Posix" && rightType == "Posix" {
+			if isTemporalType(leftType) && isTemporalType(rightType) {
 				return "Int", nil
 			}
 			if leftType == "Float" || rightType == "Float" {
@@ -1909,7 +1910,16 @@ func areNumericComparable(leftType, rightType string) bool {
 
 func isNumericLikeType(typ string) bool {
 	switch typ {
-	case "Int", "Float", "Posix":
+	case "Int", "Float", "Date", "DateTime":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTemporalType(typ string) bool {
+	switch typ {
+	case "Date", "DateTime":
 		return true
 	default:
 		return false
@@ -1923,7 +1933,7 @@ func isTypeAssignable(targetType, sourceType string) bool {
 	if targetType == "Float" && sourceType == "Int" {
 		return true
 	}
-	if targetType == "Posix" && sourceType == "Int" {
+	if isTemporalType(targetType) && (sourceType == "Int" || isTemporalType(sourceType)) {
 		return true
 	}
 	return false
@@ -2089,10 +2099,13 @@ func parseFieldDefaultLiteral(fieldType string, raw string, lineNo int) (any, er
 			return false, nil
 		}
 		return nil, fmt.Errorf("line %d: field default for %s must be true or false", lineNo, fieldType)
-	case "Int", "Posix":
+	case "Int", "Date", "DateTime":
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("line %d: field default for %s must be an integer literal", lineNo, fieldType)
+		}
+		if fieldType == "Date" {
+			n = normalizeDateMillis(n)
 		}
 		return n, nil
 	case "Float":
@@ -2111,11 +2124,16 @@ func parseFieldDefaultLiteral(fieldType string, raw string, lineNo int) (any, er
 
 func isPrimitiveFieldType(fieldType string) bool {
 	switch strings.TrimSpace(fieldType) {
-	case "Int", "String", "Bool", "Float", "Posix":
+	case "Int", "String", "Bool", "Float", "Date", "DateTime":
 		return true
 	default:
 		return false
 	}
+}
+
+func normalizeDateMillis(value int64) int64 {
+	t := time.UnixMilli(value).UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC).UnixMilli()
 }
 
 func entityPrimaryField(entity *model.Entity) *model.Field {

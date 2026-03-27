@@ -15,7 +15,7 @@ import Html.Events as HtmlEvents
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
-import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), InputAliasField, InputAliasInfo, Row, Schema, decodeRows, decodeSchema, encodePayload, fieldSchemaLabel, fieldTypeLabel, formatPosixInputMillis, parsePosixInput, rowDecoder, valueToDisplayString, valueToString)
+import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), InputAliasField, InputAliasInfo, Row, Schema, decodeRows, decodeSchema, encodePayload, fieldSchemaLabel, fieldTypeLabel, formatDateInputMillis, formatDateTimeInputMillis, parseDateInput, parseDateTimeInput, rowDecoder, valueToDisplayString, valueToString)
 import Url exposing (Url)
 
 
@@ -1978,8 +1978,16 @@ encodeBootstrapFieldValue field rawValue =
                 Nothing ->
                     Err (fieldLabel field.name ++ " expects a decimal number")
 
-        PosixType ->
-            case parsePosixInput rawValue of
+        DateType ->
+            case parseDateInput rawValue of
+                Just value ->
+                    Ok (Encode.float value)
+
+                Nothing ->
+                    Err (fieldLabel field.name ++ " expects a date or Unix milliseconds")
+
+        DateTimeType ->
+            case parseDateTimeInput rawValue of
                 Just value ->
                     Ok (Encode.float value)
 
@@ -2607,8 +2615,16 @@ encodeActionField valuesByName field partialResult =
                             Nothing ->
                                 Err (fieldLabel field.name ++ " expects a decimal number")
 
-                    "Posix" ->
-                        case parsePosixInput rawValue of
+                    "Date" ->
+                        case parseDateInput rawValue of
+                            Just value ->
+                                Ok (( field.name, Encode.float value ) :: items)
+
+                            Nothing ->
+                                Err (fieldLabel field.name ++ " expects a date or Unix milliseconds")
+
+                    "DateTime" ->
+                        case parseDateTimeInput rawValue of
                             Just value ->
                                 Ok (( field.name, Encode.float value ) :: items)
 
@@ -2723,11 +2739,18 @@ fieldDefaultText field =
     case field.defaultValue of
         Just defaultValue ->
             case field.fieldType of
-                PosixType ->
+                DateType ->
                     defaultValue
                         |> Decode.decodeValue Decode.float
                         |> Result.toMaybe
-                        |> Maybe.map formatPosixInputMillis
+                        |> Maybe.map formatDateInputMillis
+                        |> Maybe.withDefault (valueToString defaultValue)
+
+                DateTimeType ->
+                    defaultValue
+                        |> Decode.decodeValue Decode.float
+                        |> Result.toMaybe
+                        |> Maybe.map formatDateTimeInputMillis
                         |> Maybe.withDefault (valueToString defaultValue)
 
                 _ ->
@@ -2748,7 +2771,10 @@ fieldDefaultText field =
 
 placeholderForType : String -> String -> String
 placeholderForType fieldName fieldType =
-    if fieldType == "Posix" then
+    if fieldType == "Date" then
+        "YYYY-MM-DD"
+
+    else if fieldType == "DateTime" then
         "YYYY-MM-DDTHH:MM"
 
     else
@@ -3070,11 +3096,18 @@ formFromRow model rowValue =
                                     |> Maybe.map
                                         (\value ->
                                             case field.fieldType of
-                                                PosixType ->
+                                                DateType ->
                                                     value
                                                         |> Decode.decodeValue Decode.float
                                                         |> Result.toMaybe
-                                                        |> Maybe.map formatPosixInputMillis
+                                                        |> Maybe.map formatDateInputMillis
+                                                        |> Maybe.withDefault (valueToString value)
+
+                                                DateTimeType ->
+                                                    value
+                                                        |> Decode.decodeValue Decode.float
+                                                        |> Result.toMaybe
+                                                        |> Maybe.map formatDateTimeInputMillis
                                                         |> Maybe.withDefault (valueToString value)
 
                                                 _ ->
@@ -4708,8 +4741,14 @@ viewAuthEmailStage model firstAdminMode actionLabel submitMsg isLoading =
                         )
                         (SetBootstrapField field.name)
 
-                PosixType ->
-                    posixDateTimeField
+                DateType ->
+                    dateField
+                        (fieldLabel field.name)
+                        (Dict.get field.name model.bootstrapFormValues |> Maybe.withDefault "")
+                        (SetBootstrapField field.name)
+
+                DateTimeType ->
+                    dateTimeField
                         (fieldLabel field.name ++ " (UTC)")
                         (Dict.get field.name model.bootstrapFormValues |> Maybe.withDefault "")
                         (SetBootstrapField field.name)
@@ -5096,8 +5135,38 @@ cupertinoTextInputAttrs =
     ]
 
 
-posixDateTimeField : String -> String -> (String -> msg) -> Element msg
-posixDateTimeField labelText currentValue onChangeMsg =
+dateField : String -> String -> (String -> msg) -> Element msg
+dateField labelText currentValue onChangeMsg =
+    column
+        [ width fill, spacing 0 ]
+        [ el
+            [ Font.size 12
+            , paddingEach { top = 0, right = 0, bottom = 6, left = 0 }
+            ]
+            (text labelText)
+        , Element.html <|
+            Html.input
+                [ HtmlAttr.type_ "date"
+                , HtmlAttr.value currentValue
+                , HtmlEvents.onInput onChangeMsg
+                , HtmlAttr.style "width" "100%"
+                , HtmlAttr.style "padding" "12px"
+                , HtmlAttr.style "border-radius" "12px"
+                , HtmlAttr.style "border" "1px solid rgb(222,230,241)"
+                , HtmlAttr.style "background" "rgb(248,250,254)"
+                , HtmlAttr.style "color" "rgb(29,36,44)"
+                , HtmlAttr.style "font-size" "15px"
+                , HtmlAttr.style "font-family" "\"IBM Plex Sans\", \"Space Grotesk\", sans-serif"
+                , HtmlAttr.style "outline" "none"
+                , HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)"
+                , HtmlAttr.style "box-sizing" "border-box"
+                ]
+                []
+        ]
+
+
+dateTimeField : String -> String -> (String -> msg) -> Element msg
+dateTimeField labelText currentValue onChangeMsg =
     column
         [ width fill, spacing 0 ]
         [ el
@@ -5995,8 +6064,14 @@ viewActionPanel model actionInfo =
                             (Dict.get field.name model.actionFormValues |> Maybe.withDefault "false")
                             (SetActionField field.name)
 
-                    else if field.fieldType == "Posix" then
-                        posixDateTimeField
+                    else if field.fieldType == "Date" then
+                        dateField
+                            (fieldLabel field.name)
+                            (Dict.get field.name model.actionFormValues |> Maybe.withDefault "")
+                            (SetActionField field.name)
+
+                    else if field.fieldType == "DateTime" then
+                        dateTimeField
                             (fieldLabel field.name ++ " (UTC)")
                             (Dict.get field.name model.actionFormValues |> Maybe.withDefault "")
                             (SetActionField field.name)
@@ -7541,8 +7616,14 @@ formCard model entity titleText =
                                 )
                                 (SetFormField field.name)
 
-                        PosixType ->
-                            posixDateTimeField
+                        DateType ->
+                            dateField
+                                (fieldLabel field.name)
+                                (Dict.get field.name model.formValues |> Maybe.withDefault "")
+                                (SetFormField field.name)
+
+                        DateTimeType ->
+                            dateTimeField
                                 (fieldLabel field.name ++ " (UTC)")
                                 (Dict.get field.name model.formValues |> Maybe.withDefault "")
                                 (SetFormField field.name)

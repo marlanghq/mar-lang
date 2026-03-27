@@ -63,14 +63,14 @@ type symbolCatalog struct {
 
 var (
 	entityDeclRe                = regexp.MustCompile(`^\s*entity\s+([A-Za-z][A-Za-z0-9_]*)\s*\{`)
-	fieldDeclRe                 = regexp.MustCompile(`^\s*([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|Posix)\b`)
+	fieldDeclRe                 = regexp.MustCompile(`^\s*([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|DateTime|Date)\b`)
 	belongsToNamedRe            = regexp.MustCompile(`^\s*belongs_to\s+([a-z][A-Za-z0-9_]*)\s*:\s*([A-Za-z][A-Za-z0-9_]*)\b`)
 	belongsToNamedCurrentUserRe = regexp.MustCompile(`^\s*belongs_to\s+([a-z][A-Za-z0-9_]*)\s*:\s*(current_user)\b`)
 	belongsToCurrentUserRe      = regexp.MustCompile(`^\s*belongs_to\s+(current_user)\b`)
 	belongsToShortRe            = regexp.MustCompile(`^\s*belongs_to\s+([A-Za-z][A-Za-z0-9_]*)\b`)
 
 	typeAliasDeclRe  = regexp.MustCompile(`^\s*type\s+alias\s+([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.*)$`)
-	aliasFieldDeclRe = regexp.MustCompile(`([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|Posix)\b`)
+	aliasFieldDeclRe = regexp.MustCompile(`([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|DateTime|Date)\b`)
 
 	actionDeclRe        = regexp.MustCompile(`^\s*action\s+([a-z][A-Za-z0-9_]*)\s*\{\s*$`)
 	actionInputRe       = regexp.MustCompile(`^\s*input\s*:\s*([A-Za-z][A-Za-z0-9_]*)\s*$`)

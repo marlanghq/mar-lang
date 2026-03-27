@@ -805,7 +805,7 @@ docSearchSectionText maybeSectionId =
                     "Advanced Guide. Core concepts of the language. Mar is a declarative DSL (domain-specific language) for backends, inspired by Elm, PocketBase, and Rails, implemented in Elm and Go with focus on readability, maintainability, and simple deployment."
 
                 "syntax-model" ->
-                    "Syntax model. Top-level statements: app, port, database, public, system, auth, entity, type alias, action. Fields use the form fieldName: Type with modifiers such as primary, auto, optional, and default. Built-in field types include Int, String, Bool, Float, and Posix. Posix follows Elm Time.Posix and stores Unix milliseconds. Comments use Elm-style line comments."
+                    "Syntax model. Top-level statements: app, port, database, public, system, auth, entity, type alias, action. Fields use the form fieldName: Type with modifiers such as primary, auto, optional, and default. Built-in field types include Int, String, Bool, Float, Date, and DateTime. Date and DateTime are both stored internally as POSIX Unix milliseconds and also returned in JSON as POSIX Unix milliseconds. Comments use Elm-style line comments."
                     ++ " Singular relationships use belongs_to."
 
                 "authentication-and-authorization" ->
@@ -815,7 +815,7 @@ docSearchSectionText maybeSectionId =
                     "Rules and typed actions. Rules are for validation close to the entity definition. Actions are for multi-step reads and writes that must succeed or fail together. Action steps can load, create, update, and delete rows inside the same transaction. Steps may bind aliases such as order = create Order or todo = load Todo, and later steps may reference alias fields like order.id. rule validates entity data and returns HTTP 422 when validation fails. Actions run in a single atomic transaction. Mar checks input types and assigned entity fields at compile time. Current limitations. Single .mar entry file per app. No multi-file projects or imports."
 
                 "language-reference" ->
-                    "Language Reference. Browse the current keywords, built-in names, functions, primitive types, relationship syntax, and configuration options. Built-in primitive types include Int, String, Bool, Float, and Posix. Posix stores Unix milliseconds and follows Elm Time.Posix."
+                    "Language Reference. Browse the current keywords, built-in names, functions, primitive types, relationship syntax, and configuration options. Built-in primitive types include Int, String, Bool, Float, Date, and DateTime. Date and DateTime are stored internally as POSIX Unix milliseconds and returned in JSON as POSIX Unix milliseconds."
 
                 "validation-and-authorization-reference" ->
                     "Validation and authorization reference. rule, expect, when, authorize, all, read, create, update, delete."
@@ -944,13 +944,13 @@ docSearchEntries =
       , route = AdvancedFundamentals
       , sectionId = Just "advanced-fundamentals"
       , summary = "Understand the core syntax, built-in User model, relationships, rules, and authorization."
-      , keywords = [ "language", "entities", "relationships", "belongs_to", "rules", "authorize", "user", "auth", "Posix", "timestamp", "Unix milliseconds", "default" ]
+      , keywords = [ "language", "entities", "relationships", "belongs_to", "rules", "authorize", "user", "auth", "Date", "DateTime", "POSIX", "Unix milliseconds", "default" ]
       }
     , { title = "Syntax model"
       , route = AdvancedFundamentals
       , sectionId = Just "syntax-model"
       , summary = "Top-level statements, fields, belongs_to relationships, comments, and the basic shape of a Mar app."
-      , keywords = [ "app", "port", "database", "public", "system", "auth", "entity", "belongs_to", "type alias", "action", "comments", "Posix", "Int", "String", "Bool", "Float", "default" ]
+      , keywords = [ "app", "port", "database", "public", "system", "auth", "entity", "belongs_to", "type alias", "action", "comments", "Date", "DateTime", "Int", "String", "Bool", "Float", "default" ]
       }
     , { title = "Relationships"
       , route = AdvancedFundamentals
@@ -974,7 +974,7 @@ docSearchEntries =
       , route = AdvancedLanguageReference
       , sectionId = Just "language-reference"
       , summary = "Browse the current keywords, built-in names, relationship syntax, primitive types, functions, and configuration options."
-      , keywords = [ "reference", "keywords", "belongs_to", "functions", "system", "auth", "public", "Posix", "Int", "String", "Bool", "Float", "primitive types", "default" ]
+      , keywords = [ "reference", "keywords", "belongs_to", "functions", "system", "auth", "public", "Date", "DateTime", "Int", "String", "Bool", "Float", "primitive types", "default" ]
       }
     , { title = "Validation and authorization reference"
       , route = AdvancedLanguageReference
@@ -1308,7 +1308,7 @@ advancedLanguagePage model =
                     , text " with focus on readability, maintainability, and simple deployment."
                     ]
                 , docSubsectionTitle "Fundamentals"
-                , bodyText "Mar reads top-to-bottom as a declarative app definition. A Mar app is centered around entities, relationships, rules, authorization, auth configuration, and typed actions. Built-in field types are Int, String, Bool, Float, and Posix."
+                , bodyText "Mar reads top-to-bottom as a declarative app definition. A Mar app is centered around entities, relationships, rules, authorization, auth configuration, and typed actions. Built-in field types are Int, String, Bool, Float, Date, and DateTime."
                 , docSubsectionTitle "Quick Examples"
                 , codeFromString model "shared-todo.mar" 320 sharedTodoExampleSource
                 , codeFromString model "personal-todo.mar" 300 relationshipExampleSource
@@ -1320,7 +1320,7 @@ advancedLanguagePage model =
                     [ "Top-level statements: app, port, database, public, system, auth, entity, type alias, action."
                     , "Fields use the form fieldName: Type with optional modifiers such as primary, auto, optional, and default."
                     , "Singular relationships use `belongs_to`, for example `belongs_to User`, `belongs_to current_user`, `belongs_to reviewer: current_user`, or `belongs_to customer: User optional`."
-                    , "Built-in field types are Int, String, Bool, Float, and Posix. `Posix` follows Elm `Time.Posix` and stores Unix milliseconds."
+                    , "Built-in field types are Int, String, Bool, Float, Date, and DateTime. `Date` is semantic day-only data, while `DateTime` represents a timestamp. Internally both are stored as POSIX Unix milliseconds, and JSON responses also return POSIX Unix milliseconds."
                     , "Comments use Elm-style line comments: -- this is a comment."
                     ]
                 ]
@@ -1411,7 +1411,8 @@ advancedLanguageReferencePage =
                     , languageReferenceItem "String" "Text field type."
                     , languageReferenceItem "Bool" "Boolean field type."
                     , languageReferenceItem "Float" "Decimal-number field type."
-                    , languageReferenceItem "Posix" "Timestamp field type stored as Unix milliseconds, aligned with Elm `Time.Posix`."
+                    , languageReferenceItem "Date" "Calendar date field type. Internally stored as POSIX Unix milliseconds normalized to 00:00 UTC, and returned in JSON as POSIX Unix milliseconds."
+                    , languageReferenceItem "DateTime" "Timestamp field type. Internally stored as POSIX Unix milliseconds and returned in JSON as POSIX Unix milliseconds."
                     ]
                 ]
             , anchoredSection "validation-and-authorization-reference"
@@ -3620,7 +3621,7 @@ marKeywordWords =
 
 marTypeWords : List String
 marTypeWords =
-    [ "Int", "String", "Bool", "Float", "Posix" ]
+    [ "Int", "String", "Bool", "Float", "Date", "DateTime" ]
 
 
 marFieldModifierWords : List String
@@ -3767,7 +3768,7 @@ entity Course {
 entity Enrollment {
   belongs_to Student
   belongs_to Course
-  enrolled_at: Posix
+  enrolled_at: DateTime
 }
 """
 

@@ -461,7 +461,7 @@ func keywordCompletionItems() []map[string]any {
 		"sqlite_mmap_size_mb",
 		"sqlite_cache_size_kb",
 	}
-	types := []string{"Int", "String", "Bool", "Float", "Posix"}
+	types := []string{"Int", "String", "Bool", "Float", "Date", "DateTime"}
 	functions := []string{"length", "contains", "starts_with", "ends_with", "matches"}
 	out := make([]map[string]any, 0, len(keywords)+len(types)+len(functions)+len(expr.BuiltinValueNames))
 	for _, kw := range keywords {

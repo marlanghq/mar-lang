@@ -545,10 +545,13 @@ func fieldDefaultSQL(field *model.Field) (string, bool) {
 			return "1", true
 		}
 		return "0", true
-	case "Int", "Posix":
+	case "Int", "Date", "DateTime":
 		number, ok := toInt64(field.Default)
 		if !ok {
 			return "", false
+		}
+		if field.Type == "Date" {
+			number = normalizeDateMillis(number)
 		}
 		return strconv.FormatInt(number, 10), true
 	case "Float":

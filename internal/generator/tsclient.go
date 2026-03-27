@@ -383,7 +383,7 @@ func sanitizeTSFieldName(value string) string {
 
 func marTypeToTSType(typ string) string {
 	switch typ {
-	case "Int", "Float", "Posix":
+	case "Int", "Float", "Date", "DateTime":
 		return "number"
 	case "String":
 		return "string"

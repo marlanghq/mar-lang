@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"mar/internal/model"
 	"mar/internal/sqlitecli"
@@ -58,10 +59,17 @@ func normalizeInputValue(field *model.Field, value any) (dbValue any, apiValue a
 			return nil, nil, fmt.Errorf("field %s must be Int", field.Name)
 		}
 		return n, float64(n), nil
-	case "Posix":
+	case "Date":
 		n, ok := toInt64(value)
 		if !ok {
-			return nil, nil, fmt.Errorf("field %s must be Posix (Unix milliseconds)", field.Name)
+			return nil, nil, fmt.Errorf("field %s must be Date (Unix milliseconds)", field.Name)
+		}
+		n = normalizeDateMillis(n)
+		return n, float64(n), nil
+	case "DateTime":
+		n, ok := toInt64(value)
+		if !ok {
+			return nil, nil, fmt.Errorf("field %s must be DateTime (Unix milliseconds)", field.Name)
 		}
 		return n, float64(n), nil
 	case "Float":
@@ -104,7 +112,7 @@ func decodeDBValue(field *model.Field, value any) any {
 			return nil
 		}
 		return float64(n)
-	case "Posix":
+	case "Date", "DateTime":
 		n, ok := toInt64(value)
 		if !ok {
 			return nil
@@ -136,10 +144,13 @@ func parsePrimaryValue(entity *model.Entity, raw string) (any, bool) {
 			return nil, false
 		}
 		return n, true
-	case "Posix":
+	case "Date", "DateTime":
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return nil, false
+		}
+		if pk.Type == "Date" {
+			n = normalizeDateMillis(n)
 		}
 		return n, true
 	case "Float":
@@ -206,6 +217,11 @@ func toFloat64(v any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func normalizeDateMillis(value int64) int64 {
+	t := time.UnixMilli(value).UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC).UnixMilli()
 }
 
 func queryRowsForRequest(db *sqlitecli.DB, requestID string, query string, args ...any) ([]map[string]any, error) {
