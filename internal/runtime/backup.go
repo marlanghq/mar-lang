@@ -126,6 +126,28 @@ func ListSQLiteBackups(databasePath string, limit int) ([]BackupFile, error) {
 	return files, nil
 }
 
+// FindSQLiteBackupByName finds a known backup for the given database by exact file name.
+func FindSQLiteBackupByName(databasePath, fileName string) (BackupFile, bool, error) {
+	cleanedName := strings.TrimSpace(fileName)
+	if cleanedName == "" {
+		return BackupFile{}, false, nil
+	}
+	if cleanedName != filepath.Base(cleanedName) {
+		return BackupFile{}, false, nil
+	}
+
+	backups, err := ListSQLiteBackups(databasePath, 0)
+	if err != nil {
+		return BackupFile{}, false, err
+	}
+	for _, backup := range backups {
+		if backup.Name == cleanedName {
+			return backup, true, nil
+		}
+	}
+	return BackupFile{}, false, nil
+}
+
 func backupDirectory(databasePath string) string {
 	resolvedDatabasePath := resolveAbsolutePath(databasePath)
 	return filepath.Join(filepath.Dir(resolvedDatabasePath), "backups")

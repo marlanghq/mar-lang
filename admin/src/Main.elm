@@ -114,13 +114,11 @@ type alias Model =
     , actionResult : Maybe Row
     , perf : Remote PerfPayload
     , adminVersion : Remote AdminVersionPayload
-    , monitoringVersionDetailsOpen : Bool
     , requestLogs : Remote RequestLogsPayload
     , backups : Remote BackupsPayload
     , performanceMode : Bool
     , requestLogsMode : Bool
     , databaseMode : Bool
-    , lastBackup : Maybe BackupResponse
     , pendingDelete : Maybe PendingDelete
     , authInlineMessage : Maybe String
     , flash : Maybe String
@@ -158,7 +156,6 @@ type Msg
     | SelectDatabase
     | ReloadDatabase
     | ReloadPerformance
-    | ToggleMonitoringVersionDetails
     | ReloadRequestLogs
     | GotPerformance (Result ApiHttpError PerfPayload)
     | GotAdminVersion (Result ApiHttpError AdminVersionPayload)
@@ -539,13 +536,11 @@ init flags url navKey =
             , actionResult = Nothing
             , perf = NotAsked
             , adminVersion = NotAsked
-            , monitoringVersionDetailsOpen = False
             , requestLogs = NotAsked
             , backups = NotAsked
             , performanceMode = False
             , requestLogsMode = False
             , databaseMode = False
-            , lastBackup = Nothing
             , pendingDelete = Nothing
             , authInlineMessage = Nothing
             , flash = Nothing
@@ -728,7 +723,7 @@ applySystemRoute route model =
             RoutePerformance ->
                 let
                     nextModel =
-                        { baseModel | performanceMode = True, perf = Loading, adminVersion = Loading, monitoringVersionDetailsOpen = False }
+                        { baseModel | performanceMode = True, perf = Loading, adminVersion = Loading }
                 in
                 ( nextModel, Cmd.batch [ loadPerformance nextModel, loadAdminVersion nextModel ] )
 
@@ -968,12 +963,8 @@ routeForCurrentEntityList model =
 
 rowIdForCurrentSelection : Model -> Row -> Maybe String
 rowIdForCurrentSelection model rowValue =
-    case model.selectedEntity of
-        Just entity ->
-            rowId entity rowValue
-
-        Nothing ->
-            Nothing
+    model.selectedEntity
+        |> Maybe.andThen (\entity -> rowId entity rowValue)
 
 
 cancelFormRoute : Model -> Maybe Route
@@ -1131,9 +1122,6 @@ update msg model =
             in
             ( nextModel, Cmd.batch [ loadPerformance nextModel, loadAdminVersion nextModel ] )
 
-        ToggleMonitoringVersionDetails ->
-            ( { model | monitoringVersionDetailsOpen = not model.monitoringVersionDetailsOpen }, Cmd.none )
-
         ReloadRequestLogs ->
             let
                 nextModel =
@@ -1267,8 +1255,11 @@ update msg model =
                     case scope of
                         AppAuthScope ->
                             let
+                                nextRoute =
+                                    routeForAuthenticatedRole response.role model.currentRoute
+
                                 nextWorkspace =
-                                    workspaceForCurrentRoute response.role model.currentRoute
+                                    workspaceForCurrentRoute response.role nextRoute
 
                                 nextModel =
                                     { model
@@ -1284,6 +1275,7 @@ update msg model =
                                         , firstAdminCodeRequested = False
                                         , authToolsOpen = False
                                         , workspace = nextWorkspace
+                                        , currentRoute = nextRoute
                                         , flash = Just "Login successful."
                                     }
 
@@ -1293,7 +1285,7 @@ update msg model =
                                 saveSessionCmd =
                                     saveSessionFromModel nextModel
                             in
-                            ( nextModel, Cmd.batch [ schemaCmd, saveSessionCmd ] )
+                            ( nextModel, Cmd.batch [ schemaCmd, saveSessionCmd, replaceRoute nextRoute nextModel ] )
 
                 Err httpError ->
                     ( { model | authSubmitting = Nothing, flash = Just (authLoginErrorToString httpError) }, Cmd.none )
@@ -1304,8 +1296,11 @@ update msg model =
                     case scope of
                         AppAuthScope ->
                             let
+                                nextRoute =
+                                    routeForAuthenticatedRole response.role model.currentRoute
+
                                 nextWorkspace =
-                                    workspaceForCurrentRoute response.role model.currentRoute
+                                    workspaceForCurrentRoute response.role nextRoute
 
                                 nextModel =
                                     { model
@@ -1315,6 +1310,7 @@ update msg model =
                                         , sessionRestorePending = False
                                         , authToolsOpen = False
                                         , workspace = nextWorkspace
+                                        , currentRoute = nextRoute
                                         , flash = Nothing
                                     }
                             in
@@ -1399,20 +1395,10 @@ update msg model =
 
         GotBackup result ->
             case result of
-                Ok response ->
+                Ok _ ->
                     let
-                        removedCount =
-                            List.length response.removed
-
-                        removedText =
-                            if removedCount > 0 then
-                                " Removed " ++ String.fromInt removedCount ++ " old backup(s)."
-
-                            else
-                                ""
-
                         nextModel =
-                            { model | lastBackup = Just response, flash = Just ("Backup created at " ++ response.path ++ "." ++ removedText), backups = Loading }
+                            { model | flash = Nothing, backups = Loading }
                     in
                     ( nextModel, Cmd.batch [ loadBackups nextModel, loadPerformance nextModel ] )
 
@@ -3198,11 +3184,13 @@ viewMobileTopBar : Model -> Element Msg
 viewMobileTopBar model =
     column
         [ width fill
-        , Background.color (rgb255 18 22 28)
+        , Background.color (rgb255 232 237 245)
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color (rgb255 214 221 233)
         , padding 16
         , spacing 4
         ]
-        [ el [ Font.size 22, Font.bold, Font.color (rgb255 240 245 250) ] (text (currentAppName model)) ]
+        [ el [ Font.size 22, Font.bold, Font.color (rgb255 34 47 64) ] (text (currentAppName model)) ]
 
 
 mobileNavEntries : Model -> List MobileNavEntry
@@ -3258,7 +3246,7 @@ mobileNavEntries model =
             if hasAnyAuthInfo model then
                 { label =
                     if workspace == AppWorkspace then
-                        "Account"
+                        "Profile"
 
                     else
                         "Authorization"
@@ -4156,7 +4144,7 @@ viewSidebar model =
                 , label =
                     sidebarItemLabel
                         (if workspace == AppWorkspace then
-                            "Account"
+                            "Profile"
 
                          else
                             "Authorization"
@@ -5139,11 +5127,7 @@ dateField : String -> String -> (String -> msg) -> Element msg
 dateField labelText currentValue onChangeMsg =
     column
         [ width fill, spacing 0 ]
-        [ el
-            [ Font.size 12
-            , paddingEach { top = 0, right = 0, bottom = 6, left = 0 }
-            ]
-            (text labelText)
+        [ formFieldLabelElement labelText
         , Element.html <|
             Html.input
                 [ HtmlAttr.type_ "date"
@@ -5169,11 +5153,7 @@ dateTimeField : String -> String -> (String -> msg) -> Element msg
 dateTimeField labelText currentValue onChangeMsg =
     column
         [ width fill, spacing 0 ]
-        [ el
-            [ Font.size 12
-            , paddingEach { top = 0, right = 0, bottom = 6, left = 0 }
-            ]
-            (text labelText)
+        [ formFieldLabelElement labelText
         , Element.html <|
             Html.input
                 [ HtmlAttr.type_ "datetime-local"
@@ -5219,16 +5199,11 @@ relationFormField model field relationEntityName =
         _ ->
             column
                 [ width fill, spacing 6 ]
-                [ Input.text cupertinoTextInputAttrs
-                    { onChange = SetFormField field.name
-                    , text = currentValue
-                    , placeholder =
-                        Just
-                            (Input.placeholder []
-                                (text (humanizeIdentifier relationEntityName ++ " id"))
-                            )
-                    , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name))
-                    }
+                [ formTextField
+                    (fieldLabel field.name)
+                    currentValue
+                    (humanizeIdentifier relationEntityName ++ " id")
+                    (SetFormField field.name)
                 , case helperText of
                     Just message ->
                         el [ Font.size 12, Font.color (rgb255 108 119 133) ] (text message)
@@ -5241,11 +5216,11 @@ relationFormField model field relationEntityName =
 relationSelectField : Model -> Field -> String -> String -> List Row -> Element Msg
 relationSelectField model field relationEntityName currentValue relatedRows =
     let
-        options =
+        availableOptions =
             relationOptions (findEntity relationEntityName model) relationEntityName relatedRows
 
         optionExists =
-            List.any (\( optionValue, _ ) -> optionValue == currentValue) options
+            List.any (\( optionValue, _ ) -> optionValue == currentValue) availableOptions
 
         promptLabel =
             if field.optional then
@@ -5260,23 +5235,32 @@ relationSelectField model field relationEntityName currentValue relatedRows =
 
             else
                 []
+
+        allOptions =
+            ( "", promptLabel ) :: missingCurrentOption ++ availableOptions
+
+        normalizeSelectedValue rawValue =
+            let
+                trimmed =
+                    String.trim rawValue
+            in
+            if List.any (\( optionValue, _ ) -> optionValue == trimmed) allOptions then
+                trimmed
+
+            else
+                ""
     in
     column
         [ width fill, spacing 0 ]
-        [ el
-            [ Font.size 12
-            , paddingEach { top = 0, right = 0, bottom = 6, left = 0 }
-            ]
-            (text (fieldLabel field.name))
+        [ formFieldLabelElement (fieldLabel field.name)
         , Element.html <|
             Html.div
                 [ HtmlAttr.style "position" "relative"
                 , HtmlAttr.style "width" "100%"
                 ]
                 [ Html.select
-                    [ HtmlAttr.value currentValue
-                    , HtmlEvents.onInput (SetFormField field.name)
-                    , HtmlAttr.style "width" "100%"
+                    [ HtmlAttr.style "width" "100%"
+                    , HtmlEvents.on "change" (Decode.map (\rawValue -> SetFormField field.name (normalizeSelectedValue rawValue)) HtmlEvents.targetValue)
                     , HtmlAttr.style "padding" "12px 42px 12px 12px"
                     , HtmlAttr.style "border-radius" "12px"
                     , HtmlAttr.style "border" "1px solid rgb(222,230,241)"
@@ -5286,6 +5270,7 @@ relationSelectField model field relationEntityName currentValue relatedRows =
                     , HtmlAttr.style "font-family" "\"IBM Plex Sans\", \"Space Grotesk\", sans-serif"
                     , HtmlAttr.style "outline" "none"
                     , HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)"
+                    , HtmlAttr.style "box-sizing" "border-box"
                     , HtmlAttr.style "appearance" "none"
                     , HtmlAttr.style "-webkit-appearance" "none"
                     , HtmlAttr.style "-moz-appearance" "none"
@@ -5298,12 +5283,7 @@ relationSelectField model field relationEntityName currentValue relatedRows =
                                 ]
                                 [ Html.text optionLabel ]
                         )
-                        (List.concat
-                            [ [ ( "", promptLabel ) ]
-                            , missingCurrentOption
-                            , options
-                            ]
-                        )
+                        allOptions
                     )
                 , Html.div
                     [ HtmlAttr.style "position" "absolute"
@@ -5319,6 +5299,33 @@ relationSelectField model field relationEntityName currentValue relatedRows =
         ]
 
 
+formTextField : String -> String -> String -> (String -> Msg) -> Element Msg
+formTextField labelText currentValue placeholderText onChangeMsg =
+    column
+        [ width fill, spacing 0 ]
+        [ formFieldLabelElement labelText
+        , Input.text cupertinoTextInputAttrs
+            { onChange = onChangeMsg
+            , text = currentValue
+            , placeholder =
+                Just
+                    (Input.placeholder []
+                        (text placeholderText)
+                    )
+            , label = Input.labelHidden labelText
+            }
+        ]
+
+
+formFieldLabelElement : String -> Element msg
+formFieldLabelElement labelText =
+    el
+        [ Font.size 12
+        , paddingEach { top = 0, right = 0, bottom = 8, left = 0 }
+        ]
+        (text labelText)
+
+
 relationOptions : Maybe Entity -> String -> List Row -> List ( String, String )
 relationOptions maybeEntity relationEntityName relatedRows =
     relatedRows
@@ -5332,7 +5339,6 @@ relationOptions maybeEntity relationEntityName relatedRows =
                         Nothing
             )
         |> List.sortBy (\( _, labelText ) -> String.toLower labelText)
-
 
 relationOptionLabel : Maybe Entity -> String -> Row -> String
 relationOptionLabel maybeEntity relationEntityName rowValue =
@@ -5636,6 +5642,64 @@ workspaceForCurrentRoute maybeRole route =
 
             else
                 AppWorkspace
+
+
+routeForAuthenticatedRole : Maybe String -> Route -> Route
+routeForAuthenticatedRole maybeRole route =
+    let
+        allowedWorkspace workspace =
+            if workspace == AdminWorkspace && isAdminRole maybeRole then
+                AdminWorkspace
+
+            else
+                AppWorkspace
+    in
+    case route of
+        RouteDefault workspace ->
+            RouteDefault (allowedWorkspace workspace)
+
+        RouteAuthTools workspace ->
+            if isAdminRole maybeRole then
+                RouteAuthTools (allowedWorkspace workspace)
+
+            else
+                RouteDefault AppWorkspace
+
+        RouteEntity workspace entityName ->
+            RouteEntity (allowedWorkspace workspace) entityName
+
+        RouteEntityCreate workspace entityName ->
+            RouteEntityCreate (allowedWorkspace workspace) entityName
+
+        RouteEntityDetail workspace entityName rowKey ->
+            RouteEntityDetail (allowedWorkspace workspace) entityName rowKey
+
+        RouteEntityEdit workspace entityName rowKey ->
+            RouteEntityEdit (allowedWorkspace workspace) entityName rowKey
+
+        RouteAction workspace actionName ->
+            RouteAction (allowedWorkspace workspace) actionName
+
+        RoutePerformance ->
+            if isAdminRole maybeRole then
+                RoutePerformance
+
+            else
+                RouteDefault AppWorkspace
+
+        RouteRequestLogs ->
+            if isAdminRole maybeRole then
+                RouteRequestLogs
+
+            else
+                RouteDefault AppWorkspace
+
+        RouteDatabase ->
+            if isAdminRole maybeRole then
+                RouteDatabase
+
+            else
+                RouteDefault AppWorkspace
 
 
 currentAppName : Model -> String
@@ -6444,7 +6508,7 @@ viewPerformancePanel model =
             compact =
                 isCompactLayout model
 
-            routeRow perfRoute =
+            routeRow showDivider perfRoute =
                 let
                     routeTextAttrs =
                         [ Font.size 13
@@ -6475,7 +6539,23 @@ viewPerformancePanel model =
 
                 else
                     row
-                        (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 12 ])
+                        [ width fill
+                        , spacing 12
+                        , centerY
+                        , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                        , Border.widthEach
+                            { top = 0
+                            , right = 0
+                            , bottom =
+                                if showDivider then
+                                    1
+
+                                else
+                                    0
+                            , left = 0
+                            }
+                        , Border.color (rgb255 235 240 247)
+                        ]
                         [ el ([ width (fillPortion 1), Font.bold ] ++ routeTextAttrs) (text perfRoute.method)
                         , el ((width (fillPortion 3)) :: routeTextAttrs) (text perfRoute.route)
                         , el ((width (fillPortion 1)) :: routeMetaAttrs) (text (String.fromInt perfRoute.count))
@@ -6483,14 +6563,6 @@ viewPerformancePanel model =
                         , el ((width (fillPortion 1)) :: routeMetaAttrs) (text (formatMs perfRoute.avgMs))
                         ]
 
-            cards perf =
-                wrappedRow [ width fill, spacing 12 ]
-                    [ performanceCard "Uptime" (formatSeconds perf.uptimeSeconds)
-                    , performanceCard "Memory (heap)" (formatBytes perf.memoryBytes)
-                    , performanceCard "SQLite file" (formatBytes perf.sqliteBytes)
-                    , performanceCard "Goroutines" (String.fromInt perf.goroutines)
-                    , performanceCard "Requests" (String.fromInt perf.http.totalRequests)
-                    ]
         in
         column
             panelAttrs
@@ -6498,7 +6570,7 @@ viewPerformancePanel model =
                 "Monitoring"
                 []
                 [ cupertinoNeutralButton (Just ReloadPerformance) "Refresh" ]
-            , viewMonitoringVersion model.adminVersion model.monitoringVersionDetailsOpen
+            , viewMonitoringVersion compact model.adminVersion
             , el
                 [ width fill
                 , height (px 1)
@@ -6517,46 +6589,90 @@ viewPerformancePanel model =
 
                 Loaded perf ->
                     column [ width fill, spacing 12 ]
-                        [ cards perf
-                        , wrappedRow [ width fill, spacing 12 ]
-                            [ performanceCard "2xx responses" (String.fromInt perf.http.success2xx)
-                            , performanceCard "4xx errors" (String.fromInt perf.http.errors4xx)
-                            , performanceCard "5xx errors" (String.fromInt perf.http.errors5xx)
-                            ]
+                        [ if compact then
+                            column [ width fill, spacing 12 ]
+                                [ monitoringMetricSection compact
+                                    "Runtime"
+                                    [ ( "Uptime", formatSeconds perf.uptimeSeconds )
+                                    , ( "Memory", formatBytes perf.memoryBytes )
+                                    , ( "SQLite file", formatBytes perf.sqliteBytes )
+                                    , ( "Goroutines", String.fromInt perf.goroutines )
+                                    ]
+                                , monitoringMetricSection compact
+                                    "Traffic"
+                                    [ ( "Requests", String.fromInt perf.http.totalRequests )
+                                    , ( "2xx responses", String.fromInt perf.http.success2xx )
+                                    , ( "4xx errors", String.fromInt perf.http.errors4xx )
+                                    , ( "5xx errors", String.fromInt perf.http.errors5xx )
+                                    ]
+                                ]
+
+                          else
+                            wrappedRow [ width fill, spacing 12 ]
+                                [ monitoringMetricSection compact
+                                    "Runtime"
+                                    [ ( "Uptime", formatSeconds perf.uptimeSeconds )
+                                    , ( "Memory", formatBytes perf.memoryBytes )
+                                    , ( "SQLite file", formatBytes perf.sqliteBytes )
+                                    , ( "Goroutines", String.fromInt perf.goroutines )
+                                    ]
+                                , monitoringMetricSection compact
+                                    "Traffic"
+                                    [ ( "Requests", String.fromInt perf.http.totalRequests )
+                                    , ( "2xx responses", String.fromInt perf.http.success2xx )
+                                    , ( "4xx errors", String.fromInt perf.http.errors4xx )
+                                    , ( "5xx errors", String.fromInt perf.http.errors5xx )
+                                    ]
+                                ]
                         , column [ width fill, spacing 8 ]
                             (el [ Font.bold, Font.size 18 ] (text "Route metrics")
                                 :: (if List.isEmpty perf.http.routes then
                                         [ paragraph [] [ text "No requests captured yet." ] ]
 
-                                    else
-                                        (if compact then
-                                            []
+                                    else if compact then
+                                        List.map (routeRow False) perf.http.routes
 
-                                         else
-                                            [ row
-                                                (cupertinoInsetCardAttrs 10
-                                                    ++ [ width fill
-                                                       , spacing 12
-                                                       , Background.color (rgb255 245 248 253)
-                                                       ]
-                                                )
-                                                [ el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Method")
-                                                , el [ width (fillPortion 3), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Path")
-                                                , el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Count")
-                                                , el [ width (fillPortion 2), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Counts by code")
-                                                , el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Average")
-                                                ]
+                                    else
+                                        [ column
+                                            [ width fill
+                                            , Background.color (rgb255 255 255 255)
+                                            , Border.rounded 14
+                                            , Border.width 1
+                                            , Border.color (rgb255 227 234 243)
                                             ]
-                                        )
-                                            ++ List.map routeRow perf.http.routes
+                                            (List.concat
+                                                [ [ row
+                                                        [ width fill
+                                                        , spacing 12
+                                                        , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+                                                        , Background.color (rgb255 247 250 254)
+                                                        , Border.roundEach { topLeft = 14, topRight = 14, bottomLeft = 0, bottomRight = 0 }
+                                                        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+                                                        , Border.color (rgb255 227 234 243)
+                                                        ]
+                                                        [ el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Method")
+                                                        , el [ width (fillPortion 3), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Path")
+                                                        , el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Count")
+                                                        , el [ width (fillPortion 2), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Counts by code")
+                                                        , el [ width (fillPortion 1), Font.size 12, Font.color (rgb255 93 103 120), Font.bold ] (text "Average")
+                                                        ]
+                                                  ]
+                                                , List.indexedMap
+                                                    (\index perfRoute ->
+                                                        routeRow (index < List.length perf.http.routes - 1) perfRoute
+                                                    )
+                                                    perf.http.routes
+                                                ]
+                                            )
+                                        ]
                                    )
                             )
                         ]
             ]
 
 
-viewMonitoringVersion : Remote AdminVersionPayload -> Bool -> Element Msg
-viewMonitoringVersion versionRemote detailsOpen =
+viewMonitoringVersion : Bool -> Remote AdminVersionPayload -> Element Msg
+viewMonitoringVersion compact versionRemote =
     case versionRemote of
         NotAsked ->
             none
@@ -6568,52 +6684,22 @@ viewMonitoringVersion versionRemote detailsOpen =
             paragraph [ Font.size 13, Font.color (rgb255 176 60 46) ] [ text ("Version info unavailable: " ++ message) ]
 
         Loaded versionPayload ->
-            let
-                summaryCards =
-                    [ databaseInfoCard "App" versionPayload.app.name
-                    , databaseInfoCard "Mar version" versionPayload.mar.version
-                    ]
-            in
             column
                 [ width fill
                 , spacing 10
                 ]
-                [ wrappedRow [ width fill, spacing 12 ] summaryCards
-                , Input.button
-                    [ Font.size 13
-                    , Font.color (rgb255 93 103 120)
-                    , alignLeft
-                    , paddingEach { top = 2, right = 2, bottom = 2, left = 2 }
+                [ column
+                    (cupertinoInsetCardAttrs 10 ++ [ width fill, spacing 10 ])
+                    [ row [ width fill, centerY, spacing 12 ]
+                        [ el [ Font.size 12, Font.color (rgb255 93 103 120), Font.semiBold ] (text "Identity") ]
+                    , monitoringMetaGrid compact
+                        [ ( "App", versionPayload.app.name )
+                        , ( "App build", formatAppBuildLabel versionPayload.app.buildTime versionPayload.app.manifestHash )
+                        , ( "Mar version", formatMarVersionLabel versionPayload.mar.version versionPayload.mar.commit )
+                        , ( "Go version", versionPayload.runtimeInfo.goVersion )
+                        , ( "Platform", versionPayload.runtimeInfo.platform )
+                        ]
                     ]
-                    { onPress = Just ToggleMonitoringVersionDetails
-                    , label =
-                        text
-                            (if detailsOpen then
-                                "Hide details"
-
-                             else
-                                "View details"
-                            )
-                    }
-                , if detailsOpen then
-                    column
-                        [ width fill
-                        , spacing 12
-                        ]
-                        [ wrappedRow [ width fill, spacing 12 ]
-                            [ databaseInfoCard "App build time" versionPayload.app.buildTime
-                            , databaseInfoCardWithHint "Manifest hash" versionPayload.app.manifestHash "Changes when the app definition changes."
-                            ]
-                        , wrappedRow [ width fill, spacing 12 ]
-                            [ compactInfoCard "Mar commit" versionPayload.mar.commit
-                            , compactInfoCard "Mar build time" versionPayload.mar.buildTime
-                            , compactInfoCard "Go version" versionPayload.runtimeInfo.goVersion
-                            , compactInfoCard "Platform" versionPayload.runtimeInfo.platform
-                            ]
-                        ]
-
-                  else
-                    none
                 ]
 
 
@@ -6877,19 +6963,6 @@ viewDatabasePanelAdmin model =
                 NotAsked ->
                     "-"
 
-        lastBackupInfo =
-            case model.lastBackup of
-                Just backup ->
-                    column [ width fill, spacing 6 ]
-                        [ el [ Font.bold ] (text "Last backup")
-                        , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text backup.path)
-                        , el [ Font.size 12, Font.color (rgb255 93 103 120) ]
-                            (text ("Removed old backups: " ++ String.fromInt (List.length backup.removed)))
-                        ]
-
-                Nothing ->
-                    none
-
         backupsSection =
             case model.backups of
                 NotAsked ->
@@ -6909,31 +6982,42 @@ viewDatabasePanelAdmin model =
                         paragraph [ Font.size 13, Font.color (rgb255 93 103 120) ]
                             [ text "No backups found yet." ]
 
-                    else
+                    else if compact then
                         column
                             [ width fill
                             , spacing 8
                             ]
-                            (List.concat
-                                [ if compact then
-                                    []
+                            (List.map (backupRow model.apiBase compact False) payload.backups)
 
-                                  else
-                                    [ row
+                    else
+                        column
+                            [ width fill
+                            , Background.color (rgb255 255 255 255)
+                            , Border.rounded 14
+                            , Border.width 1
+                            , Border.color (rgb255 227 234 243)
+                            ]
+                            (List.concat
+                                [ [ row
                                         [ width fill
                                         , spacing 12
-                                        , paddingEach { top = 6, right = 10, bottom = 6, left = 10 }
+                                        , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
                                         , Background.color (rgb255 247 250 254)
-                                        , Border.rounded 8
-                                        , Border.width 1
-                                        , Border.color (rgb255 232 238 246)
+                                        , Border.roundEach { topLeft = 14, topRight = 14, bottomLeft = 0, bottomRight = 0 }
+                                        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+                                        , Border.color (rgb255 227 234 243)
                                         ]
                                         [ el [ width (fillPortion 2), Font.bold ] (text "Backup time")
                                         , el [ width (fillPortion 1), Font.bold ] (text "Size")
                                         , el [ width (fillPortion 4), Font.bold ] (text "File")
+                                        , el [ width (px 56), centerX ] none
                                         ]
-                                    ]
-                                , List.map (backupRow compact) payload.backups
+                                  ]
+                                , List.indexedMap
+                                    (\index backup ->
+                                        backupRow model.apiBase False (index < List.length payload.backups - 1) backup
+                                    )
+                                    payload.backups
                                 ]
                             )
     in
@@ -6950,7 +7034,6 @@ viewDatabasePanelAdmin model =
             , databaseInfoCard "File" dbPath
             , databaseInfoCard "Backups directory" backupDirText
             ]
-        , lastBackupInfo
         , el [ Font.bold, Font.size 18, Font.color (rgb255 39 51 68) ] (text "Available backups")
         , backupsSection
         ]
@@ -6998,8 +7081,8 @@ databaseBackupDir databasePath =
         folderPath ++ "/backups"
 
 
-backupRow : Bool -> BackupFile -> Element Msg
-backupRow compact backup =
+backupRow : String -> Bool -> Bool -> BackupFile -> Element Msg
+backupRow apiBase compact showDivider backup =
     if compact then
         column
             ([ width fill
@@ -7011,19 +7094,32 @@ backupRow compact backup =
             [ backupRowField "Backup time" backup.createdAt
             , backupRowField "Size" (formatBytes backup.sizeBytes)
             , backupRowField "File" (backupDisplayName backup)
+            , el [ alignLeft ] (backupDownloadButton apiBase backup)
             ]
 
     else
         row
-            ([ width fill
-             , spacing 12
-             ]
-                ++ cupertinoInsetCardAttrs 10
-                ++ [ paddingEach { top = 8, right = 10, bottom = 8, left = 10 } ]
-            )
-            [ el [ width (fillPortion 2) ] (text backup.createdAt)
-            , el [ width (fillPortion 1), Font.bold ] (text (formatBytes backup.sizeBytes))
-            , el [ width (fillPortion 4), Font.size 13, Font.color (rgb255 93 103 120) ] (text (backupDisplayName backup))
+            [ width fill
+            , spacing 12
+            , centerY
+            , paddingEach { top = 10, right = 14, bottom = 10, left = 14 }
+            , Border.widthEach
+                { top = 0
+                , right = 0
+                , bottom =
+                    if showDivider then
+                        1
+
+                    else
+                        0
+                , left = 0
+                }
+            , Border.color (rgb255 235 240 247)
+            ]
+            [ el [ width (fillPortion 2), Font.size 14, Font.color (rgb255 39 51 68) ] (text backup.createdAt)
+            , el [ width (fillPortion 1), Font.size 14, Font.bold, Font.color (rgb255 39 51 68) ] (text (formatBytes backup.sizeBytes))
+            , el [ width (fillPortion 4), Font.size 12, Font.color (rgb255 93 103 120) ] (text (backupDisplayName backup))
+            , el [ width (px 56), centerX ] (backupDownloadButton apiBase backup)
             ]
 
 
@@ -7047,11 +7143,61 @@ backupRowField label value =
 
 backupDisplayName : BackupFile -> String
 backupDisplayName backup =
+    backupDownloadName backup
+
+
+backupDownloadName : BackupFile -> String
+backupDownloadName backup =
     if String.trim backup.name /= "" then
         backup.name
 
     else
         lastPathSegment backup.path
+
+
+backupDownloadButton : String -> BackupFile -> Element Msg
+backupDownloadButton apiBase backup =
+    Element.html
+        (Html.a
+            [ HtmlAttr.href (apiBase ++ "/_mar/backups/download?name=" ++ Url.percentEncode (backupDownloadName backup))
+            , HtmlAttr.target "_blank"
+            , HtmlAttr.rel "noopener noreferrer"
+            , HtmlAttr.download (backupDownloadName backup)
+            , HtmlAttr.title ("Download " ++ backupDownloadName backup)
+            , HtmlAttr.style "width" "32px"
+            , HtmlAttr.style "height" "32px"
+            , HtmlAttr.style "display" "inline-flex"
+            , HtmlAttr.style "align-items" "center"
+            , HtmlAttr.style "justify-content" "center"
+            , HtmlAttr.style "background" "#F3F7FC"
+            , HtmlAttr.style "border" "1px solid #E1EAF6"
+            , HtmlAttr.style "border-radius" "999px"
+            , HtmlAttr.style "color" "#2F63D9"
+            , HtmlAttr.style "text-decoration" "none"
+            , HtmlAttr.style "box-sizing" "border-box"
+            ]
+            [ Html.div
+                [ HtmlAttr.style "display" "flex"
+                , HtmlAttr.style "flex-direction" "column"
+                , HtmlAttr.style "align-items" "center"
+                , HtmlAttr.style "justify-content" "center"
+                , HtmlAttr.style "line-height" "1"
+                , HtmlAttr.style "transform" "translateY(1px)"
+                ]
+                [ Html.span
+                    [ HtmlAttr.style "font-size" "14px"
+                    , HtmlAttr.style "font-weight" "700"
+                    ]
+                    [ Html.text "↓" ]
+                , Html.span
+                    [ HtmlAttr.style "font-size" "10px"
+                    , HtmlAttr.style "font-weight" "700"
+                    , HtmlAttr.style "margin-top" "-2px"
+                    ]
+                    [ Html.text "—" ]
+                ]
+            ]
+        )
 
 
 lastPathSegment : String -> String
@@ -7075,6 +7221,110 @@ performanceCard title value =
         [ el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text title)
         , el [ Font.size 14, Font.bold ] (text value)
         ]
+
+
+monitoringMetricSection : Bool -> String -> List ( String, String ) -> Element Msg
+monitoringMetricSection compact title stats =
+    column
+        (cupertinoInsetCardAttrs 10
+            ++ [ width
+                    (if compact then
+                        fill
+
+                     else
+                        fillPortion 1 |> minimum 240
+                    )
+               , spacing 8
+               ]
+        )
+        [ el [ Font.size 12, Font.color (rgb255 93 103 120), Font.semiBold ] (text title)
+        , wrappedRow
+            [ width fill
+            , spacing 8
+            , paddingEach { top = 0, right = 6, bottom = 0, left = 6 }
+            ]
+            (List.map monitoringMetricChip stats)
+        ]
+
+
+monitoringMetricChip : ( String, String ) -> Element Msg
+monitoringMetricChip ( label, value ) =
+    column
+        [ Background.color (rgb255 247 250 254)
+        , Border.rounded 12
+        , Border.width 1
+        , Border.color (rgb255 230 236 244)
+        , paddingEach { top = 8, right = 10, bottom = 8, left = 10 }
+        , spacing 3
+        , width (fill |> minimum 116)
+        ]
+        [ el [ Font.size 10, Font.color (rgb255 106 118 135) ] (text label)
+        , el [ Font.size 13, Font.bold, Font.color (rgb255 39 51 68) ] (text value)
+        ]
+
+
+monitoringMetaChip : ( String, String ) -> Element Msg
+monitoringMetaChip ( label, value ) =
+    column
+        [ Background.color (rgb255 247 250 254)
+        , Border.rounded 12
+        , Border.width 1
+        , Border.color (rgb255 230 236 244)
+        , paddingEach { top = 7, right = 10, bottom = 7, left = 10 }
+        , spacing 3
+        , width fill
+        ]
+        [ el [ Font.size 10, Font.color (rgb255 106 118 135) ] (text label)
+        , paragraph
+            [ width fill
+            , Font.size 12
+            , Font.bold
+            , Font.color (rgb255 39 51 68)
+            , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
+            , htmlAttribute (HtmlAttr.style "word-break" "break-word")
+            ]
+            [ text value ]
+        ]
+
+
+monitoringMetaGrid : Bool -> List ( String, String ) -> Element Msg
+monitoringMetaGrid compact stats =
+    let
+        columns =
+            if compact then
+                1
+
+            else
+                3
+    in
+    column [ width fill, spacing 8 ]
+        (chunkList columns stats
+            |> List.map (monitoringMetaGridRow columns)
+        )
+
+
+monitoringMetaGridRow : Int -> List ( String, String ) -> Element Msg
+monitoringMetaGridRow columns stats =
+    let
+        cells =
+            List.map (\item -> el [ width (fillPortion 1) ] (monitoringMetaChip item)) stats
+
+        fillers =
+            List.repeat (max 0 (columns - List.length stats)) (el [ width (fillPortion 1) ] none)
+    in
+    row [ width fill, spacing 8 ] (cells ++ fillers)
+
+
+chunkList : Int -> List a -> List (List a)
+chunkList size items =
+    if size <= 0 then
+        [ items ]
+
+    else if List.isEmpty items then
+        []
+
+    else
+        List.take size items :: chunkList size (List.drop size items)
 
 
 viewCountsByCode : List PerfStatusCount -> Element Msg
@@ -7141,15 +7391,6 @@ databaseInfoCardWithHint title value hint =
         ]
 
 
-compactInfoCard : String -> String -> Element Msg
-compactInfoCard title value =
-    column
-        (cupertinoInsetCardAttrs 10 ++ [ width fill, spacing 4 ])
-        [ el [ Font.size 11, Font.color (rgb255 93 103 120) ] (text title)
-        , paragraph [ Font.size 12, Font.color (rgb255 41 52 68) ] [ text value ]
-        ]
-
-
 splitLogTimestamp : String -> ( String, String )
 splitLogTimestamp rawTimestamp =
     case String.words (String.trim rawTimestamp) of
@@ -7161,6 +7402,85 @@ splitLogTimestamp rawTimestamp =
 
         _ ->
             ( "-", "-" )
+
+
+formatBuildTimestamp : String -> String
+formatBuildTimestamp rawTimestamp =
+    case String.split "T" (String.trim rawTimestamp) of
+        [ datePart, timePart ] ->
+            formatLogDate datePart ++ ", " ++ formatBuildTimePart timePart
+
+        _ ->
+            rawTimestamp
+
+
+formatAppBuildLabel : String -> String -> String
+formatAppBuildLabel buildTime manifestHash =
+    let
+        buildLabel =
+            formatBuildTimestamp buildTime
+
+        shortHash =
+            shortManifestHash manifestHash
+    in
+    if shortHash == "" then
+        buildLabel
+
+    else
+        buildLabel ++ " (" ++ shortHash ++ ")"
+
+
+formatBuildTimePart : String -> String
+formatBuildTimePart rawTime =
+    let
+        trimmed =
+            String.trim rawTime
+
+        zoneLabel =
+            if String.endsWith "Z" trimmed then
+                " UTC"
+
+            else
+                ""
+    in
+    case String.split ":" trimmed of
+        hour :: minute :: _ ->
+            hour ++ ":" ++ minute ++ zoneLabel
+
+        _ ->
+            rawTime
+
+
+shortManifestHash : String -> String
+shortManifestHash rawHash =
+    let
+        trimmed =
+            String.trim rawHash
+
+        normalized =
+            if String.startsWith "sha256:" trimmed then
+                String.dropLeft 7 trimmed
+
+            else
+                trimmed
+    in
+    String.left 12 normalized
+
+
+formatMarVersionLabel : String -> String -> String
+formatMarVersionLabel version commit =
+    let
+        trimmedVersion =
+            String.trim version
+
+        trimmedCommit =
+            String.trim commit
+    in
+    if trimmedCommit == "" then
+        trimmedVersion
+
+    else
+        trimmedVersion ++ " (" ++ trimmedCommit ++ ")"
 
 
 formatLogDate : String -> String
@@ -7629,16 +7949,11 @@ formCard model entity titleText =
                                 (SetFormField field.name)
 
                         _ ->
-                            Input.text cupertinoTextInputAttrs
-                                { onChange = SetFormField field.name
-                                , text = Dict.get field.name model.formValues |> Maybe.withDefault ""
-                                , placeholder =
-                                    Just
-                                        (Input.placeholder []
-                                            (text (placeholderForField field))
-                                        )
-                                , label = Input.labelAbove [ Font.size 12 ] (text (fieldLabel field.name))
-                                }
+                            formTextField
+                                (fieldLabel field.name)
+                                (Dict.get field.name model.formValues |> Maybe.withDefault "")
+                                (placeholderForField field)
+                                (SetFormField field.name)
     in
     column
         (cupertinoPanelAttrs 10 14)

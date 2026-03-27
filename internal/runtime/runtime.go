@@ -129,19 +129,19 @@ func New(app *model.App) (*Runtime, error) {
 	db := sqlitecli.OpenWithConfig(app.Database, SQLiteConfigForApp(app))
 
 	r := &Runtime{
-		App:            app,
-		DB:             db,
-		entitiesByRes:  map[string]*model.Entity{},
-		entitiesByName: map[string]*model.Entity{},
-		aliasesByName:  map[string]*model.TypeAlias{},
-		actionsByName:  map[string]*model.Action{},
-		rules:          map[string][]compiledRule{},
-		authorizers:    map[string]map[string]expr.Expr{},
-		metrics:        newMetricsCollector(),
-		requestLogs:    newRequestLogStore(requestLogsBufferSize(app)),
-		dbQueries:      newDBQueryCollector(requestLogsBufferSize(app)),
+		App:             app,
+		DB:              db,
+		entitiesByRes:   map[string]*model.Entity{},
+		entitiesByName:  map[string]*model.Entity{},
+		aliasesByName:   map[string]*model.TypeAlias{},
+		actionsByName:   map[string]*model.Action{},
+		rules:           map[string][]compiledRule{},
+		authorizers:     map[string]map[string]expr.Expr{},
+		metrics:         newMetricsCollector(),
+		requestLogs:     newRequestLogStore(requestLogsBufferSize(app)),
+		dbQueries:       newDBQueryCollector(requestLogsBufferSize(app)),
 		requestAuthByID: map[string]authSession{},
-		authRateLimit:  newAuthRateLimiter(authRequestCodeRateLimitPerMinute(app), authLoginRateLimitPerMinute(app)),
+		authRateLimit:   newAuthRateLimiter(authRequestCodeRateLimitPerMinute(app), authLoginRateLimitPerMinute(app)),
 	}
 	db.SetQueryHook(func(event sqlitecli.QueryEvent) {
 		r.dbQueries.record(event)
@@ -494,6 +494,35 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		})
 		return nil
 	}
+	if method == http.MethodGet && path == "/_mar/backups/download" {
+		if !r.authEnabled() {
+			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
+		}
+		if !auth.Authenticated {
+			return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
+		}
+		if !isAdminRole(auth.Role) {
+			return newAPIError(http.StatusForbidden, "admin_role_required", "Admin role required")
+		}
+
+		name := strings.TrimSpace(req.URL.Query().Get("name"))
+		if name == "" {
+			return newAPIError(http.StatusBadRequest, "backup_name_required", "Backup name is required")
+		}
+
+		backup, ok, err := FindSQLiteBackupByName(r.App.Database, name)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return newAPIError(http.StatusNotFound, "backup_not_found", "Backup not found")
+		}
+
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", backup.Name))
+		http.ServeFile(w, req, backup.Path)
+		return nil
+	}
 
 	if r.authEnabled() {
 		switch {
@@ -732,7 +761,7 @@ func (r *Runtime) metricsRouteLabel(req *http.Request) string {
 	}
 
 	switch path {
-	case "/health", "/_mar/schema", "/_mar/version", "/_mar/version/admin", "/_mar/perf", "/_mar/backups", "/_mar/bootstrap-admin":
+	case "/health", "/_mar/schema", "/_mar/version", "/_mar/version/admin", "/_mar/perf", "/_mar/backups", "/_mar/backups/download", "/_mar/bootstrap-admin":
 		return path
 	case "/_mar/request-logs":
 		return path
@@ -741,7 +770,8 @@ func (r *Runtime) metricsRouteLabel(req *http.Request) string {
 		return "/_mar/admin"
 	}
 
-	if strings.HasPrefix(path, "/auth/") {
+	switch path {
+	case "/auth/request-code", "/auth/login", "/auth/logout", "/auth/me":
 		return path
 	}
 
@@ -750,7 +780,7 @@ func (r *Runtime) metricsRouteLabel(req *http.Request) string {
 		if name != "" && !strings.Contains(name, "/") {
 			return "/actions/:name"
 		}
-		return path
+		return "/not-found"
 	}
 
 	for i := range r.App.Entities {
@@ -767,7 +797,7 @@ func (r *Runtime) metricsRouteLabel(req *http.Request) string {
 		}
 	}
 
-	return path
+	return "/not-found"
 }
 
 func isAdminRole(role any) bool {
