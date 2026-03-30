@@ -370,29 +370,63 @@ view model =
 
 page : Model -> Element Msg
 page model =
+    let
+        isAdvanced =
+            topLevelRoute model.route == AdvancedGuide
+
+        pageSpacing =
+            if isAdvanced then
+                0
+
+            else
+                20
+
+        contentSpacing =
+            if isAdvanced then
+                0
+
+            else
+                12
+
+        pageContent =
+            if isAdvanced then
+                [ routeView model
+                , footer
+                ]
+
+            else
+                [ warningBanner
+                , routeView model
+                , footer
+                ]
+    in
     column
         [ width fill
-        , spacing 20
+        , spacing pageSpacing
         , paddingEach { top = 20, right = 20, bottom = 28, left = 20 }
         ]
         [ topBar model
         , column
             [ width fill
-            , spacing 20
+            , spacing contentSpacing
             ]
-            [ warningBanner
-            , routeView model
-            , footer
-            ]
+            pageContent
         ]
 
 
 topBar : Model -> Element Msg
 topBar model =
-    panel
+    panelWithAttributes
+        [ paddingEach { top = 12, right = 16, bottom = 10, left = 16 }
+        , if topLevelRoute model.route == AdvancedGuide then
+            Border.roundEach { topLeft = 12, topRight = 12, bottomLeft = 0, bottomRight = 0 }
+
+          else
+            Border.rounded 12
+        ]
         [ row [ width fill, spacing 10, alignTop ]
             [ websiteLogoBlock
-            , column [ width fill, spacing 12 ]
+            , column [ width fill, spacing 8 ]
                 [ wrappedRow [ width fill, spacing 12 ]
                     [ el [ Font.size 28, Font.bold, Font.color (rgb255 22 57 96) ] (text "Mar")
                     , el [ width fill ] none
@@ -1252,6 +1286,7 @@ advancedLanguagePage model =
         , spacing 20
         ]
         [ advancedSubmenu model.route
+        , warningBanner
         , panel
             [ anchoredSection "advanced-fundamentals"
                 [ sectionTitle "Advanced Guide"
@@ -1383,6 +1418,7 @@ advancedLanguageReferencePage =
         , spacing 20
         ]
         [ advancedSubmenu AdvancedLanguageReference
+        , warningBanner
         , panel
             [ anchoredSection "language-reference"
                 [ sectionTitle "Advanced Guide"
@@ -1471,6 +1507,7 @@ advancedRuntimePage model =
         , spacing 20
         ]
         [ advancedSubmenu model.route
+        , warningBanner
         , panel
             [ anchoredSection "runtime"
                 [ sectionTitle "Advanced Guide"
@@ -1529,6 +1566,7 @@ advancedToolingPage model =
         , spacing 20
         ]
         [ advancedSubmenu model.route
+        , warningBanner
         , panel
             [ anchoredSection "tooling"
                 [ sectionTitle "Advanced Guide"
@@ -1641,6 +1679,7 @@ advancedDeployPage model =
         , spacing 20
         ]
         [ advancedSubmenu AdvancedDeploy
+        , warningBanner
         , panel
             [ anchoredSection "deploy"
                 [ sectionTitle "Advanced Guide"
@@ -1733,6 +1772,7 @@ advancedCompilerPage =
         , spacing 20
         ]
         [ advancedSubmenu AdvancedCompiler
+        , warningBanner
         , panel
             [ anchoredSection "compiler"
                 [ sectionTitle "Advanced Guide"
@@ -2619,9 +2659,17 @@ commandSnippet model command =
 
 advancedSubmenu : Route -> Element Msg
 advancedSubmenu current =
-    panel
+    panelWithAttributes
+        [ moveDown -6
+        , spacing 8
+        , paddingEach { top = 10, right = 12, bottom = 10, left = 112 }
+        , Background.color (rgb255 228 238 252)
+        , Border.widthEach { top = 0, right = 1, bottom = 1, left = 1 }
+        , Border.color (rgb255 184 205 234)
+        , Border.roundEach { topLeft = 0, topRight = 0, bottomLeft = 12, bottomRight = 12 }
+        ]
         [ wrappedRow [ width fill, spacing 8 ]
-            [ sectionNavItem current AdvancedFundamentals "Fundamentals"
+            [ sectionNavItem current AdvancedFundamentals "Core Concepts"
             , sectionNavItem current AdvancedRuntime "Runtime"
             , sectionNavItem current AdvancedTooling "Tooling"
             , sectionNavItem current AdvancedDeploy "Deploy"
@@ -2642,7 +2690,39 @@ sectionNavItem current target label =
                 _ ->
                     current == target
     in
-    navLink label (routeHref target) isCurrent
+    sectionNavLink label (routeHref target) isCurrent
+
+
+sectionNavLink : String -> String -> Bool -> Element Msg
+sectionNavLink label target isCurrent =
+    link
+        (if isCurrent then
+            [ Font.size 14
+            , Font.semiBold
+            , Font.color (rgb255 24 73 126)
+            , Background.color (rgb255 226 238 253)
+            , Border.width 1
+            , Border.color (rgb255 171 200 235)
+            , Border.rounded 999
+            , paddingEach { top = 6, right = 10, bottom = 6, left = 10 }
+            , htmlAttribute (HtmlAttr.style "cursor" "pointer")
+            ]
+
+         else
+            [ Font.size 14
+            , Font.semiBold
+            , Font.color (rgb255 64 88 118)
+            , Background.color (rgb255 250 252 255)
+            , Border.width 1
+            , Border.color (rgb255 205 217 234)
+            , Border.rounded 999
+            , paddingEach { top = 6, right = 10, bottom = 6, left = 10 }
+            , htmlAttribute (HtmlAttr.style "cursor" "pointer")
+            ]
+        )
+        { url = target
+        , label = text label
+        }
 
 
 advancedPager : Maybe Route -> Maybe Route -> Element Msg
@@ -2709,7 +2789,7 @@ routeLabel : Route -> String
 routeLabel route =
     case route of
         AdvancedFundamentals ->
-            "Fundamentals"
+            "Core Concepts"
 
         AdvancedLanguageReference ->
             "Language Reference"
