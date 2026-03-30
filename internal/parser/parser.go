@@ -153,7 +153,7 @@ func Parse(source string) (*model.App, error) {
 		if m := match(`^port\s+([0-9]{1,5})$`, trimmed); m != nil {
 			port := mustInt(m[1])
 			if port < 1 || port > 65535 {
-				return nil, fmt.Errorf("line %d: invalid port %d", cur.number, port)
+				return nil, parserErrorf("line %d: invalid port %d", cur.number, port)
 			}
 			app.Port = port
 			advance()
@@ -169,7 +169,7 @@ func Parse(source string) (*model.App, error) {
 
 		if trimmed == "system {" {
 			if app.System != nil {
-				return nil, fmt.Errorf("line %d: system block already declared", cur.number)
+				return nil, parserErrorf("line %d: system block already declared", cur.number)
 			}
 			systemCfg, err := parseSystemBlock(lines, &idx)
 			if err != nil {
@@ -181,7 +181,7 @@ func Parse(source string) (*model.App, error) {
 
 		if trimmed == "public {" {
 			if app.Public != nil {
-				return nil, fmt.Errorf("line %d: public block already declared", cur.number)
+				return nil, parserErrorf("line %d: public block already declared", cur.number)
 			}
 			publicCfg, err := parsePublicBlock(lines, &idx)
 			if err != nil {
@@ -193,7 +193,7 @@ func Parse(source string) (*model.App, error) {
 
 		if trimmed == "auth {" {
 			if app.Auth != nil {
-				return nil, fmt.Errorf("line %d: auth block already declared", cur.number)
+				return nil, parserErrorf("line %d: auth block already declared", cur.number)
 			}
 			auth, err := parseAuthBlock(lines, &idx)
 			if err != nil {
@@ -207,7 +207,7 @@ func Parse(source string) (*model.App, error) {
 			entityName := m[1]
 			if entityName == "User" {
 				if userExtension != nil {
-					return nil, fmt.Errorf("line %d: entity User already declared", cur.number)
+					return nil, parserErrorf("line %d: entity User already declared", cur.number)
 				}
 				entity, err := parseUserExtensionBlock(lines, &idx)
 				if err != nil {
@@ -217,7 +217,7 @@ func Parse(source string) (*model.App, error) {
 				continue
 			}
 			if seenEntities[entityName] {
-				return nil, fmt.Errorf("line %d: entity %q already declared", cur.number, entityName)
+				return nil, parserErrorf("line %d: entity %q already declared", cur.number, entityName)
 			}
 			entity, err := parseEntityBlock(lines, &idx, entityName)
 			if err != nil {
@@ -250,7 +250,7 @@ func Parse(source string) (*model.App, error) {
 	}
 
 	if app.AppName == "" {
-		return nil, fmt.Errorf("missing app declaration")
+		return nil, parserErrorf("missing app declaration")
 	}
 	if app.Auth == nil {
 		app.Auth = defaultAuthConfig()
@@ -311,7 +311,7 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 		if m := match(`^code_ttl_minutes\s+([0-9]{1,4})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minCodeTTLMinutes || value > maxCodeTTLMinutes {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: auth.code_ttl_minutes must be between %d and %d",
 					ln.number,
 					minCodeTTLMinutes,
@@ -320,11 +320,13 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 			}
 			auth.CodeTTLMinutes = value
 			matched = true
+		} else if m := match(`^code_ttl_minutes\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: auth.code_ttl_minutes must be an integer between %d and %d.", ln.number, minCodeTTLMinutes, maxCodeTTLMinutes)
 		}
 		if m := match(`^session_ttl_hours\s+([0-9]{1,4})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minSessionTTLHours || value > maxSessionTTLHours {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: auth.session_ttl_hours must be between %d and %d",
 					ln.number,
 					minSessionTTLHours,
@@ -333,11 +335,13 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 			}
 			auth.SessionTTLHours = value
 			matched = true
+		} else if m := match(`^session_ttl_hours\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: auth.session_ttl_hours must be an integer between %d and %d.", ln.number, minSessionTTLHours, maxSessionTTLHours)
 		}
 		if m := match(`^auth_request_code_rate_limit_per_minute\s+([0-9]{1,5})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minAuthRateLimitPerMinute || value > maxAuthRateLimitPerMinute {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: auth.auth_request_code_rate_limit_per_minute must be between %d and %d",
 					ln.number,
 					minAuthRateLimitPerMinute,
@@ -346,11 +350,13 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 			}
 			auth.AuthRequestCodeRateLimit = intPtr(value)
 			matched = true
+		} else if m := match(`^auth_request_code_rate_limit_per_minute\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: auth.auth_request_code_rate_limit_per_minute must be an integer between %d and %d.", ln.number, minAuthRateLimitPerMinute, maxAuthRateLimitPerMinute)
 		}
 		if m := match(`^auth_login_rate_limit_per_minute\s+([0-9]{1,5})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minAuthRateLimitPerMinute || value > maxAuthRateLimitPerMinute {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: auth.auth_login_rate_limit_per_minute must be between %d and %d",
 					ln.number,
 					minAuthRateLimitPerMinute,
@@ -359,11 +365,13 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 			}
 			auth.AuthLoginRateLimit = intPtr(value)
 			matched = true
+		} else if m := match(`^auth_login_rate_limit_per_minute\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: auth.auth_login_rate_limit_per_minute must be an integer between %d and %d.", ln.number, minAuthRateLimitPerMinute, maxAuthRateLimitPerMinute)
 		}
 		if m := match(`^admin_ui_session_ttl_hours\s+([0-9]{1,4})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minSessionTTLHours || value > maxSessionTTLHours {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: auth.admin_ui_session_ttl_hours must be between %d and %d",
 					ln.number,
 					minSessionTTLHours,
@@ -372,12 +380,14 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 			}
 			auth.AdminUISessionTTLHours = intPtr(value)
 			matched = true
+		} else if m := match(`^admin_ui_session_ttl_hours\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: auth.admin_ui_session_ttl_hours must be an integer between %d and %d.", ln.number, minSessionTTLHours, maxSessionTTLHours)
 		}
 		if m := match(`^security_frame_policy\s+(deny|sameorigin)$`, trimmed); m != nil {
 			auth.SecurityFramePolicy = stringPtr(m[1])
 			matched = true
 		} else if m := match(`^security_frame_policy\s+(.+)$`, trimmed); m != nil {
-			return nil, fmt.Errorf(
+			return nil, parserErrorf(
 				"line %d: auth.security_frame_policy must be one of: deny, sameorigin",
 				ln.number,
 			)
@@ -386,7 +396,7 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 			auth.SecurityReferrerPolicy = stringPtr(m[1])
 			matched = true
 		} else if m := match(`^security_referrer_policy\s+(.+)$`, trimmed); m != nil {
-			return nil, fmt.Errorf(
+			return nil, parserErrorf(
 				"line %d: auth.security_referrer_policy must be one of: strict-origin-when-cross-origin, no-referrer",
 				ln.number,
 			)
@@ -395,7 +405,7 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 			auth.SecurityContentNoSniff = boolPtr(m[1] == "true")
 			matched = true
 		} else if m := match(`^security_content_type_nosniff\s+(.+)$`, trimmed); m != nil {
-			return nil, fmt.Errorf(
+			return nil, parserErrorf(
 				"line %d: auth.security_content_type_nosniff must be true or false",
 				ln.number,
 			)
@@ -403,6 +413,8 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 		if m := match(`^email_transport\s+(console|smtp)$`, trimmed); m != nil {
 			auth.EmailTransport = m[1]
 			matched = true
+		} else if m := match(`^email_transport\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: auth.email_transport must be one of: console, smtp.", ln.number)
 		}
 		if m := match(`^email_from\s+"([^"]+)"$`, trimmed); m != nil {
 			auth.EmailFrom = m[1]
@@ -419,10 +431,12 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 		if m := match(`^smtp_port\s+([0-9]{1,5})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < 1 || value > 65535 {
-				return nil, fmt.Errorf("line %d: auth.smtp_port must be between 1 and 65535", ln.number)
+				return nil, parserErrorf("line %d: auth.smtp_port must be between 1 and 65535", ln.number)
 			}
 			auth.SMTPPort = value
 			matched = true
+		} else if m := match(`^smtp_port\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: auth.smtp_port must be an integer between 1 and 65535.", ln.number)
 		}
 		if m := match(`^smtp_username\s+"([^"]+)"$`, trimmed); m != nil {
 			auth.SMTPUsername = m[1]
@@ -435,6 +449,8 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 		if m := match(`^smtp_starttls\s+(true|false)$`, trimmed); m != nil {
 			auth.SMTPStartTLS = m[1] == "true"
 			matched = true
+		} else if m := match(`^smtp_starttls\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: auth.smtp_starttls must be true or false.", ln.number)
 		}
 		if !matched {
 			return nil, unknownStatementError(ln.number, "auth", trimmed, authStatementCandidates)
@@ -442,7 +458,7 @@ func parseAuthBlock(lines []line, idx *int) (*model.AuthConfig, error) {
 		(*idx)++
 	}
 
-	return nil, fmt.Errorf("auth block is missing closing }")
+	return nil, parserErrorf("auth block is missing closing }")
 }
 
 func parseUserExtensionBlock(lines []line, idx *int) (*model.Entity, error) {
@@ -493,7 +509,7 @@ func parseUserExtensionBlock(lines []line, idx *int) (*model.Entity, error) {
 			}
 			if isBuiltInUserField(fieldName) {
 				if !matchesBuiltInUserField(field) {
-					return nil, fmt.Errorf("line %d: entity User cannot redefine built-in field %q", ln.number, fieldName)
+					return nil, parserErrorf("line %d: entity User cannot redefine built-in field %q", ln.number, fieldName)
 				}
 				(*idx)++
 				continue
@@ -512,10 +528,10 @@ func parseUserExtensionBlock(lines []line, idx *int) (*model.Entity, error) {
 			continue
 		}
 
-		return nil, fmt.Errorf("line %d: invalid entity statement %q", ln.number, trimmed)
+		return nil, parserErrorf("line %d: invalid entity statement %q", ln.number, trimmed)
 	}
 
-	return nil, fmt.Errorf("entity User is missing closing }")
+	return nil, parserErrorf("entity User is missing closing }")
 }
 
 func isBuiltInUserField(name string) bool {
@@ -578,19 +594,19 @@ func parsePublicBlock(lines []line, idx *int) (*model.PublicConfig, error) {
 		if trimmed == "}" {
 			(*idx)++
 			if strings.TrimSpace(publicCfg.Dir) == "" {
-				return nil, fmt.Errorf("line %d: public.dir is required", ln.number)
+				return nil, parserErrorf("line %d: public.dir is required", ln.number)
 			}
 
 			publicCfg.Mount = normalizePublicMount(publicCfg.Mount)
 			if !strings.HasPrefix(publicCfg.Mount, "/") {
-				return nil, fmt.Errorf("line %d: public.mount must start with '/'", ln.number)
+				return nil, parserErrorf("line %d: public.mount must start with '/'", ln.number)
 			}
 			if publicCfg.SPAFallback != "" {
 				if strings.HasPrefix(publicCfg.SPAFallback, "/") {
-					return nil, fmt.Errorf("line %d: public.spa_fallback must be a relative file path", ln.number)
+					return nil, parserErrorf("line %d: public.spa_fallback must be a relative file path", ln.number)
 				}
 				if strings.Contains(publicCfg.SPAFallback, "..") {
-					return nil, fmt.Errorf("line %d: public.spa_fallback cannot contain '..'", ln.number)
+					return nil, parserErrorf("line %d: public.spa_fallback cannot contain '..'", ln.number)
 				}
 			}
 			return publicCfg, nil
@@ -616,7 +632,7 @@ func parsePublicBlock(lines []line, idx *int) (*model.PublicConfig, error) {
 		(*idx)++
 	}
 
-	return nil, fmt.Errorf("public block is missing closing }")
+	return nil, parserErrorf("public block is missing closing }")
 }
 
 func normalizePublicMount(mount string) string {
@@ -655,7 +671,7 @@ func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
 		if m := match(`^request_logs_buffer\s+([0-9]{1,6})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minRequestLogsBuffer || value > maxRequestLogsBuffer {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: system.request_logs_buffer must be between %d and %d",
 					ln.number,
 					minRequestLogsBuffer,
@@ -665,11 +681,13 @@ func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
 			cfg.RequestLogsBuffer = value
 			(*idx)++
 			continue
+		} else if m := match(`^request_logs_buffer\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: system.request_logs_buffer must be an integer between %d and %d.", ln.number, minRequestLogsBuffer, maxRequestLogsBuffer)
 		}
 		if m := match(`^http_max_request_body_mb\s+([0-9]{1,4})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minHTTPMaxRequestBodyMB || value > maxHTTPMaxRequestBodyMB {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: system.http_max_request_body_mb must be between %d and %d",
 					ln.number,
 					minHTTPMaxRequestBodyMB,
@@ -679,26 +697,34 @@ func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
 			cfg.HTTPMaxRequestBodyMB = intPtr(value)
 			(*idx)++
 			continue
+		} else if m := match(`^http_max_request_body_mb\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: system.http_max_request_body_mb must be an integer between %d and %d.", ln.number, minHTTPMaxRequestBodyMB, maxHTTPMaxRequestBodyMB)
 		}
 		if m := match(`^sqlite_journal_mode\s+(wal|delete|truncate|persist|memory|off)$`, trimmed); m != nil {
 			cfg.SQLiteJournalMode = stringPtr(m[1])
 			(*idx)++
 			continue
+		} else if m := match(`^sqlite_journal_mode\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: system.sqlite_journal_mode must be one of: wal, delete, truncate, persist, memory, off.", ln.number)
 		}
 		if m := match(`^sqlite_synchronous\s+(off|normal|full|extra)$`, trimmed); m != nil {
 			cfg.SQLiteSynchronous = stringPtr(m[1])
 			(*idx)++
 			continue
+		} else if m := match(`^sqlite_synchronous\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: system.sqlite_synchronous must be one of: off, normal, full, extra.", ln.number)
 		}
 		if m := match(`^sqlite_foreign_keys\s+(true|false)$`, trimmed); m != nil {
 			cfg.SQLiteForeignKeys = boolPtr(m[1] == "true")
 			(*idx)++
 			continue
+		} else if m := match(`^sqlite_foreign_keys\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: system.sqlite_foreign_keys must be true or false.", ln.number)
 		}
 		if m := match(`^sqlite_busy_timeout_ms\s+([0-9]{1,7})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minSQLiteBusyTimeoutMs || value > maxSQLiteBusyTimeoutMs {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: system.sqlite_busy_timeout_ms must be between %d and %d",
 					ln.number,
 					minSQLiteBusyTimeoutMs,
@@ -708,11 +734,13 @@ func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
 			cfg.SQLiteBusyTimeoutMs = intPtr(value)
 			(*idx)++
 			continue
+		} else if m := match(`^sqlite_busy_timeout_ms\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: system.sqlite_busy_timeout_ms must be an integer between %d and %d.", ln.number, minSQLiteBusyTimeoutMs, maxSQLiteBusyTimeoutMs)
 		}
 		if m := match(`^sqlite_wal_autocheckpoint\s+([0-9]{1,7})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minSQLiteWALAutoCheckpoint || value > maxSQLiteWALAutoCheckpoint {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: system.sqlite_wal_autocheckpoint must be between %d and %d",
 					ln.number,
 					minSQLiteWALAutoCheckpoint,
@@ -722,11 +750,13 @@ func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
 			cfg.SQLiteWALAutoCheckpoint = intPtr(value)
 			(*idx)++
 			continue
+		} else if m := match(`^sqlite_wal_autocheckpoint\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: system.sqlite_wal_autocheckpoint must be an integer between %d and %d.", ln.number, minSQLiteWALAutoCheckpoint, maxSQLiteWALAutoCheckpoint)
 		}
 		if m := match(`^sqlite_journal_size_limit_mb\s+(-?[0-9]{1,4})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minSQLiteJournalSizeLimitMB || value > maxSQLiteJournalSizeLimitMB {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: system.sqlite_journal_size_limit_mb must be between %d and %d",
 					ln.number,
 					minSQLiteJournalSizeLimitMB,
@@ -736,11 +766,13 @@ func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
 			cfg.SQLiteJournalSizeLimitMB = intPtr(value)
 			(*idx)++
 			continue
+		} else if m := match(`^sqlite_journal_size_limit_mb\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: system.sqlite_journal_size_limit_mb must be an integer between %d and %d.", ln.number, minSQLiteJournalSizeLimitMB, maxSQLiteJournalSizeLimitMB)
 		}
 		if m := match(`^sqlite_mmap_size_mb\s+([0-9]{1,5})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minSQLiteMmapSizeMB || value > maxSQLiteMmapSizeMB {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: system.sqlite_mmap_size_mb must be between %d and %d",
 					ln.number,
 					minSQLiteMmapSizeMB,
@@ -750,11 +782,13 @@ func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
 			cfg.SQLiteMmapSizeMB = intPtr(value)
 			(*idx)++
 			continue
+		} else if m := match(`^sqlite_mmap_size_mb\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: system.sqlite_mmap_size_mb must be an integer between %d and %d.", ln.number, minSQLiteMmapSizeMB, maxSQLiteMmapSizeMB)
 		}
 		if m := match(`^sqlite_cache_size_kb\s+([0-9]{1,7})$`, trimmed); m != nil {
 			value := mustInt(m[1])
 			if value < minSQLiteCacheSizeKB || value > maxSQLiteCacheSizeKB {
-				return nil, fmt.Errorf(
+				return nil, parserErrorf(
 					"line %d: system.sqlite_cache_size_kb must be between %d and %d",
 					ln.number,
 					minSQLiteCacheSizeKB,
@@ -764,12 +798,14 @@ func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
 			cfg.SQLiteCacheSizeKB = intPtr(value)
 			(*idx)++
 			continue
+		} else if m := match(`^sqlite_cache_size_kb\s+(.+)$`, trimmed); m != nil {
+			return nil, parserErrorf("line %d: system.sqlite_cache_size_kb must be an integer between %d and %d.", ln.number, minSQLiteCacheSizeKB, maxSQLiteCacheSizeKB)
 		}
 
 		return nil, unknownStatementError(ln.number, "system", trimmed, systemStatementCandidates)
 	}
 
-	return nil, fmt.Errorf("system block is missing closing }")
+	return nil, parserErrorf("system block is missing closing }")
 }
 
 func stringPtr(v string) *string {
@@ -784,6 +820,43 @@ func boolPtr(v bool) *bool {
 	return &v
 }
 
+type punctuatedParserError struct {
+	message string
+	base    error
+}
+
+func (e punctuatedParserError) Error() string {
+	return e.message
+}
+
+func (e punctuatedParserError) Unwrap() error {
+	return e.base
+}
+
+func parserErrorf(format string, args ...any) error {
+	base := fmt.Errorf(format, args...)
+	message := finalizeParserErrorMessage(base.Error())
+	if message == base.Error() {
+		return base
+	}
+	return punctuatedParserError{
+		message: message,
+		base:    base,
+	}
+}
+
+func finalizeParserErrorMessage(message string) string {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return message
+	}
+	last := trimmed[len(trimmed)-1]
+	if last == '.' || last == '?' {
+		return message
+	}
+	return message + "."
+}
+
 func unknownStatementError(lineNumber int, scope, trimmed string, candidates []string) error {
 	label := "unknown statement"
 	if strings.TrimSpace(scope) != "" {
@@ -794,7 +867,7 @@ func unknownStatementError(lineNumber int, scope, trimmed string, candidates []s
 	if hint := misplacedStatementHint(scope, key); hint != "" {
 		base += "\n\nHint:\n  " + hint
 	}
-	return fmt.Errorf("%s", base)
+	return parserErrorf("%s", base)
 }
 
 func misplacedStatementHint(scope, key string) string {
@@ -859,7 +932,7 @@ func statementSuggestionKey(trimmed string) string {
 // parseEntityBlock parses a single entity body including fields, rules, and authorize clauses.
 func parseEntityBlock(lines []line, idx *int, name string) (*model.Entity, error) {
 	if !upperNameRe.MatchString(name) {
-		return nil, fmt.Errorf("entity name %q is invalid", name)
+		return nil, parserErrorf("entity name %q is invalid", name)
 	}
 
 	ent := &model.Entity{Name: name}
@@ -880,7 +953,7 @@ func parseEntityBlock(lines []line, idx *int, name string) (*model.Entity, error
 				if hasLinePrefixedError(err) {
 					return nil, err
 				}
-				return nil, fmt.Errorf("line %d: %w", ln.number, err)
+				return nil, parserErrorf("line %d: %w", ln.number, err)
 			}
 			return ent, nil
 		}
@@ -924,16 +997,16 @@ func parseEntityBlock(lines []line, idx *int, name string) (*model.Entity, error
 			continue
 		}
 
-		return nil, fmt.Errorf("line %d: invalid entity statement %q", ln.number, trimmed)
+		return nil, parserErrorf("line %d: invalid entity statement %q", ln.number, trimmed)
 	}
 
-	return nil, fmt.Errorf("entity %s is missing closing }", name)
+	return nil, parserErrorf("entity %s is missing closing }", name)
 }
 
 // finalizeEntity resolves derived metadata and validates rule/authorization expressions.
 func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.Authorization) error {
 	if len(ent.Fields) == 0 {
-		return fmt.Errorf("entity %s has no fields", ent.Name)
+		return parserErrorf("entity %s has no fields", ent.Name)
 	}
 	ent.Fields = append(ent.Fields,
 		model.Field{Name: "created_at", Type: "DateTime", Auto: true},
@@ -944,24 +1017,24 @@ func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.A
 	seenFields := map[string]bool{}
 	for _, f := range ent.Fields {
 		if !fieldNameRe.MatchString(f.Name) {
-			return fmt.Errorf("field name %q in %s is invalid", f.Name, ent.Name)
+			return parserErrorf("field name %q in %s is invalid", f.Name, ent.Name)
 		}
 		if seenFields[f.Name] {
-			return fmt.Errorf("duplicate field %q in %s", f.Name, ent.Name)
+			return parserErrorf("duplicate field %q in %s", f.Name, ent.Name)
 		}
 		seenFields[f.Name] = true
 		if f.Default != nil && f.Primary {
-			return fmt.Errorf("field %s in %s cannot use default together with primary", f.Name, ent.Name)
+			return parserErrorf("field %s in %s cannot use default together with primary", f.Name, ent.Name)
 		}
 		if f.Default != nil && f.Auto {
-			return fmt.Errorf("field %s in %s cannot use default together with auto", f.Name, ent.Name)
+			return parserErrorf("field %s in %s cannot use default together with auto", f.Name, ent.Name)
 		}
 		if f.Primary {
 			primaryCount++
 		}
 	}
 	if primaryCount > 1 {
-		return fmt.Errorf("entity %s has multiple primary fields", ent.Name)
+		return parserErrorf("entity %s has multiple primary fields", ent.Name)
 	}
 	if primaryCount == 0 {
 		ent.Fields = append([]model.Field{{
@@ -978,7 +1051,7 @@ func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.A
 		}
 	}
 	if ent.PrimaryKey == "" {
-		return fmt.Errorf("entity %s requires a primary key", ent.Name)
+		return parserErrorf("entity %s requires a primary key", ent.Name)
 	}
 
 	ent.Table = pluralize(toSnake(ent.Name))
@@ -992,21 +1065,21 @@ func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.A
 	for _, rule := range rawRules {
 		if strings.TrimSpace(rule.Message) == "" {
 			if rule.LineNo > 0 {
-				return fmt.Errorf("line %d: rule message cannot be empty", rule.LineNo)
+				return parserErrorf("line %d: rule message cannot be empty", rule.LineNo)
 			}
-			return fmt.Errorf("rule message cannot be empty")
+			return parserErrorf("rule message cannot be empty")
 		}
 		if strings.TrimSpace(rule.Expression) == "" {
 			if rule.LineNo > 0 {
-				return fmt.Errorf("line %d: rule expression cannot be empty", rule.LineNo)
+				return parserErrorf("line %d: rule expression cannot be empty", rule.LineNo)
 			}
-			return fmt.Errorf("rule expression cannot be empty")
+			return parserErrorf("rule expression cannot be empty")
 		}
 		if _, err := expr.Parse(rule.Expression, expr.ParserOptions{AllowedVariables: allowedVars}); err != nil {
 			if rule.LineNo > 0 {
-				return fmt.Errorf("line %d: invalid rule expression %q (%w)", rule.LineNo, rule.Expression, err)
+				return parserErrorf("line %d: invalid rule expression %q (%w)", rule.LineNo, rule.Expression, err)
 			}
-			return fmt.Errorf("invalid rule expression %q (%w)", rule.Expression, err)
+			return parserErrorf("invalid rule expression %q (%w)", rule.Expression, err)
 		}
 		ent.Rules = append(ent.Rules, rule)
 	}
@@ -1019,16 +1092,16 @@ func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.A
 	for _, authz := range rawAuthz {
 		if seenAction[authz.Action] {
 			if authz.LineNo > 0 {
-				return fmt.Errorf("line %d: duplicate authorize rule for %q", authz.LineNo, authz.Action)
+				return parserErrorf("line %d: duplicate authorize rule for %q", authz.LineNo, authz.Action)
 			}
-			return fmt.Errorf("duplicate authorize rule for %q", authz.Action)
+			return parserErrorf("duplicate authorize rule for %q", authz.Action)
 		}
 		seenAction[authz.Action] = true
 		if _, err := expr.Parse(authz.Expression, expr.ParserOptions{AllowedVariables: exprVars}); err != nil {
 			if authz.LineNo > 0 {
-				return fmt.Errorf("line %d: invalid authorization expression %q (%w)", authz.LineNo, authz.Expression, err)
+				return parserErrorf("line %d: invalid authorization expression %q (%w)", authz.LineNo, authz.Expression, err)
 			}
-			return fmt.Errorf("invalid authorization expression %q (%w)", authz.Expression, err)
+			return parserErrorf("invalid authorization expression %q (%w)", authz.Expression, err)
 		}
 		if authz.Action == "all" {
 			hasAll = true
@@ -1069,17 +1142,17 @@ func validateEntityPredicates(app *model.App) error {
 		for _, rule := range ent.Rules {
 			if err := validateBooleanExpr(rule.Expression, variableTypes, false); err != nil {
 				if rule.LineNo > 0 {
-					return fmt.Errorf("line %d: invalid rule expression %q (%w)", rule.LineNo, rule.Expression, err)
+					return parserErrorf("line %d: invalid rule expression %q (%w)", rule.LineNo, rule.Expression, err)
 				}
-				return fmt.Errorf("invalid rule expression %q (%w)", rule.Expression, err)
+				return parserErrorf("invalid rule expression %q (%w)", rule.Expression, err)
 			}
 		}
 		for _, authz := range ent.Authorizations {
 			if err := validateBooleanExpr(authz.Expression, variableTypes, true); err != nil {
 				if authz.LineNo > 0 {
-					return fmt.Errorf("line %d: invalid authorization expression %q (%w)", authz.LineNo, authz.Expression, err)
+					return parserErrorf("line %d: invalid authorization expression %q (%w)", authz.LineNo, authz.Expression, err)
 				}
-				return fmt.Errorf("invalid authorization expression %q (%w)", authz.Expression, err)
+				return parserErrorf("invalid authorization expression %q (%w)", authz.Expression, err)
 			}
 		}
 	}
@@ -1103,22 +1176,22 @@ func resolveEntityRelations(app *model.App) error {
 			field := &ent.Fields[j]
 			if field.RelationEntity != "" {
 				if field.CurrentUser && ent.Name == "User" {
-					return fmt.Errorf("entity %s field %s cannot use belongs_to current_user", ent.Name, field.Name)
+					return parserErrorf("entity %s field %s cannot use belongs_to current_user", ent.Name, field.Name)
 				}
 				target := entitiesByName[field.RelationEntity]
 				if target == nil {
-					return fmt.Errorf("entity %s field %s references unknown entity %s", ent.Name, field.Name, field.RelationEntity)
+					return parserErrorf("entity %s field %s references unknown entity %s", ent.Name, field.Name, field.RelationEntity)
 				}
 				pk := entityPrimaryField(target)
 				if pk == nil || !isPrimitiveFieldType(pk.Type) {
-					return fmt.Errorf("entity %s field %s cannot belong_to %s because %s primary key is unsupported", ent.Name, field.Name, field.RelationEntity, field.RelationEntity)
+					return parserErrorf("entity %s field %s cannot belong_to %s because %s primary key is unsupported", ent.Name, field.Name, field.RelationEntity, field.RelationEntity)
 				}
 				field.Type = pk.Type
 			}
 
 			storageName := model.FieldStorageName(field)
 			if seenStorageNames[storageName] {
-				return fmt.Errorf("entity %s has duplicate stored field %q", ent.Name, storageName)
+				return parserErrorf("entity %s has duplicate stored field %q", ent.Name, storageName)
 			}
 			seenStorageNames[storageName] = true
 		}
@@ -1132,7 +1205,7 @@ func parseTypeAlias(lines []line, idx *int) (*model.TypeAlias, error) {
 	trimmed := strings.TrimSpace(start.text)
 	m := match(`^type\s+alias\s+([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.*)$`, trimmed)
 	if m == nil {
-		return nil, fmt.Errorf("line %d: invalid type alias declaration", start.number)
+		return nil, parserErrorf("line %d: invalid type alias declaration", start.number)
 	}
 	name := m[1]
 	rest := strings.TrimSpace(m[2])
@@ -1154,14 +1227,14 @@ func parseTypeAlias(lines []line, idx *int) (*model.TypeAlias, error) {
 	}
 
 	if !strings.HasPrefix(rest, "{") {
-		return nil, fmt.Errorf("line %d: type alias %s must start with a record. Try: type alias %s = { field : String }", curLine, name, name)
+		return nil, parserErrorf("line %d: type alias %s must start with a record. Try: type alias %s = { field : String }", curLine, name, name)
 	}
 	rest = strings.TrimSpace(strings.TrimPrefix(rest, "{"))
 	for {
 		if rest == "" {
 			(*idx)++
 			if *idx >= len(lines) {
-				return nil, fmt.Errorf("type alias %s is missing closing }", name)
+				return nil, parserErrorf("type alias %s is missing closing }", name)
 			}
 			curLine = lines[*idx].number
 			rest = strings.TrimSpace(lines[*idx].text)
@@ -1179,11 +1252,11 @@ func parseTypeAlias(lines []line, idx *int) (*model.TypeAlias, error) {
 				}
 			}
 			if strings.TrimSpace(after) != "" {
-				return nil, fmt.Errorf("line %d: unexpected tokens after type alias %s record", curLine, name)
+				return nil, parserErrorf("line %d: unexpected tokens after type alias %s record", curLine, name)
 			}
 			(*idx)++
 			if len(alias.Fields) == 0 {
-				return nil, fmt.Errorf("line %d: type alias %s must declare at least one field", start.number, name)
+				return nil, parserErrorf("line %d: type alias %s must declare at least one field", start.number, name)
 			}
 			return alias, nil
 		}
@@ -1203,11 +1276,11 @@ func parseAliasFieldToken(alias *model.TypeAlias, seen map[string]bool, token st
 	}
 	m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(`+marTypePattern+`)$`, token)
 	if m == nil {
-		return fmt.Errorf("line %d: invalid field in type alias %s. Expected `name : Type` with Int/String/Bool/Float/Date/DateTime", lineNo, alias.Name)
+		return parserErrorf("line %d: invalid field in type alias %s. Expected `name : Type` with Int/String/Bool/Float/Date/DateTime", lineNo, alias.Name)
 	}
 	name := m[1]
 	if seen[name] {
-		return fmt.Errorf("line %d: duplicate field %q in type alias %s", lineNo, name, alias.Name)
+		return parserErrorf("line %d: duplicate field %q in type alias %s", lineNo, name, alias.Name)
 	}
 	seen[name] = true
 	alias.Fields = append(alias.Fields, model.AliasField{Name: name, Type: m[2]})
@@ -1221,7 +1294,7 @@ func parseBelongsToStatement(trimmed string, lineNo int) (*model.Field, bool, er
 
 	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "belongs_to"))
 	if rest == "" {
-		return nil, true, fmt.Errorf("line %d: belongs_to requires a target entity", lineNo)
+		return nil, true, parserErrorf("line %d: belongs_to requires a target entity", lineNo)
 	}
 
 	if rest == "current_user" {
@@ -1232,7 +1305,7 @@ func parseBelongsToStatement(trimmed string, lineNo int) (*model.Field, bool, er
 		}, true, nil
 	}
 	if strings.HasPrefix(rest, "current_user ") {
-		return nil, true, fmt.Errorf("line %d: belongs_to current_user does not support modifiers", lineNo)
+		return nil, true, parserErrorf("line %d: belongs_to current_user does not support modifiers", lineNo)
 	}
 
 	var fieldName string
@@ -1244,7 +1317,7 @@ func parseBelongsToStatement(trimmed string, lineNo int) (*model.Field, bool, er
 		after = strings.TrimSpace(after)
 		parts := strings.Fields(after)
 		if len(parts) == 0 {
-			return nil, true, fmt.Errorf("line %d: belongs_to %s requires a target entity", lineNo, fieldName)
+			return nil, true, parserErrorf("line %d: belongs_to %s requires a target entity", lineNo, fieldName)
 		}
 		targetEntity = parts[0]
 		rawAttrs = strings.TrimSpace(strings.TrimPrefix(after, targetEntity))
@@ -1258,11 +1331,11 @@ func parseBelongsToStatement(trimmed string, lineNo int) (*model.Field, bool, er
 	}
 
 	if !fieldNameRe.MatchString(fieldName) {
-		return nil, true, fmt.Errorf("line %d: belongs_to field name %q is invalid", lineNo, fieldName)
+		return nil, true, parserErrorf("line %d: belongs_to field name %q is invalid", lineNo, fieldName)
 	}
 	if targetEntity == "current_user" {
 		if rawAttrs != "" {
-			return nil, true, fmt.Errorf("line %d: belongs_to current_user does not support modifiers", lineNo)
+			return nil, true, parserErrorf("line %d: belongs_to current_user does not support modifiers", lineNo)
 		}
 		return &model.Field{
 			Name:           fieldName,
@@ -1271,7 +1344,7 @@ func parseBelongsToStatement(trimmed string, lineNo int) (*model.Field, bool, er
 		}, true, nil
 	}
 	if !upperNameRe.MatchString(targetEntity) {
-		return nil, true, fmt.Errorf("line %d: belongs_to target %q is invalid", lineNo, targetEntity)
+		return nil, true, parserErrorf("line %d: belongs_to target %q is invalid", lineNo, targetEntity)
 	}
 
 	field := &model.Field{
@@ -1291,14 +1364,14 @@ func parseBelongsToAttributes(field *model.Field, raw string, lineNo int) error 
 
 	tokens, err := tokenizeFieldAttributes(raw)
 	if err != nil {
-		return fmt.Errorf("line %d: %w", lineNo, err)
+		return parserErrorf("line %d: %w", lineNo, err)
 	}
 	for _, token := range tokens {
 		switch token {
 		case "optional":
 			field.Optional = true
 		default:
-			return fmt.Errorf("line %d: belongs_to only supports the optional modifier", lineNo)
+			return parserErrorf("line %d: belongs_to only supports the optional modifier", lineNo)
 		}
 	}
 	return nil
@@ -1319,17 +1392,17 @@ func parseActionBlock(lines []line, idx *int, name string) (*model.Action, error
 		if trimmed == "}" {
 			(*idx)++
 			if !hasInput {
-				return nil, fmt.Errorf("line %d: action %s is missing `input: TypeAlias`", ln.number, name)
+				return nil, parserErrorf("line %d: action %s is missing `input: TypeAlias`", ln.number, name)
 			}
 			if len(action.Steps) == 0 {
-				return nil, fmt.Errorf("line %d: action %s must contain at least one write step", ln.number, name)
+				return nil, parserErrorf("line %d: action %s must contain at least one write step", ln.number, name)
 			}
 			return action, nil
 		}
 
 		if m := match(`^input\s*:\s*([A-Za-z][A-Za-z0-9_]*)$`, trimmed); m != nil {
 			if hasInput {
-				return nil, fmt.Errorf("line %d: action %s already declares input", ln.number, name)
+				return nil, parserErrorf("line %d: action %s already declares input", ln.number, name)
 			}
 			action.InputAlias = m[1]
 			hasInput = true
@@ -1355,10 +1428,10 @@ func parseActionBlock(lines []line, idx *int, name string) (*model.Action, error
 			continue
 		}
 
-		return nil, fmt.Errorf("line %d: invalid action statement %q", ln.number, trimmed)
+		return nil, parserErrorf("line %d: invalid action statement %q", ln.number, trimmed)
 	}
 
-	return nil, fmt.Errorf("action %s is missing closing }", name)
+	return nil, parserErrorf("action %s is missing closing }", name)
 }
 
 func parseActionStepBlock(lines []line, idx *int, actionName, kind, entityName, alias string) (*model.ActionStep, error) {
@@ -1376,18 +1449,18 @@ func parseActionStepBlock(lines []line, idx *int, actionName, kind, entityName, 
 		if trimmed == "}" {
 			(*idx)++
 			if len(step.Values) == 0 {
-				return nil, fmt.Errorf("line %d: %s %s in action %s must define at least one field", ln.number, kind, entityName, actionName)
+				return nil, parserErrorf("line %d: %s %s in action %s must define at least one field", ln.number, kind, entityName, actionName)
 			}
 			return step, nil
 		}
 
 		assign := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(.+)$`, trimmed)
 		if assign == nil {
-			return nil, fmt.Errorf("line %d: invalid %s field %q. Expected `field: value`", ln.number, kind, trimmed)
+			return nil, parserErrorf("line %d: invalid %s field %q. Expected `field: value`", ln.number, kind, trimmed)
 		}
 		field := assign[1]
 		if seen[field] {
-			return nil, fmt.Errorf("line %d: duplicate field %q in %s %s", ln.number, field, kind, entityName)
+			return nil, parserErrorf("line %d: duplicate field %q in %s %s", ln.number, field, kind, entityName)
 		}
 		seen[field] = true
 
@@ -1400,13 +1473,13 @@ func parseActionStepBlock(lines []line, idx *int, actionName, kind, entityName, 
 		(*idx)++
 	}
 
-	return nil, fmt.Errorf("%s %s in action %s is missing closing }", kind, entityName, actionName)
+	return nil, parserErrorf("%s %s in action %s is missing closing }", kind, entityName, actionName)
 }
 
 func parseActionFieldExpr(raw string, lineNo int) (*model.ActionFieldExpr, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil, fmt.Errorf("line %d: action value cannot be empty", lineNo)
+		return nil, parserErrorf("line %d: action value cannot be empty", lineNo)
 	}
 	return &model.ActionFieldExpr{
 		Expression: raw,
@@ -1427,54 +1500,54 @@ func validateAuthConfig(app *model.App) error {
 		}
 	}
 	if userEntity == nil {
-		return fmt.Errorf("auth.user_entity %q does not match any declared entity", app.Auth.UserEntity)
+		return parserErrorf("auth.user_entity %q does not match any declared entity", app.Auth.UserEntity)
 	}
 
 	if !hasField(userEntity, app.Auth.EmailField, "String") {
-		return fmt.Errorf("auth.email_field %q must exist in entity %s with type String", app.Auth.EmailField, userEntity.Name)
+		return parserErrorf("auth.email_field %q must exist in entity %s with type String", app.Auth.EmailField, userEntity.Name)
 	}
 
 	if app.Auth.RoleField != "" {
 		if hasFieldName(userEntity, app.Auth.RoleField) && !hasField(userEntity, app.Auth.RoleField, "String") {
-			return fmt.Errorf("auth.role_field %q must be String when present in entity %s", app.Auth.RoleField, userEntity.Name)
+			return parserErrorf("auth.role_field %q must be String when present in entity %s", app.Auth.RoleField, userEntity.Name)
 		}
 	}
 
 	switch app.Auth.EmailTransport {
 	case "console":
 		if strings.TrimSpace(app.Auth.SMTPHost) != "" {
-			return fmt.Errorf("auth.smtp_host can only be used when email_transport smtp is selected")
+			return parserErrorf("auth.smtp_host can only be used when email_transport smtp is selected")
 		}
 		if strings.TrimSpace(app.Auth.SMTPUsername) != "" {
-			return fmt.Errorf("auth.smtp_username can only be used when email_transport smtp is selected")
+			return parserErrorf("auth.smtp_username can only be used when email_transport smtp is selected")
 		}
 		if strings.TrimSpace(app.Auth.SMTPPasswordEnv) != "" {
-			return fmt.Errorf("auth.smtp_password_env can only be used when email_transport smtp is selected")
+			return parserErrorf("auth.smtp_password_env can only be used when email_transport smtp is selected")
 		}
 		if app.Auth.SMTPPort != 587 {
-			return fmt.Errorf("auth.smtp_port can only be used when email_transport smtp is selected")
+			return parserErrorf("auth.smtp_port can only be used when email_transport smtp is selected")
 		}
 		if !app.Auth.SMTPStartTLS {
-			return fmt.Errorf("auth.smtp_starttls can only be used when email_transport smtp is selected")
+			return parserErrorf("auth.smtp_starttls can only be used when email_transport smtp is selected")
 		}
 	case "smtp":
 		if strings.TrimSpace(app.Auth.SMTPHost) == "" {
-			return fmt.Errorf("auth.smtp_host is required when email_transport smtp is selected")
+			return parserErrorf("auth.smtp_host is required when email_transport smtp is selected")
 		}
 		if app.Auth.SMTPPort < 1 || app.Auth.SMTPPort > 65535 {
-			return fmt.Errorf("auth.smtp_port must be between 1 and 65535 when email_transport smtp is selected")
+			return parserErrorf("auth.smtp_port must be between 1 and 65535 when email_transport smtp is selected")
 		}
 		if strings.TrimSpace(app.Auth.SMTPUsername) == "" {
-			return fmt.Errorf("auth.smtp_username is required when email_transport smtp is selected")
+			return parserErrorf("auth.smtp_username is required when email_transport smtp is selected")
 		}
 		if strings.TrimSpace(app.Auth.SMTPPasswordEnv) == "" {
-			return fmt.Errorf("auth.smtp_password_env is required when email_transport smtp is selected")
+			return parserErrorf("auth.smtp_password_env is required when email_transport smtp is selected")
 		}
 		if !envVarNameRe.MatchString(strings.TrimSpace(app.Auth.SMTPPasswordEnv)) {
-			return fmt.Errorf("auth.smtp_password_env %q must be a valid environment variable name", app.Auth.SMTPPasswordEnv)
+			return parserErrorf("auth.smtp_password_env %q must be a valid environment variable name", app.Auth.SMTPPasswordEnv)
 		}
 	default:
-		return fmt.Errorf("auth.email_transport %q is not supported", app.Auth.EmailTransport)
+		return parserErrorf("auth.email_transport %q is not supported", app.Auth.EmailTransport)
 	}
 
 	return nil
@@ -1485,7 +1558,7 @@ func validateActions(app *model.App) error {
 	for i := range app.InputAliases {
 		alias := &app.InputAliases[i]
 		if _, exists := aliasByName[alias.Name]; exists {
-			return fmt.Errorf("duplicate type alias %q", alias.Name)
+			return parserErrorf("duplicate type alias %q", alias.Name)
 		}
 		aliasByName[alias.Name] = alias
 	}
@@ -1498,13 +1571,13 @@ func validateActions(app *model.App) error {
 	seenActions := map[string]bool{}
 	for _, action := range app.Actions {
 		if seenActions[action.Name] {
-			return fmt.Errorf("duplicate action %q", action.Name)
+			return parserErrorf("duplicate action %q", action.Name)
 		}
 		seenActions[action.Name] = true
 
 		alias := aliasByName[action.InputAlias]
 		if alias == nil {
-			return fmt.Errorf("action %s references unknown input type %q", action.Name, action.InputAlias)
+			return parserErrorf("action %s references unknown input type %q", action.Name, action.InputAlias)
 		}
 		inputFieldTypes := map[string]string{}
 		aliasFieldNames := make([]string, 0, len(alias.Fields))
@@ -1520,70 +1593,70 @@ func validateActions(app *model.App) error {
 		writeSteps := 0
 
 		if len(action.Steps) == 0 {
-			return fmt.Errorf("action %s must have at least one write step", action.Name)
+			return parserErrorf("action %s must have at least one write step", action.Name)
 		}
 		for _, step := range action.Steps {
 			entity := entityByName[step.Entity]
 			if entity == nil {
-				return fmt.Errorf("action %s references unknown entity %q", action.Name, step.Entity)
+				return parserErrorf("action %s references unknown entity %q", action.Name, step.Entity)
 			}
 			if step.Alias != "" {
 				if step.Alias == "input" {
-					return fmt.Errorf("action %s cannot use reserved alias name %q", action.Name, step.Alias)
+					return parserErrorf("action %s cannot use reserved alias name %q", action.Name, step.Alias)
 				}
 				if _, ok := inputFieldTypes[step.Alias]; ok {
-					return fmt.Errorf("action %s alias %q conflicts with input field name", action.Name, step.Alias)
+					return parserErrorf("action %s alias %q conflicts with input field name", action.Name, step.Alias)
 				}
 				if existing, ok := availableAliases[step.Alias]; ok {
-					return fmt.Errorf("action %s alias %q is already bound to %s", action.Name, step.Alias, existing)
+					return parserErrorf("action %s alias %q is already bound to %s", action.Name, step.Alias, existing)
 				}
 			}
 			pkField := findEntityField(entity, entity.PrimaryKey)
 			if pkField == nil {
-				return fmt.Errorf("action %s references entity %s without a primary key field", action.Name, entity.Name)
+				return parserErrorf("action %s references entity %s without a primary key field", action.Name, entity.Name)
 			}
 			assignments := map[string]model.ActionFieldExpr{}
 			for _, item := range step.Values {
 				field := findEntityField(entity, item.Field)
 				if field == nil {
-					return fmt.Errorf("action %s assigns unknown field %s.%s%s", action.Name, entity.Name, item.Field, suggest.DidYouMeanSuffix(item.Field, entityFieldNames(entity)))
+					return parserErrorf("action %s assigns unknown field %s.%s%s", action.Name, entity.Name, item.Field, suggest.DidYouMeanSuffix(item.Field, entityFieldNames(entity)))
 				}
 				if step.Kind == "create" && field.Auto {
-					return fmt.Errorf("action %s cannot assign auto-generated field %s.%s", action.Name, entity.Name, item.Field)
+					return parserErrorf("action %s cannot assign auto-generated field %s.%s", action.Name, entity.Name, item.Field)
 				}
 				if step.Kind == "update" && field.Auto && !field.Primary {
-					return fmt.Errorf("action %s cannot assign auto-generated field %s.%s", action.Name, entity.Name, item.Field)
+					return parserErrorf("action %s cannot assign auto-generated field %s.%s", action.Name, entity.Name, item.Field)
 				}
 				assignments[item.Field] = item
 
 				sourceType, err := resolveActionExprType(item.Expression, availableVariables, aliasFieldNames)
 				if err != nil {
-					return fmt.Errorf("action %s field %s.%s: %w", action.Name, entity.Name, item.Field, err)
+					return parserErrorf("action %s field %s.%s: %w", action.Name, entity.Name, item.Field, err)
 				}
 				if sourceType == "Null" {
 					if !field.Optional && !field.Primary {
-						return fmt.Errorf("action %s field %s.%s: null is only allowed on optional fields", action.Name, entity.Name, item.Field)
+						return parserErrorf("action %s field %s.%s: null is only allowed on optional fields", action.Name, entity.Name, item.Field)
 					}
 					if field.Primary {
-						return fmt.Errorf("action %s field %s.%s: null is not allowed on primary key fields", action.Name, entity.Name, item.Field)
+						return parserErrorf("action %s field %s.%s: null is not allowed on primary key fields", action.Name, entity.Name, item.Field)
 					}
 					continue
 				}
 				if !isTypeAssignable(field.Type, sourceType) {
-					return fmt.Errorf("action %s field %s.%s expects %s but got %s", action.Name, entity.Name, item.Field, field.Type, sourceType)
+					return parserErrorf("action %s field %s.%s expects %s but got %s", action.Name, entity.Name, item.Field, field.Type, sourceType)
 				}
 			}
 
 			switch step.Kind {
 			case "load":
 				if step.Alias == "" {
-					return fmt.Errorf("action %s load %s must bind its result to an alias", action.Name, entity.Name)
+					return parserErrorf("action %s load %s must bind its result to an alias", action.Name, entity.Name)
 				}
 				if len(assignments) != 1 {
-					return fmt.Errorf("action %s load %s must only include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
+					return parserErrorf("action %s load %s must only include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
 				}
 				if _, ok := assignments[entity.PrimaryKey]; !ok {
-					return fmt.Errorf("action %s load %s must include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
+					return parserErrorf("action %s load %s must include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
 				}
 			case "create":
 				writeSteps++
@@ -1595,27 +1668,27 @@ func validateActions(app *model.App) error {
 						continue
 					}
 					if _, ok := assignments[field.Name]; !ok {
-						return fmt.Errorf("action %s is missing required field %s.%s", action.Name, entity.Name, field.Name)
+						return parserErrorf("action %s is missing required field %s.%s", action.Name, entity.Name, field.Name)
 					}
 				}
 			case "update":
 				writeSteps++
 				if _, ok := assignments[entity.PrimaryKey]; !ok {
-					return fmt.Errorf("action %s update %s must include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
+					return parserErrorf("action %s update %s must include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
 				}
 				if len(assignments) == 1 {
-					return fmt.Errorf("action %s update %s must change at least one non-primary field", action.Name, entity.Name)
+					return parserErrorf("action %s update %s must change at least one non-primary field", action.Name, entity.Name)
 				}
 			case "delete":
 				writeSteps++
 				if len(assignments) != 1 {
-					return fmt.Errorf("action %s delete %s must only include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
+					return parserErrorf("action %s delete %s must only include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
 				}
 				if _, ok := assignments[entity.PrimaryKey]; !ok {
-					return fmt.Errorf("action %s delete %s must include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
+					return parserErrorf("action %s delete %s must include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
 				}
 			default:
-				return fmt.Errorf("action %s has unsupported step kind %q", action.Name, step.Kind)
+				return parserErrorf("action %s has unsupported step kind %q", action.Name, step.Kind)
 			}
 
 			if step.Alias != "" {
@@ -1626,7 +1699,7 @@ func validateActions(app *model.App) error {
 			}
 		}
 		if writeSteps == 0 {
-			return fmt.Errorf("action %s must have at least one create, update, or delete step", action.Name)
+			return parserErrorf("action %s must have at least one create, update, or delete step", action.Name)
 		}
 	}
 	return nil
@@ -1721,7 +1794,7 @@ func validateBooleanExpr(raw string, variableTypes map[string]string, includeBui
 		return err
 	}
 	if typ != "Bool" {
-		return fmt.Errorf("expression must evaluate to Bool, got %s", typ)
+		return parserErrorf("expression must evaluate to Bool, got %s", typ)
 	}
 	return nil
 }
@@ -1736,7 +1809,7 @@ func parseTypedExpr(raw string, variableTypes map[string]string, includeBuiltins
 		msg := err.Error()
 		if strings.Contains(msg, "unknown identifier") {
 			name := strings.Trim(strings.TrimPrefix(msg, "unknown identifier "), `"`)
-			return nil, fmt.Errorf("references unknown value %q%s", name, suggest.DidYouMeanSuffix(name, actionVariableNames(typedExprVariables(variableTypes, includeBuiltins), aliasFieldNames)))
+			return nil, parserErrorf("references unknown value %q%s", name, suggest.DidYouMeanSuffix(name, actionVariableNames(typedExprVariables(variableTypes, includeBuiltins), aliasFieldNames)))
 		}
 		return nil, err
 	}
@@ -1793,12 +1866,12 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 		case float64, float32:
 			return "Float", nil
 		default:
-			return "", fmt.Errorf("unsupported literal value")
+			return "", parserErrorf("unsupported literal value")
 		}
 	case expr.Variable:
 		t := variableTypes[n.Name]
 		if t == "" {
-			return "", fmt.Errorf("references unknown value %q", n.Name)
+			return "", parserErrorf("references unknown value %q", n.Name)
 		}
 		return t, nil
 	case expr.Unary:
@@ -1809,7 +1882,7 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 		switch n.Op {
 		case "not":
 			if rightType != "Bool" {
-				return "", fmt.Errorf("operator not expects Bool, got %s", rightType)
+				return "", parserErrorf("operator not expects Bool, got %s", rightType)
 			}
 			return "Bool", nil
 		case "-":
@@ -1819,10 +1892,10 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 			case "Float":
 				return "Float", nil
 			default:
-				return "", fmt.Errorf("operator - expects Int or Float")
+				return "", parserErrorf("operator - expects Int or Float")
 			}
 		default:
-			return "", fmt.Errorf("unknown unary operator %q", n.Op)
+			return "", parserErrorf("unknown unary operator %q", n.Op)
 		}
 	case expr.Binary:
 		leftType, err := inferActionExprType(n.Left, variableTypes)
@@ -1836,17 +1909,17 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 		switch n.Op {
 		case "and", "or":
 			if leftType != "Bool" || rightType != "Bool" {
-				return "", fmt.Errorf("operator %s expects Bool operands", n.Op)
+				return "", parserErrorf("operator %s expects Bool operands", n.Op)
 			}
 			return "Bool", nil
 		case "==", "!=":
 			if !areEqualityComparable(leftType, rightType) {
-				return "", fmt.Errorf("operator %s expects compatible values, got %s and %s", n.Op, leftType, rightType)
+				return "", parserErrorf("operator %s expects compatible values, got %s and %s", n.Op, leftType, rightType)
 			}
 			return "Bool", nil
 		case ">", ">=", "<", "<=":
 			if !areOrderedComparable(leftType, rightType) {
-				return "", fmt.Errorf("operator %s expects comparable values, got %s and %s", n.Op, leftType, rightType)
+				return "", parserErrorf("operator %s expects comparable values, got %s and %s", n.Op, leftType, rightType)
 			}
 			return "Bool", nil
 		case "+":
@@ -1865,7 +1938,7 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 			if leftType == "Int" && rightType == "Int" {
 				return "Int", nil
 			}
-			return "", fmt.Errorf("operator + expects compatible values")
+			return "", parserErrorf("operator + expects compatible values")
 		case "-":
 			if isTemporalType(leftType) && rightType == "Int" {
 				return leftType, nil
@@ -1879,7 +1952,7 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 			if leftType == "Int" && rightType == "Int" {
 				return "Int", nil
 			}
-			return "", fmt.Errorf("operator - expects compatible numeric values")
+			return "", parserErrorf("operator - expects compatible numeric values")
 		case "*":
 			if leftType == "Float" || rightType == "Float" {
 				return "Float", nil
@@ -1887,14 +1960,14 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 			if leftType == "Int" && rightType == "Int" {
 				return "Int", nil
 			}
-			return "", fmt.Errorf("operator * expects numeric values")
+			return "", parserErrorf("operator * expects numeric values")
 		case "/":
 			if (leftType == "Int" || leftType == "Float") && (rightType == "Int" || rightType == "Float") {
 				return "Float", nil
 			}
-			return "", fmt.Errorf("operator / expects numeric values")
+			return "", parserErrorf("operator / expects numeric values")
 		default:
-			return "", fmt.Errorf("unknown operator %q", n.Op)
+			return "", parserErrorf("unknown operator %q", n.Op)
 		}
 	case expr.Call:
 		argTypes := make([]string, 0, len(n.Args))
@@ -1908,19 +1981,19 @@ func inferActionExprType(node expr.Expr, variableTypes map[string]string) (strin
 		switch n.Name {
 		case "contains", "starts_with", "ends_with", "matches":
 			if len(argTypes) != 2 || argTypes[0] != "String" || argTypes[1] != "String" {
-				return "", fmt.Errorf("function %s expects String arguments", n.Name)
+				return "", parserErrorf("function %s expects String arguments", n.Name)
 			}
 			return "Bool", nil
 		case "length":
 			if len(argTypes) != 1 || argTypes[0] != "String" {
-				return "", fmt.Errorf("function length expects a String argument")
+				return "", parserErrorf("function length expects a String argument")
 			}
 			return "Int", nil
 		default:
-			return "", fmt.Errorf("unsupported function %q", n.Name)
+			return "", parserErrorf("unsupported function %q", n.Name)
 		}
 	default:
-		return "", fmt.Errorf("unsupported expression type")
+		return "", parserErrorf("unsupported expression type")
 	}
 }
 
@@ -2044,7 +2117,7 @@ func defaultDatabaseName(appName string) string {
 func parseFieldAttributes(field *model.Field, raw string, lineNo int) error {
 	tokens, err := tokenizeFieldAttributes(raw)
 	if err != nil {
-		return fmt.Errorf("line %d: %w", lineNo, err)
+		return parserErrorf("line %d: %w", lineNo, err)
 	}
 	for i := 0; i < len(tokens); i++ {
 		switch tokens[i] {
@@ -2058,7 +2131,7 @@ func parseFieldAttributes(field *model.Field, raw string, lineNo int) error {
 			field.Optional = true
 		case "default":
 			if i+1 >= len(tokens) {
-				return fmt.Errorf("line %d: default requires a literal value", lineNo)
+				return parserErrorf("line %d: default requires a literal value", lineNo)
 			}
 			defaultValue, err := parseFieldDefaultLiteral(field.Type, tokens[i+1], lineNo)
 			if err != nil {
@@ -2067,7 +2140,7 @@ func parseFieldAttributes(field *model.Field, raw string, lineNo int) error {
 			field.Default = defaultValue
 			i++
 		default:
-			return fmt.Errorf("line %d: unknown field attribute %q", lineNo, tokens[i])
+			return parserErrorf("line %d: unknown field attribute %q", lineNo, tokens[i])
 		}
 	}
 	return nil
@@ -2109,7 +2182,7 @@ func tokenizeFieldAttributes(raw string) ([]string, error) {
 	}
 
 	if inString {
-		return nil, fmt.Errorf("unterminated string literal in field attributes")
+		return nil, parserErrorf("unterminated string literal in field attributes")
 	}
 	if current.Len() > 0 {
 		tokens = append(tokens, current.String())
@@ -2121,11 +2194,11 @@ func parseFieldDefaultLiteral(fieldType string, raw string, lineNo int) (any, er
 	switch fieldType {
 	case "String":
 		if !(strings.HasPrefix(raw, "\"") && strings.HasSuffix(raw, "\"")) {
-			return nil, fmt.Errorf("line %d: field default for %s must be a string literal", lineNo, fieldType)
+			return nil, parserErrorf("line %d: field default for %s must be a string literal", lineNo, fieldType)
 		}
 		unquoted, err := strconv.Unquote(raw)
 		if err != nil {
-			return nil, fmt.Errorf("line %d: invalid string literal %q", lineNo, raw)
+			return nil, parserErrorf("line %d: invalid string literal %q", lineNo, raw)
 		}
 		return unquoted, nil
 	case "Bool":
@@ -2135,11 +2208,11 @@ func parseFieldDefaultLiteral(fieldType string, raw string, lineNo int) (any, er
 		if raw == "false" {
 			return false, nil
 		}
-		return nil, fmt.Errorf("line %d: field default for %s must be true or false", lineNo, fieldType)
+		return nil, parserErrorf("line %d: field default for %s must be true or false", lineNo, fieldType)
 	case "Int", "Date", "DateTime":
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("line %d: field default for %s must be an integer literal", lineNo, fieldType)
+			return nil, parserErrorf("line %d: field default for %s must be an integer literal", lineNo, fieldType)
 		}
 		if fieldType == "Date" {
 			n = normalizeDateMillis(n)
@@ -2151,11 +2224,11 @@ func parseFieldDefaultLiteral(fieldType string, raw string, lineNo int) (any, er
 		}
 		f, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
-			return nil, fmt.Errorf("line %d: field default for %s must be a numeric literal", lineNo, fieldType)
+			return nil, parserErrorf("line %d: field default for %s must be a numeric literal", lineNo, fieldType)
 		}
 		return f, nil
 	default:
-		return nil, fmt.Errorf("line %d: unsupported field type %s", lineNo, fieldType)
+		return nil, parserErrorf("line %d: unsupported field type %s", lineNo, fieldType)
 	}
 }
 

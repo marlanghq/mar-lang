@@ -1216,6 +1216,29 @@ auth {
 	}
 }
 
+func TestParseAuthAdminUISessionTTLRejectsNonInteger(t *testing.T) {
+	src := `
+app AuthApi
+
+entity User {
+  email: String
+  role: String
+}
+
+auth {
+  admin_ui_session_ttl_hours 0.01
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for non-integer auth.admin_ui_session_ttl_hours")
+	}
+	if !strings.Contains(err.Error(), "auth.admin_ui_session_ttl_hours must be an integer between") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
 func TestParseActionTypeMismatchShowsFriendlyError(t *testing.T) {
 	src := `
 app Demo
