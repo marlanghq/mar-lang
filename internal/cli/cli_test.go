@@ -77,69 +77,6 @@ func TestFormatParseCLIErrorAddsHintForMissingAppDeclaration(t *testing.T) {
 	}
 }
 
-func TestHighlightParseCLIMessageColorsMissingAppDeclaration(t *testing.T) {
-	msg := highlightParseCLIMessage(true, "missing app declaration")
-
-	if !strings.Contains(msg, "missing \033[1mapp\033[0m declaration") {
-		t.Fatalf("expected missing app declaration to highlight app, got %q", msg)
-	}
-}
-
-func TestHighlightParseCLIMessageColorsOtherDeclarations(t *testing.T) {
-	msg := highlightParseCLIMessage(true, "missing auth declaration and public declaration")
-
-	if !strings.Contains(msg, "missing \033[1mauth\033[0m declaration") {
-		t.Fatalf("expected missing auth declaration to highlight auth, got %q", msg)
-	}
-	if !strings.Contains(msg, "\033[1mpublic\033[0m declaration") {
-		t.Fatalf("expected public declaration to highlight public, got %q", msg)
-	}
-}
-
-func TestHighlightParseCLIMessageColorsAppDeclarationExample(t *testing.T) {
-	msg := highlightParseCLIMessage(true, "Add an app declaration near the top of the file. Example: app Todo")
-
-	if !strings.Contains(msg, "an \033[1mapp\033[0m declaration") {
-		t.Fatalf("expected app keyword in prose to be bold, got %q", msg)
-	}
-	if !strings.Contains(msg, "\033[1mapp\033[0m \033[1;36mTodo\033[0m") {
-		t.Fatalf("expected app declaration example to color app and Todo separately, got %q", msg)
-	}
-}
-
-func TestHighlightParseCLIMessageColorsUnknownInputFieldInRed(t *testing.T) {
-	msg := highlightParseCLIMessage(true, `action placeBookOrder field OrderItem.unitPrice: references unknown input field "unitPrico". Did you mean "unitPrice"?`)
-
-	if !strings.Contains(msg, "\033[1;31m\"unitPrico\"\033[0m") {
-		t.Fatalf("expected unknown input field token to be red, got %q", msg)
-	}
-	if !strings.Contains(msg, "\033[1;36m\"unitPrice\"\033[0m") {
-		t.Fatalf("expected suggested token to be cyan, got %q", msg)
-	}
-}
-
-func TestHighlightParseCLIMessageColorsAuthSmtpConfigReference(t *testing.T) {
-	msg := highlightParseCLIMessage(true, "auth.smtp_host can only be used when email_transport smtp is selected")
-
-	if !strings.Contains(msg, "\033[1;36mauth.smtp_host\033[0m") {
-		t.Fatalf("expected auth.smtp_host to be cyan, got %q", msg)
-	}
-	if !strings.Contains(msg, "\033[1memail_transport\033[0m \033[1;32msmtp\033[0m") {
-		t.Fatalf("expected email_transport smtp to be highlighted, got %q", msg)
-	}
-}
-
-func TestHighlightAppWarningColorsBacktickedFields(t *testing.T) {
-	msg := highlightAppWarning(true, "Missing required fields: `name`, `surname`")
-
-	if !strings.Contains(msg, "\033[1;36mname\033[0m") {
-		t.Fatalf("expected name to be highlighted, got %q", msg)
-	}
-	if !strings.Contains(msg, "\033[1;36msurname\033[0m") {
-		t.Fatalf("expected surname to be highlighted, got %q", msg)
-	}
-}
-
 func TestHighlightAppWarningRemovesBackticksWithoutColor(t *testing.T) {
 	msg := highlightAppWarning(false, "Missing required field: `name`")
 

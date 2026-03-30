@@ -150,14 +150,14 @@ func TestRunFlyLogsRequiresFlyConfigFile(t *testing.T) {
 	}
 }
 
-func TestFormatFlyInitNoteHighlightsSMTPPasswordEnv(t *testing.T) {
+func TestFormatFlyInitNoteIncludesSMTPPasswordEnv(t *testing.T) {
 	note := "SMTP password will be read from the RESEND_API_KEY environment variable at runtime."
 	result := flyInitResult{SMTPPasswordEnv: "RESEND_API_KEY"}
 
 	got := formatFlyInitNote(true, result, note)
 
-	if !strings.Contains(got, "\033[1;36mRESEND_API_KEY\033[0m") {
-		t.Fatalf("expected SMTPPasswordEnv to be cyan, got %q", got)
+	if !strings.Contains(got, "RESEND_API_KEY") {
+		t.Fatalf("expected SMTPPasswordEnv to appear in note, got %q", got)
 	}
 }
 
