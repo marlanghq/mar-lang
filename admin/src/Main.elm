@@ -1061,7 +1061,12 @@ update msg model =
                     ( syncRouteSelection nextModel, Cmd.none )
 
                 Err httpError ->
-                    ( { model | rows = Failed (httpErrorToString httpError) }, Cmd.none )
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            outcome
+
+                        Nothing ->
+                            ( { model | rows = Failed (httpErrorToString httpError) }, Cmd.none )
 
         GotRelationRows entityName result ->
             case result of
@@ -1069,7 +1074,12 @@ update msg model =
                     ( { model | relationRows = Dict.insert entityName (Loaded rows) model.relationRows }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | relationRows = Dict.insert entityName (Failed (httpErrorToString httpError)) model.relationRows }, Cmd.none )
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            outcome
+
+                        Nothing ->
+                            ( { model | relationRows = Dict.insert entityName (Failed (httpErrorToString httpError)) model.relationRows }, Cmd.none )
 
         SelectPerformance ->
             if not (isAdminProfile model) then
@@ -1135,7 +1145,12 @@ update msg model =
                     ( { model | perf = Loaded perf }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | perf = Failed (httpErrorToString httpError) }, Cmd.none )
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            outcome
+
+                        Nothing ->
+                            ( { model | perf = Failed (httpErrorToString httpError) }, Cmd.none )
 
         GotAdminVersion result ->
             case result of
@@ -1143,7 +1158,12 @@ update msg model =
                     ( { model | adminVersion = Loaded payload }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | adminVersion = Failed (httpErrorToString httpError) }, Cmd.none )
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            outcome
+
+                        Nothing ->
+                            ( { model | adminVersion = Failed (httpErrorToString httpError) }, Cmd.none )
 
         GotRequestLogs result ->
             case result of
@@ -1151,7 +1171,12 @@ update msg model =
                     ( { model | requestLogs = Loaded payload }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | requestLogs = Failed (httpErrorToString httpError) }, Cmd.none )
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            outcome
+
+                        Nothing ->
+                            ( { model | requestLogs = Failed (httpErrorToString httpError) }, Cmd.none )
 
         GotBackups result ->
             case result of
@@ -1159,7 +1184,12 @@ update msg model =
                     ( { model | backups = Loaded backups }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | backups = Failed (httpErrorToString httpError) }, Cmd.none )
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            outcome
+
+                        Nothing ->
+                            ( { model | backups = Failed (httpErrorToString httpError) }, Cmd.none )
 
         SetAuthEmail email ->
             if model.authSubmitting == Just AuthSubmitSendingCode then
@@ -1403,7 +1433,12 @@ update msg model =
                     ( nextModel, Cmd.batch [ loadBackups nextModel, loadPerformance nextModel ] )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            outcome
+
+                        Nothing ->
+                            ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
 
         ToggleAuthTools ->
             let
@@ -1532,7 +1567,12 @@ update msg model =
                             ( nextModel, Cmd.none )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            outcome
+
+                        Nothing ->
+                            ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
 
         GotUpdate result ->
             case result of
@@ -1563,7 +1603,12 @@ update msg model =
                             ( nextModel, Cmd.none )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            outcome
+
+                        Nothing ->
+                            ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
 
         RequestDeleteRow rowValue ->
             case model.selectedEntity of
@@ -1617,7 +1662,12 @@ update msg model =
                             ( nextModel, Cmd.none )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError), pendingDelete = Nothing }, Cmd.none )
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            outcome
+
+                        Nothing ->
+                            ( { model | flash = Just (httpErrorToString httpError), pendingDelete = Nothing }, Cmd.none )
 
         RunAction ->
             case model.selectedAction of
@@ -1638,7 +1688,12 @@ update msg model =
                     ( { model | actionResult = Just response, flash = Just "Action executed successfully" }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            outcome
+
+                        Nothing ->
+                            ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
 
         ClearFlash ->
             ( { model | flash = Nothing }, Cmd.none )
@@ -3437,7 +3492,7 @@ viewMobileBottomNav model =
         row
             [ width fill
             , paddingEach { top = 8, right = 14, bottom = 14, left = 14 }
-            , htmlAttribute (HtmlAttr.style "padding-bottom" "calc(34px + env(safe-area-inset-bottom))")
+            , htmlAttribute (HtmlAttr.style "padding-bottom" "calc(29px + env(safe-area-inset-bottom))")
             ]
             [ row
                 [ width fill
@@ -3566,7 +3621,7 @@ viewMobileMoreSheet model =
     el
         [ width fill
         , height fill
-        , Background.color (rgba255 24 29 36 138)
+        , Background.color (rgba255 214 223 235 150)
         ]
         (column
             [ width fill
@@ -5793,6 +5848,50 @@ isUnauthorizedError httpError =
 
         _ ->
             False
+
+
+handleUnauthorizedSessionExpiry : Model -> ApiHttpError -> Maybe ( Model, Cmd Msg )
+handleUnauthorizedSessionExpiry model httpError =
+    if isUnauthorizedError httpError then
+        let
+            targetRoute =
+                RouteAuthTools AppWorkspace
+
+            clearedModel =
+                clearLocalSession model
+
+            nextModel =
+                { clearedModel
+                    | workspace = AppWorkspace
+                    , currentRoute = targetRoute
+                    , performanceMode = False
+                    , requestLogsMode = False
+                    , databaseMode = False
+                    , selectedEntity = Nothing
+                    , selectedAction = Nothing
+                    , rows = NotAsked
+                    , selectedRow = Nothing
+                    , formMode = FormHidden
+                    , formValues = Dict.empty
+                    , relationRows = Dict.empty
+                    , actionFormValues = Dict.empty
+                    , actionResult = Nothing
+                    , pendingDelete = Nothing
+                    , flash = Just "Session expired. Please login again."
+                    , mobileSidebarOpen = False
+                    , keepMobileSidebarOpenOnNextRoute = False
+                }
+        in
+        Just
+            ( nextModel
+            , Cmd.batch
+                [ saveSessionFromModel nextModel
+                , Nav.replaceUrl nextModel.navKey (routeHref nextModel targetRoute)
+                ]
+            )
+
+    else
+        Nothing
 
 
 hasActiveSession : Model -> Bool
