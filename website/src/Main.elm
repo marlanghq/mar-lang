@@ -836,7 +836,7 @@ docSearchSectionText maybeSectionId =
                     "Public static frontend. Mar can embed static frontend files into the final executable and optionally serve an SPA fallback."
 
                 "generated-endpoints" ->
-                    "Generated endpoints. CRUD, actions, auth, health, schema, version, and App UI related endpoints are generated automatically. Each entity gets REST CRUD endpoints. Typed actions are exposed as POST /actions/<name>. System endpoints include /health, /_mar, /_mar/schema, and /_mar/version. Admin-only system endpoints include /_mar/version/admin, /_mar/perf, /_mar/request-logs, and /_mar/backups."
+                    "Generated endpoints. CRUD, actions, auth, health, schema, version, and App UI related endpoints are generated automatically. Each entity gets REST CRUD endpoints. Typed actions are exposed as POST /actions/<name>. System endpoints include /health, /_mar, /_mar/schema, and /_mar/version. Admin-only system endpoints include /_mar/admin/version, /_mar/admin/perf, /_mar/admin/request-logs, /_mar/admin/backups, and /_mar/admin/bootstrap."
 
                 "migrations" ->
                     "Database Schema Migrations. Automatic migrations run on startup. Safe changes such as new optional columns and new required columns with literal defaults are applied. Unsafe changes are blocked with clear errors."
@@ -1504,7 +1504,7 @@ advancedRuntimePage model =
                     [ "Each entity gets REST CRUD endpoints."
                     , "Typed actions are exposed as POST /actions/<name>."
                     , "System endpoints include /health, /_mar, /_mar/schema, and /_mar/version."
-                    , "Admin-only system endpoints include /_mar/version/admin, /_mar/perf, /_mar/request-logs, and /_mar/backups."
+                    , "Admin-only system endpoints include /_mar/admin/version, /_mar/admin/perf, /_mar/admin/request-logs, /_mar/admin/backups, and /_mar/admin/bootstrap."
                     ]
                 ]
             , anchoredSection "migrations"

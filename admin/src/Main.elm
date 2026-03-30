@@ -1794,7 +1794,7 @@ loadPerformance model =
     Http.request
         { method = "GET"
         , headers = appAuthHeaders model
-        , url = model.apiBase ++ "/_mar/perf"
+        , url = model.apiBase ++ "/_mar/admin/perf"
         , body = Http.emptyBody
         , expect = expectJsonWithApiError GotPerformance perfPayloadDecoder
         , timeout = Nothing
@@ -1807,7 +1807,7 @@ loadAdminVersion model =
     Http.request
         { method = "GET"
         , headers = appAuthHeaders model
-        , url = model.apiBase ++ "/_mar/version/admin"
+        , url = model.apiBase ++ "/_mar/admin/version"
         , body = Http.emptyBody
         , expect = expectJsonWithApiError GotAdminVersion adminVersionDecoder
         , timeout = Nothing
@@ -1820,7 +1820,7 @@ loadRequestLogs model =
     Http.request
         { method = "GET"
         , headers = appAuthHeaders model
-        , url = model.apiBase ++ "/_mar/request-logs?limit=30"
+        , url = model.apiBase ++ "/_mar/admin/request-logs?limit=30"
         , body = Http.emptyBody
         , expect = expectJsonWithApiError GotRequestLogs requestLogsPayloadDecoder
         , timeout = Nothing
@@ -1833,7 +1833,7 @@ loadBackups model =
     Http.request
         { method = "GET"
         , headers = appAuthHeaders model
-        , url = model.apiBase ++ "/_mar/backups"
+        , url = model.apiBase ++ "/_mar/admin/backups"
         , body = Http.emptyBody
         , expect = expectJsonWithApiError GotBackups backupsDecoder
         , timeout = Nothing
@@ -1846,7 +1846,7 @@ triggerBackup model =
     Http.request
         { method = "POST"
         , headers = appAuthHeaders model
-        , url = model.apiBase ++ "/_mar/backups"
+        , url = model.apiBase ++ "/_mar/admin/backups"
         , body = Http.emptyBody
         , expect = expectJsonWithApiError GotBackup backupResponseDecoder
         , timeout = Nothing
@@ -1928,7 +1928,7 @@ bootstrapFirstAdmin : Model -> Encode.Value -> Cmd Msg
 bootstrapFirstAdmin model payload =
     let
         endpoint =
-            "/_mar/bootstrap-admin"
+            "/_mar/admin/bootstrap"
     in
     Http.request
         { method = "POST"
@@ -4143,7 +4143,7 @@ viewSidebar model =
                 )
                 { onPress = Just SelectPerformance
                 , label =
-                    sidebarItemLabel "Monitoring" (Just "/_mar/perf")
+                    sidebarItemLabel "Monitoring" (Just "/_mar/admin/perf")
                 }
 
         requestLogsButton : Element Msg
@@ -4161,7 +4161,7 @@ viewSidebar model =
                 )
                 { onPress = Just SelectRequestLogs
                 , label =
-                    sidebarItemLabel "Logs" (Just "/_mar/request-logs")
+                    sidebarItemLabel "Logs" (Just "/_mar/admin/request-logs")
                 }
 
         databaseButton : Element Msg
@@ -4179,7 +4179,7 @@ viewSidebar model =
                 )
                 { onPress = Just SelectDatabase
                 , label =
-                    sidebarItemLabel "Database" (Just "/_mar/backups")
+                    sidebarItemLabel "Database" (Just "/_mar/admin/backups")
                 }
 
         authToolsButton : Element Msg
@@ -7258,7 +7258,7 @@ backupDownloadButton : String -> BackupFile -> Element Msg
 backupDownloadButton apiBase backup =
     Element.html
         (Html.a
-            [ HtmlAttr.href (apiBase ++ "/_mar/backups/download?name=" ++ Url.percentEncode (backupDownloadName backup))
+            [ HtmlAttr.href (apiBase ++ "/_mar/admin/backups/download?name=" ++ Url.percentEncode (backupDownloadName backup))
             , HtmlAttr.target "_blank"
             , HtmlAttr.rel "noopener noreferrer"
             , HtmlAttr.download (backupDownloadName backup)

@@ -31,7 +31,7 @@ func (r *Runtime) printStartupBanner() {
 		fmt.Printf("  %s %s\n", "POST", "/auth/login")
 		fmt.Printf("  %s %s\n", "POST", "/auth/logout")
 		fmt.Printf("  %s %s\n", "GET ", "/auth/me")
-		fmt.Printf("  %s %s\n", "POST", "/_mar/bootstrap-admin (first admin setup)")
+		fmt.Printf("  %s %s\n", "POST", "/_mar/admin/bootstrap (first admin setup)")
 		if r.authUser != nil {
 			fmt.Printf("  %s %s\n", "ALL ", r.authUser.Resource+" (auth users)")
 		}
@@ -77,11 +77,11 @@ func (r *Runtime) printStartupBanner() {
 	fmt.Printf("  %s %s\n", "GET ", "/_mar/schema")
 	fmt.Printf("  %s %s\n", "GET ", "/_mar/version")
 	if r.authEnabled() {
-		fmt.Printf("  %s %s\n", "GET ", "/_mar/version/admin (role admin)")
-		fmt.Printf("  %s %s\n", "GET ", "/_mar/perf (role admin)")
-		fmt.Printf("  %s %s\n", "GET ", "/_mar/request-logs (role admin)")
-		fmt.Printf("  %s %s\n", "POST", "/_mar/backups (role admin)")
-		fmt.Printf("  %s %s\n", "GET ", "/_mar/backups (role admin)")
+		fmt.Printf("  %s %s\n", "GET ", "/_mar/admin/version (role admin)")
+		fmt.Printf("  %s %s\n", "GET ", "/_mar/admin/perf (role admin)")
+		fmt.Printf("  %s %s\n", "GET ", "/_mar/admin/request-logs (role admin)")
+		fmt.Printf("  %s %s\n", "POST", "/_mar/admin/backups (role admin)")
+		fmt.Printf("  %s %s\n", "GET ", "/_mar/admin/backups (role admin)")
 	}
 
 	if shouldShowAdminHint() {

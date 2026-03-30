@@ -423,7 +423,7 @@ func (r *Runtime) describeAuthAndAdminQueryReason(route, sqlUpper string) string
 		case tableMatchesQuery(sqlUpper, authUserTable):
 			return "Load the auth user for this email"
 		}
-	case "/_mar/bootstrap-admin":
+	case "/_mar/admin/bootstrap":
 		switch {
 		case strings.Contains(sqlUpper, "COUNT(*) AS TOTAL"):
 			return "Check whether first-admin bootstrap is still allowed"
@@ -454,7 +454,7 @@ func (r *Runtime) describeAuthAndAdminQueryReason(route, sqlUpper string) string
 		return "Load the current session"
 	case strings.Contains(sqlUpper, "UPDATE MAR_SESSIONS SET REVOKED = 1"):
 		return "Revoke the current session"
-	case route != "/auth/request-code" && route != "/_mar/bootstrap-admin" && tableMatchesQuery(sqlUpper, authUserTable):
+	case route != "/auth/request-code" && route != "/_mar/admin/bootstrap" && tableMatchesQuery(sqlUpper, authUserTable):
 		return "Load the current authenticated user"
 	}
 

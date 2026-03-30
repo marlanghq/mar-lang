@@ -381,7 +381,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		r.writeJSON(w, http.StatusOK, r.publicVersionPayload())
 		return nil
 	}
-	if method == http.MethodPost && path == "/_mar/bootstrap-admin" {
+	if method == http.MethodPost && path == "/_mar/admin/bootstrap" {
 		payload, err := readJSONBody(req)
 		if err != nil {
 			return err
@@ -395,7 +395,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 	}
 	r.rememberRequestAuth(requestID, auth)
 
-	if method == http.MethodGet && path == "/_mar/perf" {
+	if method == http.MethodGet && path == "/_mar/admin/perf" {
 		if !r.authEnabled() {
 			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
 		}
@@ -408,7 +408,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		r.writeJSON(w, http.StatusOK, r.perfPayload())
 		return nil
 	}
-	if method == http.MethodGet && path == "/_mar/version/admin" {
+	if method == http.MethodGet && path == "/_mar/admin/version" {
 		if !r.authEnabled() {
 			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
 		}
@@ -422,7 +422,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		return nil
 	}
 
-	if method == http.MethodGet && path == "/_mar/request-logs" {
+	if method == http.MethodGet && path == "/_mar/admin/request-logs" {
 		if !r.authEnabled() {
 			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
 		}
@@ -447,7 +447,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		return nil
 	}
 
-	if method == http.MethodPost && path == "/_mar/backups" {
+	if method == http.MethodPost && path == "/_mar/admin/backups" {
 		if !r.authEnabled() {
 			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
 		}
@@ -470,7 +470,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		})
 		return nil
 	}
-	if method == http.MethodGet && path == "/_mar/backups" {
+	if method == http.MethodGet && path == "/_mar/admin/backups" {
 		if !r.authEnabled() {
 			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
 		}
@@ -491,7 +491,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		})
 		return nil
 	}
-	if method == http.MethodGet && path == "/_mar/backups/download" {
+	if method == http.MethodGet && path == "/_mar/admin/backups/download" {
 		if !r.authEnabled() {
 			return newAPIError(http.StatusNotFound, "auth_not_enabled", "Authentication is not enabled")
 		}
@@ -762,9 +762,9 @@ func (r *Runtime) metricsRouteLabel(req *http.Request) string {
 	}
 
 	switch path {
-	case "/health", "/_mar/schema", "/_mar/version", "/_mar/version/admin", "/_mar/perf", "/_mar/backups", "/_mar/backups/download", "/_mar/bootstrap-admin":
+	case "/health", "/_mar/schema", "/_mar/version", "/_mar/admin/version", "/_mar/admin/perf", "/_mar/admin/backups", "/_mar/admin/backups/download", "/_mar/admin/bootstrap":
 		return path
-	case "/_mar/request-logs":
+	case "/_mar/admin/request-logs":
 		return path
 	}
 	if path == "/_mar" || strings.HasPrefix(path, "/_mar/") {

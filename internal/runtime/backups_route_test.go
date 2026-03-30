@@ -52,9 +52,9 @@ func TestAdminCanDownloadBackupByName(t *testing.T) {
 		t.Fatalf("expected login token in response, got body=%s", loginRec.Body.String())
 	}
 
-	createRec := doRuntimeRequest(r, http.MethodPost, "/_mar/backups", "", loginPayload.Token)
+	createRec := doRuntimeRequest(r, http.MethodPost, "/_mar/admin/backups", "", loginPayload.Token)
 	if createRec.Code != http.StatusOK {
-		t.Fatalf("expected 200 from /_mar/backups, got %d body=%s", createRec.Code, createRec.Body.String())
+		t.Fatalf("expected 200 from /_mar/admin/backups, got %d body=%s", createRec.Code, createRec.Body.String())
 	}
 
 	var createPayload struct {
@@ -65,7 +65,7 @@ func TestAdminCanDownloadBackupByName(t *testing.T) {
 	}
 
 	name := filepath.Base(createPayload.Path)
-	downloadRec := doRuntimeRequest(r, http.MethodGet, "/_mar/backups/download?name="+name, "", loginPayload.Token)
+	downloadRec := doRuntimeRequest(r, http.MethodGet, "/_mar/admin/backups/download?name="+name, "", loginPayload.Token)
 	if downloadRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 from backup download, got %d body=%s", downloadRec.Code, downloadRec.Body.String())
 	}

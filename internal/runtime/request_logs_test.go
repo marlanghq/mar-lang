@@ -31,7 +31,7 @@ func TestRequestLogsEndpointRequiresAuthAndReturnsCapturedLogs(t *testing.T) {
 
 	r := mustNewAuthRuntime(t, filepath.Join(t.TempDir(), "request-logs.db"))
 
-	unauthRec := doRuntimeRequest(r, http.MethodGet, "/_mar/request-logs", "", "")
+	unauthRec := doRuntimeRequest(r, http.MethodGet, "/_mar/admin/request-logs", "", "")
 	if unauthRec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 without auth, got %d body=%s", unauthRec.Code, unauthRec.Body.String())
 	}
@@ -44,7 +44,7 @@ func TestRequestLogsEndpointRequiresAuthAndReturnsCapturedLogs(t *testing.T) {
 		t.Fatalf("expected 200 for GET /todos, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
 
-	rec := doRuntimeRequest(r, http.MethodGet, "/_mar/request-logs?limit=20", "", token)
+	rec := doRuntimeRequest(r, http.MethodGet, "/_mar/admin/request-logs?limit=20", "", token)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for request logs, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -126,7 +126,7 @@ func TestRequestLogsGiveReasonsToAllQueriesInEntityRequest(t *testing.T) {
 		t.Fatalf("expected 200 for GET /todos, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	logsRec := doRuntimeRequest(r, http.MethodGet, "/_mar/request-logs?limit=20", "", token)
+	logsRec := doRuntimeRequest(r, http.MethodGet, "/_mar/admin/request-logs?limit=20", "", token)
 	if logsRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for request logs, got %d body=%s", logsRec.Code, logsRec.Body.String())
 	}
@@ -221,7 +221,7 @@ entity Todo {
 		t.Fatalf("expected 200 for GET /todos, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
 
-	logsRec := doRuntimeRequest(r, http.MethodGet, "/_mar/request-logs?limit=20", "", adminToken)
+	logsRec := doRuntimeRequest(r, http.MethodGet, "/_mar/admin/request-logs?limit=20", "", adminToken)
 	if logsRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for request logs, got %d body=%s", logsRec.Code, logsRec.Body.String())
 	}
@@ -293,7 +293,7 @@ entity Todo {
 		t.Fatalf("expected 200 for GET /todos, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
 
-	logsRec := doRuntimeRequest(r, http.MethodGet, "/_mar/request-logs?limit=20", "", adminToken)
+	logsRec := doRuntimeRequest(r, http.MethodGet, "/_mar/admin/request-logs?limit=20", "", adminToken)
 	if logsRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for request logs, got %d body=%s", logsRec.Code, logsRec.Body.String())
 	}
@@ -316,7 +316,7 @@ func TestRequestLogsAddAuthQueryReasons(t *testing.T) {
 	}
 
 	token := readTokenFromLoginResponse(t, rec.Body.Bytes())
-	logsRec := doRuntimeRequest(r, http.MethodGet, "/_mar/request-logs?limit=20", "", token)
+	logsRec := doRuntimeRequest(r, http.MethodGet, "/_mar/admin/request-logs?limit=20", "", token)
 	if logsRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for request logs, got %d body=%s", logsRec.Code, logsRec.Body.String())
 	}
@@ -393,7 +393,7 @@ func TestRequestLogsEndpointMasksSensitiveValues(t *testing.T) {
 		},
 	})
 
-	rec := doRuntimeRequest(r, http.MethodGet, "/_mar/request-logs?limit=5", "", token)
+	rec := doRuntimeRequest(r, http.MethodGet, "/_mar/admin/request-logs?limit=5", "", token)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for request logs, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -436,7 +436,7 @@ func TestRequestLogsSkipHealthAndDoNotExposeNilRoleForUnauthenticatedRequests(t 
 		t.Fatalf("expected 200 for /_mar/version, got %d body=%s", versionRec.Code, versionRec.Body.String())
 	}
 
-	rec := doRuntimeRequest(r, http.MethodGet, "/_mar/request-logs?limit=20", "", token)
+	rec := doRuntimeRequest(r, http.MethodGet, "/_mar/admin/request-logs?limit=20", "", token)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for request logs, got %d body=%s", rec.Code, rec.Body.String())
 	}

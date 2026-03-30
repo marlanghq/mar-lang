@@ -15,8 +15,8 @@ func TestVersionEndpointPublicPayload(t *testing.T) {
 		MarVersion:   "v1.2.3",
 		MarCommit:    "abc123",
 		MarBuildTime: "2026-03-04T16:00:00Z",
-		AppBuildTime:  "2026-03-04T16:10:00Z",
-		ManifestHash:  "sha256:deadbeef",
+		AppBuildTime: "2026-03-04T16:10:00Z",
+		ManifestHash: "sha256:test-manifest-hash",
 	})
 
 	rec := doRuntimeRequest(r, http.MethodGet, "/_mar/version", "", "")
@@ -38,7 +38,7 @@ func TestVersionEndpointPublicPayload(t *testing.T) {
 	if app["name"] != "AuthBootstrapApi" {
 		t.Fatalf("unexpected app.name: %+v", app)
 	}
-	if app["manifestHash"] != "sha256:deadbeef" {
+	if app["manifestHash"] != "sha256:test-manifest-hash" {
 		t.Fatalf("unexpected app.manifestHash: %+v", app)
 	}
 }
@@ -51,11 +51,11 @@ func TestVersionEndpointAdminRequiresAdminRole(t *testing.T) {
 		MarVersion:   "v1.2.3",
 		MarCommit:    "abc123",
 		MarBuildTime: "2026-03-04T16:00:00Z",
-		AppBuildTime:  "2026-03-04T16:10:00Z",
-		ManifestHash:  "sha256:deadbeef",
+		AppBuildTime: "2026-03-04T16:10:00Z",
+		ManifestHash: "sha256:test-manifest-hash",
 	})
 
-	unauth := doRuntimeRequest(r, http.MethodGet, "/_mar/version/admin", "", "")
+	unauth := doRuntimeRequest(r, http.MethodGet, "/_mar/admin/version", "", "")
 	if unauth.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 without auth, got %d body=%s", unauth.Code, unauth.Body.String())
 	}
@@ -63,9 +63,9 @@ func TestVersionEndpointAdminRequiresAdminRole(t *testing.T) {
 	loginCode := requestCodeAndUseKnownCode(t, r, "admin@example.com")
 	token := loginWithCodeAndReadToken(t, r, "admin@example.com", loginCode)
 
-	rec := doRuntimeRequest(r, http.MethodGet, "/_mar/version/admin", "", token)
+	rec := doRuntimeRequest(r, http.MethodGet, "/_mar/admin/version", "", token)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 from /_mar/version/admin, got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 200 from /_mar/admin/version, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
 	var payload struct {
@@ -82,7 +82,7 @@ func TestVersionEndpointAdminRequiresAdminRole(t *testing.T) {
 		} `json:"runtime"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode /_mar/version/admin failed: %v body=%s", err, rec.Body.String())
+		t.Fatalf("decode /_mar/admin/version failed: %v body=%s", err, rec.Body.String())
 	}
 	if payload.Mar.Version != "v1.2.3" || payload.Mar.Commit != "abc123" {
 		t.Fatalf("unexpected mar payload: %+v", payload.Mar)

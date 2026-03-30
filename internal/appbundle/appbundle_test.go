@@ -23,7 +23,7 @@ func TestBuildAndLoadExecutableRoundTrip(t *testing.T) {
 			MarCommit:    "abc123",
 			MarBuildTime: "2026-03-07T00:00:00Z",
 			AppBuildTime: "2026-03-07T01:00:00Z",
-			ManifestHash: "sha256:deadbeef",
+			ManifestHash: "sha256:test-manifest-hash",
 		},
 		AppUIFiles: map[string][]byte{
 			"index.html":  []byte("<html></html>"),
@@ -49,7 +49,7 @@ func TestBuildAndLoadExecutableRoundTrip(t *testing.T) {
 	if bundle.App.AppName != "TodoApi" {
 		t.Fatalf("unexpected app name: %q", bundle.App.AppName)
 	}
-	if bundle.Metadata.ManifestHash != "sha256:deadbeef" {
+	if bundle.Metadata.ManifestHash != "sha256:test-manifest-hash" {
 		t.Fatalf("unexpected manifest hash: %q", bundle.Metadata.ManifestHash)
 	}
 

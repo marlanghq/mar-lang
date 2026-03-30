@@ -53,7 +53,7 @@ entity Todo {
 		path string
 		want string
 	}{
-		{path: "/_mar/backups/download", want: "/_mar/backups/download"},
+		{path: "/_mar/admin/backups/download", want: "/_mar/admin/backups/download"},
 		{path: "/auth/request-code", want: "/auth/request-code"},
 		{path: "/auth/login", want: "/auth/login"},
 		{path: "/auth/logout", want: "/auth/logout"},
