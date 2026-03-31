@@ -275,7 +275,7 @@ final class AppViewModel: ObservableObject {
         if let clientError = error as? MarClientError {
             switch clientError {
             case .transport(_, let message, _):
-                errorMessage = "This app could not reach its server."
+                errorMessage = "We’re having trouble reaching the app."
                 errorDetails = message + " Check your internet connection and try again."
                 return
             case .decoding:
