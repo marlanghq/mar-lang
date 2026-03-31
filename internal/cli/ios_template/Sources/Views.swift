@@ -427,7 +427,7 @@ struct EntityRowsView: View {
         self.entity = entity
         self.schema = schema
         self.client = client
-        _model = StateObject(wrappedValue: EntityRowsViewModel(entity: entity, client: client))
+        _model = StateObject(wrappedValue: EntityRowsViewModel(entity: entity, schema: schema, client: client))
     }
 
     var body: some View {
@@ -447,15 +447,23 @@ struct EntityRowsView: View {
                 ForEach(model.rows.indices, id: \.self) { index in
                     let row = model.rows[index]
                     NavigationLink {
-                        RowDetailView(entity: entity, schema: schema, client: client, row: row) { updatedRow in
-                            model.insertOrReplace(updatedRow)
-                        } onDelete: { deletedRow in
-                            if let deletedID = RowPresentation.rowID(entity: entity, row: deletedRow) {
-                                model.rows.removeAll { RowPresentation.rowID(entity: entity, row: $0) == deletedID }
-                            }
-                        }
+                        RowDetailView(
+                            entity: entity,
+                            schema: schema,
+                            client: client,
+                            row: row,
+                            onSaved: { updatedRow in
+                                model.insertOrReplace(updatedRow)
+                            },
+                            onDelete: { deletedRow in
+                                if let deletedID = RowPresentation.rowID(entity: entity, row: deletedRow) {
+                                    model.rows.removeAll { RowPresentation.rowID(entity: entity, row: $0) == deletedID }
+                                }
+                            },
+                            relationLabelsByEntity: model.relationLabelsByEntity
+                        )
                     } label: {
-                        EntityRowSummaryView(entity: entity, row: row)
+                        EntityRowSummaryView(entity: entity, row: row, relationLabelsByEntity: model.relationLabelsByEntity)
                     }
                 }
             }
@@ -494,18 +502,18 @@ struct EntityRowsView: View {
 struct EntityRowSummaryView: View {
     let entity: Entity
     let row: Row
+    let relationLabelsByEntity: [String: [String: String]]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(RowPresentation.relatedRowLabel(entity: entity, row: row))
+            Text(RowPresentation.rowTitle(entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity))
                 .font(.headline)
 
-            ForEach(Array(entity.summaryFields.prefix(2))) { field in
-                if let value = row[field.name], !RowPresentation.displayString(for: field, value: value).isEmpty {
-                    Text("\(RowPresentation.fieldLabel(field.name)): \(RowPresentation.displayString(for: field, value: value))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            let summaryRows = Array(RowPresentation.summaryRows(entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity).prefix(2))
+            ForEach(Array(summaryRows.enumerated()), id: \.offset) { _, item in
+                Text("\(item.label): \(item.value)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -518,6 +526,7 @@ struct RowDetailView: View {
     let row: Row
     let onSaved: (Row) -> Void
     let onDelete: (Row) -> Void
+    let relationLabelsByEntity: [String: [String: String]]
 
     @Environment(\.dismiss) private var dismiss
     @State private var showingEdit = false
@@ -530,7 +539,10 @@ struct RowDetailView: View {
             Section {
                 ForEach(entity.detailFields) { field in
                     if let value = row[field.name] {
-                        LabeledContent(RowPresentation.fieldLabel(field.name), value: RowPresentation.displayString(for: field, value: value))
+                        let text = RowPresentation.displayString(for: field, value: value, relationLabelsByEntity: relationLabelsByEntity)
+                        if !text.isEmpty {
+                            LabeledContent(RowPresentation.fieldLabel(field.name), value: text)
+                        }
                     }
                 }
             }
@@ -557,7 +569,7 @@ struct RowDetailView: View {
                 .disabled(isDeleting)
             }
         }
-        .navigationTitle(RowPresentation.relatedRowLabel(entity: entity, row: row))
+        .navigationTitle(RowPresentation.rowTitle(entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Edit") {

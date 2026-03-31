@@ -338,14 +338,17 @@ final class AppViewModel: ObservableObject {
 @MainActor
 final class EntityRowsViewModel: ObservableObject {
     let entity: Entity
+    let schema: Schema
     private let client: MarAPIClient
 
     @Published var rows: [Row] = []
+    @Published var relationLabelsByEntity: [String: [String: String]] = [:]
     @Published var isLoading = false
     @Published var errorMessage: String?
 
-    init(entity: Entity, client: MarAPIClient) {
+    init(entity: Entity, schema: Schema, client: MarAPIClient) {
         self.entity = entity
+        self.schema = schema
         self.client = client
     }
 
@@ -356,6 +359,7 @@ final class EntityRowsViewModel: ObservableObject {
 
         do {
             rows = try await client.listRows(entity: entity)
+            relationLabelsByEntity = try await loadRelationLabels()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -382,6 +386,24 @@ final class EntityRowsViewModel: ObservableObject {
         guard let id = RowPresentation.rowID(entity: entity, row: row) else { return }
         try await client.deleteRow(entity: entity, id: id)
         rows.removeAll { RowPresentation.rowID(entity: entity, row: $0) == id }
+    }
+
+    private func loadRelationLabels() async throws -> [String: [String: String]] {
+        let relationNames = Set(entity.fields.compactMap(\.relationEntity))
+        guard !relationNames.isEmpty else { return [:] }
+
+        var result: [String: [String: String]] = [:]
+        for relationName in relationNames {
+            guard let relationEntity = schema.entities.first(where: { $0.name == relationName }) else { continue }
+            let relationRows = try await client.listRows(entity: relationEntity)
+            result[relationName] = Dictionary(
+                uniqueKeysWithValues: relationRows.compactMap { row in
+                    guard let id = RowPresentation.rowID(entity: relationEntity, row: row) else { return nil }
+                    return (id, RowPresentation.relatedRowLabel(entity: relationEntity, row: row))
+                }
+            )
+        }
+        return result
     }
 }
 

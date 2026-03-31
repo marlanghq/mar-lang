@@ -207,7 +207,54 @@ enum RowPresentation {
         return entity.displayName
     }
 
-    static func displayString(for field: Field, value: JSONValue) -> String {
+    static func rowTitle(entity: Entity, row: Row, relationLabelsByEntity: [String: [String: String]] = [:]) -> String {
+        if let field = preferredDisplayField(from: entity.fields),
+           let value = row[field.name]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+           !value.isEmpty,
+           value != "null" {
+            return value
+        }
+
+        if let primaryRelationField = primaryRelationFieldForTitle(entity: entity),
+           let relationValue = row[primaryRelationField.name],
+           let relationLabel = resolvedRelationLabel(for: primaryRelationField, value: relationValue, relationLabelsByEntity: relationLabelsByEntity),
+           !relationLabel.isEmpty {
+            return relationLabel
+        }
+
+        return entity.displayName
+    }
+
+    static func summaryRows(entity: Entity, row: Row, relationLabelsByEntity: [String: [String: String]] = [:]) -> [(label: String, value: String)] {
+        var rows: [(label: String, value: String)] = []
+
+        for field in entity.summaryFields {
+            guard let value = row[field.name] else { continue }
+            let text = displayString(for: field, value: value, relationLabelsByEntity: relationLabelsByEntity).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            rows.append((fieldLabel(field.name), text))
+        }
+
+        if !rows.isEmpty {
+            return rows
+        }
+
+        let titleFieldName = primaryRelationFieldForTitle(entity: entity)?.name
+        for field in entity.detailFields where field.relationEntity != nil && field.name != titleFieldName {
+            guard let value = row[field.name] else { continue }
+            let text = displayString(for: field, value: value, relationLabelsByEntity: relationLabelsByEntity).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            rows.append((fieldLabel(field.name), text))
+        }
+
+        return rows
+    }
+
+    static func displayString(for field: Field, value: JSONValue, relationLabelsByEntity: [String: [String: String]] = [:]) -> String {
+        if let relationLabel = resolvedRelationLabel(for: field, value: value, relationLabelsByEntity: relationLabelsByEntity) {
+            return relationLabel
+        }
+
         switch field.fieldType {
         case .date:
             if let millis = value.doubleValue {
@@ -274,6 +321,17 @@ enum RowPresentation {
         let normalized = manifestHash.replacingOccurrences(of: "sha256:", with: "")
         guard !normalized.isEmpty else { return nil }
         return String(normalized.prefix(12))
+    }
+
+    private static func primaryRelationFieldForTitle(entity: Entity) -> Field? {
+        entity.fields.first { !$0.primary && !$0.currentUser && $0.relationEntity != nil }
+    }
+
+    private static func resolvedRelationLabel(for field: Field, value: JSONValue, relationLabelsByEntity: [String: [String: String]]) -> String? {
+        guard let relationEntity = field.relationEntity else { return nil }
+        let raw = value.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty, raw != "null" else { return nil }
+        return relationLabelsByEntity[relationEntity]?[raw]
     }
 
     private static func preferredDisplayField(from fields: [Field]) -> Field? {
