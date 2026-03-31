@@ -1,0 +1,37 @@
+-- =========================================
+-- A review belongs to a book and a reviewer (current user).
+-- =========================================
+
+app BookReviews
+
+auth {
+  email_from "no-reply@book-reviews.local"
+  email_subject "Your BookReviews login code"
+  smtp_host "smtp.resend.com"
+  smtp_username "resend"
+  smtp_password_env "RESEND_API_KEY"
+}
+
+entity Book {
+  title: String
+  authorName: String
+
+  rule "Book title cannot be empty" expect title != ""
+
+  authorize all when true
+}
+
+entity Review {
+  rating: Int
+  notes: String optional
+
+  belongs_to Book
+  belongs_to reviewer: current_user
+
+  rule "Rating must be between 1 and 5" expect rating >= 1 and rating <= 5
+
+  authorize read when true
+  authorize create when user_authenticated and reviewer == user_id
+  authorize update when user_authenticated and (reviewer == user_id or user_role == "admin")
+  authorize delete when user_authenticated and (reviewer == user_id or user_role == "admin")
+}

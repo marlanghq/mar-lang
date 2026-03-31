@@ -4036,7 +4036,7 @@ viewSidebar model =
                 )
                 { onPress = Just (SelectEntity entity.name)
                 , label =
-                    sidebarItemLabel entity.name (Just entity.resource)
+                    sidebarItemLabel (entityDisplayName entity) (Just entity.resource)
                 }
 
         actionEndpointCard : ActionInfo -> Element Msg
@@ -8169,7 +8169,7 @@ viewSelectedRow model =
 
 networkErrorMessage : String
 networkErrorMessage =
-    "We could not connect right now. Please try again in a moment."
+    "We’re having trouble reaching the app."
 
 
 httpErrorToString : ApiHttpError -> String
