@@ -55,13 +55,22 @@ func renderZshCompletion(binaryName string) string {
   local -a shells
   local -a format_flags
   local -a format_check_flags
+
+  _mar_complete_mar_files() {
+    _files -g '*.mar(.)'
+  }
+
+  _mar_complete_directories() {
+    _files -/
+  }
+
   commands=(
     'init:Create a new Mar project with a starter app'
     'edit:Edit a Mar file directly in the terminal'
     'dev:Run development mode with hot reload'
     'compile:Compile a .mar app into executables for all supported platforms'
-    'ios:Generate a fresh iOS Xcode project from a .mar app'
     'fly:Prepare, provision, deploy, inspect logs for, and destroy a Fly.io app'
+    'ios:Generate a fresh iOS Xcode project from a .mar app'
     'completion:Generate shell completion scripts'
     'format:Format Mar source files'
     'lsp:Start the Mar Language Server'
@@ -98,12 +107,12 @@ func renderZshCompletion(binaryName string) string {
   case "${words[2]}" in
     edit)
       if (( CURRENT == 3 )); then
-        _files -g '*.mar'
+        _mar_complete_mar_files
       fi
       ;;
     dev|compile)
       if (( CURRENT == 3 )); then
-        _files -g '*.mar'
+        _mar_complete_mar_files
       elif (( CURRENT == 4 )); then
         _message 'output name'
       fi
@@ -116,9 +125,9 @@ func renderZshCompletion(binaryName string) string {
       case "${words[3]}" in
         generate)
           if (( CURRENT == 4 )); then
-            _files -g '*.mar'
+            _mar_complete_mar_files
           elif (( CURRENT == 5 )); then
-            _message 'output directory'
+            _mar_complete_directories
           fi
           ;;
       esac
@@ -131,7 +140,7 @@ func renderZshCompletion(binaryName string) string {
       case "${words[3]}" in
         init|provision|deploy|destroy|logs)
           if (( CURRENT == 4 )); then
-            _files -g '*.mar'
+            _mar_complete_mar_files
           fi
           ;;
       esac
@@ -158,7 +167,7 @@ func renderZshCompletion(binaryName string) string {
         _describe 'format flag' format_check_flags
         return
       fi
-      _files -g '*.mar'
+      _mar_complete_mar_files
       ;;
   esac
 }
@@ -175,20 +184,28 @@ func renderBashCompletion(binaryName string) string {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   prev2="${COMP_WORDS[COMP_CWORD-2]}"
 
+  _mar_complete_mar_files() {
+    COMPREPLY=( $(compgen -f -X '!*.mar' -- "${cur}") )
+  }
+
+  _mar_complete_directories() {
+    COMPREPLY=( $(compgen -d -- "${cur}") )
+  }
+
   if [[ ${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "init edit dev compile ios fly completion format lsp version" -- "${cur}") )
+    COMPREPLY=( $(compgen -W "init edit dev compile fly ios completion format lsp version" -- "${cur}") )
     return 0
   fi
 
   case "${COMP_WORDS[1]}" in
     edit)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
-        COMPREPLY=( $(compgen -f -X '!*.mar' -- "${cur}") )
+        _mar_complete_mar_files
       fi
       ;;
     dev|compile)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
-        COMPREPLY=( $(compgen -f -X '!*.mar' -- "${cur}") )
+        _mar_complete_mar_files
       fi
       ;;
     ios)
@@ -196,11 +213,13 @@ func renderBashCompletion(binaryName string) string {
         COMPREPLY=( $(compgen -W "generate" -- "${cur}") )
         return 0
       fi
-      case "${prev}" in
-        generate)
-          COMPREPLY=( $(compgen -f -X '!*.mar' -- "${cur}") )
-          ;;
-      esac
+      if [[ "${COMP_WORDS[2]}" == "generate" ]]; then
+        if [[ ${COMP_CWORD} -eq 3 ]]; then
+          _mar_complete_mar_files
+        elif [[ ${COMP_CWORD} -eq 4 ]]; then
+          _mar_complete_directories
+        fi
+      fi
       ;;
     fly)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
@@ -209,7 +228,7 @@ func renderBashCompletion(binaryName string) string {
       fi
       case "${prev}" in
         init|provision|deploy|destroy|logs)
-          COMPREPLY=( $(compgen -f -X '!*.mar' -- "${cur}") )
+          _mar_complete_mar_files
           ;;
       esac
       ;;
@@ -240,7 +259,7 @@ func renderBashCompletion(binaryName string) string {
       else
         COMPREPLY=(
           $(compgen -W "--check --stdin" -- "${cur}")
-          $(compgen -f -X '!*.mar' -- "${cur}")
+          $(_mar_complete_mar_files)
         )
       fi
       ;;
@@ -257,8 +276,8 @@ complete -c %s -n '__fish_use_subcommand' -a init -d 'Create a new Mar project w
 complete -c %s -n '__fish_use_subcommand' -a edit -d 'Edit a Mar file directly in the terminal'
 complete -c %s -n '__fish_use_subcommand' -a dev -d 'Run development mode with hot reload'
 complete -c %s -n '__fish_use_subcommand' -a compile -d 'Compile a .mar app into executables for all supported platforms'
-complete -c %s -n '__fish_use_subcommand' -a ios -d 'Generate a fresh iOS Xcode project from a .mar app'
 complete -c %s -n '__fish_use_subcommand' -a fly -d 'Prepare, provision, deploy, inspect logs for, and destroy a Fly.io app'
+complete -c %s -n '__fish_use_subcommand' -a ios -d 'Generate a fresh iOS Xcode project from a .mar app'
 complete -c %s -n '__fish_use_subcommand' -a completion -d 'Generate shell completion scripts'
 complete -c %s -n '__fish_use_subcommand' -a format -d 'Format Mar source files'
 complete -c %s -n '__fish_use_subcommand' -a lsp -d 'Start the Mar Language Server'

@@ -227,10 +227,7 @@ func TestPrintIOSGenerateSummary(t *testing.T) {
 	if !strings.Contains(got, "dist/mar-lang-school-ios") {
 		t.Fatalf("expected output dir, got %q", got)
 	}
-	if !strings.Contains(got, "Builds with Xcode on macOS only.") {
-		t.Fatalf("expected macOS note, got %q", got)
-	}
-	if !strings.Contains(got, "1. Open the Xcode project: open dist/mar-lang-school-ios/MarRuntimeIOS.xcodeproj") {
+	if !strings.Contains(got, "1. On macOS, open the Xcode project: open dist/mar-lang-school-ios/MarRuntimeIOS.xcodeproj") {
 		t.Fatalf("expected project path in next steps, got %q", got)
 	}
 	if !strings.Contains(got, "2. Select your signing team.") {

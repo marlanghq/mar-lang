@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # Regenerates the compiler's embedded assets:
-# - copies the latest admin UI bundle into internal/cli/compiler_assets
+# - copies the latest App UI bundle into internal/cli/compiler_assets
 # - rebuilds the precompiled runtime stubs used by mar compile and mar dev
-# This keeps the mar compiler, its embedded admin files, and packaged runtimes in sync.
+# This keeps the mar compiler, its embedded App UI files, and packaged runtimes in sync.
 
 set -euo pipefail
 
@@ -39,11 +39,11 @@ human_size() {
   }'
 }
 
-printf "  %s%s%s\n" "$COLOR_INFO" "Copying minified admin bundle into embedded assets" "$COLOR_RESET"
+printf "  %s%s%s\n" "$COLOR_INFO" "Copying minified App UI bundle into embedded assets" "$COLOR_RESET"
 mkdir -p "$ASSET_ROOT/dist"
-cp "$ROOT/admin/index.html" "$ASSET_ROOT/index.html"
-cp "$ROOT/admin/favicon.svg" "$ASSET_ROOT/favicon.svg"
-cp "$ROOT/admin/dist/app.js" "$ASSET_ROOT/dist/app.js"
+cp "$ROOT/app-ui/index.html" "$ASSET_ROOT/index.html"
+cp "$ROOT/app-ui/favicon.svg" "$ASSET_ROOT/favicon.svg"
+cp "$ROOT/app-ui/dist/app.js" "$ASSET_ROOT/dist/app.js"
 
 build_stub() {
   local target="$1"

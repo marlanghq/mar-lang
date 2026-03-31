@@ -182,7 +182,7 @@ struct Entity: Codable, Hashable, Identifiable {
         fields.filter { !$0.primary && !$0.currentUser && !$0.auto && $0.relationEntity == nil }
     }
     var detailFields: [Field] {
-        fields.filter { !$0.primary && !$0.currentUser }
+        fields.filter { !$0.primary && !$0.currentUser && !$0.auto }
     }
     var displayFields: [Field] {
         let visible = visibleFields

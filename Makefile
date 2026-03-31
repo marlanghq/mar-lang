@@ -12,7 +12,7 @@ MACOS_DEVELOPER_ID_APP ?=
 MACOS_DEVELOPER_ID_INSTALLER ?=
 MACOS_NOTARY_PROFILE ?=
 
-.PHONY: all check check-go check-elm check-elm-live check-python3 check-node check-npm check-npx check-zip check-codesign check-pkgbuild check-notarytool check-stapler check-macos-release-config admin website website-serve website-dev vscode-plugin compiler-assets mar mar-release mar-release-zip mar-release-macos _mar-release-macos-sign _mar-release-macos-pkg _mar-release-macos-notarize _mar-release-macos-validate test clean distclean
+.PHONY: all check check-go check-elm check-elm-live check-python3 check-node check-npm check-npx check-zip check-codesign check-pkgbuild check-notarytool check-stapler check-macos-release-config app-ui website website-serve website-dev vscode-plugin compiler-assets mar mar-release mar-release-zip mar-release-macos _mar-release-macos-sign _mar-release-macos-pkg _mar-release-macos-notarize _mar-release-macos-validate test clean distclean
 
 define print_title
 	@sh -c 'if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "\n%s\n" "$(1)"; else printf "\n\033[1;36m%s\033[0m\n" "$(1)"; fi'
@@ -185,11 +185,11 @@ check-macos-release-config:
 			exit 1; \
 		fi'
 
-admin: check-elm check-npx
+app-ui: check-elm check-npx
 	$(call print_title,App UI)
-	$(call print_info,Building admin/dist/app.js with Elm $(ELM_REQUIRED_VERSION))
-	$(call print_info,Minifying admin/dist/app.js with esbuild)
-	@cd admin && sh -c '\
+	$(call print_info,Building app-ui/dist/app.js with Elm $(ELM_REQUIRED_VERSION))
+	$(call print_info,Minifying app-ui/dist/app.js with esbuild)
+	@cd app-ui && sh -c '\
 		elm_output=$$(elm make src/Main.elm --optimize --output=dist/app.unminified.js 2>&1) || { printf "%s\n" "$$elm_output"; exit 1; }; \
 		before_bytes=$$(wc -c < dist/app.unminified.js | tr -d " "); \
 		esbuild_output=$$(npx --yes esbuild dist/app.unminified.js --minify --outfile=dist/app.js 2>&1) || { printf "%s\n" "$$esbuild_output"; exit 1; }; \
@@ -199,11 +199,11 @@ admin: check-elm check-npx
 		reduction=$$(awk "BEGIN { if ($$before_bytes > 0) printf \"%.0f\", (( $$before_bytes - $$after_bytes ) / $$before_bytes) * 100; else printf \"0\" }"); \
 		rm -f dist/app.unminified.js; \
 		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then \
-			printf "  %s\n" "Output: admin/dist/app.js ($$after_kb KB, down from $$before_kb KB, -$$reduction%%)"; \
+			printf "  %s\n" "Output: app-ui/dist/app.js ($$after_kb KB, down from $$before_kb KB, -$$reduction%%)"; \
 		else \
-			printf "  Output: \033[1;32m%s\033[0m \033[38;5;245m(%s KB, down from %s KB, -%s%%)\033[0m\n" "admin/dist/app.js" "$$after_kb" "$$before_kb" "$$reduction"; \
+			printf "  Output: \033[1;32m%s\033[0m \033[38;5;245m(%s KB, down from %s KB, -%s%%)\033[0m\n" "app-ui/dist/app.js" "$$after_kb" "$$before_kb" "$$reduction"; \
 		fi'
-	@if [ -z "$(CHAINED)" ] && [ -n "$(filter admin,$(MAKECMDGOALS))" ]; then printf "\n"; fi
+	@if [ -z "$(CHAINED)" ] && [ -n "$(filter app-ui,$(MAKECMDGOALS))" ]; then printf "\n"; fi
 
 website: check-elm check-npx
 	$(call print_title,Website)
@@ -269,17 +269,17 @@ vscode-plugin: check-npx check-npm
 		fi'
 	@if [ -z "$(CHAINED)" ]; then printf "\n"; fi
 
-compiler-assets: check-go admin
+compiler-assets: check-go app-ui
 	$(call print_title,Compiler assets)
-	$(call print_info,Refreshing embedded admin assets and runtime stubs)
+	$(call print_info,Refreshing embedded App UI assets and runtime stubs)
 	@GOCACHE="$(GOCACHE)" ./scripts/build-compiler-assets.sh
 	@sh -c '\
 		bytes=$$(wc -c < internal/cli/compiler_assets/admin/dist/app.js | tr -d " "); \
 		size_kb=$$(awk "BEGIN { printf \"%.1f\", $$bytes / 1024 }"); \
 		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then \
-			printf "  %s\n" "Embedded admin bundle: internal/cli/compiler_assets/admin/dist/app.js ($$size_kb KB, copied from minified admin/dist/app.js)"; \
+			printf "  %s\n" "Embedded App UI bundle: internal/cli/compiler_assets/admin/dist/app.js ($$size_kb KB, copied from minified app-ui/dist/app.js)"; \
 		else \
-			printf "  Embedded admin bundle: \033[1;32m%s\033[0m \033[38;5;245m(%s KB, copied from minified admin/dist/app.js)\033[0m\n" "internal/cli/compiler_assets/admin/dist/app.js" "$$size_kb"; \
+			printf "  Embedded App UI bundle: \033[1;32m%s\033[0m \033[38;5;245m(%s KB, copied from minified app-ui/dist/app.js)\033[0m\n" "internal/cli/compiler_assets/admin/dist/app.js" "$$size_kb"; \
 		fi'
 	@if [ -z "$(CHAINED)" ] && [ -n "$(filter compiler-assets,$(MAKECMDGOALS))" ]; then printf "\n"; fi
 
