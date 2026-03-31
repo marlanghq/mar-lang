@@ -2578,7 +2578,11 @@ splitEntitiesForSidebar : Model -> List Entity -> ( List Entity, List Entity )
 splitEntitiesForSidebar model entities =
     case authInfoFromModel model of
         Just authInfo ->
-            ( List.filter (\entity -> entity.name == authInfo.userEntity) entities
+            ( if isAdminProfile model then
+                List.filter (\entity -> entity.name == authInfo.userEntity) entities
+
+              else
+                []
             , List.filter (\entity -> entity.name /= authInfo.userEntity) entities
             )
 
