@@ -100,8 +100,6 @@ type alias Model =
     , sessionRestorePending : Bool
     , firstAdminCodeRequested : Bool
     , bootstrapFormValues : Dict String String
-    , authToolsOpen : Bool
-    , workspace : WorkspaceMode
     , schema : Remote Schema
     , selectedEntity : Maybe Entity
     , selectedAction : Maybe ActionInfo
@@ -116,9 +114,6 @@ type alias Model =
     , adminVersion : Remote AdminVersionPayload
     , requestLogs : Remote RequestLogsPayload
     , backups : Remote BackupsPayload
-    , performanceMode : Bool
-    , requestLogsMode : Bool
-    , databaseMode : Bool
     , pendingDelete : Maybe PendingDelete
     , authInlineMessage : Maybe String
     , flash : Maybe String
@@ -522,8 +517,6 @@ init flags url navKey =
             , sessionRestorePending = True
             , firstAdminCodeRequested = False
             , bootstrapFormValues = Dict.empty
-            , authToolsOpen = storedAuthToken == "" && storedSystemAuthToken == ""
-            , workspace = AppWorkspace
             , schema = Loading
             , selectedEntity = Nothing
             , selectedAction = Nothing
@@ -538,9 +531,6 @@ init flags url navKey =
             , adminVersion = NotAsked
             , requestLogs = NotAsked
             , backups = NotAsked
-            , performanceMode = False
-            , requestLogsMode = False
-            , databaseMode = False
             , pendingDelete = Nothing
             , authInlineMessage = Nothing
             , flash = Nothing
@@ -590,36 +580,36 @@ applyCurrentRoute model =
         RouteDefault AppWorkspace ->
             case model.schema of
                 Loaded schema ->
-                    case preferredInitialEntity schema of
+                    case preferredInitialEntity model schema of
                         Just entity ->
-                            applyEntityRoute AppWorkspace entity.name EntityRouteList model
+                            applyEntityRoute entity.name EntityRouteList model
 
                         Nothing ->
-                            ( resetForRoute AppWorkspace model, Cmd.none )
+                            ( resetForRoute model, Cmd.none )
 
                 _ ->
-                    ( resetForRoute AppWorkspace model, Cmd.none )
+                    ( resetForRoute model, Cmd.none )
 
         RouteDefault AdminWorkspace ->
-            applyAuthToolsRoute AdminWorkspace model
+            applyAuthToolsRoute model
 
-        RouteAuthTools workspace ->
-            applyAuthToolsRoute workspace model
+        RouteAuthTools _ ->
+            applyAuthToolsRoute model
 
-        RouteEntity workspace entityName ->
-            applyEntityRoute workspace entityName EntityRouteList model
+        RouteEntity _ entityName ->
+            applyEntityRoute entityName EntityRouteList model
 
-        RouteEntityCreate workspace entityName ->
-            applyEntityRoute workspace entityName EntityRouteCreate model
+        RouteEntityCreate _ entityName ->
+            applyEntityRoute entityName EntityRouteCreate model
 
-        RouteEntityDetail workspace entityName rowKey ->
-            applyEntityRoute workspace entityName (EntityRouteDetail rowKey) model
+        RouteEntityDetail _ entityName rowKey ->
+            applyEntityRoute entityName (EntityRouteDetail rowKey) model
 
-        RouteEntityEdit workspace entityName rowKey ->
-            applyEntityRoute workspace entityName (EntityRouteEdit rowKey) model
+        RouteEntityEdit _ entityName rowKey ->
+            applyEntityRoute entityName (EntityRouteEdit rowKey) model
 
-        RouteAction workspace actionName ->
-            applyActionRoute workspace actionName model
+        RouteAction _ actionName ->
+            applyActionRoute actionName model
 
         RoutePerformance ->
             applySystemRoute RoutePerformance model
@@ -631,15 +621,10 @@ applyCurrentRoute model =
             applySystemRoute RouteDatabase model
 
 
-resetForRoute : WorkspaceMode -> Model -> Model
-resetForRoute workspace model =
+resetForRoute : Model -> Model
+resetForRoute model =
     { model
-        | workspace = workspace
-        , authToolsOpen = False
-        , performanceMode = False
-        , requestLogsMode = False
-        , databaseMode = False
-        , selectedEntity = Nothing
+        | selectedEntity = Nothing
         , selectedAction = Nothing
         , rows = NotAsked
         , selectedRow = Nothing
@@ -655,29 +640,29 @@ resetForRoute workspace model =
     }
 
 
-applyAuthToolsRoute : WorkspaceMode -> Model -> ( Model, Cmd Msg )
-applyAuthToolsRoute workspace model =
+applyAuthToolsRoute : Model -> ( Model, Cmd Msg )
+applyAuthToolsRoute model =
     let
         baseModel =
-            resetForRoute workspace model
+            resetForRoute model
     in
-    ( { baseModel | authToolsOpen = True }, Cmd.none )
+    ( baseModel, Cmd.none )
 
 
-applyActionRoute : WorkspaceMode -> String -> Model -> ( Model, Cmd Msg )
-applyActionRoute workspace actionName model =
+applyActionRoute : String -> Model -> ( Model, Cmd Msg )
+applyActionRoute actionName model =
     case findAction actionName model of
         Nothing ->
             let
                 baseModel =
-                    resetForRoute workspace model
+                    resetForRoute model
             in
             ( { baseModel | flash = Just "Action not found" }, Cmd.none )
 
         Just actionInfo ->
             let
                 baseModel =
-                    resetForRoute workspace model
+                    resetForRoute model
             in
             ( { baseModel
                 | selectedAction = Just actionInfo
@@ -692,7 +677,7 @@ applySystemRoute route model =
     if not (isAdminProfile model) then
         let
             baseModel =
-                resetForRoute AppWorkspace model
+                resetForRoute model
         in
         ( { baseModel
             | flash =
@@ -717,27 +702,27 @@ applySystemRoute route model =
     else
         let
             baseModel =
-                resetForRoute AdminWorkspace model
+                resetForRoute model
         in
         case route of
             RoutePerformance ->
                 let
                     nextModel =
-                        { baseModel | performanceMode = True, perf = Loading, adminVersion = Loading }
+                        { baseModel | perf = Loading, adminVersion = Loading }
                 in
                 ( nextModel, Cmd.batch [ loadPerformance nextModel, loadAdminVersion nextModel ] )
 
             RouteRequestLogs ->
                 let
                     nextModel =
-                        { baseModel | requestLogsMode = True, requestLogs = Loading }
+                        { baseModel | requestLogs = Loading }
                 in
                 ( nextModel, loadRequestLogs nextModel )
 
             RouteDatabase ->
                 let
                     nextModel =
-                        { baseModel | databaseMode = True, perf = Loading, backups = Loading }
+                        { baseModel | perf = Loading, backups = Loading }
                 in
                 ( nextModel, Cmd.batch [ loadPerformance nextModel, loadBackups nextModel ] )
 
@@ -745,13 +730,13 @@ applySystemRoute route model =
                 ( baseModel, Cmd.none )
 
 
-applyEntityRoute : WorkspaceMode -> String -> EntityRouteMode -> Model -> ( Model, Cmd Msg )
-applyEntityRoute workspace entityName routeMode model =
+applyEntityRoute : String -> EntityRouteMode -> Model -> ( Model, Cmd Msg )
+applyEntityRoute entityName routeMode model =
     case findEntity entityName model of
         Nothing ->
             let
                 baseModel =
-                    resetForRoute workspace model
+                    resetForRoute model
             in
             ( { baseModel | flash = Just "Entity not found" }, Cmd.none )
 
@@ -786,7 +771,7 @@ applyEntityRoute workspace entityName routeMode model =
                 baseModel =
                     let
                         clearedModel =
-                            resetForRoute workspace model
+                            resetForRoute model
                     in
                     { clearedModel
                         | selectedEntity = Just entity
@@ -1288,9 +1273,6 @@ update msg model =
                                 nextRoute =
                                     routeForAuthenticatedRole response.role model.currentRoute
 
-                                nextWorkspace =
-                                    workspaceForCurrentRoute response.role nextRoute
-
                                 nextModel =
                                     { model
                                         | authToken = ""
@@ -1303,8 +1285,6 @@ update msg model =
                                         , authSubmitting = Nothing
                                         , sessionRestorePending = False
                                         , firstAdminCodeRequested = False
-                                        , authToolsOpen = False
-                                        , workspace = nextWorkspace
                                         , currentRoute = nextRoute
                                         , flash = Just "Login successful."
                                     }
@@ -1329,17 +1309,12 @@ update msg model =
                                 nextRoute =
                                     routeForAuthenticatedRole response.role model.currentRoute
 
-                                nextWorkspace =
-                                    workspaceForCurrentRoute response.role nextRoute
-
                                 nextModel =
                                     { model
                                         | currentEmail = Just response.email
                                         , currentRole = response.role
                                         , authStage = AuthStageSession
                                         , sessionRestorePending = False
-                                        , authToolsOpen = False
-                                        , workspace = nextWorkspace
                                         , currentRoute = nextRoute
                                         , flash = Nothing
                                     }
@@ -1367,7 +1342,6 @@ update msg model =
                                                 else
                                                     AuthStageEmail
                                             , sessionRestorePending = False
-                                            , authToolsOpen = True
                                             , flash =
                                                 if shouldShowExpiredMessage then
                                                     Just "Session expired. Please login again."
@@ -2552,11 +2526,11 @@ findInputAlias aliasName model =
             Nothing
 
 
-preferredInitialEntity : Schema -> Maybe Entity
-preferredInitialEntity schema =
+preferredInitialEntity : Model -> Schema -> Maybe Entity
+preferredInitialEntity model schema =
     let
         authEntityName =
-            schema.auth |> Maybe.map .userEntity
+            authUserEntityName model
 
         nonAuthEntities =
             case authEntityName of
@@ -2576,14 +2550,14 @@ preferredInitialEntity schema =
 
 splitEntitiesForSidebar : Model -> List Entity -> ( List Entity, List Entity )
 splitEntitiesForSidebar model entities =
-    case authInfoFromModel model of
-        Just authInfo ->
+    case authUserEntityName model of
+        Just userEntityName ->
             ( if isAdminProfile model then
-                List.filter (\entity -> entity.name == authInfo.userEntity) entities
+                List.filter (\entity -> entity.name == userEntityName) entities
 
               else
                 []
-            , List.filter (\entity -> entity.name /= authInfo.userEntity) entities
+            , List.filter (\entity -> entity.name /= userEntityName) entities
             )
 
         Nothing ->
@@ -3192,17 +3166,12 @@ viewLayout model =
     else if hasActiveSession model then
         if isCompactLayout model then
             column
-                [ width fill
-                , height fill
-                , htmlAttribute (HtmlAttr.style "height" "100vh")
-                , htmlAttribute (HtmlAttr.style "min-height" "100vh")
-                , htmlAttribute (HtmlAttr.style "overflow" "hidden")
-                ]
+                ([ width fill, height fill ] ++ viewportHeightAttrs)
                 [ viewMobileTopBar model
                 , el
                     [ width fill
                     , height fill
-                    , htmlAttribute (HtmlAttr.style "min-height" "0")
+                    , minHeightZeroAttr
                     , inFront
                         (if model.mobileSidebarOpen then
                             viewMobileMoreSheet model
@@ -3219,8 +3188,8 @@ viewLayout model =
             row
                 [ width fill
                 , height fill
-                , htmlAttribute (HtmlAttr.style "height" "100vh")
-                , htmlAttribute (HtmlAttr.style "overflow" "hidden")
+                , styleAttr "height" "100vh"
+                , styleAttr "overflow" "hidden"
                 ]
                 [ viewSidebar model
                 , viewContent model
@@ -3270,39 +3239,17 @@ mobileNavEntries model =
         entityEntry entity =
             { label = entityDisplayName entity
             , onPress = SelectEntity entity.name
-            , selected =
-                not model.authToolsOpen
-                    && not model.performanceMode
-                    && not model.requestLogsMode
-                    && not model.databaseMode
-                    && (case model.selectedEntity of
-                            Just current ->
-                                current.name == entity.name
-
-                            Nothing ->
-                                False
-                       )
+            , selected = isSelectedEntity entity.name model
             }
 
         actionEntry actionInfo =
             { label = humanizeIdentifier actionInfo.name
             , onPress = SelectAction actionInfo.name
-            , selected =
-                not model.authToolsOpen
-                    && not model.performanceMode
-                    && not model.requestLogsMode
-                    && not model.databaseMode
-                    && (case model.selectedAction of
-                            Just current ->
-                                current.name == actionInfo.name
-
-                            Nothing ->
-                                False
-                       )
+            , selected = isSelectedAction actionInfo.name model
             }
 
         authEntries =
-            if hasAnyAuthInfo model then
+            if shouldShowAuthTools model then
                 { label =
                     if workspace == AppWorkspace then
                         "Profile"
@@ -3310,7 +3257,7 @@ mobileNavEntries model =
                     else
                         "Authorization"
                 , onPress = ToggleAuthTools
-                , selected = model.authToolsOpen
+                , selected = isAuthToolsOpen model
                 }
                     :: (if workspace == AdminWorkspace then
                             List.map entityEntry authEntities
@@ -3324,9 +3271,9 @@ mobileNavEntries model =
 
         systemEntries =
             if isAdminProfile model && workspace == AdminWorkspace then
-                [ { label = "Monitoring", onPress = SelectPerformance, selected = model.performanceMode && not model.authToolsOpen }
-                , { label = "Logs", onPress = SelectRequestLogs, selected = model.requestLogsMode && not model.authToolsOpen }
-                , { label = "Database", onPress = SelectDatabase, selected = model.databaseMode && not model.authToolsOpen }
+                [ { label = "Monitoring", onPress = SelectPerformance, selected = isPerformanceView model }
+                , { label = "Logs", onPress = SelectRequestLogs, selected = isRequestLogsView model }
+                , { label = "Database", onPress = SelectDatabase, selected = isDatabaseView model }
                 ]
 
             else
@@ -3450,28 +3397,27 @@ viewMobileBottomNav model =
 
         moreButton =
             Input.button
-                [ width fill
-                , Background.color
+                ([ width fill
+                 , Background.color
                     (if moreSelected then
                         rgb255 236 243 255
 
                      else
                         rgba255 255 255 0 0
                     )
-                , Font.color
+                 , Font.color
                     (if moreSelected then
                         rgb255 53 84 138
 
                      else
                         rgb255 104 116 134
                     )
-                , Border.rounded 14
-                , paddingEach { top = 9, right = 8, bottom = 9, left = 8 }
-                , cupertinoFocusRing
-                , htmlAttribute (HtmlAttr.style "outline" "none")
-                , htmlAttribute (HtmlAttr.style "box-shadow" "none")
-                , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
-                ]
+                 , Border.rounded 14
+                 , paddingEach { top = 9, right = 8, bottom = 9, left = 8 }
+                 , cupertinoFocusRing
+                 ]
+                    ++ clearInteractiveChromeAttrs
+                )
                 { onPress =
                     if model.mobileSidebarOpen then
                         Nothing
@@ -3506,9 +3452,9 @@ viewMobileBottomNav model =
                 , Border.width 1
                 , Border.color (rgba255 226 234 244 220)
                 , paddingEach { top = 8, right = 8, bottom = 8, left = 8 }
-                , htmlAttribute (HtmlAttr.style "backdrop-filter" "blur(24px)")
-                , htmlAttribute (HtmlAttr.style "-webkit-backdrop-filter" "blur(24px)")
-                , htmlAttribute (HtmlAttr.style "box-shadow" "0 12px 30px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.72)")
+                , styleAttr "backdrop-filter" "blur(24px)"
+                , styleAttr "-webkit-backdrop-filter" "blur(24px)"
+                , styleAttr "box-shadow" "0 12px 30px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.72)"
                 ]
                 (List.map navButton visibleEntries
                     ++ (if shouldShowMore then
@@ -3532,28 +3478,27 @@ viewMobileMoreSheet model =
 
         sheetButton entry =
             Input.button
-                [ width fill
-                , Border.rounded 14
-                , Background.color
+                ([ width fill
+                 , Border.rounded 14
+                 , Background.color
                     (if entry.selected then
                         rgb255 229 238 255
 
                      else
                         rgb255 244 247 252
                     )
-                , Font.color
+                 , Font.color
                     (if entry.selected then
                         rgb255 45 97 209
 
                      else
                         rgb255 43 56 74
                     )
-                , paddingEach { top = 13, right = 14, bottom = 13, left = 14 }
-                , cupertinoFocusRing
-                , htmlAttribute (HtmlAttr.style "outline" "none")
-                , htmlAttribute (HtmlAttr.style "box-shadow" "none")
-                , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
-                ]
+                 , paddingEach { top = 13, right = 14, bottom = 13, left = 14 }
+                 , cupertinoFocusRing
+                 ]
+                    ++ clearInteractiveChromeAttrs
+                )
                 { onPress =
                     Just
                         (if entry.selected then
@@ -3567,34 +3512,33 @@ viewMobileMoreSheet model =
 
         workspaceButton entry =
             Input.button
-                [ width fill
-                , Border.rounded 14
-                , Border.width 2
-                , Border.color
+                ([ width fill
+                 , Border.rounded 14
+                 , Border.width 2
+                 , Border.color
                     (if entry.selected then
                         rgb255 225 232 242
 
                      else
                         rgba255 255 255 0 0
                     )
-                , Background.color
+                 , Background.color
                     (if entry.selected then
                         rgb255 248 251 255
 
                      else
                         rgba255 255 255 0 0
                     )
-                , Font.color
+                 , Font.color
                     (if entry.selected then
                         rgb255 53 84 138
 
                      else
                         rgb255 78 92 112
                     )
-                , paddingEach { top = 11, right = 10, bottom = 11, left = 10 }
-                , cupertinoFocusRing
-                , htmlAttribute (HtmlAttr.style "outline" "none")
-                , htmlAttribute
+                 , paddingEach { top = 11, right = 10, bottom = 11, left = 10 }
+                 , cupertinoFocusRing
+                 , htmlAttribute
                     (HtmlAttr.style
                         "box-shadow"
                         (if entry.selected then
@@ -3604,7 +3548,9 @@ viewMobileMoreSheet model =
                             "none"
                         )
                     )
-                ]
+                 ]
+                    ++ [ styleAttr "outline" "none" ]
+                )
                 { onPress =
                     Just
                         (if entry.selected then
@@ -3640,23 +3586,22 @@ viewMobileMoreSheet model =
                 , Border.roundEach { topLeft = 24, topRight = 24, bottomLeft = 0, bottomRight = 0 }
                 , Border.width 1
                 , Border.color (rgba255 226 234 244 236)
-                , htmlAttribute (HtmlAttr.style "backdrop-filter" "blur(28px)")
-                , htmlAttribute (HtmlAttr.style "-webkit-backdrop-filter" "blur(28px)")
-                , htmlAttribute (HtmlAttr.style "box-shadow" "0 -10px 30px rgba(15,23,42,0.10), inset 0 1px 0 rgba(255,255,255,0.72)")
+                , styleAttr "backdrop-filter" "blur(28px)"
+                , styleAttr "-webkit-backdrop-filter" "blur(28px)"
+                , styleAttr "box-shadow" "0 -10px 30px rgba(15,23,42,0.10), inset 0 1px 0 rgba(255,255,255,0.72)"
                 ]
                 (row [ width fill, spacing 12 ]
                     [ el [ Font.size 20, Font.bold, Font.color (rgb255 34 47 64) ] (text "More")
                     , el [ width fill ] none
                     , Input.button
-                        [ Background.color (rgb255 236 240 246)
-                        , Font.color (rgb255 62 74 92)
-                        , Border.rounded 12
-                        , paddingEach { top = 8, right = 12, bottom = 8, left = 12 }
-                        , cupertinoFocusRing
-                        , htmlAttribute (HtmlAttr.style "outline" "none")
-                        , htmlAttribute (HtmlAttr.style "box-shadow" "none")
-                        , htmlAttribute (HtmlAttr.style "-webkit-tap-highlight-color" "rgba(0,0,0,0)")
-                        ]
+                        ([ Background.color (rgb255 236 240 246)
+                         , Font.color (rgb255 62 74 92)
+                         , Border.rounded 12
+                         , paddingEach { top = 8, right = 12, bottom = 8, left = 12 }
+                         , cupertinoFocusRing
+                         ]
+                            ++ clearInteractiveChromeAttrs
+                        )
                         { onPress = Just CloseMobileSidebar
                         , label = text "Close"
                         }
@@ -3673,7 +3618,7 @@ viewMobileMoreSheet model =
                                 , Border.width 1
                                 , Border.color (rgb255 219 228 240)
                                 , padding 12
-                                , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)")
+                                , styleAttr "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.72)"
                                 ]
                                 [ el [ Font.size 11, Font.bold, Font.color (rgb255 109 121 139) ] (text "WORKSPACE")
                                 , row
@@ -4080,17 +4025,7 @@ viewSidebar model =
         entityButton entity =
             let
                 selected =
-                    not model.authToolsOpen
-                        && not model.performanceMode
-                        && not model.requestLogsMode
-                        && not model.databaseMode
-                        && (case model.selectedEntity of
-                                Just current ->
-                                    current.name == entity.name
-
-                                Nothing ->
-                                    False
-                           )
+                    isSelectedEntity entity.name model
             in
             Input.button
                 (sidebarButtonAttrs
@@ -4108,17 +4043,7 @@ viewSidebar model =
         actionEndpointCard actionInfo =
             let
                 selected =
-                    not model.authToolsOpen
-                        && not model.performanceMode
-                        && not model.requestLogsMode
-                        && not model.databaseMode
-                        && (case model.selectedAction of
-                                Just current ->
-                                    current.name == actionInfo.name
-
-                                Nothing ->
-                                    False
-                           )
+                    isSelectedAction actionInfo.name model
             in
             Input.button
                 (sidebarButtonAttrs
@@ -4136,7 +4061,7 @@ viewSidebar model =
         performanceButton =
             let
                 selected =
-                    model.performanceMode && not model.authToolsOpen
+                    isPerformanceView model
             in
             Input.button
                 (sidebarButtonAttrs
@@ -4154,7 +4079,7 @@ viewSidebar model =
         requestLogsButton =
             let
                 selected =
-                    model.requestLogsMode && not model.authToolsOpen
+                    isRequestLogsView model
             in
             Input.button
                 (sidebarButtonAttrs
@@ -4172,7 +4097,7 @@ viewSidebar model =
         databaseButton =
             let
                 selected =
-                    model.databaseMode && not model.authToolsOpen
+                    isDatabaseView model
             in
             Input.button
                 (sidebarButtonAttrs
@@ -4190,7 +4115,7 @@ viewSidebar model =
         authToolsButton =
             let
                 selected =
-                    model.authToolsOpen
+                    isAuthToolsOpen model
             in
             Input.button
                 (sidebarButtonAttrs
@@ -4262,7 +4187,7 @@ viewSidebar model =
                         )
                 ]
             , workspaceSwitch
-            , if hasAnyAuthInfo model then
+            , if shouldShowAuthTools model then
                 el (cupertinoSectionHeaderAttrs ++ [ Font.color sidebarSectionColor ])
                     (text
                         (if workspace == AppWorkspace then
@@ -4396,16 +4321,16 @@ viewContent model =
         )
         [ viewAuthToolsPanel model
         , viewFlash model
-        , if model.authToolsOpen then
+        , if isAuthToolsOpen model then
             none
 
-          else if model.performanceMode then
+          else if isPerformanceView model then
             viewPerformancePanel model
 
-          else if model.requestLogsMode then
+          else if isRequestLogsView model then
             viewRequestLogsPanel model
 
-          else if model.databaseMode then
+          else if isDatabaseView model then
             viewDatabasePanel model
 
           else
@@ -4435,7 +4360,7 @@ viewContent model =
 
 viewAuthToolsPanel : Model -> Element Msg
 viewAuthToolsPanel model =
-    if not model.authToolsOpen then
+    if not (isAuthToolsOpen model) then
         none
 
     else
@@ -4666,7 +4591,7 @@ viewAuthToolsPanel model =
                     AuthStageSession ->
                         viewAuthSessionStage model
         in
-        if not (hasAnyAuthInfo model) then
+        if not (shouldShowAuthTools model) then
             none
 
         else
@@ -5587,9 +5512,28 @@ authInfoFromModel model =
             Nothing
 
 
+authUserEntityName : Model -> Maybe String
+authUserEntityName model =
+    case authInfoFromModel model of
+        Just authInfo ->
+            Just authInfo.userEntity
+
+        Nothing ->
+            if hasActiveSession model then
+                Just "User"
+
+            else
+                Nothing
+
+
 hasAnyAuthInfo : Model -> Bool
 hasAnyAuthInfo model =
     authInfoFromModel model /= Nothing
+
+
+shouldShowAuthTools : Model -> Bool
+shouldShowAuthTools model =
+    hasAnyAuthInfo model || hasActiveSession model
 
 
 currentAuthStage : Model -> AuthStage
@@ -5622,122 +5566,144 @@ authFirstAdminMode model =
 
 currentWorkspace : Model -> WorkspaceMode
 currentWorkspace model =
-    if isAdminProfile model && model.workspace == AdminWorkspace then
+    let
+        requestedWorkspace =
+            workspaceFromRoute model.currentRoute
+    in
+    if requestedWorkspace == AdminWorkspace && isAdminProfile model then
         AdminWorkspace
 
     else
         AppWorkspace
 
 
-workspaceForCurrentRoute : Maybe String -> Route -> WorkspaceMode
-workspaceForCurrentRoute maybeRole route =
+workspaceFromRoute : Route -> WorkspaceMode
+workspaceFromRoute route =
     case route of
         RouteDefault workspace ->
-            if workspace == AdminWorkspace && isAdminRole maybeRole then
-                AdminWorkspace
-
-            else
-                AppWorkspace
+            workspace
 
         RouteAuthTools workspace ->
-            if workspace == AdminWorkspace && isAdminRole maybeRole then
-                AdminWorkspace
-
-            else
-                AppWorkspace
+            workspace
 
         RouteEntity workspace _ ->
-            if workspace == AdminWorkspace && isAdminRole maybeRole then
-                AdminWorkspace
-
-            else
-                AppWorkspace
+            workspace
 
         RouteEntityCreate workspace _ ->
-            if workspace == AdminWorkspace && isAdminRole maybeRole then
-                AdminWorkspace
-
-            else
-                AppWorkspace
+            workspace
 
         RouteEntityDetail workspace _ _ ->
-            if workspace == AdminWorkspace && isAdminRole maybeRole then
-                AdminWorkspace
-
-            else
-                AppWorkspace
+            workspace
 
         RouteEntityEdit workspace _ _ ->
-            if workspace == AdminWorkspace && isAdminRole maybeRole then
-                AdminWorkspace
-
-            else
-                AppWorkspace
+            workspace
 
         RouteAction workspace _ ->
-            if workspace == AdminWorkspace && isAdminRole maybeRole then
-                AdminWorkspace
-
-            else
-                AppWorkspace
+            workspace
 
         RoutePerformance ->
-            if isAdminRole maybeRole then
-                AdminWorkspace
-
-            else
-                AppWorkspace
+            AdminWorkspace
 
         RouteRequestLogs ->
-            if isAdminRole maybeRole then
-                AdminWorkspace
-
-            else
-                AppWorkspace
+            AdminWorkspace
 
         RouteDatabase ->
-            if isAdminRole maybeRole then
-                AdminWorkspace
+            AdminWorkspace
 
-            else
-                AppWorkspace
+
+isAuthToolsOpen : Model -> Bool
+isAuthToolsOpen model =
+    case model.currentRoute of
+        RouteAuthTools _ ->
+            True
+
+        _ ->
+            False
+
+
+isPerformanceView : Model -> Bool
+isPerformanceView model =
+    model.currentRoute == RoutePerformance
+
+
+isRequestLogsView : Model -> Bool
+isRequestLogsView model =
+    model.currentRoute == RouteRequestLogs
+
+
+isDatabaseView : Model -> Bool
+isDatabaseView model =
+    model.currentRoute == RouteDatabase
+
+
+isEntitySelectionActive : Model -> Bool
+isEntitySelectionActive model =
+    not (isAuthToolsOpen model)
+        && not (isPerformanceView model)
+        && not (isRequestLogsView model)
+        && not (isDatabaseView model)
+
+
+isSelectedEntity : String -> Model -> Bool
+isSelectedEntity entityName model =
+    isEntitySelectionActive model
+        && (case model.selectedEntity of
+                Just current ->
+                    current.name == entityName
+
+                Nothing ->
+                    False
+           )
+
+
+isSelectedAction : String -> Model -> Bool
+isSelectedAction actionName model =
+    isEntitySelectionActive model
+        && (case model.selectedAction of
+                Just current ->
+                    current.name == actionName
+
+                Nothing ->
+                    False
+           )
+
+
+allowedWorkspace : Maybe String -> WorkspaceMode -> WorkspaceMode
+allowedWorkspace maybeRole workspace =
+    if workspace == AdminWorkspace && isAdminRole maybeRole then
+        AdminWorkspace
+
+    else
+        AppWorkspace
 
 
 routeForAuthenticatedRole : Maybe String -> Route -> Route
 routeForAuthenticatedRole maybeRole route =
-    let
-        allowedWorkspace workspace =
-            if workspace == AdminWorkspace && isAdminRole maybeRole then
-                AdminWorkspace
-
-            else
-                AppWorkspace
-    in
     case route of
         RouteDefault workspace ->
-            RouteDefault (allowedWorkspace workspace)
+            RouteDefault (allowedWorkspace maybeRole workspace)
 
         RouteAuthTools workspace ->
             if isAdminRole maybeRole then
-                RouteAuthTools (allowedWorkspace workspace)
+                RouteAuthTools (allowedWorkspace maybeRole workspace)
 
             else
                 RouteDefault AppWorkspace
 
         RouteEntity workspace entityName ->
-            RouteEntity (allowedWorkspace workspace) entityName
+            RouteEntity (allowedWorkspace maybeRole workspace) entityName
 
         RouteEntityCreate workspace entityName ->
-            RouteEntityCreate (allowedWorkspace workspace) entityName
+            RouteEntityCreate (allowedWorkspace maybeRole workspace) entityName
 
         RouteEntityDetail workspace entityName rowKey ->
-            RouteEntityDetail (allowedWorkspace workspace) entityName rowKey
+            RouteEntityDetail (allowedWorkspace maybeRole workspace) entityName rowKey
 
         RouteEntityEdit workspace entityName rowKey ->
-            RouteEntityEdit (allowedWorkspace workspace) entityName rowKey
+            RouteEntityEdit (allowedWorkspace maybeRole workspace) entityName rowKey
 
         RouteAction workspace actionName ->
-            RouteAction (allowedWorkspace workspace) actionName
+            RouteAction (allowedWorkspace maybeRole workspace) actionName
 
         RoutePerformance ->
             if isAdminRole maybeRole then
@@ -5830,7 +5796,6 @@ clearLocalSession model =
         , sessionRestorePending = False
         , authInlineMessage = Nothing
         , flash = Nothing
-        , authToolsOpen = True
     }
 
 
@@ -5866,11 +5831,7 @@ handleUnauthorizedSessionExpiry model httpError =
 
             nextModel =
                 { clearedModel
-                    | workspace = AppWorkspace
-                    , currentRoute = targetRoute
-                    , performanceMode = False
-                    , requestLogsMode = False
-                    , databaseMode = False
+                    | currentRoute = targetRoute
                     , selectedEntity = Nothing
                     , selectedAction = Nothing
                     , rows = NotAsked
@@ -5922,14 +5883,13 @@ viewPanelTitle : String -> List (Element msg) -> Element msg
 viewPanelTitle title details =
     column [ width fill, spacing 6 ]
         (paragraph
-            [ width fill
-            , Font.bold
-            , Font.size 20
-            , Font.color (rgb255 34 47 64)
-            , htmlAttribute (HtmlAttr.style "min-width" "0")
-            , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
-            , htmlAttribute (HtmlAttr.style "word-break" "break-word")
-            ]
+            ([ width fill
+             , Font.bold
+             , Font.size 20
+             , Font.color (rgb255 34 47 64)
+             ]
+                ++ wrapAnywhereAttrs
+            )
             [ text title ]
             :: details
         )
@@ -5942,7 +5902,7 @@ viewPanelHeader compact title details actions =
             if List.isEmpty actions then
                 el
                     [ width fill
-                    , htmlAttribute (HtmlAttr.style "min-width" "0")
+                    , minWidthZeroAttr
                     , paddingEach { top = 4, right = 0, bottom = 0, left = 0 }
                     ]
                     (viewPanelTitle title details)
@@ -5950,7 +5910,7 @@ viewPanelHeader compact title details actions =
             else
                 el
                     [ width fill
-                    , htmlAttribute (HtmlAttr.style "min-width" "0")
+                    , minWidthZeroAttr
                     ]
                     (viewPanelTitle title details)
     in
@@ -5966,7 +5926,7 @@ viewPanelHeader compact title details actions =
             ]
 
     else
-        row [ width fill, spacing 10, htmlAttribute (HtmlAttr.style "min-width" "0") ]
+        row [ width fill, spacing 10, minWidthZeroAttr ]
             [ titleBlock
             , if List.isEmpty actions then
                 none
@@ -5991,6 +5951,45 @@ onEnter message =
                     )
             )
         )
+
+
+styleAttr : String -> String -> Element.Attribute msg
+styleAttr name value =
+    htmlAttribute (HtmlAttr.style name value)
+
+
+viewportHeightAttrs : List (Element.Attribute msg)
+viewportHeightAttrs =
+    [ styleAttr "height" "100vh"
+    , styleAttr "min-height" "100vh"
+    , styleAttr "overflow" "hidden"
+    ]
+
+
+minHeightZeroAttr : Element.Attribute msg
+minHeightZeroAttr =
+    styleAttr "min-height" "0"
+
+
+minWidthZeroAttr : Element.Attribute msg
+minWidthZeroAttr =
+    styleAttr "min-width" "0"
+
+
+wrapAnywhereAttrs : List (Element.Attribute msg)
+wrapAnywhereAttrs =
+    [ minWidthZeroAttr
+    , styleAttr "overflow-wrap" "anywhere"
+    , styleAttr "word-break" "break-word"
+    ]
+
+
+clearInteractiveChromeAttrs : List (Element.Attribute msg)
+clearInteractiveChromeAttrs =
+    [ styleAttr "outline" "none"
+    , styleAttr "box-shadow" "none"
+    , styleAttr "-webkit-tap-highlight-color" "rgba(0,0,0,0)"
+    ]
 
 
 viewFlash : Model -> Element Msg
@@ -6027,10 +6026,7 @@ viewFlash model =
                         , spacing 12
                         ]
                         [ paragraph
-                            [ width fill
-                            , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
-                            , htmlAttribute (HtmlAttr.style "word-break" "break-word")
-                            ]
+                            (width fill :: wrapAnywhereAttrs)
                             [ text message ]
                         , cupertinoPrimaryButton (Just ClearFlash) "Close"
                         ]
@@ -6042,10 +6038,7 @@ viewFlash model =
                         , htmlAttribute (HtmlAttr.style "align-items" "flex-start")
                         ]
                         [ paragraph
-                            [ width fill
-                            , htmlAttribute (HtmlAttr.style "overflow-wrap" "anywhere")
-                            , htmlAttribute (HtmlAttr.style "word-break" "break-word")
-                            ]
+                            (width fill :: wrapAnywhereAttrs)
                             [ text message ]
                         , cupertinoPrimaryButton (Just ClearFlash) "Close"
                         ]
