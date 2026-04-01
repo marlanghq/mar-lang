@@ -1999,7 +1999,7 @@ downloadInstallRow =
                 }
             , text ". Linux and Windows releases come as "
             , inlineCommand ".zip"
-            , text " archives. On macOS, download the "
+            , text " archives. On macOS, download the signed "
             , inlineCommand ".pkg"
             , text " installer. Extract the archive if needed."
             ]
