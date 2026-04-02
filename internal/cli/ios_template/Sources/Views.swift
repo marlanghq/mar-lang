@@ -88,7 +88,7 @@ struct StartupErrorView: View {
             .padding(24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Mar Runtime")
+            .navigationTitle(model.displayAppName)
         }
     }
 }
@@ -101,10 +101,8 @@ struct LoginView: View {
             Form {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
-                        if let schema = model.schema {
-                            Text(schema.appName)
-                                .font(.title.bold())
-                        }
+                        Text(model.displayAppName)
+                            .font(.title.bold())
 
                         Text(model.loginStep == .email ? "Sign in with your email." : "Enter the code sent to your email.")
                             .foregroundStyle(.secondary)

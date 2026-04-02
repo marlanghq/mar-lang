@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 
 private let generatedServerURL = "__MAR_IOS_SERVER_URL__"
+private let generatedDisplayName = "__MAR_IOS_DISPLAY_NAME__"
 
 struct LoginAlertState: Identifiable {
     let id = UUID()
@@ -61,6 +62,17 @@ final class AppViewModel: ObservableObject {
 
     var authEnabled: Bool {
         schema?.auth?.enabled == true
+    }
+
+    var displayAppName: String {
+        let configuredName = generatedDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let appName = schema?.appName, !appName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return appName
+        }
+        if !configuredName.isEmpty {
+            return configuredName
+        }
+        return "Mar Runtime"
     }
 
     func start() async {
