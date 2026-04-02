@@ -118,14 +118,14 @@ func flyUsageError(binaryName string) error {
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly init <app.mar>", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly provision <app.mar>", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly deploy <app.mar> [--yes]", binaryName))
-	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly destroy <app.mar>", binaryName))
 	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly logs <app.mar>", binaryName))
+	fmt.Fprintf(&b, "  %s\n", fmt.Sprintf("%s fly destroy <app.mar>", binaryName))
 	fmt.Fprintf(&b, "\n%s\n", colorizeCLI(useColor, "\033[1;33m", "Hint:"))
 	fmt.Fprintf(&b, "  Prepare Fly.io deployment files with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s fly init <app.mar>", binaryName)))
 	fmt.Fprintf(&b, "  Create the Fly app, volume, and secrets with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s fly provision <app.mar>", binaryName)))
 	fmt.Fprintf(&b, "  Deploy the current app with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s fly deploy <app.mar> [--yes]", binaryName)))
-	fmt.Fprintf(&b, "  Permanently destroy the Fly.io app with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s fly destroy <app.mar>", binaryName)))
 	fmt.Fprintf(&b, "  Read recent Fly.io app logs with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s fly logs <app.mar>", binaryName)))
+	fmt.Fprintf(&b, "  Permanently destroy the Fly.io app with: %s\n", colorizeCLI(useColor, "\033[1;32m", fmt.Sprintf("%s fly destroy <app.mar>", binaryName)))
 	return styledCLIError(strings.TrimRight(b.String(), "\n") + "\n")
 }
 

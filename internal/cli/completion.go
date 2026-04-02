@@ -80,8 +80,8 @@ func renderZshCompletion(binaryName string) string {
     'init:Prepare Fly.io deployment files for your app'
     'provision:Create the Fly app, volume, and secrets from the generated config'
     'deploy:Rebuild the Linux executable for Fly.io and run fly deploy'
-    'destroy:Permanently destroy the Fly.io app configured for this project'
     'logs:Fetch the most recent Fly.io app logs without tailing'
+    'destroy:Permanently destroy the Fly.io app configured for this project'
   )
   ios_commands=(
     'generate:Generate a fresh iOS Xcode project'
@@ -284,11 +284,11 @@ complete -c %s -n '__fish_use_subcommand' -a lsp -d 'Start the Mar Language Serv
 complete -c %s -n '__fish_use_subcommand' -a version -d 'Show version and build information'
 
 complete -c %s -n '__fish_seen_subcommand_from ios; and not __fish_seen_subcommand_from generate' -a generate -d 'Generate a fresh iOS Xcode project'
-complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init provision deploy destroy logs' -a init -d 'Prepare Fly.io deployment files for your app'
-complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init provision deploy destroy logs' -a provision -d 'Create the Fly app, volume, and secrets from the generated config'
-complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init provision deploy destroy logs' -a deploy -d 'Rebuild the Linux executable for Fly.io and run fly deploy'
-complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init provision deploy destroy logs' -a destroy -d 'Permanently destroy the Fly.io app configured for this project'
-complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init provision deploy destroy logs' -a logs -d 'Fetch the most recent Fly.io app logs without tailing'
+complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init provision deploy logs destroy' -a init -d 'Prepare Fly.io deployment files for your app'
+complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init provision deploy logs destroy' -a provision -d 'Create the Fly app, volume, and secrets from the generated config'
+complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init provision deploy logs destroy' -a deploy -d 'Rebuild the Linux executable for Fly.io and run fly deploy'
+complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init provision deploy logs destroy' -a logs -d 'Fetch the most recent Fly.io app logs without tailing'
+complete -c %s -n '__fish_seen_subcommand_from fly; and not __fish_seen_subcommand_from init provision deploy logs destroy' -a destroy -d 'Permanently destroy the Fly.io app configured for this project'
 
 complete -c %s -n '__fish_seen_subcommand_from edit; and test (count (commandline -opc)) -eq 2' -a '(__fish_complete_suffix .mar)'
 complete -c %s -n '__fish_seen_subcommand_from dev compile; and test (count (commandline -opc)) -eq 2' -a '(__fish_complete_suffix .mar)'
