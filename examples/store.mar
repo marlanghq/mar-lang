@@ -20,8 +20,8 @@ auth {
 -- Entities
 -- =========================================
 
--- User is both identity and profile for auth.
--- First login can auto-provision the user when fields are inferable.
+-- Every Mar app includes a built-in User entity.
+-- Here we extend it with optional profile fields and customize access rules.
 entity User {
   displayName: String optional
   phone: String optional
@@ -29,10 +29,9 @@ entity User {
   rule "User email must be valid" expect matches "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$" email
   rule "Role must be admin or user" expect role == "admin" or role == "user"
 
-  authorize all when user_role == "admin"
   authorize read when user_authenticated and (id == user_id or user_role == "admin")
   authorize update when user_authenticated and ((id == user_id and role == user_role) or user_role == "admin")
-  authorize delete when user_role == "admin"
+  authorize create, delete when user_role == "admin"
 }
 
 entity Book {
@@ -47,10 +46,9 @@ entity Book {
   rule "Price must be greater than zero" expect price > 0
   rule "Stock cannot be negative" expect stock >= 0
 
-  authorize all when true
+  authorize read when anonymous or user_authenticated
   authorize create when user_authenticated
-  authorize update when user_role == "admin"
-  authorize delete when user_role == "admin"
+  authorize update, delete when user_role == "admin"
 }
 
 -- Order and OrderItem are linked by orderRef.
@@ -68,9 +66,7 @@ entity Order {
   rule "Order total must be greater than zero" expect total > 0
   rule "Currency must be BRL or USD" expect currency == "BRL" or currency == "USD"
 
-  authorize read when user_authenticated and (userId == user_id or user_role == "admin")
-  authorize create when user_authenticated and (userId == user_id or user_role == "admin")
-  authorize update when user_authenticated and (userId == user_id or user_role == "admin")
+  authorize read, create, update when user_authenticated and (userId == user_id or user_role == "admin")
   authorize delete when user_role == "admin"
 }
 
@@ -87,9 +83,7 @@ entity OrderItem {
   rule "Unit price must be greater than zero" expect unitPrice > 0
   rule "Line total must be greater than zero" expect lineTotal > 0
 
-  authorize read when user_authenticated and (userId == user_id or user_role == "admin")
-  authorize create when user_authenticated and (userId == user_id or user_role == "admin")
-  authorize update when user_authenticated and (userId == user_id or user_role == "admin")
+  authorize read, create, update when user_authenticated and (userId == user_id or user_role == "admin")
   authorize delete when user_role == "admin"
 }
 
@@ -98,10 +92,8 @@ entity AuditLog {
   event: String
   orderRef: String optional
 
-  authorize read when user_role == "admin"
+  authorize read, update, delete when user_role == "admin"
   authorize create when user_authenticated
-  authorize update when user_role == "admin"
-  authorize delete when user_role == "admin"
 }
 
 -- =========================================

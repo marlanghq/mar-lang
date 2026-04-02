@@ -73,7 +73,7 @@ type editorSnapshot struct {
 var (
 	marEditorKeywords = map[string]struct{}{
 		"app": {}, "port": {}, "database": {}, "ios": {}, "public": {}, "system": {}, "auth": {}, "entity": {}, "action": {}, "type": {}, "alias": {},
-		"rule": {}, "expect": {}, "authorize": {}, "when": {}, "all": {}, "read": {}, "load": {}, "create": {}, "update": {}, "delete": {}, "belongs_to": {}, "current_user": {},
+		"rule": {}, "expect": {}, "authorize": {}, "when": {}, "read": {}, "load": {}, "create": {}, "update": {}, "delete": {}, "belongs_to": {}, "current_user": {},
 		"bundle_identifier": {}, "display_name": {}, "server_url": {},
 		"code_ttl_minutes": {}, "session_ttl_hours": {}, "email_from": {}, "email_subject": {}, "smtp_host": {}, "smtp_port": {}, "smtp_username": {}, "smtp_password_env": {}, "smtp_starttls": {},
 		"dir": {}, "mount": {}, "spa_fallback": {},
@@ -84,14 +84,17 @@ var (
 	marEditorFunctions = map[string]struct{}{
 		"length": {}, "contains": {}, "starts_with": {}, "ends_with": {}, "matches": {},
 	}
+	marEditorLogicalOperators = map[string]struct{}{
+		"and": {}, "or": {}, "not": {},
+	}
 	marEditorTypes = map[string]struct{}{
 		"String": {}, "Int": {}, "Bool": {}, "Float": {}, "Date": {}, "DateTime": {},
 	}
 	marEditorFieldModifiers = map[string]struct{}{
 		"primary": {}, "auto": {}, "optional": {}, "default": {},
 	}
-	marEditorBooleans = map[string]struct{}{
-		"true": {}, "false": {},
+	marEditorLiterals = map[string]struct{}{
+		"true": {}, "false": {}, "null": {},
 	}
 )
 
@@ -1378,11 +1381,13 @@ func editorHighlightLine(line string, useColor bool, selectFrom, selectTo int, h
 				style = "\033[38;5;75m"
 			case tokenInSet(token, marEditorFunctions):
 				style = "\033[38;5;114m"
+			case tokenInSet(token, marEditorLogicalOperators):
+				style = "\033[38;5;110m"
 			case tokenInSet(token, marEditorTypes):
 				style = "\033[38;5;141m"
 			case tokenInSet(token, marEditorFieldModifiers):
 				style = "\033[38;5;110m"
-			case tokenInSet(token, marEditorBooleans):
+			case tokenInSet(token, marEditorLiterals):
 				style = "\033[38;5;179m"
 			default:
 				style = ""

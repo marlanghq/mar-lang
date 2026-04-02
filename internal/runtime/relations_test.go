@@ -18,13 +18,13 @@ app StoreApi
 
 entity Book {
   title: String
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 
 entity Review {
   body: String
   belongs_to Book
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 `)
 
@@ -66,18 +66,18 @@ app EnrollmentApi
 
 entity Student {
   name: String
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 
 entity Course {
   title: String
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 
 entity Enrollment {
   belongs_to Student
   belongs_to Course
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 `)
 
@@ -366,7 +366,7 @@ app TimestampApi
 
 entity Todo {
   title: String
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 `)
 

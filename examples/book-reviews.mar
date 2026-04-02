@@ -18,7 +18,7 @@ entity Book {
 
   rule "Book title cannot be empty" expect title != ""
 
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 
 entity Review {
@@ -30,8 +30,7 @@ entity Review {
 
   rule "Rating must be between 1 and 5" expect rating >= 1 and rating <= 5
 
-  authorize read when true
+  authorize read when anonymous or user_authenticated
   authorize create when user_authenticated and reviewer == user_id
-  authorize update when user_authenticated and (reviewer == user_id or user_role == "admin")
-  authorize delete when user_authenticated and (reviewer == user_id or user_role == "admin")
+  authorize update, delete when user_authenticated and (reviewer == user_id or user_role == "admin")
 }

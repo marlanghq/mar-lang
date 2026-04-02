@@ -218,7 +218,7 @@ entity Todo {
 
   rule "Title must have at least 3 chars" expect length title >= 3
 
-  authorize all when user_authenticated
+  authorize read, create, update, delete when user_authenticated
 }
 `, appName)) + "\n"
 }

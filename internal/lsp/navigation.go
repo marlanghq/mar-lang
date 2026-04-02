@@ -80,7 +80,7 @@ var (
 	actionAliasRefRe    = regexp.MustCompile(`\b([a-z][A-Za-z0-9_]*)\.([a-z][A-Za-z0-9_]*)\b`)
 
 	ruleLineRe      = regexp.MustCompile(`^\s*rule\s+"[^"]+"\s+expect\s+(.+)$`)
-	authorizeLineRe = regexp.MustCompile(`^\s*authorize\s+(?:all|read|create|update|delete)\s+when\s+(.+)$`)
+	authorizeLineRe = regexp.MustCompile(`^\s*authorize\s+(?:(?:read|create|update|delete)(?:\s*,\s*(?:read|create|update|delete))*)\s+when\s+(.+)$`)
 	wordRe          = regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\b`)
 
 	authOpenRe = regexp.MustCompile(`^\s*auth\s*\{\s*$`)

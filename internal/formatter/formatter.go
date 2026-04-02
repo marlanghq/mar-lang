@@ -28,7 +28,7 @@ var (
 	belongsToNamedRe            = regexp.MustCompile(`^belongs_to\s+([a-z][A-Za-z0-9_]*)\s*:\s*([A-Za-z][A-Za-z0-9_]*)(?:\s+(.*))?$`)
 	belongsToShortRe            = regexp.MustCompile(`^belongs_to\s+([A-Za-z][A-Za-z0-9_]*)(?:\s+(.*))?$`)
 	ruleRe                      = regexp.MustCompile(`^rule\s+"([^"]+)"\s+expect\s+(.+)$`)
-	authorizeRe                 = regexp.MustCompile(`^authorize\s+(all|read|create|update|delete)\s+when\s+(.+)$`)
+	authorizeRe                 = regexp.MustCompile(`^authorize\s+(.+?)\s+when\s+(.+)$`)
 	systemIntRe                 = regexp.MustCompile(`^(request_logs_buffer|sqlite_busy_timeout_ms|sqlite_wal_autocheckpoint)\s+([0-9]{1,7})$`)
 	systemModeRe                = regexp.MustCompile(`^(sqlite_journal_mode)\s+(wal|delete|truncate|persist|memory|off)$`)
 	systemSyncRe                = regexp.MustCompile(`^(sqlite_synchronous)\s+(off|normal|full|extra)$`)
@@ -278,7 +278,11 @@ func normalizeLine(trimmed string, state *formatState) string {
 			return `rule "` + m[1] + `" expect ` + strings.TrimSpace(m[2])
 		}
 		if m := authorizeRe.FindStringSubmatch(trimmed); m != nil {
-			return "authorize " + m[1] + " when " + strings.TrimSpace(m[2])
+			ops, err := parseAuthorizeOperations(strings.TrimSpace(m[1]))
+			if err == nil {
+				return "authorize " + strings.Join(ops, ", ") + " when " + strings.TrimSpace(m[2])
+			}
+			return "authorize " + strings.TrimSpace(m[1]) + " when " + strings.TrimSpace(m[2])
 		}
 	}
 
@@ -315,6 +319,28 @@ func normalizeLine(trimmed string, state *formatState) string {
 	}
 
 	return collapseSpaces(trimmed)
+}
+
+func parseAuthorizeOperations(raw string) ([]string, error) {
+	parts := strings.Split(raw, ",")
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("missing authorize operations")
+	}
+	valid := map[string]bool{
+		"read":   true,
+		"create": true,
+		"update": true,
+		"delete": true,
+	}
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		op := strings.TrimSpace(part)
+		if !valid[op] {
+			return nil, fmt.Errorf("invalid authorize operation %q", op)
+		}
+		out = append(out, op)
+	}
+	return out, nil
 }
 
 func normalizeNewlines(source string) string {

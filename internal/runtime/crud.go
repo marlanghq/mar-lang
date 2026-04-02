@@ -280,6 +280,7 @@ func (r *Runtime) isAuthorized(entity *model.Entity, action string, auth authSes
 		ctx[k] = v
 	}
 	ctx["user_authenticated"] = auth.Authenticated
+	ctx["anonymous"] = !auth.Authenticated
 	ctx["user_email"] = auth.Email
 	ctx["user_id"] = auth.UserID
 	ctx["user_role"] = auth.Role

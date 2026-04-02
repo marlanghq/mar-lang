@@ -115,3 +115,33 @@ entity Todo {
 		t.Fatalf("expected always-true admin rule to omit WHERE, got sql=%q args=%v ok=%v", sqlText, args, ok)
 	}
 }
+
+func TestListReadAuthorizationWhereOmitsWhereForAnonymousOrAuthenticatedRule(t *testing.T) {
+	requireSQLite3(t)
+
+	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "read-auth-sql-public.db"), `
+app TodoReadFilter
+
+auth {
+}
+
+entity Todo {
+  title: String
+
+  authorize read when anonymous or user_authenticated
+}
+`)
+
+	entity := r.entitiesByName["Todo"]
+	if entity == nil {
+		t.Fatal("expected Todo entity")
+	}
+
+	if sqlText, args, ok := r.listReadAuthorizationWhere(entity, authSession{}); ok || sqlText != "" || len(args) != 0 {
+		t.Fatalf("expected anonymous or authenticated rule to omit WHERE for anonymous access, got sql=%q args=%v ok=%v", sqlText, args, ok)
+	}
+
+	if sqlText, args, ok := r.listReadAuthorizationWhere(entity, authSession{Authenticated: true, UserID: int64(1), Role: "member"}); ok || sqlText != "" || len(args) != 0 {
+		t.Fatalf("expected anonymous or authenticated rule to omit WHERE for authenticated access, got sql=%q args=%v ok=%v", sqlText, args, ok)
+	}
+}

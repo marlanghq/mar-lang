@@ -34,8 +34,5 @@ entity Todo {
 
   -- Users can only interact with their own todos.
   -- Admins can read and manage all todos.
-  authorize read when user_authenticated and (user == user_id or user_role == "admin")
-  authorize create when user_authenticated
-  authorize update when user_authenticated and (user == user_id or user_role == "admin")
-  authorize delete when user_authenticated and (user == user_id or user_role == "admin")
+  authorize read, create, update, delete when user_authenticated and (user == user_id or user_role == "admin")
 }

@@ -19,7 +19,7 @@ entity Todo {
   order_index: Int default 0
   progress: Float default 0.5
   due_at: DateTime default 1742203200000
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 `)
 

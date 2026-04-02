@@ -597,12 +597,11 @@ func parseUserExtensionBlock(lines []line, idx *int) (*model.Entity, error) {
 			continue
 		}
 
-		if m := match(`^authorize\s+(all|read|create|update|delete)\s+when\s+(.+)$`, trimmed); m != nil {
-			rawAuthz = append(rawAuthz, model.Authorization{
-				Action:     m[1],
-				Expression: strings.TrimSpace(m[2]),
-				LineNo:     ln.number,
-			})
+		if authz, ok, err := parseAuthorizeClause(trimmed, ln.number); ok {
+			if err != nil {
+				return nil, err
+			}
+			rawAuthz = append(rawAuthz, authz...)
 			(*idx)++
 			continue
 		}
@@ -638,6 +637,72 @@ func parseUserExtensionBlock(lines []line, idx *int) (*model.Entity, error) {
 	}
 
 	return nil, parserErrorf("entity User is missing closing }")
+}
+
+func parseAuthorizeClause(trimmed string, lineNo int) ([]model.Authorization, bool, error) {
+	m := match(`^authorize\s+(.+?)\s+when\s+(.+)$`, trimmed)
+	if m == nil {
+		return nil, false, nil
+	}
+
+	actions, err := parseAuthorizeActions(strings.TrimSpace(m[1]))
+	if err != nil {
+		return nil, true, parserErrorf("line %d: %w", lineNo, err)
+	}
+	expression := strings.TrimSpace(m[2])
+	if expression == "" {
+		return nil, true, parserErrorf("line %d: authorize expression cannot be empty", lineNo)
+	}
+
+	out := make([]model.Authorization, 0, len(actions))
+	for _, action := range actions {
+		out = append(out, model.Authorization{
+			Action:     action,
+			Expression: expression,
+			LineNo:     lineNo,
+		})
+	}
+	return out, true, nil
+}
+
+func isLiteralTrueExpr(node expr.Expr) bool {
+	lit, ok := node.(expr.Literal)
+	if !ok {
+		return false
+	}
+	value, ok := lit.Value.(bool)
+	return ok && value
+}
+
+func parseAuthorizeActions(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, parserErrorf("authorize must list one or more operations before when")
+	}
+
+	parts := strings.Split(raw, ",")
+	actions := make([]string, 0, len(parts))
+	valid := map[string]bool{
+		"read":   true,
+		"create": true,
+		"update": true,
+		"delete": true,
+	}
+
+	for _, part := range parts {
+		action := strings.TrimSpace(part)
+		if action == "" {
+			return nil, parserErrorf("authorize operations must be separated by commas")
+		}
+		if !valid[action] {
+			return nil, parserErrorf(
+				"unknown authorize operation %q. Expected one or more of: read, create, update, delete",
+				action,
+			)
+		}
+		actions = append(actions, action)
+	}
+
+	return actions, nil
 }
 
 func isBuiltInUserField(name string) bool {
@@ -1083,12 +1148,11 @@ func parseEntityBlock(lines []line, idx *int, name string) (*model.Entity, error
 			continue
 		}
 
-		if m := match(`^authorize\s+(all|read|create|update|delete)\s+when\s+(.+)$`, trimmed); m != nil {
-			rawAuthz = append(rawAuthz, model.Authorization{
-				Action:     m[1],
-				Expression: strings.TrimSpace(m[2]),
-				LineNo:     ln.number,
-			})
+		if authz, ok, err := parseAuthorizeClause(trimmed, ln.number); ok {
+			if err != nil {
+				return nil, err
+			}
+			rawAuthz = append(rawAuthz, authz...)
 			(*idx)++
 			continue
 		}
@@ -1200,10 +1264,7 @@ func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.A
 	}
 
 	exprVars := expr.AllowedVariablesWithBuiltins(allowedVars)
-	authorizeOps := []string{"read", "create", "update", "delete"}
 	seenAction := map[string]bool{}
-	var allExpression string
-	var hasAll bool
 	for _, authz := range rawAuthz {
 		if seenAction[authz.Action] {
 			if authz.LineNo > 0 {
@@ -1212,33 +1273,20 @@ func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.A
 			return parserErrorf("duplicate authorize rule for %q", authz.Action)
 		}
 		seenAction[authz.Action] = true
-		if _, err := expr.Parse(authz.Expression, expr.ParserOptions{AllowedVariables: exprVars}); err != nil {
+		parsed, err := expr.Parse(authz.Expression, expr.ParserOptions{AllowedVariables: exprVars})
+		if err != nil {
 			if authz.LineNo > 0 {
 				return parserErrorf("line %d: invalid authorization expression %q (%w)", authz.LineNo, authz.Expression, err)
 			}
 			return parserErrorf("invalid authorization expression %q (%w)", authz.Expression, err)
 		}
-		if authz.Action == "all" {
-			hasAll = true
-			allExpression = authz.Expression
-			continue
+		if isLiteralTrueExpr(parsed) {
+			if authz.LineNo > 0 {
+				return parserErrorf("line %d: authorization expressions cannot use true. Use anonymous or user_authenticated instead", authz.LineNo)
+			}
+			return parserErrorf("authorization expressions cannot use true. Use anonymous or user_authenticated instead")
 		}
 		ent.Authorizations = append(ent.Authorizations, authz)
-	}
-	if hasAll {
-		resolved := make([]model.Authorization, 0, len(authorizeOps))
-		specificByAction := map[string]string{}
-		for _, authz := range ent.Authorizations {
-			specificByAction[authz.Action] = authz.Expression
-		}
-		for _, action := range authorizeOps {
-			expression := allExpression
-			if specific, ok := specificByAction[action]; ok {
-				expression = specific
-			}
-			resolved = append(resolved, model.Authorization{Action: action, Expression: expression})
-		}
-		ent.Authorizations = resolved
 	}
 
 	return nil
@@ -1919,11 +1967,12 @@ func parseTypedExpr(raw string, variableTypes map[string]string, includeBuiltins
 }
 
 func typedExprVariables(variableTypes map[string]string, includeBuiltins bool) map[string]string {
-	out := make(map[string]string, len(variableTypes)+4)
+	out := make(map[string]string, len(variableTypes)+5)
 	for name, typ := range variableTypes {
 		out[name] = typ
 	}
 	if includeBuiltins {
+		out["anonymous"] = "Bool"
 		out["user_authenticated"] = "Bool"
 		out["user_email"] = "String"
 		out["user_id"] = "Int"

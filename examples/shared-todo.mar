@@ -29,5 +29,5 @@ entity SharedTodo {
   title: String
   done: Bool
 
-  authorize all when user_authenticated
+  authorize read, create, update, delete when user_authenticated
 }

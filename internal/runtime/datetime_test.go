@@ -17,7 +17,7 @@ app TodoApi
 entity Event {
   title: String
   starts_at: DateTime
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 `)
 
@@ -60,7 +60,7 @@ app TodoApi
 entity Student {
   name: String
   birthday: Date
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 `)
 
@@ -89,7 +89,7 @@ app TodoApi
 entity Event {
   title: String
   starts_at: DateTime
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 
 type alias ScheduleEventInput =
@@ -137,7 +137,7 @@ app TodoApi
 entity Todo {
   title: String
   done: Bool default false
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 
 type alias RenameTodoInput =
@@ -210,13 +210,13 @@ app TodoApi
 entity Todo {
   title: String
   done: Bool default false
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 
 entity AuditLog {
   todoId: Int
   message: String
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 
 type alias CompleteTodoInput =

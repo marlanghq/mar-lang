@@ -999,13 +999,13 @@ auth {
 	}
 }
 
-func TestParseAuthorizeAllExpandsToCrudOperations(t *testing.T) {
+func TestParseAuthorizeOperationListExpandsToCrudOperations(t *testing.T) {
 	src := `
 app TodoApi
 
 entity Todo {
   title: String
-  authorize all when user_authenticated
+  authorize read, create, update, delete when user_authenticated
 }
 `
 
@@ -1044,14 +1044,13 @@ entity Todo {
 	}
 }
 
-func TestParseAuthorizeAllAllowsSpecificOverride(t *testing.T) {
+func TestParseAuthorizeAllowsAnonymousBuiltin(t *testing.T) {
 	src := `
 app TodoApi
 
 entity Todo {
   title: String
-  authorize all when user_authenticated
-  authorize delete when user_role == "admin"
+  authorize read when anonymous or user_authenticated
 }
 `
 
@@ -1061,23 +1060,61 @@ entity Todo {
 	}
 
 	var todo model.Entity
+	var found bool
 	for _, entity := range app.Entities {
 		if entity.Name == "Todo" {
 			todo = entity
+			found = true
 			break
 		}
 	}
-
-	expected := map[string]string{
-		"read":   "user_authenticated",
-		"create": "user_authenticated",
-		"update": "user_authenticated",
-		"delete": `user_role == "admin"`,
+	if !found {
+		t.Fatal("expected Todo entity")
 	}
-	for _, authz := range todo.Authorizations {
-		if expected[authz.Action] != authz.Expression {
-			t.Fatalf("unexpected authorization for %s: %q", authz.Action, authz.Expression)
-		}
+	if len(todo.Authorizations) != 1 {
+		t.Fatalf("expected 1 authorization rule, got %d", len(todo.Authorizations))
+	}
+	if got, want := todo.Authorizations[0].Expression, `anonymous or user_authenticated`; got != want {
+		t.Fatalf("expected authorization expression %q, got %q", want, got)
+	}
+}
+
+func TestParseAuthorizeRejectsLiteralTrue(t *testing.T) {
+	src := `
+app TodoApi
+
+entity Todo {
+  title: String
+  authorize read when true
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for authorize read when true")
+	}
+	if !strings.Contains(err.Error(), "authorization expressions cannot use true") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseAuthorizeOperationListRejectsDuplicateOverride(t *testing.T) {
+	src := `
+app TodoApi
+
+entity Todo {
+  title: String
+  authorize read, create, update, delete when user_authenticated
+  authorize delete when user_role == "admin"
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error for duplicate authorize rule")
+	}
+	if !strings.Contains(err.Error(), `duplicate authorize rule for "delete"`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

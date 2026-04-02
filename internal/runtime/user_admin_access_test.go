@@ -22,7 +22,7 @@ entity User {
 entity Todo {
   title: String
 
-  authorize all when user_authenticated
+  authorize read, create, update, delete when user_authenticated
 }
 
 auth {

@@ -1,6 +1,7 @@
 package expr
 
 var BuiltinValueNames = []string{
+	"anonymous",
 	"user_authenticated",
 	"user_email",
 	"user_id",

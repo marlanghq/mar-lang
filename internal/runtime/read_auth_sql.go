@@ -197,6 +197,8 @@ func readAuthScalarExprFromValue(value any) (readAuthSQLExpr, bool) {
 
 func readAuthBuiltinValue(auth authSession, name string) (any, bool) {
 	switch name {
+	case "anonymous":
+		return !auth.Authenticated, true
 	case "user_authenticated":
 		return auth.Authenticated, true
 	case "user_email":

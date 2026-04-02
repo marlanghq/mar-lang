@@ -72,7 +72,7 @@ var (
 		"smtp_starttls":                           "Controls whether Mar upgrades the SMTP connection with STARTTLS.",
 		"rule":                                    "Adds validation logic for entity records.",
 		"expect":                                  "Used in `rule` clauses to declare the condition that must be true.",
-		"authorize":                               "Adds authorization rules for CRUD actions. Use `authorize all when ...` to set a default rule for read, create, update, and delete, and override specific operations when needed.",
+		"authorize":                               "Adds authorization rules for one or more CRUD actions. Example: `authorize read, create, update, delete when ...`.",
 		"read":                                    "Used in authorize clauses to control single-record reads and which rows appear in list responses.",
 		"belongs_to":                              "Declares a singular relationship to another entity. Example: `belongs_to User`, `belongs_to customer: User optional`, `belongs_to current_user`, or `belongs_to reviewer: current_user`.",
 		"current_user":                            "Used in `belongs_to current_user` or `belongs_to reviewer: current_user` to create a required relationship to the authenticated built-in `User` automatically.",
@@ -131,6 +131,8 @@ func (s *server) handleHover(id json.RawMessage, params textDocumentPositionPara
 	doc, ok := keywordHoverDescriptions[word]
 	if !ok && expr.IsBuiltinValueName(word) {
 		switch word {
+		case "anonymous":
+			doc = "Returns true when the current request is not authenticated."
 		case "user_authenticated":
 			doc = "Returns true when the current request is authenticated."
 		case "user_email":

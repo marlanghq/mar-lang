@@ -14,7 +14,7 @@ app TodoApi
 
 entity Todo {
   title: String
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 `)
 
@@ -45,7 +45,7 @@ app TodoApi
 
 entity Todo {
   title: String
-  authorize all when true
+  authorize read, create, update, delete when anonymous or user_authenticated
 }
 `)
 

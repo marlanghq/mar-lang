@@ -426,7 +426,6 @@ func keywordCompletionItems() []map[string]any {
 		"authorize",
 		"belongs_to",
 		"current_user",
-		"all",
 		"read",
 		"action",
 		"input",
