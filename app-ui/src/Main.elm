@@ -4,7 +4,7 @@ import Browser
 import Browser.Events
 import Browser.Navigation as Nav
 import Dict exposing (Dict)
-import Element exposing (Element, alignLeft, centerX, centerY, column, el, fill, fillPortion, height, htmlAttribute, inFront, maximum, minimum, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarY, spacing, text, width, wrappedRow)
+import Element exposing (Element, alignLeft, alignRight, below, centerX, centerY, column, el, fill, fillPortion, height, htmlAttribute, inFront, maximum, minimum, none, padding, paddingEach, paragraph, px, rgb255, rgba255, row, scrollbarY, spacing, text, width, wrappedRow)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
@@ -143,6 +143,8 @@ type alias Model =
     , viewportWidth : Int
     , mobileSidebarOpen : Bool
     , keepMobileSidebarOpenOnNextRoute : Bool
+    , desktopWorkspaceMenuOpen : Bool
+    , desktopProfileModalOpen : Bool
     }
 
 
@@ -236,6 +238,9 @@ type Msg
     | ViewportResized Int
     | ToggleMobileSidebar
     | CloseMobileSidebar
+    | ToggleDesktopWorkspaceMenu
+    | CloseDesktopWorkspaceMenu
+    | CloseAuthTools
     | GotLocalZone Time.Zone
 
 
@@ -635,6 +640,8 @@ init flags url navKey =
             , viewportWidth = max 320 flags.viewportWidth
             , mobileSidebarOpen = False
             , keepMobileSidebarOpenOnNextRoute = False
+            , desktopWorkspaceMenuOpen = False
+            , desktopProfileModalOpen = False
             }
     in
     case cachedSchema of
@@ -1172,7 +1179,15 @@ update msg model =
                     ( model, Nav.load href )
 
         UrlChanged url ->
-            applyCurrentRoute (promotePendingSchemaForNavigation { model | currentUrl = url, currentRoute = routeFromUrl url })
+            applyCurrentRoute
+                (promotePendingSchemaForNavigation
+                    { model
+                        | currentUrl = url
+                        , currentRoute = routeFromUrl url
+                        , desktopWorkspaceMenuOpen = False
+                        , desktopProfileModalOpen = False
+                    }
+                )
 
         GotSchema result ->
             case result of
@@ -1780,9 +1795,26 @@ update msg model =
         SwitchWorkspace workspace ->
             let
                 nextModel =
-                    closeMobileSidebarForNavigation model
+                    closeMobileSidebarForNavigation { model | desktopWorkspaceMenuOpen = False, desktopProfileModalOpen = False }
             in
             ( nextModel, pushRoute (routeForWorkspaceSwitch workspace nextModel) nextModel )
+
+        ToggleDesktopWorkspaceMenu ->
+            ( { model | desktopWorkspaceMenuOpen = not model.desktopWorkspaceMenuOpen }, Cmd.none )
+
+        CloseDesktopWorkspaceMenu ->
+            ( { model | desktopWorkspaceMenuOpen = False }, Cmd.none )
+
+        CloseAuthTools ->
+            if isCompactLayout model then
+                let
+                    nextModel =
+                        closeMobileSidebarForNavigation { model | desktopWorkspaceMenuOpen = False }
+                in
+                ( nextModel, pushRoute (RouteDefault (currentWorkspace nextModel)) nextModel )
+
+            else
+                ( { model | desktopProfileModalOpen = False, desktopWorkspaceMenuOpen = False }, Cmd.none )
 
         SetActionField fieldName value ->
             let
@@ -2016,11 +2048,15 @@ update msg model =
                             withObservedSchemaVersionFromError httpError ( { model | flash = Just (httpErrorToString httpError) }, Cmd.none )
 
         ToggleAuthTools ->
-            let
-                nextModel =
-                    closeMobileSidebarForNavigation model
-            in
-            ( nextModel, pushRoute (RouteAuthTools (currentWorkspace nextModel)) nextModel )
+            if isCompactLayout model then
+                let
+                    nextModel =
+                        closeMobileSidebarForNavigation { model | desktopWorkspaceMenuOpen = False }
+                in
+                ( nextModel, pushRoute (RouteAuthTools (currentWorkspace nextModel)) nextModel )
+
+            else
+                ( { model | desktopProfileModalOpen = not model.desktopProfileModalOpen, desktopWorkspaceMenuOpen = False }, Cmd.none )
 
         SelectRow rowValue ->
             case ( model.selectedEntity, rowIdForCurrentSelection model rowValue ) of
@@ -4805,15 +4841,7 @@ viewLayout model =
                 ]
 
         else
-            row
-                [ width fill
-                , height fill
-                , styleAttr "height" "100vh"
-                , styleAttr "overflow" "hidden"
-                ]
-                [ viewSidebar model
-                , viewContent model
-                ]
+            viewDesktopLayout model
 
     else
         viewAuthGate model
@@ -4839,6 +4867,439 @@ viewMobileTopBar model =
         , spacing 4
         ]
         [ el [ Font.size 22, Font.bold, Font.color (rgb255 34 47 64) ] (text (currentAppName model)) ]
+
+
+viewDesktopLayout : Model -> Element Msg
+viewDesktopLayout model =
+    if currentWorkspace model == AppWorkspace then
+        viewDesktopAppShell model
+
+    else
+        viewDesktopAdminShell model
+
+
+viewDesktopAppShell : Model -> Element Msg
+viewDesktopAppShell model =
+    column
+        ([ width fill
+        , height fill
+        , styleAttr "height" "100vh"
+        , styleAttr "overflow" "hidden"
+        ]
+            ++ (if model.desktopProfileModalOpen then
+                    [ inFront (viewDesktopProfileModal model) ]
+
+                else
+                    []
+               )
+        )
+        [ viewDesktopHeader model
+        , el
+            [ width fill
+            , height fill
+            , minHeightZeroAttr
+            ]
+            (el
+                [ centerX
+                , width (maximum 980 fill)
+                , height fill
+                , minHeightZeroAttr
+                ]
+                (viewContent model)
+            )
+        ]
+
+
+viewDesktopAdminShell : Model -> Element Msg
+viewDesktopAdminShell model =
+    row
+        ([ width fill
+        , height fill
+        , styleAttr "height" "100vh"
+        , styleAttr "overflow" "hidden"
+        ]
+            ++ (if model.desktopProfileModalOpen then
+                    [ inFront (viewDesktopProfileModal model) ]
+
+                else
+                    []
+               )
+        )
+        [ viewSidebar model
+        , column
+            [ width fill
+            , height fill
+            , minHeightZeroAttr
+            ]
+            [ viewDesktopHeader model
+            , viewContent model
+            ]
+        ]
+
+
+viewDesktopHeader : Model -> Element Msg
+viewDesktopHeader model =
+    if currentWorkspace model == AppWorkspace then
+        viewDesktopAppHeader model
+
+    else
+        viewDesktopAdminHeader model
+
+
+viewDesktopAppHeader : Model -> Element Msg
+viewDesktopAppHeader model =
+    let
+        titleOverlay =
+            el
+                [ width fill
+                , centerY
+                , htmlAttribute (HtmlAttr.style "pointer-events" "none")
+                ]
+                (paragraph
+                    [ width fill
+                    , Font.center
+                    , Font.size 24
+                    , Font.bold
+                    , Font.color (rgb255 34 47 64)
+                    ]
+                    [ text (desktopHeaderTitle model) ]
+                )
+    in
+    el
+        [ width fill
+        , Background.color (rgb255 248 250 252)
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color (rgb255 220 227 238)
+        ]
+        (el
+            [ width (maximum 980 fill)
+            , centerX
+            , paddingEach { top = 14, right = 24, bottom = 14, left = 12 }
+            , inFront titleOverlay
+            ]
+            (row
+                [ width fill ]
+                [ viewDesktopLeadingControl model
+                , el [ width fill ] none
+                , viewDesktopProfileButton model
+                ]
+            )
+        )
+
+
+viewDesktopAdminHeader : Model -> Element Msg
+viewDesktopAdminHeader model =
+    el
+        [ width fill
+        , Background.color (rgb255 248 250 252)
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color (rgb255 220 227 238)
+        ]
+        (row
+            [ width fill
+            , centerX
+            , paddingEach { top = 14, right = 24, bottom = 14, left = 24 }
+            , spacing 16
+            ]
+            [ el [ width (px 160), alignLeft ] (viewDesktopLeadingControl model)
+            , el
+                [ width fill
+                , centerX
+                ]
+                (paragraph
+                    [ width fill
+                    , centerX
+                    , Font.center
+                    , Font.size 24
+                    , Font.bold
+                    , Font.color (rgb255 34 47 64)
+                    ]
+                    [ text (desktopHeaderTitle model) ]
+                )
+            , el [ width (px 160) ]
+                (row [ width fill ]
+                    [ el [ alignRight ] (viewDesktopProfileButton model) ]
+                )
+            ]
+        )
+
+
+viewDesktopLeadingControl : Model -> Element Msg
+viewDesktopLeadingControl model =
+    viewDesktopWorkspaceSwitcher model
+
+
+viewDesktopWorkspaceSwitcher : Model -> Element Msg
+viewDesktopWorkspaceSwitcher model =
+    if isAdminProfile model then
+        let
+            closeOverlay =
+                Input.button
+                    ([ width fill
+                     , height fill
+                     , htmlAttribute (HtmlAttr.style "position" "fixed")
+                     , htmlAttribute (HtmlAttr.style "inset" "0")
+                     , htmlAttribute (HtmlAttr.style "z-index" "10")
+                     ]
+                        ++ clearInteractiveChromeAttrs
+                    )
+                    { onPress = Just CloseDesktopWorkspaceMenu
+                    , label = none
+                    }
+
+            workspaceLabel =
+                case currentWorkspace model of
+                    AppWorkspace ->
+                        "App"
+
+                    AdminWorkspace ->
+                        "Admin"
+
+            menuButton isSelected label workspace =
+                Input.button
+                    ([ width fill
+                     , Background.color
+                        (if isSelected then
+                            rgb255 243 247 255
+
+                         else
+                            rgb255 255 255 255
+                        )
+                     , Border.rounded 10
+                     , Border.width 1
+                     , Border.color
+                        (if isSelected then
+                            rgb255 209 222 244
+
+                         else
+                            rgb255 232 238 246
+                        )
+                     , Font.color
+                        (if isSelected then
+                            rgb255 46 82 142
+
+                         else
+                            rgb255 71 82 100
+                        )
+                     , paddingEach { top = 10, right = 12, bottom = 10, left = 12 }
+                     , cupertinoFocusRing
+                     ]
+                        ++ clearInteractiveChromeAttrs
+                    )
+                    { onPress = Just (SwitchWorkspace workspace)
+                    , label =
+                        paragraph [ Font.semiBold ]
+                            [ text label ]
+                    }
+
+            switcherMenu =
+                column
+                    [ width (px 180)
+                    , spacing 8
+                    , Background.color (rgb255 255 255 255)
+                    , Border.rounded 16
+                    , Border.width 1
+                    , Border.color (rgb255 220 228 240)
+                    , padding 10
+                    , htmlAttribute (HtmlAttr.style "position" "relative")
+                    , htmlAttribute (HtmlAttr.style "z-index" "20")
+                    , styleAttr "box-shadow" "0 18px 40px rgba(15,23,42,0.12), inset 0 1px 0 rgba(255,255,255,0.68)"
+                    ]
+                    [ menuButton (currentWorkspace model == AppWorkspace) "App" AppWorkspace
+                    , menuButton (currentWorkspace model == AdminWorkspace) "Admin" AdminWorkspace
+                    ]
+        in
+        el
+            (if model.desktopWorkspaceMenuOpen then
+                [ inFront closeOverlay
+                , below
+                    (el
+                        [ paddingEach { top = 8, right = 0, bottom = 0, left = 0 }
+                        , htmlAttribute (HtmlAttr.style "position" "relative")
+                        , htmlAttribute (HtmlAttr.style "z-index" "20")
+                        ]
+                        switcherMenu
+                    )
+                ]
+
+             else
+                []
+            )
+            (Input.button
+                ([ Border.rounded 999
+                 , Border.width 1
+                 , Border.color (rgb255 220 228 240)
+                 , Background.color (rgb255 241 245 250)
+                 , Font.color (rgb255 53 64 83)
+                 , paddingEach { top = 8, right = 14, bottom = 8, left = 14 }
+                 , cupertinoFocusRing
+                 , styleAttr "box-shadow" "0 1px 3px rgba(31,41,55,0.08), inset 0 1px 0 rgba(255,255,255,0.72)"
+                 , htmlAttribute (HtmlAttr.style "position" "relative")
+                 , htmlAttribute (HtmlAttr.style "z-index" "20")
+                 ]
+                    ++ clearInteractiveChromeAttrs
+                )
+                { onPress = Just ToggleDesktopWorkspaceMenu
+                , label =
+                    row [ spacing 8 ]
+                        [ paragraph [ Font.semiBold ] [ text workspaceLabel ]
+                        , el [ Font.color (rgb255 126 138 156) ]
+                            (text
+                                (if model.desktopWorkspaceMenuOpen then
+                                    "▴"
+
+                                 else
+                                    "▾"
+                                )
+                            )
+                        ]
+                }
+            )
+
+    else
+        none
+
+
+viewDesktopProfileButton : Model -> Element Msg
+viewDesktopProfileButton model =
+    if shouldShowAuthTools model then
+        Input.button
+            ([ width (px 40)
+             , height (px 40)
+             , Border.rounded 20
+             , Border.width 1
+             , Border.color (rgb255 220 228 240)
+             , Background.color (rgb255 241 245 250)
+             , Font.color (rgb255 74 86 106)
+             , centerX
+             , centerY
+             , cupertinoFocusRing
+             , htmlAttribute (HtmlAttr.attribute "aria-label" "Profile")
+             , htmlAttribute (HtmlAttr.style "box-shadow" "0 1px 3px rgba(31,41,55,0.08), inset 0 1px 0 rgba(255,255,255,0.72)")
+             ]
+                ++ clearInteractiveChromeAttrs
+            )
+            { onPress = Just ToggleAuthTools
+            , label =
+                column
+                    [ centerX
+                    , centerY
+                    , spacing 2
+                    ]
+                    [ el
+                        [ width (px 10)
+                        , height (px 10)
+                        , Border.rounded 5
+                        , Background.color (rgb255 98 110 130)
+                        , centerX
+                        ]
+                        none
+                    , el
+                        [ width (px 18)
+                        , height (px 9)
+                        , Border.rounded 9
+                        , Background.color (rgb255 98 110 130)
+                        , centerX
+                        ]
+                        none
+                    ]
+            }
+
+    else
+        none
+
+
+viewDesktopProfileModal : Model -> Element Msg
+viewDesktopProfileModal model =
+    let
+        modalCard =
+            el
+                [ centerX
+                , centerY
+                , width (maximum 560 fill)
+                , Background.color (rgb255 255 255 255)
+                , Border.rounded 28
+                , Border.width 1
+                , Border.color (rgb255 220 227 238)
+                , padding 22
+                , htmlAttribute (HtmlAttr.style "position" "relative")
+                , htmlAttribute (HtmlAttr.style "z-index" "20")
+                , htmlAttribute (HtmlAttr.style "box-shadow" "0 26px 70px rgba(15,23,42,0.16), inset 0 1px 0 rgba(255,255,255,0.72)")
+                ]
+                (column [ width fill, spacing 18 ]
+                    [ row [ width fill ]
+                        [ el [ Font.size 28, Font.bold, Font.color (rgb255 43 52 66) ] (text "Profile")
+                        , el [ width fill ] none
+                        , Input.button
+                            ([ width (px 38)
+                             , height (px 38)
+                             , Border.rounded 19
+                             , Border.width 1
+                             , Border.color (rgb255 220 228 240)
+                             , Background.color (rgb255 241 245 250)
+                             , Font.color (rgb255 122 135 154)
+                             , centerX
+                             , centerY
+                             ]
+                                ++ clearInteractiveChromeAttrs
+                            )
+                            { onPress = Just CloseAuthTools
+                            , label = el [ centerX, centerY, Font.size 20 ] (text "×")
+                            }
+                        ]
+                    , viewAuthSessionStage model
+                    ]
+                )
+    in
+    el
+        [ width fill
+        , height fill
+        , inFront modalCard
+        ]
+        (Input.button
+            ([ width fill
+             , height fill
+             , Background.color (rgba255 17 24 39 0.12)
+             ]
+                ++ clearInteractiveChromeAttrs
+            )
+            { onPress = Just CloseAuthTools
+            , label = none
+            }
+        )
+
+
+desktopHeaderTitle : Model -> String
+desktopHeaderTitle model =
+    case currentWorkspace model of
+        AppWorkspace ->
+            currentAppName model
+
+        AdminWorkspace ->
+            if isAuthToolsOpen model then
+                "Authorization"
+
+            else if isPerformanceView model then
+                "Monitoring"
+
+            else if isRequestLogsView model then
+                "Request Logs"
+
+            else if isDatabaseView model then
+                "Database"
+
+            else
+                case model.selectedAction of
+                    Just actionInfo ->
+                        humanizeIdentifier actionInfo.name
+
+                    Nothing ->
+                        case model.selectedEntity of
+                            Just entity ->
+                                entityDisplayName entity
+
+                            Nothing ->
+                                "Admin"
 
 
 mobileNavEntries : Model -> List MobileNavEntry
@@ -5515,29 +5976,6 @@ viewSidebar model =
             else
                 rgb255 126 138 156
 
-        workspaceToggleBackground selected =
-            if compact then
-                sidebarItemBackground selected
-
-            else if selected then
-                rgb255 233 241 255
-
-            else
-                rgba255 255 255 0 0
-
-        workspaceToggleTextColor selected =
-            if compact then
-                sidebarItemTextColor selected
-
-            else if selected then
-                rgb255 45 77 136
-
-            else
-                rgb255 78 92 112
-
-        workspaceToggleBorderColor =
-            rgb255 220 228 240
-
         sidebarButtonAttrs selected backgroundColor textColor paddingValues =
             [ width fill
             , Border.rounded 10
@@ -5557,27 +5995,6 @@ viewSidebar model =
                     "box-shadow"
                     (if selected && not compact then
                         "0 8px 20px rgba(110, 139, 196, 0.10), inset 0 1px 0 rgba(255,255,255,0.55)"
-
-                     else
-                        "none"
-                    )
-                )
-            , cupertinoFocusRing
-            ]
-
-        workspaceToggleAttrs backgroundColor textColor paddingValues =
-            [ width fill
-            , Border.rounded 10
-            , Border.width 1
-            , Border.color workspaceToggleBorderColor
-            , Background.color backgroundColor
-            , Font.color textColor
-            , paddingEach paddingValues
-            , htmlAttribute
-                (HtmlAttr.style
-                    "box-shadow"
-                    (if backgroundColor == rgb255 233 241 255 then
-                        "0 1px 3px rgba(31, 41, 55, 0.10), inset 0 1px 0 rgba(255,255,255,0.72)"
 
                      else
                         "none"
@@ -5617,44 +6034,6 @@ viewSidebar model =
                                     []
                            )
                     )
-
-        workspaceSwitch : List (Element Msg)
-        workspaceSwitch =
-            if isAdminProfile model then
-                [ el
-                    [ width fill
-                    , Background.color (rgb255 229 236 246)
-                    , Border.rounded 14
-                    , Border.width 1
-                    , Border.color (rgb255 210 220 235)
-                    , padding 3
-                    , htmlAttribute (HtmlAttr.style "box-shadow" "inset 0 1px 0 rgba(255,255,255,0.7)")
-                    ]
-                    (row [ width fill, spacing 4 ]
-                        [ Input.button
-                            (workspaceToggleAttrs
-                                (workspaceToggleBackground (workspace == AppWorkspace))
-                                (workspaceToggleTextColor (workspace == AppWorkspace))
-                                { top = 3, right = 10, bottom = 3, left = 10 }
-                            )
-                            { onPress = Just (SwitchWorkspace AppWorkspace)
-                            , label = paragraph [ centerX, Font.size 14 ] [ text "App" ]
-                            }
-                        , Input.button
-                            (workspaceToggleAttrs
-                                (workspaceToggleBackground (workspace == AdminWorkspace))
-                                (workspaceToggleTextColor (workspace == AdminWorkspace))
-                                { top = 3, right = 10, bottom = 3, left = 10 }
-                            )
-                            { onPress = Just (SwitchWorkspace AdminWorkspace)
-                            , label = paragraph [ centerX, Font.size 14 ] [ text "Admin" ]
-                            }
-                        ]
-                    )
-                ]
-
-            else
-                []
 
         entityButton entity =
             let
@@ -5745,31 +6124,6 @@ viewSidebar model =
                     sidebarItemLabel "Database" (Just "/_mar/admin/backups")
                 }
 
-        authToolsButton : Element Msg
-        authToolsButton =
-            let
-                selected =
-                    isAuthToolsOpen model
-            in
-            Input.button
-                (sidebarButtonAttrs
-                    selected
-                    (sidebarItemBackground selected)
-                    (sidebarItemTextColor selected)
-                    { top = 12, right = 12, bottom = 12, left = 12 }
-                )
-                { onPress = Just ToggleAuthTools
-                , label =
-                    sidebarItemLabel
-                        (if workspace == AppWorkspace then
-                            "Profile"
-
-                         else
-                            "Authorization"
-                        )
-                        (Just "/auth")
-                }
-
         frontendHomeButton : Element Msg
         frontendHomeButton =
             Input.button
@@ -5833,24 +6187,10 @@ viewSidebar model =
                             )
                         )
                 ]
-            , workspaceSwitch
-            , if shouldShowAuthTools model then
+            , if workspace == AdminWorkspace && not (List.isEmpty authEntities) then
                 el (cupertinoSectionHeaderAttrs ++ [ Font.color sidebarSectionColor ])
-                    (text
-                        (if workspace == AppWorkspace then
-                            "ACCOUNT"
-
-                         else
-                            "AUTH"
-                        )
-                    )
-                    :: authToolsButton
-                    :: (if workspace == AdminWorkspace then
-                            List.map entityButton authEntities
-
-                        else
-                            []
-                       )
+                    (text "AUTH")
+                    :: List.map entityButton authEntities
 
               else
                 []
@@ -5925,12 +6265,18 @@ viewSidebar model =
 viewContent : Model -> Element Msg
 viewContent model =
     let
+        workspace =
+            currentWorkspace model
+
         compact =
             isCompactLayout model
 
+        useSinglePanelLayout =
+            compact || workspace == AppWorkspace
+
         showInspectorAsScreen =
             compact
-                && (model.formMode /= FormHidden || model.selectedRow /= Nothing)
+                && model.selectedRow /= Nothing
     in
     column
         ([ width fill
@@ -6001,11 +6347,31 @@ viewContent model =
                     viewDataPanel model
 
                 Nothing ->
-                    if showInspectorAsScreen then
-                        viewInspector model
+                    if useSinglePanelLayout then
+                        if model.formMode /= FormHidden then
+                            viewFormPanel model
 
-                    else if compact then
-                        viewDataPanel model
+                        else if showInspectorAsScreen then
+                            viewInspector model
+
+                        else
+                            viewDataPanel model
+
+                    else if model.formMode /= FormHidden then
+                        row
+                            [ width fill
+                            , height fill
+                            , spacing 12
+                            , htmlAttribute (HtmlAttr.style "min-height" "0")
+                            ]
+                            [ el
+                                [ width (fillPortion 4)
+                                , height fill
+                                , htmlAttribute (HtmlAttr.style "min-height" "0")
+                                ]
+                                (viewFormPanel model)
+                            , viewInspector model
+                            ]
 
                     else
                         row
@@ -7565,10 +7931,26 @@ currentAppName : Model -> String
 currentAppName model =
     case model.schema of
         Loaded schema ->
-            String.trim schema.appName
+            humanizeAppName schema.appName
 
         _ ->
             "Mar"
+
+
+humanizeAppName : String -> String
+humanizeAppName rawName =
+    let
+        words =
+            splitIdentifierWords rawName
+                |> List.map String.toLower
+                |> List.map capitalizeWord
+    in
+    case words of
+        [] ->
+            String.trim rawName
+
+        _ ->
+            String.join " " words
 
 
 activeAuthScope : AuthScope
@@ -8866,7 +9248,13 @@ viewDataPanel model =
 
             else
                 column
-                    ((width (fillPortion 4))
+                    ((width
+                        (if workspace == AppWorkspace then
+                            fill
+
+                         else
+                            fillPortion 4
+                        ))
                         :: (cupertinoPanelAttrs 10 16
                                 ++ [ paddingEach { top = 10, right = 16, bottom = 4, left = 16 }
                                    , htmlAttribute (HtmlAttr.style "min-height" "0")
@@ -9297,17 +9685,12 @@ viewInspector model =
                     isCompactLayout model
 
                 inspectorContent =
-                    case model.formMode of
-                        FormHidden ->
-                            case model.selectedRow of
-                                Just _ ->
-                                    [ viewSelectedRow model ]
+                    case model.selectedRow of
+                        Just _ ->
+                            [ viewSelectedRow model ]
 
-                                Nothing ->
-                                    [ viewEntitySchema model ]
-
-                        _ ->
-                            [ viewFormPanel model ]
+                        Nothing ->
+                            [ viewEntitySchema model ]
             in
             column
                 ([ width
