@@ -12,7 +12,7 @@ import (
 )
 
 // handleList returns all rows from an entity resource after authorization.
-func (r *Runtime) handleList(w http.ResponseWriter, requestID string, entity *model.Entity, auth authSession) error {
+func (r *Runtime) handleList(w http.ResponseWriter, req *http.Request, requestID string, entity *model.Entity, auth authSession) error {
 	if !r.hasAuthorizer(entity, "read", auth) {
 		if !auth.Authenticated {
 			return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
@@ -20,7 +20,7 @@ func (r *Runtime) handleList(w http.ResponseWriter, requestID string, entity *mo
 		return newAPIError(http.StatusForbidden, "not_authorized", fmt.Sprintf("Not authorized to read %s", entity.Name))
 	}
 
-	query, queryArgs, err := r.buildListQuery(entity, auth)
+	query, queryArgs, err := r.buildListQuery(entity, auth, req.URL.Query())
 	if err != nil {
 		return err
 	}

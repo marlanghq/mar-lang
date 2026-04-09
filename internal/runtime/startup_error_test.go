@@ -67,6 +67,49 @@ func TestPrintStartupErrorSuggestsHumanStringDefault(t *testing.T) {
 	}
 }
 
+func TestPrintStartupErrorFormatsRelationMigrationBlock(t *testing.T) {
+	original := os.Stderr
+	reader, writer, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatalf("pipe failed: %v", pipeErr)
+	}
+	os.Stderr = writer
+	t.Cleanup(func() {
+		os.Stderr = original
+	})
+
+	PrintStartupError(assertAsError(`migration blocked for entity VetVisit: table "vet_visits" already exists, and relation "clinic" requires a foreign key vet_visits.clinic_id -> clinics.id
+
+SQLite cannot add this foreign key with ALTER TABLE, so Mar does not migrate it automatically.
+
+Hint:
+  Migrate the table manually, then restart the app.
+  Suggested Manual Migration SQL:
+    CREATE TABLE vet_visits_new (
+      "id" INTEGER PRIMARY KEY AUTOINCREMENT
+    );`), "")
+
+	_ = writer.Close()
+	var buf bytes.Buffer
+	if _, copyErr := io.Copy(&buf, reader); copyErr != nil {
+		t.Fatalf("copy failed: %v", copyErr)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Migration blocked") {
+		t.Fatalf("expected friendly title, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Foreign key: vet_visits.clinic_id -> clinics.id") {
+		t.Fatalf("expected foreign key detail, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Suggested manual migration SQL:") {
+		t.Fatalf("expected sql hint title, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Migrate vet_visits manually, then restart the app.") {
+		t.Fatalf("expected table-specific hint, got:\n%s", output)
+	}
+}
+
 func assertAsError(message string) error {
 	return startupErrorString(message)
 }

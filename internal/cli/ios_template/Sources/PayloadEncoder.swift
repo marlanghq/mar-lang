@@ -57,7 +57,7 @@ enum PayloadEncoder {
         switch field.fieldType {
         case .string:
             return .string(raw)
-        case .custom(_):
+        case .custom:
             return .string(raw)
         case .int:
             guard let value = Int(raw) else { throw PayloadEncodingError.invalidInt(field.name) }
@@ -75,10 +75,10 @@ enum PayloadEncoder {
                 throw PayloadEncodingError.invalidBool(field.name)
             }
         case .date:
-            guard let value = MarDateCodec.parseDateInput(raw) else { throw PayloadEncodingError.invalidDate(field.name) }
+            guard let value = DateCodec.parseDateInput(raw) else { throw PayloadEncodingError.invalidDate(field.name) }
             return .number(value)
         case .dateTime:
-            guard let value = MarDateCodec.parseDateTimeInput(raw) else { throw PayloadEncodingError.invalidDateTime(field.name) }
+            guard let value = DateCodec.parseDateTimeInput(raw) else { throw PayloadEncodingError.invalidDateTime(field.name) }
             return .number(value)
         }
     }

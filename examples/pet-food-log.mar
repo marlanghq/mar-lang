@@ -1,0 +1,87 @@
+-- =========================================
+-- A simple personal app for tracking pet food purchases.
+--
+-- Each signed-in user logs when they bought food, how many kilos they
+-- bought, and how much they paid.
+-- =========================================
+
+app PetFoodLog
+
+auth {
+  email_from "no-reply@pet-food-log.local"
+  email_subject "Your Pet Food Log login code"
+  smtp_host "smtp.resend.com"
+  smtp_username "resend"
+  smtp_password_env "RESEND_API_KEY"
+}
+
+entity FoodPurchase {
+  purchaseDate: Date
+  amountKg: Float
+  amountPaid: Float
+
+  belongs_to current_user
+
+  rule "Amount in kilos must be greater than zero" expect amountKg > 0
+  rule "Amount paid must be greater than zero" expect amountPaid > 0
+
+  authorize read, create, update, delete when user_authenticated and user == user_id
+}
+
+frontend {
+  screen Home {
+    title "Home"
+
+    section {
+      link "Purchases" to FoodPurchases
+      link "Reports" to Reports
+    }
+  }
+
+  screen FoodPurchases {
+    title "Purchases"
+
+    toolbar {
+      primary create FoodPurchase
+    }
+
+    section {
+      list FoodPurchase where user == user_id {
+        title purchaseDate
+        subtitle amountKg
+        destination FoodPurchaseDetail
+      }
+    }
+  }
+
+  screen FoodPurchaseDetail for FoodPurchase {
+    title "Purchase"
+
+    toolbar {
+      trailing edit
+    }
+
+    section {
+      field purchaseDate
+      field amountKg
+      field amountPaid
+    }
+  }
+
+  screen Reports {
+    title "Reports"
+
+    section "Monthly averages" {
+      report FoodPurchase {
+        group by month(purchaseDate)
+        metric avg(amountKg) label "Average kg"
+        metric avg(amountPaid) label "Average spent"
+      }
+    }
+  }
+}
+
+ios {
+  bundle_identifier "com.example.petfoodlog"
+  server_url "http://192.168.15.180:4200"
+}

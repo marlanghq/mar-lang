@@ -47,11 +47,29 @@ entity Todo {
 	if !strings.Contains(project, `PRODUCT_BUNDLE_IDENTIFIER = "com.example.todo";`) {
 		t.Fatalf("expected generated bundle identifier, got:\n%s", project)
 	}
-	if !strings.Contains(project, `INFOPLIST_KEY_CFBundleDisplayName = "TodoApi";`) {
-		t.Fatalf("expected display name fallback from app name, got:\n%s", project)
+	if !strings.Contains(project, `INFOPLIST_FILE = Info.plist;`) {
+		t.Fatalf("expected explicit Info.plist in generated project, got:\n%s", project)
 	}
-	if !strings.Contains(project, `INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";`) {
-		t.Fatalf("expected iPad orientations in generated project, got:\n%s", project)
+
+	infoPlistBytes, err := os.ReadFile(filepath.Join(outputDir, "Info.plist"))
+	if err != nil {
+		t.Fatalf("read Info.plist failed: %v", err)
+	}
+	infoPlist := string(infoPlistBytes)
+	if !strings.Contains(infoPlist, `<string>TodoApi</string>`) {
+		t.Fatalf("expected display name fallback from app name, got:\n%s", infoPlist)
+	}
+	if !strings.Contains(infoPlist, `<key>NSAllowsLocalNetworking</key>`) {
+		t.Fatalf("expected local networking ATS exception in Info.plist, got:\n%s", infoPlist)
+	}
+	if !strings.Contains(infoPlist, `<key>NSLocalNetworkUsageDescription</key>`) {
+		t.Fatalf("expected local network usage description in Info.plist, got:\n%s", infoPlist)
+	}
+	if !strings.Contains(infoPlist, `<key>NSBonjourServices</key>`) || !strings.Contains(infoPlist, `<string>_mar._tcp</string>`) {
+		t.Fatalf("expected Bonjour service declaration in Info.plist, got:\n%s", infoPlist)
+	}
+	if !strings.Contains(infoPlist, `<key>UISupportedInterfaceOrientations~ipad</key>`) {
+		t.Fatalf("expected iPad orientations in generated Info.plist, got:\n%s", infoPlist)
 	}
 
 	if _, err := os.Stat(filepath.Join(outputDir, "Sources", "Views.swift")); err != nil {
@@ -95,8 +113,8 @@ entity Todo {
 	if !strings.Contains(string(rowPresentationBytes), "return entity.displayName") {
 		t.Fatalf("expected friendly row title fallback in generated row presentation helpers, got:\n%s", string(rowPresentationBytes))
 	}
-	if _, err := os.Stat(filepath.Join(outputDir, "Sources", "MarDateCodec.swift")); err != nil {
-		t.Fatalf("expected generated MarDateCodec source file: %v", err)
+	if _, err := os.Stat(filepath.Join(outputDir, "Sources", "DateCodec.swift")); err != nil {
+		t.Fatalf("expected generated DateCodec source file: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(outputDir, "Sources", "PayloadEncoder.swift")); err != nil {
 		t.Fatalf("expected generated PayloadEncoder source file: %v", err)
@@ -106,6 +124,40 @@ entity Todo {
 	}
 	if _, err := os.Stat(filepath.Join(outputDir, "README.generated.md")); err != nil {
 		t.Fatalf("expected generated readme: %v", err)
+	}
+}
+
+func TestRunIOSGenerateAllowsArbitraryLoadsForHTTPServerURL(t *testing.T) {
+	tempDir := t.TempDir()
+	appPath := filepath.Join(tempDir, "todo.mar")
+	source := `
+app TodoApi
+
+ios {
+  bundle_identifier "com.example.todo"
+  server_url "http://192.168.15.180:4200"
+}
+
+entity Todo {
+  title: String
+}
+`
+	if err := os.WriteFile(appPath, []byte(source), 0o644); err != nil {
+		t.Fatalf("write app failed: %v", err)
+	}
+
+	outputDir := filepath.Join(tempDir, "generated-ios")
+	if err := runIOSGenerate("mar", []string{appPath, outputDir}); err != nil {
+		t.Fatalf("runIOSGenerate failed: %v", err)
+	}
+
+	infoPlistBytes, err := os.ReadFile(filepath.Join(outputDir, "Info.plist"))
+	if err != nil {
+		t.Fatalf("read Info.plist failed: %v", err)
+	}
+	infoPlist := string(infoPlistBytes)
+	if !strings.Contains(infoPlist, `<key>NSAllowsArbitraryLoads</key>`) {
+		t.Fatalf("expected arbitrary loads for HTTP server_url, got:\n%s", infoPlist)
 	}
 }
 
@@ -142,10 +194,10 @@ entity Todo {
 	if !strings.Contains(err.Error(), appPath) {
 		t.Fatalf("expected source file path to be called out, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "bundle_identifier \"com.example.school\"") {
+	if !strings.Contains(err.Error(), "bundle_identifier \"com.example.todoapi\"") {
 		t.Fatalf("expected ios hint example, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "server_url \"https://school.example.com\"") {
+	if !strings.Contains(err.Error(), "server_url \"https://todoapi.example.com\"") {
 		t.Fatalf("expected ios hint example, got %v", err)
 	}
 }

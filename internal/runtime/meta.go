@@ -77,6 +77,9 @@ func (r *Runtime) schemaPayload(requestID string) map[string]any {
 		}
 		payload["actions"] = actions
 	}
+	if r.App.Frontend != nil {
+		payload["frontend"] = r.App.Frontend
+	}
 	cfg := r.authConfig()
 	needsBootstrap := false
 	if totalUsers, err := r.countAuthUsers(requestID); err == nil {

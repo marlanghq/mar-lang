@@ -16,6 +16,7 @@ var (
 	addPrimaryRe   = regexp.MustCompile(`^migration blocked for entity ([^:]+): cannot auto-add primary/auto field "([^"]+)" to existing table ([^ ]+)$`)
 	internalStrict = regexp.MustCompile(`^migration blocked for internal table ([^:]+): cannot auto-add strict column "([^"]+)"$`)
 	uniqueIndexRe  = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): duplicate values prevent unique index creation in table ([^ ]+)$`)
+	relationBlockRe = regexp.MustCompile(`^migration blocked for entity ([^:]+): table "([^"]+)" already exists, and relation "([^"]+)" requires a foreign key ([^.]+)\.([^ ]+) -> ([^.]+)\.([^\n]+)`)
 )
 
 type migrationBlockedKind string
@@ -51,6 +52,17 @@ type startupFriendlyError struct {
 	Hints   []string
 }
 
+type relationMigrationBlockedInfo struct {
+	Entity      string
+	Table       string
+	Relation    string
+	SourceTable string
+	SourceCol   string
+	TargetTable string
+	TargetCol   string
+	SQL         string
+}
+
 func (e *startupFriendlyError) Error() string {
 	if e == nil {
 		return ""
@@ -75,6 +87,10 @@ func PrintStartupError(err error, _ string) {
 		return
 	}
 	msg := strings.TrimSpace(err.Error())
+	if relationInfo, ok := parseRelationMigrationBlocked(msg); ok {
+		printRelationMigrationBlockedError(relationInfo)
+		return
+	}
 	info, ok := parseMigrationBlocked(msg)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -200,6 +216,110 @@ func printFriendlyStartupError(err *startupFriendlyError) {
 		}
 	}
 	fmt.Fprintln(os.Stderr)
+}
+
+func printRelationMigrationBlockedError(info relationMigrationBlockedInfo) {
+	useColor := supportsANSIOn(os.Stderr)
+	red := "\033[1;31m"
+	yellow := "\033[1;33m"
+	cyan := "\033[1;36m"
+	identifier := "\033[38;5;110m"
+	keyword := "\033[38;5;141m"
+	comment := "\033[38;5;179m"
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, colorize(useColor, red, "Migration blocked"))
+	fmt.Fprintln(os.Stderr, colorize(useColor, red, "Mar cannot update this relation automatically."))
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  %s %s\n", colorize(useColor, cyan, "Entity:"), colorize(useColor, identifier, info.Entity))
+	fmt.Fprintf(os.Stderr, "  %s %s\n", colorize(useColor, cyan, "Table:"), colorize(useColor, identifier, info.Table))
+	fmt.Fprintf(os.Stderr, "  %s %s\n", colorize(useColor, cyan, "Relation:"), colorize(useColor, identifier, info.Relation))
+	fmt.Fprintf(
+		os.Stderr,
+		"  %s %s.%s -> %s.%s\n",
+		colorize(useColor, cyan, "Foreign key:"),
+		colorize(useColor, identifier, info.SourceTable),
+		colorize(useColor, identifier, info.SourceCol),
+		colorize(useColor, identifier, info.TargetTable),
+		colorize(useColor, identifier, info.TargetCol),
+	)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(
+		os.Stderr,
+		"SQLite cannot add this foreign key with %s, so Mar does not migrate it automatically.\n",
+		colorize(useColor, keyword, "ALTER TABLE"),
+	)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, colorize(useColor, yellow, "Hint:"))
+	fmt.Fprintf(
+		os.Stderr,
+		"  Migrate %s manually, then restart the app.\n",
+		colorize(useColor, identifier, info.Table),
+	)
+	fmt.Fprintf(os.Stderr, "  %s\n", colorize(useColor, yellow, "Suggested manual migration SQL:"))
+	for _, line := range strings.Split(info.SQL, "\n") {
+		if strings.TrimSpace(line) == "" {
+			fmt.Fprintln(os.Stderr)
+			continue
+		}
+		formatted := line
+		if useColor {
+			formatted = colorizeSQLLine(formatted, keyword, identifier, comment)
+		}
+		fmt.Fprintf(os.Stderr, "    %s\n", formatted)
+	}
+	fmt.Fprintln(os.Stderr)
+}
+
+func colorizeSQLLine(line, keywordColor, identifierColor, commentColor string) string {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "/*") {
+		return colorize(true, commentColor, line)
+	}
+
+	quotedIdentifierRe := regexp.MustCompile(`"[^"]+"`)
+	colored := quotedIdentifierRe.ReplaceAllStringFunc(line, func(token string) string {
+		return colorize(true, identifierColor, token)
+	})
+
+	replacer := strings.NewReplacer(
+		"CREATE TABLE", colorize(true, keywordColor, "CREATE TABLE"),
+		"INSERT INTO", colorize(true, keywordColor, "INSERT INTO"),
+		"SELECT", colorize(true, keywordColor, "SELECT"),
+		"FROM", colorize(true, keywordColor, "FROM"),
+		"DROP TABLE", colorize(true, keywordColor, "DROP TABLE"),
+		"ALTER TABLE", colorize(true, keywordColor, "ALTER TABLE"),
+		"RENAME TO", colorize(true, keywordColor, "RENAME TO"),
+		"REFERENCES", colorize(true, keywordColor, "REFERENCES"),
+		"NULL AS", colorize(true, keywordColor, "NULL AS"),
+	)
+	return replacer.Replace(colored)
+}
+
+func parseRelationMigrationBlocked(msg string) (relationMigrationBlockedInfo, bool) {
+	matches := relationBlockRe.FindStringSubmatch(msg)
+	if len(matches) != 8 {
+		return relationMigrationBlockedInfo{}, false
+	}
+
+	sqlMarker := "\n\nHint:\n  Migrate the table manually, then restart the app.\n  Suggested Manual Migration SQL:\n"
+	sqlIdx := strings.Index(msg, sqlMarker)
+	if sqlIdx < 0 {
+		return relationMigrationBlockedInfo{}, false
+	}
+
+	sql := strings.TrimRight(msg[sqlIdx+len(sqlMarker):], "\n")
+	return relationMigrationBlockedInfo{
+		Entity:      matches[1],
+		Table:       matches[2],
+		Relation:    matches[3],
+		SourceTable: matches[4],
+		SourceCol:   matches[5],
+		TargetTable: matches[6],
+		TargetCol:   matches[7],
+		SQL:         sql,
+	}, true
 }
 
 func parseMigrationBlocked(msg string) (migrationBlockedInfo, bool) {

@@ -6,10 +6,18 @@ actor MarAPIClient {
     private var token: String?
     private var schemaVersionObserver: (@Sendable (String) -> Void)?
 
-    init(baseURL: URL, token: String? = nil, session: URLSession = .shared) {
+    init(baseURL: URL, token: String? = nil, session: URLSession = MarAPIClient.defaultSession()) {
         self.baseURL = baseURL
         self.token = token
         self.session = session
+    }
+
+    private static func defaultSession() -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 10
+        configuration.timeoutIntervalForResource = 20
+        return URLSession(configuration: configuration)
     }
 
     func setToken(_ token: String?) {
@@ -20,8 +28,20 @@ actor MarAPIClient {
         schemaVersionObserver = observer
     }
 
-    func fetchSchema() async throws -> Schema {
-        try await request("/_mar/schema", method: "GET", authorized: false)
+    func fetchSchema() async throws -> SchemaFetchResult {
+        let data = try await requestRaw("/_mar/schema", method: "GET", authorized: false, publishVersion: false)
+        let decoder = JSONDecoder()
+
+        do {
+            let schema = try decoder.decode(Schema.self, from: data)
+            return SchemaFetchResult(schema: schema, version: nil)
+        } catch {
+            throw MarClientError.decoding(
+                path: "/_mar/schema",
+                details: String(reflecting: error),
+                responsePreview: String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            )
+        }
     }
 
     func fetchPublicVersion() async throws -> PublicVersionPayload {
@@ -58,12 +78,23 @@ actor MarAPIClient {
         _ = try await requestUnit("/auth/logout", method: "POST")
     }
 
-    func listRows(entity: Entity) async throws -> [Row] {
-        try await request(entity.resource, method: "GET")
-    }
-
-    func getRow(entity: Entity, id: String) async throws -> Row {
-        try await request("\(entity.resource)/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)", method: "GET")
+    func listRows(entity: Entity, filters: [String: String] = [:]) async throws -> [Row] {
+        let path: String
+        if filters.isEmpty {
+            path = entity.resource
+        } else {
+            let query = filters
+                .sorted { $0.key < $1.key }
+                .map { key, value in
+                    let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
+                    let encodedValue = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
+                    return "\(encodedKey)=\(encodedValue)"
+                }
+                .joined(separator: "&")
+            path = "\(entity.resource)?\(query)"
+        }
+        let rows: [Row] = try await request(path, method: "GET")
+        return rows
     }
 
     func createRow(entity: Entity, payload: [String: JSONValue]) async throws -> Row {
@@ -131,33 +162,19 @@ actor MarAPIClient {
         _ path: String,
         method: String,
         authorized: Bool = true,
-        additionalHeaders: [String: String] = [:]
+        additionalHeaders: [String: String] = [:],
+        publishVersion: Bool = true
     ) async throws -> Data {
-        let request = try buildRequest(
+        let (data, httpResponse) = try await performRequest(
             path: path,
             method: method,
             authorized: authorized,
             additionalHeaders: additionalHeaders,
             body: nil
         )
-
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw marTransportError(path: path, error: error)
+        if publishVersion {
+            publishSchemaVersion(from: httpResponse)
         }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw MarClientError.transport(
-                path: path,
-                message: "The server returned an invalid HTTP response.",
-                details: "error: badServerResponse"
-            )
-        }
-
-        publishSchemaVersion(from: httpResponse)
 
         guard (200 ... 299).contains(httpResponse.statusCode) else {
             let decoder = JSONDecoder()
@@ -178,31 +195,16 @@ actor MarAPIClient {
         additionalHeaders: [String: String] = [:],
         body: [String: JSONValue]? = nil
     ) async throws -> T {
-        let request = try buildRequest(
+        let (data, httpResponse) = try await performRequest(
             path: path,
             method: method,
             authorized: authorized,
             additionalHeaders: additionalHeaders,
             body: body
         )
-
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw marTransportError(path: path, error: error)
-        }
         let decoder = JSONDecoder()
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw MarClientError.transport(
-                path: path,
-                message: "The server returned an invalid HTTP response.",
-                details: "error: badServerResponse"
-            )
-        }
-
+        logRequestResponse(path: path, method: method, statusCode: httpResponse.statusCode)
         publishSchemaVersion(from: httpResponse)
 
         guard (200 ... 299).contains(httpResponse.statusCode) else {
@@ -224,6 +226,42 @@ actor MarAPIClient {
         } catch {
             throw marTransportError(path: path, error: error)
         }
+    }
+
+    private func performRequest(
+        path: String,
+        method: String,
+        authorized: Bool,
+        additionalHeaders: [String: String],
+        body: [String: JSONValue]?
+    ) async throws -> (Data, HTTPURLResponse) {
+        let request = try buildRequest(
+            path: path,
+            method: method,
+            authorized: authorized,
+            additionalHeaders: additionalHeaders,
+            body: body
+        )
+        logRequestStart(request, path: path, method: method)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            logRequestFailure(path: path, method: method, error: error)
+            throw marTransportError(path: path, error: error)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw MarClientError.transport(
+                path: path,
+                message: "The server returned an invalid HTTP response.",
+                details: "error: badServerResponse"
+            )
+        }
+
+        return (data, httpResponse)
     }
 
     private func buildRequest(
@@ -257,13 +295,17 @@ actor MarAPIClient {
     }
 
     private func publishSchemaVersion(from response: HTTPURLResponse) {
-        guard let version = response.value(forHTTPHeaderField: "X-Mar-Schema-Version")?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let version = schemaVersion(from: response),
               !version.isEmpty
         else {
             return
         }
 
         schemaVersionObserver?(version)
+    }
+
+    private func schemaVersion(from response: HTTPURLResponse) -> String? {
+        response.value(forHTTPHeaderField: "X-Mar-Schema-Version")?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func resolvedURL(path: String) -> URL {
@@ -278,9 +320,26 @@ actor MarAPIClient {
         }
         return components?.url ?? baseURL.appending(path: pathPart)
     }
+
+    private func logRequestStart(_ request: URLRequest, path: String, method: String) {
+        print("Mar iOS request start \(method) \(request.url?.absoluteString ?? path)")
+    }
+
+    private func logRequestResponse(path: String, method: String, statusCode: Int) {
+        print("Mar iOS request response \(method) \(path) status=\(statusCode)")
+    }
+
+    private func logRequestFailure(path: String, method: String, error: Error) {
+        print("Mar iOS request failure \(method) \(path) error=\(String(reflecting: error))")
+    }
 }
 
 private struct VoidResponse: Decodable {}
+
+struct SchemaFetchResult {
+    let schema: Schema
+    let version: String?
+}
 
 extension APIErrorResponse: LocalizedError {
     var errorDescription: String? { message }
@@ -299,21 +358,6 @@ enum MarClientError: LocalizedError {
         }
     }
 
-    var debugDetails: String {
-        switch self {
-        case .decoding(let path, let details, let responsePreview):
-            return """
-            request: \(path)
-            decode: \(details)
-            response: \(responsePreview)
-            """
-        case .transport(let path, _, let details):
-            return """
-            request: \(path)
-            error: \(details)
-            """
-        }
-    }
 }
 
 func marTransportError(path: String, error: Error) -> MarClientError {
@@ -333,21 +377,37 @@ func marTransportError(path: String, error: Error) -> MarClientError {
 }
 
 private func transportMessage(for error: URLError) -> String {
+    if isLocalNetworkProhibited(error) {
+        return "Local network access is disabled for this app."
+    }
+
     switch error.code {
-    case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid, .serverCertificateUntrusted, .clientCertificateRejected, .clientCertificateRequired:
+    case .secureConnectionFailed,
+         .serverCertificateHasBadDate,
+         .serverCertificateHasUnknownRoot,
+         .serverCertificateNotYetValid,
+         .serverCertificateUntrusted,
+         .clientCertificateRejected,
+         .clientCertificateRequired:
         return "A secure connection to the server could not be established."
+    case .cannotConnectToHost:
+        return "The app server is not responding."
     case .cannotFindHost, .dnsLookupFailed:
         return "The server address could not be resolved."
     case .notConnectedToInternet, .networkConnectionLost, .internationalRoamingOff, .dataNotAllowed:
         return "The device could not reach the internet."
     case .timedOut:
-        return "The request timed out before the server responded."
+        return "This is taking longer than expected. Please try again in a moment."
     default:
         return "The app could not complete the request."
     }
 }
 
 private func transportDetails(for error: URLError) -> String {
+    if isLocalNetworkProhibited(error) {
+        return "Allow Local Network access for this app in iOS Settings, then try again."
+    }
+
     var lines = [
         "code: \(error.code.rawValue) (\(error.code))"
     ]
@@ -363,6 +423,17 @@ private func transportDetails(for error: URLError) -> String {
     }
 
     return lines.joined(separator: "\n")
+}
+
+private func isLocalNetworkProhibited(_ error: URLError) -> Bool {
+    if String(reflecting: error).localizedCaseInsensitiveContains("local network prohibited") {
+        return true
+    }
+    if let underlying = error.userInfo[NSUnderlyingErrorKey],
+       String(reflecting: underlying).localizedCaseInsensitiveContains("local network prohibited") {
+        return true
+    }
+    return false
 }
 
 private func responsePreview(from data: Data) -> String {

@@ -1,0 +1,23 @@
+disabled_rules:
+  - file_length
+  - type_body_length
+
+line_length:
+  warning: 140
+  error: 240
+
+function_body_length:
+  warning: 80
+  error: 120
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+
+identifier_name:
+  min_length:
+    warning: 2
+    error: 1
+  max_length:
+    warning: 40
+    error: 60

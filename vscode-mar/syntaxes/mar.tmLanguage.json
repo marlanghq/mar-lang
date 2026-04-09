@@ -125,6 +125,144 @@
           }
         },
         {
+          "name": "meta.frontend.declaration.mar",
+          "match": "\\b(frontend)\\s*(\\{)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "2": {
+              "name": "punctuation.section.block.begin.mar"
+            }
+          }
+        },
+        {
+          "name": "meta.frontend.screen.declaration.mar",
+          "match": "\\b(screen)\\s+([A-Z][A-Za-z0-9_]*)(?:\\s+(for)\\s+([A-Z][A-Za-z0-9_]*))?\\s*(\\{)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "2": {
+              "name": "entity.name.type.mar"
+            },
+            "3": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "4": {
+              "name": "entity.name.type.mar"
+            },
+            "5": {
+              "name": "punctuation.section.block.begin.mar"
+            }
+          }
+        },
+        {
+          "name": "meta.frontend.list.declaration.mar",
+          "match": "\\b(list|children)\\s+([A-Z][A-Za-z0-9_]*)(?:\\s+(by)\\s+([a-z][A-Za-z0-9_]*))?\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "2": {
+              "name": "entity.name.type.mar"
+            },
+            "3": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "4": {
+              "name": "variable.other.member.mar"
+            }
+          }
+        },
+        {
+          "name": "meta.frontend.report.declaration.mar",
+          "match": "\\b(report)\\s+([A-Z][A-Za-z0-9_]*)(?:\\s+(where))?\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "2": {
+              "name": "entity.name.type.mar"
+            },
+            "3": {
+              "name": "keyword.control.rule.mar"
+            }
+          }
+        },
+        {
+          "name": "meta.frontend.report.group-by.mar",
+          "match": "\\b(group)\\s+(by)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "2": {
+              "name": "keyword.control.declaration.mar"
+            }
+          }
+        },
+        {
+          "name": "meta.frontend.report.metric.mar",
+          "match": "\\b(metric)\\s+([a-z][A-Za-z0-9_]*)\\s*(label)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "2": {
+              "name": "entity.name.function.mar"
+            },
+            "3": {
+              "name": "keyword.control.declaration.mar"
+            }
+          }
+        },
+        {
+          "name": "meta.frontend.toolbar.create.mar",
+          "match": "\\b(trailing|primary)\\s+(create)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "2": {
+              "name": "keyword.control.rule.mar"
+            },
+            "3": {
+              "name": "entity.name.type.mar"
+            }
+          }
+        },
+        {
+          "name": "meta.frontend.toolbar.edit-list.mar",
+          "match": "\\b(trailing|primary)\\s+(edit)\\s+(list)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "2": {
+              "name": "keyword.control.rule.mar"
+            },
+            "3": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "4": {
+              "name": "entity.name.type.mar"
+            }
+          }
+        },
+        {
+          "name": "meta.frontend.toolbar.edit.mar",
+          "match": "\\b(trailing|primary)\\s+(edit)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.declaration.mar"
+            },
+            "2": {
+              "name": "keyword.control.rule.mar"
+            }
+          }
+        },
+        {
           "name": "meta.typealias.declaration.mar",
           "match": "\\b(type)\\s+(alias)\\s+([A-Z][A-Za-z0-9_]*)\\s*(=)",
           "captures": {
@@ -331,11 +469,11 @@
       "patterns": [
         {
           "name": "keyword.control.declaration.mar",
-          "match": "\\b(app|port|database|ios|system|public|entity|auth|type|alias|belongs_to|ref)\\b"
+          "match": "\\b(app|port|database|ios|system|public|frontend|screen|section|toolbar|link|to|list|children|report|group|by|metric|label|destination|field|title|subtitle|entity|auth|type|alias|belongs_to|ref|trailing)\\b"
         },
         {
           "name": "keyword.control.rule.mar",
-          "match": "\\b(rule|expect|when|authorize|action|load|create|update|delete)\\b"
+          "match": "\\b(rule|expect|when|authorize|action|load|create|update|delete|edit)\\b"
         },
         {
           "name": "keyword.other.auth.mar",
@@ -359,7 +497,7 @@
         },
         {
           "name": "support.function.mar",
-          "match": "\\b(contains|starts_with|ends_with|length|matches)\\b"
+          "match": "\\b(contains|starts_with|ends_with|length|matches|avg|sum|count|min|max|month|year)\\b"
         },
         {
           "name": "variable.language.mar",

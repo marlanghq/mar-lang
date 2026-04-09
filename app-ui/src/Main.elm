@@ -15,7 +15,9 @@ import Html.Events as HtmlEvents
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
-import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), InputAliasField, InputAliasInfo, Row, Schema, decodeRows, decodeSchema, encodePayload, fieldSchemaLabel, fieldTypeLabel, formatDateInputMillis, formatDateTimeInputMillis, parseDateInput, parseDateTimeInput, rowDecoder, valueToDisplayString, valueToString)
+import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), FrontendActionValueInfo, FrontendFormFieldInfo, FrontendInfo, FrontendItemInfo, FrontendReportMetricInfo, FrontendScreenInfo, FrontendSectionInfo, FrontendToolbarItemInfo, InputAliasField, InputAliasInfo, Row, Schema, decodeRows, decodeSchema, encodePayload, encodeSchema, fieldSchemaLabel, fieldTypeLabel, formatDateInputMillis, formatDateTimeInputMillis, parseDateInput, parseDateTimeInput, rowDecoder, valueToDisplayString, valueToString)
+import Task
+import Time
 import Url exposing (Url)
 
 
@@ -23,11 +25,16 @@ type alias Flags =
     { apiBase : String
     , authToken : String
     , systemAuthToken : String
+    , cachedSchema : Maybe Decode.Value
+    , cachedSchemaVersion : Maybe String
     , viewportWidth : Int
     }
 
 
 port saveSession : Encode.Value -> Cmd msg
+
+
+port saveSchemaCache : Encode.Value -> Cmd msg
 
 
 type Remote a
@@ -90,6 +97,7 @@ type alias Model =
     , authToken : String
     , systemAuthToken : String
     , currentEmail : Maybe String
+    , currentUserID : Maybe String
     , currentRole : Maybe String
     , currentSystemEmail : Maybe String
     , currentSystemRole : Maybe String
@@ -108,7 +116,16 @@ type alias Model =
     , formMode : FormMode
     , formValues : Dict String String
     , relationRows : Dict String (Remote (List Row))
+    , frontendStack : List FrontendLocation
+    , frontendRows : Dict String (Remote (List Row))
+    , frontendListEditModes : Dict String Bool
+    , frontendCreateEntity : Maybe String
+    , frontendCreatePresetFields : List String
+    , frontendCreateFormFields : List FrontendFormFieldInfo
+    , frontendEditFormFields : List FrontendFormFieldInfo
     , actionFormValues : Dict String String
+    , actionPresetFields : List String
+    , actionFormFields : List FrontendFormFieldInfo
     , actionResult : Maybe Row
     , perf : Remote PerfPayload
     , adminVersion : Remote AdminVersionPayload
@@ -119,8 +136,10 @@ type alias Model =
     , flash : Maybe String
     , schemaRefreshNotice : Maybe String
     , currentSchemaVersion : Maybe String
+    , pendingSchema : Maybe Schema
     , pendingSchemaVersion : Maybe String
     , schemaRefreshInFlight : Bool
+    , localZone : Time.Zone
     , viewportWidth : Int
     , mobileSidebarOpen : Bool
     , keepMobileSidebarOpenOnNextRoute : Bool
@@ -141,6 +160,12 @@ type alias MobileNavEntry =
     }
 
 
+type alias FrontendLocation =
+    { screen : String
+    , row : Maybe Row
+    }
+
+
 type Msg
     = UrlRequested Browser.UrlRequest
     | UrlChanged Url
@@ -151,6 +176,18 @@ type Msg
     | ReloadRows
     | GotRows (Result ApiHttpError (ApiResponse (List Row)))
     | GotRelationRows String (Result ApiHttpError (ApiResponse (List Row)))
+    | SelectFrontendScreen String
+    | SelectFrontendRow String Row
+    | SelectFrontendCreate String (Dict String String) (List FrontendFormFieldInfo)
+    | StartFrontendEdit (List FrontendFormFieldInfo)
+    | RequestFrontendDelete
+    | ToggleFrontendListEdit String
+    | StartFrontendEditRow String Row
+    | RequestFrontendDeleteRow String Row
+    | SelectFrontendRoot
+    | FrontendBack
+    | GotFrontendRows String (Result ApiHttpError (ApiResponse (List Row)))
+    | SelectFrontendAction String (Dict String String) (List FrontendFormFieldInfo)
     | SelectPerformance
     | SelectRequestLogs
     | SelectDatabase
@@ -199,6 +236,7 @@ type Msg
     | ViewportResized Int
     | ToggleMobileSidebar
     | CloseMobileSidebar
+    | GotLocalZone Time.Zone
 
 
 type ApiHttpError
@@ -236,6 +274,7 @@ type alias LoginResponse =
 
 type alias AuthMeResponse =
     { email : String
+    , userId : Maybe String
     , role : Maybe String
     }
 
@@ -351,6 +390,18 @@ type alias RequestLogQuery =
     , durationMs : Float
     , rowCount : Int
     , error : Maybe String
+    }
+
+
+type FrontendReportGroupSpec
+    = FrontendReportGroupField String
+    | FrontendReportGroupMonth String
+
+
+type alias FrontendComputedReport =
+    { sortKey : String
+    , label : String
+    , metrics : List ( String, String )
     }
 
 
@@ -512,6 +563,18 @@ init flags url navKey =
         storedSystemAuthToken =
             String.trim flags.systemAuthToken
 
+        cachedSchema =
+            flags.cachedSchema
+                |> Maybe.andThen
+                    (\raw ->
+                        case Decode.decodeValue decodeSchema raw of
+                            Ok schema ->
+                                Just schema
+
+                            Err _ ->
+                                Nothing
+                    )
+
         initialModel =
             { apiBase = flags.apiBase
             , navKey = navKey
@@ -520,6 +583,7 @@ init flags url navKey =
             , authToken = storedAuthToken
             , systemAuthToken = storedSystemAuthToken
             , currentEmail = Nothing
+            , currentUserID = Nothing
             , currentRole = Nothing
             , currentSystemEmail = Nothing
             , currentSystemRole = Nothing
@@ -530,7 +594,13 @@ init flags url navKey =
             , sessionRestorePending = True
             , firstAdminCodeRequested = False
             , bootstrapFormValues = Dict.empty
-            , schema = Loading
+            , schema =
+                case cachedSchema of
+                    Just schema ->
+                        Loaded schema
+
+                    Nothing ->
+                        Loading
             , selectedEntity = Nothing
             , selectedAction = Nothing
             , rows = NotAsked
@@ -538,7 +608,16 @@ init flags url navKey =
             , formMode = FormHidden
             , formValues = Dict.empty
             , relationRows = Dict.empty
+            , frontendStack = []
+            , frontendRows = Dict.empty
+            , frontendListEditModes = Dict.empty
+            , frontendCreateEntity = Nothing
+            , frontendCreatePresetFields = []
+            , frontendCreateFormFields = []
+            , frontendEditFormFields = []
             , actionFormValues = Dict.empty
+            , actionPresetFields = []
+            , actionFormFields = []
             , actionResult = Nothing
             , perf = NotAsked
             , adminVersion = NotAsked
@@ -548,17 +627,38 @@ init flags url navKey =
             , authInlineMessage = Nothing
             , flash = Nothing
             , schemaRefreshNotice = Nothing
-            , currentSchemaVersion = Nothing
+            , currentSchemaVersion = flags.cachedSchemaVersion
+            , pendingSchema = Nothing
             , pendingSchemaVersion = Nothing
             , schemaRefreshInFlight = False
+            , localZone = Time.utc
             , viewportWidth = max 320 flags.viewportWidth
             , mobileSidebarOpen = False
             , keepMobileSidebarOpenOnNextRoute = False
             }
     in
-    ( initialModel
-    , loadSchema flags.apiBase
-    )
+    case cachedSchema of
+        Just _ ->
+            let
+                ( routedModel, routeCmd ) =
+                    applyCurrentRoute initialModel
+            in
+            ( routedModel
+            , Cmd.batch
+                [ routeCmd
+                , loadAuthMe AppAuthScope routedModel
+                , loadSchemaRefresh flags.apiBase
+                , Task.perform GotLocalZone Time.here
+                ]
+            )
+
+        Nothing ->
+            ( initialModel
+            , Cmd.batch
+                [ loadSchema flags.apiBase
+                , Task.perform GotLocalZone Time.here
+                ]
+            )
 
 
 type EntityRouteMode
@@ -597,36 +697,63 @@ applyCurrentRoute model =
         RouteDefault AppWorkspace ->
             case model.schema of
                 Loaded schema ->
-                    case preferredInitialEntity model schema of
-                        Just entity ->
-                            applyEntityRoute entity.name EntityRouteList model
+                    case schema.frontend of
+                        Just frontend ->
+                            applyFrontendDefaultRoute schema frontend model
 
                         Nothing ->
-                            ( resetForRoute model, Cmd.none )
+                            case preferredInitialEntity model schema of
+                                Just entity ->
+                                    applyEntityRoute entity.name EntityRouteList model
+
+                                Nothing ->
+                                    ( resetForRoute model, Cmd.none )
 
                 _ ->
                     ( resetForRoute model, Cmd.none )
 
         RouteDefault AdminWorkspace ->
-            applyAuthToolsRoute model
+            case model.schema of
+                Loaded schema ->
+                    case preferredInitialEntity model schema of
+                        Just entity ->
+                            applyEntityRoute entity.name EntityRouteList model
+
+                        Nothing ->
+                            applyAuthToolsRoute model
+
+                _ ->
+                    applyAuthToolsRoute model
 
         RouteAuthTools _ ->
             applyAuthToolsRoute model
 
-        RouteEntity _ entityName ->
-            applyEntityRoute entityName EntityRouteList model
+        RouteEntity workspace entityName ->
+            if workspace == AppWorkspace then
+                applyAppFrontendOr model (\() -> applyEntityRoute entityName EntityRouteList model)
+
+            else
+                applyEntityRoute entityName EntityRouteList model
 
         RouteEntityCreate _ entityName ->
             applyEntityRoute entityName EntityRouteCreate model
 
-        RouteEntityDetail _ entityName rowKey ->
-            applyEntityRoute entityName (EntityRouteDetail rowKey) model
+        RouteEntityDetail workspace entityName rowKey ->
+            if workspace == AppWorkspace then
+                applyAppFrontendOr model (\() -> applyEntityRoute entityName (EntityRouteDetail rowKey) model)
+
+            else
+                applyEntityRoute entityName (EntityRouteDetail rowKey) model
 
         RouteEntityEdit _ entityName rowKey ->
             applyEntityRoute entityName (EntityRouteEdit rowKey) model
 
-        RouteAction _ actionName ->
-            applyActionRoute actionName model
+        RouteAction workspace actionName ->
+            if workspace == AppWorkspace then
+                applyAppFrontendOr model (\() -> applyActionRoute actionName model)
+
+            else
+                applyActionRoute actionName model
 
         RoutePerformance ->
             applySystemRoute RoutePerformance model
@@ -647,7 +774,15 @@ resetForRoute model =
         , selectedRow = Nothing
         , formMode = FormHidden
         , formValues = Dict.empty
+        , frontendStack = []
+        , frontendRows = Dict.empty
+        , frontendCreateEntity = Nothing
+        , frontendCreatePresetFields = []
+        , frontendCreateFormFields = []
+        , frontendEditFormFields = []
         , actionFormValues = Dict.empty
+        , actionPresetFields = []
+        , actionFormFields = []
         , actionResult = Nothing
         , pendingDelete = Nothing
         , authInlineMessage = Nothing
@@ -664,6 +799,40 @@ applyAuthToolsRoute model =
             resetForRoute model
     in
     ( baseModel, Cmd.none )
+
+
+applyFrontendDefaultRoute : Schema -> FrontendInfo -> Model -> ( Model, Cmd Msg )
+applyFrontendDefaultRoute schema frontend model =
+    case List.head frontend.screens of
+        Nothing ->
+            ( resetForRoute model, Cmd.none )
+
+        Just screen ->
+            let
+                baseModel =
+                    resetForRoute model
+
+                nextModel =
+                    { baseModel
+                        | frontendStack = [ { screen = screen.name, row = Nothing } ]
+                    }
+            in
+            ( nextModel, ensureFrontendRowsForScreen nextModel schema screen Nothing )
+
+
+applyAppFrontendOr : Model -> (() -> ( Model, Cmd Msg )) -> ( Model, Cmd Msg )
+applyAppFrontendOr model fallback =
+    case model.schema of
+        Loaded schema ->
+            case schema.frontend of
+                Just frontend ->
+                    applyFrontendDefaultRoute schema frontend model
+
+                Nothing ->
+                    fallback ()
+
+        _ ->
+            fallback ()
 
 
 applyActionRoute : String -> Model -> ( Model, Cmd Msg )
@@ -685,6 +854,8 @@ applyActionRoute actionName model =
                     { baseModel
                         | selectedAction = Just actionInfo
                         , actionFormValues = actionFormDefaults model actionInfo
+                        , actionPresetFields = []
+                        , actionFormFields = []
                     }
             in
             case findInputAlias actionInfo.inputAlias model of
@@ -1001,7 +1172,7 @@ update msg model =
                     ( model, Nav.load href )
 
         UrlChanged url ->
-            applyCurrentRoute { model | currentUrl = url, currentRoute = routeFromUrl url }
+            applyCurrentRoute (promotePendingSchemaForNavigation { model | currentUrl = url, currentRoute = routeFromUrl url })
 
         GotSchema result ->
             case result of
@@ -1020,6 +1191,7 @@ update msg model =
 
                                         Nothing ->
                                             model.currentSchemaVersion
+                                , pendingSchema = Nothing
                                 , authStage =
                                     if hasActiveSession model then
                                         AuthStageSession
@@ -1035,7 +1207,7 @@ update msg model =
                                         == ""
                             }
                     in
-                    ( nextModel, loadAuthMe AppAuthScope nextModel )
+                    ( nextModel, Cmd.batch [ loadAuthMe AppAuthScope nextModel, saveSchemaCachePayload nextModel.currentSchemaVersion schema ] )
 
                 Err httpError ->
                     withObservedSchemaVersionFromError httpError
@@ -1050,20 +1222,19 @@ update msg model =
 
                         nextModel =
                             { model
-                                | schema = Loaded refreshedSchema
-                                , currentSchemaVersion =
+                                | pendingSchema = Just refreshedSchema
+                                , pendingSchemaVersion =
                                     case response.schemaVersion of
                                         Just version ->
                                             Just version
 
                                         Nothing ->
                                             model.pendingSchemaVersion
-                                , pendingSchemaVersion = Nothing
                                 , schemaRefreshInFlight = False
                                 , schemaRefreshNotice = Nothing
                               }
                     in
-                    applyCurrentRoute nextModel
+                    ( nextModel, saveSchemaCachePayload nextModel.pendingSchemaVersion refreshedSchema )
 
                 Err httpError ->
                     withObservedSchemaVersionFromError httpError
@@ -1074,6 +1245,9 @@ update msg model =
                       }
                         , Cmd.none
                         )
+
+        GotLocalZone zone ->
+            ( { model | localZone = zone }, Cmd.none )
 
         SelectEntity entityName ->
             let
@@ -1137,6 +1311,341 @@ update msg model =
 
                         Nothing ->
                             withObservedSchemaVersionFromError httpError ( { model | relationRows = Dict.insert entityName (Failed (httpErrorToString httpError)) model.relationRows }, Cmd.none )
+
+        SelectFrontendScreen screenName ->
+            let
+                promotedModel =
+                    promotePendingSchemaForNavigation model
+            in
+            case promotedModel.schema of
+                Loaded schema ->
+                    case schema.frontend |> Maybe.andThen (findFrontendScreen screenName) of
+                        Just screen ->
+                            let
+                                nextModel =
+                                    closeMobileSidebarForNavigation
+                                        { promotedModel
+                                            | frontendStack = promotedModel.frontendStack ++ [ { screen = screen.name, row = Nothing } ]
+                                            , selectedAction = Nothing
+                                            , actionFormFields = []
+                                            , frontendCreateEntity = Nothing
+                                            , frontendCreatePresetFields = []
+                                            , frontendCreateFormFields = []
+                                            , frontendEditFormFields = []
+                                            , actionResult = Nothing
+                                            , flash = Nothing
+                                        }
+                            in
+                            ( nextModel, ensureFrontendRowsForScreen nextModel schema screen Nothing )
+
+                        Nothing ->
+                            ( { promotedModel | flash = Just "Screen not found" }, Cmd.none )
+
+                _ ->
+                    ( promotedModel, Cmd.none )
+
+        SelectFrontendRow screenName rowValue ->
+            let
+                promotedModel =
+                    promotePendingSchemaForNavigation model
+            in
+            case promotedModel.schema of
+                Loaded schema ->
+                    case schema.frontend |> Maybe.andThen (findFrontendScreen screenName) of
+                        Just screen ->
+                            let
+                                nextModel =
+                                    { promotedModel
+                                        | frontendStack = promotedModel.frontendStack ++ [ { screen = screen.name, row = Just rowValue } ]
+                                        , selectedAction = Nothing
+                                        , actionFormFields = []
+                                        , frontendCreateEntity = Nothing
+                                        , frontendCreatePresetFields = []
+                                        , frontendCreateFormFields = []
+                                        , frontendEditFormFields = []
+                                        , actionResult = Nothing
+                                        , flash = Nothing
+                                    }
+                            in
+                            ( nextModel, ensureFrontendRowsForScreen nextModel schema screen (Just rowValue) )
+
+                        Nothing ->
+                            ( { promotedModel | flash = Just "Screen not found" }, Cmd.none )
+
+                _ ->
+                    ( promotedModel, Cmd.none )
+
+        SelectFrontendCreate entityName presetValues formFields ->
+            let
+                promotedModel =
+                    promotePendingSchemaForNavigation model
+            in
+            case findEntity entityName promotedModel of
+                Just entity ->
+                    let
+                        defaults =
+                            formDefaults { promotedModel | selectedEntity = Just entity, formMode = FormCreate }
+
+                        nextModel =
+                            { promotedModel
+                                | selectedEntity = Just entity
+                                , selectedRow = Nothing
+                                , formMode = FormCreate
+                                , formValues = Dict.union presetValues defaults
+                                , frontendCreateEntity = Just entity.name
+                                , frontendCreatePresetFields = Dict.keys presetValues
+                                , frontendCreateFormFields = formFields
+                                , frontendEditFormFields = []
+                                , selectedAction = Nothing
+                                , actionResult = Nothing
+                                , flash = Nothing
+                            }
+                    in
+                    ( nextModel, ensureRelationRowsForCreateForm nextModel entity )
+
+                Nothing ->
+                    ( { promotedModel | flash = Just "Entity not found" }, Cmd.none )
+
+        StartFrontendEdit formFields ->
+            let
+                promotedModel =
+                    promotePendingSchemaForNavigation model
+            in
+            case currentFrontendEditableContext promotedModel of
+                Just ( entity, rowValue ) ->
+                    let
+                        nextModel =
+                            { promotedModel
+                                | selectedEntity = Just entity
+                                , selectedRow = Just rowValue
+                                , formMode = FormEdit rowValue
+                                , formValues = formFromRow { promotedModel | selectedEntity = Just entity } rowValue
+                                , frontendCreateEntity = Nothing
+                                , frontendCreatePresetFields = []
+                                , frontendCreateFormFields = []
+                                , frontendEditFormFields = formFields
+                                , flash = Nothing
+                            }
+                    in
+                    ( nextModel, ensureRelationRowsForCurrentEntityForm nextModel entity )
+
+                Nothing ->
+                    ( { promotedModel | flash = Just "Could not open edit mode" }, Cmd.none )
+
+        RequestFrontendDelete ->
+            let
+                promotedModel =
+                    promotePendingSchemaForNavigation model
+            in
+            case currentFrontendEditableContext promotedModel of
+                Just ( entity, rowValue ) ->
+                    case rowId entity rowValue of
+                        Just idValue ->
+                            ( { promotedModel
+                                | selectedEntity = Just entity
+                                , selectedRow = Just rowValue
+                                , pendingDelete = Just { entity = entity, idValue = idValue, message = deleteConfirmationMessage promotedModel.localZone entity rowValue }
+                                , flash = Nothing
+                              }
+                            , Cmd.none
+                            )
+
+                        Nothing ->
+                            ( { promotedModel | flash = Just "Could not find row id" }, Cmd.none )
+
+                Nothing ->
+                    ( { promotedModel | flash = Just "Could not remove this record" }, Cmd.none )
+
+        ToggleFrontendListEdit entityName ->
+            let
+                promotedModel =
+                    promotePendingSchemaForNavigation model
+
+                nextModes =
+                    case currentFrontendLocation promotedModel of
+                        Just location ->
+                            let
+                                key =
+                                    frontendListEditKey location entityName
+
+                                enabled =
+                                    Dict.get key promotedModel.frontendListEditModes
+                                        |> Maybe.withDefault False
+                            in
+                            Dict.insert key (not enabled) promotedModel.frontendListEditModes
+
+                        Nothing ->
+                            promotedModel.frontendListEditModes
+            in
+            ( { promotedModel | frontendListEditModes = nextModes }, Cmd.none )
+
+        StartFrontendEditRow entityName rowValue ->
+            let
+                promotedModel =
+                    promotePendingSchemaForNavigation model
+            in
+            case findEntity entityName promotedModel of
+                Just entity ->
+                    let
+                        nextModel =
+                            { promotedModel
+                                | selectedEntity = Just entity
+                                , selectedRow = Just rowValue
+                                , formMode = FormEdit rowValue
+                                , formValues = formFromRow { promotedModel | selectedEntity = Just entity } rowValue
+                                , frontendCreateEntity = Nothing
+                                , frontendCreatePresetFields = []
+                                , frontendCreateFormFields = []
+                                , frontendEditFormFields = []
+                                , flash = Nothing
+                            }
+                    in
+                    ( nextModel, ensureRelationRowsForCurrentEntityForm nextModel entity )
+
+                Nothing ->
+                    ( { promotedModel | flash = Just "Entity not found" }, Cmd.none )
+
+        RequestFrontendDeleteRow entityName rowValue ->
+            let
+                promotedModel =
+                    promotePendingSchemaForNavigation model
+            in
+            case findEntity entityName promotedModel of
+                Just entity ->
+                    case rowId entity rowValue of
+                        Just idValue ->
+                            ( { promotedModel
+                                | selectedEntity = Just entity
+                                , selectedRow = Just rowValue
+                                , pendingDelete = Just { entity = entity, idValue = idValue, message = deleteConfirmationMessage promotedModel.localZone entity rowValue }
+                                , flash = Nothing
+                              }
+                            , Cmd.none
+                            )
+
+                        Nothing ->
+                            ( { promotedModel | flash = Just "Could not find row id" }, Cmd.none )
+
+                Nothing ->
+                    ( { promotedModel | flash = Just "Could not remove this record" }, Cmd.none )
+
+        SelectFrontendRoot ->
+            let
+                promotedModel =
+                    promotePendingSchemaForNavigation model
+            in
+            case promotedModel.schema of
+                Loaded schema ->
+                    case schema.frontend of
+                        Just frontend ->
+                            let
+                                ( nextModel, loadCmd ) =
+                                    applyFrontendDefaultRoute schema frontend promotedModel
+                            in
+                            ( closeMobileSidebarForNavigation nextModel
+                            , Cmd.batch
+                                [ loadCmd
+                                , pushRoute (RouteDefault AppWorkspace) promotedModel
+                                ]
+                            )
+
+                        Nothing ->
+                            ( promotedModel, Cmd.none )
+
+                _ ->
+                    ( promotedModel, Cmd.none )
+
+        FrontendBack ->
+            let
+                promotedModel =
+                    promotePendingSchemaForNavigation model
+            in
+            if promotedModel.selectedAction /= Nothing then
+                ( { promotedModel | selectedAction = Nothing, actionResult = Nothing, actionFormFields = [], flash = Nothing }, Cmd.none )
+
+            else if promotedModel.frontendCreateEntity /= Nothing then
+                ( { promotedModel
+                    | frontendCreateEntity = Nothing
+                    , frontendCreatePresetFields = []
+                    , frontendCreateFormFields = []
+                    , frontendEditFormFields = []
+                    , selectedEntity = Nothing
+                    , selectedRow = Nothing
+                    , formMode = FormHidden
+                    , formValues = Dict.empty
+                    , flash = Nothing
+                  }
+                , Cmd.none
+                )
+
+            else if promotedModel.formMode /= FormHidden then
+                ( { promotedModel
+                    | selectedEntity = Nothing
+                    , selectedRow = Nothing
+                    , formMode = FormHidden
+                    , frontendEditFormFields = []
+                    , formValues = Dict.empty
+                    , flash = Nothing
+                  }
+                , Cmd.none
+                )
+
+            else
+                case promotedModel.frontendStack of
+                    [] ->
+                        ( promotedModel, Cmd.none )
+
+                    [ _ ] ->
+                        ( promotedModel, Cmd.none )
+
+                    _ ->
+                        ( { promotedModel | frontendStack = dropLast promotedModel.frontendStack, flash = Nothing }, Cmd.none )
+
+        GotFrontendRows key result ->
+            case result of
+                Ok response ->
+                    withObservedSchemaVersion response.schemaVersion
+                        ( { model | frontendRows = Dict.insert key (Loaded response.value) model.frontendRows }, Cmd.none )
+
+                Err httpError ->
+                    case handleUnauthorizedSessionExpiry model httpError of
+                        Just outcome ->
+                            withObservedSchemaVersionFromError httpError outcome
+
+                        Nothing ->
+                            withObservedSchemaVersionFromError httpError ( { model | frontendRows = Dict.insert key (Failed (httpErrorToString httpError)) model.frontendRows }, Cmd.none )
+
+        SelectFrontendAction actionName presetValues formFields ->
+            let
+                promotedModel =
+                    promotePendingSchemaForNavigation model
+            in
+            case findAction actionName promotedModel of
+                Nothing ->
+                    ( { promotedModel | flash = Just "Action not found" }, Cmd.none )
+
+                Just actionInfo ->
+                    let
+                        nextModel =
+                            { promotedModel
+                                | selectedAction = Just actionInfo
+                                , frontendCreateEntity = Nothing
+                                , frontendCreatePresetFields = []
+                                , frontendCreateFormFields = []
+                                , frontendEditFormFields = []
+                                , actionFormValues = Dict.union presetValues (actionFormDefaults promotedModel actionInfo)
+                                , actionPresetFields = Dict.keys presetValues
+                                , actionFormFields = formFields
+                                , actionResult = Nothing
+                                , flash = Nothing
+                            }
+                    in
+                    case findInputAlias actionInfo.inputAlias promotedModel of
+                        Just aliasInfo ->
+                            ( nextModel, ensureRelationRowsForActionForm nextModel aliasInfo )
+
+                        Nothing ->
+                            ( nextModel, Cmd.none )
 
         SelectPerformance ->
             if not (isAdminProfile model) then
@@ -1276,7 +1785,11 @@ update msg model =
             ( nextModel, pushRoute (routeForWorkspaceSwitch workspace nextModel) nextModel )
 
         SetActionField fieldName value ->
-            ( { model | actionFormValues = Dict.insert fieldName value model.actionFormValues }, Cmd.none )
+            let
+                nextModel =
+                    updateActionFormField model fieldName value
+            in
+            ( nextModel, ensureRelationRowsForCurrentActionDependencies nextModel fieldName )
 
         RequestAuthCode ->
             if String.trim model.authEmail == "" then
@@ -1397,6 +1910,7 @@ update msg model =
                                 nextModel =
                                     { model
                                         | currentEmail = Just response.email
+                                        , currentUserID = response.userId
                                         , currentRole = response.role
                                         , authStage = AuthStageSession
                                         , sessionRestorePending = False
@@ -1419,6 +1933,7 @@ update msg model =
                                         { model
                                             | authToken = ""
                                             , currentEmail = Nothing
+                                            , currentUserID = Nothing
                                             , currentRole = Nothing
                                             , authStage =
                                                 if model.firstAdminCodeRequested || model.authStage == AuthStageCode then
@@ -1545,23 +2060,71 @@ update msg model =
                             ( { model | selectedRow = Nothing, flash = Nothing }, Cmd.none )
 
         CancelForm ->
-            case model.currentRoute of
-                RouteEntityCreate _ _ ->
-                    ( model, backRoute model )
+            if isFrontendWorkspaceActive model then
+                if model.frontendCreateEntity /= Nothing then
+                    ( { model
+                        | frontendCreateEntity = Nothing
+                        , frontendCreatePresetFields = []
+                        , frontendCreateFormFields = []
+                        , frontendEditFormFields = []
+                        , selectedEntity = Nothing
+                        , selectedRow = Nothing
+                        , formMode = FormHidden
+                        , formValues = Dict.empty
+                        , flash = Nothing
+                      }
+                    , Cmd.none
+                    )
 
-                RouteEntityEdit _ _ _ ->
-                    ( model, backRoute model )
+                else
+                    ( { model
+                        | selectedEntity = Nothing
+                        , selectedRow = Nothing
+                        , formMode = FormHidden
+                        , frontendEditFormFields = []
+                        , formValues = Dict.empty
+                        , flash = Nothing
+                      }
+                    , Cmd.none
+                    )
 
-                _ ->
-                    case cancelFormRoute model of
-                        Just route ->
-                            ( model, replaceRoute route model )
+            else if model.frontendCreateEntity /= Nothing then
+                ( { model
+                    | frontendCreateEntity = Nothing
+                    , frontendCreatePresetFields = []
+                    , frontendCreateFormFields = []
+                    , frontendEditFormFields = []
+                    , selectedEntity = Nothing
+                    , selectedRow = Nothing
+                    , formMode = FormHidden
+                    , formValues = Dict.empty
+                    , flash = Nothing
+                  }
+                , Cmd.none
+                )
 
-                        Nothing ->
-                            ( { model | formMode = FormHidden, formValues = Dict.empty, flash = Nothing }, Cmd.none )
+            else
+                case model.currentRoute of
+                    RouteEntityCreate _ _ ->
+                        ( model, backRoute model )
+
+                    RouteEntityEdit _ _ _ ->
+                        ( model, backRoute model )
+
+                    _ ->
+                        case cancelFormRoute model of
+                            Just route ->
+                                ( model, replaceRoute route model )
+
+                            Nothing ->
+                                ( { model | formMode = FormHidden, formValues = Dict.empty, flash = Nothing }, Cmd.none )
 
         SetFormField key value ->
-            ( { model | formValues = Dict.insert key value model.formValues }, Cmd.none )
+            let
+                nextModel =
+                    updateCurrentEntityFormField model key value
+            in
+            ( nextModel, ensureRelationRowsForCurrentEntityDependencies nextModel key )
 
         SubmitForm ->
             case model.selectedEntity of
@@ -1578,7 +2141,7 @@ update msg model =
                                 _ ->
                                     False
                     in
-                    case encodePayload { forUpdate = forUpdate } entity.fields model.formValues of
+                    case encodePayload model.localZone { forUpdate = forUpdate } entity.fields model.formValues of
                         Err message ->
                             ( { model | flash = Just message }, Cmd.none )
 
@@ -1617,18 +2180,39 @@ update msg model =
                             case model.selectedEntity of
                                 Just entity ->
                                     updateRelationCacheForEntity entity (prependRowIfMissing entity createdRow)
-                                        { model | rows = nextRows, formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
+                                        { model | rows = nextRows, frontendCreateEntity = Nothing, frontendCreatePresetFields = [], frontendCreateFormFields = [], frontendEditFormFields = [], formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
 
                                 Nothing ->
-                                    { model | rows = nextRows, formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
+                                    { model | rows = nextRows, frontendCreateEntity = Nothing, frontendCreatePresetFields = [], frontendCreateFormFields = [], frontendEditFormFields = [], formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
                     in
-                    case ( model.selectedEntity, rowIdForCurrentSelection nextModel createdRow ) of
-                        ( Just entity, Just rowKey ) ->
-                            withObservedSchemaVersion response.schemaVersion
-                                ( nextModel, replaceRoute (RouteEntityDetail (currentWorkspace nextModel) entity.name rowKey) nextModel )
+                    if model.frontendCreateEntity /= Nothing then
+                        case model.schema of
+                            Loaded schema ->
+                                case currentFrontendLocation model |> Maybe.andThen (\location -> schema.frontend |> Maybe.andThen (findFrontendScreen location.screen) |> Maybe.map (\screen -> ( screen, location.row ))) of
+                                    Just ( screen, maybeRow ) ->
+                                        let
+                                            frontendModel =
+                                                { nextModel | frontendRows = Dict.empty }
+                                        in
+                                        withObservedSchemaVersion response.schemaVersion
+                                            ( frontendModel
+                                            , ensureFrontendRowsForScreen frontendModel schema screen maybeRow
+                                            )
 
-                        _ ->
-                            withObservedSchemaVersion response.schemaVersion ( nextModel, Cmd.none )
+                                    Nothing ->
+                                        withObservedSchemaVersion response.schemaVersion ( nextModel, Cmd.none )
+
+                            _ ->
+                                withObservedSchemaVersion response.schemaVersion ( nextModel, Cmd.none )
+
+                    else
+                        case ( model.selectedEntity, rowIdForCurrentSelection nextModel createdRow ) of
+                            ( Just entity, Just rowKey ) ->
+                                withObservedSchemaVersion response.schemaVersion
+                                    ( nextModel, replaceRoute (RouteEntityDetail (currentWorkspace nextModel) entity.name rowKey) nextModel )
+
+                            _ ->
+                                withObservedSchemaVersion response.schemaVersion ( nextModel, Cmd.none )
 
                 Err httpError ->
                     case handleUnauthorizedSessionExpiry model httpError of
@@ -1657,17 +2241,36 @@ update msg model =
                             case model.selectedEntity of
                                 Just entity ->
                                     updateRelationCacheForEntity entity (replaceRow entity updatedRow)
-                                        { model | rows = nextRows, selectedRow = Just updatedRow, formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
+                                        { model | rows = nextRows, selectedRow = Just updatedRow, formMode = FormHidden, formValues = Dict.empty, frontendEditFormFields = [], flash = Nothing }
 
                                 Nothing ->
-                                    { model | rows = nextRows, selectedRow = Just updatedRow, formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
+                                    { model | rows = nextRows, selectedRow = Just updatedRow, formMode = FormHidden, formValues = Dict.empty, frontendEditFormFields = [], flash = Nothing }
                     in
-                    case ( model.selectedEntity, rowIdForCurrentSelection nextModel updatedRow ) of
-                        ( Just _, Just _ ) ->
-                            withObservedSchemaVersion response.schemaVersion ( nextModel, backRoute nextModel )
+                    if isFrontendWorkspaceActive model then
+                        let
+                            frontendModel =
+                                nextModel
+                                    |> updateFrontendRowsForEntityCache updatedRow
+                                    |> updateCurrentFrontendLocationRow updatedRow
+                                    |> (\m ->
+                                            { m
+                                                | selectedEntity = Nothing
+                                                , selectedRow = Nothing
+                                                , formMode = FormHidden
+                                                , formValues = Dict.empty
+                                                , frontendEditFormFields = []
+                                            }
+                                       )
+                        in
+                        withObservedSchemaVersion response.schemaVersion ( frontendModel, Cmd.none )
 
-                        _ ->
-                            withObservedSchemaVersion response.schemaVersion ( nextModel, Cmd.none )
+                    else
+                        case ( model.selectedEntity, rowIdForCurrentSelection nextModel updatedRow ) of
+                            ( Just _, Just _ ) ->
+                                withObservedSchemaVersion response.schemaVersion ( nextModel, backRoute nextModel )
+
+                            _ ->
+                                withObservedSchemaVersion response.schemaVersion ( nextModel, Cmd.none )
 
                 Err httpError ->
                     case handleUnauthorizedSessionExpiry model httpError of
@@ -1690,7 +2293,7 @@ update msg model =
                         Just idValue ->
                             let
                                 message =
-                                    deleteConfirmationMessage entity rowValue
+                                    deleteConfirmationMessage model.localZone entity rowValue
 
                                 nextModel =
                                     { model | pendingDelete = Just { entity = entity, idValue = idValue, message = message } }
@@ -1700,7 +2303,7 @@ update msg model =
         ConfirmDelete ->
             case model.pendingDelete of
                 Just pendingDelete ->
-                    ( { model | pendingDelete = Nothing }, deleteRowRequest model pendingDelete.entity pendingDelete.idValue )
+                    ( model, deleteRowRequest model pendingDelete.entity pendingDelete.idValue )
 
                 Nothing ->
                     ( { model | pendingDelete = Nothing }, Cmd.none )
@@ -1721,12 +2324,29 @@ update msg model =
                                 Nothing ->
                                     { model | flash = Nothing, selectedRow = Nothing, formMode = FormHidden, formValues = Dict.empty, pendingDelete = Nothing, rows = NotAsked }
                     in
-                    case routeForCurrentEntityList nextModel of
-                        Just route ->
-                            withObservedSchemaVersion response.schemaVersion ( nextModel, replaceRoute route nextModel )
+                    if isFrontendWorkspaceActive model then
+                        let
+                            frontendModel =
+                                case model.pendingDelete of
+                                    Just pendingDelete ->
+                                        { nextModel
+                                            | frontendStack = dropLast nextModel.frontendStack
+                                            , frontendRows = removeFrontendRowsForEntityCache pendingDelete.entity pendingDelete.idValue nextModel.frontendRows
+                                            , selectedEntity = Nothing
+                                        }
 
-                        Nothing ->
-                            withObservedSchemaVersion response.schemaVersion ( nextModel, Cmd.none )
+                                    Nothing ->
+                                        nextModel
+                        in
+                        withObservedSchemaVersion response.schemaVersion ( frontendModel, Cmd.none )
+
+                    else
+                        case routeForCurrentEntityList nextModel of
+                            Just route ->
+                                withObservedSchemaVersion response.schemaVersion ( nextModel, replaceRoute route nextModel )
+
+                            Nothing ->
+                                withObservedSchemaVersion response.schemaVersion ( nextModel, Cmd.none )
 
                 Err httpError ->
                     case handleUnauthorizedSessionExpiry model httpError of
@@ -1752,8 +2372,34 @@ update msg model =
         GotRunAction result ->
             case result of
                 Ok response ->
+                    let
+                        nextModel =
+                            { model
+                                | actionResult = Just response.value
+                                , flash = Nothing
+                                , rows = NotAsked
+                                , relationRows = Dict.empty
+                                , frontendRows = Dict.empty
+                            }
+
+                        reloadActionRelations =
+                            case model.selectedAction |> Maybe.andThen (\actionInfo -> findInputAlias actionInfo.inputAlias model) of
+                                Just aliasInfo ->
+                                    ensureRelationRowsForInputAlias nextModel aliasInfo
+
+                                Nothing ->
+                                    Cmd.none
+
+                        reloadFrontendRows =
+                            reloadCurrentFrontendRows nextModel
+                    in
                     withObservedSchemaVersion response.schemaVersion
-                        ( { model | actionResult = Just response.value, flash = Nothing }, Cmd.none )
+                        ( nextModel
+                        , Cmd.batch
+                            [ reloadActionRelations
+                            , reloadFrontendRows
+                            ]
+                        )
 
                 Err httpError ->
                     case handleUnauthorizedSessionExpiry model httpError of
@@ -1834,19 +2480,9 @@ ensureRelationRowsForEntity model entity =
     entity.fields
         |> List.filterMap .relationEntity
         |> uniqueStrings
-        |> List.filter
-            (\entityName ->
-                case Dict.get entityName model.relationRows of
-                    Just Loading ->
-                        False
-
-                    Just (Loaded _) ->
-                        False
-
-                    _ ->
-                        True
-            )
-        |> List.map (loadRelationRows model)
+        |> List.map (\entityName -> ( entityName, Dict.empty ))
+        |> List.filter (shouldLoadRelationRows model)
+        |> List.map (\( entityName, filters ) -> loadRelationRows model entityName filters)
         |> Cmd.batch
 
 
@@ -1855,9 +2491,165 @@ ensureRelationRowsForInputAlias model aliasInfo =
     aliasInfo.fields
         |> List.filterMap .relationEntity
         |> uniqueStrings
+        |> List.map (\entityName -> ( entityName, Dict.empty ))
+        |> List.filter (shouldLoadRelationRows model)
+        |> List.map (\( entityName, filters ) -> loadRelationRows model entityName filters)
+        |> Cmd.batch
+
+
+ensureRelationRowsForCreateForm : Model -> Entity -> Cmd Msg
+ensureRelationRowsForCreateForm model entity =
+    frontendCreateVisibleFields model entity
+        |> List.filterMap
+            (\field ->
+                field.relationEntity
+                    |> Maybe.andThen
+                        (\relationEntity ->
+                            frontendFormFieldFilters model.frontendCreateFormFields model.formValues field.name
+                                |> Maybe.map (\filters -> ( relationEntity, filters ))
+                        )
+            )
+        |> List.filter (shouldLoadRelationRows model)
+        |> List.map (\( entityName, filters ) -> loadRelationRows model entityName filters)
+        |> Cmd.batch
+
+
+ensureRelationRowsForActionForm : Model -> InputAliasInfo -> Cmd Msg
+ensureRelationRowsForActionForm model aliasInfo =
+    frontendActionVisibleFields model aliasInfo
+        |> List.filterMap
+            (\field ->
+                field.relationEntity
+                    |> Maybe.andThen
+                        (\relationEntity ->
+                            frontendFormFieldFilters model.actionFormFields model.actionFormValues field.name
+                                |> Maybe.map (\filters -> ( relationEntity, filters ))
+                        )
+            )
+        |> List.filter (shouldLoadRelationRows model)
+        |> List.map (\( entityName, filters ) -> loadRelationRows model entityName filters)
+        |> Cmd.batch
+
+ensureRelationRowsForCurrentEntityForm : Model -> Entity -> Cmd Msg
+ensureRelationRowsForCurrentEntityForm model entity =
+    currentFrontendEntityVisibleFields model entity
+        |> List.filterMap
+            (\field ->
+                field.relationEntity
+                    |> Maybe.andThen
+                        (\relationEntity ->
+                            currentFrontendEntityFormFieldFilters model field.name
+                                |> Maybe.map (\filters -> ( relationEntity, filters ))
+                        )
+            )
+        |> List.filter (shouldLoadRelationRows model)
+        |> List.map (\( entityName, filters ) -> loadRelationRows model entityName filters)
+        |> Cmd.batch
+
+
+ensureRelationRowsForCurrentActionDependencies : Model -> String -> Cmd Msg
+ensureRelationRowsForCurrentActionDependencies model changedField =
+    case model.selectedAction |> Maybe.andThen (\action -> findInputAlias action.inputAlias model) of
+        Just aliasInfo ->
+            frontendDependentFieldNames model.actionFormFields changedField
+                |> List.filterMap
+                    (\fieldName ->
+                        frontendActionVisibleFields model aliasInfo
+                            |> List.filter (\field -> field.name == fieldName)
+                            |> List.head
+                            |> Maybe.andThen
+                                (\field ->
+                                    field.relationEntity
+                                        |> Maybe.andThen
+                                            (\relationEntity ->
+                                                frontendFormFieldFilters model.actionFormFields model.actionFormValues field.name
+                                                    |> Maybe.map (\filters -> ( relationEntity, filters ))
+                                            )
+                                )
+                    )
+                |> List.filter (shouldLoadRelationRows model)
+                |> List.map (\( entityName, filters ) -> loadRelationRows model entityName filters)
+                |> Cmd.batch
+
+        Nothing ->
+            Cmd.none
+
+
+shouldLoadRelationRows : Model -> ( String, Dict String String ) -> Bool
+shouldLoadRelationRows model ( entityName, filters ) =
+    case Dict.get (relationRowsCacheKey entityName filters) model.relationRows of
+        Just Loading ->
+            False
+
+        Just (Loaded _) ->
+            False
+
+        _ ->
+            True
+
+
+loadRelationRows : Model -> String -> Dict String String -> Cmd Msg
+loadRelationRows model entityName filters =
+    case findEntity entityName model of
+        Nothing ->
+            Cmd.none
+
+        Just entity ->
+            let
+                cacheKey =
+                    relationRowsCacheKey entityName filters
+
+                queryString =
+                    if Dict.isEmpty filters then
+                        ""
+
+                    else
+                        "?"
+                            ++ (filters
+                                    |> Dict.toList
+                                    |> List.sortBy Tuple.first
+                                    |> List.map (\( key, value ) -> Url.percentEncode key ++ "=" ++ Url.percentEncode value)
+                                    |> String.join "&"
+                               )
+            in
+            Http.request
+                { method = "GET"
+                , headers = appAuthHeaders model
+                , url = model.apiBase ++ entity.resource ++ queryString
+                , body = Http.emptyBody
+                , expect = expectJsonWithApiError (GotRelationRows cacheKey) decodeRows
+                , timeout = Nothing
+                , tracker = Nothing
+                }
+
+
+loadFrontendRows : Model -> String -> Entity -> Cmd Msg
+loadFrontendRows model key entity =
+    Http.request
+        { method = "GET"
+        , headers = appAuthHeaders model
+        , url = model.apiBase ++ entity.resource
+        , body = Http.emptyBody
+        , expect = expectJsonWithApiError (GotFrontendRows key) decodeRows
+        , timeout = Nothing
+        , tracker = Nothing
+        }
+
+
+ensureFrontendRowsForScreen : Model -> Schema -> FrontendScreenInfo -> Maybe Row -> Cmd Msg
+ensureFrontendRowsForScreen model schema screen maybeRow =
+    screen.sections
+        |> List.concatMap .items
+        |> List.filter (\item -> item.kind == "list" || item.kind == "children" || item.kind == "report")
+        |> List.filterMap
+            (\item ->
+                item.entity
+                    |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema)
+                    |> Maybe.map (\entity -> ( frontendRowsKey schema screen maybeRow item, entity ))
+            )
         |> List.filter
-            (\entityName ->
-                case Dict.get entityName model.relationRows of
+            (\( key, _ ) ->
+                case Dict.get key model.frontendRows of
                     Just Loading ->
                         False
 
@@ -1867,26 +2659,23 @@ ensureRelationRowsForInputAlias model aliasInfo =
                     _ ->
                         True
             )
-        |> List.map (loadRelationRows model)
+        |> List.map (\( key, entity ) -> loadFrontendRows model key entity)
         |> Cmd.batch
 
 
-loadRelationRows : Model -> String -> Cmd Msg
-loadRelationRows model entityName =
-    case findEntity entityName model of
-        Nothing ->
-            Cmd.none
+reloadCurrentFrontendRows : Model -> Cmd Msg
+reloadCurrentFrontendRows model =
+    case ( model.schema, currentFrontendLocation model ) of
+        ( Loaded schema, Just location ) ->
+            case schema.frontend |> Maybe.andThen (findFrontendScreen location.screen) of
+                Just screen ->
+                    ensureFrontendRowsForScreen model schema screen location.row
 
-        Just entity ->
-            Http.request
-                { method = "GET"
-                , headers = appAuthHeaders model
-                , url = model.apiBase ++ entity.resource
-                , body = Http.emptyBody
-                , expect = expectJsonWithApiError (GotRelationRows entityName) decodeRows
-                , timeout = Nothing
-                , tracker = Nothing
-                }
+                Nothing ->
+                    Cmd.none
+
+        _ ->
+            Cmd.none
 
 
 loadPerformance : Model -> Cmd Msg
@@ -2068,12 +2857,12 @@ bootstrapPayloadFromModel model =
 
         [] ->
             bootstrapSupportedFields model
-                |> List.foldl (encodeBootstrapField model.bootstrapFormValues) (Ok [ ( "email", Encode.string (String.trim model.authEmail) ) ])
+                |> List.foldl (encodeBootstrapField model.localZone model.bootstrapFormValues) (Ok [ ( "email", Encode.string (String.trim model.authEmail) ) ])
                 |> Result.map Encode.object
 
 
-encodeBootstrapField : Dict String String -> Field -> Result String (List ( String, Encode.Value )) -> Result String (List ( String, Encode.Value ))
-encodeBootstrapField valuesByName field partialResult =
+encodeBootstrapField : Time.Zone -> Dict String String -> Field -> Result String (List ( String, Encode.Value )) -> Result String (List ( String, Encode.Value ))
+encodeBootstrapField zone valuesByName field partialResult =
     case partialResult of
         Err message ->
             Err message
@@ -2089,7 +2878,7 @@ encodeBootstrapField valuesByName field partialResult =
                 Err (fieldLabel field.name ++ " is required")
 
             else
-                case encodeBootstrapFieldValue field rawValue of
+                case encodeBootstrapFieldValue zone field rawValue of
                     Ok encoded ->
                         Ok (( field.name, encoded ) :: items)
 
@@ -2097,8 +2886,8 @@ encodeBootstrapField valuesByName field partialResult =
                         Err message
 
 
-encodeBootstrapFieldValue : Field -> String -> Result String Encode.Value
-encodeBootstrapFieldValue field rawValue =
+encodeBootstrapFieldValue : Time.Zone -> Field -> String -> Result String Encode.Value
+encodeBootstrapFieldValue zone field rawValue =
     case field.fieldType of
         StringType ->
             Ok (Encode.string rawValue)
@@ -2131,7 +2920,7 @@ encodeBootstrapFieldValue field rawValue =
                     Err (fieldLabel field.name ++ " expects a date or Unix milliseconds")
 
         DateTimeType ->
-            case parseDateTimeInput rawValue of
+            case parseDateTimeInput zone rawValue of
                 Just value ->
                     Ok (Encode.float value)
 
@@ -2487,8 +3276,14 @@ loginResponseDecoder =
 
 authMeResponseDecoder : Decode.Decoder AuthMeResponse
 authMeResponseDecoder =
-    Decode.map2 AuthMeResponse
+    Decode.map3 AuthMeResponse
         (Decode.field "email" Decode.string)
+        (Decode.oneOf
+            [ Decode.field "userId" (Decode.map (String.fromInt >> Just) Decode.int)
+            , Decode.field "userId" (Decode.map Just Decode.string)
+            , Decode.succeed Nothing
+            ]
+        )
         (Decode.oneOf
             [ Decode.field "role" (Decode.map Just Decode.string)
             , Decode.field "role" (Decode.null Nothing)
@@ -2691,11 +3486,16 @@ findEntity : String -> Model -> Maybe Entity
 findEntity entityName model =
     case model.schema of
         Loaded schema ->
-            List.filter (\entity -> entity.name == entityName) schema.entities
-                |> List.head
+            findEntityInSchema entityName schema
 
         _ ->
             Nothing
+
+
+findEntityInSchema : String -> Schema -> Maybe Entity
+findEntityInSchema entityName schema =
+    List.filter (\entity -> entity.name == entityName) schema.entities
+        |> List.head
 
 
 findAction : String -> Model -> Maybe ActionInfo
@@ -2758,6 +3558,531 @@ splitEntitiesForSidebar model entities =
             ( [], entities )
 
 
+findFrontendScreen : String -> FrontendInfo -> Maybe FrontendScreenInfo
+findFrontendScreen screenName frontend =
+    frontend.screens
+        |> List.filter (\screen -> screen.name == screenName)
+        |> List.head
+
+
+currentFrontendLocation : Model -> Maybe FrontendLocation
+currentFrontendLocation model =
+    model.frontendStack
+        |> List.reverse
+        |> List.head
+
+
+currentFrontendEditableContext : Model -> Maybe ( Entity, Row )
+currentFrontendEditableContext model =
+    case ( model.schema, currentFrontendLocation model ) of
+        ( Loaded schema, Just location ) ->
+            case ( location.row, schema.frontend |> Maybe.andThen (findFrontendScreen location.screen) |> Maybe.andThen (\screen -> screen.forEntity |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema)) ) of
+                ( Just rowValue, Just entity ) ->
+                    Just ( entity, rowValue )
+
+                _ ->
+                    Nothing
+
+        _ ->
+            Nothing
+
+
+updateCurrentFrontendLocationRow : Row -> Model -> Model
+updateCurrentFrontendLocationRow updatedRow model =
+    case currentFrontendEditableContext model of
+        Just ( entity, _ ) ->
+            { model
+                | frontendStack =
+                    List.map
+                        (\location ->
+                            case location.row of
+                                Just rowValue ->
+                                    if rowId entity rowValue == rowId entity updatedRow then
+                                        { location | row = Just updatedRow }
+
+                                    else
+                                        location
+
+                                Nothing ->
+                                    location
+                        )
+                        model.frontendStack
+            }
+
+        Nothing ->
+            model
+
+
+updateFrontendRowsForEntityCache : Row -> Model -> Model
+updateFrontendRowsForEntityCache updatedRow model =
+    case currentFrontendEditableContext model of
+        Just ( entity, _ ) ->
+            { model
+                | frontendRows =
+                    Dict.map
+                        (\_ remoteRows ->
+                            case remoteRows of
+                                Loaded rows ->
+                                    Loaded (replaceRow entity updatedRow rows)
+
+                                _ ->
+                                    remoteRows
+                        )
+                        model.frontendRows
+            }
+
+        Nothing ->
+            model
+
+
+removeFrontendRowsForEntityCache : Entity -> String -> Dict String (Remote (List Row)) -> Dict String (Remote (List Row))
+removeFrontendRowsForEntityCache entity idValue frontendRows =
+    Dict.map
+        (\_ remoteRows ->
+            case remoteRows of
+                Loaded rows ->
+                    Loaded (removeRowById entity idValue rows)
+
+                _ ->
+                    remoteRows
+        )
+        frontendRows
+
+
+dropLast : List a -> List a
+dropLast items =
+    case items of
+        [] ->
+            []
+
+        [ _ ] ->
+            []
+
+        first :: rest ->
+            first :: dropLast rest
+
+
+frontendRowsKey : Schema -> FrontendScreenInfo -> Maybe Row -> FrontendItemInfo -> String
+frontendRowsKey schema screen maybeRow item =
+    let
+        parentID =
+            case ( screen.forEntity, maybeRow ) of
+                ( Just entityName, Just rowValue ) ->
+                    findEntityInSchema entityName schema
+                        |> Maybe.andThen (\entity -> rowId entity rowValue)
+                        |> Maybe.withDefault ""
+
+                _ ->
+                    ""
+    in
+    String.join ":"
+        [ item.kind
+        , Maybe.withDefault "" item.entity
+        , Maybe.withDefault "" item.relationField
+        , Maybe.withDefault "" item.filter
+        , parentID
+        ]
+
+
+frontendListEditKey : FrontendLocation -> String -> String
+frontendListEditKey location entityName =
+    location.screen ++ ":" ++ entityName
+
+
+isFrontendListEditing : Model -> FrontendLocation -> String -> Bool
+isFrontendListEditing model location entityName =
+    Dict.get (frontendListEditKey location entityName) model.frontendListEditModes
+        |> Maybe.withDefault False
+
+
+frontendRowMatches : Model -> Schema -> FrontendScreenInfo -> FrontendLocation -> FrontendItemInfo -> Row -> Bool
+frontendRowMatches model schema screen location item rowValue =
+    let
+        matchesParent =
+            if item.kind /= "children" then
+                True
+
+            else
+                case ( screen.forEntity, location.row, item.relationField ) of
+                    ( Just parentEntityName, Just parentRow, Just relationField ) ->
+                        case findEntityInSchema parentEntityName schema |> Maybe.andThen (\entity -> rowId entity parentRow) of
+                            Just parentID ->
+                                frontendRawRowFieldValue relationField rowValue == Just parentID
+
+                            Nothing ->
+                                False
+
+                    _ ->
+                        False
+    in
+    matchesParent && frontendConditionMatches model (Just rowValue) item.filter
+
+
+frontendConditionMatches : Model -> Maybe Row -> Maybe String -> Bool
+frontendConditionMatches model maybeRow maybeRaw =
+    let
+        expression =
+            maybeRaw
+                |> Maybe.map String.trim
+                |> Maybe.withDefault ""
+    in
+    if expression == "" then
+        True
+
+    else
+        case expression of
+            "user_authenticated" ->
+                model.currentEmail /= Nothing
+
+            "anonymous" ->
+                model.currentEmail == Nothing
+
+            _ ->
+                case ( String.words expression, maybeRow ) of
+                    ( [ fieldName, op, right ], Just rowValue ) ->
+                        let
+                            leftValue =
+                                frontendRawRowFieldValue fieldName rowValue
+                                    |> Maybe.withDefault ""
+
+                            rightValue =
+                                if right == "user_id" then
+                                    model.currentUserID |> Maybe.withDefault ""
+
+                                else
+                                    trimQuotes right
+                        in
+                        case op of
+                            "==" ->
+                                leftValue == rightValue
+
+                            "!=" ->
+                                leftValue /= rightValue
+
+                            _ ->
+                                True
+
+                    _ ->
+                        True
+
+
+frontendActionPresetValues : Model -> Maybe String -> Maybe Row -> List FrontendActionValueInfo -> Dict String String
+frontendActionPresetValues model maybeBinding maybeRow values =
+    values
+        |> List.filterMap
+            (\value ->
+                frontendActionExpressionValue model maybeBinding maybeRow value.expression
+                    |> Maybe.map (\resolved -> ( value.field, resolved ))
+            )
+        |> Dict.fromList
+
+
+frontendActionExpressionValue : Model -> Maybe String -> Maybe Row -> String -> Maybe String
+frontendActionExpressionValue model maybeBinding maybeRow rawExpression =
+    let
+        expression =
+            String.trim rawExpression
+    in
+    if expression == "user_id" then
+        model.currentUserID
+
+    else
+        case frontendBoundFieldName maybeBinding expression of
+            Just fieldName ->
+                maybeRow
+                    |> Maybe.andThen (frontendRawRowFieldValue fieldName)
+
+            Nothing ->
+                if String.startsWith "\"" expression && String.endsWith "\"" expression then
+                    Just (trimQuotes expression)
+
+                else
+                    Just expression
+
+
+frontendBoundFieldName : Maybe String -> String -> Maybe String
+frontendBoundFieldName maybeBinding expression =
+    maybeBinding
+        |> Maybe.andThen
+            (\binding ->
+                let
+                    prefix =
+                        binding ++ "."
+                in
+                if String.startsWith prefix expression then
+                    Just (String.dropLeft (String.length prefix) expression)
+
+                else
+                    Nothing
+            )
+
+
+frontendEntityBindingName : String -> String
+frontendEntityBindingName entityName =
+    case String.uncons entityName of
+        Just ( first, rest ) ->
+            String.fromChar (Char.toLower first) ++ rest
+
+        Nothing ->
+            ""
+
+
+frontendScreenBindingName : FrontendScreenInfo -> Maybe String
+frontendScreenBindingName screen =
+    screen.forEntity
+        |> Maybe.map frontendEntityBindingName
+
+
+frontendScreenTitle : Model -> FrontendScreenInfo -> FrontendLocation -> String
+frontendScreenTitle model screen location =
+    case ( screen.titleExpression, location.row ) of
+        ( Just expression, Just rowValue ) ->
+            frontendActionExpressionValue model (frontendScreenBindingName screen) (Just rowValue) expression
+                |> Maybe.andThen
+                    (\resolved ->
+                        if String.trim resolved == "" then
+                            Nothing
+
+                        else
+                            Just resolved
+                    )
+                |> Maybe.withDefault (screen.title |> Maybe.withDefault (humanizeIdentifier screen.name))
+
+        _ ->
+            screen.title
+                |> Maybe.withDefault (humanizeIdentifier screen.name)
+
+
+frontendFormFieldConfig : List FrontendFormFieldInfo -> String -> Maybe FrontendFormFieldInfo
+frontendFormFieldConfig formFields fieldName =
+    formFields
+        |> List.filter (\formField -> formField.field == fieldName)
+        |> List.head
+
+
+frontendDependentFilter : FrontendFormFieldInfo -> Maybe ( String, String )
+frontendDependentFilter formField =
+    case formField.filter |> Maybe.map String.trim of
+        Just rawFilter ->
+            case String.split "==" rawFilter of
+                [ left, right ] ->
+                    let
+                        relationField =
+                            String.trim left
+
+                        rightSide =
+                            String.trim right
+                    in
+                    if String.startsWith "form." rightSide then
+                        Just ( relationField, String.dropLeft 5 rightSide )
+
+                    else
+                        Nothing
+
+                _ ->
+                    Nothing
+
+        Nothing ->
+            Nothing
+
+
+frontendFormFieldFilters : List FrontendFormFieldInfo -> Dict String String -> String -> Maybe (Dict String String)
+frontendFormFieldFilters formFields values fieldName =
+    case frontendFormFieldConfig formFields fieldName |> Maybe.andThen frontendDependentFilter of
+        Just ( relationField, parentField ) ->
+            let
+                parentValue =
+                    values
+                        |> Dict.get parentField
+                        |> Maybe.withDefault ""
+                        |> String.trim
+            in
+            if parentValue == "" then
+                Nothing
+
+            else
+                Just (Dict.singleton relationField parentValue)
+
+        Nothing ->
+            Just Dict.empty
+
+
+frontendDependentFieldNames : List FrontendFormFieldInfo -> String -> List String
+frontendDependentFieldNames formFields parentFieldName =
+    formFields
+        |> List.filterMap
+            (\formField ->
+                case frontendDependentFilter formField of
+                    Just ( _, parentField ) ->
+                        if parentField == parentFieldName then
+                            Just formField.field
+
+                        else
+                            Nothing
+
+                    Nothing ->
+                        Nothing
+            )
+
+
+relationRowsCacheKey : String -> Dict String String -> String
+relationRowsCacheKey entityName filters =
+    if Dict.isEmpty filters then
+        entityName
+
+    else
+        entityName
+            ++ "?"
+            ++ (filters
+                    |> Dict.toList
+                    |> List.sortBy Tuple.first
+                    |> List.map (\( key, value ) -> Url.percentEncode key ++ "=" ++ Url.percentEncode value)
+                    |> String.join "&"
+               )
+
+updateCurrentEntityFormField : Model -> String -> String -> Model
+updateCurrentEntityFormField model fieldName value =
+    let
+        activeFormFields =
+            currentFrontendEntityFormFields model
+
+        dependentFields =
+            frontendDependentFieldNames activeFormFields fieldName
+
+        clearedValues =
+            List.foldl Dict.remove model.formValues dependentFields
+    in
+    { model | formValues = Dict.insert fieldName value clearedValues }
+
+
+ensureRelationRowsForCurrentEntityDependencies : Model -> String -> Cmd Msg
+ensureRelationRowsForCurrentEntityDependencies model changedField =
+    case model.selectedEntity of
+        Just entity ->
+            frontendDependentFieldNames (currentFrontendEntityFormFields model) changedField
+                |> List.filterMap
+                    (\fieldName ->
+                        currentFrontendEntityVisibleFields model entity
+                            |> List.filter (\field -> field.name == fieldName)
+                            |> List.head
+                            |> Maybe.andThen
+                                (\field ->
+                                    field.relationEntity
+                                        |> Maybe.andThen
+                                            (\relationEntity ->
+                                                currentFrontendEntityFormFieldFilters model field.name
+                                                    |> Maybe.map (\filters -> ( relationEntity, filters ))
+                                            )
+                                )
+                    )
+                |> List.filter (shouldLoadRelationRows model)
+                |> List.map (\( entityName, filters ) -> loadRelationRows model entityName filters)
+                |> Cmd.batch
+
+        Nothing ->
+            Cmd.none
+
+
+updateActionFormField : Model -> String -> String -> Model
+updateActionFormField model fieldName value =
+    let
+        dependentFields =
+            frontendDependentFieldNames model.actionFormFields fieldName
+
+        clearedValues =
+            List.foldl Dict.remove model.actionFormValues dependentFields
+    in
+    { model | actionFormValues = Dict.insert fieldName value clearedValues }
+
+
+currentFrontendEntityFormFields : Model -> List FrontendFormFieldInfo
+currentFrontendEntityFormFields model =
+    case model.formMode of
+        FormEdit _ ->
+            model.frontendEditFormFields
+
+        _ ->
+            model.frontendCreateFormFields
+
+
+currentFrontendEntityFormFieldFilters : Model -> String -> Maybe (Dict String String)
+currentFrontendEntityFormFieldFilters model fieldName =
+    frontendFormFieldFilters (currentFrontendEntityFormFields model) model.formValues fieldName
+
+
+frontendCreateVisibleFields : Model -> Entity -> List Field
+frontendCreateVisibleFields model entity =
+    if List.isEmpty model.frontendCreateFormFields then
+        appVisibleFields entity
+            |> List.filter (\field -> not (List.member field.name model.frontendCreatePresetFields))
+
+    else
+        model.frontendCreateFormFields
+            |> List.filterMap
+                (\formField ->
+                    appVisibleFields entity
+                        |> List.filter (\field -> field.name == formField.field && not (List.member field.name model.frontendCreatePresetFields))
+                        |> List.head
+                )
+
+
+currentFrontendEntityVisibleFields : Model -> Entity -> List Field
+currentFrontendEntityVisibleFields model entity =
+    let
+        activeFormFields =
+            currentFrontendEntityFormFields model
+    in
+    if List.isEmpty activeFormFields then
+        appVisibleFields entity
+            |> List.filter (\field -> not (List.member field.name model.frontendCreatePresetFields))
+
+    else
+        activeFormFields
+            |> List.filterMap
+                (\formField ->
+                    appVisibleFields entity
+                        |> List.filter (\field -> field.name == formField.field && not (List.member field.name model.frontendCreatePresetFields))
+                        |> List.head
+                )
+
+
+frontendActionVisibleFields : Model -> InputAliasInfo -> List InputAliasField
+frontendActionVisibleFields model aliasInfo =
+    if List.isEmpty model.actionFormFields then
+        aliasInfo.fields
+            |> List.filter (\field -> not (List.member field.name model.actionPresetFields))
+
+    else
+        model.actionFormFields
+            |> List.filterMap
+                (\formField ->
+                    aliasInfo.fields
+                        |> List.filter (\field -> field.name == formField.field && not (List.member field.name model.actionPresetFields))
+                        |> List.head
+                )
+
+
+frontendRawRowFieldValue : String -> Row -> Maybe String
+frontendRawRowFieldValue fieldName rowValue =
+    Dict.get fieldName rowValue
+        |> Maybe.map valueToString
+
+
+trimQuotes : String -> String
+trimQuotes value =
+    let
+        trimmed =
+            String.trim value
+    in
+    if String.startsWith "\"" trimmed && String.endsWith "\"" trimmed && String.length trimmed >= 2 then
+        trimmed
+            |> String.dropLeft 1
+            |> String.dropRight 1
+
+    else
+        trimmed
+
+
 actionFormDefaults : Model -> ActionInfo -> Dict String String
 actionFormDefaults model actionInfo =
     case findInputAlias actionInfo.inputAlias model of
@@ -2787,12 +4112,12 @@ actionPayloadFromForm model actionInfo =
 
         Just aliasInfo ->
             aliasInfo.fields
-                |> List.foldl (encodeActionField model.actionFormValues) (Ok [])
+                |> List.foldl (encodeActionField model.localZone model.actionFormValues) (Ok [])
                 |> Result.map Encode.object
 
 
-encodeActionField : Dict String String -> InputAliasField -> Result String (List ( String, Encode.Value )) -> Result String (List ( String, Encode.Value ))
-encodeActionField valuesByName field partialResult =
+encodeActionField : Time.Zone -> Dict String String -> InputAliasField -> Result String (List ( String, Encode.Value )) -> Result String (List ( String, Encode.Value ))
+encodeActionField zone valuesByName field partialResult =
     case partialResult of
         Err message ->
             Err message
@@ -2837,7 +4162,7 @@ encodeActionField valuesByName field partialResult =
                                 Err (fieldLabel field.name ++ " expects a date or Unix milliseconds")
 
                     "DateTime" ->
-                        case parseDateTimeInput rawValue of
+                        case parseDateTimeInput zone rawValue of
                             Just value ->
                                 Ok (( field.name, Encode.float value ) :: items)
 
@@ -2868,9 +4193,9 @@ rowId entity rowValue =
         |> Maybe.map valueToString
 
 
-deleteConfirmationMessage : Entity -> Row -> String
-deleteConfirmationMessage entity rowValue =
-    case rowDisplayLabel entity rowValue of
+deleteConfirmationMessage : Time.Zone -> Entity -> Row -> String
+deleteConfirmationMessage zone entity rowValue =
+    case rowDisplayLabel zone entity rowValue of
         Just label ->
             "Delete " ++ entityLabel entity ++ " \"" ++ label ++ "\"? This action cannot be undone."
 
@@ -2878,11 +4203,11 @@ deleteConfirmationMessage entity rowValue =
             "Delete this " ++ entityLabel entity ++ " entry? This action cannot be undone."
 
 
-rowDisplayLabel : Entity -> Row -> Maybe String
-rowDisplayLabel entity rowValue =
+rowDisplayLabel : Time.Zone -> Entity -> Row -> Maybe String
+rowDisplayLabel zone entity rowValue =
     case preferredDisplayFieldFromFields entity.fields of
         Just field ->
-            rowFieldValue entity field.name rowValue
+            rowFieldValue zone entity field.name rowValue
                 |> Maybe.map String.trim
                 |> Maybe.andThen
                     (\value ->
@@ -2912,11 +4237,11 @@ rowFieldLabel model entity fieldName rowValue =
                                         relationFieldValueLabel model field value
 
                                     Nothing ->
-                                        valueToDisplayString field.fieldType value
+                                        valueToDisplayString model.localZone field.fieldType value
                             )
 
                 Nothing ->
-                    rowFieldValue entity fieldName rowValue
+                    rowFieldValue model.localZone entity fieldName rowValue
     in
     displayValue
         |> Maybe.map String.trim
@@ -2928,6 +4253,39 @@ rowFieldLabel model entity fieldName rowValue =
                 else
                     Just value
             )
+
+
+frontendFieldLabelAndValue : Model -> Schema -> FrontendLocation -> Entity -> String -> Row -> Maybe ( String, String )
+frontendFieldLabelAndValue model schema location entity rawFieldName rowValue =
+    let
+        ( fieldName, displayFieldName ) =
+            parseFrontendDisplayFieldPath rawFieldName
+    in
+    case ( List.filter (\field -> field.name == fieldName) entity.fields |> List.head, displayFieldName ) of
+        ( Just field, Just _ ) ->
+            Dict.get field.name rowValue
+                |> Maybe.map
+                    (\value ->
+                        ( fieldLabel field.name
+                        , frontendRelationFieldValueLabel model schema location field value
+                        )
+                    )
+                |> Maybe.andThen
+                    (\( labelText, valueText ) ->
+                        let
+                            trimmed =
+                                String.trim valueText
+                        in
+                        if trimmed == "" || trimmed == "null" then
+                            Nothing
+
+                        else
+                            Just ( labelText, trimmed )
+                    )
+
+        _ ->
+            rowFieldLabel model entity fieldName rowValue
+                |> Maybe.map (\value -> ( fieldLabel fieldName, value ))
 
 
 entityLabel : Entity -> String
@@ -2942,13 +4300,23 @@ fieldLabel =
     humanizeIdentifier
 
 
+parseFrontendDisplayFieldPath : String -> ( String, Maybe String )
+parseFrontendDisplayFieldPath raw =
+    case String.split "." raw of
+        [ fieldName, displayField ] ->
+            ( fieldName, Just displayField )
+
+        _ ->
+            ( raw, Nothing )
+
+
 fieldPlaceholder : String -> String
 fieldPlaceholder fieldName =
     "Enter " ++ String.toLower (fieldLabel fieldName)
 
 
-fieldDefaultText : Field -> String
-fieldDefaultText field =
+fieldDefaultText : Time.Zone -> Field -> String
+fieldDefaultText zone field =
     case field.defaultValue of
         Just defaultValue ->
             case field.fieldType of
@@ -2963,7 +4331,7 @@ fieldDefaultText field =
                     defaultValue
                         |> Decode.decodeValue Decode.float
                         |> Result.toMaybe
-                        |> Maybe.map formatDateTimeInputMillis
+                        |> Maybe.map (formatDateTimeInputMillis zone)
                         |> Maybe.withDefault (valueToString defaultValue)
 
                 _ ->
@@ -3011,13 +4379,13 @@ placeholderForField field =
             placeholderForType field.name (fieldTypeLabel field.fieldType)
 
 
-rowFieldValue : Entity -> String -> Row -> Maybe String
-rowFieldValue entity fieldName rowValue =
+rowFieldValue : Time.Zone -> Entity -> String -> Row -> Maybe String
+rowFieldValue zone entity fieldName rowValue =
     let
         displayValue value =
             case List.filter (\field -> field.name == fieldName) entity.fields |> List.head of
                 Just field ->
-                    valueToDisplayString field.fieldType value
+                    valueToDisplayString zone field.fieldType value
 
                 Nothing ->
                     valueToString value
@@ -3082,11 +4450,11 @@ fallbackRelationLabel entityName rawId =
     humanizeIdentifier entityName ++ " #" ++ rawId
 
 
-relatedRowLabel : Entity -> Row -> String
-relatedRowLabel entity rowValue =
+relatedRowLabel : Time.Zone -> Entity -> Row -> String
+relatedRowLabel zone entity rowValue =
     case preferredDisplayFieldFromFields entity.fields of
         Just field ->
-            rowFieldValue entity field.name rowValue
+            rowFieldValue zone entity field.name rowValue
                 |> Maybe.map String.trim
                 |> Maybe.andThen
                     (\value ->
@@ -3130,7 +4498,7 @@ relationFieldValueLabel model field value =
                     ( Just relatedEntity, Just (Loaded relatedRows) ) ->
                         case findRowById relatedEntity rawId relatedRows of
                             Just relatedRow ->
-                                relatedRowLabel relatedEntity relatedRow
+                                relatedRowLabel model.localZone relatedEntity relatedRow
 
                             Nothing ->
                                 fallbackRelationLabel entityName rawId
@@ -3139,7 +4507,62 @@ relationFieldValueLabel model field value =
                         fallbackRelationLabel entityName rawId
 
         Nothing ->
-            valueToDisplayString field.fieldType value
+            valueToDisplayString model.localZone field.fieldType value
+
+
+frontendRelationFieldValueLabel : Model -> Schema -> FrontendLocation -> Field -> Decode.Value -> String
+frontendRelationFieldValueLabel model schema location field value =
+    let
+        rawId =
+            valueToString value |> String.trim
+    in
+    case field.relationEntity of
+        Just relationEntityName ->
+            if rawId == "" || rawId == "null" then
+                ""
+
+            else
+                case frontendParentRelationLabel schema model location relationEntityName rawId of
+                    Just labelText ->
+                        labelText
+
+                    Nothing ->
+                        relationFieldValueLabel model field value
+
+        Nothing ->
+            valueToDisplayString model.localZone field.fieldType value
+
+
+frontendParentRelationLabel : Schema -> Model -> FrontendLocation -> String -> String -> Maybe String
+frontendParentRelationLabel schema model location relationEntityName rawId =
+    case List.reverse model.frontendStack of
+        current :: parent :: _ ->
+            if current.screen /= location.screen then
+                Nothing
+
+            else
+                case ( parent.row, schema.frontend |> Maybe.andThen (findFrontendScreen parent.screen) |> Maybe.andThen (\screen -> screen.forEntity) |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema) ) of
+                    ( Just parentRow, Just parentEntity ) ->
+                        if parentEntity.name /= relationEntityName then
+                            Nothing
+
+                        else
+                            case rowId parentEntity parentRow of
+                                Just parentId ->
+                                    if parentId == rawId then
+                                        Just (relatedRowLabel model.localZone parentEntity parentRow)
+
+                                    else
+                                        Nothing
+
+                                Nothing ->
+                                    Nothing
+
+                    _ ->
+                        Nothing
+
+        _ ->
+            Nothing
 
 
 entityDisplayName : Entity -> String
@@ -3290,7 +4713,7 @@ formDefaults model =
                 |> List.map
                     (\field ->
                         ( field.name
-                        , fieldDefaultText field
+                        , fieldDefaultText model.localZone field
                         )
                     )
                 |> Dict.fromList
@@ -3323,7 +4746,7 @@ formFromRow model rowValue =
                                                     value
                                                         |> Decode.decodeValue Decode.float
                                                         |> Result.toMaybe
-                                                        |> Maybe.map formatDateTimeInputMillis
+                                                        |> Maybe.map (formatDateTimeInputMillis model.localZone)
                                                         |> Maybe.withDefault (valueToString value)
 
                                                 _ ->
@@ -3445,6 +4868,17 @@ mobileNavEntries model =
             , selected = isSelectedAction actionInfo.name model
             }
 
+        frontendEntries =
+            if appWorkspaceHasFrontend model && workspace == AppWorkspace then
+                [ { label = "Home"
+                  , onPress = SelectFrontendRoot
+                  , selected = isFrontendWorkspaceActive model
+                  }
+                ]
+
+            else
+                []
+
         authEntries =
             if shouldShowAuthTools model then
                 { label =
@@ -3476,8 +4910,14 @@ mobileNavEntries model =
             else
                 []
     in
-    List.map entityEntry crudEntities
-        ++ List.map actionEntry actions
+    frontendEntries
+        ++ (if appWorkspaceHasFrontend model && workspace == AppWorkspace then
+                []
+
+            else
+                List.map entityEntry crudEntities
+                    ++ List.map actionEntry actions
+           )
         ++ systemEntries
         ++ authEntries
 
@@ -4158,6 +5598,9 @@ viewSidebar model =
                 _ ->
                     ( [], [], [] )
 
+        useFrontendNavigation =
+            workspace == AppWorkspace && appWorkspaceHasFrontend model
+
         sidebarItemLabel : String -> Maybe String -> Element Msg
         sidebarItemLabel title maybeSubtitle =
             if workspace == AppWorkspace then
@@ -4326,6 +5769,19 @@ viewSidebar model =
                         )
                         (Just "/auth")
                 }
+
+        frontendHomeButton : Element Msg
+        frontendHomeButton =
+            Input.button
+                (sidebarButtonAttrs
+                    (isFrontendWorkspaceActive model)
+                    (sidebarItemBackground (isFrontendWorkspaceActive model))
+                    (sidebarItemTextColor (isFrontendWorkspaceActive model))
+                    { top = 12, right = 12, bottom = 12, left = 12 }
+                )
+                { onPress = Just SelectFrontendRoot
+                , label = sidebarItemLabel "Home" Nothing
+                }
     in
     column
         ([ width
@@ -4398,7 +5854,18 @@ viewSidebar model =
 
               else
                 []
-            , if List.isEmpty crudEntities then
+            , if useFrontendNavigation then
+                [ el
+                    ([ paddingEach { top = 4, right = 0, bottom = 0, left = 0 }
+                     , Font.color sidebarSectionColor
+                     ]
+                        ++ cupertinoSectionHeaderAttrs
+                    )
+                    (text "APP")
+                , frontendHomeButton
+                ]
+
+              else if List.isEmpty crudEntities then
                 []
 
               else
@@ -4417,7 +5884,7 @@ viewSidebar model =
                         )
                     )
                     :: List.map entityButton crudEntities
-            , if List.isEmpty actions then
+            , if useFrontendNavigation || List.isEmpty actions then
                 []
 
               else
@@ -4524,6 +5991,9 @@ viewContent model =
 
           else if isDatabaseView model then
             viewDatabasePanel model
+
+          else if isFrontendWorkspaceActive model then
+            viewFrontendWorkspace model
 
           else
             case model.selectedAction of
@@ -4913,7 +6383,7 @@ viewAuthEmailStage model firstAdminMode actionLabel submitMsg isLoading =
 
                 DateTimeType ->
                     dateTimeField
-                        (fieldLabel field.name ++ " (UTC)")
+                        (fieldLabel field.name)
                         (Dict.get field.name model.bootstrapFormValues |> Maybe.withDefault "")
                         (SetBootstrapField field.name)
 
@@ -5365,43 +6835,54 @@ relationFormField model field relationEntityName =
         currentValue =
             Dict.get field.name model.formValues |> Maybe.withDefault ""
 
+        maybeFilters =
+            currentFrontendEntityFormFieldFilters model field.name
+
         helperText =
-            case Dict.get relationEntityName model.relationRows of
+            case maybeFilters of
+                Nothing ->
+                    case frontendFormFieldConfig (currentFrontendEntityFormFields model) field.name |> Maybe.andThen frontendDependentFilter of
+                        Just ( _, parentField ) ->
+                            Just ("Select " ++ fieldLabel parentField ++ " first.")
+
+                        Nothing ->
+                            Nothing
+
+                Just filters ->
+                    case Dict.get (relationRowsCacheKey relationEntityName filters) model.relationRows of
+                        Just Loading ->
+                            Just ("Loading " ++ humanizeIdentifier relationEntityName ++ " options...")
+
+                        Just (Failed _) ->
+                            Just ("Could not load " ++ humanizeIdentifier relationEntityName ++ " options.")
+
+                        _ ->
+                            Nothing
+    in
+    case maybeFilters of
+        Just filters ->
+            case Dict.get (relationRowsCacheKey relationEntityName filters) model.relationRows of
+                Just (Loaded relatedRows) ->
+                    relationSelectField model field relationEntityName currentValue relatedRows
+
                 Just Loading ->
-                    Just ("Loading " ++ humanizeIdentifier relationEntityName ++ " options...")
+                    relationStateField field "Loading options..." (Maybe.withDefault ("Loading " ++ humanizeIdentifier relationEntityName ++ " options...") helperText)
 
                 Just (Failed _) ->
-                    Just ("Could not load " ++ humanizeIdentifier relationEntityName ++ " options. Enter the id manually.")
+                    relationStateField field "Options unavailable" (Maybe.withDefault ("Could not load " ++ humanizeIdentifier relationEntityName ++ " options.") helperText)
 
                 _ ->
-                    Nothing
-    in
-    case Dict.get relationEntityName model.relationRows of
-        Just (Loaded relatedRows) ->
-            relationSelectField model field relationEntityName currentValue relatedRows
+                    relationStateField field "Loading options..." (Maybe.withDefault ("Loading " ++ humanizeIdentifier relationEntityName ++ " options...") helperText)
 
-        _ ->
-            column
-                [ width fill, spacing 6 ]
-                [ formTextField
-                    (fieldLabel field.name)
-                    currentValue
-                    (humanizeIdentifier relationEntityName ++ " id")
-                    (SetFormField field.name)
-                , case helperText of
-                    Just message ->
-                        el [ Font.size 12, Font.color (rgb255 108 119 133) ] (text message)
-
-                    Nothing ->
-                        none
-                ]
+        Nothing ->
+            relationStateField field ("Select " ++ humanizeIdentifier relationEntityName) (Maybe.withDefault ("Select " ++ fieldLabel field.name ++ " first.") helperText)
 
 
 relationSelectField : Model -> Field -> String -> String -> List Row -> Element Msg
 relationSelectField model field relationEntityName currentValue relatedRows =
     let
         availableOptions =
-            relationOptions (findEntity relationEntityName model) relationEntityName relatedRows
+            relationOptions model.localZone (findEntity relationEntityName model) relationEntityName relatedRows
 
         optionExists =
             List.any (\( optionValue, _ ) -> optionValue == currentValue) availableOptions
@@ -5436,35 +6917,54 @@ actionRelationFormField model field relationEntityName =
     let
         currentValue =
             Dict.get field.name model.actionFormValues |> Maybe.withDefault ""
+
+        maybeFilters =
+            frontendFormFieldFilters model.actionFormFields model.actionFormValues field.name
     in
-    case Dict.get relationEntityName model.relationRows of
-        Just (Loaded relatedRows) ->
-            actionRelationSelectField model field relationEntityName currentValue relatedRows
+    case maybeFilters of
+        Just filters ->
+            case Dict.get (relationRowsCacheKey relationEntityName filters) model.relationRows of
+                Just (Loaded relatedRows) ->
+                    actionRelationSelectField model field relationEntityName currentValue relatedRows
 
-        Just Loading ->
-            actionRelationStateField
-                field
-                "Loading options..."
-                ("Loading " ++ humanizeIdentifier relationEntityName ++ " options...")
+                Just Loading ->
+                    actionRelationStateField
+                        field
+                        "Loading options..."
+                        ("Loading " ++ humanizeIdentifier relationEntityName ++ " options...")
 
-        Just (Failed _) ->
-            actionRelationStateField
-                field
-                "Options unavailable"
-                ("Could not load " ++ humanizeIdentifier relationEntityName ++ " options.")
+                Just (Failed _) ->
+                    actionRelationStateField
+                        field
+                        "Options unavailable"
+                        ("Could not load " ++ humanizeIdentifier relationEntityName ++ " options.")
 
-        _ ->
-            actionRelationStateField
-                field
-                "Loading options..."
-                ("Loading " ++ humanizeIdentifier relationEntityName ++ " options...")
+                _ ->
+                    actionRelationStateField
+                        field
+                        "Loading options..."
+                        ("Loading " ++ humanizeIdentifier relationEntityName ++ " options...")
+
+        Nothing ->
+            case frontendFormFieldConfig model.actionFormFields field.name |> Maybe.andThen frontendDependentFilter of
+                Just ( _, parentField ) ->
+                    actionRelationStateField
+                        field
+                        ("Select " ++ fieldLabel parentField ++ " first")
+                        ("Select " ++ fieldLabel parentField ++ " first.")
+
+                Nothing ->
+                    actionRelationStateField
+                        field
+                        "Loading options..."
+                        ("Loading " ++ humanizeIdentifier relationEntityName ++ " options...")
 
 
 actionRelationSelectField : Model -> InputAliasField -> String -> String -> List Row -> Element Msg
 actionRelationSelectField model field relationEntityName currentValue relatedRows =
     let
         availableOptions =
-            relationOptions (findEntity relationEntityName model) relationEntityName relatedRows
+            relationOptions model.localZone (findEntity relationEntityName model) relationEntityName relatedRows
 
         optionExists =
             List.any (\( optionValue, _ ) -> optionValue == currentValue) availableOptions
@@ -5489,6 +6989,25 @@ actionRelationSelectField model field relationEntityName currentValue relatedRow
 
 actionRelationStateField : InputAliasField -> String -> String -> Element Msg
 actionRelationStateField field valueText helperText =
+    column
+        [ width fill, spacing 6 ]
+        [ formFieldLabelElement (fieldLabel field.name)
+        , el
+            [ width fill
+            , paddingEach { top = 12, right = 12, bottom = 12, left = 12 }
+            , Border.rounded 12
+            , Border.width 1
+            , Border.color (rgb255 222 230 241)
+            , Background.color (rgb255 248 250 254)
+            , Font.color (rgb255 108 119 133)
+            ]
+            (text valueText)
+        , el [ Font.size 12, Font.color (rgb255 108 119 133) ] (text helperText)
+        ]
+
+
+relationStateField : Field -> String -> String -> Element Msg
+relationStateField field valueText helperText =
     column
         [ width fill, spacing 6 ]
         [ formFieldLabelElement (fieldLabel field.name)
@@ -5625,25 +7144,25 @@ formFieldLabelElement labelText =
         (text labelText)
 
 
-relationOptions : Maybe Entity -> String -> List Row -> List ( String, String )
-relationOptions maybeEntity relationEntityName relatedRows =
+relationOptions : Time.Zone -> Maybe Entity -> String -> List Row -> List ( String, String )
+relationOptions zone maybeEntity relationEntityName relatedRows =
     relatedRows
         |> List.filterMap
             (\rowValue ->
                 case rowIdForRelation maybeEntity rowValue of
                     Just idValue ->
-                        Just ( idValue, relationOptionLabel maybeEntity relationEntityName rowValue )
+                        Just ( idValue, relationOptionLabel zone maybeEntity relationEntityName rowValue )
 
                     Nothing ->
                         Nothing
             )
         |> List.sortBy (\( _, labelText ) -> String.toLower labelText)
 
-relationOptionLabel : Maybe Entity -> String -> Row -> String
-relationOptionLabel maybeEntity relationEntityName rowValue =
+relationOptionLabel : Time.Zone -> Maybe Entity -> String -> Row -> String
+relationOptionLabel zone maybeEntity relationEntityName rowValue =
     case maybeEntity of
         Just relatedEntity ->
-            relatedRowLabel relatedEntity rowValue
+            relatedRowLabel zone relatedEntity rowValue
 
         Nothing ->
             rowIdForRelation Nothing rowValue
@@ -6100,6 +7619,7 @@ clearLocalSession model =
         | authToken = ""
         , systemAuthToken = ""
         , currentEmail = Nothing
+        , currentUserID = Nothing
         , currentRole = Nothing
         , currentSystemEmail = Nothing
         , currentSystemRole = Nothing
@@ -6110,6 +7630,8 @@ clearLocalSession model =
         , authSubmitting = Nothing
         , sessionRestorePending = False
         , authInlineMessage = Nothing
+        , actionPresetFields = []
+        , actionFormFields = []
         , flash = Nothing
     }
 
@@ -6122,6 +7644,45 @@ saveSessionFromModel model =
             , ( "systemAuthToken", Encode.string (String.trim model.systemAuthToken) )
             ]
         )
+
+
+saveSchemaCachePayload : Maybe String -> Schema -> Cmd Msg
+saveSchemaCachePayload maybeVersion schema =
+    saveSchemaCache
+        (Encode.object
+            [ ( "schemaVersion"
+              , case maybeVersion of
+                    Just version ->
+                        Encode.string version
+
+                    Nothing ->
+                        Encode.null
+              )
+            , ( "schema", encodeSchema schema )
+            ]
+        )
+
+
+promotePendingSchemaForNavigation : Model -> Model
+promotePendingSchemaForNavigation model =
+    case model.pendingSchema of
+        Just pendingSchema ->
+            { model
+                | schema = Loaded pendingSchema
+                , currentSchemaVersion =
+                    case model.pendingSchemaVersion of
+                        Just version ->
+                            Just version
+
+                        Nothing ->
+                            model.currentSchemaVersion
+                , pendingSchema = Nothing
+                , pendingSchemaVersion = Nothing
+                , schemaRefreshNotice = Nothing
+            }
+
+        Nothing ->
+            model
 
 
 isUnauthorizedError : ApiHttpError -> Bool
@@ -6154,7 +7715,13 @@ handleUnauthorizedSessionExpiry model httpError =
                     , formMode = FormHidden
                     , formValues = Dict.empty
                     , relationRows = Dict.empty
+                    , frontendCreateEntity = Nothing
+                    , frontendCreatePresetFields = []
+                    , frontendCreateFormFields = []
+                    , frontendEditFormFields = []
                     , actionFormValues = Dict.empty
+                    , actionPresetFields = []
+                    , actionFormFields = []
                     , actionResult = Nothing
                     , pendingDelete = Nothing
                     , flash = Just "Session expired. Please login again."
@@ -6445,6 +8012,781 @@ viewDeleteConfirmation model =
                 )
 
 
+isFrontendWorkspaceActive : Model -> Bool
+isFrontendWorkspaceActive model =
+    currentWorkspace model
+        == AppWorkspace
+        && (case ( model.schema, model.frontendStack ) of
+                ( Loaded schema, _ :: _ ) ->
+                    schema.frontend /= Nothing
+
+                _ ->
+                    False
+           )
+
+
+appWorkspaceHasFrontend : Model -> Bool
+appWorkspaceHasFrontend model =
+    case model.schema of
+        Loaded schema ->
+            schema.frontend /= Nothing
+
+        _ ->
+            False
+
+
+viewFrontendWorkspace : Model -> Element Msg
+viewFrontendWorkspace model =
+    case model.schema of
+        Loaded schema ->
+            if model.formMode /= FormHidden || model.frontendCreateEntity /= Nothing then
+                column [ width fill, height fill, spacing 12 ]
+                    [ wrappedRow [ width fill, spacing 10 ]
+                        [ cupertinoNeutralButton (Just FrontendBack) "Back"
+                        ]
+                    , viewFormPanel model
+                    ]
+
+            else if model.selectedAction /= Nothing then
+                column [ width fill, height fill, spacing 12 ]
+                    [ wrappedRow [ width fill, spacing 10 ]
+                        [ cupertinoNeutralButton (Just FrontendBack) "Back"
+                        ]
+                    , viewDataPanel model
+                    ]
+
+            else
+                case ( schema.frontend, currentFrontendLocation model ) of
+                    ( Just frontend, Just location ) ->
+                        case findFrontendScreen location.screen frontend of
+                            Just screen ->
+                                viewFrontendScreen model schema screen location
+
+                            Nothing ->
+                                paragraph [ Font.color (rgb255 176 60 46) ] [ text "Screen not found." ]
+
+                    _ ->
+                        paragraph [] [ text "No frontend screen available." ]
+
+        _ ->
+            paragraph [] [ text "Loading..." ]
+
+
+viewFrontendScreen : Model -> Schema -> FrontendScreenInfo -> FrontendLocation -> Element Msg
+viewFrontendScreen model schema screen location =
+    let
+        titleText =
+            frontendScreenTitle model screen location
+
+        navigationActions =
+            if List.length model.frontendStack > 1 then
+                [ cupertinoNeutralButton (Just FrontendBack) "Back" ]
+
+            else
+                []
+
+        toolbarActions =
+            screen.toolbarItems
+                |> List.map (viewFrontendToolbarAction model location)
+    in
+    column
+        ((height fill) :: cupertinoPanelAttrs 12 16)
+        [ viewPanelHeader (isCompactLayout model) titleText [] (navigationActions ++ toolbarActions)
+        , column
+            [ width fill
+            , height fill
+            , spacing 14
+            , scrollbarY
+            , htmlAttribute (HtmlAttr.style "min-height" "0")
+            ]
+            (screen.sections
+                |> List.filter (\section -> frontendConditionMatches model location.row section.when)
+                |> List.map (viewFrontendSection model schema screen location)
+            )
+        ]
+
+
+viewFrontendToolbarAction : Model -> FrontendLocation -> FrontendToolbarItemInfo -> Element Msg
+viewFrontendToolbarAction model location toolbarItem =
+    case toolbarItem.item.kind of
+        "create" ->
+            case toolbarItem.item.entity of
+                Just entityName ->
+                    let
+                        label =
+                            case toolbarItem.placement of
+                                "primary" ->
+                                    "New"
+
+                                _ ->
+                                    "New " ++ humanizeIdentifier entityName
+                    in
+                    if toolbarItem.placement == "primary" then
+                        cupertinoPrimaryButton (Just (SelectFrontendCreate entityName Dict.empty [])) label
+
+                    else
+                        cupertinoNeutralButton (Just (SelectFrontendCreate entityName Dict.empty [])) label
+
+                Nothing ->
+                    none
+
+        "editList" ->
+            case toolbarItem.item.entity of
+                Just entityName ->
+                    let
+                        editing =
+                            isFrontendListEditing model location entityName
+                    in
+                    cupertinoNeutralButton
+                        (Just (ToggleFrontendListEdit entityName))
+                        (if editing then
+                            "Done"
+
+                         else
+                            "Edit"
+                        )
+
+                Nothing ->
+                    none
+
+        "edit" ->
+            case currentFrontendEditableContext model of
+                Just ( entity, _ ) ->
+                    cupertinoNeutralButton
+                        (Just (StartFrontendEdit []))
+                        ("Edit " ++ entityDisplayName entity)
+
+                Nothing ->
+                    none
+
+        _ ->
+            none
+
+
+viewFrontendSection : Model -> Schema -> FrontendScreenInfo -> FrontendLocation -> FrontendSectionInfo -> Element Msg
+viewFrontendSection model schema screen location sectionInfo =
+    let
+        body =
+            sectionInfo.items
+                |> List.map (viewFrontendItem model schema screen location)
+    in
+    if List.isEmpty sectionInfo.items then
+        none
+
+    else
+        column [ width fill, spacing 8 ]
+            [ case sectionInfo.title of
+                Just titleText ->
+                    el (cupertinoSectionHeaderAttrs ++ [ Font.color (rgb255 118 129 146) ]) (text (String.toUpper titleText))
+
+                Nothing ->
+                    none
+            , column
+                (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 8 ])
+                body
+            ]
+
+
+viewFrontendItem : Model -> Schema -> FrontendScreenInfo -> FrontendLocation -> FrontendItemInfo -> Element Msg
+viewFrontendItem model schema screen location item =
+    case item.kind of
+        "link" ->
+            if frontendConditionMatches model location.row item.filter then
+                case item.target of
+                    Just target ->
+                        Input.button
+                            (frontendRowButtonAttrs False)
+                            { onPress = Just (SelectFrontendScreen target)
+                            , label =
+                                row [ width fill, spacing 12 ]
+                                    [ paragraph [ width fill, Font.bold ] [ text (Maybe.withDefault (humanizeIdentifier target) item.label) ]
+                                    , el [ Font.size 18, Font.color (rgb255 132 145 162), centerY ] (text "›")
+                                    ]
+                            }
+
+                    Nothing ->
+                        none
+
+            else
+                none
+
+        "field" ->
+            case ( screen.forEntity, location.row, item.field ) of
+                ( Just entityName, Just rowValue, Just fieldName ) ->
+                    case findEntityInSchema entityName schema of
+                        Just entity ->
+                            case frontendFieldLabelAndValue model schema location entity fieldName rowValue of
+                                Just ( labelText, value ) ->
+                                    row [ width fill, spacing 12 ]
+                                        [ el [ width (fillPortion 1), Font.bold, Font.size 13, Font.color (rgb255 62 74 92) ] (text labelText)
+                                        , paragraph [ width (fillPortion 2), Font.size 14, Font.color (rgb255 42 54 72) ] [ text value ]
+                                        ]
+
+                                Nothing ->
+                                    none
+
+                        Nothing ->
+                            none
+
+                _ ->
+                    none
+
+        "create" ->
+            case item.entity of
+                Just entityName ->
+                    Input.button
+                        (frontendRowButtonAttrs False)
+                        { onPress = Just (SelectFrontendCreate entityName (frontendActionPresetValues model (frontendScreenBindingName screen) location.row item.values) item.formFields)
+                        , label = paragraph [ Font.bold ] [ text ("Create " ++ humanizeIdentifier entityName) ]
+                        }
+
+                Nothing ->
+                    none
+
+        "edit" ->
+            case currentFrontendEditableContext model of
+                Just ( entity, _ ) ->
+                    Input.button
+                        (frontendRowButtonAttrs False)
+                        { onPress = Just (StartFrontendEdit item.formFields)
+                        , label =
+                            row [ width fill, spacing 12 ]
+                                [ paragraph [ width fill, Font.bold ] [ text ("Edit " ++ entityDisplayName entity) ]
+                                , el [ Font.size 18, Font.color (rgb255 132 145 162), centerY ] (text "›")
+                                ]
+                        }
+
+                Nothing ->
+                    none
+
+        "delete" ->
+            case currentFrontendEditableContext model of
+                Just ( entity, _ ) ->
+                    Input.button
+                        (frontendRowButtonAttrs False)
+                        { onPress = Just RequestFrontendDelete
+                        , label =
+                            row [ width fill, spacing 12 ]
+                                [ paragraph [ width fill, Font.color (rgb255 196 68 55) ] [ text ("Delete " ++ entityDisplayName entity) ]
+                                ]
+                        }
+
+                Nothing ->
+                    none
+
+        "list" ->
+            viewFrontendRowsItem model schema screen location item
+
+        "children" ->
+            viewFrontendRowsItem model schema screen location item
+
+        "report" ->
+            viewFrontendReportItem model schema screen location item
+
+        "action" ->
+            case item.action of
+                Just actionName ->
+                    Input.button
+                        (frontendRowButtonAttrs False)
+                        { onPress = Just (SelectFrontendAction actionName (frontendActionPresetValues model (frontendScreenBindingName screen) location.row item.values) item.formFields)
+                        , label =
+                            row [ width fill, spacing 12 ]
+                                [ paragraph [ width fill, Font.bold ] [ text (humanizeIdentifier actionName) ]
+                                , el [ Font.size 18, Font.color (rgb255 132 145 162), centerY ] (text "›")
+                                ]
+                        }
+
+                Nothing ->
+                    none
+
+        _ ->
+            none
+
+
+viewFrontendRowsItem : Model -> Schema -> FrontendScreenInfo -> FrontendLocation -> FrontendItemInfo -> Element Msg
+viewFrontendRowsItem model schema screen location item =
+    case item.entity |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema) of
+        Nothing ->
+            none
+
+        Just entity ->
+            let
+                key =
+                    frontendRowsKey schema screen location.row item
+
+                remoteRows =
+                    Dict.get key model.frontendRows
+                        |> Maybe.withDefault NotAsked
+            in
+            case remoteRows of
+                NotAsked ->
+                    paragraph [ Font.color (rgb255 93 103 120) ] [ text "Loading..." ]
+
+                Loading ->
+                    paragraph [ Font.color (rgb255 93 103 120) ] [ text "Loading..." ]
+
+                Failed message ->
+                    paragraph [ Font.color (rgb255 176 60 46) ] [ text message ]
+
+                Loaded rows ->
+                    let
+                        visibleRows =
+                            rows
+                                |> List.filter (frontendRowMatches model schema screen location item)
+
+                        editingList =
+                            isFrontendListEditing model location entity.name
+                    in
+                    if List.isEmpty visibleRows then
+                        paragraph [ Font.color (rgb255 93 103 120) ] [ text ("No " ++ String.toLower (humanizeIdentifier entity.name) ++ " yet.") ]
+
+                    else
+                        column [ width fill, spacing 8 ]
+                            (List.map
+                                (if editingList then
+                                    viewFrontendEditableRowCard model entity item
+
+                                 else
+                                    viewFrontendRowCard model entity item
+                                )
+                                visibleRows
+                            )
+
+
+viewFrontendReportItem : Model -> Schema -> FrontendScreenInfo -> FrontendLocation -> FrontendItemInfo -> Element Msg
+viewFrontendReportItem model schema screen location item =
+    case item.entity |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema) of
+        Nothing ->
+            none
+
+        Just entity ->
+            let
+                key =
+                    frontendRowsKey schema screen location.row item
+
+                remoteRows =
+                    Dict.get key model.frontendRows
+                        |> Maybe.withDefault NotAsked
+            in
+            case remoteRows of
+                NotAsked ->
+                    paragraph [ Font.color (rgb255 93 103 120) ] [ text "Loading..." ]
+
+                Loading ->
+                    paragraph [ Font.color (rgb255 93 103 120) ] [ text "Loading..." ]
+
+                Failed message ->
+                    paragraph [ Font.color (rgb255 176 60 46) ] [ text message ]
+
+                Loaded rows ->
+                    let
+                        reportRows =
+                            frontendReportRows model entity item rows
+                    in
+                    if List.isEmpty reportRows then
+                        paragraph [ Font.color (rgb255 93 103 120) ] [ text "No data yet." ]
+
+                    else
+                        column [ width fill, spacing 8 ]
+                            (List.map viewFrontendReportCard reportRows)
+
+
+viewFrontendReportCard : FrontendComputedReport -> Element Msg
+viewFrontendReportCard report =
+    column
+        (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 8 ])
+        (el [ Font.bold, Font.size 15, Font.color (rgb255 35 50 71) ] (text report.label)
+            :: List.map
+                (\( labelText, valueText ) ->
+                    row [ width fill, spacing 12 ]
+                        [ el [ width (fillPortion 2), Font.size 13, Font.color (rgb255 90 103 120) ] (text labelText)
+                        , el [ width (fillPortion 1), Font.size 13, Font.bold, Font.color (rgb255 42 54 72), alignLeft ] (text valueText)
+                        ]
+                )
+                report.metrics
+        )
+
+
+frontendReportRows : Model -> Entity -> FrontendItemInfo -> List Row -> List FrontendComputedReport
+frontendReportRows model entity item rows =
+    case item.reportGroup |> Maybe.andThen (\raw -> parseFrontendReportGroupSpec raw entity) of
+        Nothing ->
+            []
+
+        Just groupSpec ->
+            rows
+                |> List.filter (\rowValue -> frontendConditionMatches model (Just rowValue) item.filter)
+                |> List.foldl
+                    (\rowValue groups ->
+                        case frontendReportGroupKey model.localZone entity groupSpec rowValue of
+                            Nothing ->
+                                groups
+
+                            Just ( sortKey, labelText ) ->
+                                Dict.update sortKey
+                                    (\maybeRows ->
+                                        Just
+                                            { label = labelText
+                                            , rows = rowValue :: Maybe.withDefault [] (Maybe.map .rows maybeRows)
+                                            }
+                                    )
+                                    groups
+                    )
+                    Dict.empty
+                |> Dict.toList
+                |> List.map
+                    (\( sortKey, groupData ) ->
+                        { sortKey = sortKey
+                        , label = groupData.label
+                        , metrics = List.filterMap (frontendReportMetricValue entity groupData.rows) item.reportMetrics
+                        }
+                    )
+                |> List.sortBy .sortKey
+
+
+parseFrontendReportGroupSpec : String -> Entity -> Maybe FrontendReportGroupSpec
+parseFrontendReportGroupSpec raw entity =
+    let
+        trimmed =
+            String.trim raw
+    in
+    if String.startsWith "month(" trimmed && String.endsWith ")" trimmed then
+        let
+            fieldName =
+                trimmed
+                    |> String.dropLeft 6
+                    |> String.dropRight 1
+                    |> String.trim
+        in
+        if fieldExists entity fieldName then
+            Just (FrontendReportGroupMonth fieldName)
+
+        else
+            Nothing
+
+    else if fieldExists entity trimmed then
+        Just (FrontendReportGroupField trimmed)
+
+    else
+        Nothing
+
+
+frontendReportGroupKey : Time.Zone -> Entity -> FrontendReportGroupSpec -> Row -> Maybe ( String, String )
+frontendReportGroupKey zone entity groupSpec rowValue =
+    case groupSpec of
+        FrontendReportGroupField fieldName ->
+            rowFieldLabelForReport zone entity fieldName rowValue
+                |> Maybe.map (\labelText -> ( labelText, labelText ))
+
+        FrontendReportGroupMonth fieldName ->
+            Dict.get fieldName rowValue
+                |> Maybe.andThen decodeFloatValue
+                |> Maybe.map (\millis -> frontendMonthGroupLabel zone millis)
+
+
+frontendMonthGroupLabel : Time.Zone -> Float -> ( String, String )
+frontendMonthGroupLabel zone millis =
+    let
+        posix =
+            Time.millisToPosix (round millis)
+
+        monthNumber =
+            monthNumberString (Time.toMonth zone posix)
+
+        yearText =
+            String.fromInt (Time.toYear zone posix)
+    in
+    ( yearText ++ "-" ++ monthNumber
+    , monthLabel monthNumber ++ " " ++ yearText
+    )
+
+
+frontendReportMetricValue : Entity -> List Row -> FrontendReportMetricInfo -> Maybe ( String, String )
+frontendReportMetricValue entity rows metric =
+    let
+        aggregate =
+            String.trim metric.aggregate
+
+        labelText =
+            metric.label
+                |> Maybe.andThen nonEmptyString
+                |> Maybe.withDefault (defaultReportMetricLabel aggregate metric.field)
+    in
+    case aggregate of
+        "count" ->
+            Just ( labelText, String.fromInt (List.length rows) )
+
+        "avg" ->
+            metric.field
+                |> Maybe.andThen (\fieldName -> aggregateReportField averageReportValue entity fieldName rows)
+                |> Maybe.map (\value -> ( labelText, formatReportNumber value ))
+
+        "sum" ->
+            metric.field
+                |> Maybe.andThen (\fieldName -> aggregateReportField sumReportValues entity fieldName rows)
+                |> Maybe.map (\value -> ( labelText, formatReportNumber value ))
+
+        "min" ->
+            metric.field
+                |> Maybe.andThen (\fieldName -> aggregateReportField minReportValue entity fieldName rows)
+                |> Maybe.map (\value -> ( labelText, formatReportNumber value ))
+
+        "max" ->
+            metric.field
+                |> Maybe.andThen (\fieldName -> aggregateReportField maxReportValue entity fieldName rows)
+                |> Maybe.map (\value -> ( labelText, formatReportNumber value ))
+
+        _ ->
+            Nothing
+
+
+aggregateReportField : (List Float -> Maybe Float) -> Entity -> String -> List Row -> Maybe Float
+aggregateReportField reducer entity fieldName rows =
+    if not (fieldExists entity fieldName) then
+        Nothing
+
+    else
+        rows
+            |> List.filterMap (\rowValue -> Dict.get fieldName rowValue |> Maybe.andThen decodeFloatValue)
+            |> reducer
+
+
+averageReportValue : List Float -> Maybe Float
+averageReportValue values =
+    if List.isEmpty values then
+        Nothing
+
+    else
+        Just ((Maybe.withDefault 0 (sumReportValues values)) / toFloat (List.length values))
+
+
+sumReportValues : List Float -> Maybe Float
+sumReportValues values =
+    if List.isEmpty values then
+        Nothing
+
+    else
+        Just (List.sum values)
+
+
+minReportValue : List Float -> Maybe Float
+minReportValue values =
+    List.minimum values
+
+
+maxReportValue : List Float -> Maybe Float
+maxReportValue values =
+    List.maximum values
+
+
+defaultReportMetricLabel : String -> Maybe String -> String
+defaultReportMetricLabel aggregate maybeField =
+    case ( aggregate, maybeField ) of
+        ( "count", _ ) ->
+            "Count"
+
+        ( _, Just fieldName ) ->
+            humanizeIdentifier fieldName
+
+        _ ->
+            humanizeIdentifier aggregate
+
+
+formatReportNumber : Float -> String
+formatReportNumber value =
+    let
+        rounded =
+            roundTo2 value
+    in
+    if abs (rounded - toFloat (round rounded)) < 0.0001 then
+        String.fromInt (round rounded)
+
+    else
+        String.fromFloat rounded
+
+
+roundTo2 : Float -> Float
+roundTo2 value =
+    toFloat (round (value * 100)) / 100
+
+
+rowFieldLabelForReport : Time.Zone -> Entity -> String -> Row -> Maybe String
+rowFieldLabelForReport zone entity fieldName rowValue =
+    let
+        displayValue =
+            case List.filter (\field -> field.name == fieldName) entity.fields |> List.head of
+                Just field ->
+                    Dict.get fieldName rowValue
+                        |> Maybe.map
+                            (\value ->
+                                case field.relationEntity of
+                                    Just _ ->
+                                        valueToString value
+
+                                    Nothing ->
+                                        valueToDisplayString zone field.fieldType value
+                            )
+
+                Nothing ->
+                    rowFieldValue zone entity fieldName rowValue
+    in
+    displayValue
+        |> Maybe.map String.trim
+        |> Maybe.andThen nonEmptyString
+
+
+fieldExists : Entity -> String -> Bool
+fieldExists entity fieldName =
+    List.any (\field -> field.name == fieldName) entity.fields
+
+
+decodeFloatValue : Encode.Value -> Maybe Float
+decodeFloatValue value =
+    Decode.decodeValue Decode.float value
+        |> Result.toMaybe
+
+
+nonEmptyString : String -> Maybe String
+nonEmptyString raw =
+    let
+        trimmed =
+            String.trim raw
+    in
+    if trimmed == "" || trimmed == "null" then
+        Nothing
+
+    else
+        Just trimmed
+
+
+monthNumberString : Time.Month -> String
+monthNumberString month =
+    case month of
+        Time.Jan ->
+            "01"
+
+        Time.Feb ->
+            "02"
+
+        Time.Mar ->
+            "03"
+
+        Time.Apr ->
+            "04"
+
+        Time.May ->
+            "05"
+
+        Time.Jun ->
+            "06"
+
+        Time.Jul ->
+            "07"
+
+        Time.Aug ->
+            "08"
+
+        Time.Sep ->
+            "09"
+
+        Time.Oct ->
+            "10"
+
+        Time.Nov ->
+            "11"
+
+        Time.Dec ->
+            "12"
+
+
+viewFrontendRowCard : Model -> Entity -> FrontendItemInfo -> Row -> Element Msg
+viewFrontendRowCard model entity item rowValue =
+    let
+        titleText =
+            item.titleField
+                |> Maybe.andThen (\fieldName -> rowFieldLabel model entity fieldName rowValue)
+                |> Maybe.withDefault (rowCardTitle model AppWorkspace entity rowValue)
+
+        subtitleText =
+            item.subtitleField
+                |> Maybe.andThen (\fieldName -> rowFieldLabel model entity fieldName rowValue)
+
+        destination =
+            item.destination
+    in
+    Input.button
+        (frontendRowButtonAttrs False)
+        { onPress =
+            destination
+                |> Maybe.map (\screenName -> SelectFrontendRow screenName rowValue)
+        , label =
+            row [ width fill, spacing 12 ]
+                [ column [ width fill, spacing 4 ]
+                    [ paragraph [ Font.bold, Font.color (rgb255 35 50 71) ] [ text titleText ]
+                    , case subtitleText of
+                        Just subtitle ->
+                            paragraph [ Font.size 13, Font.color (rgb255 90 103 120) ] [ text subtitle ]
+
+                        Nothing ->
+                            none
+                    ]
+                , case destination of
+                    Just _ ->
+                        el [ Font.size 18, Font.color (rgb255 132 145 162), centerY ] (text "›")
+
+                    Nothing ->
+                        none
+                ]
+        }
+
+
+viewFrontendEditableRowCard : Model -> Entity -> FrontendItemInfo -> Row -> Element Msg
+viewFrontendEditableRowCard model entity item rowValue =
+    column
+        (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 10 ])
+        [ row [ width fill, spacing 12 ]
+            [ column [ width fill, spacing 4 ]
+                [ paragraph [ Font.bold, Font.color (rgb255 35 50 71) ]
+                    [ text
+                        (item.titleField
+                            |> Maybe.andThen (\fieldName -> rowFieldLabel model entity fieldName rowValue)
+                            |> Maybe.withDefault (rowCardTitle model AppWorkspace entity rowValue)
+                        )
+                    ]
+                , case item.subtitleField |> Maybe.andThen (\fieldName -> rowFieldLabel model entity fieldName rowValue) of
+                    Just subtitle ->
+                        paragraph [ Font.size 13, Font.color (rgb255 90 103 120) ] [ text subtitle ]
+
+                    Nothing ->
+                        none
+                ]
+            ]
+        , wrappedRow [ width fill, spacing 10 ]
+            [ cupertinoNeutralButton (Just (StartFrontendEditRow entity.name rowValue)) "Edit"
+            , cupertinoDangerButton (Just (RequestFrontendDeleteRow entity.name rowValue)) "Delete"
+            ]
+        ]
+
+
+frontendRowButtonAttrs : Bool -> List (Element.Attribute Msg)
+frontendRowButtonAttrs selected =
+    [ width fill
+    , Background.color
+        (if selected then
+            rgb255 237 244 255
+
+         else
+            rgb255 250 252 255
+        )
+    , Border.rounded 12
+    , Border.width 1
+    , Border.color (rgb255 226 232 239)
+    , padding 12
+    , htmlAttribute (HtmlAttr.style "cursor" "pointer")
+    , cupertinoFocusRing
+    ]
+
+
 viewDataPanel : Model -> Element Msg
 viewDataPanel model =
     case model.selectedAction of
@@ -6553,8 +8895,11 @@ viewActionPanel model actionInfo =
                 workspace =
                     currentWorkspace model
 
+                visibleFields =
+                    frontendActionVisibleFields model aliasInfo
+
                 canRunAction =
-                    aliasInfo.fields
+                    visibleFields
                         |> List.all
                             (\field ->
                                 case field.relationEntity of
@@ -6562,11 +8907,16 @@ viewActionPanel model actionInfo =
                                         True
 
                                     Just relationEntityName ->
-                                        case Dict.get relationEntityName model.relationRows of
-                                            Just (Loaded _) ->
-                                                True
+                                        case frontendFormFieldFilters model.actionFormFields model.actionFormValues field.name of
+                                            Just filters ->
+                                                case Dict.get (relationRowsCacheKey relationEntityName filters) model.relationRows of
+                                                    Just (Loaded _) ->
+                                                        True
 
-                                            _ ->
+                                                    _ ->
+                                                        False
+
+                                            Nothing ->
                                                 False
                             )
 
@@ -6592,7 +8942,7 @@ viewActionPanel model actionInfo =
 
                             else if field.fieldType == "DateTime" then
                                 dateTimeField
-                                    (fieldLabel field.name ++ " (UTC)")
+                                    (fieldLabel field.name)
                                     (Dict.get field.name model.actionFormValues |> Maybe.withDefault "")
                                     (SetActionField field.name)
 
@@ -6636,7 +8986,7 @@ viewActionPanel model actionInfo =
                             )
                             []
                       ]
-                    , List.map fieldInput aliasInfo.fields
+                    , List.map fieldInput visibleFields
                     , [ if isCompactLayout model then
                             wrappedRow [ width fill, spacing 10 ]
                                 [ cupertinoPrimaryButton
@@ -7310,7 +9660,7 @@ viewRequestLogEntry entry =
                     "queries"
 
         querySummary =
-            String.fromInt entry.queryCount ++ " " ++ queryLabel ++ ", " ++ formatMs entry.queryTimeMs
+            "DB " ++ String.fromInt entry.queryCount ++ " " ++ queryLabel ++ ", " ++ formatMs entry.queryTimeMs
 
         userSummary =
             case ( entry.userEmail, entry.userRole ) of
@@ -7337,18 +9687,11 @@ viewRequestLogEntry entry =
     column
         (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 8 ])
         (List.concat
-            [ [ row [ width fill, spacing 10 ]
-                    [ el [ Font.size 12, Font.bold, Font.color (rgb255 70 80 96) ] (text ("Date: " ++ dateText))
-                    , el [ Font.size 12, Font.bold, Font.color (rgb255 70 80 96) ] (text ("Time: " ++ timeText))
-                    ]
-              , wrappedRow [ width fill, spacing 10 ]
-                    [ el [ Font.size 13, Font.bold, Font.color (rgb255 44 56 72) ] (text (entry.method ++ " " ++ entry.path))
-                    , el [ Font.size 13, Font.color statusColor, Font.bold ] (text (String.fromInt entry.status))
-                    , el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text (formatMs entry.durationMs))
-                    ]
-              , wrappedRow [ width fill, spacing 10 ]
-                    [ el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text ("Route: " ++ entry.route))
-                    , el [ Font.size 12, Font.color (rgb255 93 103 120) ] (text querySummary)
+            [ [ el [ Font.size 12, Font.bold, Font.color (rgb255 70 80 96) ] (text (dateText ++ " " ++ timeText))
+              , el [ Font.size 13, Font.bold, Font.color (rgb255 44 56 72) ] (text (entry.method ++ " " ++ entry.path))
+              , paragraph [ Font.size 12, Font.color (rgb255 93 103 120) ]
+                    [ el [ Font.color statusColor, Font.bold ] (text (String.fromInt entry.status))
+                    , text (" · Total " ++ formatMs entry.durationMs ++ " · " ++ querySummary)
                     ]
               ]
             , if String.trim userSummary /= "" then
@@ -8413,7 +10756,11 @@ formCard : Model -> Entity -> String -> Element Msg
 formCard model entity titleText =
     let
         formFields =
-            appVisibleFields entity
+            if isFrontendWorkspaceActive model then
+                currentFrontendEntityVisibleFields model entity
+
+            else
+                appVisibleFields entity
 
         fieldInput field =
             case field.relationEntity of
@@ -8445,7 +10792,7 @@ formCard model entity titleText =
 
                         DateTimeType ->
                             dateTimeField
-                                (fieldLabel field.name ++ " (UTC)")
+                                (fieldLabel field.name)
                                 (Dict.get field.name model.formValues |> Maybe.withDefault "")
                                 (SetFormField field.name)
 
@@ -8463,6 +10810,25 @@ formCard model entity titleText =
                                 (Dict.get field.name model.formValues |> Maybe.withDefault "")
                                 (placeholderForField field)
                                 (SetFormField field.name)
+
+        deleteSection =
+            case ( isFrontendWorkspaceActive model, model.formMode ) of
+                ( True, FormEdit _ ) ->
+                    [ column
+                        (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 8 ])
+                        [ Input.button
+                            (frontendRowButtonAttrs False)
+                            { onPress = Just RequestFrontendDelete
+                            , label =
+                                row [ width fill, spacing 12 ]
+                                    [ paragraph [ width fill, Font.color (rgb255 196 68 55) ] [ text ("Delete " ++ entityDisplayName entity) ]
+                                    ]
+                            }
+                        ]
+                    ]
+
+                _ ->
+                    []
     in
     column
         (cupertinoPanelAttrs 10 14)
@@ -8483,6 +10849,7 @@ formCard model entity titleText =
                     , cupertinoNeutralButton (Just CancelForm) "Cancel"
                     ]
               ]
+            , deleteSection
             ]
         )
 

@@ -12,7 +12,7 @@
 -- - read access cannot yet be filtered by "user belongs to this gym" through
 --   an exists/count query over GymMember
 -- - class capacity cannot yet be enforced from the live count of enrollments,
---   so remainingSpots is modeled explicitly
+--   so remainingSpots is maintained explicitly by actions
 -- =========================================
 
 app GymClasses
@@ -114,6 +114,38 @@ entity ClassEnrollment {
   authorize update, delete when user_authenticated and (attendee == user_id or user_role == Admin)
 }
 
+type alias CreateWorkoutClassInput =
+  { gymId : ref Gym
+  , title : String
+  , startsAt : DateTime
+  , endsAt : DateTime
+  , capacity : Int
+}
+
+action createWorkoutClass {
+  input: CreateWorkoutClassInput
+
+  selectedGym = load Gym {
+    id: input.gymId
+  }
+
+  rule "Only gym owners and admins can create classes" expect user_role == Owner or user_role == Admin
+  rule "You can only create classes for your own gym" expect selectedGym.owner == user_id
+  rule "Class title cannot be empty" expect input.title != ""
+  rule "Capacity must be at least 1" expect input.capacity >= 1
+  rule "End time must be after start time" expect input.endsAt > input.startsAt
+
+  create WorkoutClass {
+    gym: selectedGym.id
+    owner: selectedGym.owner
+    title: input.title
+    startsAt: input.startsAt
+    endsAt: input.endsAt
+    capacity: input.capacity
+    remainingSpots: input.capacity
+  }
+}
+
 type alias EnrollInClassInput =
   { gymMemberId : ref GymMember
   , workoutClassId : ref WorkoutClass
@@ -146,4 +178,157 @@ action enrollInClass {
     id: selectedWorkoutClass.id
     remainingSpots: selectedWorkoutClass.remainingSpots - 1
   }
+}
+
+frontend {
+  screen Home {
+    title "Gym classes"
+
+    section "Browse" {
+      link "Gyms" to Gyms
+      link "Classes" to Classes
+    }
+
+    section "My activity" {
+      link "My gyms" to MyGyms
+      link "My memberships" to MyMemberships
+      link "My enrollments" to MyEnrollments
+    }
+  }
+
+  screen Gyms {
+    title "Gyms"
+
+    section {
+      list Gym {
+        title name
+        destination GymDetail
+      }
+    }
+  }
+
+  screen MyGyms {
+    title "My gyms"
+
+    section {
+      list Gym where owner == user_id {
+        title name
+        destination GymDetail
+      }
+    }
+
+    section {
+      create Gym
+    }
+  }
+
+  screen GymDetail for Gym {
+    title gym.name
+
+    section "Classes" {
+      children WorkoutClass by gym {
+        title title
+        subtitle startsAt
+        destination ClassDetail
+      }
+
+      action createWorkoutClass {
+        gymId = gym.id
+      }
+    }
+
+    section "Members" {
+      children GymMember by gym {
+        title member
+        subtitle status
+        destination MemberDetail
+      }
+    }
+  }
+
+  screen Classes {
+    title "Classes"
+
+    section {
+      list WorkoutClass {
+        title title
+        subtitle startsAt
+        destination ClassDetail
+      }
+    }
+  }
+
+  screen ClassDetail for WorkoutClass {
+    title workoutClass.title
+
+    section "Schedule" {
+      field startsAt
+      field endsAt
+      field capacity
+      field remainingSpots
+    }
+
+    section "Enrollments" {
+      children ClassEnrollment by workoutClass {
+        title attendee
+        subtitle status
+      }
+    }
+
+    section "Enrollment" {
+      action enrollInClass {
+        workoutClassId = workoutClass.id
+      }
+    }
+  }
+
+  screen MyMemberships {
+    title "My memberships"
+
+    section {
+      list GymMember where member == user_id {
+        title gym
+        subtitle status
+        destination MemberDetail
+      }
+    }
+  }
+
+  screen MemberDetail for GymMember {
+    title "Membership"
+
+    section {
+      field gym
+      field member
+      field status
+    }
+  }
+
+  screen MyEnrollments {
+    title "My enrollments"
+
+    section {
+      list ClassEnrollment where attendee == user_id {
+        title workoutClass
+        subtitle status
+        destination EnrollmentDetail
+      }
+    }
+  }
+
+  screen EnrollmentDetail for ClassEnrollment {
+    title "Enrollment"
+
+    section {
+      field gym
+      field workoutClass
+      field attendee
+      field status
+    }
+  }
+}
+
+ios {
+  bundle_identifier "com.example.school.local3"
+  server_url "http://192.168.15.180:4200"
 }

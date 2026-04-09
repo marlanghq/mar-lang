@@ -12,6 +12,7 @@ type App struct {
 	Auth         *AuthConfig   `json:"auth,omitempty"`
 	InputAliases []TypeAlias   `json:"inputAliases,omitempty"`
 	Actions      []Action      `json:"actions,omitempty"`
+	Frontend     *Frontend     `json:"frontend,omitempty"`
 	Warnings     []string      `json:"warnings,omitempty"`
 }
 
@@ -152,4 +153,73 @@ type ActionStep struct {
 type ActionFieldExpr struct {
 	Field      string `json:"field"`
 	Expression string `json:"expression"`
+}
+
+type Frontend struct {
+	Screens []FrontendScreen `json:"screens"`
+}
+
+type FrontendScreen struct {
+	Name            string                `json:"name"`
+	ForEntity       string                `json:"forEntity,omitempty"`
+	Title           string                `json:"title,omitempty"`
+	TitleExpression string                `json:"titleExpression,omitempty"`
+	ToolbarItems    []FrontendToolbarItem `json:"toolbarItems,omitempty"`
+	Sections        []FrontendSection     `json:"sections,omitempty"`
+	LineNo          int                   `json:"-"`
+	TitleLineNo     int                   `json:"-"`
+}
+
+type FrontendToolbarItem struct {
+	Placement string       `json:"placement"`
+	Item      FrontendItem `json:"item"`
+	LineNo    int          `json:"-"`
+}
+
+type FrontendSection struct {
+	Title      string         `json:"title,omitempty"`
+	When       string         `json:"when,omitempty"`
+	Items      []FrontendItem `json:"items,omitempty"`
+	LineNo     int            `json:"-"`
+	WhenLineNo int            `json:"-"`
+}
+
+type FrontendItem struct {
+	Kind          string                 `json:"kind"`
+	Label         string                 `json:"label,omitempty"`
+	Target        string                 `json:"target,omitempty"`
+	Entity        string                 `json:"entity,omitempty"`
+	RelationField string                 `json:"relationField,omitempty"`
+	Filter        string                 `json:"filter,omitempty"`
+	Field         string                 `json:"field,omitempty"`
+	TitleField    string                 `json:"titleField,omitempty"`
+	SubtitleField string                 `json:"subtitleField,omitempty"`
+	Destination   string                 `json:"destination,omitempty"`
+	Action        string                 `json:"action,omitempty"`
+	ReportGroup   string                 `json:"reportGroup,omitempty"`
+	ReportMetrics []FrontendReportMetric `json:"reportMetrics,omitempty"`
+	Values        []FrontendActionValue  `json:"values,omitempty"`
+	FormFields    []FrontendFormField    `json:"formFields,omitempty"`
+	LineNo        int                    `json:"-"`
+	FilterLineNo  int                    `json:"-"`
+}
+
+type FrontendReportMetric struct {
+	Aggregate string `json:"aggregate"`
+	Field     string `json:"field,omitempty"`
+	Label     string `json:"label,omitempty"`
+	LineNo    int    `json:"-"`
+}
+
+type FrontendActionValue struct {
+	Field      string `json:"field"`
+	Expression string `json:"expression"`
+	LineNo     int    `json:"-"`
+}
+
+type FrontendFormField struct {
+	Field        string `json:"field"`
+	Filter       string `json:"filter,omitempty"`
+	LineNo       int    `json:"-"`
+	FilterLineNo int    `json:"-"`
 }

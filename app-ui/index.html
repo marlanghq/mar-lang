@@ -23,6 +23,19 @@
     <script>
       const params = new URLSearchParams(window.location.search);
       const apiBase = params.get('api') || window.location.origin;
+      const schemaCacheKey = `marAppUiSchema:${apiBase}`;
+
+      let cachedSchema = null;
+      let cachedSchemaVersion = null;
+
+      try {
+        const raw = window.localStorage.getItem(schemaCacheKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          cachedSchema = parsed.schema ?? null;
+          cachedSchemaVersion = parsed.schemaVersion ?? null;
+        }
+      } catch (_) {}
 
       const app = Elm.Main.init({
         node: document.getElementById('app'),
@@ -30,12 +43,22 @@
           apiBase,
           authToken: '',
           systemAuthToken: '',
+          cachedSchema,
+          cachedSchemaVersion,
           viewportWidth: window.innerWidth || 1280
         }
       });
 
       if (app.ports && app.ports.saveSession) {
         app.ports.saveSession.subscribe(() => {});
+      }
+
+      if (app.ports && app.ports.saveSchemaCache) {
+        app.ports.saveSchemaCache.subscribe((payload) => {
+          try {
+            window.localStorage.setItem(schemaCacheKey, JSON.stringify(payload));
+          } catch (_) {}
+        });
       }
     </script>
   </body>

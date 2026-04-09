@@ -80,12 +80,12 @@ enum RowPresentation {
         switch field.fieldType {
         case .date:
             if let millis = value.doubleValue {
-                return MarDateCodec.formatDateDisplay(milliseconds: millis)
+                return DateCodec.formatDateDisplay(milliseconds: millis)
             }
             return value.stringValue
         case .dateTime:
             if let millis = value.doubleValue {
-                return MarDateCodec.formatDateTimeDisplay(milliseconds: millis)
+                return DateCodec.formatDateTimeDisplay(milliseconds: millis)
             }
             return value.stringValue
         default:
@@ -98,12 +98,12 @@ enum RowPresentation {
             switch field.fieldType {
             case .date:
                 if let millis = value.doubleValue {
-                    return MarDateCodec.formatDateInput(milliseconds: millis)
+                    return DateCodec.formatDateInput(milliseconds: millis)
                 }
                 return value.stringValue
             case .dateTime:
                 if let millis = value.doubleValue {
-                    return MarDateCodec.formatDateTimeInput(milliseconds: millis)
+                    return DateCodec.formatDateTimeInput(milliseconds: millis)
                 }
                 return value.stringValue
             default:
@@ -126,11 +126,11 @@ enum RowPresentation {
         switch field.fieldType {
         case .date:
             if let millis = value.doubleValue {
-                return MarDateCodec.formatDateInput(milliseconds: millis)
+                return DateCodec.formatDateInput(milliseconds: millis)
             }
         case .dateTime:
             if let millis = value.doubleValue {
-                return MarDateCodec.formatDateTimeInput(milliseconds: millis)
+                return DateCodec.formatDateTimeInput(milliseconds: millis)
             }
         default:
             break
@@ -172,7 +172,7 @@ enum RowPresentation {
 
         if let stringField = candidates.first(where: { field in
             switch field.fieldType {
-            case .string, .custom(_):
+            case .string, .custom:
                 return true
             default:
                 return false

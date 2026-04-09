@@ -1,10 +1,16 @@
 import Foundation
 
-enum MarDateCodec {
+enum DateCodec {
     static let utcTimeZone = TimeZone(secondsFromGMT: 0)!
+    static let localTimeZone = TimeZone.autoupdatingCurrent
     static let utcCalendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = utcTimeZone
+        return calendar
+    }()
+    static let localCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = localTimeZone
         return calendar
     }()
 
@@ -19,8 +25,8 @@ enum MarDateCodec {
 
     private static let dateTimeInputFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.calendar = utcCalendar
-        formatter.timeZone = utcTimeZone
+        formatter.calendar = localCalendar
+        formatter.timeZone = localTimeZone
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd'T'HH:mm"
         return formatter
@@ -79,7 +85,7 @@ enum MarDateCodec {
 
     static func formatDateTimeDisplay(milliseconds: Double) -> String {
         let input = formatDateTimeInput(milliseconds: milliseconds)
-        return input.replacingOccurrences(of: "T", with: " ") + " UTC"
+        return input.replacingOccurrences(of: "T", with: " ")
     }
 
     static func parseBuildTime(_ raw: String) -> String {

@@ -1,0 +1,221 @@
+-- =========================================
+-- A simple personal app for tracking pets and vet visits.
+--
+-- Each signed-in user manages their own pets, clinics, veterinarians,
+-- and a small log of veterinary visits.
+-- =========================================
+
+app PetCareLog
+
+auth {
+  email_from "no-reply@pet-care-log.local"
+  email_subject "Your Pet Care Log login code"
+  smtp_host "smtp.resend.com"
+  smtp_username "resend"
+  smtp_password_env "RESEND_API_KEY"
+}
+
+type PetSpecies {
+  Dog
+  Cat
+  Bird
+  Rabbit
+  Fish
+  Reptile
+  Other
+}
+
+entity User {
+  displayName: String optional
+
+  authorize read, update when user_authenticated and id == user_id
+}
+
+entity Pet {
+  name: String
+  species: PetSpecies
+  birthday: Date optional
+  notes: String optional
+
+  belongs_to owner: current_user
+
+  rule "Pet name must have at least 2 chars" expect length name >= 2
+
+  authorize read, create, update, delete when user_authenticated and owner == user_id
+}
+
+entity Clinic {
+  name: String
+
+  belongs_to owner: current_user
+
+  rule "Clinic name must have at least 2 chars" expect length name >= 2
+
+  authorize read, create, update, delete when user_authenticated and owner == user_id
+}
+
+entity Veterinarian {
+  name: String
+
+  belongs_to clinic: Clinic
+  belongs_to owner: current_user
+
+  rule "Veterinarian name must have at least 2 chars" expect length name >= 2
+
+  authorize read, create, update, delete when user_authenticated and owner == user_id
+}
+
+entity VetVisit {
+  visitDate: Date
+  reason: String
+
+  belongs_to pet: Pet
+  belongs_to clinic: Clinic
+  belongs_to veterinarian: Veterinarian
+  belongs_to owner: current_user
+
+  rule "Reason cannot be empty" expect reason != ""
+
+  authorize read, create, update, delete when user_authenticated and owner == user_id
+}
+frontend {
+  screen Home {
+    title "Home"
+
+    section {
+      link "My pets" to Pets
+      link "Clinics" to Clinics
+    }
+
+    section "Logs" {
+      link "Vet visits" to VetVisits
+    }
+  }
+
+  screen Pets {
+    title "Pets"
+
+    section {
+      list Pet where owner == user_id {
+        title name
+        subtitle species
+        destination PetDetail
+      }
+    }
+
+    section {
+      create Pet
+    }
+  }
+
+  screen PetDetail for Pet {
+    title pet.name
+
+    section "Profile" {
+      field species
+      field birthday
+      field notes
+    }
+
+    section "Vet visits" {
+      children VetVisit by pet {
+        title reason
+        subtitle visitDate
+        destination VetVisitDetail
+      }
+
+      create VetVisit {
+        pet = pet.id
+
+        form {
+          field clinic
+          field veterinarian where clinic == form.clinic
+          field visitDate
+          field reason
+        }
+      }
+    }
+  }
+
+  screen Clinics {
+    title "Clinics"
+
+    section {
+      list Clinic where owner == user_id {
+        title name
+        destination ClinicDetail
+      }
+    }
+
+    section {
+      create Clinic
+    }
+  }
+
+  screen ClinicDetail for Clinic {
+    title clinic.name
+
+    section "Veterinarians" {
+      children Veterinarian by clinic {
+        title name
+        destination VeterinarianDetail
+      }
+
+      create Veterinarian {
+        clinic = clinic.id
+      }
+    }
+
+    section "Manage" {
+      edit {
+        form {
+          field name
+        }
+      }
+      delete
+    }
+  }
+
+  screen VeterinarianDetail for Veterinarian {
+    title veterinarian.name
+
+    section {
+      field clinic.name
+      field name
+    }
+
+    section "Manage" {
+      edit
+      delete
+    }
+  }
+
+  screen VetVisits {
+    title "Vet visits"
+
+    section {
+      list VetVisit where owner == user_id {
+        title reason
+        subtitle visitDate
+        destination VetVisitDetail
+      }
+    }
+  }
+
+  screen VetVisitDetail for VetVisit {
+    title vetVisit.reason
+
+    section {
+      field pet
+      field visitDate
+      field clinic
+      field veterinarian
+      field reason
+    }
+  }
+}
+
+ios {
+  bundle_identifier "com.example.school"
+  server_url "http://192.168.15.180:4200"
+}

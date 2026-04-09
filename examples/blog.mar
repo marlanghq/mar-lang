@@ -1,0 +1,217 @@
+-- A personal blog app with public blogs, posts, comments, and publishing.
+-- The frontend block sketches an iOS-style app made of list screens and sections.
+
+app PersonalBlogs
+
+auth {
+  email_from "no-reply@yourdomain.com"
+  smtp_host "smtp.your-provider.com"
+  smtp_username "your-smtp-username"
+  smtp_password_env "SMTP_PASSWORD"
+}
+
+type PostStatus {
+  Draft
+  Published
+}
+
+entity User {
+  displayName: String optional
+
+  authorize read, update when user_authenticated and id == user_id
+}
+
+entity Blog {
+  name: String
+  description: String optional
+
+  belongs_to owner: current_user
+
+  rule "Blog name must have at least 3 chars" expect length name >= 3
+
+  authorize read when anonymous or user_authenticated
+  authorize create when user_authenticated
+  authorize update, delete when user_authenticated and owner == user_id
+}
+
+entity Post {
+  title: String
+  body: String
+  status: PostStatus
+
+  belongs_to blog: Blog
+  belongs_to author: current_user
+
+  rule "Title must have at least 3 chars" expect length title >= 3
+  rule "Body cannot be empty" expect body != ""
+
+  authorize read when status == Published or (user_authenticated and author == user_id)
+  authorize create when user_authenticated and author == user_id
+  authorize update, delete when user_authenticated and author == user_id
+}
+
+entity Comment {
+  body: String
+
+  belongs_to post: Post
+  belongs_to author: current_user
+
+  rule "Comment cannot be empty" expect body != ""
+
+  authorize read when anonymous or user_authenticated
+  authorize create when user_authenticated and author == user_id
+  authorize update, delete when user_authenticated and author == user_id
+}
+
+type alias CreatePostInput =
+  { blogId : ref Blog
+  , title : String
+  , body : String
+}
+
+action createPost {
+  input: CreatePostInput
+
+  blog = load Blog {
+    id: input.blogId
+  }
+
+  rule "You can only post to your own blog" expect blog.owner == user_id
+  rule "Title must have at least 3 chars" expect length input.title >= 3
+  rule "Body cannot be empty" expect input.body != ""
+
+  create Post {
+    blog: blog.id
+    title: input.title
+    body: input.body
+    status: Draft
+  }
+}
+
+type alias PublishPostInput =
+  { postId : ref Post }
+
+action publishPost {
+  input: PublishPostInput
+
+  post = load Post {
+    id: input.postId
+  }
+
+  rule "You can only publish your own posts" expect post.author == user_id
+
+  update Post {
+    id: post.id
+    status: Published
+  }
+}
+
+type alias AddCommentInput =
+  { postId : ref Post
+  , body : String
+}
+
+action addComment {
+  input: AddCommentInput
+
+  post = load Post {
+    id: input.postId
+  }
+
+  rule "You must be signed in to comment" expect user_authenticated
+  rule "You can only comment on published posts" expect post.status == Published
+  rule "Comment cannot be empty" expect input.body != ""
+
+  create Comment {
+    post: post.id
+    body: input.body
+  }
+}
+
+frontend {
+  screen Home {
+    title "Blogs"
+
+    section "Browse" {
+      link "All blogs" to PublicBlogs
+      link "My blogs" to MyBlog
+    }
+  }
+
+  screen PublicBlogs {
+    title "All blogs"
+
+    section {
+      list Blog {
+        title name
+        subtitle description
+        destination BlogDetail
+      }
+    }
+  }
+
+  screen MyBlog {
+    title "My blogs"
+
+    section {
+      list Blog where owner == user_id {
+        title name
+        subtitle description
+        destination BlogDetail
+      }
+    }
+
+    section {
+      create Blog
+    }
+  }
+
+  screen BlogDetail for Blog {
+    title blog.name
+
+    section "About" {
+      field description
+    }
+
+    section "Posts" {
+      children Post by blog {
+        title title
+        subtitle status
+        destination PostDetail
+      }
+    }
+
+    section "Writing" {
+      action createPost {
+        blogId = blog.id
+      }
+    }
+  }
+
+  screen PostDetail for Post {
+    title post.title
+
+    section {
+      field body
+      field status
+    }
+
+    section "Publishing" when status == Draft {
+      action publishPost {
+        postId = post.id
+      }
+    }
+
+    section "Comments" {
+      children Comment by post {
+        title body
+      }
+    }
+
+    section {
+      action addComment {
+        postId = post.id
+      }
+    }
+  }
+}

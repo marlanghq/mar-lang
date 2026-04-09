@@ -9,7 +9,7 @@
 /* Begin PBXBuildFile section */
 		1FD57D8A32FE387509ED47A1 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 005A7E9F81C5C27775E6BE2C /* AppViewModel.swift */; };
 		48AADA0650E4B724377C7C5A /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A88D9537727A5BAA1EB3A172 /* Models.swift */; };
-		560B2C0A5BA411E800000001 /* MarDateCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 560B2C0A5BA411E800000011 /* MarDateCodec.swift */; };
+		560B2C0A5BA411E800000001 /* DateCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 560B2C0A5BA411E800000011 /* DateCodec.swift */; };
 		560B2C0A5BA411E800000002 /* PayloadEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 560B2C0A5BA411E800000012 /* PayloadEncoder.swift */; };
 		560B2C0A5BA411E800000003 /* RowPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 560B2C0A5BA411E800000013 /* RowPresentation.swift */; };
 		560B2C0A5BA411E800000004 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 560B2C0A5BA411E800000014 /* SessionStore.swift */; };
@@ -21,7 +21,7 @@
 /* Begin PBXFileReference section */
 		005A7E9F81C5C27775E6BE2C /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		1C2D7FF40416498F5A13EDC5 /* MarRuntimeIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarRuntimeIOSApp.swift; sourceTree = "<group>"; };
-		560B2C0A5BA411E800000011 /* MarDateCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarDateCodec.swift; sourceTree = "<group>"; };
+		560B2C0A5BA411E800000011 /* DateCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DateCodec.swift; sourceTree = "<group>"; };
 		560B2C0A5BA411E800000012 /* PayloadEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayloadEncoder.swift; sourceTree = "<group>"; };
 		560B2C0A5BA411E800000013 /* RowPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RowPresentation.swift; sourceTree = "<group>"; };
 		560B2C0A5BA411E800000014 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
@@ -45,7 +45,7 @@
 			children = (
 				BB34E92DC160D7671C51FA4B /* APIClient.swift */,
 				005A7E9F81C5C27775E6BE2C /* AppViewModel.swift */,
-				560B2C0A5BA411E800000011 /* MarDateCodec.swift */,
+				560B2C0A5BA411E800000011 /* DateCodec.swift */,
 				1C2D7FF40416498F5A13EDC5 /* MarRuntimeIOSApp.swift */,
 				A88D9537727A5BAA1EB3A172 /* Models.swift */,
 				560B2C0A5BA411E800000012 /* PayloadEncoder.swift */,
@@ -124,7 +124,7 @@
 			files = (
 				AB4FDA629113DA1A25BAF86B /* APIClient.swift in Sources */,
 				1FD57D8A32FE387509ED47A1 /* AppViewModel.swift in Sources */,
-				560B2C0A5BA411E800000001 /* MarDateCodec.swift in Sources */,
+				560B2C0A5BA411E800000001 /* DateCodec.swift in Sources */,
 				F3173B5D3E8E37DFE65D01ED /* MarRuntimeIOSApp.swift in Sources */,
 				48AADA0650E4B724377C7C5A /* Models.swift in Sources */,
 				560B2C0A5BA411E800000002 /* PayloadEncoder.swift in Sources */,
@@ -191,12 +191,8 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "__MAR_IOS_DISPLAY_NAME__";
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
@@ -259,12 +255,8 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "__MAR_IOS_DISPLAY_NAME__";
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;

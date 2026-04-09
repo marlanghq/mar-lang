@@ -603,7 +603,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		if path == base {
 			switch method {
 			case http.MethodGet:
-				return r.handleList(w, requestID, entity, auth)
+				return r.handleList(w, req, requestID, entity, auth)
 			case http.MethodPost:
 				payload, err := readJSONBody(req)
 				if err != nil {

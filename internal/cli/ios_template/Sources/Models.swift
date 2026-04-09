@@ -253,6 +253,7 @@ struct Schema: Codable, Hashable {
     let systemAuth: SystemAuthInfo?
     let inputAliases: [InputAliasInfo]
     let actions: [ActionInfo]
+    let frontend: FrontendInfo?
 
     enum CodingKeys: String, CodingKey {
         case appName
@@ -263,6 +264,7 @@ struct Schema: Codable, Hashable {
         case systemAuth
         case inputAliases
         case actions
+        case frontend
     }
 
     init(
@@ -273,7 +275,8 @@ struct Schema: Codable, Hashable {
         auth: AuthInfo?,
         systemAuth: SystemAuthInfo?,
         inputAliases: [InputAliasInfo],
-        actions: [ActionInfo]
+        actions: [ActionInfo],
+        frontend: FrontendInfo?
     ) {
         self.appName = appName
         self.port = port
@@ -283,6 +286,7 @@ struct Schema: Codable, Hashable {
         self.systemAuth = systemAuth
         self.inputAliases = inputAliases
         self.actions = actions
+        self.frontend = frontend
     }
 
     init(from decoder: Decoder) throws {
@@ -295,6 +299,7 @@ struct Schema: Codable, Hashable {
         systemAuth = try container.decodeIfPresent(SystemAuthInfo.self, forKey: .systemAuth)
         inputAliases = try container.decodeIfPresent([InputAliasInfo].self, forKey: .inputAliases) ?? []
         actions = try container.decodeIfPresent([ActionInfo].self, forKey: .actions) ?? []
+        frontend = try container.decodeIfPresent(FrontendInfo.self, forKey: .frontend)
     }
 }
 
@@ -317,6 +322,19 @@ struct ActionInfo: Codable, Hashable, Identifiable {
     let steps: Int
 
     var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case inputAlias
+        case steps
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        inputAlias = try container.decodeIfPresent(String.self, forKey: .inputAlias) ?? ""
+        steps = try container.decodeIfPresent(Int.self, forKey: .steps) ?? 0
+    }
 }
 
 struct InputAliasInfo: Codable, Hashable, Identifiable {
@@ -324,6 +342,17 @@ struct InputAliasInfo: Codable, Hashable, Identifiable {
     let fields: [InputAliasField]
 
     var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case fields
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        fields = try container.decodeIfPresent([InputAliasField].self, forKey: .fields) ?? []
+    }
 }
 
 struct InputAliasField: Codable, Hashable, Identifiable {
@@ -340,6 +369,168 @@ struct InputAliasField: Codable, Hashable, Identifiable {
         case enumValues
         case relationEntity
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        fieldType = try container.decode(String.self, forKey: .fieldType)
+        enumValues = try container.decodeIfPresent([String].self, forKey: .enumValues) ?? []
+        relationEntity = try container.decodeIfPresent(String.self, forKey: .relationEntity)
+    }
+}
+
+struct FrontendInfo: Codable, Hashable {
+    let screens: [FrontendScreenInfo]
+
+    enum CodingKeys: String, CodingKey {
+        case screens
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        screens = try container.decodeIfPresent([FrontendScreenInfo].self, forKey: .screens) ?? []
+    }
+}
+
+struct FrontendScreenInfo: Codable, Hashable, Identifiable {
+    let name: String
+    let forEntity: String?
+    let title: String?
+    let titleExpression: String?
+    let toolbarItems: [FrontendToolbarItemInfo]
+    let sections: [FrontendSectionInfo]
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case forEntity
+        case title
+        case titleExpression
+        case toolbarItems
+        case sections
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        forEntity = try container.decodeIfPresent(String.self, forKey: .forEntity)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        titleExpression = try container.decodeIfPresent(String.self, forKey: .titleExpression)
+        toolbarItems = try container.decodeIfPresent([FrontendToolbarItemInfo].self, forKey: .toolbarItems) ?? []
+        sections = try container.decodeIfPresent([FrontendSectionInfo].self, forKey: .sections) ?? []
+    }
+}
+
+struct FrontendToolbarItemInfo: Codable, Hashable {
+    let placement: String
+    let item: FrontendItemInfo
+}
+
+struct FrontendSectionInfo: Codable, Hashable, Identifiable {
+    let title: String?
+    let when: String?
+    let items: [FrontendItemInfo]
+
+    var id: String {
+        "\(title ?? ""):\(when ?? ""):\(items.map(\.id).joined(separator: ","))"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case when
+        case items
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        when = try container.decodeIfPresent(String.self, forKey: .when)
+        items = try container.decodeIfPresent([FrontendItemInfo].self, forKey: .items) ?? []
+    }
+}
+
+struct FrontendItemInfo: Codable, Hashable, Identifiable {
+    let kind: String
+    let label: String?
+    let target: String?
+    let entity: String?
+    let relationField: String?
+    let filter: String?
+    let field: String?
+    let titleField: String?
+    let subtitleField: String?
+    let destination: String?
+    let action: String?
+    let reportGroup: String?
+    let reportMetrics: [FrontendReportMetricInfo]
+    let values: [FrontendActionValueInfo]
+    let formFields: [FrontendFormFieldInfo]
+
+    var id: String {
+        [
+            kind,
+            label ?? "",
+            target ?? "",
+            entity ?? "",
+            relationField ?? "",
+            field ?? "",
+            action ?? ""
+        ].joined(separator: ":")
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case label
+        case target
+        case entity
+        case relationField
+        case filter
+        case field
+        case titleField
+        case subtitleField
+        case destination
+        case action
+        case reportGroup
+        case reportMetrics
+        case values
+        case formFields
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(String.self, forKey: .kind)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        target = try container.decodeIfPresent(String.self, forKey: .target)
+        entity = try container.decodeIfPresent(String.self, forKey: .entity)
+        relationField = try container.decodeIfPresent(String.self, forKey: .relationField)
+        filter = try container.decodeIfPresent(String.self, forKey: .filter)
+        field = try container.decodeIfPresent(String.self, forKey: .field)
+        titleField = try container.decodeIfPresent(String.self, forKey: .titleField)
+        subtitleField = try container.decodeIfPresent(String.self, forKey: .subtitleField)
+        destination = try container.decodeIfPresent(String.self, forKey: .destination)
+        action = try container.decodeIfPresent(String.self, forKey: .action)
+        reportGroup = try container.decodeIfPresent(String.self, forKey: .reportGroup)
+        reportMetrics = try container.decodeIfPresent([FrontendReportMetricInfo].self, forKey: .reportMetrics) ?? []
+        values = try container.decodeIfPresent([FrontendActionValueInfo].self, forKey: .values) ?? []
+        formFields = try container.decodeIfPresent([FrontendFormFieldInfo].self, forKey: .formFields) ?? []
+    }
+}
+
+struct FrontendReportMetricInfo: Codable, Hashable {
+    let aggregate: String
+    let field: String?
+    let label: String?
+}
+
+struct FrontendActionValueInfo: Codable, Hashable {
+    let field: String
+    let expression: String
+}
+
+struct FrontendFormFieldInfo: Codable, Hashable {
+    let field: String
+    let filter: String?
 }
 
 struct RequestCodeResponse: Decodable, Hashable {
@@ -515,4 +706,11 @@ struct SessionSnapshot: Codable, Equatable {
     let token: String
     let email: String?
     let role: String?
+    let userID: String?
+}
+
+struct SchemaCacheSnapshot: Codable, Equatable {
+    let baseURL: String
+    let version: String?
+    let schema: Schema
 }

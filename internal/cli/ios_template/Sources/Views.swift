@@ -1,6 +1,10 @@
 import SwiftUI
 import UIKit
 
+private extension Notification.Name {
+    static let marRowsChanged = Notification.Name("marRowsChanged")
+}
+
 struct RootView: View {
     @ObservedObject var model: AppViewModel
 
@@ -43,6 +47,19 @@ struct StartupLoadingView: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemGroupedBackground))
+    }
+}
+
+private struct LatestSchemaDestination<Content: View>: View {
+    @ObservedObject var model: AppViewModel
+    let fallbackSchema: Schema
+    let build: (Schema) -> Content
+
+    var body: some View {
+        build(model.schema ?? fallbackSchema)
+            .onAppear {
+                model.activatePendingSchemaIfNeeded()
+            }
     }
 }
 
@@ -105,88 +122,81 @@ struct LoginView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(model.displayAppName)
-                            .font(.title.bold())
-
-                        Text(model.loginStep == .email ? "Sign in with your email." : "Enter the code sent to your email.")
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(loginSubtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 8)
 
-                if model.loginStep == .email {
-                    Section("Email") {
-                        TextField("name@example.com", text: $model.authEmail)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.emailAddress)
-                            .textContentType(.emailAddress)
-                            .autocorrectionDisabled()
-                            .disabled(model.isBusy)
-                    }
-                } else {
-                    Section("Code") {
-                        TextField("123456", text: $model.authCode)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.numberPad)
-                            .textContentType(.oneTimeCode)
-                            .font(.system(.body, design: .rounded).monospacedDigit())
-                            .disabled(model.isBusy)
-                    }
-
-                    Section("Email") {
-                        Text(model.authEmail)
-                            .foregroundStyle(.primary)
-
-                        Button("Use a Different Email") {
-                            model.editLoginEmail()
+                Form {
+                    if model.loginStep == .email {
+                        Section("Email") {
+                            TextField("name@example.com", text: $model.authEmail)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.emailAddress)
+                                .textContentType(.emailAddress)
+                                .autocorrectionDisabled()
+                                .disabled(model.isBusy)
                         }
-                        .disabled(model.isBusy)
-
-                        Button("Send Another Code") {
-                            Task { await model.requestCode() }
+                    } else {
+                        Section("Code") {
+                            TextField("123456", text: $model.authCode)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.numberPad)
+                                .textContentType(.oneTimeCode)
+                                .font(.system(.body, design: .rounded).monospacedDigit())
+                                .disabled(model.isBusy)
                         }
-                        .disabled(model.isBusy)
-                    }
-                }
 
-                if model.loginStep == .email, let message = model.infoMessage {
-                    Section {
-                        Text(message)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                        Section("Email") {
+                            Text(model.authEmail)
+                                .foregroundStyle(.primary)
 
-                if let message = model.errorMessage {
-                    Section {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(message)
-                                .foregroundStyle(.red)
-
-                            if let details = model.errorDetails, !details.isEmpty {
-                                Text(details)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
+                            Button("Use a Different Email") {
+                                model.editLoginEmail()
                             }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
+                            .disabled(model.isBusy)
 
-                if let auth = model.schema?.auth, auth.needsBootstrap {
-                    Section("Not implemented yet") {
-                        Text("Bootstrap-first-admin flow is not implemented in this iOS runtime yet. Use the web Admin for the first admin creation.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            Button("Send Another Code") {
+                                Task { await model.requestCode() }
+                            }
+                            .disabled(model.isBusy)
+                        }
+                    }
+
+                    if model.loginStep == .email, let message = model.infoMessage {
+                        Section {
+                            Text(message)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if let message = model.errorMessage {
+                        Section {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(message)
+                                    .foregroundStyle(.red)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+
+                    if let auth = model.schema?.auth, auth.needsBootstrap {
+                        Section("Not implemented yet") {
+                            Text("Bootstrap-first-admin flow is not implemented in this iOS runtime yet. Use the web Admin for the first admin creation.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
-            .navigationTitle("Sign In")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(model.loginStep == .email ? "Sign In" : "Enter Code")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -223,28 +233,13 @@ struct LoginView: View {
             model.authCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
-}
 
-struct ErrorSections: View {
-    let message: String?
-    let details: String?
-
-    var body: some View {
-        if let message {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(message)
-                        .foregroundStyle(.red)
-
-                    if let details, !details.isEmpty {
-                        Text(details)
-                            .font(.footnote.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
+    private var loginSubtitle: String {
+        switch model.loginStep {
+        case .email:
+            "We will send you a 6-digit access code."
+        case .code:
+            "Enter the 6-digit access code we sent to your email."
         }
     }
 }
@@ -255,41 +250,51 @@ struct ShellView: View {
     let client: MarAPIClient
 
     var body: some View {
-        NavigationStack {
-            List {
-                ForEach(primarySpecs) { spec in
-                    NavigationLink {
-                        ShellTabDestinationView(spec: spec, schema: schema, client: client, model: model)
-                    } label: {
-                        Text(spec.title)
+        if let frontend = schema.frontend, let firstScreen = frontend.screens.first {
+            NavigationStack {
+                FrontendScreenView(screen: firstScreen, row: nil, parentEntity: nil, parentRow: nil, schema: schema, client: client, model: model)
+            }
+        } else {
+            NavigationStack {
+                List {
+                    ForEach(primarySpecs) { spec in
+                        NavigationLink {
+                            LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                                ShellTabDestinationView(spec: spec, schema: liveSchema, client: client, model: model)
+                            }
+                        } label: {
+                            Text(spec.title)
+                        }
                     }
-                }
 
-                if !adminSpecs.isEmpty {
-                    Section("Admin") {
-                        ForEach(adminSpecs) { spec in
-                            NavigationLink {
-                                ShellTabDestinationView(spec: spec, schema: schema, client: client, model: model)
-                            } label: {
-                                Text(spec.title)
+                    if !adminSpecs.isEmpty {
+                        Section("Admin") {
+                            ForEach(adminSpecs) { spec in
+                                NavigationLink {
+                                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                                        ShellTabDestinationView(spec: spec, schema: liveSchema, client: client, model: model)
+                                    }
+                                } label: {
+                                    Text(spec.title)
+                                }
                             }
                         }
                     }
                 }
-            }
-            .listStyle(.insetGrouped)
-            .contentMargins(.top, 18, for: .scrollContent)
-            .listSectionSpacing(.custom(24))
-            .navigationTitle(schema.appName)
-            .toolbar {
-                if model.authEnabled {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        NavigationLink {
-                            ProfileView(model: model)
-                        } label: {
-                            Image(systemName: "person.crop.circle")
+                .listStyle(.insetGrouped)
+                .contentMargins(.top, 18, for: .scrollContent)
+                .listSectionSpacing(.custom(24))
+                .navigationTitle(schema.appName)
+                .toolbar {
+                    if model.authEnabled {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            NavigationLink {
+                                ProfileView(model: model)
+                            } label: {
+                                Image(systemName: "person.crop.circle")
+                            }
+                            .accessibilityLabel("Profile")
                         }
-                        .accessibilityLabel("Profile")
                     }
                 }
             }
@@ -299,7 +304,7 @@ struct ShellView: View {
     private var primarySpecs: [ShellTabSpec] {
         var specs = businessEntitySpecs
         if !schema.actions.isEmpty {
-            specs.append(ShellTabSpec(tab: .actions, title: "Actions", systemImage: "bolt"))
+            specs.append(ShellTabSpec(tab: .actions, title: "Actions"))
         }
         return specs
     }
@@ -308,7 +313,7 @@ struct ShellView: View {
         var specs: [ShellTabSpec] = []
         specs.append(contentsOf: userEntitySpecs)
         if model.isAdmin {
-            specs.append(ShellTabSpec(tab: .admin, title: "Admin", systemImage: "gauge"))
+            specs.append(ShellTabSpec(tab: .admin, title: "Admin"))
         }
         return specs
     }
@@ -320,7 +325,6 @@ struct ShellView: View {
                 ShellTabSpec(
                     tab: .entity(entity.name),
                     title: entity.displayName,
-                    systemImage: symbolName(for: entity),
                     entity: entity
                 )
             }
@@ -333,38 +337,20 @@ struct ShellView: View {
                 ShellTabSpec(
                     tab: .entity(entity.name),
                     title: entity.displayName,
-                    systemImage: symbolName(for: entity),
                     entity: entity
                 )
             }
-    }
-
-    private func symbolName(for entity: Entity) -> String {
-        switch entity.name.lowercased() {
-        case "student":
-            return "person"
-        case "class", "course":
-            return "book.closed"
-        case "enrollment":
-            return "link"
-        case "user":
-            return "person.2"
-        default:
-            return "square.text.square"
-        }
     }
 }
 
 private struct ShellTabSpec: Identifiable {
     let tab: AppViewModel.Tab
     let title: String
-    let systemImage: String
     let entity: Entity?
 
-    init(tab: AppViewModel.Tab, title: String, systemImage: String, entity: Entity? = nil) {
+    init(tab: AppViewModel.Tab, title: String, entity: Entity? = nil) {
         self.tab = tab
         self.title = title
-        self.systemImage = systemImage
         self.entity = entity
     }
 
@@ -404,6 +390,898 @@ private struct ShellTabDestinationView: View {
             ProfileView(model: model)
         }
     }
+}
+
+private struct FrontendScreenView: View {
+    let screen: FrontendScreenInfo
+    let row: Row?
+    let parentEntity: Entity?
+    let parentRow: Row?
+    let schema: Schema
+    let client: MarAPIClient
+    let model: AppViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var editingListEntities: Set<String> = []
+
+    var body: some View {
+        List {
+            if screen.forEntity != nil && row == nil {
+                Section {
+                    ContentUnavailableView("No record selected", systemImage: "questionmark.circle")
+                }
+            } else {
+                ForEach(Array(screen.sections.enumerated()), id: \.offset) { _, section in
+                    if frontendCondition(section.when, row: row, model: model) {
+                        Section(section.title ?? "") {
+                            ForEach(Array(section.items.enumerated()), id: \.offset) { _, item in
+                                FrontendItemView(
+                                    item: item,
+                                    screen: screen,
+                                    sectionTitle: section.title,
+                                    row: row,
+                                    parentEntity: parentEntity,
+                                    parentRow: parentRow,
+                                    schema: schema,
+                                    client: client,
+                                    model: model,
+                                    editingListEntities: editingListEntities
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle(screenTitle)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                ForEach(Array(trailingToolbarItems.enumerated()), id: \.offset) { _, toolbarItem in
+                    toolbarView(for: toolbarItem)
+                }
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                ForEach(Array(primaryToolbarItems.enumerated()), id: \.offset) { _, toolbarItem in
+                    toolbarView(for: toolbarItem)
+                }
+            }
+            if model.authEnabled && screen.name == "Home" {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        ProfileView(model: model)
+                    } label: {
+                        Image(systemName: "person.crop.circle")
+                    }
+                    .accessibilityLabel("Profile")
+                }
+            }
+        }
+    }
+
+    private var trailingToolbarItems: [FrontendToolbarItemInfo] {
+        screen.toolbarItems.filter { $0.placement != "primary" }
+    }
+
+    private var primaryToolbarItems: [FrontendToolbarItemInfo] {
+        screen.toolbarItems.filter { $0.placement == "primary" }
+    }
+
+    private var screenTitle: String {
+        if let expression = screen.titleExpression,
+           let row,
+           let resolved = frontendActionExpression(expression, binding: frontendScreenBindingName(screen), row: row, model: model),
+           !resolved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return resolved
+        }
+        if let title = screen.title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return title
+        }
+        if let forEntity = screen.forEntity, let entity = schema.entities.first(where: { $0.name == forEntity }), let row {
+            return RowPresentation.rowTitle(entity: entity, row: row)
+        }
+        return RowPresentation.humanizeIdentifier(screen.name)
+    }
+
+    @ViewBuilder
+    private func toolbarView(for toolbarItem: FrontendToolbarItemInfo) -> some View {
+        switch toolbarItem.item.kind {
+        case "edit":
+            if let entity = toolbarScreenEntity, let row {
+                NavigationLink {
+                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                        EntityFormView(
+                            entity: entity,
+                            schema: liveSchema,
+                            client: client,
+                            mode: .edit(row)
+                        ) { _ in } onDeleted: { _ in
+                            dismiss()
+                        }
+                    }
+                } label: {
+                    Text("Edit")
+                }
+            }
+        case "editList":
+            if let entityName = toolbarItem.item.entity {
+                let isEditing = editingListEntities.contains(entityName)
+                Button(isEditing ? "Done" : "Edit") {
+                    if isEditing {
+                        editingListEntities.remove(entityName)
+                    } else {
+                        editingListEntities.insert(entityName)
+                    }
+                }
+            }
+        case "create":
+            if let entityName = toolbarItem.item.entity,
+               let entity = schema.entities.first(where: { $0.name == entityName }) {
+                NavigationLink {
+                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                        EntityFormView(
+                            entity: entity,
+                            schema: liveSchema,
+                            client: client,
+                            mode: .create
+                        ) { _ in }
+                    }
+                } label: {
+                    if toolbarItem.placement == "primary" {
+                        Image(systemName: "plus")
+                    } else {
+                        Text("New")
+                    }
+                }
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    private var toolbarScreenEntity: Entity? {
+        guard let name = screen.forEntity else { return nil }
+        return schema.entities.first(where: { $0.name == name })
+    }
+}
+
+private struct FrontendItemView: View {
+    let item: FrontendItemInfo
+    let screen: FrontendScreenInfo
+    let sectionTitle: String?
+    let row: Row?
+    let parentEntity: Entity?
+    let parentRow: Row?
+    let schema: Schema
+    let client: MarAPIClient
+    let model: AppViewModel
+    let editingListEntities: Set<String>
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmingDelete = false
+    @State private var deleteErrorMessage: String?
+
+    @ViewBuilder
+    var body: some View {
+        switch item.kind {
+        case "link":
+            if frontendCondition(item.filter, row: row, model: model),
+               let targetName = item.target,
+               let target = schema.frontend?.screens.first(where: { $0.name == targetName }) {
+                NavigationLink {
+                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                        FrontendScreenView(screen: target, row: nil, parentEntity: screenEntity, parentRow: row, schema: liveSchema, client: client, model: model)
+                    }
+                } label: {
+                    Text(item.label ?? RowPresentation.humanizeIdentifier(target.name))
+                }
+            }
+        case "field":
+            if let fieldName = item.field,
+               let entity = screenEntity,
+               let (labelText, text) = frontendFieldDisplay(entity: entity, fieldPath: fieldName, row: row) {
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    LabeledContent(labelText, value: text)
+                }
+            }
+        case "create":
+            if let entityName = item.entity, let entity = schema.entities.first(where: { $0.name == entityName }) {
+                NavigationLink("Create \(entity.displayName)") {
+                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                        EntityFormView(
+                            entity: entity,
+                            schema: liveSchema,
+                            client: client,
+                            mode: .create,
+                            initialValues: frontendActionValues(item.values, binding: frontendScreenBindingName(screen), row: row, model: model),
+                            formFields: item.formFields
+                        ) { _ in }
+                    }
+                }
+            }
+        case "edit":
+            if let entity = screenEntity, let row {
+                NavigationLink {
+                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                        EntityFormView(
+                            entity: entity,
+                            schema: liveSchema,
+                            client: client,
+                            mode: .edit(row),
+                            formFields: item.formFields
+                        ) { _ in
+                            dismiss()
+                        } onDeleted: { _ in
+                            dismiss()
+                        }
+                    }
+                } label: {
+                    Text("Edit \(entity.displayName)")
+                }
+            }
+        case "delete":
+            if let entity = screenEntity, row != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        confirmingDelete = true
+                    } label: {
+                        HStack {
+                            Text("Delete \(entity.displayName)")
+                                .foregroundStyle(.red)
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    if let deleteErrorMessage, !deleteErrorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(deleteErrorMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                }
+                .alert("Delete \(entity.displayName)?", isPresented: $confirmingDelete) {
+                    Button("Delete", role: .destructive) {
+                        Task { await deleteCurrentRow(entity: entity) }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This cannot be undone.")
+                }
+            }
+        case "list", "children":
+            if let entityName = item.entity, let entity = schema.entities.first(where: { $0.name == entityName }) {
+                FrontendRowsView(
+                    item: item,
+                    entity: entity,
+                    sectionTitle: sectionTitle,
+                    screenTitle: screen.title,
+                    parentEntity: screenEntity,
+                    parentRow: row,
+                    schema: schema,
+                    client: client,
+                    model: model,
+                    isEditingList: editingListEntities.contains(entity.name)
+                )
+            }
+        case "report":
+            if let entityName = item.entity, let entity = schema.entities.first(where: { $0.name == entityName }) {
+                FrontendReportView(
+                    item: item,
+                    entity: entity,
+                    schema: schema,
+                    client: client,
+                    model: model
+                )
+            }
+        case "action":
+            if let actionName = item.action,
+               let action = schema.actions.first(where: { $0.name == actionName }) {
+                NavigationLink(RowPresentation.humanizeIdentifier(action.name)) {
+                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                        ActionFormView(
+                            action: action,
+                            alias: liveSchema.inputAliases.first(where: { $0.name == action.inputAlias }),
+                            schema: liveSchema,
+                            client: client,
+                            initialValues: frontendActionValues(item.values, binding: frontendScreenBindingName(screen), row: row, model: model),
+                            formFields: item.formFields
+                        )
+                    }
+                }
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    private var screenEntity: Entity? {
+        guard let name = screen.forEntity else { return nil }
+        return schema.entities.first(where: { $0.name == name })
+    }
+
+    private func frontendFieldDisplay(entity: Entity, fieldPath: String, row: Row?) -> (String, String)? {
+        guard let row else { return nil }
+        let (fieldName, _) = parseFrontendDisplayFieldPath(fieldPath)
+        guard let field = entity.fields.first(where: { $0.name == fieldName }),
+              let value = row[field.name] else {
+            return nil
+        }
+        let text = frontendFieldText(field: field, value: value)
+        return (RowPresentation.fieldLabel(field.name), text)
+    }
+
+    private func parseFrontendDisplayFieldPath(_ raw: String) -> (String, String?) {
+        let parts = raw.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        if parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty {
+            return (parts[0], parts[1])
+        }
+        return (raw, nil)
+    }
+
+    private func frontendFieldText(field: Field, value: JSONValue) -> String {
+        guard let relationEntityName = field.relationEntity else {
+            return RowPresentation.displayString(for: field, value: value)
+        }
+        let rawID = value.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawID.isEmpty, rawID != "null",
+              schema.entities.contains(where: { $0.name == relationEntityName }) else {
+            return RowPresentation.displayString(for: field, value: value)
+        }
+        if let parentEntity, let parentRow,
+           parentEntity.name == relationEntityName,
+           RowPresentation.rowID(entity: parentEntity, row: parentRow) == rawID {
+            return RowPresentation.relatedRowLabel(entity: parentEntity, row: parentRow)
+        }
+        return RowPresentation.displayString(for: field, value: value)
+    }
+
+    private func deleteCurrentRow(entity: Entity) async {
+        guard let row, let id = RowPresentation.rowID(entity: entity, row: row) else {
+            deleteErrorMessage = "Could not remove this record."
+            return
+        }
+
+        do {
+            try await client.deleteRow(entity: entity, id: id)
+            NotificationCenter.default.post(name: .marRowsChanged, object: entity.name)
+            dismiss()
+        } catch {
+            deleteErrorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct FrontendComputedReport: Identifiable {
+    let sortKey: String
+    let label: String
+    let metrics: [(String, String)]
+
+    var id: String { sortKey }
+}
+
+private enum FrontendReportGroupSpec {
+    case field(String)
+    case month(String)
+}
+
+private struct FrontendReportView: View {
+    let item: FrontendItemInfo
+    let entity: Entity
+    let schema: Schema
+    let client: MarAPIClient
+    let model: AppViewModel
+
+    @State private var rows: [Row] = []
+    @State private var isLoading = false
+    @State private var hasStartedLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if let errorMessage, !errorMessage.isEmpty {
+                Text(errorMessage)
+                    .foregroundStyle(.red)
+            } else if isLoading && rows.isEmpty {
+                HStack {
+                    ProgressView()
+                    Text("Loading...")
+                        .foregroundStyle(.secondary)
+                }
+            } else if reportRows.isEmpty {
+                Text("No data yet.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(reportRows) { report in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(report.label)
+                            .font(.headline)
+                        ForEach(Array(report.metrics.enumerated()), id: \.offset) { _, metric in
+                            LabeledContent(metric.0, value: metric.1)
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear {
+            guard !hasStartedLoading else { return }
+            hasStartedLoading = true
+            Task { await load() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .marRowsChanged)) { notification in
+            let changedEntity = notification.object as? String
+            guard changedEntity == nil || changedEntity == entity.name else { return }
+            Task { await load() }
+        }
+    }
+
+    private var reportRows: [FrontendComputedReport] {
+        guard let groupSpec = parseReportGroup(item.reportGroup, entity: entity) else { return [] }
+
+        var grouped: [String: (label: String, rows: [Row])] = [:]
+        for row in rows where frontendCondition(item.filter, row: row, model: model) {
+            guard let group = reportGroupKey(groupSpec, row: row) else { continue }
+            var entry = grouped[group.sortKey] ?? (label: group.label, rows: [])
+            entry.rows.append(row)
+            grouped[group.sortKey] = entry
+        }
+
+        return grouped
+            .map { sortKey, entry in
+                FrontendComputedReport(
+                    sortKey: sortKey,
+                    label: entry.label,
+                    metrics: item.reportMetrics.compactMap { metricValue($0, rows: entry.rows) }
+                )
+            }
+            .sorted { $0.sortKey < $1.sortKey }
+    }
+
+    private func load() async {
+        guard !isLoading else { return }
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            rows = try await client.listRows(entity: entity)
+            isLoading = false
+        } catch {
+            isLoading = false
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func parseReportGroup(_ raw: String?, entity: Entity) -> FrontendReportGroupSpec? {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.hasPrefix("month("), trimmed.hasSuffix(")") {
+            let fieldName = String(trimmed.dropFirst("month(".count).dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard entity.fields.contains(where: { $0.name == fieldName }) else { return nil }
+            return .month(fieldName)
+        }
+
+        guard entity.fields.contains(where: { $0.name == trimmed }) else { return nil }
+        return .field(trimmed)
+    }
+
+    private func reportGroupKey(_ spec: FrontendReportGroupSpec, row: Row) -> (sortKey: String, label: String)? {
+        switch spec {
+        case .field(let fieldName):
+            let label = reportFieldLabel(fieldName: fieldName, row: row)
+            return label.map { ($0, $0) }
+        case .month(let fieldName):
+            guard let value = row[fieldName]?.doubleValue else { return nil }
+            let date = Date(timeIntervalSince1970: value / 1000)
+            let year = DateCodec.localCalendar.component(.year, from: date)
+            let month = DateCodec.localCalendar.component(.month, from: date)
+            let sortKey = String(format: "%04d-%02d", year, month)
+            return (sortKey, monthLabel(month) + " " + String(year))
+        }
+    }
+
+    private func reportFieldLabel(fieldName: String, row: Row) -> String? {
+        guard let field = entity.fields.first(where: { $0.name == fieldName }),
+              let value = row[field.name] else {
+            return nil
+        }
+        let text = RowPresentation.displayString(for: field, value: value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    private func metricValue(_ metric: FrontendReportMetricInfo, rows: [Row]) -> (String, String)? {
+        let aggregate = metric.aggregate.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = (metric.label?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            ?? defaultMetricLabel(aggregate: aggregate, fieldName: metric.field)
+
+        switch aggregate {
+        case "count":
+            return (label, String(rows.count))
+        case "avg":
+            guard let value = aggregateField(metric.field, rows: rows, reducer: average) else { return nil }
+            return (label, formatMetricNumber(value))
+        case "sum":
+            guard let value = aggregateField(metric.field, rows: rows, reducer: sum) else { return nil }
+            return (label, formatMetricNumber(value))
+        case "min":
+            guard let value = aggregateField(metric.field, rows: rows, reducer: { $0.min() }) else { return nil }
+            return (label, formatMetricNumber(value))
+        case "max":
+            guard let value = aggregateField(metric.field, rows: rows, reducer: { $0.max() }) else { return nil }
+            return (label, formatMetricNumber(value))
+        default:
+            return nil
+        }
+    }
+
+    private func aggregateField(_ fieldName: String?, rows: [Row], reducer: ([Double]) -> Double?) -> Double? {
+        guard let fieldName,
+              entity.fields.contains(where: { $0.name == fieldName }) else {
+            return nil
+        }
+        let values = rows.compactMap { $0[fieldName]?.doubleValue }
+        return reducer(values)
+    }
+
+    private func average(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    private func sum(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +)
+    }
+
+    private func defaultMetricLabel(aggregate: String, fieldName: String?) -> String {
+        if aggregate == "count" {
+            return "Count"
+        }
+        if let fieldName, !fieldName.isEmpty {
+            return RowPresentation.humanizeIdentifier(fieldName)
+        }
+        return RowPresentation.humanizeIdentifier(aggregate)
+    }
+
+    private func formatMetricNumber(_ value: Double) -> String {
+        let rounded = (value * 100).rounded() / 100
+        if rounded.rounded() == rounded {
+            return String(Int(rounded))
+        }
+        return rounded.formatted(.number.precision(.fractionLength(2)))
+    }
+
+    private func monthLabel(_ month: Int) -> String {
+        switch month {
+        case 1: return "Jan"
+        case 2: return "Feb"
+        case 3: return "Mar"
+        case 4: return "Apr"
+        case 5: return "May"
+        case 6: return "Jun"
+        case 7: return "Jul"
+        case 8: return "Aug"
+        case 9: return "Sep"
+        case 10: return "Oct"
+        case 11: return "Nov"
+        case 12: return "Dec"
+        default: return String(month)
+        }
+    }
+}
+
+private struct FrontendRowsView: View {
+    let item: FrontendItemInfo
+    let entity: Entity
+    let sectionTitle: String?
+    let screenTitle: String?
+    let parentEntity: Entity?
+    let parentRow: Row?
+    let schema: Schema
+    let client: MarAPIClient
+    let model: AppViewModel
+    let isEditingList: Bool
+
+    @State private var rows: [Row] = []
+    @State private var relationLabelsByEntity: [String: [String: String]] = [:]
+    @State private var isLoading = false
+    @State private var hasStartedLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if let message = errorMessage {
+                Text(message)
+                    .foregroundStyle(.red)
+            } else if isLoading && rows.isEmpty {
+                HStack {
+                    ProgressView()
+                    Text("Loading...")
+                        .foregroundStyle(.secondary)
+                }
+            } else if filteredRows.isEmpty {
+                Text("No \(emptyRowsLabel) yet")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(filteredRows.enumerated()), id: \.offset) { _, row in
+                    if isEditingList {
+                        VStack(alignment: .leading, spacing: 10) {
+                            FrontendRowSummaryView(item: item, entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity)
+                            HStack(spacing: 10) {
+                                NavigationLink("Edit") {
+                                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                                        EntityFormView(
+                                            entity: entity,
+                                            schema: liveSchema,
+                                            client: client,
+                                            mode: .edit(row)
+                                        ) { _ in } onDeleted: { deletedRow in
+                                            rows.removeAll { candidate in
+                                                RowPresentation.rowID(entity: entity, row: candidate) ==
+                                                    RowPresentation.rowID(entity: entity, row: deletedRow)
+                                            }
+                                        }
+                                    }
+                                }
+                                Button("Delete", role: .destructive) {
+                                    Task { await deleteRow(row) }
+                                }
+                            }
+                            .font(.subheadline)
+                        }
+                    } else if let destination = destinationScreen {
+                        NavigationLink {
+                            LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                                FrontendScreenView(screen: destination, row: row, parentEntity: parentEntity ?? entity, parentRow: parentRow ?? row, schema: liveSchema, client: client, model: model)
+                            }
+                        } label: {
+                            FrontendRowSummaryView(item: item, entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity)
+                        }
+                    } else {
+                        NavigationLink {
+                            LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                                RowDetailView(
+                                    entity: entity,
+                                    schema: liveSchema,
+                                    client: client,
+                                    row: row,
+                                    onSaved: { _ in },
+                                    onDelete: { _ in },
+                                    relationLabelsByEntity: relationLabelsByEntity
+                                )
+                            }
+                        } label: {
+                            FrontendRowSummaryView(item: item, entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity)
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear {
+            guard !hasStartedLoading else { return }
+            hasStartedLoading = true
+            Task { await load() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .marRowsChanged)) { notification in
+            let changedEntity = notification.object as? String
+            guard changedEntity == nil || changedEntity == entity.name else { return }
+            Task { await load() }
+        }
+    }
+
+    private var filteredRows: [Row] {
+        rows.filter { row in
+            if item.kind == "children" {
+                guard let relationField = item.relationField,
+                      let parentEntity,
+                      let parentRow,
+                      let parentID = RowPresentation.rowID(entity: parentEntity, row: parentRow) else {
+                    return false
+                }
+                let childValue = row[relationField]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if childValue != parentID {
+                    return false
+                }
+            }
+            return frontendCondition(item.filter, row: row, model: model)
+        }
+    }
+
+    private var destinationScreen: FrontendScreenInfo? {
+        guard let destinationName = item.destination else { return nil }
+        return schema.frontend?.screens.first(where: { $0.name == destinationName })
+    }
+
+    private var emptyRowsLabel: String {
+        let label = nonEmpty(item.label) ?? nonEmpty(sectionTitle) ?? nonEmpty(screenTitle) ?? entity.displayName
+        let lowercased = label.lowercased()
+        if lowercased.hasPrefix("my ") {
+            return String(lowercased.dropFirst(3))
+        }
+        return lowercased
+    }
+
+    private func load() async {
+        guard !isLoading else { return }
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            let loadedRows = try await client.listRows(entity: entity)
+            rows = loadedRows
+            isLoading = false
+            guard !loadedRows.isEmpty else {
+                relationLabelsByEntity = [:]
+                return
+            }
+            relationLabelsByEntity = await loadRelationLabelsBestEffort()
+        } catch {
+            isLoading = false
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteRow(_ row: Row) async {
+        guard let id = RowPresentation.rowID(entity: entity, row: row) else { return }
+        do {
+            try await client.deleteRow(entity: entity, id: id)
+            rows.removeAll { RowPresentation.rowID(entity: entity, row: $0) == id }
+            NotificationCenter.default.post(name: .marRowsChanged, object: entity.name)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadRelationLabelsBestEffort() async -> [String: [String: String]] {
+        let relationNames = relationNamesNeededForSummary()
+        guard !relationNames.isEmpty else { return [:] }
+
+        var result: [String: [String: String]] = [:]
+        for relationName in relationNames {
+            guard let relationEntity = schema.entities.first(where: { $0.name == relationName }) else { continue }
+            guard let relationRows = try? await client.listRows(entity: relationEntity) else { continue }
+            result[relationName] = Dictionary(
+                uniqueKeysWithValues: relationRows.compactMap { row in
+                    guard let id = RowPresentation.rowID(entity: relationEntity, row: row) else { return nil }
+                    return (id, RowPresentation.relatedRowLabel(entity: relationEntity, row: row))
+                }
+            )
+        }
+        return result
+    }
+
+    private func relationNamesNeededForSummary() -> Set<String> {
+        var fieldNames: [String] = []
+
+        if let titleField = item.titleField {
+            fieldNames.append(titleField)
+        }
+
+        if let subtitleField = item.subtitleField {
+            fieldNames.append(subtitleField)
+        }
+
+        if fieldNames.isEmpty {
+            fieldNames.append(contentsOf: entity.summaryFields.prefix(1).map(\.name))
+        }
+
+        return Set(fieldNames.compactMap { fieldName in
+            entity.fields.first(where: { $0.name == fieldName })?.relationEntity
+        })
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private struct FrontendRowSummaryView: View {
+    let item: FrontendItemInfo
+    let entity: Entity
+    let row: Row
+    let relationLabelsByEntity: [String: [String: String]]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(rowText(fieldName: item.titleField) ?? RowPresentation.rowTitle(entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity))
+                .font(.headline)
+
+            if let subtitle = rowText(fieldName: item.subtitleField), !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if item.titleField == nil {
+                let summaryRows = Array(RowPresentation.summaryRows(entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity).prefix(1))
+                ForEach(Array(summaryRows.enumerated()), id: \.offset) { _, item in
+                    Text("\(item.label): \(item.value)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func rowText(fieldName: String?) -> String? {
+        guard let fieldName,
+              let field = entity.fields.first(where: { $0.name == fieldName }),
+              let value = row[field.name] else {
+            return nil
+        }
+        let text = RowPresentation.displayString(for: field, value: value, relationLabelsByEntity: relationLabelsByEntity)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+}
+
+@MainActor
+private func frontendCondition(_ raw: String?, row: Row?, model: AppViewModel) -> Bool {
+    let expression = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !expression.isEmpty else { return true }
+
+    switch expression {
+    case "user_authenticated":
+        return model.authenticatedEmail != nil || model.authenticatedUserID != nil
+    case "anonymous":
+        return model.authenticatedEmail == nil && model.authenticatedUserID == nil
+    default:
+        break
+    }
+
+    let parts = expression.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+    guard parts.count == 3, let row else { return true }
+    let left = parts[0]
+    let op = parts[1]
+    let right = parts[2]
+    let leftValue = row[left]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let rightValue: String
+    switch right {
+    case "user_id":
+        rightValue = model.authenticatedUserID ?? ""
+    default:
+        rightValue = right.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+    }
+
+    switch op {
+    case "==":
+        return leftValue == rightValue
+    case "!=":
+        return leftValue != rightValue
+    default:
+        return true
+    }
+}
+
+@MainActor
+private func frontendActionValues(_ values: [FrontendActionValueInfo], binding: String?, row: Row?, model: AppViewModel) -> [String: String] {
+    Dictionary(uniqueKeysWithValues: values.compactMap { value in
+        let resolved = frontendActionExpression(value.expression, binding: binding, row: row, model: model)
+        return resolved == nil ? nil : (value.field, resolved!)
+    })
+}
+
+@MainActor
+private func frontendActionExpression(_ raw: String, binding: String?, row: Row?, model: AppViewModel) -> String? {
+    let expression = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if expression == "user_id" {
+        return model.authenticatedUserID
+    }
+    if let fieldName = frontendBoundFieldName(expression, binding: binding) {
+        return row?[fieldName]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    if expression.hasPrefix("\""), expression.hasSuffix("\""), expression.count >= 2 {
+        return String(expression.dropFirst().dropLast())
+    }
+    return expression
+}
+
+private func frontendBoundFieldName(_ expression: String, binding: String?) -> String? {
+    guard let binding, !binding.isEmpty else { return nil }
+    let prefix = binding + "."
+    guard expression.hasPrefix(prefix) else { return nil }
+    return String(expression.dropFirst(prefix.count))
+}
+
+private func frontendScreenBindingName(_ screen: FrontendScreenInfo) -> String? {
+    guard let entityName = screen.forEntity, let first = entityName.first else { return nil }
+    return String(first).lowercased() + entityName.dropFirst()
 }
 
 struct EntityRowsView: View {
@@ -584,6 +1462,9 @@ struct RowDetailView: View {
             NavigationStack {
                 EntityFormView(entity: entity, schema: schema, client: client, mode: .edit(row)) { updated in
                     onSaved(updated)
+                } onDeleted: { deletedRow in
+                    onDelete(deletedRow)
+                    dismiss()
                 }
             }
         }
@@ -616,17 +1497,43 @@ struct EntityFormView: View {
     let entity: Entity
     let schema: Schema
     let client: MarAPIClient
+    let initialValues: [String: String]
+    let formFields: [FrontendFormFieldInfo]
     let onSaved: (Row) -> Void
+    let onDeleted: (Row) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model: EntityFormViewModel
+    @State private var confirmingDelete = false
+    @State private var isDeleting = false
 
-    init(entity: Entity, schema: Schema, client: MarAPIClient, mode: EntityFormViewModel.Mode, onSaved: @escaping (Row) -> Void) {
+    init(
+        entity: Entity,
+        schema: Schema,
+        client: MarAPIClient,
+        mode: EntityFormViewModel.Mode,
+        initialValues: [String: String] = [:],
+        formFields: [FrontendFormFieldInfo] = [],
+        onSaved: @escaping (Row) -> Void,
+        onDeleted: @escaping (Row) -> Void = { _ in }
+    ) {
         self.entity = entity
         self.schema = schema
         self.client = client
+        self.initialValues = initialValues
+        self.formFields = formFields
         self.onSaved = onSaved
-        _model = StateObject(wrappedValue: EntityFormViewModel(entity: entity, schema: schema, client: client, mode: mode))
+        self.onDeleted = onDeleted
+        _model = StateObject(
+            wrappedValue: EntityFormViewModel(
+                entity: entity,
+                schema: schema,
+                client: client,
+                mode: mode,
+                initialValues: initialValues,
+                formFields: formFields
+            )
+        )
     }
 
     var title: String {
@@ -648,8 +1555,33 @@ struct EntityFormView: View {
             }
 
             Section {
-                ForEach(entity.visibleFields) { field in
-                    DynamicFieldView(field: field, value: binding(for: field), relationRows: model.relationRows[field.relationEntity ?? ""] ?? [], relationEntity: relationEntity(named: field.relationEntity))
+                ForEach(model.visibleFields) { field in
+                    if initialValues[field.name] == nil {
+                        DynamicFieldView(
+                            field: field,
+                            value: binding(for: field),
+                            relationRows: model.relationRows(for: field),
+                            relationEntity: relationEntity(named: field.relationEntity),
+                            relationHelperText: model.relationHelperText(for: field)
+                        )
+                    }
+                }
+            }
+
+            if case .edit = model.mode {
+                Section("Manage") {
+                    Button(role: .destructive) {
+                        confirmingDelete = true
+                    } label: {
+                        HStack {
+                            if isDeleting {
+                                ProgressView()
+                            }
+                            Text("Delete \(entity.displayName)")
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    .disabled(isDeleting || model.isSaving)
                 }
             }
         }
@@ -674,6 +1606,14 @@ struct EntityFormView: View {
         .task {
             await model.loadRelations()
         }
+        .alert("Delete \(entity.displayName)?", isPresented: $confirmingDelete) {
+            Button("Delete", role: .destructive) {
+                Task { await deleteCurrentRow() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This cannot be undone.")
+        }
     }
 
     private func relationEntity(named name: String?) -> Entity? {
@@ -684,7 +1624,10 @@ struct EntityFormView: View {
     private func binding(for field: Field) -> Binding<String> {
         Binding(
             get: { model.values[field.name, default: RowPresentation.defaultText(for: field)] },
-            set: { model.values[field.name] = $0 }
+            set: { newValue in
+                model.setValue(newValue, for: field.name)
+                Task { await model.loadRelations() }
+            }
         )
     }
 
@@ -692,6 +1635,24 @@ struct EntityFormView: View {
         do {
             let row = try await model.submit()
             onSaved(row)
+            NotificationCenter.default.post(name: .marRowsChanged, object: entity.name)
+            dismiss()
+        } catch {
+            model.errorMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteCurrentRow() async {
+        guard case let .edit(row) = model.mode else { return }
+        guard let id = RowPresentation.rowID(entity: entity, row: row) else { return }
+
+        isDeleting = true
+        defer { isDeleting = false }
+
+        do {
+            try await client.deleteRow(entity: entity, id: id)
+            NotificationCenter.default.post(name: .marRowsChanged, object: entity.name)
+            onDeleted(row)
             dismiss()
         } catch {
             model.errorMessage = error.localizedDescription
@@ -704,11 +1665,19 @@ struct DynamicFieldView: View {
     @Binding var value: String
     let relationRows: [Row]
     let relationEntity: Entity?
+    let relationHelperText: String?
 
     @ViewBuilder
     var body: some View {
         if field.relationEntity != nil {
-            relationPicker
+            VStack(alignment: .leading, spacing: 8) {
+                relationPicker
+                if let relationHelperText {
+                    Text(relationHelperText)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
         } else if !field.enumValues.isEmpty {
             enumPicker
         } else {
@@ -718,7 +1687,7 @@ struct DynamicFieldView: View {
             case .date:
             dateNavigationLink(label: RowPresentation.fieldLabel(field.name), includesTime: false)
             case .dateTime:
-            dateNavigationLink(label: "\(RowPresentation.fieldLabel(field.name)) (UTC)", includesTime: true)
+            dateNavigationLink(label: RowPresentation.fieldLabel(field.name), includesTime: true)
             case .int:
             TextField(RowPresentation.fieldLabel(field.name), text: $value)
                 .keyboardType(.numberPad)
@@ -799,11 +1768,11 @@ struct DynamicFieldView: View {
 
     private func displayDateText(includesTime: Bool) -> String {
         guard !value.isEmpty else { return includesTime ? "Not set" : "Not set" }
-        if includesTime, let parsed = MarDateCodec.parseDateTimeInput(value) {
-            return MarDateCodec.formatDateTimeDisplay(milliseconds: parsed)
+        if includesTime, let parsed = DateCodec.parseDateTimeInput(value) {
+            return DateCodec.formatDateTimeDisplay(milliseconds: parsed)
         }
-        if !includesTime, let parsed = MarDateCodec.parseDateInput(value) {
-            return MarDateCodec.formatDateDisplay(milliseconds: parsed)
+        if !includesTime, let parsed = DateCodec.parseDateInput(value) {
+            return DateCodec.formatDateDisplay(milliseconds: parsed)
         }
         return value
     }
@@ -825,8 +1794,8 @@ struct DateFieldEditorView: View {
         _value = value
 
         let parsed: Double? = includesTime
-            ? MarDateCodec.parseDateTimeInput(value.wrappedValue)
-            : MarDateCodec.parseDateInput(value.wrappedValue)
+            ? DateCodec.parseDateTimeInput(value.wrappedValue)
+            : DateCodec.parseDateInput(value.wrappedValue)
         let initialDate = parsed.map { Date(timeIntervalSince1970: $0 / 1000) } ?? Date()
         _selectedDate = State(initialValue: initialDate)
     }
@@ -840,7 +1809,7 @@ struct DateFieldEditorView: View {
                     displayedComponents: includesTime ? [.date, .hourAndMinute] : [.date]
                 )
                 .labelsHidden()
-                .environment(\.timeZone, MarDateCodec.utcTimeZone)
+                .environment(\.timeZone, includesTime ? DateCodec.localTimeZone : DateCodec.utcTimeZone)
             }
 
             if isOptional {
@@ -858,8 +1827,8 @@ struct DateFieldEditorView: View {
                 Button("Done") {
                     let millis = selectedDate.timeIntervalSince1970 * 1000
                     value = includesTime
-                        ? MarDateCodec.formatDateTimeInput(milliseconds: millis)
-                        : MarDateCodec.formatDateInput(milliseconds: millis)
+                        ? DateCodec.formatDateTimeInput(milliseconds: millis)
+                        : DateCodec.formatDateInput(milliseconds: millis)
                     dismiss()
                 }
             }
@@ -895,19 +1864,33 @@ struct ActionFormView: View {
     let alias: InputAliasInfo?
     let schema: Schema
     let client: MarAPIClient
+    let initialValues: [String: String]
+    let formFields: [FrontendFormFieldInfo]
 
-    @State private var values: [String: String] = [:]
+    @State private var values: [String: String]
     @State private var relationRows: [String: [Row]] = [:]
     @State private var resultRow: Row?
     @State private var errorMessage: String?
     @State private var isRunning = false
 
+    init(action: ActionInfo, alias: InputAliasInfo?, schema: Schema, client: MarAPIClient, initialValues: [String: String] = [:], formFields: [FrontendFormFieldInfo] = []) {
+        self.action = action
+        self.alias = alias
+        self.schema = schema
+        self.client = client
+        self.initialValues = initialValues
+        self.formFields = formFields
+        _values = State(initialValue: initialValues)
+    }
+
     var body: some View {
         Form {
             if let alias {
                 Section("Input") {
-                    ForEach(alias.fields) { field in
-                        actionFieldView(field)
+                    ForEach(visibleFields(alias: alias)) { field in
+                        if initialValues[field.name] == nil {
+                            actionFieldView(field)
+                        }
                     }
                 }
             } else {
@@ -954,23 +1937,29 @@ struct ActionFormView: View {
 
     private var canRun: Bool {
         guard let alias else { return false }
-        return alias.fields.allSatisfy { field in
+        return visibleFields(alias: alias).allSatisfy { field in
             guard let relationEntityName = field.relationEntity else { return true }
-            return relationRows[relationEntityName] != nil
+            guard let filters = relationFilters(for: field) else { return false }
+            return relationRows[relationRowsCacheKey(entityName: relationEntityName, filters: filters)] != nil
         }
     }
 
     private func binding(for fieldName: String) -> Binding<String> {
         Binding(
             get: { values[fieldName, default: ""] },
-            set: { values[fieldName] = $0 }
+            set: { newValue in
+                updateValue(newValue, for: fieldName)
+                Task { await loadRelations() }
+            }
         )
     }
 
     @ViewBuilder
     private func actionFieldView(_ field: InputAliasField) -> some View {
         if let relationEntityName = field.relationEntity {
-            if let relationEntity = relationEntity(named: relationEntityName), let rows = relationRows[relationEntityName] {
+            if let relationEntity = relationEntity(named: relationEntityName),
+               let filters = relationFilters(for: field),
+               let rows = relationRows[relationRowsCacheKey(entityName: relationEntityName, filters: filters)] {
                 Picker(RowPresentation.fieldLabel(field.name), selection: binding(for: field.name)) {
                     Text("Select \(relationEntity.displayName)")
                         .tag("")
@@ -985,10 +1974,7 @@ struct ActionFormView: View {
                 }
                 .pickerStyle(.navigationLink)
             } else {
-                LabeledContent(RowPresentation.fieldLabel(field.name)) {
-                    Text("Loading options...")
-                        .foregroundStyle(.secondary)
-                }
+                actionRelationState(field)
             }
         } else if !field.enumValues.isEmpty {
             Picker(RowPresentation.fieldLabel(field.name), selection: binding(for: field.name)) {
@@ -1014,10 +2000,41 @@ struct ActionFormView: View {
                 .labelsHidden()
                 .pickerStyle(.segmented)
             }
+        } else if field.fieldType == "Date" {
+            actionDateNavigationLink(field: field, includesTime: false)
+        } else if field.fieldType == "DateTime" {
+            actionDateNavigationLink(field: field, includesTime: true)
         } else {
             TextField(RowPresentation.fieldLabel(field.name), text: binding(for: field.name))
                 .keyboardType(field.fieldType == "Int" ? .numberPad : (field.fieldType == "Float" ? .decimalPad : .default))
         }
+    }
+
+    @ViewBuilder
+    private func actionDateNavigationLink(field: InputAliasField, includesTime: Bool) -> some View {
+        let label = RowPresentation.fieldLabel(field.name)
+        NavigationLink {
+            DateFieldEditorView(
+                title: label,
+                includesTime: includesTime,
+                isOptional: false,
+                value: binding(for: field.name)
+            )
+        } label: {
+            LabeledContent(label, value: actionDateDisplayText(fieldName: field.name, includesTime: includesTime))
+        }
+    }
+
+    private func actionDateDisplayText(fieldName: String, includesTime: Bool) -> String {
+        let raw = values[fieldName, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return "Not set" }
+        if includesTime, let parsed = DateCodec.parseDateTimeInput(raw) {
+            return DateCodec.formatDateTimeDisplay(milliseconds: parsed)
+        }
+        if !includesTime, let parsed = DateCodec.parseDateInput(raw) {
+            return DateCodec.formatDateDisplay(milliseconds: parsed)
+        }
+        return raw
     }
 
     private func relationEntity(named name: String) -> Entity? {
@@ -1027,13 +2044,13 @@ struct ActionFormView: View {
     private func loadRelations() async {
         guard let alias else { return }
 
-        let relationNames = Set(alias.fields.compactMap(\.relationEntity))
-        guard !relationNames.isEmpty else { return }
-
-        for relationName in relationNames {
-            guard relationRows[relationName] == nil, let relationEntity = relationEntity(named: relationName) else { continue }
+        for field in visibleFields(alias: alias) {
+            guard let relationName = field.relationEntity else { continue }
+            guard let filters = relationFilters(for: field) else { continue }
+            let cacheKey = relationRowsCacheKey(entityName: relationName, filters: filters)
+            guard relationRows[cacheKey] == nil, let relationEntity = relationEntity(named: relationName) else { continue }
             do {
-                relationRows[relationName] = try await client.listRows(entity: relationEntity)
+                relationRows[cacheKey] = try await client.listRows(entity: relationEntity, filters: filters)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -1049,8 +2066,62 @@ struct ActionFormView: View {
         do {
             let payload = try buildActionPayload(fields: alias.fields, valuesByName: values)
             resultRow = try await client.runAction(action: action, payload: payload)
+            NotificationCenter.default.post(name: .marRowsChanged, object: nil)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func visibleFields(alias: InputAliasInfo) -> [InputAliasField] {
+        let baseFields = alias.fields.filter { initialValues[$0.name] == nil }
+        guard !formFields.isEmpty else { return baseFields }
+        return formFields.compactMap { formField in
+            baseFields.first(where: { $0.name == formField.field })
+        }
+    }
+
+    private func formFieldConfig(for fieldName: String) -> FrontendFormFieldInfo? {
+        formFields.first(where: { $0.field == fieldName })
+    }
+
+    private func relationFilters(for field: InputAliasField) -> [String: String]? {
+        guard let config = formFieldConfig(for: field.name),
+              let (relationField, parentField) = frontendDependentFilter(config)
+        else {
+            return [:]
+        }
+        let parentValue = values[parentField, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !parentValue.isEmpty else { return nil }
+        return [relationField: parentValue]
+    }
+
+    private func updateValue(_ value: String, for fieldName: String) {
+        let dependentFields = formFields.compactMap { formField -> String? in
+            guard let (_, parentField) = frontendDependentFilter(formField), parentField == fieldName else {
+                return nil
+            }
+            return formField.field
+        }
+        for dependentField in dependentFields {
+            values.removeValue(forKey: dependentField)
+        }
+        values[fieldName] = value
+    }
+
+    @ViewBuilder
+    private func actionRelationState(_ field: InputAliasField) -> some View {
+        if let config = formFieldConfig(for: field.name),
+           let (_, parentField) = frontendDependentFilter(config),
+           values[parentField, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            LabeledContent(RowPresentation.fieldLabel(field.name)) {
+                Text("Select \(RowPresentation.fieldLabel(parentField)) first.")
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            LabeledContent(RowPresentation.fieldLabel(field.name)) {
+                Text("Loading options...")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -1078,12 +2149,12 @@ struct ActionFormView: View {
                     throw APIErrorResponse(errorCode: "invalid_field", message: "\(field.name) expects Bool", details: nil)
                 }
             case "Date":
-                guard let value = MarDateCodec.parseDateInput(raw) else {
+                guard let value = DateCodec.parseDateInput(raw) else {
                     throw APIErrorResponse(errorCode: "invalid_field", message: "\(field.name) expects a date or Unix milliseconds", details: nil)
                 }
                 payload[field.name] = .number(value)
             case "DateTime":
-                guard let value = MarDateCodec.parseDateTimeInput(raw) else {
+                guard let value = DateCodec.parseDateTimeInput(raw) else {
                     throw APIErrorResponse(errorCode: "invalid_field", message: "\(field.name) expects a date/time or Unix milliseconds", details: nil)
                 }
                 payload[field.name] = .number(value)
@@ -1133,11 +2204,9 @@ struct ProfileView: View {
 }
 
 struct AdminHomeView: View {
-    let client: MarAPIClient
     @StateObject private var model: AdminViewModel
 
     init(client: MarAPIClient) {
-        self.client = client
         _model = StateObject(wrappedValue: AdminViewModel(client: client))
     }
 
@@ -1386,7 +2455,7 @@ private struct AdminBackupsView: View {
 
 private enum AdminFormatting {
     static func appBuildLabel(_ app: VersionApp) -> String {
-        let buildTime = MarDateCodec.parseBuildTime(app.buildTime)
+        let buildTime = DateCodec.parseBuildTime(app.buildTime)
         if let shortHash = RowPresentation.appShortHash(app.manifestHash) {
             return "\(buildTime) (\(shortHash))"
         }

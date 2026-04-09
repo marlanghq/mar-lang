@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"fmt"
+	"net/url"
+	"sort"
+	"strings"
 
 	"mar/internal/expr"
 	"mar/internal/model"
@@ -15,7 +18,7 @@ type readAuthSQLExpr struct {
 	boolVal bool
 }
 
-func (r *Runtime) buildListQuery(entity *model.Entity, auth authSession) (string, []any, error) {
+func (r *Runtime) buildListQuery(entity *model.Entity, auth authSession, queryValues url.Values) (string, []any, error) {
 	table, err := quoteIdentifier(entity.Table)
 	if err != nil {
 		return "", nil, err
@@ -26,13 +29,127 @@ func (r *Runtime) buildListQuery(entity *model.Entity, auth authSession) (string
 	}
 
 	query := fmt.Sprintf("SELECT * FROM %s", table)
-	var args []any
+	var (
+		args          []any
+		whereClauses  []string
+	)
 	if whereSQL, whereArgs, ok := r.listReadAuthorizationWhere(entity, auth); ok {
-		query += " WHERE " + whereSQL
+		whereClauses = append(whereClauses, whereSQL)
 		args = append(args, whereArgs...)
+	}
+	filterSQL, filterArgs, err := buildListFilterWhere(entity, queryValues)
+	if err != nil {
+		return "", nil, err
+	}
+	if filterSQL != "" {
+		whereClauses = append(whereClauses, filterSQL)
+		args = append(args, filterArgs...)
+	}
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 	query += fmt.Sprintf(" ORDER BY %s DESC", pk)
 	return query, args, nil
+}
+
+func buildListFilterWhere(entity *model.Entity, queryValues url.Values) (string, []any, error) {
+	if entity == nil || len(queryValues) == 0 {
+		return "", nil, nil
+	}
+
+	clauses := []string{}
+	args := []any{}
+	keys := make([]string, 0, len(queryValues))
+	for key := range queryValues {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		values := queryValues[key]
+		field := runtimeFindEntityField(entity, key)
+		if field == nil {
+			return "", nil, newAPIError(400, "invalid_list_filter", fmt.Sprintf("Unknown filter field %s", key))
+		}
+		if len(values) != 1 {
+			return "", nil, newAPIError(400, "invalid_list_filter", fmt.Sprintf("Filter field %s must appear only once", key))
+		}
+		dbValue, err := normalizeListFilterValue(field, values[0])
+		if err != nil {
+			return "", nil, newAPIError(400, "invalid_list_filter", err.Error())
+		}
+		column, err := quoteIdentifier(model.FieldStorageName(field))
+		if err != nil {
+			return "", nil, err
+		}
+		clauses = append(clauses, fmt.Sprintf("%s = ?", column))
+		args = append(args, dbValue)
+	}
+	return strings.Join(clauses, " AND "), args, nil
+}
+
+func runtimeFindEntityField(entity *model.Entity, name string) *model.Field {
+	if entity == nil {
+		return nil
+	}
+	for i := range entity.Fields {
+		if entity.Fields[i].Name == name {
+			return &entity.Fields[i]
+		}
+	}
+	return nil
+}
+
+func normalizeListFilterValue(field *model.Field, raw string) (any, error) {
+	if field == nil {
+		return nil, fmt.Errorf("filter field is required")
+	}
+	switch field.Type {
+	case "Int":
+		n, ok := toInt64(strings.TrimSpace(raw))
+		if !ok {
+			return nil, fmt.Errorf("filter %s must be Int", field.Name)
+		}
+		return n, nil
+	case "Date":
+		n, ok := toInt64(strings.TrimSpace(raw))
+		if !ok {
+			return nil, fmt.Errorf("filter %s must be Date (Unix milliseconds)", field.Name)
+		}
+		return normalizeDateMillis(n), nil
+	case "DateTime":
+		n, ok := toInt64(strings.TrimSpace(raw))
+		if !ok {
+			return nil, fmt.Errorf("filter %s must be DateTime (Unix milliseconds)", field.Name)
+		}
+		return n, nil
+	case "Float":
+		f, ok := toFloat64(strings.TrimSpace(raw))
+		if !ok {
+			return nil, fmt.Errorf("filter %s must be Float", field.Name)
+		}
+		return f, nil
+	case "Bool":
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "true":
+			return int64(1), nil
+		case "false":
+			return int64(0), nil
+		default:
+			return nil, fmt.Errorf("filter %s must be Bool", field.Name)
+		}
+	case "String":
+		return raw, nil
+	default:
+		if len(field.EnumValues) > 0 {
+			for _, enumValue := range field.EnumValues {
+				if raw == enumValue {
+					return raw, nil
+				}
+			}
+			return nil, fmt.Errorf("filter %s must be one of: %s", field.Name, strings.Join(field.EnumValues, ", "))
+		}
+		return nil, fmt.Errorf("unsupported filter type %s", field.Type)
+	}
 }
 
 func (r *Runtime) listReadAuthorizationWhere(entity *model.Entity, auth authSession) (string, []any, bool) {

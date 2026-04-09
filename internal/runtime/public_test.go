@@ -471,3 +471,71 @@ action publishPost {
 
 	t.Fatal("expected PublishPostInput.post to appear in schema payload")
 }
+
+func TestSchemaEndpointIncludesFrontend(t *testing.T) {
+	requireSQLite3(t)
+
+	app := mustParseApp(t, `
+app Blog
+database "./blog.db"
+
+entity Post {
+  title: String
+}
+
+frontend {
+  screen Home {
+    title "Blog"
+
+    section "Browse" {
+      list Post {
+        title title
+        destination PostDetail
+      }
+    }
+  }
+
+  screen PostDetail for Post {
+    title "Post"
+
+    section {
+      field title
+    }
+  }
+}
+`)
+	app.Database = filepath.Join(t.TempDir(), "mar-schema-frontend.db")
+
+	r, err := New(app)
+	if err != nil {
+		t.Fatalf("runtime.New failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/_mar/schema", nil)
+	r.handleHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /_mar/schema, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode schema response: %v", err)
+	}
+
+	frontend, ok := payload["frontend"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected frontend object, got %#v", payload["frontend"])
+	}
+	screens, ok := frontend["screens"].([]any)
+	if !ok || len(screens) != 2 {
+		t.Fatalf("expected 2 frontend screens, got %#v", frontend["screens"])
+	}
+	first, ok := screens[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first screen object, got %#v", screens[0])
+	}
+	if first["name"] != "Home" || first["title"] != "Blog" {
+		t.Fatalf("unexpected first screen: %#v", first)
+	}
+}

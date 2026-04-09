@@ -194,6 +194,83 @@
       "}"
     ]
   },
+  "Mar Frontend Block": {
+    "prefix": "frontend",
+    "description": "Create an experimental frontend navigation block",
+    "body": [
+      "frontend {",
+      "  screen ${1:Home} {",
+      "    title \"${2:Home}\"",
+      "",
+      "    section \"${3:Browse}\" {",
+      "      link \"${4:Items}\" to ${5:Items}",
+      "    }",
+      "  }",
+      "",
+      "  screen ${5:Items} {",
+      "    title \"${4:Items}\"",
+      "",
+      "    section {",
+      "      list ${6:Item} {",
+      "        title ${7:name}",
+      "        destination ${8:ItemDetail}",
+      "      }",
+      "    }",
+      "  }",
+      "",
+      "  screen ${8:ItemDetail} for ${6:Item} {",
+      "    title \"${9:Item}\"",
+      "",
+      "    section {",
+      "      field ${7:name}",
+      "    }",
+      "  }",
+      "}"
+    ]
+  },
+  "Mar Frontend Screen": {
+    "prefix": "screen",
+    "description": "Create a frontend screen",
+    "body": [
+      "screen ${1:ScreenName}${2: for EntityName} {",
+      "  title \"${3:Screen title}\"",
+      "",
+      "  section {",
+      "    ${4:field name}",
+      "  }",
+      "}"
+    ]
+  },
+  "Mar Frontend Section": {
+    "prefix": "section",
+    "description": "Create a frontend section",
+    "body": [
+      "section \"${1:Section}\" {",
+      "  ${2:field name}",
+      "}"
+    ]
+  },
+  "Mar Frontend List": {
+    "prefix": "frontlist",
+    "description": "Create a frontend entity list",
+    "body": [
+      "list ${1:Entity} {",
+      "  title ${2:name}",
+      "  ${3:subtitle description}",
+      "  destination ${4:EntityDetail}",
+      "}"
+    ]
+  },
+  "Mar Frontend Children": {
+    "prefix": "children",
+    "description": "Create a frontend child list from belongs_to",
+    "body": [
+      "children ${1:Comment} by ${2:post} {",
+      "  title ${3:body}",
+      "  ${4:destination CommentDetail}",
+      "}"
+    ]
+  },
   "Mar Action Block": {
     "prefix": "action",
     "description": "Create an action block with typed input and write steps",

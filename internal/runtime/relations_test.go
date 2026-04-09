@@ -102,6 +102,54 @@ entity Enrollment {
 	}
 }
 
+func TestListSupportsQueryFiltersByEntityField(t *testing.T) {
+	requireSQLite3(t)
+
+	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "list-query-filters.db"), `
+app PetCareLog
+
+entity Clinic {
+  name: String
+  authorize read, create, update, delete when anonymous or user_authenticated
+}
+
+entity Veterinarian {
+  name: String
+  belongs_to clinic: Clinic
+  authorize read, create, update, delete when anonymous or user_authenticated
+}
+`)
+
+	if rec := doRuntimeRequest(r, http.MethodPost, "/clinics", `{"name":"Downtown"}`, ""); rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 when creating clinic 1, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doRuntimeRequest(r, http.MethodPost, "/clinics", `{"name":"West Side"}`, ""); rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 when creating clinic 2, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doRuntimeRequest(r, http.MethodPost, "/veterinarians", `{"name":"Ana","clinic":1}`, ""); rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 when creating veterinarian 1, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doRuntimeRequest(r, http.MethodPost, "/veterinarians", `{"name":"Bruno","clinic":2}`, ""); rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 when creating veterinarian 2, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec := doRuntimeRequest(r, http.MethodGet, "/veterinarians?clinic=1", "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 when filtering veterinarians, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var rows []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("decode list response failed: %v body=%s", err, rec.Body.String())
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 filtered veterinarian, got %d body=%s", len(rows), rec.Body.String())
+	}
+	if rows[0]["name"] != "Ana" {
+		t.Fatalf("expected filtered veterinarian Ana, got %#v", rows[0])
+	}
+}
+
 func TestReadAuthorizationFiltersListAndProtectsGet(t *testing.T) {
 	requireSQLite3(t)
 
