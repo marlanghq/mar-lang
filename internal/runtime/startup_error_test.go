@@ -85,9 +85,13 @@ SQLite cannot add this foreign key with ALTER TABLE, so Mar does not migrate it 
 Hint:
   Migrate the table manually, then restart the app.
   Suggested Manual Migration SQL:
+    BEGIN TRANSACTION;
+
     CREATE TABLE vet_visits_new (
       "id" INTEGER PRIMARY KEY AUTOINCREMENT
-    );`), "")
+    );
+
+    COMMIT;`), "")
 
 	_ = writer.Close()
 	var buf bytes.Buffer
@@ -105,8 +109,51 @@ Hint:
 	if !strings.Contains(output, "Suggested manual migration SQL:") {
 		t.Fatalf("expected sql hint title, got:\n%s", output)
 	}
+	if !strings.Contains(output, "BEGIN TRANSACTION;") {
+		t.Fatalf("expected transactional sql hint, got:\n%s", output)
+	}
 	if !strings.Contains(output, "Migrate vet_visits manually, then restart the app.") {
 		t.Fatalf("expected table-specific hint, got:\n%s", output)
+	}
+}
+
+func TestPrintStartupErrorFormatsNullabilityMigrationBlock(t *testing.T) {
+	original := os.Stderr
+	reader, writer, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatalf("pipe failed: %v", pipeErr)
+	}
+	os.Stderr = writer
+	t.Cleanup(func() {
+		os.Stderr = original
+	})
+
+	PrintStartupError(
+		assertAsError(`migration blocked for Estudante.dataNascimento: nullability changed from required to optional in table estudantes`),
+		"",
+	)
+
+	_ = writer.Close()
+	var buf bytes.Buffer
+	if _, copyErr := io.Copy(&buf, reader); copyErr != nil {
+		t.Fatalf("copy failed: %v", copyErr)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Database field: required") {
+		t.Fatalf("expected database nullability detail, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Mar field: optional") {
+		t.Fatalf("expected mar nullability detail, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Suggested manual migration SQL:") {
+		t.Fatalf("expected sql hint title, got:\n%s", output)
+	}
+	if !strings.Contains(output, "BEGIN TRANSACTION;") {
+		t.Fatalf("expected transactional sql hint, got:\n%s", output)
+	}
+	if !strings.Contains(output, "make dataNascimento optional") {
+		t.Fatalf("expected field-specific nullability comment, got:\n%s", output)
 	}
 }
 

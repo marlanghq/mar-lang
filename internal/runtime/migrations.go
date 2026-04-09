@@ -231,6 +231,15 @@ func (r *Runtime) migrateEntityTable(entity *model.Entity) error {
 			}
 			continue
 		}
+		if ok && hasNullabilityChange(&field, row) {
+			hasRows, err := r.tableHasRows(entity.Table)
+			if err != nil {
+				return err
+			}
+			if !hasRows {
+				return r.rebuildEmptyEntityTable(entity)
+			}
+		}
 		if err := assertCompatibleColumn(entity.Name, entity.Table, &field, row); err != nil {
 			return err
 		}
@@ -242,6 +251,35 @@ func (r *Runtime) migrateEntityTable(entity *model.Entity) error {
 		}
 	}
 	return nil
+}
+
+func hasNullabilityChange(field *model.Field, existing tableInfoRow) bool {
+	if field == nil || field.Primary {
+		return false
+	}
+	existingNotNull := existing.NotNull == 1
+	expectedNotNull := !field.Optional
+	return existingNotNull != expectedNotNull
+}
+
+func (r *Runtime) rebuildEmptyEntityTable(entity *model.Entity) error {
+	if entity == nil {
+		return nil
+	}
+	table, _ := quoteIdentifier(entity.Table)
+	if _, err := r.DB.Exec("DROP TABLE " + table); err != nil {
+		return err
+	}
+
+	cols := make([]string, 0, len(entity.Fields))
+	for _, field := range entity.Fields {
+		cols = append(cols, r.entityColumnDefinition(entity, &field))
+	}
+	sqlText := fmt.Sprintf("CREATE TABLE %s (%s);", table, strings.Join(cols, ", "))
+	if _, err := r.DB.Exec(sqlText); err != nil {
+		return err
+	}
+	return r.recordMigration(entity.Table, "recreate_empty_table", sqlText)
 }
 
 func sqliteToInt(v any) int64 {
@@ -383,10 +421,24 @@ func assertCompatibleColumn(entityName, tableName string, field *model.Field, ex
 		existingNotNull := existing.NotNull == 1
 		expectedNotNull := !field.Optional
 		if existingNotNull != expectedNotNull {
-			return fmt.Errorf("migration blocked for %s.%s: nullability changed in table %s", entityName, field.Name, tableName)
+			return fmt.Errorf(
+				"migration blocked for %s.%s: nullability changed from %s to %s in table %s",
+				entityName,
+				field.Name,
+				nullabilityLabel(existingNotNull),
+				nullabilityLabel(expectedNotNull),
+				tableName,
+			)
 		}
 	}
 	return nil
+}
+
+func nullabilityLabel(required bool) string {
+	if required {
+		return "required"
+	}
+	return "optional"
 }
 
 func (r *Runtime) entityColumnDefinition(entity *model.Entity, field *model.Field) string {
@@ -510,6 +562,8 @@ func (r *Runtime) manualRelationMigrationSQL(entity *model.Entity, relationField
 
 	return strings.Join(
 		[]string{
+			"BEGIN TRANSACTION;",
+			"",
 			"CREATE TABLE " + newTableName + " (",
 			strings.Join(columnDefs, ",\n"),
 			");",
@@ -520,6 +574,8 @@ func (r *Runtime) manualRelationMigrationSQL(entity *model.Entity, relationField
 			"",
 			"DROP TABLE " + entity.Table + ";",
 			"ALTER TABLE " + newTableName + " RENAME TO " + entity.Table + ";",
+			"",
+			"COMMIT;",
 		},
 		"\n",
 	)

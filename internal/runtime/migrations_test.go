@@ -249,6 +249,89 @@ entity Book {
 	}
 }
 
+func TestMigrationsAllowNullabilityChangeWhenTableIsEmpty(t *testing.T) {
+	requireSQLite3(t)
+
+	dbPath := filepath.Join(t.TempDir(), "migration-nullability-empty.db")
+
+	appV1 := mustParseApp(t, `
+app MigrationApi
+
+entity Student {
+  birthDate: Date
+}
+`)
+	appV1.Database = dbPath
+	if _, err := New(appV1); err != nil {
+		t.Fatalf("runtime.New(v1) failed: %v", err)
+	}
+
+	appV2 := mustParseApp(t, `
+app MigrationApi
+
+entity Student {
+  birthDate: Date optional
+}
+`)
+	appV2.Database = dbPath
+	if _, err := New(appV2); err != nil {
+		t.Fatalf("runtime.New(v2) failed: %v", err)
+	}
+
+	db := sqlitecli.Open(dbPath)
+	rows, err := db.QueryRows(`PRAGMA table_info("students")`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info failed: %v", err)
+	}
+	birthDate, ok := findColumn(rows, "birthDate")
+	if !ok {
+		t.Fatalf("expected birthDate column in students table, got rows: %+v", rows)
+	}
+	if got := int64Value(birthDate["notnull"]); got != 0 {
+		t.Fatalf("expected birthDate to be nullable, got notnull=%d", got)
+	}
+}
+
+func TestMigrationsBlockNullabilityChangeWhenTableHasRows(t *testing.T) {
+	requireSQLite3(t)
+
+	dbPath := filepath.Join(t.TempDir(), "migration-nullability-block.db")
+
+	appV1 := mustParseApp(t, `
+app MigrationApi
+
+entity Student {
+  birthDate: Date
+}
+`)
+	appV1.Database = dbPath
+	r1, err := New(appV1)
+	if err != nil {
+		t.Fatalf("runtime.New(v1) failed: %v", err)
+	}
+	if _, err := r1.DB.Exec(`INSERT INTO students (birthDate, created_at, updated_at) VALUES (?, ?, ?)`, int64(0), int64(1), int64(1)); err != nil {
+		t.Fatalf("seed insert failed: %v", err)
+	}
+
+	appV2 := mustParseApp(t, `
+app MigrationApi
+
+entity Student {
+  birthDate: Date optional
+}
+`)
+	appV2.Database = dbPath
+	_, err = New(appV2)
+	if err == nil {
+		t.Fatal("expected migration to block nullability change")
+	}
+
+	msg := err.Error()
+	if !strings.Contains(msg, "nullability changed from required to optional") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
 func TestMigrationsCreateForeignKeyForNewRelationTable(t *testing.T) {
 	requireSQLite3(t)
 

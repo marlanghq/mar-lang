@@ -9,13 +9,13 @@ import (
 )
 
 var (
-	typeChangeRe   = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): type changed from ([^ ]+) to ([^ ]+) in table ([^ ]+)$`)
-	pkChangeRe     = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): primary key shape changed in table ([^ ]+)$`)
-	nullChangeRe   = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): nullability changed in table ([^ ]+)$`)
-	addRequiredRe  = regexp.MustCompile(`^migration blocked for entity ([^:]+): cannot auto-add required field "([^"]+)" \(([^)]+)\) to existing table ([^ ]+)$`)
-	addPrimaryRe   = regexp.MustCompile(`^migration blocked for entity ([^:]+): cannot auto-add primary/auto field "([^"]+)" to existing table ([^ ]+)$`)
-	internalStrict = regexp.MustCompile(`^migration blocked for internal table ([^:]+): cannot auto-add strict column "([^"]+)"$`)
-	uniqueIndexRe  = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): duplicate values prevent unique index creation in table ([^ ]+)$`)
+	typeChangeRe    = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): type changed from ([^ ]+) to ([^ ]+) in table ([^ ]+)$`)
+	pkChangeRe      = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): primary key shape changed in table ([^ ]+)$`)
+	nullChangeRe    = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): nullability changed from ([^ ]+) to ([^ ]+) in table ([^ ]+)$`)
+	addRequiredRe   = regexp.MustCompile(`^migration blocked for entity ([^:]+): cannot auto-add required field "([^"]+)" \(([^)]+)\) to existing table ([^ ]+)$`)
+	addPrimaryRe    = regexp.MustCompile(`^migration blocked for entity ([^:]+): cannot auto-add primary/auto field "([^"]+)" to existing table ([^ ]+)$`)
+	internalStrict  = regexp.MustCompile(`^migration blocked for internal table ([^:]+): cannot auto-add strict column "([^"]+)"$`)
+	uniqueIndexRe   = regexp.MustCompile(`^migration blocked for ([^.]+)\.([^:]+): duplicate values prevent unique index creation in table ([^ ]+)$`)
 	relationBlockRe = regexp.MustCompile(`^migration blocked for entity ([^:]+): table "([^"]+)" already exists, and relation "([^"]+)" requires a foreign key ([^.]+)\.([^ ]+) -> ([^.]+)\.([^\n]+)`)
 )
 
@@ -32,12 +32,14 @@ const (
 )
 
 type migrationBlockedInfo struct {
-	Kind         migrationBlockedKind
-	Entity       string
-	Field        string
-	Table        string
-	CurrentType  string
-	ExpectedType string
+	Kind          migrationBlockedKind
+	Entity        string
+	Field         string
+	Table         string
+	CurrentType   string
+	ExpectedType  string
+	CurrentShape  string
+	ExpectedShape string
 }
 
 type startupDetail struct {
@@ -116,12 +118,30 @@ func PrintStartupError(err error, _ string) {
 	if info.Kind == blockedTypeChange {
 		fmt.Fprintf(os.Stderr, "  %s %s\n", colorize(useColor, cyan, "Database type:"), info.CurrentType)
 		fmt.Fprintf(os.Stderr, "  %s %s\n", colorize(useColor, cyan, "Mar type:"), info.ExpectedType)
+	} else if info.Kind == blockedNullChange {
+		fmt.Fprintf(os.Stderr, "  %s %s\n", colorize(useColor, cyan, "Database field:"), info.CurrentShape)
+		fmt.Fprintf(os.Stderr, "  %s %s\n", colorize(useColor, cyan, "Mar field:"), info.ExpectedShape)
 	}
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, colorize(useColor, yellow, "Hint:"))
 	if info.Kind == blockedUniqueIndex {
 		fmt.Fprintln(os.Stderr, "  Remove duplicate values for this field in the current database.")
+	} else if info.Kind == blockedNullChange && info.Field != "" && info.Table != "" {
+		fmt.Fprintln(os.Stderr, "  This change usually requires rebuilding the table in SQLite.")
+		fmt.Fprintln(os.Stderr, "  Migrate the table manually, then restart the app.")
+		fmt.Fprintf(os.Stderr, "  %s\n", colorize(useColor, yellow, "Suggested manual migration SQL:"))
+		for _, line := range strings.Split(manualNullabilityMigrationSQL(info), "\n") {
+			if strings.TrimSpace(line) == "" {
+				fmt.Fprintln(os.Stderr)
+				continue
+			}
+			formatted := line
+			if useColor {
+				formatted = colorizeSQLLine(formatted, "\033[38;5;141m", "\033[38;5;110m", "\033[38;5;179m")
+			}
+			fmt.Fprintf(os.Stderr, "    %s\n", formatted)
+		}
 	} else if info.Kind == blockedAddRequired && info.Field != "" && info.ExpectedType != "" {
 		optionalExample := colorizedFieldExample(useColor, info.Field, info.ExpectedType, "optional", "")
 		defaultExample := colorizedFieldExample(useColor, info.Field, info.ExpectedType, "default", suggestedDefaultLiteral(info.ExpectedType))
@@ -133,6 +153,29 @@ func PrintStartupError(err error, _ string) {
 		fmt.Fprintln(os.Stderr, "  Run a manual SQL migration, or update your Mar schema to match the current database.")
 	}
 	fmt.Fprintln(os.Stderr)
+}
+
+func manualNullabilityMigrationSQL(info migrationBlockedInfo) string {
+	newTableName := info.Table + "_new"
+	return strings.Join(
+		[]string{
+			"BEGIN TRANSACTION;",
+			"",
+			"CREATE TABLE " + newTableName + " (",
+			"  /* copy the current columns from " + info.Table + ", but make " + info.Field + " " + info.ExpectedShape + " */",
+			");",
+			"",
+			"INSERT INTO " + newTableName,
+			"SELECT *",
+			"FROM " + info.Table + ";",
+			"",
+			"DROP TABLE " + info.Table + ";",
+			"ALTER TABLE " + newTableName + " RENAME TO " + info.Table + ";",
+			"",
+			"COMMIT;",
+		},
+		"\n",
+	)
 }
 
 func colorizedFieldExample(useColor bool, fieldName, fieldType, modifier, literal string) string {
@@ -284,6 +327,8 @@ func colorizeSQLLine(line, keywordColor, identifierColor, commentColor string) s
 	})
 
 	replacer := strings.NewReplacer(
+		"BEGIN TRANSACTION", colorize(true, keywordColor, "BEGIN TRANSACTION"),
+		"COMMIT", colorize(true, keywordColor, "COMMIT"),
 		"CREATE TABLE", colorize(true, keywordColor, "CREATE TABLE"),
 		"INSERT INTO", colorize(true, keywordColor, "INSERT INTO"),
 		"SELECT", colorize(true, keywordColor, "SELECT"),
@@ -341,12 +386,14 @@ func parseMigrationBlocked(msg string) (migrationBlockedInfo, bool) {
 			Table:  m[3],
 		}, true
 	}
-	if m := nullChangeRe.FindStringSubmatch(msg); len(m) == 4 {
+	if m := nullChangeRe.FindStringSubmatch(msg); len(m) == 6 {
 		return migrationBlockedInfo{
-			Kind:   blockedNullChange,
-			Entity: m[1],
-			Field:  m[2],
-			Table:  m[3],
+			Kind:          blockedNullChange,
+			Entity:        m[1],
+			Field:         m[2],
+			CurrentShape:  m[3],
+			ExpectedShape: m[4],
+			Table:         m[5],
 		}, true
 	}
 	if m := addRequiredRe.FindStringSubmatch(msg); len(m) == 5 {
