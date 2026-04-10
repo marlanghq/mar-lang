@@ -77,8 +77,8 @@ func (r *Runtime) schemaPayload(requestID string) map[string]any {
 		}
 		payload["actions"] = actions
 	}
-	if r.App.Frontend != nil {
-		payload["frontend"] = r.App.Frontend
+	if r.App.Screens != nil {
+		payload["screens"] = r.App.Screens
 	}
 	cfg := r.authConfig()
 	needsBootstrap := false

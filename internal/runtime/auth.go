@@ -626,7 +626,6 @@ func (r *Runtime) handleAuthLogin(w http.ResponseWriter, req *http.Request, requ
 		"expiresAt": sessionExpiresAt,
 		"email":     email,
 		"role":      loginRole,
-		"user":      decodedUser,
 	})
 	return nil
 }

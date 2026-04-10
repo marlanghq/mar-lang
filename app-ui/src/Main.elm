@@ -15,7 +15,7 @@ import Html.Events as HtmlEvents
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
-import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), FrontendActionValueInfo, FrontendFormFieldInfo, FrontendInfo, FrontendItemInfo, FrontendReportMetricInfo, FrontendScreenInfo, FrontendSectionInfo, FrontendToolbarItemInfo, InputAliasField, InputAliasInfo, Row, Schema, decodeRows, decodeSchema, encodePayload, encodeSchema, fieldSchemaLabel, fieldTypeLabel, formatDateInputMillis, formatDateTimeInputMillis, parseDateInput, parseDateTimeInput, rowDecoder, valueToDisplayString, valueToString)
+import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), FrontendActionValueInfo, FrontendFormFieldInfo, FrontendInfo, FrontendItemInfo, FrontendReportMetricInfo, FrontendScreenInfo, FrontendSectionInfo, FrontendToolbarItemInfo, InputAliasField, InputAliasInfo, Row, Schema, decodeRows, decodeSchema, encodePayload, fieldSchemaLabel, fieldTypeLabel, formatDateInputMillis, formatDateTimeInputMillis, parseDateInput, parseDateTimeInput, rowDecoder, valueToDisplayString, valueToString)
 import Task
 import Time
 import Url exposing (Url)
@@ -32,9 +32,6 @@ type alias Flags =
 
 
 port saveSession : Encode.Value -> Cmd msg
-
-
-port saveSchemaCache : Encode.Value -> Cmd msg
 
 
 type Remote a
@@ -704,7 +701,7 @@ applyCurrentRoute model =
         RouteDefault AppWorkspace ->
             case model.schema of
                 Loaded schema ->
-                    case schema.frontend of
+                    case schema.screens of
                         Just frontend ->
                             applyFrontendDefaultRoute schema frontend model
 
@@ -831,7 +828,7 @@ applyAppFrontendOr : Model -> (() -> ( Model, Cmd Msg )) -> ( Model, Cmd Msg )
 applyAppFrontendOr model fallback =
     case model.schema of
         Loaded schema ->
-            case schema.frontend of
+            case schema.screens of
                 Just frontend ->
                     applyFrontendDefaultRoute schema frontend model
 
@@ -1222,7 +1219,7 @@ update msg model =
                                         == ""
                             }
                     in
-                    ( nextModel, Cmd.batch [ loadAuthMe AppAuthScope nextModel, saveSchemaCachePayload nextModel.currentSchemaVersion schema ] )
+                    ( nextModel, loadAuthMe AppAuthScope nextModel )
 
                 Err httpError ->
                     withObservedSchemaVersionFromError httpError
@@ -1249,7 +1246,7 @@ update msg model =
                                 , schemaRefreshNotice = Nothing
                               }
                     in
-                    ( nextModel, saveSchemaCachePayload nextModel.pendingSchemaVersion refreshedSchema )
+                    ( nextModel, Cmd.none )
 
                 Err httpError ->
                     withObservedSchemaVersionFromError httpError
@@ -1334,7 +1331,7 @@ update msg model =
             in
             case promotedModel.schema of
                 Loaded schema ->
-                    case schema.frontend |> Maybe.andThen (findFrontendScreen screenName) of
+                    case schema.screens |> Maybe.andThen (findFrontendScreen screenName) of
                         Just screen ->
                             let
                                 nextModel =
@@ -1366,7 +1363,7 @@ update msg model =
             in
             case promotedModel.schema of
                 Loaded schema ->
-                    case schema.frontend |> Maybe.andThen (findFrontendScreen screenName) of
+                    case schema.screens |> Maybe.andThen (findFrontendScreen screenName) of
                         Just screen ->
                             let
                                 nextModel =
@@ -1551,7 +1548,7 @@ update msg model =
             in
             case promotedModel.schema of
                 Loaded schema ->
-                    case schema.frontend of
+                    case schema.screens of
                         Just frontend ->
                             let
                                 ( nextModel, loadCmd ) =
@@ -2224,7 +2221,7 @@ update msg model =
                     if model.frontendCreateEntity /= Nothing then
                         case model.schema of
                             Loaded schema ->
-                                case currentFrontendLocation model |> Maybe.andThen (\location -> schema.frontend |> Maybe.andThen (findFrontendScreen location.screen) |> Maybe.map (\screen -> ( screen, location.row ))) of
+                                case currentFrontendLocation model |> Maybe.andThen (\location -> schema.screens |> Maybe.andThen (findFrontendScreen location.screen) |> Maybe.map (\screen -> ( screen, location.row ))) of
                                     Just ( screen, maybeRow ) ->
                                         let
                                             frontendModel =
@@ -2703,7 +2700,7 @@ reloadCurrentFrontendRows : Model -> Cmd Msg
 reloadCurrentFrontendRows model =
     case ( model.schema, currentFrontendLocation model ) of
         ( Loaded schema, Just location ) ->
-            case schema.frontend |> Maybe.andThen (findFrontendScreen location.screen) of
+            case schema.screens |> Maybe.andThen (findFrontendScreen location.screen) of
                 Just screen ->
                     ensureFrontendRowsForScreen model schema screen location.row
 
@@ -3217,11 +3214,7 @@ apiErrorDecoder =
             , Decode.succeed Nothing
             ]
         )
-        (Decode.oneOf
-            [ Decode.field "error" Decode.string
-            , Decode.field "message" Decode.string
-            ]
-        )
+        (Decode.field "message" Decode.string)
         (Decode.succeed Nothing)
 
 
@@ -3295,16 +3288,12 @@ loginResponseDecoder =
         (Decode.oneOf
             [ Decode.field "role" (Decode.map Just Decode.string)
             , Decode.field "role" (Decode.null Nothing)
-            , Decode.at [ "user", "role" ] (Decode.map Just Decode.string)
-            , Decode.at [ "user", "role" ] (Decode.null Nothing)
             , Decode.succeed Nothing
             ]
         )
         (Decode.oneOf
             [ Decode.field "email" (Decode.map Just Decode.string)
             , Decode.field "email" (Decode.null Nothing)
-            , Decode.at [ "user", "email" ] (Decode.map Just Decode.string)
-            , Decode.at [ "user", "email" ] (Decode.null Nothing)
             , Decode.succeed Nothing
             ]
         )
@@ -3612,7 +3601,7 @@ currentFrontendEditableContext : Model -> Maybe ( Entity, Row )
 currentFrontendEditableContext model =
     case ( model.schema, currentFrontendLocation model ) of
         ( Loaded schema, Just location ) ->
-            case ( location.row, schema.frontend |> Maybe.andThen (findFrontendScreen location.screen) |> Maybe.andThen (\screen -> screen.forEntity |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema)) ) of
+            case ( location.row, schema.screens |> Maybe.andThen (findFrontendScreen location.screen) |> Maybe.andThen (\screen -> screen.forEntity |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema)) ) of
                 ( Just rowValue, Just entity ) ->
                     Just ( entity, rowValue )
 
@@ -4577,7 +4566,7 @@ frontendParentRelationLabel schema model location relationEntityName rawId =
                 Nothing
 
             else
-                case ( parent.row, schema.frontend |> Maybe.andThen (findFrontendScreen parent.screen) |> Maybe.andThen (\screen -> screen.forEntity) |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema) ) of
+                case ( parent.row, schema.screens |> Maybe.andThen (findFrontendScreen parent.screen) |> Maybe.andThen (\screen -> screen.forEntity) |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema) ) of
                     ( Just parentRow, Just parentEntity ) ->
                         if parentEntity.name /= relationEntityName then
                             Nothing
@@ -6176,16 +6165,12 @@ viewSidebar model =
                 , if workspace == AppWorkspace && not (isAdminProfile model) then
                     none
 
-                  else
+                  else if workspace == AppWorkspace then
                     el [ Font.size 13, Font.color sidebarSubtitleColor ]
-                        (text
-                            (if workspace == AppWorkspace then
-                                "App workspace"
+                        (text "App workspace")
 
-                             else
-                                "System workspace"
-                            )
-                        )
+                  else
+                    none
                 ]
             , if workspace == AdminWorkspace && not (List.isEmpty authEntities) then
                 el (cupertinoSectionHeaderAttrs ++ [ Font.color sidebarSectionColor ])
@@ -8028,23 +8013,6 @@ saveSessionFromModel model =
         )
 
 
-saveSchemaCachePayload : Maybe String -> Schema -> Cmd Msg
-saveSchemaCachePayload maybeVersion schema =
-    saveSchemaCache
-        (Encode.object
-            [ ( "schemaVersion"
-              , case maybeVersion of
-                    Just version ->
-                        Encode.string version
-
-                    Nothing ->
-                        Encode.null
-              )
-            , ( "schema", encodeSchema schema )
-            ]
-        )
-
-
 promotePendingSchemaForNavigation : Model -> Model
 promotePendingSchemaForNavigation model =
     case model.pendingSchema of
@@ -8400,7 +8368,7 @@ isFrontendWorkspaceActive model =
         == AppWorkspace
         && (case ( model.schema, model.frontendStack ) of
                 ( Loaded schema, _ :: _ ) ->
-                    schema.frontend /= Nothing
+                    schema.screens /= Nothing
 
                 _ ->
                     False
@@ -8411,7 +8379,7 @@ appWorkspaceHasFrontend : Model -> Bool
 appWorkspaceHasFrontend model =
     case model.schema of
         Loaded schema ->
-            schema.frontend /= Nothing
+            schema.screens /= Nothing
 
         _ ->
             False
@@ -8438,7 +8406,7 @@ viewFrontendWorkspace model =
                     ]
 
             else
-                case ( schema.frontend, currentFrontendLocation model ) of
+                case ( schema.screens, currentFrontendLocation model ) of
                     ( Just frontend, Just location ) ->
                         case findFrontendScreen location.screen frontend of
                             Just screen ->
@@ -8448,7 +8416,7 @@ viewFrontendWorkspace model =
                                 paragraph [ Font.color (rgb255 176 60 46) ] [ text "Screen not found." ]
 
                     _ ->
-                        paragraph [] [ text "No frontend screen available." ]
+                        paragraph [] [ text "No screen available." ]
 
         _ ->
             paragraph [] [ text "Loading..." ]
@@ -10043,7 +10011,7 @@ viewRequestLogEntry entry =
                     "queries"
 
         querySummary =
-            "DB " ++ String.fromInt entry.queryCount ++ " " ++ queryLabel ++ ", " ++ formatMs entry.queryTimeMs
+            String.fromInt entry.queryCount ++ " database " ++ queryLabel ++ " in " ++ formatMs entry.queryTimeMs
 
         userSummary =
             case ( entry.userEmail, entry.userRole ) of
@@ -10071,10 +10039,12 @@ viewRequestLogEntry entry =
         (cupertinoInsetCardAttrs 12 ++ [ width fill, spacing 8 ])
         (List.concat
             [ [ el [ Font.size 12, Font.bold, Font.color (rgb255 70 80 96) ] (text (dateText ++ " " ++ timeText))
-              , el [ Font.size 13, Font.bold, Font.color (rgb255 44 56 72) ] (text (entry.method ++ " " ++ entry.path))
+              , paragraph [ Font.size 13, Font.bold, Font.color (rgb255 44 56 72) ]
+                    [ text (entry.method ++ " " ++ entry.path ++ "  ")
+                    , el [ Font.color statusColor, Font.bold ] (text (String.fromInt entry.status))
+                    ]
               , paragraph [ Font.size 12, Font.color (rgb255 93 103 120) ]
-                    [ el [ Font.color statusColor, Font.bold ] (text (String.fromInt entry.status))
-                    , text (" · Total " ++ formatMs entry.durationMs ++ " · " ++ querySummary)
+                    [ text ("Total: " ++ formatMs entry.durationMs ++ ", " ++ querySummary)
                     ]
               ]
             , if String.trim userSummary /= "" then

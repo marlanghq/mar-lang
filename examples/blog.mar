@@ -128,7 +128,7 @@ action addComment {
   }
 }
 
-frontend {
+screens {
   screen Home {
     title "Blogs"
 

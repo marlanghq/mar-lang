@@ -250,7 +250,7 @@ struct ShellView: View {
     let client: MarAPIClient
 
     var body: some View {
-        if let frontend = schema.frontend, let firstScreen = frontend.screens.first {
+        if let frontend = schema.screens, let firstScreen = frontend.screens.first {
             NavigationStack {
                 FrontendScreenView(screen: firstScreen, row: nil, parentEntity: nil, parentRow: nil, schema: schema, client: client, model: model)
             }
@@ -565,7 +565,7 @@ private struct FrontendItemView: View {
         case "link":
             if frontendCondition(item.filter, row: row, model: model),
                let targetName = item.target,
-               let target = schema.frontend?.screens.first(where: { $0.name == targetName }) {
+               let target = schema.screens?.screens.first(where: { $0.name == targetName }) {
                 NavigationLink {
                     LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
                         FrontendScreenView(screen: target, row: nil, parentEntity: screenEntity, parentRow: row, schema: liveSchema, client: client, model: model)
@@ -1086,7 +1086,7 @@ private struct FrontendRowsView: View {
 
     private var destinationScreen: FrontendScreenInfo? {
         guard let destinationName = item.destination else { return nil }
-        return schema.frontend?.screens.first(where: { $0.name == destinationName })
+        return schema.screens?.screens.first(where: { $0.name == destinationName })
     }
 
     private var emptyRowsLabel: String {

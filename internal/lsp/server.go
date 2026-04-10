@@ -418,7 +418,7 @@ func keywordCompletionItems() []map[string]any {
 		"ios",
 		"system",
 		"public",
-		"frontend",
+		"screens",
 		"screen",
 		"section",
 		"link",

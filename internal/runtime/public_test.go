@@ -277,6 +277,47 @@ entity Todo {
 	}
 }
 
+func TestAppUIIndexEmbedsBootstrapSchemaAndVersion(t *testing.T) {
+	requireSQLite3(t)
+
+	app := mustParseApp(t, `
+app FrontApi
+database "./front.db"
+
+entity Todo {
+  title: String
+}
+`)
+	app.Database = filepath.Join(t.TempDir(), "mar-app-ui-bootstrap.db")
+
+	r, err := New(app)
+	if err != nil {
+		t.Fatalf("runtime.New failed: %v", err)
+	}
+	r.SetVersionInfo(VersionInfo{ManifestHash: "sha256:testhash"})
+	r.SetAppUIFiles(fstest.MapFS{
+		"index.html":  &fstest.MapFile{Data: []byte(`<html><body><script id="mar-bootstrap" type="application/json">__MAR_BOOTSTRAP_JSON__</script></body></html>`)},
+		"dist/app.js": &fstest.MapFile{Data: []byte("console.log('app-ui')")},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/_mar", nil)
+	r.handleHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /_mar, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "__MAR_BOOTSTRAP_JSON__") {
+		t.Fatalf("expected bootstrap placeholder to be replaced, got %q", body)
+	}
+	if !strings.Contains(body, `"appName":"FrontApi"`) {
+		t.Fatalf("expected embedded schema app name, got %q", body)
+	}
+	if !strings.Contains(body, `"manifestHash":"sha256:testhash"`) {
+		t.Fatalf("expected embedded manifest hash, got %q", body)
+	}
+}
+
 func TestSchemaEndpointIncludesEnumValues(t *testing.T) {
 	requireSQLite3(t)
 
@@ -483,7 +524,7 @@ entity Post {
   title: String
 }
 
-frontend {
+screens {
   screen Home {
     title "Blog"
 
@@ -523,13 +564,13 @@ frontend {
 		t.Fatalf("failed to decode schema response: %v", err)
 	}
 
-	frontend, ok := payload["frontend"].(map[string]any)
+	screensPayload, ok := payload["screens"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected frontend object, got %#v", payload["frontend"])
+		t.Fatalf("expected screens object, got %#v", payload["screens"])
 	}
-	screens, ok := frontend["screens"].([]any)
+	screens, ok := screensPayload["screens"].([]any)
 	if !ok || len(screens) != 2 {
-		t.Fatalf("expected 2 frontend screens, got %#v", frontend["screens"])
+		t.Fatalf("expected 2 screens, got %#v", screensPayload["screens"])
 	}
 	first, ok := screens[0].(map[string]any)
 	if !ok {

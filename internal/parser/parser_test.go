@@ -277,7 +277,7 @@ entity Todo {
 	}
 }
 
-func TestParseSupportsFrontendScreens(t *testing.T) {
+func TestParseSupportsScreens(t *testing.T) {
 	src := `
 app PersonalBlogs
 
@@ -310,7 +310,7 @@ action createPost {
   }
 }
 
-frontend {
+screens {
   screen Home {
     title "Blogs"
 
@@ -368,20 +368,20 @@ frontend {
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	if app.Frontend == nil {
-		t.Fatal("expected frontend block to be parsed")
+	if app.Screens == nil {
+		t.Fatal("expected screens block to be parsed")
 	}
-	if len(app.Frontend.Screens) != 4 {
-		t.Fatalf("expected 4 frontend screens, got %d", len(app.Frontend.Screens))
+	if len(app.Screens.Screens) != 4 {
+		t.Fatalf("expected 4 screens, got %d", len(app.Screens.Screens))
 	}
-	home := app.Frontend.Screens[0]
+	home := app.Screens.Screens[0]
 	if home.Name != "Home" || home.Title != "Blogs" {
 		t.Fatalf("unexpected home screen: %+v", home)
 	}
 	if got := home.Sections[0].Items[1]; got.Kind != "link" || got.Target != "MyBlog" || got.Filter != "user_authenticated" {
 		t.Fatalf("unexpected filtered link: %+v", got)
 	}
-	blogDetail := app.Frontend.Screens[3]
+	blogDetail := app.Screens.Screens[3]
 	if blogDetail.Name != "BlogDetail" || blogDetail.ForEntity != "Blog" {
 		t.Fatalf("unexpected blog detail screen: %+v", blogDetail)
 	}
@@ -408,7 +408,7 @@ frontend {
 	}
 }
 
-func TestParseRejectsFrontendChildrenWithWrongRelation(t *testing.T) {
+func TestParseRejectsScreensChildrenWithWrongRelation(t *testing.T) {
 	src := `
 app BadFrontend
 
@@ -420,7 +420,7 @@ entity Post {
   title: String
 }
 
-frontend {
+screens {
   screen BlogDetail for Blog {
     section {
       children Post by blog {
@@ -440,7 +440,27 @@ frontend {
 	}
 }
 
-func TestParseRejectsFrontendDynamicTitleWithoutForEntity(t *testing.T) {
+func TestParseRejectsLegacyFrontendBlock(t *testing.T) {
+	src := `
+app LegacyBlock
+
+frontend {
+  screen Home {
+    title "Home"
+  }
+}
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected Parse to reject legacy frontend block")
+	}
+	if !strings.Contains(err.Error(), "unknown statement \"frontend {\"") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsScreensDynamicTitleWithoutForEntity(t *testing.T) {
 	src := `
 app BadFrontend
 
@@ -448,7 +468,7 @@ entity Pet {
   name: String
 }
 
-frontend {
+screens {
   screen Pets {
     title pet.name
 
@@ -470,7 +490,7 @@ frontend {
 	}
 }
 
-func TestParseFrontendFormFields(t *testing.T) {
+func TestParseScreensFormFields(t *testing.T) {
 	src := `
 app PetCareLog
 
@@ -514,7 +534,7 @@ action createVetVisit {
   }
 }
 
-frontend {
+screens {
   screen PetDetail for Pet {
     title pet.name
 
@@ -547,14 +567,14 @@ frontend {
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	createItem := app.Frontend.Screens[0].Sections[0].Items[0]
+	createItem := app.Screens.Screens[0].Sections[0].Items[0]
 	if len(createItem.FormFields) != 4 {
 		t.Fatalf("expected 4 create form fields, got %+v", createItem.FormFields)
 	}
 	if createItem.FormFields[1].Field != "veterinarian" || createItem.FormFields[1].Filter != "clinic == form.clinic" {
 		t.Fatalf("unexpected create dependent form field: %+v", createItem.FormFields[1])
 	}
-	actionItem := app.Frontend.Screens[0].Sections[0].Items[1]
+	actionItem := app.Screens.Screens[0].Sections[0].Items[1]
 	if len(actionItem.FormFields) != 4 {
 		t.Fatalf("expected 4 action form fields, got %+v", actionItem.FormFields)
 	}
@@ -563,7 +583,7 @@ frontend {
 	}
 }
 
-func TestParseFrontendEditDeleteRequireForEntity(t *testing.T) {
+func TestParseScreensEditDeleteRequireForEntity(t *testing.T) {
 	src := `
 app BadFrontend
 
@@ -571,7 +591,7 @@ entity Clinic {
   name: String
 }
 
-frontend {
+screens {
   screen Clinics {
     title "Clinics"
 
@@ -587,12 +607,12 @@ frontend {
 	if err == nil {
 		t.Fatal("expected Parse to reject edit/delete without screen entity")
 	}
-	if !strings.Contains(err.Error(), "frontend screen Clinics edit requires `screen Clinics for Entity`") {
+	if !strings.Contains(err.Error(), "screen Clinics edit requires `screen Clinics for Entity`") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseFrontendRelationDisplayField(t *testing.T) {
+func TestParseScreensRelationDisplayField(t *testing.T) {
 	src := `
 app PetCareLog
 
@@ -605,7 +625,7 @@ entity Veterinarian {
   belongs_to clinic: Clinic
 }
 
-frontend {
+screens {
   screen VeterinarianDetail for Veterinarian {
     title veterinarian.name
 
@@ -622,13 +642,13 @@ frontend {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 
-	got := app.Frontend.Screens[0].Sections[0].Items[0].Field
+	got := app.Screens.Screens[0].Sections[0].Items[0].Field
 	if got != "clinic.name" {
 		t.Fatalf("expected dotted field path to be preserved, got %q", got)
 	}
 }
 
-func TestParseFrontendEditCustomFormFields(t *testing.T) {
+func TestParseScreensEditCustomFormFields(t *testing.T) {
 	src := `
 app PetCareLog
 
@@ -641,7 +661,7 @@ entity Veterinarian {
   belongs_to clinic: Clinic
 }
 
-frontend {
+screens {
   screen VeterinarianDetail for Veterinarian {
     title veterinarian.name
 
@@ -661,7 +681,7 @@ frontend {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 
-	editItem := app.Frontend.Screens[0].Sections[0].Items[0]
+	editItem := app.Screens.Screens[0].Sections[0].Items[0]
 	if editItem.Kind != "edit" {
 		t.Fatalf("expected edit item, got %+v", editItem)
 	}
@@ -670,7 +690,7 @@ frontend {
 	}
 }
 
-func TestParseFrontendReport(t *testing.T) {
+func TestParseScreensReport(t *testing.T) {
 	src := `
 app PetFoodLog
 
@@ -680,7 +700,7 @@ entity FoodPurchase {
   amountPaid: Float
 }
 
-frontend {
+screens {
   screen Reports {
     title "Reports"
 
@@ -700,7 +720,7 @@ frontend {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 
-	reportItem := app.Frontend.Screens[0].Sections[0].Items[0]
+	reportItem := app.Screens.Screens[0].Sections[0].Items[0]
 	if reportItem.Kind != "report" {
 		t.Fatalf("expected report item, got %+v", reportItem)
 	}
@@ -715,7 +735,7 @@ frontend {
 	}
 }
 
-func TestParseFrontendReportRejectsInvalidMetricField(t *testing.T) {
+func TestParseScreensReportRejectsInvalidMetricField(t *testing.T) {
 	src := `
 app PetFoodLog
 
@@ -724,7 +744,7 @@ entity FoodPurchase {
   note: String
 }
 
-frontend {
+screens {
   screen Reports {
     title "Reports"
 
@@ -747,7 +767,7 @@ frontend {
 	}
 }
 
-func TestParseFrontendToolbarItems(t *testing.T) {
+func TestParseScreensToolbarItems(t *testing.T) {
 	src := `
 app PetFoodLog
 
@@ -756,7 +776,7 @@ entity FoodPurchase {
   amountKg: Float
 }
 
-frontend {
+screens {
   screen FoodPurchases {
     title "Purchases"
 
@@ -786,7 +806,7 @@ frontend {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 
-	listScreen := app.Frontend.Screens[0]
+	listScreen := app.Screens.Screens[0]
 	if len(listScreen.ToolbarItems) != 1 {
 		t.Fatalf("expected 1 list toolbar item, got %+v", listScreen.ToolbarItems)
 	}
@@ -794,7 +814,7 @@ frontend {
 		t.Fatalf("unexpected list toolbar item: %+v", listScreen.ToolbarItems[0])
 	}
 
-	detailScreen := app.Frontend.Screens[1]
+	detailScreen := app.Screens.Screens[1]
 	if len(detailScreen.ToolbarItems) != 1 {
 		t.Fatalf("expected 1 detail toolbar item, got %+v", detailScreen.ToolbarItems)
 	}
@@ -1834,7 +1854,7 @@ entity Student {
 	}
 }
 
-func TestParseFrontendReportErrorUsesOriginalReportLine(t *testing.T) {
+func TestParseScreensReportErrorUsesOriginalReportLine(t *testing.T) {
 	src := `
 app Demo
 
@@ -1850,7 +1870,7 @@ entity FoodPurchase {
   authorize read when user_authenticated
 }
 
-frontend {
+screens {
   screen Reports {
     section "Monthly averages" {
       report FoodPurchase where owner == user_id {
@@ -1866,7 +1886,7 @@ frontend {
 	if err == nil {
 		t.Fatal("expected parse error for unknown identifier in frontend report filter")
 	}
-	if !strings.Contains(err.Error(), `line 19: frontend screen Reports report FoodPurchase: invalid expression "owner == user_id" (unknown identifier "owner")`) {
+	if !strings.Contains(err.Error(), `line 19: screen Reports report FoodPurchase: invalid expression "owner == user_id" (unknown identifier "owner")`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

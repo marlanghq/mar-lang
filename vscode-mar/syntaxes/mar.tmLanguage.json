@@ -126,7 +126,7 @@
         },
         {
           "name": "meta.frontend.declaration.mar",
-          "match": "\\b(frontend)\\s*(\\{)",
+          "match": "\\b(screens)\\s*(\\{)",
           "captures": {
             "1": {
               "name": "keyword.control.declaration.mar"
@@ -469,7 +469,7 @@
       "patterns": [
         {
           "name": "keyword.control.declaration.mar",
-          "match": "\\b(app|port|database|ios|system|public|frontend|screen|section|toolbar|link|to|list|children|report|group|by|metric|label|destination|field|title|subtitle|entity|auth|type|alias|belongs_to|ref|trailing)\\b"
+          "match": "\\b(app|port|database|ios|system|public|screens|screen|section|toolbar|link|to|list|children|report|group|by|metric|label|destination|field|title|subtitle|entity|auth|type|alias|belongs_to|ref|trailing)\\b"
         },
         {
           "name": "keyword.control.rule.mar",

@@ -24,6 +24,14 @@ func TestAuthSessionCookieSupportsAdminFrontendFlow(t *testing.T) {
 		t.Fatalf("expected 200 from /auth/login, got %d body=%s", loginRec.Code, loginRec.Body.String())
 	}
 
+	var loginPayload map[string]any
+	if err := json.Unmarshal(loginRec.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatalf("failed to decode login response: %v body=%s", err, loginRec.Body.String())
+	}
+	if _, exists := loginPayload["user"]; exists {
+		t.Fatalf("expected /auth/login response to omit user payload, got body=%s", loginRec.Body.String())
+	}
+
 	sessionCookie := findCookie(loginRec, sessionCookieName)
 	if sessionCookie == nil {
 		t.Fatalf("expected %s cookie to be set on login", sessionCookieName)

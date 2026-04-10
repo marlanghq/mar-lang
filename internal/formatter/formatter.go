@@ -10,18 +10,19 @@ import (
 )
 
 var (
-	appRe         = regexp.MustCompile(`^app\s+([A-Za-z][A-Za-z0-9_]*)$`)
-	portRe        = regexp.MustCompile(`^port\s+([0-9]{1,5})$`)
-	dbRe          = regexp.MustCompile(`^database\s+"([^"]+)"$`)
-	iosStartRe    = regexp.MustCompile(`^ios\s*\{$`)
-	systemStartRe = regexp.MustCompile(`^system\s*\{$`)
-	publicStartRe = regexp.MustCompile(`^public\s*\{$`)
-	authStartRe   = regexp.MustCompile(`^auth\s*\{$`)
-	entityStartRe = regexp.MustCompile(`^entity\s+([A-Za-z][A-Za-z0-9_]*)\s*\{$`)
-	typeAliasRe   = regexp.MustCompile(`^type\s+alias\s+([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.*)$`)
-	actionStartRe = regexp.MustCompile(`^action\s+([a-z][A-Za-z0-9_]*)\s*\{$`)
-	actionInputRe = regexp.MustCompile(`^input\s*:\s*([A-Za-z][A-Za-z0-9_]*)$`)
-	actionStepRe  = regexp.MustCompile(`^(?:([a-z][A-Za-z0-9_]*)\s*=\s*)?(load|create|update|delete)\s+([A-Za-z][A-Za-z0-9_]*)\s*\{$`)
+	appRe          = regexp.MustCompile(`^app\s+([A-Za-z][A-Za-z0-9_]*)$`)
+	portRe         = regexp.MustCompile(`^port\s+([0-9]{1,5})$`)
+	dbRe           = regexp.MustCompile(`^database\s+"([^"]+)"$`)
+	iosStartRe     = regexp.MustCompile(`^ios\s*\{$`)
+	systemStartRe  = regexp.MustCompile(`^system\s*\{$`)
+	publicStartRe  = regexp.MustCompile(`^public\s*\{$`)
+	screensStartRe = regexp.MustCompile(`^screens\s*\{$`)
+	authStartRe    = regexp.MustCompile(`^auth\s*\{$`)
+	entityStartRe  = regexp.MustCompile(`^entity\s+([A-Za-z][A-Za-z0-9_]*)\s*\{$`)
+	typeAliasRe    = regexp.MustCompile(`^type\s+alias\s+([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.*)$`)
+	actionStartRe  = regexp.MustCompile(`^action\s+([a-z][A-Za-z0-9_]*)\s*\{$`)
+	actionInputRe  = regexp.MustCompile(`^input\s*:\s*([A-Za-z][A-Za-z0-9_]*)$`)
+	actionStepRe   = regexp.MustCompile(`^(?:([a-z][A-Za-z0-9_]*)\s*=\s*)?(load|create|update|delete)\s+([A-Za-z][A-Za-z0-9_]*)\s*\{$`)
 
 	entityFieldRe               = regexp.MustCompile(`^([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|DateTime|Date)(?:\s+(.*))?$`)
 	belongsToNamedCurrentUserRe = regexp.MustCompile(`^belongs_to\s+([a-z][A-Za-z0-9_]*)\s*:\s*(current_user)(?:\s+(.*))?$`)
@@ -181,6 +182,9 @@ func normalizeLine(trimmed string, state *formatState) string {
 	}
 	if publicStartRe.MatchString(trimmed) {
 		return "public {"
+	}
+	if screensStartRe.MatchString(trimmed) {
+		return "screens {"
 	}
 	if authStartRe.MatchString(trimmed) {
 		return "auth {"

@@ -2,8 +2,8 @@ package cli
 
 import (
 	"bufio"
-	"encoding/json"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -301,8 +301,8 @@ func mustIOSEmbeddedSchemaJSON(app *model.App) string {
 		}
 		payload["actions"] = actions
 	}
-	if app.Frontend != nil {
-		payload["frontend"] = app.Frontend
+	if app.Screens != nil {
+		payload["screens"] = app.Screens
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

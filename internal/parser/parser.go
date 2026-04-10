@@ -32,7 +32,7 @@ var (
 		"ios",
 		"system",
 		"public",
-		"frontend",
+		"screens",
 		"auth",
 		"entity",
 		"type",
@@ -217,15 +217,15 @@ func Parse(source string) (*model.App, error) {
 			continue
 		}
 
-		if trimmed == "frontend {" {
-			if app.Frontend != nil {
-				return nil, parserErrorf("line %d: frontend block already declared", cur.number)
+		if trimmed == "screens {" {
+			if app.Screens != nil {
+				return nil, parserErrorf("line %d: screens block already declared", cur.number)
 			}
 			frontend, err := parseFrontendBlock(lines, &idx)
 			if err != nil {
 				return nil, err
 			}
-			app.Frontend = frontend
+			app.Screens = frontend
 			continue
 		}
 
@@ -920,7 +920,7 @@ func parseFrontendBlock(lines []line, idx *int) (*model.Frontend, error) {
 		if trimmed == "}" {
 			(*idx)++
 			if len(frontend.Screens) == 0 {
-				return nil, parserErrorf("line %d: frontend must declare at least one screen", ln.number)
+				return nil, parserErrorf("line %d: screens must declare at least one screen", ln.number)
 			}
 			return frontend, nil
 		}
@@ -933,10 +933,10 @@ func parseFrontendBlock(lines []line, idx *int) (*model.Frontend, error) {
 			continue
 		}
 
-		return nil, parserErrorf("line %d: invalid frontend statement %q", ln.number, trimmed)
+		return nil, parserErrorf("line %d: invalid screens statement %q", ln.number, trimmed)
 	}
 
-	return nil, parserErrorf("frontend block is missing closing }")
+	return nil, parserErrorf("screens block is missing closing }")
 }
 
 func parseFrontendScreenBlock(lines []line, idx *int, name, forEntity string) (*model.FrontendScreen, error) {
@@ -1054,7 +1054,7 @@ func parseFrontendToolbarBlock(lines []line, idx *int) ([]model.FrontendToolbarI
 		return nil, parserErrorf("line %d: invalid toolbar statement %q", ln.number, trimmed)
 	}
 
-	return nil, parserErrorf("frontend toolbar is missing closing }")
+	return nil, parserErrorf("screens toolbar is missing closing }")
 }
 
 func parseFrontendSectionBlock(lines []line, idx *int, title, when string) (*model.FrontendSection, error) {
@@ -1160,10 +1160,10 @@ func parseFrontendSectionBlock(lines []line, idx *int, title, when string) (*mod
 			continue
 		}
 
-		return nil, parserErrorf("line %d: invalid frontend section statement %q", ln.number, trimmed)
+		return nil, parserErrorf("line %d: invalid screens section statement %q", ln.number, trimmed)
 	}
 
-	return nil, parserErrorf("frontend section is missing closing }")
+	return nil, parserErrorf("screens section is missing closing }")
 }
 
 func parseFrontendListBlock(lines []line, idx *int, kind, entity, relationField, filter string) (*model.FrontendItem, error) {
@@ -1204,10 +1204,10 @@ func parseFrontendListBlock(lines []line, idx *int, kind, entity, relationField,
 			continue
 		}
 
-		return nil, parserErrorf("line %d: invalid frontend list statement %q", ln.number, trimmed)
+		return nil, parserErrorf("line %d: invalid screens list statement %q", ln.number, trimmed)
 	}
 
-	return nil, parserErrorf("frontend %s %s is missing closing }", kind, entity)
+	return nil, parserErrorf("screens %s %s is missing closing }", kind, entity)
 }
 
 func parseFrontendReportBlock(lines []line, idx *int, entity, filter string) (*model.FrontendItem, error) {
@@ -1234,7 +1234,7 @@ func parseFrontendReportBlock(lines []line, idx *int, entity, filter string) (*m
 		}
 		if m := match(`^group\s+by\s+(.+)$`, trimmed); m != nil {
 			if item.ReportGroup != "" {
-				return nil, parserErrorf("line %d: duplicate frontend report group", ln.number)
+				return nil, parserErrorf("line %d: duplicate screens report group", ln.number)
 			}
 			item.ReportGroup = strings.TrimSpace(m[1])
 			(*idx)++
@@ -1251,10 +1251,10 @@ func parseFrontendReportBlock(lines []line, idx *int, entity, filter string) (*m
 			continue
 		}
 
-		return nil, parserErrorf("line %d: invalid frontend report statement %q", ln.number, trimmed)
+		return nil, parserErrorf("line %d: invalid screens report statement %q", ln.number, trimmed)
 	}
 
-	return nil, parserErrorf("frontend report %s is missing closing }", entity)
+	return nil, parserErrorf("screens report %s is missing closing }", entity)
 }
 
 func parseFrontendActionBlock(lines []line, idx *int, name string) (*model.FrontendItem, error) {
@@ -1290,7 +1290,7 @@ func parseFrontendItemValues(lines []line, idx *int, item *model.FrontendItem, k
 		}
 		if trimmed == "form {" {
 			if len(item.FormFields) > 0 {
-				return parserErrorf("line %d: frontend %s %s already declares form fields", ln.number, kind, name)
+				return parserErrorf("line %d: screens %s %s already declares form fields", ln.number, kind, name)
 			}
 			formFields, err := parseFrontendFormFields(lines, idx, kind, name)
 			if err != nil {
@@ -1301,18 +1301,18 @@ func parseFrontendItemValues(lines []line, idx *int, item *model.FrontendItem, k
 		}
 		m := match(`^([a-z][A-Za-z0-9_]*)\s*=\s*(.+)$`, trimmed)
 		if m == nil {
-			return parserErrorf("line %d: invalid frontend %s value %q. Expected `field = expression` or `form { ... }`", ln.number, kind, trimmed)
+			return parserErrorf("line %d: invalid screens %s value %q. Expected `field = expression` or `form { ... }`", ln.number, kind, trimmed)
 		}
 		field := m[1]
 		if seen[field] {
-			return parserErrorf("line %d: duplicate frontend %s value %q", ln.number, kind, field)
+			return parserErrorf("line %d: duplicate screens %s value %q", ln.number, kind, field)
 		}
 		seen[field] = true
 		item.Values = append(item.Values, model.FrontendActionValue{Field: field, Expression: strings.TrimSpace(m[2]), LineNo: ln.number})
 		(*idx)++
 	}
 
-	return parserErrorf("frontend %s %s is missing closing }", kind, name)
+	return parserErrorf("screens %s %s is missing closing }", kind, name)
 }
 
 func parseFrontendFormFields(lines []line, idx *int, kind, name string) ([]model.FrontendFormField, error) {
@@ -1333,11 +1333,11 @@ func parseFrontendFormFields(lines []line, idx *int, kind, name string) ([]model
 		}
 		m := match(`^field\s+([a-z][A-Za-z0-9_]*)(?:\s+where\s+(.+))?$`, trimmed)
 		if m == nil {
-			return nil, parserErrorf("line %d: invalid frontend %s form field %q. Expected `field name` or `field name where relation == form.otherField`", ln.number, kind, trimmed)
+			return nil, parserErrorf("line %d: invalid screens %s form field %q. Expected `field name` or `field name where relation == form.otherField`", ln.number, kind, trimmed)
 		}
 		fieldName := m[1]
 		if seen[fieldName] {
-			return nil, parserErrorf("line %d: duplicate frontend %s form field %q", ln.number, kind, fieldName)
+			return nil, parserErrorf("line %d: duplicate screens %s form field %q", ln.number, kind, fieldName)
 		}
 		seen[fieldName] = true
 		fields = append(fields, model.FrontendFormField{
@@ -1349,7 +1349,7 @@ func parseFrontendFormFields(lines []line, idx *int, kind, name string) ([]model
 		(*idx)++
 	}
 
-	return nil, parserErrorf("frontend %s %s form is missing closing }", kind, name)
+	return nil, parserErrorf("screens %s %s form is missing closing }", kind, name)
 }
 
 // parseSystemBlock parses system-level runtime options.
@@ -2640,7 +2640,7 @@ func validateActions(app *model.App) error {
 }
 
 func validateFrontend(app *model.App) error {
-	if app == nil || app.Frontend == nil {
+	if app == nil || app.Screens == nil {
 		return nil
 	}
 
@@ -2664,29 +2664,29 @@ func validateFrontend(app *model.App) error {
 	}
 
 	screenByName := map[string]*model.FrontendScreen{}
-	for i := range app.Frontend.Screens {
-		screen := &app.Frontend.Screens[i]
+	for i := range app.Screens.Screens {
+		screen := &app.Screens.Screens[i]
 		if _, exists := screenByName[screen.Name]; exists {
-			return parserErrorf("duplicate frontend screen %q", screen.Name)
+			return parserErrorf("duplicate screen %q", screen.Name)
 		}
 		screenByName[screen.Name] = screen
 		if screen.ForEntity != "" && entityByName[screen.ForEntity] == nil {
-			return parserErrorf("frontend screen %s references unknown entity %s", screen.Name, screen.ForEntity)
+			return parserErrorf("screen %s references unknown entity %s", screen.Name, screen.ForEntity)
 		}
 	}
 
-	for i := range app.Frontend.Screens {
-		screen := &app.Frontend.Screens[i]
+	for i := range app.Screens.Screens {
+		screen := &app.Screens.Screens[i]
 		var screenEntity *model.Entity
 		if screen.ForEntity != "" {
 			screenEntity = entityByName[screen.ForEntity]
 		}
 		if strings.TrimSpace(screen.TitleExpression) != "" {
 			if screenEntity == nil {
-				return parserErrorAtLinef(screen.TitleLineNo, "frontend screen %s dynamic title requires `screen %s for Entity`", screen.Name, screen.Name)
+				return parserErrorAtLinef(screen.TitleLineNo, "screen %s dynamic title requires `screen %s for Entity`", screen.Name, screen.Name)
 			}
 			if err := validateFrontendActionExpression(screen.TitleExpression, screenEntity, enumLiteralNames); err != nil {
-				return parserErrorAtLinef(screen.TitleLineNo, "frontend screen %s title: %w", screen.Name, err)
+				return parserErrorAtLinef(screen.TitleLineNo, "screen %s title: %w", screen.Name, err)
 			}
 		}
 		for _, toolbarItem := range screen.ToolbarItems {
@@ -2694,26 +2694,26 @@ func validateFrontend(app *model.App) error {
 			case "create":
 				entity := entityByName[toolbarItem.Item.Entity]
 				if entity == nil {
-					return parserErrorAtLinef(toolbarItem.LineNo, "frontend screen %s toolbar create references unknown entity %s", screen.Name, toolbarItem.Item.Entity)
+					return parserErrorAtLinef(toolbarItem.LineNo, "screen %s toolbar create references unknown entity %s", screen.Name, toolbarItem.Item.Entity)
 				}
 			case "edit":
 				if screenEntity == nil {
-					return parserErrorAtLinef(toolbarItem.LineNo, "frontend screen %s toolbar edit requires `screen %s for Entity`", screen.Name, screen.Name)
+					return parserErrorAtLinef(toolbarItem.LineNo, "screen %s toolbar edit requires `screen %s for Entity`", screen.Name, screen.Name)
 				}
 			case "editList":
 				entity := entityByName[toolbarItem.Item.Entity]
 				if entity == nil {
-					return parserErrorAtLinef(toolbarItem.LineNo, "frontend screen %s toolbar edit list references unknown entity %s", screen.Name, toolbarItem.Item.Entity)
+					return parserErrorAtLinef(toolbarItem.LineNo, "screen %s toolbar edit list references unknown entity %s", screen.Name, toolbarItem.Item.Entity)
 				}
 			default:
-				return parserErrorAtLinef(toolbarItem.LineNo, "frontend screen %s toolbar uses unsupported item kind %s", screen.Name, toolbarItem.Item.Kind)
+				return parserErrorAtLinef(toolbarItem.LineNo, "screen %s toolbar uses unsupported item kind %s", screen.Name, toolbarItem.Item.Kind)
 			}
 		}
 		for j := range screen.Sections {
 			section := &screen.Sections[j]
 			if strings.TrimSpace(section.When) != "" {
 				if err := validateFrontendExpression(section.When, screenEntity, enumLiteralNames); err != nil {
-					return parserErrorAtLinef(section.WhenLineNo, "frontend screen %s section %q: %w", screen.Name, section.Title, err)
+					return parserErrorAtLinef(section.WhenLineNo, "screen %s section %q: %w", screen.Name, section.Title, err)
 				}
 			}
 			for k := range section.Items {
@@ -2721,142 +2721,142 @@ func validateFrontend(app *model.App) error {
 				switch item.Kind {
 				case "link":
 					if screenByName[item.Target] == nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s links to unknown screen %s", screen.Name, item.Target)
+						return parserErrorAtLinef(item.LineNo, "screen %s links to unknown screen %s", screen.Name, item.Target)
 					}
 					if strings.TrimSpace(item.Filter) != "" {
 						if err := validateFrontendExpression(item.Filter, screenEntity, enumLiteralNames); err != nil {
-							return parserErrorAtLinef(item.FilterLineNo, "frontend screen %s link %q: %w", screen.Name, item.Label, err)
+							return parserErrorAtLinef(item.FilterLineNo, "screen %s link %q: %w", screen.Name, item.Label, err)
 						}
 					}
 				case "field":
 					if screenEntity == nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s field %s requires `screen %s for Entity`", screen.Name, item.Field, screen.Name)
+						return parserErrorAtLinef(item.LineNo, "screen %s field %s requires `screen %s for Entity`", screen.Name, item.Field, screen.Name)
 					}
 					baseFieldName, displayFieldName, hasDisplayPath := parseFrontendDisplayFieldPath(item.Field)
 					baseField := findEntityField(screenEntity, baseFieldName)
 					if baseField == nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s field %s does not exist on %s", screen.Name, item.Field, screenEntity.Name)
+						return parserErrorAtLinef(item.LineNo, "screen %s field %s does not exist on %s", screen.Name, item.Field, screenEntity.Name)
 					}
 					if hasDisplayPath {
 						if baseField.RelationEntity == "" {
-							return parserErrorAtLinef(item.LineNo, "frontend screen %s field %s must reference a relation field", screen.Name, item.Field)
+							return parserErrorAtLinef(item.LineNo, "screen %s field %s must reference a relation field", screen.Name, item.Field)
 						}
 						relationEntity := entityByName[baseField.RelationEntity]
 						if relationEntity == nil {
-							return parserErrorAtLinef(item.LineNo, "frontend screen %s field %s references unknown entity %s", screen.Name, item.Field, baseField.RelationEntity)
+							return parserErrorAtLinef(item.LineNo, "screen %s field %s references unknown entity %s", screen.Name, item.Field, baseField.RelationEntity)
 						}
 						preferred := preferredFrontendDisplayField(relationEntity)
 						if preferred == nil || !strings.EqualFold(preferred.Name, displayFieldName) {
 							if preferred != nil {
-								return parserErrorAtLinef(item.LineNo, "frontend screen %s field %s is unsupported; %s displays as %s.%s", screen.Name, item.Field, relationEntity.Name, baseFieldName, preferred.Name)
+								return parserErrorAtLinef(item.LineNo, "screen %s field %s is unsupported; %s displays as %s.%s", screen.Name, item.Field, relationEntity.Name, baseFieldName, preferred.Name)
 							}
-							return parserErrorAtLinef(item.LineNo, "frontend screen %s field %s is unsupported; %s has no display field", screen.Name, item.Field, relationEntity.Name)
+							return parserErrorAtLinef(item.LineNo, "screen %s field %s is unsupported; %s has no display field", screen.Name, item.Field, relationEntity.Name)
 						}
 					}
 				case "edit", "delete":
 					if screenEntity == nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s %s requires `screen %s for Entity`", screen.Name, item.Kind, screen.Name)
+						return parserErrorAtLinef(item.LineNo, "screen %s %s requires `screen %s for Entity`", screen.Name, item.Kind, screen.Name)
 					}
 					if item.Kind == "edit" {
 						if err := validateFrontendFormFieldsForEntity(item.FormFields, screenEntity, entityByName); err != nil {
-							return parserErrorAtLinef(item.LineNo, "frontend screen %s edit: %w", screen.Name, err)
+							return parserErrorAtLinef(item.LineNo, "screen %s edit: %w", screen.Name, err)
 						}
 					}
 				case "create":
 					entity := entityByName[item.Entity]
 					if entity == nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s create references unknown entity %s", screen.Name, item.Entity)
+						return parserErrorAtLinef(item.LineNo, "screen %s create references unknown entity %s", screen.Name, item.Entity)
 					}
 					for _, value := range item.Values {
 						field := findEntityField(entity, value.Field)
 						if field == nil {
-							return parserErrorAtLinef(value.LineNo, "frontend screen %s create %s assigns unknown field %s", screen.Name, entity.Name, value.Field)
+							return parserErrorAtLinef(value.LineNo, "screen %s create %s assigns unknown field %s", screen.Name, entity.Name, value.Field)
 						}
 						if field.Primary || field.Auto || field.CurrentUser {
-							return parserErrorAtLinef(value.LineNo, "frontend screen %s create %s cannot assign generated field %s", screen.Name, entity.Name, value.Field)
+							return parserErrorAtLinef(value.LineNo, "screen %s create %s cannot assign generated field %s", screen.Name, entity.Name, value.Field)
 						}
 						if strings.TrimSpace(value.Expression) == "" {
-							return parserErrorAtLinef(value.LineNo, "frontend screen %s create %s field %s cannot be empty", screen.Name, entity.Name, value.Field)
+							return parserErrorAtLinef(value.LineNo, "screen %s create %s field %s cannot be empty", screen.Name, entity.Name, value.Field)
 						}
 						if err := validateFrontendActionExpression(value.Expression, screenEntity, enumLiteralNames); err != nil {
-							return parserErrorAtLinef(value.LineNo, "frontend screen %s create %s field %s: %w", screen.Name, entity.Name, value.Field, err)
+							return parserErrorAtLinef(value.LineNo, "screen %s create %s field %s: %w", screen.Name, entity.Name, value.Field, err)
 						}
 					}
 					if err := validateFrontendFormFieldsForEntity(item.FormFields, entity, entityByName); err != nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s create %s: %w", screen.Name, entity.Name, err)
+						return parserErrorAtLinef(item.LineNo, "screen %s create %s: %w", screen.Name, entity.Name, err)
 					}
 				case "list", "children":
 					entity := entityByName[item.Entity]
 					if entity == nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s %s references unknown entity %s", screen.Name, item.Kind, item.Entity)
+						return parserErrorAtLinef(item.LineNo, "screen %s %s references unknown entity %s", screen.Name, item.Kind, item.Entity)
 					}
 					if item.Kind == "children" {
 						if screenEntity == nil {
-							return parserErrorAtLinef(item.LineNo, "frontend screen %s children %s requires `screen %s for Entity`", screen.Name, item.Entity, screen.Name)
+							return parserErrorAtLinef(item.LineNo, "screen %s children %s requires `screen %s for Entity`", screen.Name, item.Entity, screen.Name)
 						}
 						relation := findEntityField(entity, item.RelationField)
 						if relation == nil || relation.RelationEntity != screenEntity.Name {
-							return parserErrorAtLinef(item.LineNo, "frontend screen %s children %s by %s must reference a belongs_to field pointing to %s", screen.Name, item.Entity, item.RelationField, screenEntity.Name)
+							return parserErrorAtLinef(item.LineNo, "screen %s children %s by %s must reference a belongs_to field pointing to %s", screen.Name, item.Entity, item.RelationField, screenEntity.Name)
 						}
 					}
 					if item.TitleField != "" && findEntityField(entity, item.TitleField) == nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s %s %s title field %s does not exist", screen.Name, item.Kind, item.Entity, item.TitleField)
+						return parserErrorAtLinef(item.LineNo, "screen %s %s %s title field %s does not exist", screen.Name, item.Kind, item.Entity, item.TitleField)
 					}
 					if item.SubtitleField != "" && findEntityField(entity, item.SubtitleField) == nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s %s %s subtitle field %s does not exist", screen.Name, item.Kind, item.Entity, item.SubtitleField)
+						return parserErrorAtLinef(item.LineNo, "screen %s %s %s subtitle field %s does not exist", screen.Name, item.Kind, item.Entity, item.SubtitleField)
 					}
 					if item.Destination != "" {
 						destination := screenByName[item.Destination]
 						if destination == nil {
-							return parserErrorAtLinef(item.LineNo, "frontend screen %s %s %s references unknown destination screen %s", screen.Name, item.Kind, item.Entity, item.Destination)
+							return parserErrorAtLinef(item.LineNo, "screen %s %s %s references unknown destination screen %s", screen.Name, item.Kind, item.Entity, item.Destination)
 						}
 						if destination.ForEntity != "" && destination.ForEntity != item.Entity {
-							return parserErrorAtLinef(item.LineNo, "frontend screen %s %s %s destination %s is for %s, expected %s", screen.Name, item.Kind, item.Entity, item.Destination, destination.ForEntity, item.Entity)
+							return parserErrorAtLinef(item.LineNo, "screen %s %s %s destination %s is for %s, expected %s", screen.Name, item.Kind, item.Entity, item.Destination, destination.ForEntity, item.Entity)
 						}
 					}
 					if strings.TrimSpace(item.Filter) != "" {
 						if err := validateFrontendExpression(item.Filter, entity, enumLiteralNames); err != nil {
-							return parserErrorAtLinef(item.FilterLineNo, "frontend screen %s %s %s: %w", screen.Name, item.Kind, item.Entity, err)
+							return parserErrorAtLinef(item.FilterLineNo, "screen %s %s %s: %w", screen.Name, item.Kind, item.Entity, err)
 						}
 					}
 				case "report":
 					entity := entityByName[item.Entity]
 					if entity == nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s report references unknown entity %s", screen.Name, item.Entity)
+						return parserErrorAtLinef(item.LineNo, "screen %s report references unknown entity %s", screen.Name, item.Entity)
 					}
 					if strings.TrimSpace(item.Filter) != "" {
 						if err := validateFrontendExpression(item.Filter, entity, enumLiteralNames); err != nil {
-							return parserErrorAtLinef(item.FilterLineNo, "frontend screen %s report %s: %w", screen.Name, item.Entity, err)
+							return parserErrorAtLinef(item.FilterLineNo, "screen %s report %s: %w", screen.Name, item.Entity, err)
 						}
 					}
 					if err := validateFrontendReport(item, entity); err != nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s report %s: %w", screen.Name, item.Entity, err)
+						return parserErrorAtLinef(item.LineNo, "screen %s report %s: %w", screen.Name, item.Entity, err)
 					}
 				case "action":
 					action := actionByName[item.Action]
 					if action == nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s action references unknown action %s", screen.Name, item.Action)
+						return parserErrorAtLinef(item.LineNo, "screen %s action references unknown action %s", screen.Name, item.Action)
 					}
 					alias := aliasByName[action.InputAlias]
 					if alias == nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s action %s references unknown input %s", screen.Name, action.Name, action.InputAlias)
+						return parserErrorAtLinef(item.LineNo, "screen %s action %s references unknown input %s", screen.Name, action.Name, action.InputAlias)
 					}
 					for _, value := range item.Values {
 						if !aliasHasField(alias, value.Field) {
-							return parserErrorAtLinef(value.LineNo, "frontend screen %s action %s assigns unknown input field %s", screen.Name, action.Name, value.Field)
+							return parserErrorAtLinef(value.LineNo, "screen %s action %s assigns unknown input field %s", screen.Name, action.Name, value.Field)
 						}
 						if strings.TrimSpace(value.Expression) == "" {
-							return parserErrorAtLinef(value.LineNo, "frontend screen %s action %s input %s cannot be empty", screen.Name, action.Name, value.Field)
+							return parserErrorAtLinef(value.LineNo, "screen %s action %s input %s cannot be empty", screen.Name, action.Name, value.Field)
 						}
 						if err := validateFrontendActionExpression(value.Expression, screenEntity, enumLiteralNames); err != nil {
-							return parserErrorAtLinef(value.LineNo, "frontend screen %s action %s input %s: %w", screen.Name, action.Name, value.Field, err)
+							return parserErrorAtLinef(value.LineNo, "screen %s action %s input %s: %w", screen.Name, action.Name, value.Field, err)
 						}
 					}
 					if err := validateFrontendFormFieldsForAlias(item.FormFields, alias, entityByName); err != nil {
-						return parserErrorAtLinef(item.LineNo, "frontend screen %s action %s: %w", screen.Name, action.Name, err)
+						return parserErrorAtLinef(item.LineNo, "screen %s action %s: %w", screen.Name, action.Name, err)
 					}
 				default:
-					return parserErrorAtLinef(item.LineNo, "frontend screen %s uses unsupported item kind %s", screen.Name, item.Kind)
+					return parserErrorAtLinef(item.LineNo, "screen %s uses unsupported item kind %s", screen.Name, item.Kind)
 				}
 			}
 		}

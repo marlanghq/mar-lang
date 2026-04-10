@@ -19,47 +19,53 @@
   </head>
   <body>
     <div id="app"></div>
+    <script id="mar-bootstrap" type="application/json">__MAR_BOOTSTRAP_JSON__</script>
     <script src="/_mar/dist/app.js"></script>
     <script>
-      const params = new URLSearchParams(window.location.search);
-      const apiBase = params.get('api') || window.location.origin;
-      const schemaCacheKey = `marAppUiSchema:${apiBase}`;
+      function readEmbeddedBootstrap() {
+        try {
+          const bootstrapNode = document.getElementById('mar-bootstrap');
+          const bootstrapText = bootstrapNode ? bootstrapNode.textContent : '';
 
-      let cachedSchema = null;
-      let cachedSchemaVersion = null;
+          if (!bootstrapText) {
+            return null;
+          }
 
-      try {
-        const raw = window.localStorage.getItem(schemaCacheKey);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          cachedSchema = parsed.schema ?? null;
-          cachedSchemaVersion = parsed.schemaVersion ?? null;
+          const payload = JSON.parse(bootstrapText);
+          const schema = payload?.schema ?? null;
+          const schemaVersion = payload?.version?.app?.manifestHash ?? null;
+
+          if (!schema) {
+            return null;
+          }
+
+          return { schema, schemaVersion };
+        } catch (_) {
+          return null;
         }
-      } catch (_) {}
-
-      const app = Elm.Main.init({
-        node: document.getElementById('app'),
-        flags: {
-          apiBase,
-          authToken: '',
-          systemAuthToken: '',
-          cachedSchema,
-          cachedSchemaVersion,
-          viewportWidth: window.innerWidth || 1280
-        }
-      });
-
-      if (app.ports && app.ports.saveSession) {
-        app.ports.saveSession.subscribe(() => {});
       }
 
-      if (app.ports && app.ports.saveSchemaCache) {
-        app.ports.saveSchemaCache.subscribe((payload) => {
-          try {
-            window.localStorage.setItem(schemaCacheKey, JSON.stringify(payload));
-          } catch (_) {}
+      (() => {
+        const params = new URLSearchParams(window.location.search);
+        const apiBase = params.get('api') || window.location.origin;
+        const initialBootstrap = readEmbeddedBootstrap();
+
+        const app = Elm.Main.init({
+          node: document.getElementById('app'),
+          flags: {
+            apiBase,
+            authToken: '',
+            systemAuthToken: '',
+            cachedSchema: initialBootstrap?.schema ?? null,
+            cachedSchemaVersion: initialBootstrap?.schemaVersion ?? null,
+            viewportWidth: window.innerWidth || 1280
+          }
         });
-      }
+
+        if (app.ports && app.ports.saveSession) {
+          app.ports.saveSession.subscribe(() => {});
+        }
+      })();
     </script>
   </body>
 </html>

@@ -666,7 +666,7 @@ func (r *Runtime) writeError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
 	code := defaultAPIErrorCode(status)
 	msg := err.Error()
-	payload := map[string]any{"error": msg, "message": msg, "errorCode": code}
+	payload := map[string]any{"message": msg, "errorCode": code}
 	var apiErr *apiError
 	if errors.As(err, &apiErr) {
 		status = apiErr.Status
@@ -675,7 +675,6 @@ func (r *Runtime) writeError(w http.ResponseWriter, err error) {
 		} else {
 			code = defaultAPIErrorCode(status)
 		}
-		payload["error"] = apiErr.Message
 		payload["message"] = apiErr.Message
 		payload["errorCode"] = code
 		if len(apiErr.Details) > 0 {

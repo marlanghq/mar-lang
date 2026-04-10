@@ -253,7 +253,7 @@ struct Schema: Codable, Hashable {
     let systemAuth: SystemAuthInfo?
     let inputAliases: [InputAliasInfo]
     let actions: [ActionInfo]
-    let frontend: FrontendInfo?
+    let screens: FrontendInfo?
 
     enum CodingKeys: String, CodingKey {
         case appName
@@ -264,7 +264,7 @@ struct Schema: Codable, Hashable {
         case systemAuth
         case inputAliases
         case actions
-        case frontend
+        case screens
     }
 
     init(
@@ -276,7 +276,7 @@ struct Schema: Codable, Hashable {
         systemAuth: SystemAuthInfo?,
         inputAliases: [InputAliasInfo],
         actions: [ActionInfo],
-        frontend: FrontendInfo?
+        screens: FrontendInfo?
     ) {
         self.appName = appName
         self.port = port
@@ -286,7 +286,7 @@ struct Schema: Codable, Hashable {
         self.systemAuth = systemAuth
         self.inputAliases = inputAliases
         self.actions = actions
-        self.frontend = frontend
+        self.screens = screens
     }
 
     init(from decoder: Decoder) throws {
@@ -299,7 +299,7 @@ struct Schema: Codable, Hashable {
         systemAuth = try container.decodeIfPresent(SystemAuthInfo.self, forKey: .systemAuth)
         inputAliases = try container.decodeIfPresent([InputAliasInfo].self, forKey: .inputAliases) ?? []
         actions = try container.decodeIfPresent([ActionInfo].self, forKey: .actions) ?? []
-        frontend = try container.decodeIfPresent(FrontendInfo.self, forKey: .frontend)
+        screens = try container.decodeIfPresent(FrontendInfo.self, forKey: .screens)
     }
 }
 
@@ -542,39 +542,6 @@ struct LoginResponse: Decodable, Hashable {
     let token: String
     let role: String?
     let email: String?
-
-    private enum CodingKeys: String, CodingKey {
-        case token
-        case role
-        case email
-        case user
-    }
-
-    private enum UserCodingKeys: String, CodingKey {
-        case role
-        case email
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        token = try container.decode(String.self, forKey: .token)
-
-        if let directRole = try container.decodeIfPresent(String.self, forKey: .role) {
-            role = directRole
-        } else if let userContainer = try? container.nestedContainer(keyedBy: UserCodingKeys.self, forKey: .user) {
-            role = try userContainer.decodeIfPresent(String.self, forKey: .role)
-        } else {
-            role = nil
-        }
-
-        if let directEmail = try container.decodeIfPresent(String.self, forKey: .email) {
-            email = directEmail
-        } else if let userContainer = try? container.nestedContainer(keyedBy: UserCodingKeys.self, forKey: .user) {
-            email = try userContainer.decodeIfPresent(String.self, forKey: .email)
-        } else {
-            email = nil
-        }
-    }
 }
 
 struct AuthMeResponse: Decodable, Hashable {

@@ -28,7 +28,7 @@ entity FoodPurchase {
   authorize read, create, update, delete when user_authenticated and user == user_id
 }
 
-frontend {
+screens {
   screen Home {
     title "Home"
 

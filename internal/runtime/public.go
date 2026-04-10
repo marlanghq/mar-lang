@@ -1,12 +1,15 @@
 package runtime
 
 import (
+	"encoding/json"
 	"io/fs"
 	"mime"
 	"net/http"
 	"path"
 	"strings"
 )
+
+const appUIBootstrapPlaceholder = "__MAR_BOOTSTRAP_JSON__"
 
 // SetPublicFiles attaches embedded public static files to the runtime.
 func (r *Runtime) SetPublicFiles(publicFS fs.FS) {
@@ -29,7 +32,44 @@ func (r *Runtime) serveAppUIAsset(w http.ResponseWriter, req *http.Request, requ
 	if !ok {
 		return false, nil
 	}
+	if assetPath == "" || assetPath == "index.html" {
+		return r.serveAppUIBootstrapHTML(w, req)
+	}
 	return servePublicFile(w, req, r.appUIFS, assetPath)
+}
+
+func (r *Runtime) serveAppUIBootstrapHTML(w http.ResponseWriter, req *http.Request) (bool, error) {
+	data, err := fs.ReadFile(r.appUIFS, "index.html")
+	if err != nil {
+		return false, nil
+	}
+
+	bootstrapPayload := map[string]any{
+		"schema":  r.schemaPayload("app_ui_bootstrap"),
+		"version": r.publicVersionPayload(),
+	}
+	bootstrapJSON, err := json.Marshal(bootstrapPayload)
+	if err != nil {
+		return false, err
+	}
+
+	html := strings.ReplaceAll(string(data), appUIBootstrapPlaceholder, escapeBootstrapJSONForHTML(string(bootstrapJSON)))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if req.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return true, nil
+	}
+	_, err = w.Write([]byte(html))
+	return true, err
+}
+
+func escapeBootstrapJSONForHTML(value string) string {
+	replacer := strings.NewReplacer(
+		"<", "\\u003c",
+		">", "\\u003e",
+		"&", "\\u0026",
+	)
+	return replacer.Replace(value)
 }
 
 func (r *Runtime) servePublicAsset(w http.ResponseWriter, req *http.Request, requestPath string) (bool, error) {

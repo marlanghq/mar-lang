@@ -25,17 +25,10 @@ type PetSpecies {
   Other
 }
 
-entity User {
-  displayName: String optional
-
-  authorize read, update when user_authenticated and id == user_id
-}
-
 entity Pet {
   name: String
   species: PetSpecies
   birthday: Date optional
-  notes: String optional
 
   belongs_to owner: current_user
 
@@ -78,7 +71,11 @@ entity VetVisit {
 
   authorize read, create, update, delete when user_authenticated and owner == user_id
 }
-frontend {
+---------------------------------------------------
+--------------------  FRONTEND --------------------
+---------------------------------------------------
+
+screens {
   screen Home {
     title "Home"
 
@@ -114,7 +111,6 @@ frontend {
     section "Profile" {
       field species
       field birthday
-      field notes
     }
 
     section "Vet visits" {

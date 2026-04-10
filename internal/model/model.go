@@ -12,7 +12,7 @@ type App struct {
 	Auth         *AuthConfig   `json:"auth,omitempty"`
 	InputAliases []TypeAlias   `json:"inputAliases,omitempty"`
 	Actions      []Action      `json:"actions,omitempty"`
-	Frontend     *Frontend     `json:"frontend,omitempty"`
+	Screens      *Frontend     `json:"screens,omitempty"`
 	Warnings     []string      `json:"warnings,omitempty"`
 }
 
