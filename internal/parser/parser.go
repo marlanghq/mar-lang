@@ -284,6 +284,9 @@ func Parse(source string) (*model.App, error) {
 			return nil, err
 		}
 	}
+	if err := validateNamedTypeInference(recordByName, typeByName, entityByName); err != nil {
+		return nil, err
+	}
 
 	for i := range app.Functions {
 		if err := validateFunctionExpression(&app.Functions[i], functionByName, recordByName, typeByName, entityByName); err != nil {
@@ -1282,15 +1285,11 @@ func parseScreenItem(node sexp.Node, queries map[string]*queryDef) (model.Fronte
 			return model.FrontendItem{}, parseError(node, "empty does not accept arguments")
 		}
 		return model.FrontendItem{Kind: "empty"}, nil
-	case "field":
+	case "text":
 		if len(items) != 2 {
-			return model.FrontendItem{}, parseError(node, "field expects one symbol")
+			return model.FrontendItem{}, parseError(node, "text expects one argument")
 		}
-		field, ok := symbolValue(items[1])
-		if !ok {
-			return model.FrontendItem{}, parseError(items[1], "field expects a symbol")
-		}
-		return model.FrontendItem{Kind: "field", Field: canonicalFieldName(field)}, nil
+		return model.FrontendItem{Kind: "text", Text: sexp.InlineString(items[1])}, nil
 	case "link":
 		if len(items) != 3 || items[1].Kind != sexp.KindString {
 			return model.FrontendItem{}, parseError(node, "link expects (link \"Label\" destination)")
@@ -2220,6 +2219,21 @@ func validateSumType(sumType *model.EnumType, records map[string]*model.Record, 
 	return nil
 }
 
+func validateNamedTypeInference(records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
+	checker := newFrontendTypeChecker(nil, records, types, entities, nil, nil)
+	for name := range records {
+		if _, _, err := checker.namedType(name); err != nil {
+			return err
+		}
+	}
+	for name := range types {
+		if _, _, err := checker.namedType(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func validateRecordTypeExpr(typeExpr string, records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
 	switch typeExpr {
 	case "string", "bool", "int", "decimal", "date", "datetime", "cursor", "(unit)":
@@ -3000,22 +3014,24 @@ func validateFrontendScreenItem(screen model.FrontendScreen, screens map[string]
 		}
 	}
 	switch item.Kind {
-	case "field":
-		if len(screen.Parameters) == 0 {
-			return fmt.Errorf("field requires a screen row parameter")
+	case "text":
+		if strings.TrimSpace(item.Text) == "" {
+			return fmt.Errorf("text requires an expression")
 		}
-		if item.Field == "" {
-			return fmt.Errorf("field requires a row field")
+		node, err := sexp.ParseOne(item.Text)
+		if err != nil {
+			return fmt.Errorf("text: %w", err)
 		}
-		rowType := anyFrontendType()
-		if typeChecker != nil && len(screen.Parameters) > 0 {
-			rowType = typeChecker.screenParameterType(screen.Name, 0)
+		env := typeChecker.baseEnv(screen)
+		if screen.ViewModel != "" {
+			env[screen.ViewModel] = modelType
 		}
-		if rowType.Kind == frontendTypeAny {
-			return fmt.Errorf("field cannot be type-checked because screen parameter %q is unresolved", screen.Parameters[0])
+		valueType, err := typeChecker.inferExprType(node, env)
+		if err != nil {
+			return fmt.Errorf("text: %w", err)
 		}
-		if _, err := frontendRecordFieldType(rowType, item.Field); err != nil {
-			return err
+		if !frontendAssignable(valueType, stringFrontendType()) {
+			return fmt.Errorf("text expects string, got %s", valueType.String())
 		}
 	case "textInput", "textarea", "toggle", "select":
 		if strings.TrimSpace(item.ModelField) == "" {

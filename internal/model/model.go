@@ -260,6 +260,7 @@ type FrontendItem struct {
 	Kind          string                 `json:"kind"`
 	Condition     string                 `json:"condition,omitempty"`
 	Label         string                 `json:"label,omitempty"`
+	Text          string                 `json:"text,omitempty"`
 	Message       string                 `json:"message,omitempty"`
 	ModelField    string                 `json:"modelField,omitempty"`
 	Disabled      string                 `json:"disabled,omitempty"`
@@ -268,7 +269,6 @@ type FrontendItem struct {
 	Entity        string                 `json:"entity,omitempty"`
 	RelationField string                 `json:"relationField,omitempty"`
 	Filter        string                 `json:"filter,omitempty"`
-	Field         string                 `json:"field,omitempty"`
 	TitleField    string                 `json:"titleField,omitempty"`
 	SubtitleField string                 `json:"subtitleField,omitempty"`
 	Destination   string                 `json:"destination,omitempty"`

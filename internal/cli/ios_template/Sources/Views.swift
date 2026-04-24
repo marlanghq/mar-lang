@@ -930,14 +930,8 @@ private struct FrontendItemView: View {
                         Text(item.label ?? RowPresentation.humanizeIdentifier(target.name))
                     }
                 }
-            case "field":
-                if let fieldName = item.field,
-                   let entity = screenEntity,
-                   let (labelText, text) = frontendFieldDisplay(entity: entity, fieldPath: fieldName, row: row) {
-                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        LabeledContent(labelText, value: text)
-                    }
-                }
+            case "text":
+                Text(item.text ?? "")
             case "button":
                 Button(item.label ?? "Button") {
                     if let message = item.message {
@@ -1164,45 +1158,6 @@ private struct FrontendItemView: View {
     }
     private var screenEntity: Entity? {
         rowEntity
-    }
-
-    private func frontendFieldDisplay(entity: Entity, fieldPath: String, row: Row?) -> (String, String)? {
-        guard let row else { return nil }
-        let fieldName = parseFrontendDisplayFieldPath(fieldPath)
-        guard let field = entity.fields.first(where: { $0.name == fieldName }),
-              let value = row[field.name] else {
-            return nil
-        }
-        let text = frontendFieldText(field: field, value: value)
-        return (RowPresentation.fieldLabel(field.name), text)
-    }
-
-    private func parseFrontendDisplayFieldPath(_ raw: String) -> String {
-        let expression = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let binding = frontendScreenBindingName(screen) {
-            let prefix = binding + "."
-            if expression.hasPrefix(prefix) {
-                return String(expression.dropFirst(prefix.count))
-            }
-        }
-        return expression
-    }
-
-    private func frontendFieldText(field: Field, value: JSONValue) -> String {
-        guard let relationEntityName = field.relationEntity else {
-            return RowPresentation.displayString(for: field, value: value)
-        }
-        let rawID = value.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rawID.isEmpty, rawID != "null",
-              schema.entities.contains(where: { $0.name == relationEntityName }) else {
-            return RowPresentation.displayString(for: field, value: value)
-        }
-        if let parentEntity, let parentRow,
-           parentEntity.name == relationEntityName,
-           RowPresentation.rowID(entity: parentEntity, row: parentRow) == rawID {
-            return RowPresentation.relatedRowLabel(entity: parentEntity, row: parentRow)
-        }
-        return RowPresentation.displayString(for: field, value: value)
     }
 
     private func deleteCurrentRow(entity: Entity) async {

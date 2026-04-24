@@ -1223,7 +1223,56 @@ func (c *frontendTypeChecker) inferCallType(rawName string, args []sexp.Node, en
 	if fn := c.functions[name]; fn != nil {
 		return c.inferUserFunctionReturn(fn, args, env)
 	}
+	switch rawName {
+	case "number->string":
+		if len(args) != 1 {
+			return frontendType{}, fmt.Errorf("number->string expects 1 argument")
+		}
+		value, err := c.inferExprType(args[0], env)
+		if err != nil {
+			return frontendType{}, err
+		}
+		if !isFrontendNumberType(value) {
+			return frontendType{}, fmt.Errorf("number->string expects number, got %s", value.String())
+		}
+		return stringFrontendType(), nil
+	case "date->string":
+		if len(args) != 1 {
+			return frontendType{}, fmt.Errorf("date->string expects 1 argument")
+		}
+		value, err := c.inferExprType(args[0], env)
+		if err != nil {
+			return frontendType{}, err
+		}
+		if !frontendAssignable(value, dateFrontendType()) {
+			return frontendType{}, fmt.Errorf("date->string expects date, got %s", value.String())
+		}
+		return stringFrontendType(), nil
+	case "datetime->string":
+		if len(args) != 1 {
+			return frontendType{}, fmt.Errorf("datetime->string expects 1 argument")
+		}
+		value, err := c.inferExprType(args[0], env)
+		if err != nil {
+			return frontendType{}, err
+		}
+		if !frontendAssignable(value, dateTimeFrontendType()) {
+			return frontendType{}, fmt.Errorf("datetime->string expects datetime, got %s", value.String())
+		}
+		return stringFrontendType(), nil
+	}
 	switch name {
+	case "string_append":
+		for _, arg := range args {
+			value, err := c.inferExprType(arg, env)
+			if err != nil {
+				return frontendType{}, err
+			}
+			if !frontendAssignable(value, stringFrontendType()) {
+				return frontendType{}, fmt.Errorf("string-append expects string arguments, got %s", value.String())
+			}
+		}
+		return stringFrontendType(), nil
 	case "authenticated?":
 		if len(args) != 1 {
 			return frontendType{}, fmt.Errorf("authenticated? expects 1 argument")
@@ -1473,7 +1522,7 @@ func (c *frontendTypeChecker) inferUserFunctionReturn(fn *model.Function, args [
 	}
 	key := strings.Join(keyParts, "|")
 	if c.functionStack[key] {
-		return anyFrontendType(), nil
+		return frontendType{}, fmt.Errorf("function %s return type could not be inferred because it is recursive", fn.Name)
 	}
 	c.functionStack[key] = true
 	defer delete(c.functionStack, key)
@@ -1776,7 +1825,7 @@ func (c *frontendTypeChecker) namedType(name string) (frontendType, bool, error)
 		return cached, true, nil
 	}
 	if c.namedTypeStack[name] {
-		return anyFrontendType(), true, nil
+		return frontendType{}, false, fmt.Errorf("type %s is recursive and cannot be inferred", name)
 	}
 	if record := c.records[name]; record != nil {
 		c.namedTypeStack[name] = true
@@ -1835,11 +1884,7 @@ func (c *frontendTypeChecker) entityFieldType(field model.Field) (frontendType, 
 	if field.RelationEntity != "" {
 		entity := c.entities[field.RelationEntity]
 		if entity == nil {
-			base = anyFrontendType()
-			if field.Optional {
-				return frontendMaybeType(base), nil
-			}
-			return base, nil
+			return frontendType{}, fmt.Errorf("unknown relation entity %s", field.RelationEntity)
 		}
 		for _, candidate := range entity.Fields {
 			if candidate.Primary {
@@ -1854,7 +1899,7 @@ func (c *frontendTypeChecker) entityFieldType(field model.Field) (frontendType, 
 				return base, nil
 			}
 		}
-		base = anyFrontendType()
+		return frontendType{}, fmt.Errorf("relation entity %s has no primary key", field.RelationEntity)
 	} else {
 		switch field.Type {
 		case "String":
@@ -1873,7 +1918,7 @@ func (c *frontendTypeChecker) entityFieldType(field model.Field) (frontendType, 
 			if len(field.EnumValues) > 0 {
 				base = stringFrontendType()
 			} else {
-				base = anyFrontendType()
+				return frontendType{}, fmt.Errorf("unknown type %s", field.Type)
 			}
 		}
 	}

@@ -229,7 +229,7 @@ func TestParseRejectsNonExhaustiveScreenMatch(t *testing.T) {
          ()))))
   (view model
     (section
-      ((field count)))))
+      ((text (number->string (get model count)))))))
 
 (define-app counter-app
   (frontend
@@ -262,7 +262,7 @@ func TestParseRejectsAssocOnNonRecordScreenValue(t *testing.T) {
          ()))))
   (view model
     (section
-      ((field count)))))
+      ((text (number->string (get model count)))))))
 
 (define-app counter-app
   (frontend
@@ -295,7 +295,7 @@ func TestParseRejectsAssocWrongFieldTypeInScreenModel(t *testing.T) {
          ()))))
   (view model
     (section
-      ((field title)))))
+      ((text (get model title))))))
 
 (define-app editor-app
   (frontend
@@ -406,7 +406,7 @@ func TestParseInfersScreenParameterTypeFromListOpen(t *testing.T) {
      ()))
   (view model
     (section
-      ((field handle)))))
+      ((text user.handle)))))
 
 (define-app demo
   (entities user post)
@@ -554,30 +554,6 @@ func TestParseRejectsDisabledViewOptionOnNonBoolField(t *testing.T) {
 	}
 }
 
-func TestParseRejectsFieldWithoutScreenRowParameter(t *testing.T) {
-	src := `
-(define-screen home
-  (init
-    ((unit)
-     ()))
-  (view
-    (section
-      ((field title)))))
-
-(define-app demo
-  (frontend
-    (screens home)))
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error")
-	}
-	if !strings.Contains(err.Error(), `field requires a screen row parameter`) {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestParseRejectsScreenParameterWithoutCallerInferenceForEntrypoint(t *testing.T) {
 	src := `
 (define-screen (profile-detail user)
@@ -654,7 +630,7 @@ func TestParseRejectsGoWithWrongScreenParameterType(t *testing.T) {
 (define-screen (profile-detail user)
   (view
     (section
-      ((field handle)))))
+      ((text user.handle)))))
 
 (define-screen home
   (msg open-profile)
@@ -681,7 +657,7 @@ func TestParseRejectsGoWithWrongScreenParameterType(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `screen ProfileDetail: model must be a record, got int`) {
+	if !strings.Contains(err.Error(), `screen ProfileDetail: text: get expects a record-like value, got int`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -702,7 +678,7 @@ func TestParseRejectsListOpenWithWrongDestinationType(t *testing.T) {
 (define-screen (post-detail post)
   (view
     (section
-      ((field body)))))
+      ((text post.body)))))
 
 (define-screen profiles
   (init
@@ -725,7 +701,7 @@ func TestParseRejectsListOpenWithWrongDestinationType(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `screen PostDetail: record User has no field "body"`) {
+	if !strings.Contains(err.Error(), `screen PostDetail: text: record User has no field "body"`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -1646,6 +1622,90 @@ func TestValidateActionExpressionsPropagatesStepAliasTypes(t *testing.T) {
 	}
 }
 
+func TestValidateActionExpressionsRejectsUnknownInputAliasType(t *testing.T) {
+	action := model.Action{
+		Name:       "bad_action",
+		InputAlias: "BadInput",
+	}
+	aliases := map[string]*model.TypeAlias{
+		"BadInput": {
+			Name: "BadInput",
+			Fields: []model.AliasField{
+				{Name: "value", Type: "Mystery"},
+			},
+		},
+	}
+
+	err := validateActionExpressions(&action, aliases, nil, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected action type error")
+	}
+	if !strings.Contains(err.Error(), "action bad_action input value: unknown type Mystery") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateActionExpressionsRejectsUnknownInputAliasRelationEntity(t *testing.T) {
+	action := model.Action{
+		Name:       "bad_action",
+		InputAlias: "BadInput",
+	}
+	aliases := map[string]*model.TypeAlias{
+		"BadInput": {
+			Name: "BadInput",
+			Fields: []model.AliasField{
+				{Name: "owner", Type: "Int", RelationEntity: "Missing"},
+			},
+		},
+	}
+
+	err := validateActionExpressions(&action, aliases, nil, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected action type error")
+	}
+	if !strings.Contains(err.Error(), "action bad_action input owner: unknown relation entity Missing") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateActionExpressionsRejectsUnknownRelationInLoadedAlias(t *testing.T) {
+	todo := model.Entity{
+		Name:       "Todo",
+		PrimaryKey: "id",
+		Fields: []model.Field{
+			{Name: "id", Type: "Int", Primary: true},
+			{Name: "owner", Type: "Int", RelationEntity: "Missing"},
+		},
+	}
+	action := model.Action{
+		Name:       "load_todo",
+		InputAlias: "LoadTodoInput",
+		Steps: []model.ActionStep{
+			{
+				Kind:   "load",
+				Entity: "Todo",
+				Alias:  "loaded",
+				Values: []model.ActionFieldExpr{{Field: "id", Expression: "todo_id"}},
+			},
+		},
+	}
+	aliases := map[string]*model.TypeAlias{
+		"LoadTodoInput": {
+			Name:   "LoadTodoInput",
+			Fields: []model.AliasField{{Name: "todo_id", Type: "Int"}},
+		},
+	}
+	entities := map[string]*model.Entity{"Todo": &todo}
+
+	err := validateActionExpressions(&action, aliases, nil, nil, nil, entities)
+	if err == nil {
+		t.Fatal("expected action type error")
+	}
+	if !strings.Contains(err.Error(), "action load_todo step load Todo alias loaded: unknown relation entity Missing") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParseRejectsOrderedComparisonOnStringField(t *testing.T) {
 	src := `
 (define todo
@@ -1974,6 +2034,109 @@ func TestParseAllowsFunctionReturnWhenMaybeTypeIsInferred(t *testing.T) {
 
 	if _, err := Parse(src); err != nil {
 		t.Fatalf("Parse returned error: %v", err)
+	}
+}
+
+func TestParseRejectsRecursiveFunctionReturnInference(t *testing.T) {
+	src := `
+(define (loop value)
+  (loop value))
+
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (= (loop amount) amount))))
+
+(define-app demo
+  (entities item))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Item validate: function loop return type could not be inferred because it is recursive") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsMutuallyRecursiveFunctionReturnInference(t *testing.T) {
+	src := `
+(define (left value)
+  (right value))
+
+(define (right value)
+  (left value))
+
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (= (left amount) amount))))
+
+(define-app demo
+  (entities item))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "function left return type could not be inferred because it is recursive") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsRecursiveRecordTypeInference(t *testing.T) {
+	src := `
+(define-record node
+  (next node))
+
+(define-screen home
+  (view
+    (section
+      (title "Home")
+      (text "Home"))))
+
+(define-app demo
+  (frontend
+    (screens home)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "type node is recursive and cannot be inferred") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsRecursiveDefineTypeInference(t *testing.T) {
+	src := `
+(define-type tree
+  (branch (left tree) (right tree)))
+
+(define-screen home
+  (view
+    (section
+      (title "Home")
+      (text "Home"))))
+
+(define-app demo
+  (frontend
+    (screens home)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "type tree is recursive and cannot be inferred") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -2532,7 +2695,7 @@ func TestParseRejectsUninferredScreenMessagePayload(t *testing.T) {
   (view model
     (section
       "Home"
-      ((field count)))))
+      ((text (number->string (get model count)))))))
 
 (define-app demo
   (frontend
@@ -2737,7 +2900,7 @@ func TestParseRejectsScreenEffectsInModelPosition(t *testing.T) {
   (view
     (section
       "Profile"
-      ((field id)))))
+      ((text "Profile")))))
 
 (define-screen home
   (msg open-profile)
@@ -2867,28 +3030,6 @@ func TestParseRejectsTransitionModelWithExtraRecordWrapper(t *testing.T) {
 		t.Fatal("expected parse error")
 	}
 	if !strings.Contains(err.Error(), "extra pair of parentheses") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestParseRejectsFieldWithNonSymbol(t *testing.T) {
-	src := `
-(define-screen home
-  (view
-    (section
-      "Home"
-      ((field "title")))))
-
-(define-app demo
-  (frontend
-    (screens home)))
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error")
-	}
-	if !strings.Contains(err.Error(), "field expects a symbol") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -3291,6 +3432,74 @@ func TestParseRejectsDefineScreenWrapper(t *testing.T) {
 		t.Fatal("expected parse error")
 	}
 	if !strings.Contains(err.Error(), `unknown screen clause "screen"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseSupportsTextItemWithStringAppendAndDatetimeConversion(t *testing.T) {
+	src := `
+(define post
+  (entity
+    (fields ((body string)))))
+
+(define-record posts-model
+  (posts (list post)))
+
+(define-screen posts
+  (init ((posts-model ()) ()))
+  (view model
+    (section
+      ((list posts post ((title body) (open post-detail)))))))
+
+(define-screen (post-detail post)
+  (view
+    (section
+      ((text (string-append "Created at " (datetime->string post.created-at)))))))
+
+(define-app demo
+  (backend
+    (entities post))
+  (frontend
+    (screens posts post-detail)))
+`
+
+	if _, err := Parse(src); err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+}
+
+func TestParseRejectsTextItemWithNonStringExpression(t *testing.T) {
+	src := `
+(define post
+  (entity
+    (fields ((body string)))))
+
+(define-record posts-model
+  (posts (list post)))
+
+(define-screen posts
+  (init ((posts-model ()) ()))
+  (view model
+    (section
+      ((list posts post ((title body) (open post-detail)))))))
+
+(define-screen (post-detail post)
+  (view
+    (section
+      ((text post.created-at)))))
+
+(define-app demo
+  (backend
+    (entities post))
+  (frontend
+    (screens posts post-detail)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "text expects string, got datetime") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

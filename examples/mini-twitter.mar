@@ -295,7 +295,7 @@
          display-name-changed
          (disabled editor-disabled))
        (textarea "Bio" bio bio-changed (disabled editor-disabled))
-       (field email)
+       (text (string-append "Email " user.email))
        (button "Save profile" save-clicked (disabled editor-disabled))
        (button "Follow" (follow-clicked user.id) (disabled follow-disabled))))
     (section
@@ -305,7 +305,7 @@
          ((title body) (subtitle created-at) (open post-detail)))))))
 
 (define-screen (post-detail post)
-  (title "Post")
+  (title post.body)
   (msg
     (like-clicked post-id)
     liked
@@ -374,11 +374,10 @@
       ((comments-failed message) (model ()))))
   (view model
     (section
-      "Post"
-      ((textarea "Post" body body-changed (disabled editor-disabled))
-       (field author)
-       (field created-at)
-       (field updated-at)
+      ((textarea "Body" body body-changed (disabled editor-disabled))
+       (text (string-append "Author " (number->string post.author)))
+       (text (string-append "Created at " (datetime->string post.created-at)))
+       (text (string-append "Updated at " (datetime->string post.updated-at)))
        (button "Like" (like-clicked post.id))
        (if (get model can-edit)
          (button "Save post" save-clicked (disabled editor-disabled))
@@ -443,8 +442,8 @@
       "Comment"
       ((textarea "Comment" body body-changed (disabled editor-disabled))
        (button "Save comment" save-clicked (disabled editor-disabled))
-       (field author)
-       (field created-at)
+       (text (string-append "Author " (number->string comment.author)))
+       (text (string-append "Created at " (datetime->string comment.created-at)))
        (button "Like" (like-clicked comment.id))))))
 
 (define-app mini-twitter

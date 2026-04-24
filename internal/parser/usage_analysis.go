@@ -142,22 +142,7 @@ func inferScreenParametersFromLocalUsage(screen model.FrontendScreen, typeChecke
 
 func inferScreenParameterTypesFromItemUsage(screen model.FrontendScreen, item model.FrontendItem, typeChecker *frontendTypeChecker, actionInputs map[string][]frontendType, result map[string][]frontendType) (bool, error) {
 	changed := false
-	if item.Kind == "field" && len(screen.Parameters) > 0 && item.Field != "" {
-		paramType, ok, err := typeChecker.namedType(screen.Parameters[0])
-		if err != nil {
-			return false, err
-		}
-		if ok {
-			if _, err := frontendRecordFieldType(paramType, item.Field); err == nil {
-				next, err := mergeScreenParameterType(result, screen, 0, paramType)
-				if err != nil {
-					return false, err
-				}
-				changed = changed || next
-			}
-		}
-	}
-	for _, raw := range []string{item.Condition, item.Message} {
+	for _, raw := range []string{item.Condition, item.Message, item.Text} {
 		next, err := inferScreenParameterTypesFromExpression(screen, raw, typeChecker, actionInputs, result)
 		if err != nil {
 			return false, err
@@ -582,6 +567,9 @@ func collectUsedFunctionsFromItem(item model.FrontendItem, functions map[string]
 	}
 	if strings.TrimSpace(item.Message) != "" {
 		collectUsedFunctionsFromExpression(item.Message, functions, used)
+	}
+	if strings.TrimSpace(item.Text) != "" {
+		collectUsedFunctionsFromExpression(item.Text, functions, used)
 	}
 	for _, value := range item.Values {
 		collectUsedFunctionsFromExpression(value.Expression, functions, used)

@@ -39,6 +39,10 @@ func validateEntityExpressions(entity *model.Entity, functions map[string]*model
 	checker := newBackendTypeChecker(functions, records, types, entities)
 
 	if entity.Validate != "" {
+		env, err := checker.entityEnv(entity, false)
+		if err != nil {
+			return fmt.Errorf("entity %s validate: %w", entity.Name, err)
+		}
 		if _, err := expr.Parse(entity.Validate, expr.ParserOptions{
 			AllowedVariables: allowed,
 			AllowedFunctions: allowedFunctions,
@@ -47,7 +51,7 @@ func validateEntityExpressions(entity *model.Entity, functions map[string]*model
 		}); err != nil {
 			return fmt.Errorf("entity %s validate: %w", entity.Name, err)
 		}
-		validateType, err := checker.inferBackendExprType(entity.Validate, checker.entityEnv(entity, false))
+		validateType, err := checker.inferBackendExprType(entity.Validate, env)
 		if err != nil {
 			return fmt.Errorf("entity %s validate: %w", entity.Name, err)
 		}
@@ -58,6 +62,10 @@ func validateEntityExpressions(entity *model.Entity, functions map[string]*model
 
 	allowedWithBuiltins := expr.AllowedVariablesWithBuiltins(allowed)
 	for _, auth := range entity.Authorizations {
+		env, err := checker.entityEnv(entity, true)
+		if err != nil {
+			return fmt.Errorf("entity %s authorize %s: %w", entity.Name, auth.Action, err)
+		}
 		if _, err := expr.Parse(auth.Expression, expr.ParserOptions{
 			AllowedVariables: allowedWithBuiltins,
 			AllowedFunctions: allowedFunctions,
@@ -66,7 +74,7 @@ func validateEntityExpressions(entity *model.Entity, functions map[string]*model
 		}); err != nil {
 			return fmt.Errorf("entity %s authorize %s: %w", entity.Name, auth.Action, err)
 		}
-		authType, err := checker.inferBackendExprType(auth.Expression, checker.entityEnv(entity, true))
+		authType, err := checker.inferBackendExprType(auth.Expression, env)
 		if err != nil {
 			return fmt.Errorf("entity %s authorize %s: %w", entity.Name, auth.Action, err)
 		}
@@ -79,7 +87,10 @@ func validateEntityExpressions(entity *model.Entity, functions map[string]*model
 
 func validateBackendQueryWhere(queryName, raw string, entity *model.Entity, params []string, functions map[string]*model.Function, records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) (map[string]string, error) {
 	checker := newBackendTypeChecker(functions, records, types, entities)
-	env := checker.entityEnv(entity, true)
+	env, err := checker.entityEnv(entity, true)
+	if err != nil {
+		return nil, fmt.Errorf("query %s where: %w", queryName, err)
+	}
 	paramTypes, err := checker.inferQueryParamTypes(raw, params, env)
 	if err != nil {
 		return nil, fmt.Errorf("query %s where: %w", queryName, err)
@@ -288,7 +299,7 @@ func (c *backendTypeChecker) inferBackendExprType(raw string, env frontendTypeEn
 	return c.inferExprType(node, env)
 }
 
-func (c *backendTypeChecker) entityEnv(entity *model.Entity, includeAuth bool) frontendTypeEnv {
+func (c *backendTypeChecker) entityEnv(entity *model.Entity, includeAuth bool) (frontendTypeEnv, error) {
 	env := frontendTypeEnv{}
 	if includeAuth {
 		for key, value := range c.baseFunctionEnv() {
@@ -296,28 +307,27 @@ func (c *backendTypeChecker) entityEnv(entity *model.Entity, includeAuth bool) f
 		}
 	}
 	if entity == nil {
-		return env
+		return env, nil
 	}
 	for _, field := range entity.Fields {
 		value, err := c.entityFieldType(field)
 		if err != nil {
-			env[field.Name] = anyFrontendType()
-			continue
+			return nil, fmt.Errorf("field %s: %w", field.Name, err)
 		}
 		env[field.Name] = value
 	}
-	return env
+	return env, nil
 }
 
 func (c *backendTypeChecker) aliasFieldType(field model.AliasField) (frontendType, error) {
 	if field.RelationEntity != "" {
 		entity := c.entities[field.RelationEntity]
 		if entity == nil {
-			return anyFrontendType(), nil
+			return frontendType{}, fmt.Errorf("unknown relation entity %s", field.RelationEntity)
 		}
 		pk := backendPrimaryField(entity)
 		if pk == nil {
-			return anyFrontendType(), nil
+			return frontendType{}, fmt.Errorf("relation entity %s has no primary key", field.RelationEntity)
 		}
 		return c.entityFieldType(*pk)
 	}
@@ -338,7 +348,7 @@ func (c *backendTypeChecker) aliasFieldType(field model.AliasField) (frontendTyp
 		if len(field.EnumValues) > 0 {
 			return stringFrontendType(), nil
 		}
-		return anyFrontendType(), nil
+		return frontendType{}, fmt.Errorf("unknown type %s", field.Type)
 	}
 }
 
@@ -346,11 +356,11 @@ func (c *backendTypeChecker) entityInputFieldType(field model.Field) (frontendTy
 	if field.RelationEntity != "" {
 		entity := c.entities[field.RelationEntity]
 		if entity == nil {
-			return anyFrontendType(), nil
+			return frontendType{}, fmt.Errorf("unknown relation entity %s", field.RelationEntity)
 		}
 		pk := backendPrimaryField(entity)
 		if pk == nil {
-			return anyFrontendType(), nil
+			return frontendType{}, fmt.Errorf("relation entity %s has no primary key", field.RelationEntity)
 		}
 		return c.entityInputFieldType(*pk)
 	}
@@ -371,13 +381,13 @@ func (c *backendTypeChecker) entityInputFieldType(field model.Field) (frontendTy
 		if len(field.EnumValues) > 0 {
 			return stringFrontendType(), nil
 		}
-		return anyFrontendType(), nil
+		return frontendType{}, fmt.Errorf("unknown type %s", field.Type)
 	}
 }
 
 func (c *backendTypeChecker) entityRecordType(entity *model.Entity) (frontendType, error) {
 	if entity == nil {
-		return anyFrontendType(), nil
+		return frontendType{}, fmt.Errorf("unknown entity")
 	}
 	fields := map[string]frontendType{}
 	order := make([]string, 0, len(entity.Fields))

@@ -588,6 +588,7 @@ struct FrontendItemInfo: Codable, Hashable, Identifiable {
     let kind: String
     let condition: String?
     let label: String?
+    let text: String?
     let message: String?
     let modelField: String?
     let disabled: String?
@@ -596,7 +597,6 @@ struct FrontendItemInfo: Codable, Hashable, Identifiable {
     let entity: String?
     let relationField: String?
     let filter: String?
-    let field: String?
     let titleField: String?
     let subtitleField: String?
     let destination: String?
@@ -611,6 +611,7 @@ struct FrontendItemInfo: Codable, Hashable, Identifiable {
             kind,
             condition ?? "",
             label ?? "",
+            text ?? "",
             message ?? "",
             modelField ?? "",
             disabled ?? "",
@@ -618,7 +619,6 @@ struct FrontendItemInfo: Codable, Hashable, Identifiable {
             target ?? "",
             entity ?? "",
             relationField ?? "",
-            field ?? "",
             action ?? ""
         ].joined(separator: ":")
     }
@@ -627,6 +627,7 @@ struct FrontendItemInfo: Codable, Hashable, Identifiable {
         case kind
         case condition
         case label
+        case text
         case message
         case modelField
         case disabled
@@ -635,7 +636,6 @@ struct FrontendItemInfo: Codable, Hashable, Identifiable {
         case entity
         case relationField
         case filter
-        case field
         case titleField
         case subtitleField
         case destination
@@ -651,6 +651,7 @@ struct FrontendItemInfo: Codable, Hashable, Identifiable {
         kind = try container.decode(String.self, forKey: .kind)
         condition = try container.decodeIfPresent(String.self, forKey: .condition)
         label = try container.decodeIfPresent(String.self, forKey: .label)
+        text = try container.decodeIfPresent(String.self, forKey: .text)
         message = try container.decodeIfPresent(String.self, forKey: .message)
         modelField = try container.decodeIfPresent(String.self, forKey: .modelField)
         disabled = try container.decodeIfPresent(String.self, forKey: .disabled)
@@ -659,7 +660,6 @@ struct FrontendItemInfo: Codable, Hashable, Identifiable {
         entity = try container.decodeIfPresent(String.self, forKey: .entity)
         relationField = try container.decodeIfPresent(String.self, forKey: .relationField)
         filter = try container.decodeIfPresent(String.self, forKey: .filter)
-        field = try container.decodeIfPresent(String.self, forKey: .field)
         titleField = try container.decodeIfPresent(String.self, forKey: .titleField)
         subtitleField = try container.decodeIfPresent(String.self, forKey: .subtitleField)
         destination = try container.decodeIfPresent(String.self, forKey: .destination)

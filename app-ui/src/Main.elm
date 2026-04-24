@@ -2973,6 +2973,11 @@ frontendEvalAtom context atom =
             |> Result.map FrontendString
             |> Result.mapError Decode.errorToString
 
+    else if String.startsWith "[" atom || String.startsWith "{" atom || atom == "null" then
+        Decode.decodeString Decode.value atom
+            |> Result.map frontendValueFromJson
+            |> Result.mapError Decode.errorToString
+
     else
         case atom of
             "true" ->
@@ -3170,6 +3175,37 @@ frontendEvalList schema context items =
                         _ ->
                             Err "has-role? expects 2 arguments"
 
+                "string-append" ->
+                    frontendEvalMany schema context args
+                        |> Result.andThen frontendStringAppend
+
+                "number->string" ->
+                    case args of
+                        [ valueRaw ] ->
+                            frontendEval schema context valueRaw
+                                |> Result.andThen frontendNumberToString
+
+                        _ ->
+                            Err "number->string expects 1 argument"
+
+                "date->string" ->
+                    case args of
+                        [ valueRaw ] ->
+                            frontendEval schema context valueRaw
+                                |> Result.andThen (frontendDateToString False)
+
+                        _ ->
+                            Err "date->string expects 1 argument"
+
+                "datetime->string" ->
+                    case args of
+                        [ valueRaw ] ->
+                            frontendEval schema context valueRaw
+                                |> Result.andThen (frontendDateToString True)
+
+                        _ ->
+                            Err "datetime->string expects 1 argument"
+
                 "=" ->
                     frontendEvalBinaryComparable schema context args (\left right -> left == right)
 
@@ -3242,6 +3278,71 @@ frontendEvalBuiltinCall name values =
 
         _ ->
             Err ("unknown function " ++ name)
+
+
+frontendStringAppend : List FrontendLocalValue -> Result String FrontendLocalValue
+frontendStringAppend values =
+    values
+        |> List.foldl
+            (\value partial ->
+                partial
+                    |> Result.andThen
+                        (\current ->
+                            case value of
+                                FrontendString string ->
+                                    Ok (current ++ string)
+
+                                _ ->
+                                    Err "string-append expects string arguments"
+                        )
+            )
+            (Ok "")
+        |> Result.map FrontendString
+
+
+frontendNumberToString : FrontendLocalValue -> Result String FrontendLocalValue
+frontendNumberToString value =
+    case value of
+        FrontendNumber number ->
+            Ok (FrontendString (frontendNumberString number))
+
+        _ ->
+            Err "number->string expects number"
+
+
+frontendNumberString : Float -> String
+frontendNumberString number =
+    if toFloat (round number) == number then
+        String.fromInt (round number)
+
+    else
+        String.fromFloat number
+
+
+frontendDateToString : Bool -> FrontendLocalValue -> Result String FrontendLocalValue
+frontendDateToString includeTime value =
+    case value of
+        FrontendNumber millis ->
+            let
+                formatted =
+                    if includeTime then
+                        formatDateTimeInputMillis Time.utc millis
+                            |> String.replace "T" " "
+
+                    else
+                        formatDateInputMillis millis
+            in
+            Ok (FrontendString formatted)
+
+        FrontendString string ->
+            Ok (FrontendString string)
+
+        _ ->
+            if includeTime then
+                Err "datetime->string expects datetime"
+
+            else
+                Err "date->string expects date"
 
 
 frontendEvalBinaryComparable : Schema -> Dict String FrontendLocalValue -> List String -> (String -> String -> Bool) -> Result String FrontendLocalValue
@@ -5616,39 +5717,6 @@ rowFieldLabel model entity fieldName rowValue =
             )
 
 
-frontendFieldLabelAndValue : Model -> Schema -> FrontendLocation -> Entity -> String -> Row -> Maybe ( String, String )
-frontendFieldLabelAndValue model schema location entity rawFieldName rowValue =
-    let
-        ( fieldName, displayFieldName ) =
-            parseFrontendDisplayFieldPath rawFieldName
-    in
-    case ( List.filter (\field -> field.name == fieldName) entity.fields |> List.head, displayFieldName ) of
-        ( Just field, Just _ ) ->
-            Dict.get field.name rowValue
-                |> Maybe.map
-                    (\value ->
-                        ( fieldLabel field.name
-                        , frontendRelationFieldValueLabel model schema location field value
-                        )
-                    )
-                |> Maybe.andThen
-                    (\( labelText, valueText ) ->
-                        let
-                            trimmed =
-                                String.trim valueText
-                        in
-                        if trimmed == "" || trimmed == "null" then
-                            Nothing
-
-                        else
-                            Just ( labelText, trimmed )
-                    )
-
-        _ ->
-            rowFieldLabel model entity fieldName rowValue
-                |> Maybe.map (\value -> ( fieldLabel fieldName, value ))
-
-
 entityLabel : Entity -> String
 entityLabel entity =
     entity.name
@@ -5659,16 +5727,6 @@ entityLabel entity =
 fieldLabel : String -> String
 fieldLabel =
     humanizeIdentifier
-
-
-parseFrontendDisplayFieldPath : String -> ( String, Maybe String )
-parseFrontendDisplayFieldPath raw =
-    case String.split "." raw of
-        [ fieldName, displayField ] ->
-            ( fieldName, Just displayField )
-
-        _ ->
-            ( raw, Nothing )
 
 
 fieldPlaceholder : String -> String
@@ -5862,65 +5920,26 @@ relationFieldValueLabel model field value =
                                 relatedRowLabel model.localZone relatedEntity relatedRow
 
                             Nothing ->
-                                fallbackRelationLabel entityName rawId
+                                currentUserRelationLabel model entityName rawId
+                                    |> Maybe.withDefault (fallbackRelationLabel entityName rawId)
 
                     _ ->
-                        fallbackRelationLabel entityName rawId
+                        currentUserRelationLabel model entityName rawId
+                            |> Maybe.withDefault (fallbackRelationLabel entityName rawId)
 
         Nothing ->
             valueToDisplayString model.localZone field.fieldType value
 
 
-frontendRelationFieldValueLabel : Model -> Schema -> FrontendLocation -> Field -> Decode.Value -> String
-frontendRelationFieldValueLabel model schema location field value =
-    let
-        rawId =
-            valueToString value |> String.trim
-    in
-    case field.relationEntity of
-        Just relationEntityName ->
-            if rawId == "" || rawId == "null" then
-                ""
+currentUserRelationLabel : Model -> String -> String -> Maybe String
+currentUserRelationLabel model entityName rawId =
+    case ( String.toLower entityName, model.currentUserID, model.currentEmail ) of
+        ( "user", Just currentUserID, Just email ) ->
+            if currentUserID == rawId then
+                Just email
 
             else
-                case frontendParentRelationLabel schema model location relationEntityName rawId of
-                    Just labelText ->
-                        labelText
-
-                    Nothing ->
-                        relationFieldValueLabel model field value
-
-        Nothing ->
-            valueToDisplayString model.localZone field.fieldType value
-
-
-frontendParentRelationLabel : Schema -> Model -> FrontendLocation -> String -> String -> Maybe String
-frontendParentRelationLabel schema model location relationEntityName rawId =
-    case List.reverse model.frontendStack of
-        current :: parent :: _ ->
-            if current.screen /= location.screen then
                 Nothing
-
-            else
-                case ( parent.row, parent.rowEntity |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema) ) of
-                    ( Just parentRow, Just parentEntity ) ->
-                        if parentEntity.name /= relationEntityName then
-                            Nothing
-
-                        else
-                            case rowId parentEntity parentRow of
-                                Just parentId ->
-                                    if parentId == rawId then
-                                        Just (relatedRowLabel model.localZone parentEntity parentRow)
-
-                                    else
-                                        Nothing
-
-                                Nothing ->
-                                    Nothing
-
-                    _ ->
-                        Nothing
 
         _ ->
             Nothing
@@ -9912,25 +9931,20 @@ viewFrontendItem model schema screen location item =
                 else
                     none
 
-            "field" ->
-                case ( location.rowEntity, location.row, item.field ) of
-                    ( Just entityName, Just rowValue, Just fieldName ) ->
-                        case findEntityInSchema entityName schema of
-                            Just entity ->
-                                case frontendFieldLabelAndValue model schema location entity fieldName rowValue of
-                                    Just ( labelText, value ) ->
-                                        row [ width fill, spacing 12 ]
-                                            [ el [ width (fillPortion 1), Font.bold, Font.size 13, Font.color (rgb255 62 74 92) ] (text labelText)
-                                            , paragraph [ width (fillPortion 2), Font.size 14, Font.color (rgb255 42 54 72) ] [ text value ]
-                                            ]
+            "text" ->
+                case item.text of
+                    Just rawText ->
+                        case frontendEval schema (frontendItemEvalContext model screen location runtimeModel) rawText of
+                            Ok (FrontendString value) ->
+                                paragraph [ width fill, Font.size 14, Font.color (rgb255 42 54 72) ] [ text value ]
 
-                                    Nothing ->
-                                        none
+                            Ok _ ->
+                                paragraph [ width fill, Font.color (rgb255 176 60 46) ] [ text "Text expression must return a string." ]
 
-                            Nothing ->
-                                none
+                            Err message ->
+                                paragraph [ width fill, Font.color (rgb255 176 60 46) ] [ text message ]
 
-                    _ ->
+                    Nothing ->
                         none
 
             "button" ->
@@ -10169,6 +10183,20 @@ viewFrontendItem model schema screen location item =
 
             _ ->
                 none
+
+
+frontendItemEvalContext : Model -> FrontendScreenInfo -> FrontendLocation -> Maybe Row -> Dict String FrontendLocalValue
+frontendItemEvalContext model screen location runtimeModel =
+    let
+        baseContext =
+            frontendScreenEvalContext model screen location
+    in
+    case ( screen.updateModel, runtimeModel ) of
+        ( Just modelName, Just rowValue ) ->
+            Dict.insert modelName (FrontendObject rowValue) baseContext
+
+        _ ->
+            baseContext
 
 
 viewFrontendRowsItem : Model -> Schema -> FrontendLocation -> FrontendItemInfo -> Element Msg
