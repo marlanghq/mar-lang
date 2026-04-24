@@ -101,10 +101,10 @@ func loadSMTPPassword(cfg model.AuthConfig) (string, error) {
 			Title:   "SMTP CONFIG ERROR",
 			Message: "I cannot start this app because the SMTP password environment variable is not configured.",
 			Details: []startupDetail{
-				{Label: "Setting", Value: "auth.smtp_password_env"},
+				{Label: "Setting", Value: "app-auth -> smtp-password-env"},
 			},
 			Hints: []string{
-				`Set auth.smtp_password_env to the name of an environment variable that holds your SMTP password.`,
+				`Set smtp-password-env to the name of an environment variable that holds your SMTP password.`,
 			},
 		}
 	}
@@ -131,25 +131,25 @@ func validateRequiredSMTPConfig(cfg model.AuthConfig) error {
 	if strings.TrimSpace(cfg.SMTPHost) == "" {
 		return &startupFriendlyError{
 			Title:   "SMTP CONFIG ERROR",
-			Message: "I cannot start this app because auth.smtp_host is not configured.",
+			Message: "I cannot start this app because smtp-host is not configured.",
 			Details: []startupDetail{
-				{Label: "Setting", Value: "auth.smtp_host"},
+				{Label: "Setting", Value: "app-auth -> smtp-host"},
 			},
 			Hints: []string{
-				`Set auth.smtp_host to your SMTP server host.`,
+				`Set smtp-host to your SMTP server host.`,
 			},
 		}
 	}
 	if strings.TrimSpace(cfg.SMTPUsername) == "" {
 		return &startupFriendlyError{
 			Title:   "SMTP CONFIG ERROR",
-			Message: "I cannot start this app because auth.smtp_username is not configured.",
+			Message: "I cannot start this app because smtp-username is not configured.",
 			Details: []startupDetail{
 				{Label: "Host", Value: cfg.SMTPHost},
-				{Label: "Setting", Value: "auth.smtp_username"},
+				{Label: "Setting", Value: "app-auth -> smtp-username"},
 			},
 			Hints: []string{
-				`Set auth.smtp_username to the SMTP username for your provider.`,
+				`Set smtp-username to the SMTP username for your provider.`,
 			},
 		}
 	}
@@ -169,8 +169,8 @@ func wrapSMTPStartupError(cfg model.AuthConfig, err error) error {
 		},
 		Hints: []string{
 			"Check the SMTP host, port, username, password, and firewall rules.",
-			"If your provider expects STARTTLS on port 587, keep smtp_starttls true.",
-			"If your provider expects implicit TLS on port 465, use smtp_port 465 and smtp_starttls false.",
+			"If your provider expects STARTTLS on port 587, keep smtp-starttls true.",
+			"If your provider expects implicit TLS on port 465, use smtp-port 465 and smtp-starttls false.",
 		},
 	}
 }

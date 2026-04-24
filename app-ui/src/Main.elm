@@ -15,7 +15,7 @@ import Html.Events as HtmlEvents
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
-import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), FrontendActionValueInfo, FrontendFormFieldInfo, FrontendInfo, FrontendItemInfo, FrontendReportMetricInfo, FrontendScreenInfo, FrontendSectionInfo, FrontendToolbarItemInfo, InputAliasField, InputAliasInfo, Row, Schema, decodeRows, decodeSchema, encodePayload, fieldSchemaLabel, fieldTypeLabel, formatDateInputMillis, formatDateTimeInputMillis, parseDateInput, parseDateTimeInput, rowDecoder, valueToDisplayString, valueToString)
+import Mar.Api exposing (ActionInfo, AuthInfo, Entity, Field, FieldType(..), FrontendActionValueInfo, FrontendFormFieldInfo, FrontendInfo, FrontendItemInfo, FrontendReportMetricInfo, FrontendScreenInfo, FrontendSectionInfo, FrontendToolbarItemInfo, InputAliasField, InputAliasInfo, RecordInfo, Row, Schema, decodeRows, decodeSchema, encodePayload, fieldSchemaLabel, fieldTypeLabel, formatDateInputMillis, formatDateTimeInputMillis, parseDateInput, parseDateTimeInput, rowDecoder, valueToDisplayString, valueToString)
 import Task
 import Time
 import Url exposing (Url)
@@ -114,7 +114,7 @@ type alias Model =
     , formValues : Dict String String
     , relationRows : Dict String (Remote (List Row))
     , frontendStack : List FrontendLocation
-    , frontendRows : Dict String (Remote (List Row))
+    , frontendScreenStates : Dict String FrontendScreenState
     , frontendListEditModes : Dict String Bool
     , frontendCreateEntity : Maybe String
     , frontendCreatePresetFields : List String
@@ -162,7 +162,34 @@ type alias MobileNavEntry =
 type alias FrontendLocation =
     { screen : String
     , row : Maybe Row
+    , rowEntity : Maybe String
+    , parameters : Maybe Row
     }
+
+
+type alias FrontendScreenState =
+    { model : Encode.Value
+    , busy : Bool
+    , error : Maybe String
+    , revision : Int
+    }
+
+
+type FrontendLocalValue
+    = FrontendNull
+    | FrontendString String
+    | FrontendBool Bool
+    | FrontendNumber Float
+    | FrontendObject Row
+    | FrontendList (List FrontendLocalValue)
+    | FrontendTagged String (List FrontendLocalValue)
+    | FrontendEffect FrontendLocalEffect
+
+
+type FrontendLocalEffect
+    = FrontendCommandEffect String String String
+    | FrontendGoEffect String (List Encode.Value)
+    | FrontendBackEffect
 
 
 type Msg
@@ -176,7 +203,7 @@ type Msg
     | GotRows (Result ApiHttpError (ApiResponse (List Row)))
     | GotRelationRows String (Result ApiHttpError (ApiResponse (List Row)))
     | SelectFrontendScreen String
-    | SelectFrontendRow String Row
+    | SelectFrontendRow String String Row
     | SelectFrontendCreate String (Dict String String) (List FrontendFormFieldInfo)
     | StartFrontendEdit (List FrontendFormFieldInfo)
     | RequestFrontendDelete
@@ -185,7 +212,9 @@ type Msg
     | RequestFrontendDeleteRow String Row
     | SelectFrontendRoot
     | FrontendBack
-    | GotFrontendRows String (Result ApiHttpError (ApiResponse (List Row)))
+    | FrontendScreenMessage FrontendLocation String
+    | FrontendScreenInputMessage FrontendLocation String Encode.Value String
+    | GotFrontendCommand FrontendLocation String String (Result ApiHttpError (ApiResponse Decode.Value))
     | SelectFrontendAction String (Dict String String) (List FrontendFormFieldInfo)
     | SelectPerformance
     | SelectRequestLogs
@@ -611,7 +640,7 @@ init flags url navKey =
             , formValues = Dict.empty
             , relationRows = Dict.empty
             , frontendStack = []
-            , frontendRows = Dict.empty
+            , frontendScreenStates = Dict.empty
             , frontendListEditModes = Dict.empty
             , frontendCreateEntity = Nothing
             , frontendCreatePresetFields = []
@@ -779,7 +808,7 @@ resetForRoute model =
         , formMode = FormHidden
         , formValues = Dict.empty
         , frontendStack = []
-        , frontendRows = Dict.empty
+        , frontendScreenStates = Dict.empty
         , frontendCreateEntity = Nothing
         , frontendCreatePresetFields = []
         , frontendCreateFormFields = []
@@ -816,12 +845,18 @@ applyFrontendDefaultRoute schema frontend model =
                 baseModel =
                     resetForRoute model
 
+                location =
+                    { screen = screen.name, row = Nothing, rowEntity = Nothing, parameters = Nothing }
+
                 nextModel =
                     { baseModel
-                        | frontendStack = [ { screen = screen.name, row = Nothing } ]
+                        | frontendStack = [ location ]
                     }
+
+                ( initializedModel, initCmd ) =
+                    initializeFrontendScreenLocal schema screen location nextModel
             in
-            ( nextModel, ensureFrontendRowsForScreen nextModel schema screen Nothing )
+            ( initializedModel, initCmd )
 
 
 applyAppFrontendOr : Model -> (() -> ( Model, Cmd Msg )) -> ( Model, Cmd Msg )
@@ -1334,10 +1369,13 @@ update msg model =
                     case schema.screens |> Maybe.andThen (findFrontendScreen screenName) of
                         Just screen ->
                             let
+                                location =
+                                    { screen = screen.name, row = Nothing, rowEntity = Nothing, parameters = Nothing }
+
                                 nextModel =
                                     closeMobileSidebarForNavigation
                                         { promotedModel
-                                            | frontendStack = promotedModel.frontendStack ++ [ { screen = screen.name, row = Nothing } ]
+                                            | frontendStack = promotedModel.frontendStack ++ [ location ]
                                             , selectedAction = Nothing
                                             , actionFormFields = []
                                             , frontendCreateEntity = Nothing
@@ -1347,8 +1385,11 @@ update msg model =
                                             , actionResult = Nothing
                                             , flash = Nothing
                                         }
+
+                                ( initializedModel, initCmd ) =
+                                    initializeFrontendScreenLocal schema screen location nextModel
                             in
-                            ( nextModel, ensureFrontendRowsForScreen nextModel schema screen Nothing )
+                            ( initializedModel, initCmd )
 
                         Nothing ->
                             ( { promotedModel | flash = Just "Screen not found" }, Cmd.none )
@@ -1356,7 +1397,7 @@ update msg model =
                 _ ->
                     ( promotedModel, Cmd.none )
 
-        SelectFrontendRow screenName rowValue ->
+        SelectFrontendRow screenName rowEntityName rowValue ->
             let
                 promotedModel =
                     promotePendingSchemaForNavigation model
@@ -1366,9 +1407,12 @@ update msg model =
                     case schema.screens |> Maybe.andThen (findFrontendScreen screenName) of
                         Just screen ->
                             let
+                                location =
+                                    { screen = screen.name, row = Just rowValue, rowEntity = Just rowEntityName, parameters = Nothing }
+
                                 nextModel =
                                     { promotedModel
-                                        | frontendStack = promotedModel.frontendStack ++ [ { screen = screen.name, row = Just rowValue } ]
+                                        | frontendStack = promotedModel.frontendStack ++ [ location ]
                                         , selectedAction = Nothing
                                         , actionFormFields = []
                                         , frontendCreateEntity = Nothing
@@ -1378,8 +1422,11 @@ update msg model =
                                         , actionResult = Nothing
                                         , flash = Nothing
                                     }
+
+                                ( initializedModel, initCmd ) =
+                                    initializeFrontendScreenLocal schema screen location nextModel
                             in
-                            ( nextModel, ensureFrontendRowsForScreen nextModel schema screen (Just rowValue) )
+                            ( initializedModel, initCmd )
 
                         Nothing ->
                             ( { promotedModel | flash = Just "Screen not found" }, Cmd.none )
@@ -1613,19 +1660,78 @@ update msg model =
                     _ ->
                         ( { promotedModel | frontendStack = dropLast promotedModel.frontendStack, flash = Nothing }, Cmd.none )
 
-        GotFrontendRows key result ->
-            case result of
-                Ok response ->
-                    withObservedSchemaVersion response.schemaVersion
-                        ( { model | frontendRows = Dict.insert key (Loaded response.value) model.frontendRows }, Cmd.none )
-
-                Err httpError ->
-                    case handleUnauthorizedSessionExpiry model httpError of
-                        Just outcome ->
-                            withObservedSchemaVersionFromError httpError outcome
+        FrontendScreenMessage location message ->
+            case model.schema of
+                Loaded schema ->
+                    case schema.screens |> Maybe.andThen (findFrontendScreen location.screen) of
+                        Just screen ->
+                            dispatchFrontendScreenMessageLocal schema screen location message model
 
                         Nothing ->
-                            withObservedSchemaVersionFromError httpError ( { model | frontendRows = Dict.insert key (Failed (httpErrorToString httpError)) model.frontendRows }, Cmd.none )
+                            ( { model | flash = Just "Screen not found" }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        FrontendScreenInputMessage location fieldName fieldValue message ->
+            case model.schema of
+                Loaded schema ->
+                    case schema.screens |> Maybe.andThen (findFrontendScreen location.screen) of
+                        Just screen ->
+                            let
+                                key =
+                                    frontendLocationKey location
+
+                                currentState =
+                                    Dict.get key model.frontendScreenStates
+                                        |> Maybe.withDefault frontendScreenEmptyState
+
+                                optimisticModel =
+                                    frontendScreenModelWithField currentState.model fieldName fieldValue
+
+                                nextModel =
+                                    { model
+                                        | frontendScreenStates =
+                                            Dict.insert key { currentState | model = optimisticModel } model.frontendScreenStates
+                                    }
+                            in
+                            dispatchFrontendScreenMessageLocal schema screen location message nextModel
+
+                        Nothing ->
+                            ( { model | flash = Just "Screen not found" }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        GotFrontendCommand location successMessage failureMessage result ->
+            case model.schema of
+                Loaded schema ->
+                    case schema.screens |> Maybe.andThen (findFrontendScreen location.screen) of
+                        Just screen ->
+                            case result of
+                                Ok response ->
+                                    let
+                                        ( nextModel, followUpCmd ) =
+                                            dispatchFrontendScreenMessageLocal schema screen location (frontendReplyMessageRaw screen successMessage response.value) model
+                                    in
+                                    withObservedSchemaVersion response.schemaVersion
+                                        ( nextModel
+                                        , followUpCmd
+                                        )
+
+                                Err httpError ->
+                                    let
+                                        message =
+                                            httpErrorToString httpError
+                                    in
+                                    withObservedSchemaVersion (schemaVersionFromHttpError httpError)
+                                        (dispatchFrontendScreenMessageLocal schema screen location (frontendFailureMessageRaw screen failureMessage message) model)
+
+                        Nothing ->
+                            ( { model | flash = Just "Screen not found" }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
 
         SelectFrontendAction actionName presetValues formFields ->
             let
@@ -2219,24 +2325,7 @@ update msg model =
                                     { model | rows = nextRows, frontendCreateEntity = Nothing, frontendCreatePresetFields = [], frontendCreateFormFields = [], frontendEditFormFields = [], formMode = FormHidden, formValues = Dict.empty, flash = Nothing }
                     in
                     if model.frontendCreateEntity /= Nothing then
-                        case model.schema of
-                            Loaded schema ->
-                                case currentFrontendLocation model |> Maybe.andThen (\location -> schema.screens |> Maybe.andThen (findFrontendScreen location.screen) |> Maybe.map (\screen -> ( screen, location.row ))) of
-                                    Just ( screen, maybeRow ) ->
-                                        let
-                                            frontendModel =
-                                                { nextModel | frontendRows = Dict.empty }
-                                        in
-                                        withObservedSchemaVersion response.schemaVersion
-                                            ( frontendModel
-                                            , ensureFrontendRowsForScreen frontendModel schema screen maybeRow
-                                            )
-
-                                    Nothing ->
-                                        withObservedSchemaVersion response.schemaVersion ( nextModel, Cmd.none )
-
-                            _ ->
-                                withObservedSchemaVersion response.schemaVersion ( nextModel, Cmd.none )
+                        withObservedSchemaVersion response.schemaVersion ( nextModel, Cmd.none )
 
                     else
                         case ( model.selectedEntity, rowIdForCurrentSelection nextModel createdRow ) of
@@ -2283,7 +2372,6 @@ update msg model =
                         let
                             frontendModel =
                                 nextModel
-                                    |> updateFrontendRowsForEntityCache updatedRow
                                     |> updateCurrentFrontendLocationRow updatedRow
                                     |> (\m ->
                                             { m
@@ -2364,7 +2452,6 @@ update msg model =
                                     Just pendingDelete ->
                                         { nextModel
                                             | frontendStack = dropLast nextModel.frontendStack
-                                            , frontendRows = removeFrontendRowsForEntityCache pendingDelete.entity pendingDelete.idValue nextModel.frontendRows
                                             , selectedEntity = Nothing
                                         }
 
@@ -2412,7 +2499,6 @@ update msg model =
                                 , flash = Nothing
                                 , rows = NotAsked
                                 , relationRows = Dict.empty
-                                , frontendRows = Dict.empty
                             }
 
                         reloadActionRelations =
@@ -2422,17 +2508,9 @@ update msg model =
 
                                 Nothing ->
                                     Cmd.none
-
-                        reloadFrontendRows =
-                            reloadCurrentFrontendRows nextModel
                     in
                     withObservedSchemaVersion response.schemaVersion
-                        ( nextModel
-                        , Cmd.batch
-                            [ reloadActionRelations
-                            , reloadFrontendRows
-                            ]
-                        )
+                        ( nextModel, reloadActionRelations )
 
                 Err httpError ->
                     case handleUnauthorizedSessionExpiry model httpError of
@@ -2656,59 +2734,1403 @@ loadRelationRows model entityName filters =
                 }
 
 
-loadFrontendRows : Model -> String -> Entity -> Cmd Msg
-loadFrontendRows model key entity =
-    Http.request
-        { method = "GET"
-        , headers = appAuthHeaders model
-        , url = model.apiBase ++ entity.resource
-        , body = Http.emptyBody
-        , expect = expectJsonWithApiError (GotFrontendRows key) decodeRows
-        , timeout = Nothing
-        , tracker = Nothing
-        }
+frontendScreenUsesLocalModel : FrontendScreenInfo -> Bool
+frontendScreenUsesLocalModel screen =
+    screen.initExpression /= Nothing || screen.updateBody /= Nothing
 
 
-ensureFrontendRowsForScreen : Model -> Schema -> FrontendScreenInfo -> Maybe Row -> Cmd Msg
-ensureFrontendRowsForScreen model schema screen maybeRow =
-    screen.sections
-        |> List.concatMap .items
-        |> List.filter (\item -> item.kind == "list" || item.kind == "children" || item.kind == "report")
-        |> List.filterMap
-            (\item ->
-                item.entity
-                    |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema)
-                    |> Maybe.map (\entity -> ( frontendRowsKey schema screen maybeRow item, entity ))
-            )
-        |> List.filter
-            (\( key, _ ) ->
-                case Dict.get key model.frontendRows of
-                    Just Loading ->
-                        False
-
-                    Just (Loaded _) ->
-                        False
-
-                    _ ->
-                        True
-            )
-        |> List.map (\( key, entity ) -> loadFrontendRows model key entity)
-        |> Cmd.batch
+frontendScreenEmptyState : FrontendScreenState
+frontendScreenEmptyState =
+    { model = Encode.null, busy = False, error = Nothing, revision = 0 }
 
 
-reloadCurrentFrontendRows : Model -> Cmd Msg
-reloadCurrentFrontendRows model =
-    case ( model.schema, currentFrontendLocation model ) of
-        ( Loaded schema, Just location ) ->
-            case schema.screens |> Maybe.andThen (findFrontendScreen location.screen) of
-                Just screen ->
-                    ensureFrontendRowsForScreen model schema screen location.row
+frontendLocationKey : FrontendLocation -> String
+frontendLocationKey location =
+    let
+        rowKey =
+            location.row
+                |> Maybe.andThen (\rowValue -> Dict.get "id" rowValue)
+                |> Maybe.map valueToString
+                |> Maybe.withDefault ""
 
-                Nothing ->
-                    Cmd.none
+        parametersKey =
+            location.parameters
+                |> Maybe.map (\parameterValues -> Encode.encode 0 (Encode.object (Dict.toList parameterValues)))
+                |> Maybe.withDefault ""
+    in
+    String.join "::"
+        [ location.screen
+        , Maybe.withDefault "" location.rowEntity
+        , rowKey
+        , parametersKey
+        ]
+
+
+frontendScreenStateForLocation : Model -> FrontendLocation -> Maybe FrontendScreenState
+frontendScreenStateForLocation model location =
+    Dict.get (frontendLocationKey location) model.frontendScreenStates
+
+
+frontendScreenModelForLocation : Model -> FrontendLocation -> Maybe Row
+frontendScreenModelForLocation model location =
+    frontendScreenStateForLocation model location
+        |> Maybe.andThen (\state -> Decode.decodeValue rowDecoder state.model |> Result.toMaybe)
+
+
+frontendScreenModelWithField : Encode.Value -> String -> Encode.Value -> Encode.Value
+frontendScreenModelWithField runtimeModel fieldName fieldValue =
+    case Decode.decodeValue rowDecoder runtimeModel of
+        Ok rowValue ->
+            Encode.object (Dict.toList (Dict.insert fieldName fieldValue rowValue))
+
+        Err _ ->
+            runtimeModel
+
+
+initializeFrontendScreenLocal : Schema -> FrontendScreenInfo -> FrontendLocation -> Model -> ( Model, Cmd Msg )
+initializeFrontendScreenLocal schema screen location model =
+    if not (frontendScreenUsesLocalModel screen) then
+        ( model, Cmd.none )
+
+    else
+        let
+            rawInit =
+                screen.initExpression
+                    |> Maybe.withDefault "((unit) ())"
+
+            context =
+                frontendScreenEvalContext model screen location
+        in
+        case frontendEvalTransition schema context rawInit of
+            Ok ( modelValue, effects ) ->
+                let
+                    key =
+                        frontendLocationKey location
+
+                    initializedModel =
+                        { model
+                            | frontendScreenStates =
+                                Dict.insert key { model = modelValue, busy = False, error = Nothing, revision = 0 } model.frontendScreenStates
+                        }
+                in
+                applyFrontendLocalEffects schema location effects initializedModel
+
+            Err message ->
+                let
+                    key =
+                        frontendLocationKey location
+                in
+                ( { model
+                    | frontendScreenStates =
+                        Dict.insert key { frontendScreenEmptyState | error = Just message } model.frontendScreenStates
+                  }
+                , Cmd.none
+                )
+
+
+dispatchFrontendScreenMessageLocal : Schema -> FrontendScreenInfo -> FrontendLocation -> String -> Model -> ( Model, Cmd Msg )
+dispatchFrontendScreenMessageLocal schema screen location message model =
+    case ( screen.updateBody, screen.updateMessage, screen.updateModel ) of
+        ( Just updateBody, Just messageName, Just modelName ) ->
+            let
+                key =
+                    frontendLocationKey location
+
+                currentState =
+                    Dict.get key model.frontendScreenStates
+                        |> Maybe.withDefault frontendScreenEmptyState
+
+                baseContext =
+                    frontendScreenEvalContext model screen location
+
+                messageValueResult =
+                    frontendEval schema baseContext message
+
+                transitionResult =
+                    messageValueResult
+                        |> Result.andThen
+                            (\messageValue ->
+                                let
+                                    updateContext =
+                                        baseContext
+                                            |> Dict.insert messageName messageValue
+                                            |> Dict.insert modelName (frontendValueFromJson currentState.model)
+                                in
+                                frontendEvalTransition schema updateContext updateBody
+                            )
+            in
+            case transitionResult of
+                Ok ( nextModelValue, effects ) ->
+                    let
+                        nextRevision =
+                            currentState.revision + 1
+
+                        nextModel =
+                            { model
+                                | frontendScreenStates =
+                                    Dict.insert key { currentState | model = nextModelValue, error = Nothing, revision = nextRevision } model.frontendScreenStates
+                            }
+                    in
+                    applyFrontendLocalEffects schema location effects nextModel
+
+                Err messageText ->
+                    ( { model
+                        | frontendScreenStates =
+                            Dict.insert key { currentState | error = Just messageText } model.frontendScreenStates
+                      }
+                    , Cmd.none
+                    )
 
         _ ->
-            Cmd.none
+            ( model, Cmd.none )
+
+
+frontendEvalTransition : Schema -> Dict String FrontendLocalValue -> String -> Result String ( Encode.Value, List FrontendLocalEffect )
+frontendEvalTransition schema context raw =
+    case frontendEval schema context raw of
+        Ok (FrontendList [ modelValue, FrontendList effectValues ]) ->
+            Ok ( frontendValueToJson modelValue, List.filterMap frontendValueToEffect effectValues )
+
+        Ok _ ->
+            Err "Screen transition must return (model effects)"
+
+        Err message ->
+            Err message
+
+
+frontendValueToEffect : FrontendLocalValue -> Maybe FrontendLocalEffect
+frontendValueToEffect value =
+    case value of
+        FrontendEffect effect ->
+            Just effect
+
+        _ ->
+            Nothing
+
+
+frontendScreenEvalContext : Model -> FrontendScreenInfo -> FrontendLocation -> Dict String FrontendLocalValue
+frontendScreenEvalContext model screen location =
+    let
+        currentUserValue =
+            model.currentUserID
+                |> Maybe.andThen String.toFloat
+                |> Maybe.map
+                    (\id ->
+                        FrontendTagged "authenticated"
+                            [ FrontendNumber id
+                            , FrontendString (model.currentEmail |> Maybe.withDefault "")
+                            , FrontendString (model.currentRole |> Maybe.withDefault "")
+                            ]
+                    )
+                |> Maybe.withDefault (FrontendTagged "anonymous" [])
+
+        rowBindings =
+            case ( List.head screen.parameters, location.row ) of
+                ( Just parameterName, Just rowValue ) ->
+                    [ ( parameterName, FrontendObject rowValue ) ]
+
+                _ ->
+                    []
+
+        parameterBindings =
+            case location.parameters of
+                Just parameterValues ->
+                    parameterValues
+                        |> Dict.toList
+                        |> List.map (\( key, value ) -> ( key, frontendValueFromJson value ))
+
+                Nothing ->
+                    []
+    in
+    Dict.fromList
+        ([ ( "current_user", currentUserValue )
+         ]
+            ++ rowBindings
+            ++ parameterBindings
+        )
+
+
+frontendEval : Schema -> Dict String FrontendLocalValue -> String -> Result String FrontendLocalValue
+frontendEval schema context raw =
+    let
+        expression =
+            String.trim raw
+    in
+    if expression == "" then
+        Err "Empty expression"
+
+    else if String.startsWith "(" expression && String.endsWith ")" expression then
+        frontendEvalList schema context (splitSexpItems (expression |> String.dropLeft 1 |> String.dropRight 1))
+
+    else
+        frontendEvalAtom context expression
+
+
+frontendEvalAtom : Dict String FrontendLocalValue -> String -> Result String FrontendLocalValue
+frontendEvalAtom context atom =
+    if String.startsWith "\"" atom && String.endsWith "\"" atom then
+        Decode.decodeString Decode.string atom
+            |> Result.map FrontendString
+            |> Result.mapError Decode.errorToString
+
+    else
+        case atom of
+            "true" ->
+                Ok (FrontendBool True)
+
+            "false" ->
+                Ok (FrontendBool False)
+
+            _ ->
+                case String.toFloat atom of
+                    Just number ->
+                        Ok (FrontendNumber number)
+
+                    Nothing ->
+                        frontendResolveSymbol context atom
+
+
+frontendResolveSymbol : Dict String FrontendLocalValue -> String -> Result String FrontendLocalValue
+frontendResolveSymbol context symbol =
+    let
+        normalized =
+            frontendNormalizeSymbol symbol
+    in
+    case Dict.get normalized context of
+        Just value ->
+            Ok value
+
+        Nothing ->
+            case String.split "." symbol of
+                root :: fields ->
+                    case Dict.get (frontendNormalizeSymbol root) context of
+                        Just value ->
+                            frontendResolveFields fields value
+
+                        Nothing ->
+                            Ok (FrontendTagged normalized [])
+
+                [] ->
+                    Ok (FrontendTagged normalized [])
+
+
+frontendResolveFields : List String -> FrontendLocalValue -> Result String FrontendLocalValue
+frontendResolveFields fields value =
+    case fields of
+        [] ->
+            Ok value
+
+        fieldName :: rest ->
+            case value of
+                FrontendObject rowValue ->
+                    Dict.get (frontendNormalizeSymbol fieldName) rowValue
+                        |> Maybe.map frontendValueFromJson
+                        |> Maybe.withDefault FrontendNull
+                        |> frontendResolveFields rest
+
+                _ ->
+                    Err "Field access expects a record-like value"
+
+
+frontendEvalList : Schema -> Dict String FrontendLocalValue -> List String -> Result String FrontendLocalValue
+frontendEvalList schema context items =
+    case items of
+        [] ->
+            Ok (FrontendList [])
+
+        head :: args ->
+            if String.startsWith "(" head || String.startsWith "\"" head then
+                frontendEvalMany schema context items |> Result.map FrontendList
+
+            else
+                case head of
+                "if" ->
+                    case args of
+                        [ conditionRaw, thenRaw, elseRaw ] ->
+                            frontendEval schema context conditionRaw
+                                |> Result.andThen frontendRequireBool
+                                |> Result.andThen
+                                    (\condition ->
+                                        if condition then
+                                            frontendEval schema context thenRaw
+
+                                        else
+                                            frontendEval schema context elseRaw
+                                    )
+
+                        _ ->
+                            Err "if expects 3 arguments"
+
+                "match" ->
+                    case args of
+                        subjectRaw :: clauses ->
+                            frontendEval schema context subjectRaw
+                                |> Result.andThen (\subject -> frontendEvalMatch schema context subject clauses)
+
+                        [] ->
+                            Err "match expects a subject and clauses"
+
+                "get" ->
+                    case args of
+                        [ targetRaw, fieldName ] ->
+                            frontendEval schema context targetRaw
+                                |> Result.andThen (frontendGetField fieldName)
+
+                        _ ->
+                            Err "get expects a target and a field"
+
+                "assoc" ->
+                    case args of
+                        targetRaw :: updates ->
+                            frontendEval schema context targetRaw
+                                |> Result.andThen (\target -> frontendAssoc schema context target updates)
+
+                        [] ->
+                            Err "assoc expects a target"
+
+                "command" ->
+                    case args of
+                        [ operationRaw, successRaw, failureRaw ] ->
+                            Ok (FrontendEffect (FrontendCommandEffect operationRaw (frontendNormalizeSymbol successRaw) (frontendNormalizeSymbol failureRaw)))
+
+                        _ ->
+                            Err "command expects an operation, success message, and failure message"
+
+                "go" ->
+                    case args of
+                        targetRaw :: argumentRaws ->
+                            let
+                                target =
+                                    frontendCanonicalScreenName targetRaw
+                            in
+                            argumentRaws
+                                |> frontendEvalMany schema context
+                                |> Result.map (List.map frontendValueToJson)
+                                |> Result.map (\arguments -> FrontendEffect (FrontendGoEffect target arguments))
+
+                        [] ->
+                            Err "go expects a screen"
+
+                "back" ->
+                    Ok (FrontendEffect FrontendBackEffect)
+
+                "not" ->
+                    case args of
+                        [ child ] ->
+                            frontendEval schema context child
+                                |> Result.andThen frontendRequireBool
+                                |> Result.map (not >> FrontendBool)
+
+                        _ ->
+                            Err "not expects 1 argument"
+
+                "and" ->
+                    frontendEvalMany schema context args
+                        |> Result.andThen (frontendRequireBoolList >> Result.map (List.all identity >> FrontendBool))
+
+                "or" ->
+                    frontendEvalMany schema context args
+                        |> Result.andThen (frontendRequireBoolList >> Result.map (List.any identity >> FrontendBool))
+
+                "authenticated?" ->
+                    case args of
+                        [ userRaw ] ->
+                            frontendEval schema context userRaw
+                                |> Result.andThen frontendAuthenticatedPredicate
+
+                        _ ->
+                            Err "authenticated? expects 1 argument"
+
+                "anonymous?" ->
+                    case args of
+                        [ userRaw ] ->
+                            frontendEval schema context userRaw
+                                |> Result.andThen frontendAnonymousPredicate
+
+                        _ ->
+                            Err "anonymous? expects 1 argument"
+
+                "same-user?" ->
+                    case args of
+                        [ userRaw, idRaw ] ->
+                            Result.map2 frontendSameUserPredicate
+                                (frontendEval schema context userRaw)
+                                (frontendEval schema context idRaw)
+
+                        _ ->
+                            Err "same-user? expects 2 arguments"
+
+                "has-role?" ->
+                    case args of
+                        [ userRaw, roleRaw ] ->
+                            Result.map2 frontendHasRolePredicate
+                                (frontendEval schema context userRaw)
+                                (frontendEval schema context roleRaw)
+
+                        _ ->
+                            Err "has-role? expects 2 arguments"
+
+                "=" ->
+                    frontendEvalBinaryComparable schema context args (\left right -> left == right)
+
+                "!=" ->
+                    frontendEvalBinaryComparable schema context args (\left right -> left /= right)
+
+                _ ->
+                    case findRecordInfo (frontendNormalizeSymbol head) schema.records of
+                        Just record ->
+                            frontendEvalRecordConstructor schema context record args
+
+                        Nothing ->
+                            if Dict.member (frontendNormalizeSymbol head) context then
+                                frontendEvalMany schema context items |> Result.map FrontendList
+
+                            else
+                                frontendEvalMany schema context args
+                                    |> Result.map (FrontendTagged (frontendNormalizeSymbol head))
+
+
+frontendEvalMany : Schema -> Dict String FrontendLocalValue -> List String -> Result String (List FrontendLocalValue)
+frontendEvalMany schema context raws =
+    raws
+        |> List.foldr
+            (\raw partial ->
+                Result.map2 (::) (frontendEval schema context raw) partial
+            )
+            (Ok [])
+
+
+frontendEvalRecordConstructor : Schema -> Dict String FrontendLocalValue -> RecordInfo -> List String -> Result String FrontendLocalValue
+frontendEvalRecordConstructor schema context record args =
+    if List.length args /= List.length record.fields then
+        Err (record.name ++ " expects " ++ String.fromInt (List.length record.fields) ++ " arguments")
+
+    else
+        frontendEvalMany schema context args
+            |> Result.map
+                (\values ->
+                    List.map2 (\field value -> ( field.name, frontendValueToJson value )) record.fields values
+                        |> Dict.fromList
+                        |> FrontendObject
+                )
+
+
+frontendEvalBuiltinCall : String -> List FrontendLocalValue -> Result String FrontendLocalValue
+frontendEvalBuiltinCall name values =
+    case frontendNormalizeSymbol name of
+        "unit" ->
+            if List.isEmpty values then
+                Ok (FrontendTagged "unit" [])
+
+            else
+                Err "unit expects 0 arguments"
+
+        "nothing" ->
+            if List.isEmpty values then
+                Ok (FrontendTagged "nothing" [])
+
+            else
+                Err "nothing expects 0 arguments"
+
+        "just" ->
+            case values of
+                [ value ] ->
+                    Ok (FrontendTagged "just" [ value ])
+
+                _ ->
+                    Err "just expects 1 argument"
+
+        _ ->
+            Err ("unknown function " ++ name)
+
+
+frontendEvalBinaryComparable : Schema -> Dict String FrontendLocalValue -> List String -> (String -> String -> Bool) -> Result String FrontendLocalValue
+frontendEvalBinaryComparable schema context args compare =
+    case args of
+        [ leftRaw, rightRaw ] ->
+            Result.map2
+                (\left right -> FrontendBool (compare (frontendComparableString left) (frontendComparableString right)))
+                (frontendEval schema context leftRaw)
+                (frontendEval schema context rightRaw)
+
+        _ ->
+            Err "comparison expects 2 arguments"
+
+
+frontendEvalMatch : Schema -> Dict String FrontendLocalValue -> FrontendLocalValue -> List String -> Result String FrontendLocalValue
+frontendEvalMatch schema context subject clauses =
+    case clauses of
+        [] ->
+            Err "match had no matching clause"
+
+        clauseRaw :: rest ->
+            case parseSexpCall clauseRaw of
+                Just ( patternRaw, bodyRaw :: _ ) ->
+                    case frontendMatchPattern patternRaw subject of
+                        Just bindings ->
+                            frontendEval schema (Dict.union bindings context) bodyRaw
+
+                        Nothing ->
+                            frontendEvalMatch schema context subject rest
+
+                _ ->
+                    Err "invalid match clause"
+
+
+frontendMatchPattern : String -> FrontendLocalValue -> Maybe (Dict String FrontendLocalValue)
+frontendMatchPattern rawPattern subject =
+    let
+        pattern =
+            String.trim rawPattern
+    in
+    case subject of
+        FrontendTagged tag values ->
+            if String.startsWith "(" pattern && String.endsWith ")" pattern then
+                case splitSexpItems (pattern |> String.dropLeft 1 |> String.dropRight 1) of
+                    patternTag :: vars ->
+                        if frontendNormalizeSymbol patternTag == tag && List.length vars == List.length values then
+                            Just (Dict.fromList (List.map2 (\name value -> ( frontendNormalizeSymbol name, value )) vars values))
+
+                        else
+                            Nothing
+
+                    [] ->
+                        Nothing
+
+            else if frontendNormalizeSymbol pattern == tag && List.isEmpty values then
+                Just Dict.empty
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+frontendGetField : String -> FrontendLocalValue -> Result String FrontendLocalValue
+frontendGetField fieldName target =
+    case target of
+        FrontendObject rowValue ->
+            Dict.get (frontendNormalizeSymbol fieldName) rowValue
+                |> Maybe.map frontendValueFromJson
+                |> Maybe.withDefault FrontendNull
+                |> Ok
+
+        _ ->
+            Err "get expects a record-like value"
+
+
+frontendAssoc : Schema -> Dict String FrontendLocalValue -> FrontendLocalValue -> List String -> Result String FrontendLocalValue
+frontendAssoc schema context target updates =
+    case target of
+        FrontendObject rowValue ->
+            updates
+                |> List.foldl
+                    (\updateRaw partial ->
+                        partial
+                            |> Result.andThen
+                                (\current ->
+                                    case parseSexpCall updateRaw of
+                                        Just ( fieldName, [ valueRaw ] ) ->
+                                            frontendEval schema context valueRaw
+                                                |> Result.map (\value -> Dict.insert (frontendNormalizeSymbol fieldName) (frontendValueToJson value) current)
+
+                                        _ ->
+                                            Err "assoc updates must look like (field value)"
+                                )
+                    )
+                    (Ok rowValue)
+                |> Result.map FrontendObject
+
+        _ ->
+            Err "assoc expects a record-like value"
+
+
+frontendRequireBool : FrontendLocalValue -> Result String Bool
+frontendRequireBool value =
+    case value of
+        FrontendBool bool ->
+            Ok bool
+
+        _ ->
+            Err "Expected Bool"
+
+
+frontendRequireBoolList : List FrontendLocalValue -> Result String (List Bool)
+frontendRequireBoolList values =
+    values
+        |> List.foldr
+            (\value partial ->
+                Result.map2 (::) (frontendRequireBool value) partial
+            )
+            (Ok [])
+
+
+frontendAuthenticatedPredicate : FrontendLocalValue -> Result String FrontendLocalValue
+frontendAuthenticatedPredicate value =
+    case value of
+        FrontendTagged "authenticated" [ _, _, _ ] ->
+            Ok (FrontendBool True)
+
+        FrontendTagged "anonymous" [] ->
+            Ok (FrontendBool False)
+
+        _ ->
+            Err "authenticated? expects current-user"
+
+
+frontendAnonymousPredicate : FrontendLocalValue -> Result String FrontendLocalValue
+frontendAnonymousPredicate value =
+    case value of
+        FrontendTagged "anonymous" [] ->
+            Ok (FrontendBool True)
+
+        FrontendTagged "authenticated" [ _, _, _ ] ->
+            Ok (FrontendBool False)
+
+        _ ->
+            Err "anonymous? expects current-user"
+
+
+frontendSameUserPredicate : FrontendLocalValue -> FrontendLocalValue -> FrontendLocalValue
+frontendSameUserPredicate currentUser candidate =
+    case currentUser of
+        FrontendTagged "authenticated" [ userId, _, _ ] ->
+            FrontendBool (frontendComparableString userId == frontendComparableString candidate)
+
+        _ ->
+            FrontendBool False
+
+
+frontendHasRolePredicate : FrontendLocalValue -> FrontendLocalValue -> FrontendLocalValue
+frontendHasRolePredicate currentUser candidate =
+    case ( currentUser, candidate ) of
+        ( FrontendTagged "authenticated" [ _, _, FrontendString role ], FrontendString expected ) ->
+            FrontendBool (role == expected)
+
+        ( FrontendTagged "authenticated" [ _, _, role ], _ ) ->
+            FrontendBool (frontendComparableString role == frontendComparableString candidate)
+
+        _ ->
+            FrontendBool False
+
+
+frontendValueFromJson : Encode.Value -> FrontendLocalValue
+frontendValueFromJson value =
+    case Decode.decodeValue Decode.bool value of
+        Ok bool ->
+            FrontendBool bool
+
+        Err _ ->
+            case Decode.decodeValue Decode.float value of
+                Ok number ->
+                    FrontendNumber number
+
+                Err _ ->
+                    case Decode.decodeValue Decode.string value of
+                        Ok string ->
+                            FrontendString string
+
+                        Err _ ->
+                            case Decode.decodeValue rowDecoder value of
+                                Ok rowValue ->
+                                    case ( Dict.get "tag" rowValue |> Maybe.andThen (Decode.decodeValue Decode.string >> Result.toMaybe), Dict.get "values" rowValue |> Maybe.andThen (Decode.decodeValue (Decode.list Decode.value) >> Result.toMaybe) ) of
+                                        ( Just tag, Just values ) ->
+                                            FrontendTagged tag (List.map frontendValueFromJson values)
+
+                                        _ ->
+                                            FrontendObject rowValue
+
+                                Err _ ->
+                                    case Decode.decodeValue (Decode.list Decode.value) value of
+                                        Ok values ->
+                                            FrontendList (List.map frontendValueFromJson values)
+
+                                        Err _ ->
+                                            FrontendNull
+
+
+frontendValueToJson : FrontendLocalValue -> Encode.Value
+frontendValueToJson value =
+    case value of
+        FrontendNull ->
+            Encode.null
+
+        FrontendString string ->
+            Encode.string string
+
+        FrontendBool bool ->
+            Encode.bool bool
+
+        FrontendNumber number ->
+            Encode.float number
+
+        FrontendObject rowValue ->
+            Encode.object (Dict.toList rowValue)
+
+        FrontendList values ->
+            Encode.list frontendValueToJson values
+
+        FrontendTagged tag values ->
+            Encode.object
+                [ ( "tag", Encode.string tag )
+                , ( "values", Encode.list frontendValueToJson values )
+                ]
+
+        FrontendEffect effect ->
+            case effect of
+                FrontendCommandEffect operation success failure ->
+                    Encode.object [ ( "kind", Encode.string "command" ), ( "operation", Encode.string operation ), ( "success", Encode.string success ), ( "failure", Encode.string failure ) ]
+
+                FrontendGoEffect target arguments ->
+                    Encode.object [ ( "kind", Encode.string "go" ), ( "target", Encode.string target ), ( "arguments", Encode.list identity arguments ) ]
+
+                FrontendBackEffect ->
+                    Encode.object [ ( "kind", Encode.string "back" ) ]
+
+
+frontendComparableString : FrontendLocalValue -> String
+frontendComparableString value =
+    case value of
+        FrontendString string ->
+            string
+
+        FrontendBool bool ->
+            if bool then
+                "true"
+
+            else
+                "false"
+
+        FrontendNumber number ->
+            String.fromFloat number
+
+        FrontendNull ->
+            ""
+
+        FrontendTagged tag _ ->
+            tag
+
+        _ ->
+            Encode.encode 0 (frontendValueToJson value)
+
+
+findRecordInfo : String -> List RecordInfo -> Maybe RecordInfo
+findRecordInfo name records =
+    records
+        |> List.filter (\record -> record.name == name)
+        |> List.head
+
+
+frontendCanonicalScreenName : String -> String
+frontendCanonicalScreenName value =
+    value
+        |> String.split "-"
+        |> List.map capitalizeWord
+        |> String.join ""
+
+
+frontendCanonicalTypeName : String -> String
+frontendCanonicalTypeName =
+    frontendCanonicalScreenName
+
+
+frontendScreenParentContext : Model -> FrontendLocation -> ( Maybe String, Maybe Row )
+frontendScreenParentContext model location =
+    let
+        go stack =
+            case stack of
+                [] ->
+                    ( Nothing, Nothing )
+
+                current :: previous ->
+                    if frontendLocationKey current == frontendLocationKey location then
+                        case previous of
+                            parent :: _ ->
+                                ( parent.rowEntity, parent.row )
+
+                            [] ->
+                                ( Nothing, Nothing )
+
+                    else
+                        go previous
+    in
+    go (List.reverse model.frontendStack)
+
+
+frontendScreenPayload : Model -> FrontendLocation -> List ( String, Encode.Value )
+frontendScreenPayload model location =
+    let
+        ( parentEntityName, parentRow ) =
+            frontendScreenParentContext model location
+
+        rowField =
+            case location.row of
+                Just rowValue ->
+                    [ ( "row", Encode.object (Dict.toList rowValue) ) ]
+
+                Nothing ->
+                    []
+
+        parentEntityField =
+            case parentEntityName of
+                Just entityName ->
+                    [ ( "parentEntity", Encode.string entityName ) ]
+
+                Nothing ->
+                    []
+
+        parentRowField =
+            case parentRow of
+                Just rowValue ->
+                    [ ( "parentRow", Encode.object (Dict.toList rowValue) ) ]
+
+                Nothing ->
+                    []
+
+        parametersField =
+            case location.parameters of
+                Just parameterValues ->
+                    if Dict.isEmpty parameterValues then
+                        []
+
+                    else
+                        [ ( "parameters", Encode.object (Dict.toList parameterValues) ) ]
+
+                Nothing ->
+                    []
+    in
+    rowField ++ parentEntityField ++ parentRowField ++ parametersField
+
+
+frontendInputMessage : String -> String -> String
+frontendInputMessage messageName value =
+    "(" ++ String.trim messageName ++ " " ++ Encode.encode 0 (Encode.string value) ++ ")"
+
+
+frontendToggleMessage : String -> Bool -> String
+frontendToggleMessage messageName value =
+    "(" ++ String.trim messageName ++ " " ++ (if value then "true" else "false") ++ ")"
+
+
+frontendGoParameters : FrontendScreenInfo -> List Encode.Value -> Maybe Row
+frontendGoParameters screen arguments =
+    List.map2
+        (\name value -> ( String.trim name, value ))
+        screen.parameters
+        arguments
+        |> List.filter (\( name, _ ) -> name /= "" )
+        |> Dict.fromList
+        |> (\parameterValues ->
+                if Dict.isEmpty parameterValues then
+                    Nothing
+
+                else
+                    Just parameterValues
+           )
+
+
+applyFrontendLocalEffects : Schema -> FrontendLocation -> List FrontendLocalEffect -> Model -> ( Model, Cmd Msg )
+applyFrontendLocalEffects schema sourceLocation effects model =
+    effects
+        |> List.foldl (applyFrontendLocalEffect schema sourceLocation) ( model, [] )
+        |> (\( nextModel, cmds ) -> ( nextModel, Cmd.batch (List.reverse cmds) ))
+
+
+applyFrontendLocalEffect : Schema -> FrontendLocation -> FrontendLocalEffect -> ( Model, List (Cmd Msg) ) -> ( Model, List (Cmd Msg) )
+applyFrontendLocalEffect schema sourceLocation effect ( model, cmds ) =
+    case effect of
+        FrontendBackEffect ->
+            if List.length model.frontendStack > 1 then
+                ( { model | frontendStack = dropLast model.frontendStack, flash = Nothing }, cmds )
+
+            else
+                ( model, cmds )
+
+        FrontendGoEffect target arguments ->
+            case schema.screens |> Maybe.andThen (findFrontendScreen target) of
+                Just targetScreen ->
+                    let
+                        location =
+                            { screen = targetScreen.name
+                            , row = Nothing
+                            , rowEntity = Nothing
+                            , parameters = frontendGoParameters targetScreen arguments
+                            }
+
+                        nextModel =
+                            closeMobileSidebarForNavigation
+                                { model
+                                    | frontendStack = model.frontendStack ++ [ location ]
+                                    , selectedAction = Nothing
+                                    , actionFormFields = []
+                                    , frontendCreateEntity = Nothing
+                                    , frontendCreatePresetFields = []
+                                    , frontendCreateFormFields = []
+                                    , frontendEditFormFields = []
+                                    , actionResult = Nothing
+                                    , flash = Nothing
+                                }
+
+                        ( initializedModel, initCmd ) =
+                            initializeFrontendScreenLocal schema targetScreen location nextModel
+                    in
+                    ( initializedModel, initCmd :: cmds )
+
+                Nothing ->
+                    ( { model | flash = Just ("Screen not found: " ++ target) }, cmds )
+
+        FrontendCommandEffect operation success failure ->
+            ( model, runFrontendCommand schema sourceLocation operation success failure model :: cmds )
+
+
+runFrontendCommand : Schema -> FrontendLocation -> String -> String -> String -> Model -> Cmd Msg
+runFrontendCommand schema location operation success failure model =
+    case frontendCommandRequest schema model location operation of
+        Ok request ->
+            Http.request
+                { method = request.method
+                , headers = appAuthHeaders model
+                , url = model.apiBase ++ request.path
+                , body =
+                    case request.body of
+                        Just body ->
+                            Http.jsonBody body
+
+                        Nothing ->
+                            Http.emptyBody
+                , expect = expectJsonWithApiError (GotFrontendCommand location success failure) Decode.value
+                , timeout = Nothing
+                , tracker = Nothing
+                }
+
+        Err message ->
+            Task.perform identity (Task.succeed (FrontendScreenMessage location (frontendFailureMessageRawForName failure message)))
+
+
+type alias FrontendCommandRequest =
+    { method : String
+    , path : String
+    , body : Maybe Encode.Value
+    }
+
+
+frontendQueryPath : String -> List String -> List FrontendLocalValue -> String
+frontendQueryPath path parameters values =
+    case List.map2 (\name value -> Url.percentEncode name ++ "=" ++ Url.percentEncode (frontendQueryParamValue value)) parameters values of
+        [] ->
+            path
+
+        pairs ->
+            path ++ "?" ++ String.join "&" pairs
+
+
+frontendQueryParamValue : FrontendLocalValue -> String
+frontendQueryParamValue value =
+    case value of
+        FrontendString string ->
+            string
+
+        FrontendBool bool ->
+            if bool then
+                "true"
+
+            else
+                "false"
+
+        FrontendNumber number ->
+            if toFloat (round number) == number then
+                String.fromInt (round number)
+
+            else
+                String.fromFloat number
+
+        _ ->
+            frontendComparableString value
+
+
+frontendCommandRequest : Schema -> Model -> FrontendLocation -> String -> Result String FrontendCommandRequest
+frontendCommandRequest schema model location operation =
+    case parseSexpCall operation of
+        Just ( name, args ) ->
+            let
+                commandName =
+                    frontendNormalizeSymbol name
+
+                context =
+                    case schema.screens |> Maybe.andThen (findFrontendScreen location.screen) of
+                        Just screen ->
+                            let
+                                baseContext =
+                                    frontendScreenEvalContext model screen location
+
+                                screenModel =
+                                    frontendScreenStateForLocation model location
+                                        |> Maybe.map (.model >> frontendValueFromJson)
+                                        |> Maybe.withDefault FrontendNull
+                            in
+                            case screen.updateModel of
+                                Just modelName ->
+                                    Dict.insert modelName screenModel baseContext
+
+                                Nothing ->
+                                    baseContext
+
+                        Nothing ->
+                            Dict.empty
+            in
+            case commandName of
+                "create" ->
+                    frontendCreateCommandRequest schema context args
+
+                "update" ->
+                    frontendUpdateCommandRequest schema context args
+
+                "delete" ->
+                    frontendDeleteCommandRequest schema context args
+
+                _ ->
+                    case schema.queries |> List.filter (\query -> query.name == commandName) |> List.head of
+                        Just query ->
+                            if List.length args == List.length query.parameters then
+                                frontendEvalMany schema context args
+                                    |> Result.map
+                                        (\values ->
+                                            { method = "GET"
+                                            , path = frontendQueryPath query.path query.parameters values
+                                            , body = Nothing
+                                            }
+                                        )
+
+                            else
+                                Err (query.name ++ " expects " ++ String.fromInt (List.length query.parameters) ++ " arguments")
+
+                        Nothing ->
+                            case schema.actions |> List.filter (\action -> action.name == commandName) |> List.head of
+                                Just action ->
+                                    case schema.inputAliases |> List.filter (\alias -> alias.name == action.inputAlias) |> List.head of
+                                        Just alias ->
+                                            if List.length args /= List.length alias.fields then
+                                                Err (action.name ++ " expects " ++ String.fromInt (List.length alias.fields) ++ " arguments")
+
+                                            else
+                                                frontendEvalMany schema context args
+                                                    |> Result.map
+                                                        (\values ->
+                                                            { method = "POST"
+                                                            , path = action.path
+                                                            , body =
+                                                                List.map2 (\field value -> ( field.name, frontendValueToJson value )) alias.fields values
+                                                                    |> Encode.object
+                                                                    |> Just
+                                                            }
+                                                        )
+
+                                        Nothing ->
+                                            Err ("Input alias not found: " ++ action.inputAlias)
+
+                                Nothing ->
+                                    case schema.screens of
+                                        _ ->
+                                            Err ("Unsupported command operation: " ++ name)
+
+        Nothing ->
+            Err "Command operation must be a list"
+
+
+frontendCreateCommandRequest : Schema -> Dict String FrontendLocalValue -> List String -> Result String FrontendCommandRequest
+frontendCreateCommandRequest schema context args =
+    case args of
+        [ entityName, valuesRaw ] ->
+            findEntityInSchema (frontendCanonicalTypeName entityName) schema
+                |> Maybe.map
+                    (\entity ->
+                        frontendCommandValuesPayload schema context valuesRaw
+                            |> Result.map (\body -> { method = "POST", path = entity.resource, body = Just body })
+                    )
+                |> Maybe.withDefault (Err ("Unknown entity " ++ entityName))
+
+        _ ->
+            Err "create expects an entity and values"
+
+
+frontendUpdateCommandRequest : Schema -> Dict String FrontendLocalValue -> List String -> Result String FrontendCommandRequest
+frontendUpdateCommandRequest schema context args =
+    case args of
+        [ entityName, idRaw, valuesRaw ] ->
+            findEntityInSchema (frontendCanonicalTypeName entityName) schema
+                |> Maybe.map
+                    (\entity ->
+                        Result.map2
+                            (\id body -> { method = "PATCH", path = entity.resource ++ "/" ++ frontendComparableString id, body = Just body })
+                            (frontendEval schema context idRaw)
+                            (frontendCommandValuesPayload schema context valuesRaw)
+                    )
+                |> Maybe.withDefault (Err ("Unknown entity " ++ entityName))
+
+        _ ->
+            Err "update expects an entity, id, and values"
+
+
+frontendDeleteCommandRequest : Schema -> Dict String FrontendLocalValue -> List String -> Result String FrontendCommandRequest
+frontendDeleteCommandRequest schema context args =
+    case args of
+        [ entityName, idRaw ] ->
+            findEntityInSchema (frontendCanonicalTypeName entityName) schema
+                |> Maybe.map
+                    (\entity ->
+                        frontendEval schema context idRaw
+                            |> Result.map (\id -> { method = "DELETE", path = entity.resource ++ "/" ++ frontendComparableString id, body = Nothing })
+                    )
+                |> Maybe.withDefault (Err ("Unknown entity " ++ entityName))
+
+        _ ->
+            Err "delete expects an entity and id"
+
+
+frontendCommandValuesPayload : Schema -> Dict String FrontendLocalValue -> String -> Result String Encode.Value
+frontendCommandValuesPayload schema context valuesRaw =
+    if String.startsWith "(" valuesRaw && String.endsWith ")" valuesRaw then
+        splitSexpItems (valuesRaw |> String.dropLeft 1 |> String.dropRight 1)
+            |> List.foldl
+                (\item partial ->
+                    partial
+                        |> Result.andThen
+                            (\items ->
+                                case parseSexpCall item of
+                                    Just ( fieldName, [ valueRaw ] ) ->
+                                        frontendEval schema context valueRaw
+                                            |> Result.map (\value -> ( frontendNormalizeSymbol fieldName, frontendValueToJson value ) :: items)
+
+                                    _ ->
+                                        Err "command values must look like ((field value) ...)"
+                            )
+                )
+                (Ok [])
+            |> Result.map Encode.object
+
+    else
+        Err "command values must be a list"
+
+
+frontendReplyMessageRaw : FrontendScreenInfo -> String -> Decode.Value -> String
+frontendReplyMessageRaw screen name value =
+    if frontendMessageArity screen name == 0 then
+        name
+
+    else
+        "(" ++ name ++ " " ++ Encode.encode 0 value ++ ")"
+
+
+frontendFailureMessageRaw : FrontendScreenInfo -> String -> String -> String
+frontendFailureMessageRaw screen name message =
+    if frontendMessageArity screen name == 0 then
+        name
+
+    else
+        frontendFailureMessageRawForName name message
+
+
+frontendFailureMessageRawForName : String -> String -> String
+frontendFailureMessageRawForName name message =
+    "(" ++ name ++ " " ++ Encode.encode 0 (Encode.string message) ++ ")"
+
+
+frontendMessageArity : FrontendScreenInfo -> String -> Int
+frontendMessageArity screen name =
+    screen.messages
+        |> List.filter (\message -> message.name == name)
+        |> List.head
+        |> Maybe.map (\message -> List.length message.parameters)
+        |> Maybe.withDefault 0
+
+
+frontendItemDisabled : FrontendItemInfo -> Maybe Row -> Bool
+frontendItemDisabled item runtimeModel =
+    case ( item.disabled, runtimeModel ) of
+        ( Just fieldName, Just rowValue ) ->
+            Dict.get fieldName rowValue
+                |> Maybe.andThen (\value -> Decode.decodeValue Decode.bool value |> Result.toMaybe)
+                |> Maybe.withDefault False
+
+        _ ->
+            False
+
+
+frontendItemConditionMatches : Model -> FrontendLocation -> Maybe String -> Bool
+frontendItemConditionMatches model location maybeRaw =
+    case maybeRaw of
+        Nothing ->
+            True
+
+        Just raw ->
+            frontendConditionBoolValue model location raw
+                |> Maybe.withDefault False
+
+
+frontendConditionBoolValue : Model -> FrontendLocation -> String -> Maybe Bool
+frontendConditionBoolValue model location raw =
+    let
+        expression =
+            String.trim raw
+    in
+    case expression of
+        "true" ->
+            Just True
+
+        "false" ->
+            Just False
+
+        _ ->
+            case parseSexpCall expression of
+                Just ( "get", [ "model", fieldName ] ) ->
+                    frontendScreenModelForLocation model location
+                        |> Maybe.andThen (frontendLocalBoolField fieldName)
+
+                Just ( "not", [ child ] ) ->
+                    frontendConditionBoolValue model location child
+                        |> Maybe.map not
+
+                Just ( "and", children ) ->
+                    children
+                        |> List.map (frontendConditionBoolValue model location)
+                        |> allMaybeBool
+
+                Just ( "or", children ) ->
+                    children
+                        |> List.map (frontendConditionBoolValue model location)
+                        |> anyMaybeBool
+
+                Just ( "authenticated?", [ "current-user" ] ) ->
+                    Just (model.currentEmail /= Nothing)
+
+                Just ( "anonymous?", [ "current-user" ] ) ->
+                    Just (model.currentEmail == Nothing)
+
+                Just ( "same-user?", [ "current-user", fieldName ] ) ->
+                    location.row
+                        |> Maybe.andThen (frontendRawRowFieldValue (frontendNormalizeSymbol fieldName))
+                        |> Maybe.map (\value -> Just value == model.currentUserID)
+
+                Just ( "has-role?", [ "current-user", role ] ) ->
+                    Just ((model.currentRole |> Maybe.withDefault "") == trimQuotes role)
+
+                _ ->
+                    Nothing
+
+
+frontendLocalBoolField : String -> Row -> Maybe Bool
+frontendLocalBoolField fieldName rowValue =
+    Dict.get (frontendNormalizeSymbol fieldName) rowValue
+        |> Maybe.andThen (\value -> Decode.decodeValue Decode.bool value |> Result.toMaybe)
+
+
+allMaybeBool : List (Maybe Bool) -> Maybe Bool
+allMaybeBool values =
+    if List.member Nothing values then
+        Nothing
+
+    else
+        values
+            |> List.filterMap identity
+            |> List.all identity
+            |> Just
+
+
+anyMaybeBool : List (Maybe Bool) -> Maybe Bool
+anyMaybeBool values =
+    if List.member Nothing values then
+        Nothing
+
+    else
+        values
+            |> List.filterMap identity
+            |> List.any identity
+            |> Just
+
+
+parseSexpCall : String -> Maybe ( String, List String )
+parseSexpCall raw =
+    let
+        expression =
+            String.trim raw
+    in
+    if String.startsWith "(" expression && String.endsWith ")" expression then
+        case splitSexpItems (expression |> String.dropLeft 1 |> String.dropRight 1) of
+            head :: args ->
+                Just ( head, args )
+
+            [] ->
+                Nothing
+
+    else
+        Nothing
+
+
+splitSexpItems : String -> List String
+splitSexpItems source =
+    let
+        finish current items =
+            let
+                value =
+                    String.trim current
+            in
+            if value == "" then
+                items
+
+            else
+                items ++ [ value ]
+
+        step char state =
+            if state.escaped then
+                { state | escaped = False, current = state.current ++ String.fromChar char }
+
+            else if state.inString then
+                if char == '\\' then
+                    { state | escaped = True, current = state.current ++ String.fromChar char }
+
+                else if char == '"' then
+                    { state | inString = False, current = state.current ++ String.fromChar char }
+
+                else
+                    { state | current = state.current ++ String.fromChar char }
+
+            else if char == '"' then
+                { state | inString = True, current = state.current ++ String.fromChar char }
+
+            else if char == '(' then
+                { state | depth = state.depth + 1, current = state.current ++ String.fromChar char }
+
+            else if char == ')' then
+                { state | depth = max 0 (state.depth - 1), current = state.current ++ String.fromChar char }
+
+            else if frontendIsWhitespace char && state.depth == 0 then
+                { state | current = "", items = finish state.current state.items }
+
+            else
+                { state | current = state.current ++ String.fromChar char }
+
+        finalState =
+            source
+                |> String.toList
+                |> List.foldl step { depth = 0, inString = False, escaped = False, current = "", items = [] }
+    in
+    finish finalState.current finalState.items
+
+
+frontendNormalizeSymbol : String -> String
+frontendNormalizeSymbol value =
+    case value of
+        "current-user" ->
+            "current_user"
+
+        _ ->
+            String.replace "-" "_" value
+
+
+frontendIsWhitespace : Char -> Bool
+frontendIsWhitespace char =
+    char == ' ' || char == '\n' || char == '\t' || char == '\u{000D}'
 
 
 loadPerformance : Model -> Cmd Msg
@@ -2936,10 +4358,10 @@ encodeBootstrapFieldValue zone field rawValue =
                 Nothing ->
                     Err (fieldLabel field.name ++ " expects a whole number")
 
-        FloatType ->
+        DecimalType ->
             case String.toFloat rawValue of
-                Just value ->
-                    Ok (Encode.float value)
+                Just _ ->
+                    Ok (Encode.string rawValue)
 
                 Nothing ->
                     Err (fieldLabel field.name ++ " expects a decimal number")
@@ -3123,7 +4545,7 @@ runAction model actionInfo payload =
     Http.request
         { method = "POST"
         , headers = appAuthHeaders model
-        , url = model.apiBase ++ "/actions/" ++ actionInfo.name
+        , url = model.apiBase ++ actionInfo.path
         , body = Http.jsonBody payload
         , expect = expectJsonWithApiError GotRunAction rowDecoder
         , timeout = Nothing
@@ -3601,7 +5023,7 @@ currentFrontendEditableContext : Model -> Maybe ( Entity, Row )
 currentFrontendEditableContext model =
     case ( model.schema, currentFrontendLocation model ) of
         ( Loaded schema, Just location ) ->
-            case ( location.row, schema.screens |> Maybe.andThen (findFrontendScreen location.screen) |> Maybe.andThen (\screen -> screen.forEntity |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema)) ) of
+            case ( location.row, location.rowEntity |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema) ) of
                 ( Just rowValue, Just entity ) ->
                     Just ( entity, rowValue )
 
@@ -3638,42 +5060,6 @@ updateCurrentFrontendLocationRow updatedRow model =
             model
 
 
-updateFrontendRowsForEntityCache : Row -> Model -> Model
-updateFrontendRowsForEntityCache updatedRow model =
-    case currentFrontendEditableContext model of
-        Just ( entity, _ ) ->
-            { model
-                | frontendRows =
-                    Dict.map
-                        (\_ remoteRows ->
-                            case remoteRows of
-                                Loaded rows ->
-                                    Loaded (replaceRow entity updatedRow rows)
-
-                                _ ->
-                                    remoteRows
-                        )
-                        model.frontendRows
-            }
-
-        Nothing ->
-            model
-
-
-removeFrontendRowsForEntityCache : Entity -> String -> Dict String (Remote (List Row)) -> Dict String (Remote (List Row))
-removeFrontendRowsForEntityCache entity idValue frontendRows =
-    Dict.map
-        (\_ remoteRows ->
-            case remoteRows of
-                Loaded rows ->
-                    Loaded (removeRowById entity idValue rows)
-
-                _ ->
-                    remoteRows
-        )
-        frontendRows
-
-
 dropLast : List a -> List a
 dropLast items =
     case items of
@@ -3687,28 +5073,6 @@ dropLast items =
             first :: dropLast rest
 
 
-frontendRowsKey : Schema -> FrontendScreenInfo -> Maybe Row -> FrontendItemInfo -> String
-frontendRowsKey schema screen maybeRow item =
-    let
-        parentID =
-            case ( screen.forEntity, maybeRow ) of
-                ( Just entityName, Just rowValue ) ->
-                    findEntityInSchema entityName schema
-                        |> Maybe.andThen (\entity -> rowId entity rowValue)
-                        |> Maybe.withDefault ""
-
-                _ ->
-                    ""
-    in
-    String.join ":"
-        [ item.kind
-        , Maybe.withDefault "" item.entity
-        , Maybe.withDefault "" item.relationField
-        , Maybe.withDefault "" item.filter
-        , parentID
-        ]
-
-
 frontendListEditKey : FrontendLocation -> String -> String
 frontendListEditKey location entityName =
     location.screen ++ ":" ++ entityName
@@ -3720,27 +5084,9 @@ isFrontendListEditing model location entityName =
         |> Maybe.withDefault False
 
 
-frontendRowMatches : Model -> Schema -> FrontendScreenInfo -> FrontendLocation -> FrontendItemInfo -> Row -> Bool
-frontendRowMatches model schema screen location item rowValue =
-    let
-        matchesParent =
-            if item.kind /= "children" then
-                True
-
-            else
-                case ( screen.forEntity, location.row, item.relationField ) of
-                    ( Just parentEntityName, Just parentRow, Just relationField ) ->
-                        case findEntityInSchema parentEntityName schema |> Maybe.andThen (\entity -> rowId entity parentRow) of
-                            Just parentID ->
-                                frontendRawRowFieldValue relationField rowValue == Just parentID
-
-                            Nothing ->
-                                False
-
-                    _ ->
-                        False
-    in
-    matchesParent && frontendConditionMatches model (Just rowValue) item.filter
+frontendRowMatches : Model -> Schema -> FrontendLocation -> FrontendItemInfo -> Row -> Bool
+frontendRowMatches model schema location item rowValue =
+    frontendConditionMatches model (Just rowValue) item.filter
 
 
 frontendConditionMatches : Model -> Maybe Row -> Maybe String -> Bool
@@ -3755,12 +5101,21 @@ frontendConditionMatches model maybeRow maybeRaw =
         True
 
     else
-        case expression of
-            "user_authenticated" ->
+        case parseSexpCall expression of
+            Just ( "authenticated?", [ "current-user" ] ) ->
                 model.currentEmail /= Nothing
 
-            "anonymous" ->
+            Just ( "anonymous?", [ "current-user" ] ) ->
                 model.currentEmail == Nothing
+
+            Just ( "same-user?", [ "current-user", fieldName ] ) ->
+                maybeRow
+                    |> Maybe.andThen (frontendRawRowFieldValue (frontendNormalizeSymbol fieldName))
+                    |> Maybe.map (\value -> Just value == model.currentUserID)
+                    |> Maybe.withDefault False
+
+            Just ( "has-role?", [ "current-user", role ] ) ->
+                (model.currentRole |> Maybe.withDefault "") == trimQuotes role
 
             _ ->
                 case ( String.words expression, maybeRow ) of
@@ -3771,11 +5126,7 @@ frontendConditionMatches model maybeRow maybeRaw =
                                     |> Maybe.withDefault ""
 
                             rightValue =
-                                if right == "user_id" then
-                                    model.currentUserID |> Maybe.withDefault ""
-
-                                else
-                                    trimQuotes right
+                                trimQuotes right
                         in
                         case op of
                             "==" ->
@@ -3808,21 +5159,17 @@ frontendActionExpressionValue model maybeBinding maybeRow rawExpression =
         expression =
             String.trim rawExpression
     in
-    if expression == "user_id" then
-        model.currentUserID
+    case frontendBoundFieldName maybeBinding expression of
+        Just fieldName ->
+            maybeRow
+                |> Maybe.andThen (frontendRawRowFieldValue fieldName)
 
-    else
-        case frontendBoundFieldName maybeBinding expression of
-            Just fieldName ->
-                maybeRow
-                    |> Maybe.andThen (frontendRawRowFieldValue fieldName)
+        Nothing ->
+            if String.startsWith "\"" expression && String.endsWith "\"" expression then
+                Just (trimQuotes expression)
 
-            Nothing ->
-                if String.startsWith "\"" expression && String.endsWith "\"" expression then
-                    Just (trimQuotes expression)
-
-                else
-                    Just expression
+            else
+                Just expression
 
 
 frontendBoundFieldName : Maybe String -> String -> Maybe String
@@ -3842,20 +5189,9 @@ frontendBoundFieldName maybeBinding expression =
             )
 
 
-frontendEntityBindingName : String -> String
-frontendEntityBindingName entityName =
-    case String.uncons entityName of
-        Just ( first, rest ) ->
-            String.fromChar (Char.toLower first) ++ rest
-
-        Nothing ->
-            ""
-
-
 frontendScreenBindingName : FrontendScreenInfo -> Maybe String
 frontendScreenBindingName screen =
-    screen.forEntity
-        |> Maybe.map frontendEntityBindingName
+    List.head screen.parameters
 
 
 frontendScreenTitle : Model -> FrontendScreenInfo -> FrontendLocation -> String
@@ -4170,10 +5506,10 @@ encodeActionField zone valuesByName field partialResult =
                             Nothing ->
                                 Err (fieldLabel field.name ++ " expects a whole number")
 
-                    "Float" ->
+                    "Decimal" ->
                         case String.toFloat rawValue of
-                            Just value ->
-                                Ok (( field.name, Encode.float value ) :: items)
+                            Just _ ->
+                                Ok (( field.name, Encode.string rawValue ) :: items)
 
                             Nothing ->
                                 Err (fieldLabel field.name ++ " expects a decimal number")
@@ -4566,7 +5902,7 @@ frontendParentRelationLabel schema model location relationEntityName rawId =
                 Nothing
 
             else
-                case ( parent.row, schema.screens |> Maybe.andThen (findFrontendScreen parent.screen) |> Maybe.andThen (\screen -> screen.forEntity) |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema) ) of
+                case ( parent.row, parent.rowEntity |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema) ) of
                     ( Just parentRow, Just parentEntity ) ->
                         if parentEntity.name /= relationEntityName then
                             Nothing
@@ -6056,7 +7392,7 @@ viewSidebar model =
                 )
                 { onPress = Just (SelectAction actionInfo.name)
                 , label =
-                    sidebarItemLabel (humanizeIdentifier actionInfo.name) (Just ("/actions/" ++ actionInfo.name))
+                    sidebarItemLabel (humanizeIdentifier actionInfo.name) (Just actionInfo.path)
                 }
 
         performanceButton : Element Msg
@@ -7260,6 +8596,7 @@ relationSelectField model field relationEntityName currentValue relatedRows =
         currentValue
         ""
         allOptions
+        False
         (SetFormField field.name)
 
 
@@ -7335,6 +8672,7 @@ actionRelationSelectField model field relationEntityName currentValue relatedRow
         currentValue
         ""
         allOptions
+        False
         (SetActionField field.name)
 
 
@@ -7404,11 +8742,11 @@ enumSelectField labelText isOptional currentValue enumValues onChangeMsg =
                 ""
 
     in
-    selectFieldElement labelText selectedValue selectedValue allOptions onChangeMsg
+    selectFieldElement labelText selectedValue selectedValue allOptions False onChangeMsg
 
 
-selectFieldElement : String -> String -> String -> List ( String, String ) -> (String -> Msg) -> Element Msg
-selectFieldElement labelText currentValue fallbackValue allOptions onChangeMsg =
+selectFieldElement : String -> String -> String -> List ( String, String ) -> Bool -> (String -> Msg) -> Element Msg
+selectFieldElement labelText currentValue fallbackValue allOptions isDisabled onChangeMsg =
     let
         normalizeSelectedValue rawValue =
             let
@@ -7433,6 +8771,7 @@ selectFieldElement labelText currentValue fallbackValue allOptions onChangeMsg =
                     [ HtmlAttr.style "width" "100%"
                     , HtmlAttr.value currentValue
                     , HtmlEvents.on "change" (Decode.map (normalizeSelectedValue >> onChangeMsg) HtmlEvents.targetValue)
+                    , HtmlAttr.disabled isDisabled
                     , HtmlAttr.style "padding" "12px 42px 12px 12px"
                     , HtmlAttr.style "border-radius" "12px"
                     , HtmlAttr.style "border" "1px solid rgb(222,230,241)"
@@ -8450,7 +9789,6 @@ viewFrontendScreen model schema screen location =
             , htmlAttribute (HtmlAttr.style "min-height" "0")
             ]
             (screen.sections
-                |> List.filter (\section -> frontendConditionMatches model location.row section.when)
                 |> List.map (viewFrontendSection model schema screen location)
             )
         ]
@@ -8539,17 +9877,252 @@ viewFrontendSection model schema screen location sectionInfo =
 
 viewFrontendItem : Model -> Schema -> FrontendScreenInfo -> FrontendLocation -> FrontendItemInfo -> Element Msg
 viewFrontendItem model schema screen location item =
-    case item.kind of
-        "link" ->
-            if frontendConditionMatches model location.row item.filter then
-                case item.target of
-                    Just target ->
+    let
+        runtimeModel =
+            frontendScreenModelForLocation model location
+
+        explicitlyDisabled =
+            frontendItemDisabled item runtimeModel
+    in
+    if not (frontendItemConditionMatches model location item.condition) then
+        none
+
+    else
+        case item.kind of
+            "empty" ->
+                none
+
+            "link" ->
+                if frontendConditionMatches model location.row item.filter then
+                    case item.target of
+                        Just target ->
+                            Input.button
+                                (frontendRowButtonAttrs False)
+                                { onPress = Just (SelectFrontendScreen target)
+                                , label =
+                                    row [ width fill, spacing 12 ]
+                                        [ paragraph [ width fill, Font.bold ] [ text (Maybe.withDefault (humanizeIdentifier target) item.label) ]
+                                        , el [ Font.size 18, Font.color (rgb255 132 145 162), centerY ] (text "›")
+                                        ]
+                                }
+
+                        Nothing ->
+                            none
+
+                else
+                    none
+
+            "field" ->
+                case ( location.rowEntity, location.row, item.field ) of
+                    ( Just entityName, Just rowValue, Just fieldName ) ->
+                        case findEntityInSchema entityName schema of
+                            Just entity ->
+                                case frontendFieldLabelAndValue model schema location entity fieldName rowValue of
+                                    Just ( labelText, value ) ->
+                                        row [ width fill, spacing 12 ]
+                                            [ el [ width (fillPortion 1), Font.bold, Font.size 13, Font.color (rgb255 62 74 92) ] (text labelText)
+                                            , paragraph [ width (fillPortion 2), Font.size 14, Font.color (rgb255 42 54 72) ] [ text value ]
+                                            ]
+
+                                    Nothing ->
+                                        none
+
+                            Nothing ->
+                                none
+
+                    _ ->
+                        none
+
+            "button" ->
+                case item.message of
+                    Just rawMessage ->
                         Input.button
                             (frontendRowButtonAttrs False)
-                            { onPress = Just (SelectFrontendScreen target)
+                            { onPress =
+                                if explicitlyDisabled then
+                                    Nothing
+
+                                else
+                                    Just (FrontendScreenMessage location rawMessage)
+                            , label = paragraph [ Font.bold ] [ text (Maybe.withDefault "Button" item.label) ]
+                            }
+
+                    Nothing ->
+                        none
+
+            "textInput" ->
+                let
+                    currentValue =
+                        runtimeModel
+                            |> Maybe.andThen (\rowValue -> item.modelField |> Maybe.andThen (\fieldName -> Dict.get fieldName rowValue))
+                            |> Maybe.map valueToString
+                            |> Maybe.withDefault ""
+                in
+                column [ width fill, spacing 6 ]
+                    [ case item.label of
+                        Just labelText ->
+                            paragraph [ Font.size 13, Font.color (rgb255 82 92 108) ] [ text labelText ]
+
+                        Nothing ->
+                            none
+                    , Input.text
+                        ([ width fill
+                         , Background.color (rgb255 255 255 255)
+                         , Border.rounded 10
+                         , Border.width 1
+                         , Border.color (rgb255 220 226 236)
+                         , padding 12
+                         , htmlAttribute (HtmlAttr.disabled explicitlyDisabled)
+                         ]
+                            ++ clearInteractiveChromeAttrs
+                        )
+                        { onChange =
+                            \newValue ->
+                                case ( item.modelField, item.message ) of
+                                    ( Just fieldName, Just messageName ) ->
+                                        FrontendScreenInputMessage location fieldName (Encode.string newValue) (frontendInputMessage messageName newValue)
+
+                                    _ ->
+                                        FrontendScreenMessage location (frontendInputMessage (Maybe.withDefault "" item.message) newValue)
+                        , text = currentValue
+                        , placeholder = Nothing
+                        , label = Input.labelHidden (Maybe.withDefault "Input" item.label)
+                        }
+                    ]
+
+            "textarea" ->
+                let
+                    currentValue =
+                        runtimeModel
+                            |> Maybe.andThen (\rowValue -> item.modelField |> Maybe.andThen (\fieldName -> Dict.get fieldName rowValue))
+                            |> Maybe.map valueToString
+                            |> Maybe.withDefault ""
+                in
+                column [ width fill, spacing 6 ]
+                    [ case item.label of
+                        Just labelText ->
+                            paragraph [ Font.size 13, Font.color (rgb255 82 92 108) ] [ text labelText ]
+
+                        Nothing ->
+                            none
+                    , Input.multiline
+                        ([ width fill
+                         , height (px 120)
+                         , Background.color (rgb255 255 255 255)
+                         , Border.rounded 10
+                         , Border.width 1
+                         , Border.color (rgb255 220 226 236)
+                         , padding 12
+                         , htmlAttribute (HtmlAttr.disabled explicitlyDisabled)
+                         ]
+                            ++ clearInteractiveChromeAttrs
+                        )
+                        { onChange =
+                            \newValue ->
+                                case ( item.modelField, item.message ) of
+                                    ( Just fieldName, Just messageName ) ->
+                                        FrontendScreenInputMessage location fieldName (Encode.string newValue) (frontendInputMessage messageName newValue)
+
+                                    _ ->
+                                        FrontendScreenMessage location (frontendInputMessage (Maybe.withDefault "" item.message) newValue)
+                        , text = currentValue
+                        , placeholder = Nothing
+                        , label = Input.labelHidden (Maybe.withDefault "Textarea" item.label)
+                        , spellcheck = True
+                        }
+                    ]
+
+            "toggle" ->
+                let
+                    currentValue =
+                        runtimeModel
+                            |> Maybe.andThen (\rowValue -> item.modelField |> Maybe.andThen (\fieldName -> Dict.get fieldName rowValue))
+                            |> Maybe.andThen (\value -> Decode.decodeValue Decode.bool value |> Result.toMaybe)
+                            |> Maybe.withDefault False
+                in
+                Element.html <|
+                    Html.label
+                        [ HtmlAttr.style "display" "flex"
+                        , HtmlAttr.style "align-items" "center"
+                        , HtmlAttr.style "gap" "10px"
+                        , HtmlAttr.style "font-family" "\"IBM Plex Sans\", \"Space Grotesk\", sans-serif"
+                        , HtmlAttr.style "font-size" "15px"
+                        , HtmlAttr.style "color" "rgb(29,36,44)"
+                        ]
+                        [ Html.input
+                            [ HtmlAttr.type_ "checkbox"
+                            , HtmlAttr.checked currentValue
+                            , HtmlAttr.disabled explicitlyDisabled
+                            , HtmlEvents.onCheck
+                                (\newValue ->
+                                    case ( item.modelField, item.message ) of
+                                        ( Just fieldName, Just messageName ) ->
+                                            FrontendScreenInputMessage location fieldName (Encode.bool newValue) (frontendToggleMessage messageName newValue)
+
+                                        _ ->
+                                            FrontendScreenMessage location (frontendToggleMessage (Maybe.withDefault "" item.message) newValue)
+                                )
+                            ]
+                            []
+                        , Html.text (Maybe.withDefault "Toggle" item.label)
+                        ]
+
+            "select" ->
+                let
+                    currentValue =
+                        runtimeModel
+                            |> Maybe.andThen (\rowValue -> item.modelField |> Maybe.andThen (\fieldName -> Dict.get fieldName rowValue))
+                            |> Maybe.map valueToString
+                            |> Maybe.withDefault ""
+
+                    options =
+                        item.options
+                            |> List.map (\option -> ( option.value, option.label ))
+
+                    fallbackValue =
+                        case options of
+                            ( firstValue, _ ) :: _ ->
+                                firstValue
+
+                            [] ->
+                                ""
+                in
+                selectFieldElement
+                    (Maybe.withDefault "Select" item.label)
+                    currentValue
+                    fallbackValue
+                    options
+                    explicitlyDisabled
+                    (\newValue ->
+                        case ( item.modelField, item.message ) of
+                            ( Just fieldName, Just messageName ) ->
+                                FrontendScreenInputMessage location fieldName (Encode.string newValue) (frontendInputMessage messageName newValue)
+
+                            _ ->
+                                FrontendScreenMessage location (frontendInputMessage (Maybe.withDefault "" item.message) newValue)
+                    )
+
+            "create" ->
+                case item.entity of
+                    Just entityName ->
+                        Input.button
+                            (frontendRowButtonAttrs False)
+                            { onPress = Just (SelectFrontendCreate entityName (frontendActionPresetValues model (frontendScreenBindingName screen) location.row item.values) item.formFields)
+                            , label = paragraph [ Font.bold ] [ text ("Create " ++ humanizeIdentifier entityName) ]
+                            }
+
+                    Nothing ->
+                        none
+
+            "edit" ->
+                case currentFrontendEditableContext model of
+                    Just ( entity, _ ) ->
+                        Input.button
+                            (frontendRowButtonAttrs False)
+                            { onPress = Just (StartFrontendEdit item.formFields)
                             , label =
                                 row [ width fill, spacing 12 ]
-                                    [ paragraph [ width fill, Font.bold ] [ text (Maybe.withDefault (humanizeIdentifier target) item.label) ]
+                                    [ paragraph [ width fill, Font.bold ] [ text ("Edit " ++ entityDisplayName entity) ]
                                     , el [ Font.size 18, Font.color (rgb255 132 145 162), centerY ] (text "›")
                                     ]
                             }
@@ -8557,179 +10130,111 @@ viewFrontendItem model schema screen location item =
                     Nothing ->
                         none
 
-            else
+            "delete" ->
+                case currentFrontendEditableContext model of
+                    Just ( entity, _ ) ->
+                        Input.button
+                            (frontendRowButtonAttrs False)
+                            { onPress = Just RequestFrontendDelete
+                            , label =
+                                row [ width fill, spacing 12 ]
+                                    [ paragraph [ width fill, Font.color (rgb255 196 68 55) ] [ text ("Delete " ++ entityDisplayName entity) ]
+                                    ]
+                            }
+
+                    Nothing ->
+                        none
+
+            "list" ->
+                viewFrontendRowsItem model schema location item
+
+            "report" ->
+                viewFrontendReportItem model schema location item
+
+            "action" ->
+                case item.action of
+                    Just actionName ->
+                        Input.button
+                            (frontendRowButtonAttrs False)
+                            { onPress = Just (SelectFrontendAction actionName (frontendActionPresetValues model (frontendScreenBindingName screen) location.row item.values) item.formFields)
+                            , label =
+                                row [ width fill, spacing 12 ]
+                                    [ paragraph [ width fill, Font.bold ] [ text (humanizeIdentifier actionName) ]
+                                    , el [ Font.size 18, Font.color (rgb255 132 145 162), centerY ] (text "›")
+                                    ]
+                            }
+
+                    Nothing ->
+                        none
+
+            _ ->
                 none
 
-        "field" ->
-            case ( screen.forEntity, location.row, item.field ) of
-                ( Just entityName, Just rowValue, Just fieldName ) ->
-                    case findEntityInSchema entityName schema of
-                        Just entity ->
-                            case frontendFieldLabelAndValue model schema location entity fieldName rowValue of
-                                Just ( labelText, value ) ->
-                                    row [ width fill, spacing 12 ]
-                                        [ el [ width (fillPortion 1), Font.bold, Font.size 13, Font.color (rgb255 62 74 92) ] (text labelText)
-                                        , paragraph [ width (fillPortion 2), Font.size 14, Font.color (rgb255 42 54 72) ] [ text value ]
-                                        ]
 
-                                Nothing ->
-                                    none
-
-                        Nothing ->
-                            none
-
-                _ ->
-                    none
-
-        "create" ->
-            case item.entity of
-                Just entityName ->
-                    Input.button
-                        (frontendRowButtonAttrs False)
-                        { onPress = Just (SelectFrontendCreate entityName (frontendActionPresetValues model (frontendScreenBindingName screen) location.row item.values) item.formFields)
-                        , label = paragraph [ Font.bold ] [ text ("Create " ++ humanizeIdentifier entityName) ]
-                        }
-
-                Nothing ->
-                    none
-
-        "edit" ->
-            case currentFrontendEditableContext model of
-                Just ( entity, _ ) ->
-                    Input.button
-                        (frontendRowButtonAttrs False)
-                        { onPress = Just (StartFrontendEdit item.formFields)
-                        , label =
-                            row [ width fill, spacing 12 ]
-                                [ paragraph [ width fill, Font.bold ] [ text ("Edit " ++ entityDisplayName entity) ]
-                                , el [ Font.size 18, Font.color (rgb255 132 145 162), centerY ] (text "›")
-                                ]
-                        }
-
-                Nothing ->
-                    none
-
-        "delete" ->
-            case currentFrontendEditableContext model of
-                Just ( entity, _ ) ->
-                    Input.button
-                        (frontendRowButtonAttrs False)
-                        { onPress = Just RequestFrontendDelete
-                        , label =
-                            row [ width fill, spacing 12 ]
-                                [ paragraph [ width fill, Font.color (rgb255 196 68 55) ] [ text ("Delete " ++ entityDisplayName entity) ]
-                                ]
-                        }
-
-                Nothing ->
-                    none
-
-        "list" ->
-            viewFrontendRowsItem model schema screen location item
-
-        "children" ->
-            viewFrontendRowsItem model schema screen location item
-
-        "report" ->
-            viewFrontendReportItem model schema screen location item
-
-        "action" ->
-            case item.action of
-                Just actionName ->
-                    Input.button
-                        (frontendRowButtonAttrs False)
-                        { onPress = Just (SelectFrontendAction actionName (frontendActionPresetValues model (frontendScreenBindingName screen) location.row item.values) item.formFields)
-                        , label =
-                            row [ width fill, spacing 12 ]
-                                [ paragraph [ width fill, Font.bold ] [ text (humanizeIdentifier actionName) ]
-                                , el [ Font.size 18, Font.color (rgb255 132 145 162), centerY ] (text "›")
-                                ]
-                        }
-
-                Nothing ->
-                    none
-
-        _ ->
-            none
-
-
-viewFrontendRowsItem : Model -> Schema -> FrontendScreenInfo -> FrontendLocation -> FrontendItemInfo -> Element Msg
-viewFrontendRowsItem model schema screen location item =
+viewFrontendRowsItem : Model -> Schema -> FrontendLocation -> FrontendItemInfo -> Element Msg
+viewFrontendRowsItem model schema location item =
     case item.entity |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema) of
         Nothing ->
             none
 
         Just entity ->
-            let
-                key =
-                    frontendRowsKey schema screen location.row item
-
-                remoteRows =
-                    Dict.get key model.frontendRows
-                        |> Maybe.withDefault NotAsked
-            in
-            case remoteRows of
-                NotAsked ->
-                    paragraph [ Font.color (rgb255 93 103 120) ] [ text "Loading..." ]
-
-                Loading ->
-                    paragraph [ Font.color (rgb255 93 103 120) ] [ text "Loading..." ]
-
-                Failed message ->
-                    paragraph [ Font.color (rgb255 176 60 46) ] [ text message ]
-
-                Loaded rows ->
+            case item.modelField of
+                Just modelField ->
                     let
-                        visibleRows =
-                            rows
-                                |> List.filter (frontendRowMatches model schema screen location item)
-
-                        editingList =
-                            isFrontendListEditing model location entity.name
+                        rows =
+                            frontendScreenModelForLocation model location
+                                |> Maybe.andThen (\rowValue -> Dict.get modelField rowValue)
+                                |> Maybe.andThen (Decode.decodeValue (Decode.list rowDecoder) >> Result.toMaybe)
+                                |> Maybe.withDefault []
                     in
-                    if List.isEmpty visibleRows then
-                        paragraph [ Font.color (rgb255 93 103 120) ] [ text ("No " ++ String.toLower (humanizeIdentifier entity.name) ++ " yet.") ]
+                    viewFrontendRows model schema location entity item rows
 
-                    else
-                        column [ width fill, spacing 8 ]
-                            (List.map
-                                (if editingList then
-                                    viewFrontendEditableRowCard model entity item
-
-                                 else
-                                    viewFrontendRowCard model entity item
-                                )
-                                visibleRows
-                            )
+                Nothing ->
+                    paragraph [ Font.color (rgb255 176 60 46) ] [ text "List data must come from the screen model." ]
 
 
-viewFrontendReportItem : Model -> Schema -> FrontendScreenInfo -> FrontendLocation -> FrontendItemInfo -> Element Msg
-viewFrontendReportItem model schema screen location item =
+viewFrontendRows : Model -> Schema -> FrontendLocation -> Entity -> FrontendItemInfo -> List Row -> Element Msg
+viewFrontendRows model schema location entity item rows =
+    let
+        visibleRows =
+            rows
+                |> List.filter (frontendRowMatches model schema location item)
+
+        editingList =
+            isFrontendListEditing model location entity.name
+    in
+    if List.isEmpty visibleRows then
+        paragraph [ Font.color (rgb255 93 103 120) ] [ text ("No " ++ String.toLower (humanizeIdentifier entity.name) ++ " yet.") ]
+
+    else
+        column [ width fill, spacing 8 ]
+            (List.map
+                (if editingList then
+                    viewFrontendEditableRowCard model entity item
+
+                 else
+                    viewFrontendRowCard model entity item
+                )
+                visibleRows
+            )
+
+
+viewFrontendReportItem : Model -> Schema -> FrontendLocation -> FrontendItemInfo -> Element Msg
+viewFrontendReportItem model schema location item =
     case item.entity |> Maybe.andThen (\entityName -> findEntityInSchema entityName schema) of
         Nothing ->
             none
 
         Just entity ->
-            let
-                key =
-                    frontendRowsKey schema screen location.row item
-
-                remoteRows =
-                    Dict.get key model.frontendRows
-                        |> Maybe.withDefault NotAsked
-            in
-            case remoteRows of
-                NotAsked ->
-                    paragraph [ Font.color (rgb255 93 103 120) ] [ text "Loading..." ]
-
-                Loading ->
-                    paragraph [ Font.color (rgb255 93 103 120) ] [ text "Loading..." ]
-
-                Failed message ->
-                    paragraph [ Font.color (rgb255 176 60 46) ] [ text message ]
-
-                Loaded rows ->
+            case item.modelField of
+                Just modelField ->
                     let
+                        rows =
+                            frontendScreenModelForLocation model location
+                                |> Maybe.andThen (\rowValue -> Dict.get modelField rowValue)
+                                |> Maybe.andThen (Decode.decodeValue (Decode.list rowDecoder) >> Result.toMaybe)
+                                |> Maybe.withDefault []
+
                         reportRows =
                             frontendReportRows model entity item rows
                     in
@@ -8739,6 +10244,9 @@ viewFrontendReportItem model schema screen location item =
                     else
                         column [ width fill, spacing 8 ]
                             (List.map viewFrontendReportCard reportRows)
+
+                Nothing ->
+                    paragraph [ Font.color (rgb255 176 60 46) ] [ text "Report data must come from the screen model." ]
 
 
 viewFrontendReportCard : FrontendComputedReport -> Element Msg
@@ -9068,7 +10576,7 @@ viewFrontendRowCard model entity item rowValue =
         (frontendRowButtonAttrs False)
         { onPress =
             destination
-                |> Maybe.map (\screenName -> SelectFrontendRow screenName rowValue)
+                |> Maybe.map (\screenName -> SelectFrontendRow screenName entity.name rowValue)
         , label =
             row [ width fill, spacing 12 ]
                 [ column [ width fill, spacing 4 ]
@@ -9336,7 +10844,7 @@ viewActionPanel model actionInfo =
                                 []
 
                              else
-                                [ el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("POST /actions/" ++ actionInfo.name))
+                                [ el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("POST " ++ actionInfo.path))
                                 , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("Input: " ++ aliasInfo.name))
                                 ]
                             )
@@ -10820,6 +12328,10 @@ viewActionInfo actionInfo =
         , wrappedRow [ width fill, spacing 8 ]
             [ el [ Font.bold ] (text "Input")
             , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text actionInfo.inputAlias)
+            ]
+        , wrappedRow [ width fill, spacing 8 ]
+            [ el [ Font.bold ] (text "Endpoint")
+            , el [ Font.size 13, Font.color (rgb255 93 103 120) ] (text ("POST " ++ actionInfo.path))
             ]
         , wrappedRow [ width fill, spacing 8 ]
             [ el [ Font.bold ] (text "Steps")

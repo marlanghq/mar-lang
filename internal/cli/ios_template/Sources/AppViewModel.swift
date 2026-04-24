@@ -333,7 +333,11 @@ final class AppViewModel: ObservableObject {
             let response = try await client.fetchSchema()
             pendingSchema = response.schema
             pendingSchemaVersion = response.version
-            saveSchemaSnapshot(baseURL: configuredBaseURL?.absoluteString ?? generatedServerURL, schema: response.schema, version: response.version)
+            saveSchemaSnapshot(
+                baseURL: configuredBaseURL?.absoluteString ?? generatedServerURL,
+                schema: response.schema,
+                version: response.version
+            )
         } catch {
             setError(error)
         }
@@ -377,7 +381,11 @@ final class AppViewModel: ObservableObject {
             let response = try await client.fetchSchema()
             pendingSchema = response.schema
             pendingSchemaVersion = response.version ?? pendingSchemaVersion
-            saveSchemaSnapshot(baseURL: configuredBaseURL?.absoluteString ?? generatedServerURL, schema: response.schema, version: response.version ?? pendingSchemaVersion)
+            saveSchemaSnapshot(
+                baseURL: configuredBaseURL?.absoluteString ?? generatedServerURL,
+                schema: response.schema,
+                version: response.version ?? pendingSchemaVersion
+            )
             schemaRefreshAlert = nil
         } catch {
             pendingSchemaVersion = nil
@@ -478,7 +486,12 @@ final class AppViewModel: ObservableObject {
         isBusy = false
     }
 
-    private func finishConnect(using client: MarAPIClient, existingSession: SessionSnapshot?, baseURL: String, hasImmediateSchema: Bool) async {
+    private func finishConnect(
+        using client: MarAPIClient,
+        existingSession: SessionSnapshot?,
+        baseURL: String,
+        hasImmediateSchema: Bool
+    ) async {
         do {
             async let schemaTask = client.fetchSchema()
             async let publicVersionTask = client.fetchPublicVersion()
@@ -530,7 +543,8 @@ final class AppViewModel: ObservableObject {
 
     private func logStartupConfiguration(baseURL: URL) {
         let bundleID = Bundle.main.bundleIdentifier ?? "<missing>"
-        let localNetworkUsageDescription = Bundle.main.object(forInfoDictionaryKey: "NSLocalNetworkUsageDescription") as? String ?? "<missing>"
+        let localNetworkUsageDescription = Bundle.main
+            .object(forInfoDictionaryKey: "NSLocalNetworkUsageDescription") as? String ?? "<missing>"
         let bonjourServices = Bundle.main.object(forInfoDictionaryKey: "NSBonjourServices") ?? "<missing>"
         let transportSecurity = Bundle.main.object(forInfoDictionaryKey: "NSAppTransportSecurity") ?? "<missing>"
         print("Mar iOS startup bundle=\(bundleID) baseURL=\(baseURL.absoluteString)")
@@ -698,7 +712,14 @@ final class EntityFormViewModel: ObservableObject {
     @Published var isLoadingRelations = false
     @Published var errorMessage: String?
 
-    init(entity: Entity, schema: Schema, client: MarAPIClient, mode: Mode, initialValues: [String: String] = [:], formFields: [FrontendFormFieldInfo] = []) {
+    init(
+        entity: Entity,
+        schema: Schema,
+        client: MarAPIClient,
+        mode: Mode,
+        initialValues: [String: String] = [:],
+        formFields: [FrontendFormFieldInfo] = []
+    ) {
         self.entity = entity
         self.schema = schema
         self.client = client
@@ -717,9 +738,13 @@ final class EntityFormViewModel: ObservableObject {
         let defaults: [String: String]
         switch mode {
         case .create:
-            defaults = Dictionary(uniqueKeysWithValues: resolvedVisibleFields.map { ($0.name, RowPresentation.defaultText(for: $0)) })
+            defaults = Dictionary(
+                uniqueKeysWithValues: resolvedVisibleFields.map { ($0.name, RowPresentation.defaultText(for: $0)) }
+            )
         case .edit(let row):
-            defaults = Dictionary(uniqueKeysWithValues: resolvedVisibleFields.map { ($0.name, RowPresentation.formText(for: $0, row: row)) })
+            defaults = Dictionary(
+                uniqueKeysWithValues: resolvedVisibleFields.map { ($0.name, RowPresentation.formText(for: $0, row: row)) }
+            )
         }
         self.values = defaults.merging(initialValues) { _, preset in preset }
     }
@@ -732,7 +757,11 @@ final class EntityFormViewModel: ObservableObject {
             guard let relationEntityName = field.relationEntity else { continue }
             guard let filters = relationFilters(for: field) else { continue }
             let cacheKey = relationRowsCacheKey(entityName: relationEntityName, filters: filters)
-            guard relationRows[cacheKey] == nil, let relationEntity = schema.entities.first(where: { $0.name == relationEntityName }) else { continue }
+            guard relationRows[cacheKey] == nil,
+                  let relationEntity = schema.entities.first(where: { $0.name == relationEntityName })
+            else {
+                continue
+            }
             do {
                 relationRows[cacheKey] = try await client.listRows(entity: relationEntity, filters: filters)
             } catch {

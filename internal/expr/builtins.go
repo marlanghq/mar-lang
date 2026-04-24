@@ -1,11 +1,7 @@
 package expr
 
 var BuiltinValueNames = []string{
-	"anonymous",
-	"user_authenticated",
-	"user_email",
-	"user_id",
-	"user_role",
+	"current_user",
 }
 
 var builtinValueSet = func() map[string]struct{} {

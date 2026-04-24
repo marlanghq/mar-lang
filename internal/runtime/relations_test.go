@@ -14,18 +14,26 @@ func TestEntityCRUDSupportsBelongsToFields(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "belongs-to-crud.db"), `
-app StoreApi
+(define book
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      (((read create update delete)
+         true)))))
 
-entity Book {
-  title: String
-  authorize read, create, update, delete when anonymous or user_authenticated
-}
+(define review
+  (entity
+    (fields
+      ((body string)))
+    (belongs-to
+      ((book)))
+    (authorize
+      (((read create update delete)
+         true)))))
 
-entity Review {
-  body: String
-  belongs_to Book
-  authorize read, create, update, delete when anonymous or user_authenticated
-}
+(define-app store-api
+  (entities book review))
 `)
 
 	bookRec := doRuntimeRequest(r, http.MethodPost, "/books", `{"title":"DDD"}`, "")
@@ -43,10 +51,10 @@ entity Review {
 		t.Fatalf("decode create response failed: %v body=%s", err, reviewRec.Body.String())
 	}
 	if created["book"] != float64(1) {
-		t.Fatalf("expected review response to expose logical belongs_to field, got %#v", created["book"])
+		t.Fatalf("expected review response to expose logical relationship field, got %#v", created["book"])
 	}
 
-	row, ok, err := queryRow(r.DB, `SELECT book_id FROM reviews WHERE id = 1`)
+	row, ok, err := queryRow(r.DB, `SELECT book_id FROM review WHERE id = 1`)
 	if err != nil {
 		t.Fatalf("query review row failed: %v", err)
 	}
@@ -62,23 +70,33 @@ func TestEntityCRUDSupportsManyToManyViaJoinEntityBelongsTo(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "belongs-to-join.db"), `
-app EnrollmentApi
+(define student
+  (entity
+    (fields
+      ((name string)))
+    (authorize
+      (((read create update delete)
+         true)))))
 
-entity Student {
-  name: String
-  authorize read, create, update, delete when anonymous or user_authenticated
-}
+(define course
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      (((read create update delete)
+         true)))))
 
-entity Course {
-  title: String
-  authorize read, create, update, delete when anonymous or user_authenticated
-}
+(define enrollment
+  (entity
+    (belongs-to
+      ((student)
+       (course)))
+    (authorize
+      (((read create update delete)
+         true)))))
 
-entity Enrollment {
-  belongs_to Student
-  belongs_to Course
-  authorize read, create, update, delete when anonymous or user_authenticated
-}
+(define-app enrollment-api
+  (entities student course enrollment))
 `)
 
 	if rec := doRuntimeRequest(r, http.MethodPost, "/students", `{"name":"Mia"}`, ""); rec.Code != http.StatusCreated {
@@ -98,7 +116,7 @@ entity Enrollment {
 		t.Fatalf("decode create response failed: %v body=%s", err, rec.Body.String())
 	}
 	if created["student"] != float64(1) || created["course"] != float64(1) {
-		t.Fatalf("expected join entity response to expose logical belongs_to fields, got %#v", created)
+		t.Fatalf("expected join entity response to expose logical relationship fields, got %#v", created)
 	}
 }
 
@@ -106,18 +124,26 @@ func TestListSupportsQueryFiltersByEntityField(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "list-query-filters.db"), `
-app PetCareLog
+(define clinic
+  (entity
+    (fields
+      ((name string)))
+    (authorize
+      (((read create update delete)
+         true)))))
 
-entity Clinic {
-  name: String
-  authorize read, create, update, delete when anonymous or user_authenticated
-}
+(define veterinarian
+  (entity
+    (fields
+      ((name string)))
+    (belongs-to
+      ((clinic clinic)))
+    (authorize
+      (((read create update delete)
+         true)))))
 
-entity Veterinarian {
-  name: String
-  belongs_to clinic: Clinic
-  authorize read, create, update, delete when anonymous or user_authenticated
-}
+(define-app pet-care-log
+  (entities clinic veterinarian))
 `)
 
 	if rec := doRuntimeRequest(r, http.MethodPost, "/clinics", `{"name":"Downtown"}`, ""); rec.Code != http.StatusCreated {
@@ -154,20 +180,24 @@ func TestReadAuthorizationFiltersListAndProtectsGet(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "read-filter.db"), `
-app TodoReadFilter
+(define app-auth ())
 
-auth {
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (belongs-to
+      ((user)))
+    (authorize
+      (((read update delete)
+         (or (same-user? current-user user)
+             (has-role? current-user "admin")))
+       (create
+         (same-user? current-user user))))))
 
-entity Todo {
-  title: String
-  belongs_to User
-
-  authorize read when user_authenticated and (user == user_id or user_role == "admin")
-  authorize create when user_authenticated and user == user_id
-  authorize update when user_authenticated and (user == user_id or user_role == "admin")
-  authorize delete when user_authenticated and (user == user_id or user_role == "admin")
-}
+(define-app todo-read-filter
+  (auth app-auth)
+  (entities todo))
 `)
 
 	adminCode := requestCodeAndUseKnownCode(t, r, "owner@example.com")
@@ -235,20 +265,25 @@ func TestEntityCRUDSupportsBelongsToCurrentUser(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "belongs-to-current-user.db"), `
-app PersonalTodo
+(define app-auth ())
 
-auth {
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (belongs-to
+      ((user)))
+    (defaults
+      ((user current-user)))
+    (authorize
+       (((read update delete)
+         (or (same-user? current-user user)
+             (has-role? current-user "admin")))
+       (create (authenticated? current-user))))))
 
-entity Todo {
-  title: String
-  belongs_to current_user
-
-  authorize read when user_authenticated and (user == user_id or user_role == "admin")
-  authorize create when user_authenticated
-  authorize update when user_authenticated and (user == user_id or user_role == "admin")
-  authorize delete when user_authenticated and (user == user_id or user_role == "admin")
-}
+(define-app personal-todo
+  (auth app-auth)
+  (entities todo))
 `)
 
 	loginCode := requestCodeAndUseKnownCode(t, r, "owner@example.com")
@@ -280,7 +315,7 @@ entity Todo {
 		t.Fatalf("expected created todo to belong to current user, got %#v", created["user"])
 	}
 
-	row, ok, err := queryRow(r.DB, `SELECT user_id FROM todos WHERE id = 1`)
+	row, ok, err := queryRow(r.DB, `SELECT user_id FROM todo WHERE id = 1`)
 	if err != nil {
 		t.Fatalf("query todo row failed: %v", err)
 	}
@@ -296,20 +331,24 @@ func TestEntityCRUDRejectsManualPayloadForBelongsToCurrentUser(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "belongs-to-current-user-reject.db"), `
-app PersonalTodo
+(define app-auth ())
 
-auth {
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (belongs-to
+      ((user)))
+    (defaults
+      ((user current-user)))
+    (authorize
+      ((create (authenticated? current-user))
+       ((read update delete)
+        (same-user? current-user user))))))
 
-entity Todo {
-  title: String
-  belongs_to current_user
-
-  authorize create when user_authenticated
-  authorize read when user_authenticated and user == user_id
-  authorize update when user_authenticated and user == user_id
-  authorize delete when user_authenticated and user == user_id
-}
+(define-app personal-todo
+  (auth app-auth)
+  (entities todo))
 `)
 
 	loginCode := requestCodeAndUseKnownCode(t, r, "owner@example.com")
@@ -341,20 +380,24 @@ func TestEntityCRUDSupportsNamedBelongsToCurrentUser(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "belongs-to-named-current-user.db"), `
-app BookReviews
+(define app-auth ())
 
-auth {
-}
+(define review
+  (entity
+    (fields
+      ((rating int)))
+    (belongs-to
+      ((reviewer user)))
+    (defaults
+      ((reviewer current-user)))
+    (authorize
+      (((read update delete)
+         (same-user? current-user reviewer))
+       (create (authenticated? current-user))))))
 
-entity Review {
-  rating: Int
-  belongs_to reviewer: current_user
-
-  authorize read when user_authenticated and reviewer == user_id
-  authorize create when user_authenticated
-  authorize update when user_authenticated and reviewer == user_id
-  authorize delete when user_authenticated and reviewer == user_id
-}
+(define-app book-reviews
+  (auth app-auth)
+  (entities review))
 `)
 
 	loginCode := requestCodeAndUseKnownCode(t, r, "reviewer@example.com")
@@ -386,7 +429,7 @@ entity Review {
 		t.Fatalf("expected created review to belong to current reviewer, got %#v", created["reviewer"])
 	}
 
-	row, ok, err := queryRow(r.DB, `SELECT reviewer_id FROM reviews WHERE id = 1`)
+	row, ok, err := queryRow(r.DB, `SELECT reviewer_id FROM review WHERE id = 1`)
 	if err != nil {
 		t.Fatalf("query review row failed: %v", err)
 	}
@@ -410,12 +453,16 @@ func TestEntityCRUDAutoTimestamps(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "timestamps.db"), `
-app TimestampApi
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      (((read create update delete)
+         true)))))
 
-entity Todo {
-  title: String
-  authorize read, create, update, delete when anonymous or user_authenticated
-}
+(define-app timestamp-api
+  (entities todo))
 `)
 
 	createRec := doRuntimeRequest(r, http.MethodPost, "/todos", `{"title":"First"}`, "")
@@ -436,7 +483,7 @@ entity Todo {
 		t.Fatalf("expected positive timestamps, got created_at=%v updated_at=%v", createdAt, updatedAt)
 	}
 
-	row, ok, err := queryRow(r.DB, `SELECT created_at, updated_at FROM todos WHERE id = 1`)
+	row, ok, err := queryRow(r.DB, `SELECT created_at, updated_at FROM todo WHERE id = 1`)
 	if err != nil {
 		t.Fatalf("query todo row failed: %v", err)
 	}
@@ -452,7 +499,7 @@ entity Todo {
 		t.Fatalf("expected 200 when updating todo, got %d body=%s", updateRec.Code, updateRec.Body.String())
 	}
 
-	updatedRow, ok, err := queryRow(r.DB, `SELECT created_at, updated_at FROM todos WHERE id = 1`)
+	updatedRow, ok, err := queryRow(r.DB, `SELECT created_at, updated_at FROM todo WHERE id = 1`)
 	if err != nil {
 		t.Fatalf("query updated todo row failed: %v", err)
 	}

@@ -35,11 +35,19 @@ actor MarAPIClient {
         do {
             let schema = try decoder.decode(Schema.self, from: data)
             return SchemaFetchResult(schema: schema, version: nil)
+        } catch let decodingError as DecodingError {
+            logDecodingFailure(path: "/_mar/schema", error: decodingError, data: data)
+            throw MarClientError.decoding(
+                path: "/_mar/schema",
+                details: describe(decodingError),
+                responsePreview: responsePreview(from: data)
+            )
         } catch {
+            print("Mar iOS decode failure GET /_mar/schema error=\(String(reflecting: error))")
             throw MarClientError.decoding(
                 path: "/_mar/schema",
                 details: String(reflecting: error),
-                responsePreview: String(data: data, encoding: .utf8) ?? "<non-utf8>"
+                responsePreview: responsePreview(from: data)
             )
         }
     }
@@ -102,15 +110,34 @@ actor MarAPIClient {
     }
 
     func updateRow(entity: Entity, id: String, payload: [String: JSONValue]) async throws -> Row {
-        try await request("\(entity.resource)/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)", method: "PUT", body: payload)
+        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        return try await request(
+            "\(entity.resource)/\(encodedID)",
+            method: "PUT",
+            body: payload
+        )
     }
 
     func deleteRow(entity: Entity, id: String) async throws {
-        _ = try await requestUnit("\(entity.resource)/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)", method: "DELETE")
+        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        _ = try await requestUnit(
+            "\(entity.resource)/\(encodedID)",
+            method: "DELETE"
+        )
     }
 
     func runAction(action: ActionInfo, payload: [String: JSONValue]) async throws -> Row {
-        try await request("/actions/\(action.name)", method: "POST", body: payload)
+        try await request(action.path, method: "POST", body: payload)
+    }
+
+    func executeFrontendCommand(method: String, path: String, body: JSONValue?) async throws -> JSONValue {
+        let payload: [String: JSONValue]?
+        if case .object(let values) = body {
+            payload = values
+        } else {
+            payload = nil
+        }
+        return try await request(path, method: method, body: payload)
     }
 
     func fetchAdminVersion() async throws -> AdminVersionPayload {
@@ -138,7 +165,8 @@ actor MarAPIClient {
         let destinationName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "backup.db" : name
         let data = try await requestRaw("/_mar/admin/backups/download?name=\(encodedName)", method: "GET")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let fileName = ((destinationName as NSString).lastPathComponent).isEmpty ? "backup.db" : (destinationName as NSString).lastPathComponent
+        let lastPathComponent = (destinationName as NSString).lastPathComponent
+        let fileName = lastPathComponent.isEmpty ? "backup.db" : lastPathComponent
         let destination = directory.appendingPathComponent(fileName)
 
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
@@ -154,7 +182,12 @@ actor MarAPIClient {
         return renamed
     }
 
-    private func requestUnit(_ path: String, method: String, authorized: Bool = true, body: [String: JSONValue]? = nil) async throws -> VoidResponse {
+    private func requestUnit(
+        _ path: String,
+        method: String,
+        authorized: Bool = true,
+        body: [String: JSONValue]? = nil
+    ) async throws -> VoidResponse {
         try await request(path, method: method, authorized: authorized, body: body)
     }
 
@@ -218,6 +251,7 @@ actor MarAPIClient {
         do {
             return try decoder.decode(T.self, from: data)
         } catch let decodingError as DecodingError {
+            logDecodingFailure(path: path, error: decodingError, data: data)
             throw MarClientError.decoding(
                 path: path,
                 details: describe(decodingError),
@@ -331,6 +365,11 @@ actor MarAPIClient {
 
     private func logRequestFailure(path: String, method: String, error: Error) {
         print("Mar iOS request failure \(method) \(path) error=\(String(reflecting: error))")
+    }
+
+    private func logDecodingFailure(path: String, error: DecodingError, data: Data) {
+        print("Mar iOS decode failure \(path) details=\(describe(error))")
+        print("Mar iOS decode failure \(path) preview=\(responsePreview(from: data))")
     }
 }
 

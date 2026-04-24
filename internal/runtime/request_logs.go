@@ -388,6 +388,10 @@ func (r *Runtime) describeQueryReason(method, route, sqlText string) string {
 		return reason
 	}
 
+	if reason := describeQueryEndpointReason(route, sqlUpper); reason != "" {
+		return reason
+	}
+
 	return describeGenericQueryReason(sqlUpper)
 }
 
@@ -527,6 +531,18 @@ func describeActionQueryReason(route, sqlUpper string) string {
 		return "Delete rows for this action"
 	case strings.HasPrefix(sqlUpper, "SELECT "):
 		return "Load data needed to run this action"
+	}
+
+	return ""
+}
+
+func describeQueryEndpointReason(route, sqlUpper string) string {
+	if route != "/queries/:name" {
+		return ""
+	}
+
+	if strings.HasPrefix(sqlUpper, "SELECT ") {
+		return "Load rows for this query"
 	}
 
 	return ""

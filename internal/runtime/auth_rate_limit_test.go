@@ -83,8 +83,8 @@ func TestAuthRateLimitCanBeOverriddenFromAuth(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewAuthRateLimitRuntime(t, filepath.Join(t.TempDir(), "auth-rate-custom.db"), `
-  auth_request_code_rate_limit_per_minute 2
-  auth_login_rate_limit_per_minute 3
+  (auth-request-code-rate-limit-per-minute 2)
+  (auth-login-rate-limit-per-minute 3)
 `)
 
 	email := "rate-custom@example.com"
@@ -120,22 +120,17 @@ func mustNewAuthRateLimitRuntime(t *testing.T, dbPath, authBlock string) *Runtim
 	t.Setenv("MAR_DEV_MODE", "1")
 
 	source := strings.TrimSpace(`
-app AuthRateApi
+(define app-auth
+  (`+authBlock+`))
 
-entity User {
-  id: Int primary auto
-  email: String
-  role: String
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  id: Int primary auto
-  title: String
-}
-
-auth {
-`+authBlock+`
-}
+(define-app auth-rate-api
+  (auth app-auth)
+  (entities todo))
 `) + "\n"
 
 	app, err := parser.Parse(source)

@@ -102,18 +102,17 @@ func TestBootstrapAdminAcceptsRequiredScalarFields(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewAuthRuntimeFromSource(t, filepath.Join(t.TempDir(), "bootstrap-required-scalars.db"), `
-app AuthBootstrapApi
+(define app-auth ())
 
-entity User {
-  id: Int primary auto
-  email: String
-  role: String
-  name: String
-  surname: String
-}
+(define user
+  (entity
+    (fields
+      ((name string)
+       (surname string)))))
 
-auth {
-}
+(define-app auth-bootstrap-api
+  (auth app-auth)
+  (entities user))
 `)
 
 	rec := httptest.NewRecorder()
@@ -144,18 +143,17 @@ func TestBootstrapAdminReportsMissingRequiredScalarFields(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewAuthRuntimeFromSource(t, filepath.Join(t.TempDir(), "bootstrap-missing-required.db"), `
-app AuthBootstrapApi
+(define app-auth ())
 
-entity User {
-  id: Int primary auto
-  email: String
-  role: String
-  name: String
-  surname: String
-}
+(define user
+  (entity
+    (fields
+      ((name string)
+       (surname string)))))
 
-auth {
-}
+(define-app auth-bootstrap-api
+  (auth app-auth)
+  (entities user))
 `)
 
 	rec := httptest.NewRecorder()
@@ -183,22 +181,21 @@ func TestBootstrapAdminBlocksRequiredRelationFields(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewAuthRuntimeFromSource(t, filepath.Join(t.TempDir(), "bootstrap-required-relation.db"), `
-app AuthBootstrapApi
+(define app-auth ())
 
-entity Team {
-  id: Int primary auto
-  name: String
-}
+(define team
+  (entity
+    (fields
+      ((name string)))))
 
-entity User {
-  id: Int primary auto
-  email: String
-  role: String
-  belongs_to Team
-}
+(define user
+  (entity
+    (belongs-to
+      ((team)))))
 
-auth {
-}
+(define-app auth-bootstrap-api
+  (auth app-auth)
+  (entities team user))
 `)
 
 	rec := httptest.NewRecorder()
@@ -261,26 +258,19 @@ func mustNewAuthRuntime(t *testing.T, dbPath string) *Runtime {
 	t.Helper()
 	t.Setenv("MAR_DEV_MODE", "1")
 	app, err := parser.Parse(strings.TrimSpace(`
-app AuthBootstrapApi
+(define app-auth ())
 
-entity User {
-  id: Int primary auto
-  email: String
-  role: String
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      (((read create update delete)
+         (authenticated? current-user))))))
 
-entity Todo {
-  id: Int primary auto
-  title: String
-
-  authorize read when user_authenticated
-  authorize create when user_authenticated
-  authorize update when user_authenticated
-  authorize delete when user_authenticated
-}
-
-auth {
-}
+(define-app auth-bootstrap-api
+  (auth app-auth)
+  (entities todo))
 `) + "\n")
 	if err != nil {
 		t.Fatalf("failed to parse app: %v", err)

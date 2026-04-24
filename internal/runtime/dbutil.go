@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"mar/internal/expr"
 	"mar/internal/model"
 	"mar/internal/sqlitecli"
 )
@@ -35,7 +36,9 @@ func readJSONBody(req *http.Request) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	var out map[string]any
-	if err := json.Unmarshal(body, &out); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&out); err != nil {
 		return nil, newAPIError(http.StatusBadRequest, "invalid_json_body", "Invalid JSON body")
 	}
 	if out == nil {
@@ -72,12 +75,12 @@ func normalizeInputValue(field *model.Field, value any) (dbValue any, apiValue a
 			return nil, nil, fmt.Errorf("field %s must be DateTime (Unix milliseconds)", field.Name)
 		}
 		return n, float64(n), nil
-	case "Float":
-		f, ok := toFloat64(value)
+	case "Decimal":
+		f, ok := toDecimal(value)
 		if !ok {
-			return nil, nil, fmt.Errorf("field %s must be Float", field.Name)
+			return nil, nil, fmt.Errorf("field %s must be Decimal", field.Name)
 		}
-		return f, f, nil
+		return f.String(), f, nil
 	case "String":
 		s, ok := value.(string)
 		if !ok {
@@ -130,8 +133,8 @@ func decodeDBValue(field *model.Field, value any) any {
 			return nil
 		}
 		return float64(n)
-	case "Float":
-		f, ok := toFloat64(value)
+	case "Decimal":
+		f, ok := toDecimal(value)
 		if !ok {
 			return nil
 		}
@@ -169,12 +172,12 @@ func parsePrimaryValue(entity *model.Entity, raw string) (any, bool) {
 			n = normalizeDateMillis(n)
 		}
 		return n, true
-	case "Float":
-		f, err := strconv.ParseFloat(raw, 64)
-		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+	case "Decimal":
+		f, err := expr.ParseDecimal(raw)
+		if err != nil {
 			return nil, false
 		}
-		return f, true
+		return f.String(), true
 	case "Bool":
 		if raw == "true" {
 			return int64(1), true
@@ -232,6 +235,31 @@ func toFloat64(v any) (float64, bool) {
 		return f, err == nil
 	default:
 		return 0, false
+	}
+}
+
+func toDecimal(v any) (expr.Decimal, bool) {
+	switch t := v.(type) {
+	case expr.Decimal:
+		return t, true
+	case int:
+		return expr.NewDecimalFromInt(int64(t)), true
+	case int64:
+		return expr.NewDecimalFromInt(t), true
+	case json.Number:
+		value, err := expr.ParseDecimal(t.String())
+		return value, err == nil
+	case string:
+		value, err := expr.ParseDecimal(t)
+		return value, err == nil
+	case float64:
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return expr.Decimal{}, false
+		}
+		value, err := expr.ParseDecimal(strconv.FormatFloat(t, 'g', -1, 64))
+		return value, err == nil
+	default:
+		return expr.Decimal{}, false
 	}
 }
 

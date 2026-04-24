@@ -10,26 +10,18 @@ import (
 
 func TestComputeEditorGitSigns(t *testing.T) {
 	base := []string{
-		"app Todo",
-		"port 4100",
-		"database \"todo.db\"",
-		"entity Todo {",
-		"  title: String",
-		"}",
+		"(define todo)",
+		"(define-app todo)",
 	}
 	current := []string{
-		"app Todo",
-		"port 4100",
-		"database \"todo.db\"",
-		"entity Todo {",
-		"  title: String",
-		"  done: Bool",
-		"}",
+		"(define todo)",
+		"(define app-config ())",
+		"(define-app todo)",
 	}
 
 	signs := computeEditorGitSigns(base, current)
-	if got := signs[5]; got != '+' {
-		t.Fatalf("expected line 6 to be marked as addition, got %q", got)
+	if got := signs[1]; got != '+' {
+		t.Fatalf("expected line 2 to be marked as addition, got %q", got)
 	}
 }
 
@@ -71,10 +63,8 @@ func TestEditorSaveFormatsOnSave(t *testing.T) {
 	editor := &marEditor{
 		filePath: path,
 		lines: []string{
-			"app TodoApi",
-			"entity Todo{",
-			"title:String",
-			"}",
+			"(define todo",
+			"((fields((title string)))))",
 		},
 		savedLines: []string{""},
 	}
@@ -89,15 +79,13 @@ func TestEditorSaveFormatsOnSave(t *testing.T) {
 	}
 
 	expected := "" +
-		"app TodoApi\n" +
-		"entity Todo {\n" +
-		"  title: String\n" +
-		"}\n"
+		"(define todo\n" +
+		"((fields((title string)))))\n"
 
 	if string(content) != expected {
 		t.Fatalf("unexpected saved content\n--- expected ---\n%s\n--- got ---\n%s", expected, string(content))
 	}
-	if editor.lines[1] != "entity Todo {" {
+	if editor.lines[1] != "((fields((title string)))))" {
 		t.Fatalf("expected editor buffer to be updated with formatted content, got %#v", editor.lines)
 	}
 	if !strings.Contains(editor.status, "Saved todo.mar") {
@@ -112,10 +100,8 @@ func TestEditorSaveFallsBackWhenFormatFails(t *testing.T) {
 	editor := &marEditor{
 		filePath: path,
 		lines: []string{
-			"app TodoApi",
-			"entity Todo {",
-			"  title String",
-			"}",
+			"(define todo",
+			"((fields ((title)))))",
 		},
 		savedLines: []string{""},
 	}
@@ -130,10 +116,8 @@ func TestEditorSaveFallsBackWhenFormatFails(t *testing.T) {
 	}
 
 	expected := "" +
-		"app TodoApi\n" +
-		"entity Todo {\n" +
-		"  title String\n" +
-		"}\n"
+		"(define todo\n" +
+		"((fields ((title)))))\n"
 
 	if string(content) != expected {
 		t.Fatalf("unexpected saved fallback content\n--- expected ---\n%s\n--- got ---\n%s", expected, string(content))
@@ -172,12 +156,12 @@ func TestEditorEscClearsSelection(t *testing.T) {
 	editor := &marEditor{
 		filePath: "todo.mar",
 		lines: []string{
-			"app Todo",
+			"(define-app todo)",
 		},
 		savedLines: []string{
-			"app Todo",
+			"(define-app todo)",
 		},
-		cx: 4,
+		cx: 12,
 		cy: 0,
 	}
 
@@ -208,12 +192,12 @@ func TestEditorCtrlCCopiesAndClearsSelection(t *testing.T) {
 	editor := &marEditor{
 		filePath: "todo.mar",
 		lines: []string{
-			"app Todo",
+			"(define-app todo)",
 		},
 		savedLines: []string{
-			"app Todo",
+			"(define-app todo)",
 		},
-		cx: 4,
+		cx: 12,
 		cy: 0,
 	}
 
@@ -235,8 +219,8 @@ func TestEditorCtrlCCopiesAndClearsSelection(t *testing.T) {
 	if editor.selecting {
 		t.Fatal("expected Ctrl-c to clear selection mode")
 	}
-	if got := editor.clipboard; got != "To" {
-		t.Fatalf("expected copied text %q, got %q", "To", got)
+	if got := editor.clipboard; got != "to" {
+		t.Fatalf("expected copied text %q, got %q", "to", got)
 	}
 }
 
@@ -244,12 +228,12 @@ func TestEditorCtrlXCanBeUndone(t *testing.T) {
 	editor := &marEditor{
 		filePath: "todo.mar",
 		lines: []string{
-			"app Todo",
+			"(define-app todo)",
 		},
 		savedLines: []string{
-			"app Todo",
+			"(define-app todo)",
 		},
-		cx: 4,
+		cx: 12,
 		cy: 0,
 	}
 
@@ -268,7 +252,7 @@ func TestEditorCtrlXCanBeUndone(t *testing.T) {
 	if quit {
 		t.Fatal("Ctrl-x should not quit the editor")
 	}
-	if got := editor.lines[0]; got != "app do" {
+	if got := editor.lines[0]; got != "(define-app do)" {
 		t.Fatalf("expected cut text to be removed, got %q", got)
 	}
 
@@ -279,7 +263,7 @@ func TestEditorCtrlXCanBeUndone(t *testing.T) {
 	if quit {
 		t.Fatal("Ctrl-z should not quit the editor")
 	}
-	if got := editor.lines[0]; got != "app Todo" {
+	if got := editor.lines[0]; got != "(define-app todo)" {
 		t.Fatalf("expected undo to restore text, got %q", got)
 	}
 }

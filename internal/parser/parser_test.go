@@ -1,23 +1,63 @@
 package parser
 
 import (
-	"reflect"
+	"fmt"
 	"strings"
 	"testing"
 
 	"mar/internal/model"
 )
 
-func TestParseValidAppDerivesEntityMetadata(t *testing.T) {
+func TestParseBuildsAppFromSExpressions(t *testing.T) {
 	src := `
-app BookStoreApi
-port 4100
-database "./bookstore.db"
+(define app-config
+  ((database "./pet-food-log.db")
+   (server
+     ((port 4300)))))
 
-entity Book {
-  title: String
-  price: Float
-}
+(define app-auth
+  ((from "no-reply@example.com")
+   (subject "Your code")
+   (smtp-host "smtp.example.com")
+   (smtp-username "apikey")
+   (smtp-password-env "SMTP_PASSWORD")))
+
+(define purchase
+  (entity
+    (fields
+      ((purchase-date date)
+       (amount-paid decimal)))
+    (belongs-to
+      ((user)))
+    (defaults
+      ((user current-user)))
+    (validate
+      (if (> amount-paid 0)
+          true
+          (error "amount paid must be greater than zero")))
+    (authorize
+      ((read (same-user? current-user user))
+       (create (authenticated? current-user))))))
+
+(define-record purchases-model
+  (items (list purchase)))
+
+(define-screen purchases
+  (title "Purchases")
+  (init
+    ((purchases-model ())
+     ()))
+  (view model
+    (section
+      ((list items purchase
+         ((title purchase-date)
+          (subtitle amount-paid)))))))
+
+(define-app pet-food-log
+  (config app-config)
+  (auth app-auth)
+  (entities purchase)
+  (screens purchases))
 `
 
 	app, err := Parse(src)
@@ -25,616 +65,974 @@ entity Book {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 
-	if app.AppName != "BookStoreApi" {
+	if app.AppName != "pet-food-log" {
 		t.Fatalf("unexpected app name: %q", app.AppName)
 	}
-	if app.Port != 4100 {
+	if app.Port != 4300 {
 		t.Fatalf("unexpected port: %d", app.Port)
 	}
-	if app.Database != "./bookstore.db" {
+	if app.Database != "./pet-food-log.db" {
 		t.Fatalf("unexpected database: %q", app.Database)
 	}
+	if app.Auth == nil || app.Auth.EmailFrom != "no-reply@example.com" {
+		t.Fatalf("unexpected auth config: %+v", app.Auth)
+	}
 	if len(app.Entities) != 2 {
-		t.Fatalf("expected 2 entities (including built-in User), got %d", len(app.Entities))
+		t.Fatalf("expected built-in User plus entity, got %d", len(app.Entities))
 	}
 
-	var bookFound bool
-	var bookEntityName string
-	var book = app.Entities[0]
-	for _, entity := range app.Entities {
-		if entity.Name == "Book" {
-			book = entity
-			bookFound = true
-			bookEntityName = entity.Name
+	purchase := app.Entities[1]
+	if purchase.Name != "Purchase" {
+		t.Fatalf("unexpected entity name: %q", purchase.Name)
+	}
+	if purchase.Table != "purchase" {
+		t.Fatalf("unexpected table: %q", purchase.Table)
+	}
+	if purchase.Validate != "(if (> amount-paid 0) true (error \"amount paid must be greater than zero\"))" {
+		t.Fatalf("unexpected validate expression: %q", purchase.Validate)
+	}
+	if len(purchase.Authorizations) != 2 {
+		t.Fatalf("unexpected authorizations: %+v", purchase.Authorizations)
+	}
+
+	foundUserRelation := false
+	for _, field := range purchase.Fields {
+		if field.Name == "user" {
+			foundUserRelation = true
+			if field.RelationEntity != "User" || !field.CurrentUser {
+				t.Fatalf("unexpected relation field: %+v", field)
+			}
+		}
+	}
+	if !foundUserRelation {
+		t.Fatal("expected belongs-to field user")
+	}
+
+	if app.Screens == nil || len(app.Screens.Screens) != 1 {
+		t.Fatalf("unexpected screens: %+v", app.Screens)
+	}
+	screen := app.Screens.Screens[0]
+	if screen.Name != "Purchases" || screen.Title != "Purchases" {
+		t.Fatalf("unexpected screen: %+v", screen)
+	}
+	item := screen.Sections[0].Items[0]
+	if item.Kind != "list" || item.ModelField != "items" || item.Entity != "Purchase" || item.TitleField != "purchase_date" || item.SubtitleField != "amount_paid" {
+		t.Fatalf("unexpected list item: %+v", item)
+	}
+}
+
+func TestParseRejectsImplicitQueryLists(t *testing.T) {
+	src := `
+(define todo
+  (entity
+    (fields
+      ((title string)
+       (done bool)))
+    (belongs-to
+      ((user)))
+    (defaults
+      ((user current-user)))))
+
+(define (my-todos)
+  (query todo
+    (where (same-user? current-user user))
+    (order-by title asc)))
+
+(define-screen home
+  (title "Home")
+  (view
+    (section
+      ((list (my-todos)
+         ((title title)
+          (subtitle done)))))))
+
+(define-app todos
+  (entities todo)
+  (screens home))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected implicit query list to be rejected")
+	}
+	if !strings.Contains(err.Error(), "list expects (list model-field entity") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseSupportsModelBackedLists(t *testing.T) {
+	src := `
+(define post
+  (entity
+    (fields ((body string)))
+    (belongs-to ((author user)))))
+
+(define (posts-by-author author-id)
+  (query post
+    (where (= author author-id))
+    (order-by created-at desc)
+    (limit 20)))
+
+(define-record timeline-model
+  (posts (list post)))
+
+(define-screen timeline
+  (msg
+    (loaded posts)
+    (failed message))
+  (init
+    ((timeline-model ())
+     ((command (posts-by-author 1) loaded failed))))
+  (update msg model
+    (match msg
+      ((loaded posts) ((assoc model (posts posts)) ()))
+      ((failed message) (model ()))))
+  (view model
+    (section
+      "Posts"
+      ((list posts post
+         ((title body)))))))
+
+(define-app mini-twitter
+  (backend
+    (entities post)
+    (queries posts-by-author))
+  (frontend
+    (screens timeline)))
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	item := app.Screens.Screens[0].Sections[0].Items[0]
+	if item.Kind != "list" || item.ModelField != "posts" || item.Entity != "Post" || item.TitleField != "body" {
+		t.Fatalf("unexpected model-backed list item: %+v", item)
+	}
+}
+
+func TestParseRejectsNonExhaustiveScreenMatch(t *testing.T) {
+	src := `
+(define-record counter-model
+  (count int))
+
+(define-screen counter
+  (msg increment decrement)
+  (init
+    ((counter-model 0)
+     ()))
+  (update msg model
+    (match msg
+      (increment
+        ((assoc model (count (+ (get model count) 1)))
+         ()))))
+  (view model
+    (section
+      ((field count)))))
+
+(define-app counter-app
+  (frontend
+    (screens counter)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "match is not exhaustive") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsAssocOnNonRecordScreenValue(t *testing.T) {
+	src := `
+(define-record counter-model
+  (count int))
+
+(define-screen counter
+  (msg increment)
+  (init
+    ((counter-model 0)
+     ()))
+  (update msg model
+    (match msg
+      (increment
+        ((assoc (get model count) (value 1))
+         ()))))
+  (view model
+    (section
+      ((field count)))))
+
+(define-app counter-app
+  (frontend
+    (screens counter)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "assoc expects a record-like value") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsAssocWrongFieldTypeInScreenModel(t *testing.T) {
+	src := `
+(define-record editor-model
+  (title string))
+
+(define-screen editor
+  (msg save)
+  (init
+    ((editor-model "hello")
+     ()))
+  (update msg model
+    (match msg
+      (save
+        ((assoc model (title true))
+         ()))))
+  (view model
+    (section
+      ((field title)))))
+
+(define-app editor-app
+  (frontend
+    (screens editor)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `assoc field "title" expects string, got bool`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsUnusedFunction(t *testing.T) {
+	src := `
+(define (helper value)
+  value)
+
+(define-screen home
+  (view
+    (section
+      ((link "Home" home)))))
+
+(define-app demo
+  (frontend
+    (screens home)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `function "helper" is defined but never used`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsScreenNotExposedInDefapp(t *testing.T) {
+	src := `
+(define-screen home
+  (view
+    (section
+      ((link "Home" home)))))
+
+(define-screen settings
+  (view
+    (section
+      ((link "Home" home)))))
+
+(define-app demo
+  (frontend
+    (screens home)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `screen "settings" is defined but not exposed in define-app`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseInfersScreenParameterTypeFromListOpen(t *testing.T) {
+	src := `
+(define user
+  (entity
+    (fields ((handle string)))
+    (authorize ((read true)))))
+
+(define post
+  (entity
+    (fields ((body string)))
+    (belongs-to ((author user)))
+    (authorize ((read true)))))
+
+(define-record profiles-model
+  (people (list user)))
+
+(define-record profile-model
+  (handle string))
+
+(define (all-users)
+  (query user))
+
+(define-screen profiles
+  (msg
+    (loaded people)
+    (failed message))
+  (init
+    ((profiles-model ())
+     ((command (all-users) loaded failed))))
+  (update msg model
+    (match msg
+      ((loaded people) ((assoc model (people people)) ()))
+      ((failed message) (model ()))))
+  (view model
+    (section
+      ((list people user
+         ((title handle)
+          (open profile-detail)))))))
+
+(define-screen (profile-detail user)
+  (init
+    ((profile-model user.handle)
+     ()))
+  (view model
+    (section
+      ((field handle)))))
+
+(define-app demo
+  (entities user post)
+  (queries all-users)
+  (frontend
+    (screens profiles profile-detail)))
+`
+
+	_, err := Parse(src)
+	if err != nil {
+		t.Fatalf("expected parse success, got %v", err)
+	}
+}
+
+func TestParseInfersScreenParameterTypeFromGo(t *testing.T) {
+	src := `
+(define user
+  (entity
+    (fields ((handle string)))
+    (authorize ((read true)))))
+
+(define-record profiles-model
+  (people (list user)))
+
+(define-record profile-model
+  (handle string))
+
+(define (all-users)
+  (query user))
+
+(define-screen profiles
+  (msg
+    (loaded people)
+    (failed message))
+  (init
+    ((profiles-model ())
+     ((command (all-users) loaded failed))))
+  (update msg model
+    (match msg
+      ((loaded people) ((assoc model (people people)) ()))
+      ((failed message) (model ()))))
+  (view model
+    (section
+      ((list people user
+         ((title handle)
+          (open profile-detail)))))))
+
+(define-screen (profile-detail user)
+  (msg edit-clicked)
+  (init
+    ((unit)
+     ()))
+  (update msg model
+    (match msg
+      (edit-clicked
+        ((unit)
+         ((go edit-profile user))))))
+  (view
+    (section
+      ((button "Edit" edit-clicked)))))
+
+(define-screen (edit-profile user)
+  (init
+    ((profile-model user.handle)
+     ()))
+  (view
+    (section
+      ((link "Back" profiles)))))
+
+(define-app demo
+  (entities user)
+  (queries all-users)
+  (frontend
+    (screens profiles profile-detail edit-profile)))
+`
+
+	_, err := Parse(src)
+	if err != nil {
+		t.Fatalf("expected parse success, got %v", err)
+	}
+}
+
+func TestParseRejectsListViewWithNonListModelField(t *testing.T) {
+	src := `
+(define user
+  (entity
+    (fields ((handle string)))
+    (authorize ((read true)))))
+
+(define-record bad-model
+  (people string))
+
+(define-screen profiles
+  (init
+    ((bad-model "")
+     ()))
+  (view model
+    (section
+      ((list people user
+         ((title handle)))))))
+
+(define-app demo
+  (entities user)
+  (frontend
+    (screens profiles)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `list model field "people" must be a list`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsDisabledViewOptionOnNonBoolField(t *testing.T) {
+	src := `
+(define-record editor-model
+  (title string))
+
+(define-screen editor
+  (msg save)
+  (init
+    ((editor-model "hello")
+     ()))
+  (update msg model
+    (match msg
+      (save (model ()))))
+  (view
+    (section
+      ((button "Save" save (disabled title))))))
+
+(define-app demo
+  (frontend
+    (screens editor)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `button disabled expects bool field, got string`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsFieldWithoutScreenRowParameter(t *testing.T) {
+	src := `
+(define-screen home
+  (init
+    ((unit)
+     ()))
+  (view
+    (section
+      ((field title)))))
+
+(define-app demo
+  (frontend
+    (screens home)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `field requires a screen row parameter`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsScreenParameterWithoutCallerInferenceForEntrypoint(t *testing.T) {
+	src := `
+(define-screen (profile-detail user)
+  (init
+    ((unit)
+     ()))
+  (view
+    (section
+      ((link "Back" home)))))
+
+(define-screen home
+  (view
+    (section
+      ((link "Home" home)))))
+
+(define-app demo
+  (frontend
+    (screens home profile-detail)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "screen ProfileDetail parameter user type could not be inferred") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsUnknownListAction(t *testing.T) {
+	src := `
+(define user
+  (entity
+    (fields ((handle string)))
+    (authorize ((read true)))))
+
+(define-record profiles-model
+  (people (list user)))
+
+(define-screen profiles
+  (init
+    ((profiles-model ())
+     ()))
+  (view model
+    (section
+      ((list people user
+         ((title handle)
+          (action follow-user)))))))
+
+(define-app demo
+  (entities user)
+  (frontend
+    (screens profiles)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `list action references unknown action "follow_user"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsGoWithWrongScreenParameterType(t *testing.T) {
+	src := `
+(define user
+  (entity
+    (fields ((handle string)))))
+
+(define-record home-model
+  (count int))
+
+(define-screen (profile-detail user)
+  (view
+    (section
+      ((field handle)))))
+
+(define-screen home
+  (msg open-profile)
+  (init
+    ((home-model 1)
+     ()))
+  (update msg model
+    (match msg
+      (open-profile
+       (model
+         ((go profile-detail (get model count)))))))
+  (view model
+    (section
+      ((button "Open" open-profile)))))
+
+(define-app demo
+  (backend
+    (entities user))
+  (frontend
+    (screens home profile-detail)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `screen ProfileDetail: model must be a record, got int`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsListOpenWithWrongDestinationType(t *testing.T) {
+	src := `
+(define user
+  (entity
+    (fields ((handle string)))))
+
+(define post
+  (entity
+    (fields ((body string)))))
+
+(define-record profiles-model
+  (people (list user)))
+
+(define-screen (post-detail post)
+  (view
+    (section
+      ((field body)))))
+
+(define-screen profiles
+  (init
+    ((profiles-model ())
+     ()))
+  (view model
+    (section
+      ((list people user
+         ((title handle)
+          (open post-detail)))))))
+
+(define-app demo
+  (backend
+    (entities user post))
+  (frontend
+    (screens profiles post-detail)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `screen PostDetail: record User has no field "body"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsWrongTypedQueryPayloadInCommandReply(t *testing.T) {
+	src := `
+(define post
+  (entity
+    (fields ((body string)))))
+
+(define (recent-posts)
+  (query post
+    (limit 20)))
+
+(define-record timeline-model
+  (count int))
+
+(define-screen timeline
+  (msg
+    (loaded posts)
+    (failed message))
+  (init
+    ((timeline-model 0)
+     ((command (recent-posts) loaded failed))))
+  (update msg model
+    (match msg
+      ((loaded posts)
+       ((assoc model
+          (count posts))
+        ()))
+      ((failed message)
+       (model ()))))
+  (view model
+    (section
+      (title "Timeline")
+      (text "Timeline"))))
+
+(define-app demo
+  (backend
+    (entities post)
+    (queries recent-posts))
+  (frontend
+    (screens timeline)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `assoc field "count" expects int, got (list Post)`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsWrongTypedFailurePayloadInCommandReply(t *testing.T) {
+	src := `
+(define-record editor-model
+  (failed bool))
+
+(define publish-post
+  (action
+    (input
+      ((body string)))
+    (create post
+      ((body body)))))
+
+(define post
+  (entity
+    (fields
+      ((body string)))))
+
+(define-screen editor
+  (msg
+    save-clicked
+    saved
+    (save-failed message))
+  (init
+    ((editor-model false)
+     ()))
+  (update msg model
+    (match msg
+      (save-clicked
+       (model
+         ((command (publish-post "hello") saved save-failed))))
+      (saved
+       (model ()))
+      ((save-failed message)
+       ((assoc model
+          (failed message))
+        ()))))
+  (view model
+    (section
+      ((button "Save" save-clicked)))))
+
+(define-app demo
+  (backend
+    (entities post)
+    (actions publish-post))
+  (frontend
+    (screens editor)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `assoc field "failed" expects bool, got string`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsActionSuccessReplyWithPayload(t *testing.T) {
+	src := `
+(define publish-post
+  (action
+    (input
+      ((body string)))
+    (create post
+      ((body body)))))
+
+(define post
+  (entity
+    (fields
+      ((body string)))))
+
+(define-screen editor
+  (msg
+    save-clicked
+    (saved response)
+    (save-failed message))
+  (init
+    ((unit)
+     ()))
+  (update msg model
+    (match msg
+      (save-clicked
+       (model
+         ((command (publish-post "hello") saved save-failed))))
+      ((saved response)
+       (model ()))
+      ((save-failed message)
+       (model ()))))
+  (view model
+    (section
+      ((button "Save" save-clicked)))))
+
+(define-app demo
+  (backend
+    (entities post)
+    (actions publish-post))
+  (frontend
+    (screens editor)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), `action success reply "saved" must not accept a payload`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsUnknownIdentifiersInsideValidate(t *testing.T) {
+	src := `
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (validate
+      (> amount-paid 0))))
+
+(define-app todos
+  (entities todo))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if got := err.Error(); got == "" || got == "expected parse error" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseSupportsUniqueAndCompositeTypes(t *testing.T) {
+	src := `
+(define-record post-item
+  (body string))
+
+(define-record feed-page
+  (items (list post-item))
+  (next-cursor (maybe cursor))
+  (load-result (result string (list post-item))))
+
+(define post
+  (entity
+    (fields
+      ((body string)))
+    (belongs-to
+      ((author user)))
+    (unique
+      ((author body)))))
+
+(define-app demo
+  (entities post))
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	if len(app.Records) != 2 {
+		t.Fatalf("expected two records, got %+v", app.Records)
+	}
+	recordIndex := -1
+	for i := range app.Records {
+		if app.Records[i].Name == "feed_page" {
+			recordIndex = i
 			break
 		}
 	}
-	if !bookFound || bookEntityName != "Book" {
-		t.Fatal("expected Book entity to be present")
+	if recordIndex < 0 {
+		t.Fatalf("expected feed_page record, got %+v", app.Records)
 	}
-
-	if book.Table != "books" {
-		t.Fatalf("unexpected table: %q", book.Table)
+	fields := app.Records[recordIndex].Fields
+	if len(fields) != 3 {
+		t.Fatalf("expected feed_page fields, got %+v", app.Records)
 	}
-	if book.Resource != "/books" {
-		t.Fatalf("unexpected resource: %q", book.Resource)
+	if got := fields[1].Type; got != "(maybe cursor)" {
+		t.Fatalf("unexpected maybe cursor type: %q", got)
 	}
-	if book.PrimaryKey != "id" {
-		t.Fatalf("expected derived primary key id, got %q", book.PrimaryKey)
+	if got := fields[2].Type; got != "(result string (list post_item))" {
+		t.Fatalf("unexpected result type: %q", got)
 	}
-	if len(book.Fields) != 5 {
-		t.Fatalf("expected 5 fields (including derived id and timestamps), got %d", len(book.Fields))
+	postIndex := -1
+	for i := range app.Entities {
+		if app.Entities[i].Name == "Post" {
+			postIndex = i
+			break
+		}
 	}
-	if book.Fields[0].Name != "id" || !book.Fields[0].Primary || !book.Fields[0].Auto {
-		t.Fatalf("expected first field to be derived auto primary id, got %+v", book.Fields[0])
+	if postIndex < 0 {
+		t.Fatalf("expected Post entity, got %+v", app.Entities)
 	}
-	if book.Fields[len(book.Fields)-2].Name != "created_at" || book.Fields[len(book.Fields)-2].Type != "DateTime" || !book.Fields[len(book.Fields)-2].Auto {
-		t.Fatalf("expected created_at timestamp field, got %+v", book.Fields[len(book.Fields)-2])
+	if len(app.Entities[postIndex].Unique) != 1 {
+		t.Fatalf("expected one unique constraint, got %+v", app.Entities[postIndex].Unique)
 	}
-	if book.Fields[len(book.Fields)-1].Name != "updated_at" || book.Fields[len(book.Fields)-1].Type != "DateTime" || !book.Fields[len(book.Fields)-1].Auto {
-		t.Fatalf("expected updated_at timestamp field, got %+v", book.Fields[len(book.Fields)-1])
+	if app.Entities[postIndex].Unique[0].Fields[0] != "author" || app.Entities[postIndex].Unique[0].Fields[1] != "body" {
+		t.Fatalf("unexpected unique constraint: %+v", app.Entities[postIndex].Unique[0])
 	}
 }
 
-func TestParseSupportsDoubleDashComments(t *testing.T) {
+func TestParseSupportsBackendFrontendQueriesAndActions(t *testing.T) {
 	src := `
--- application
-app TodoApi
-port 4100
-database "./todo.db"
-
--- entity
-entity Todo {
-  title: String
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.AppName != "TodoApi" {
-		t.Fatalf("unexpected app name: %q", app.AppName)
-	}
-}
-
-func TestParseDoesNotWarnWhenBootstrapCanPromptForRequiredScalarFields(t *testing.T) {
-	src := `
-app TodoOwned
-
-entity User {
-  teste: String
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if len(app.Warnings) != 0 {
-		t.Fatalf("expected no warnings, got %v", app.Warnings)
-	}
-}
-
-func TestParseDoesNotWarnWhenBootstrapCanPromptForMultipleRequiredScalarFields(t *testing.T) {
-	src := `
-app TodoOwned
-
-entity User {
-  name: String
-  surname: String
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if len(app.Warnings) != 0 {
-		t.Fatalf("expected no warnings, got %v", app.Warnings)
-	}
-}
-
-func TestParseWarnsWhenRequiredRelationBlocksFirstAdminBootstrap(t *testing.T) {
-	src := `
-app TodoOwned
-
-entity Team {
-  name: String
-}
-
-entity User {
-  belongs_to Team
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if len(app.Warnings) != 1 {
-		t.Fatalf("expected 1 warning, got %d (%v)", len(app.Warnings), app.Warnings)
-	}
-	if !strings.Contains(app.Warnings[0], "required relation field without default") {
-		t.Fatalf("expected singular relation wording in warning, got %q", app.Warnings[0])
-	}
-	if !strings.Contains(app.Warnings[0], "`team`") {
-		t.Fatalf("expected warning to mention blocking field, got %q", app.Warnings[0])
-	}
-	if !strings.Contains(app.Warnings[0], "You can make this field optional") {
-		t.Fatalf("expected optional hint in warning, got %q", app.Warnings[0])
-	}
-}
-
-func TestParseDoesNotWarnWhenFirstAdminCanBeAutoCreated(t *testing.T) {
-	src := `
-app TodoOwned
-
-entity User {
-  displayName: String optional
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if len(app.Warnings) != 0 {
-		t.Fatalf("expected no warnings, got %v", app.Warnings)
-	}
-}
-
-func TestParseUsesDefaultPortWhenPortIsOmitted(t *testing.T) {
-	src := `
-app TodoApi
-database "./todo.db"
-
-entity Todo {
-  title: String
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.Port != 4200 {
-		t.Fatalf("expected default port 4200, got %d", app.Port)
-	}
-}
-
-func TestParseUsesDefaultDatabaseWhenDatabaseIsOmitted(t *testing.T) {
-	src := `
-app TodoApi
-
-entity Todo {
-  title: String
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.Database != "todo-api.db" {
-		t.Fatalf("expected default database todo-api.db, got %q", app.Database)
-	}
-}
-
-func TestParseSupportsIOSConfig(t *testing.T) {
-	src := `
-app TodoApi
-
-ios {
-  bundle_identifier "com.example.todo"
-  display_name "Todo App"
-  server_url "https://school.example.com"
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.IOS == nil {
-		t.Fatal("expected ios config to be parsed")
-	}
-	if app.IOS.BundleIdentifier != "com.example.todo" {
-		t.Fatalf("unexpected bundle identifier: %q", app.IOS.BundleIdentifier)
-	}
-	if app.IOS.DisplayName != "Todo App" {
-		t.Fatalf("unexpected display name: %q", app.IOS.DisplayName)
-	}
-	if app.IOS.ServerURL != "https://school.example.com" {
-		t.Fatalf("unexpected server url: %q", app.IOS.ServerURL)
-	}
-}
-
-func TestParseRequiresIOSBundleIdentifier(t *testing.T) {
-	src := `
-app TodoApi
-
-ios {
-  display_name "Todo App"
-  server_url "https://school.example.com"
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected ios bundle identifier error")
-	}
-	if !strings.Contains(err.Error(), "ios.bundle_identifier is required") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestParseSupportsScreens(t *testing.T) {
-	src := `
-app PersonalBlogs
-
-entity Blog {
-  name: String
-  belongs_to owner: current_user
-}
-
-entity Post {
-  title: String
-  belongs_to blog: Blog
-  belongs_to author: current_user
-}
-
-type alias CreatePostInput =
-  { blogId : ref Blog
-  , title : String
-  }
-
-action createPost {
-  input: CreatePostInput
-
-  blog = load Blog {
-    id: input.blogId
-  }
-
-  create Post {
-    blog: blog.id
-    title: input.title
-  }
-}
-
-screens {
-  screen Home {
-    title "Blogs"
-
-    section "Browse" {
-      link "Public blogs" to PublicBlogs
-      link "My blog" to MyBlog when user_authenticated
-    }
-  }
-
-  screen PublicBlogs {
-    title "Public blogs"
-
-    section "All blogs" {
-      list Blog {
-        title name
-        destination BlogDetail
-      }
-    }
-  }
-
-  screen MyBlog {
-    title "My blog"
-
-    section "My blogs" {
-      list Blog where owner == user_id {
-        title name
-        destination BlogDetail
-      }
-    }
-  }
-
-  screen BlogDetail for Blog {
-    title blog.name
-
-    section "Posts" {
-      children Post by blog {
-        title title
-      }
-
-      create Post {
-        blog = blog.id
-      }
-    }
-
-    section "Writing" {
-      action createPost {
-        blogId = blog.id
-      }
-    }
-  }
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.Screens == nil {
-		t.Fatal("expected screens block to be parsed")
-	}
-	if len(app.Screens.Screens) != 4 {
-		t.Fatalf("expected 4 screens, got %d", len(app.Screens.Screens))
-	}
-	home := app.Screens.Screens[0]
-	if home.Name != "Home" || home.Title != "Blogs" {
-		t.Fatalf("unexpected home screen: %+v", home)
-	}
-	if got := home.Sections[0].Items[1]; got.Kind != "link" || got.Target != "MyBlog" || got.Filter != "user_authenticated" {
-		t.Fatalf("unexpected filtered link: %+v", got)
-	}
-	blogDetail := app.Screens.Screens[3]
-	if blogDetail.Name != "BlogDetail" || blogDetail.ForEntity != "Blog" {
-		t.Fatalf("unexpected blog detail screen: %+v", blogDetail)
-	}
-	if blogDetail.TitleExpression != "blog.name" {
-		t.Fatalf("unexpected title expression: %+v", blogDetail)
-	}
-	children := blogDetail.Sections[0].Items[0]
-	if children.Kind != "children" || children.Entity != "Post" || children.RelationField != "blog" || children.TitleField != "title" {
-		t.Fatalf("unexpected children item: %+v", children)
-	}
-	create := blogDetail.Sections[0].Items[1]
-	if create.Kind != "create" || create.Entity != "Post" {
-		t.Fatalf("unexpected create item: %+v", create)
-	}
-	if len(create.Values) != 1 || create.Values[0].Field != "blog" || create.Values[0].Expression != "blog.id" {
-		t.Fatalf("unexpected create preset values: %+v", create.Values)
-	}
-	action := blogDetail.Sections[1].Items[0]
-	if action.Kind != "action" || action.Action != "createPost" {
-		t.Fatalf("unexpected action item: %+v", action)
-	}
-	if len(action.Values) != 1 || action.Values[0].Field != "blogId" || action.Values[0].Expression != "blog.id" {
-		t.Fatalf("unexpected action preset values: %+v", action.Values)
-	}
-}
-
-func TestParseRejectsScreensChildrenWithWrongRelation(t *testing.T) {
-	src := `
-app BadFrontend
-
-entity Blog {
-  name: String
-}
-
-entity Post {
-  title: String
-}
-
-screens {
-  screen BlogDetail for Blog {
-    section {
-      children Post by blog {
-        title title
-      }
-    }
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected Parse to reject children without matching belongs_to relation")
-	}
-	if !strings.Contains(err.Error(), "children Post by blog must reference a belongs_to field pointing to Blog") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestParseRejectsLegacyFrontendBlock(t *testing.T) {
-	src := `
-app LegacyBlock
-
-frontend {
-  screen Home {
-    title "Home"
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected Parse to reject legacy frontend block")
-	}
-	if !strings.Contains(err.Error(), "unknown statement \"frontend {\"") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestParseRejectsScreensDynamicTitleWithoutForEntity(t *testing.T) {
-	src := `
-app BadFrontend
-
-entity Pet {
-  name: String
-}
-
-screens {
-  screen Pets {
-    title pet.name
-
-    section {
-      list Pet {
-        title name
-      }
-    }
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected Parse to reject dynamic title without screen entity")
-	}
-	if !strings.Contains(err.Error(), "dynamic title requires `screen Pets for Entity`") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestParseScreensFormFields(t *testing.T) {
-	src := `
-app PetCareLog
-
-entity Clinic {
-  name: String
-}
-
-entity Veterinarian {
-  name: String
-  belongs_to clinic: Clinic
-}
-
-entity Pet {
-  name: String
-}
-
-entity VetVisit {
-  visitDate: Date
-  reason: String
-  belongs_to pet: Pet
-  belongs_to clinic: Clinic
-  belongs_to veterinarian: Veterinarian
-}
-
-type alias CreateVetVisitInput =
-  { clinic : ref Clinic
-  , veterinarian : ref Veterinarian
-  , visitDate : Date
-  , reason : String
-  }
-
-action createVetVisit {
-  input: CreateVetVisitInput
-
-  create VetVisit {
-    pet: 1
-    clinic: input.clinic
-    veterinarian: input.veterinarian
-    visitDate: input.visitDate
-    reason: input.reason
-  }
-}
-
-screens {
-  screen PetDetail for Pet {
-    title pet.name
-
-    section "Vet visits" {
-      create VetVisit {
-        pet = pet.id
-
-        form {
-          field clinic
-          field veterinarian where clinic == form.clinic
-          field visitDate
-          field reason
-        }
-      }
-
-      action createVetVisit {
-        form {
-          field clinic
-          field veterinarian where clinic == form.clinic
-          field visitDate
-          field reason
-        }
-      }
-    }
-  }
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	createItem := app.Screens.Screens[0].Sections[0].Items[0]
-	if len(createItem.FormFields) != 4 {
-		t.Fatalf("expected 4 create form fields, got %+v", createItem.FormFields)
-	}
-	if createItem.FormFields[1].Field != "veterinarian" || createItem.FormFields[1].Filter != "clinic == form.clinic" {
-		t.Fatalf("unexpected create dependent form field: %+v", createItem.FormFields[1])
-	}
-	actionItem := app.Screens.Screens[0].Sections[0].Items[1]
-	if len(actionItem.FormFields) != 4 {
-		t.Fatalf("expected 4 action form fields, got %+v", actionItem.FormFields)
-	}
-	if actionItem.FormFields[1].Field != "veterinarian" || actionItem.FormFields[1].Filter != "clinic == form.clinic" {
-		t.Fatalf("unexpected action dependent form field: %+v", actionItem.FormFields[1])
-	}
-}
-
-func TestParseScreensEditDeleteRequireForEntity(t *testing.T) {
-	src := `
-app BadFrontend
-
-entity Clinic {
-  name: String
-}
-
-screens {
-  screen Clinics {
-    title "Clinics"
-
-    section {
-      edit
-      delete
-    }
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected Parse to reject edit/delete without screen entity")
-	}
-	if !strings.Contains(err.Error(), "screen Clinics edit requires `screen Clinics for Entity`") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestParseScreensRelationDisplayField(t *testing.T) {
-	src := `
-app PetCareLog
-
-entity Clinic {
-  name: String
-}
-
-entity Veterinarian {
-  name: String
-  belongs_to clinic: Clinic
-}
-
-screens {
-  screen VeterinarianDetail for Veterinarian {
-    title veterinarian.name
-
-    section {
-      field clinic.name
-      field name
-    }
-  }
-}
+(define todo
+  (entity
+    (fields
+      ((title string)
+       (done bool)))
+    (belongs-to
+      ((user)))
+    (defaults
+      ((user current-user)
+       (done false)))))
+
+(define (open-todos)
+  (query todo
+    (where (same-user? current-user user))
+    (order-by created-at desc)
+    (limit 20)))
+
+(define complete-todo
+  (action
+    (input
+      ((todo-id int)))
+    (update todo todo-id
+      ((done true)))))
+
+(define-record home-model
+  (todos (list todo)))
+
+(define-screen home
+  (title "Home")
+  (msg
+    (loaded todos)
+    (failed message))
+  (init
+    ((home-model ())
+     ((command (open-todos) loaded failed))))
+  (update msg model
+    (match msg
+      ((loaded todos) ((assoc model (todos todos)) ()))
+      ((failed message) (model ()))))
+  (view model
+    (section
+      ((list todos todo
+         ((title title)))))))
+
+(define-app todos
+  (backend
+    (entities todo)
+    (queries open-todos)
+    (actions complete-todo))
+  (frontend
+    (screens home)))
 `
 
 	app, err := Parse(src)
@@ -642,208 +1040,98 @@ screens {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 
-	got := app.Screens.Screens[0].Sections[0].Items[0].Field
-	if got != "clinic.name" {
-		t.Fatalf("expected dotted field path to be preserved, got %q", got)
+	if len(app.Queries) != 1 {
+		t.Fatalf("expected one query, got %+v", app.Queries)
+	}
+	if app.Queries[0].Name != "open_todos" || app.Queries[0].Entity != "Todo" {
+		t.Fatalf("unexpected query metadata: %+v", app.Queries[0])
+	}
+	if app.Queries[0].Limit == nil || *app.Queries[0].Limit != 20 {
+		t.Fatalf("unexpected query limit: %+v", app.Queries[0])
+	}
+
+	if len(app.InputAliases) != 1 {
+		t.Fatalf("expected one input alias, got %+v", app.InputAliases)
+	}
+	if app.InputAliases[0].Name != "CompleteTodoInput" {
+		t.Fatalf("unexpected input alias: %+v", app.InputAliases[0])
+	}
+
+	if len(app.Actions) != 1 {
+		t.Fatalf("expected one action, got %+v", app.Actions)
+	}
+	if app.Actions[0].Name != "complete_todo" || app.Actions[0].InputAlias != "CompleteTodoInput" {
+		t.Fatalf("unexpected action metadata: %+v", app.Actions[0])
+	}
+	if len(app.Actions[0].Steps) != 1 || app.Actions[0].Steps[0].Kind != "update" {
+		t.Fatalf("unexpected action steps: %+v", app.Actions[0].Steps)
+	}
+
+	item := app.Screens.Screens[0].Sections[0].Items[0]
+	if item.ModelField != "todos" || item.Entity != "Todo" || item.Filter != "" {
+		t.Fatalf("unexpected screen item: %+v", item)
 	}
 }
 
-func TestParseScreensEditCustomFormFields(t *testing.T) {
+func TestParseSupportsFunctionHelpersInAuthorizeAndValidate(t *testing.T) {
 	src := `
-app PetCareLog
+(define (require-owner owner-id)
+  (if (same-user? current-user owner-id)
+      true
+      (error "owner only")))
 
-entity Clinic {
-  name: String
-}
+(define purchase
+  (entity
+    (fields
+      ((amount-paid decimal)))
+    (belongs-to
+      ((user)))
+    (defaults
+      ((user current-user)))
+    (validate
+      (if (> amount-paid 0)
+          true
+          (error "must be positive")))
+    (authorize
+      (((read update)
+         (require-owner user))))))
 
-entity Veterinarian {
-  name: String
-  belongs_to clinic: Clinic
-}
-
-screens {
-  screen VeterinarianDetail for Veterinarian {
-    title veterinarian.name
-
-    section "Manage" {
-      edit {
-        form {
-          field name
-        }
-      }
-    }
-  }
-}
+(define-app demo
+  (entities purchase))
 `
 
 	app, err := Parse(src)
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-
-	editItem := app.Screens.Screens[0].Sections[0].Items[0]
-	if editItem.Kind != "edit" {
-		t.Fatalf("expected edit item, got %+v", editItem)
+	if len(app.Functions) != 1 {
+		t.Fatalf("expected one function, got %d", len(app.Functions))
 	}
-	if len(editItem.FormFields) != 1 || editItem.FormFields[0].Field != "name" {
-		t.Fatalf("unexpected edit form fields: %+v", editItem.FormFields)
+	if app.Functions[0].Name != "require_owner" {
+		t.Fatalf("unexpected function: %+v", app.Functions[0])
+	}
+	if app.Entities[1].Validate == "" {
+		t.Fatal("expected validate expression to be set")
 	}
 }
 
-func TestParseScreensReport(t *testing.T) {
+func TestParseSupportsCurrentUserPredicatesInAuthorize(t *testing.T) {
 	src := `
-app PetFoodLog
+(define purchase
+  (entity
+    (fields
+      ((amount int)))
+    (belongs-to
+      ((user)))
+    (defaults
+      ((user current-user)))
+    (authorize
+      ((read (same-user? current-user user))
+       (create (authenticated? current-user))
+       (delete (anonymous? current-user))))))
 
-entity FoodPurchase {
-  purchaseDate: Date
-  amountKg: Float
-  amountPaid: Float
-}
-
-screens {
-  screen Reports {
-    title "Reports"
-
-    section "Monthly averages" {
-      report FoodPurchase {
-        group by month(purchaseDate)
-        metric avg(amountKg) label "Average kg"
-        metric avg(amountPaid) label "Average spent"
-      }
-    }
-  }
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-
-	reportItem := app.Screens.Screens[0].Sections[0].Items[0]
-	if reportItem.Kind != "report" {
-		t.Fatalf("expected report item, got %+v", reportItem)
-	}
-	if reportItem.ReportGroup != "month(purchaseDate)" {
-		t.Fatalf("unexpected report group: %q", reportItem.ReportGroup)
-	}
-	if len(reportItem.ReportMetrics) != 2 {
-		t.Fatalf("expected 2 report metrics, got %+v", reportItem.ReportMetrics)
-	}
-	if reportItem.ReportMetrics[0].Aggregate != "avg" || reportItem.ReportMetrics[0].Field != "amountKg" {
-		t.Fatalf("unexpected first metric: %+v", reportItem.ReportMetrics[0])
-	}
-}
-
-func TestParseScreensReportRejectsInvalidMetricField(t *testing.T) {
-	src := `
-app PetFoodLog
-
-entity FoodPurchase {
-  purchaseDate: Date
-  note: String
-}
-
-screens {
-  screen Reports {
-    title "Reports"
-
-    section "Monthly averages" {
-      report FoodPurchase {
-        group by month(purchaseDate)
-        metric avg(note) label "Average note"
-      }
-    }
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected Parse to reject report metric on string field")
-	}
-	if !strings.Contains(err.Error(), "metric avg(note) requires an Int or Float field") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestParseScreensToolbarItems(t *testing.T) {
-	src := `
-app PetFoodLog
-
-entity FoodPurchase {
-  purchaseDate: Date
-  amountKg: Float
-}
-
-screens {
-  screen FoodPurchases {
-    title "Purchases"
-
-    toolbar {
-      primary create FoodPurchase
-    }
-
-    section {
-      list FoodPurchase {
-        title purchaseDate
-      }
-    }
-  }
-
-  screen FoodPurchaseDetail for FoodPurchase {
-    title "Purchase"
-
-    toolbar {
-      trailing edit
-    }
-  }
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-
-	listScreen := app.Screens.Screens[0]
-	if len(listScreen.ToolbarItems) != 1 {
-		t.Fatalf("expected 1 list toolbar item, got %+v", listScreen.ToolbarItems)
-	}
-	if listScreen.ToolbarItems[0].Placement != "primary" || listScreen.ToolbarItems[0].Item.Kind != "create" {
-		t.Fatalf("unexpected list toolbar item: %+v", listScreen.ToolbarItems[0])
-	}
-
-	detailScreen := app.Screens.Screens[1]
-	if len(detailScreen.ToolbarItems) != 1 {
-		t.Fatalf("expected 1 detail toolbar item, got %+v", detailScreen.ToolbarItems)
-	}
-	if detailScreen.ToolbarItems[0].Placement != "trailing" || detailScreen.ToolbarItems[0].Item.Kind != "edit" {
-		t.Fatalf("unexpected detail toolbar item: %+v", detailScreen.ToolbarItems[0])
-	}
-}
-
-func TestParseActionCreateAllowsManagedCurrentUserField(t *testing.T) {
-	src := `
-app Blog
-
-entity Post {
-  title: String
-  belongs_to author: current_user
-
-  authorize create when user_authenticated and author == user_id
-}
-
-type alias CreatePostInput =
-  { title : String }
-
-action createPost {
-  input: CreatePostInput
-
-  create Post {
-    title: input.title
-  }
-}
+(define-app demo
+  (entities purchase))
 `
 
 	if _, err := Parse(src); err != nil {
@@ -851,111 +1139,22 @@ action createPost {
 	}
 }
 
-func TestParseRequiresIOSServerURL(t *testing.T) {
+func TestParseSupportsGroupedAuthorizeActions(t *testing.T) {
 	src := `
-app TodoApi
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (belongs-to
+      ((user)))
+    (authorize
+      (((read update delete)
+         (and (authenticated? current-user)
+              (same-user? current-user user)))
+       (create (authenticated? current-user))))))
 
-ios {
-  bundle_identifier "com.example.todo"
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected ios server url error")
-	}
-	if !strings.Contains(err.Error(), "ios.server_url is required") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(err.Error(), "Hint:\n  Add an ios block like:\n  ios {\n    bundle_identifier \"com.example.todoapi\"\n    server_url \"https://todoapi.example.com\"\n  }") {
-		t.Fatalf("expected ios config hint, got: %v", err)
-	}
-	if strings.Contains(err.Error(), "\n  }.") {
-		t.Fatalf("expected ios config hint without trailing period, got: %v", err)
-	}
-}
-
-func TestParseRejectsInvalidIOSBundleIdentifier(t *testing.T) {
-	src := `
-app TodoApi
-
-ios {
-  bundle_identifier "todo app"
-  server_url "https://school.example.com"
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected invalid ios bundle identifier error")
-	}
-	if !strings.Contains(err.Error(), "ios.bundle_identifier must be a reverse-DNS identifier") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestParseRejectsInvalidIOSServerURL(t *testing.T) {
-	src := `
-app TodoApi
-
-ios {
-  bundle_identifier "com.example.todo"
-  server_url "school.example.com"
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected invalid ios server url error")
-	}
-	if !strings.Contains(err.Error(), "ios.server_url must be a valid http or https URL") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestParseKeepsExplicitDatabaseWhenProvided(t *testing.T) {
-	src := `
-app TodoApi
-database "./custom.db"
-
-entity Todo {
-  title: String
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.Database != "./custom.db" {
-		t.Fatalf("expected explicit database to be preserved, got %q", app.Database)
-	}
-}
-
-func TestParseSupportsFieldDefaults(t *testing.T) {
-	src := `
-app TodoApi
-
-entity Todo {
-  title: String default "Untitled task"
-  done: Bool default false
-  points: Int default 0
-  progress: Float default 0.5
-  due_on: Date default 1742234567890
-  due_at: DateTime default 1742203200000
-}
+(define-app demo
+  (entities todo))
 `
 
 	app, err := Parse(src)
@@ -963,239 +1162,1522 @@ entity Todo {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 
-	var todo *model.Entity
-	for i := range app.Entities {
-		if app.Entities[i].Name == "Todo" {
-			todo = &app.Entities[i]
+	auths := app.Entities[1].Authorizations
+	if len(auths) != 4 {
+		t.Fatalf("expected 4 authorizations, got %+v", auths)
+	}
+	if auths[0].Action != "read" || auths[1].Action != "update" || auths[2].Action != "delete" || auths[3].Action != "create" {
+		t.Fatalf("unexpected authorization actions: %+v", auths)
+	}
+}
+
+func TestParseRejectsNonBoolValidateCondition(t *testing.T) {
+	src := `
+(define purchase
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (if 123
+          true
+          false))))
+
+(define-app store
+  (entities purchase))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "validate: if condition must be bool") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseTreatsErrorAsNeverInTypeInference(t *testing.T) {
+	src := `
+(define purchase
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (if (> amount 0)
+          true
+          (error "must be positive")))))
+
+(define-app store
+  (entities purchase))
+`
+
+	if _, err := Parse(src); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+}
+
+func TestParseDoesNotLetErrorMaskConcreteTypeMismatch(t *testing.T) {
+	src := `
+(define purchase
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (if (> amount 0)
+          (error "must be positive")
+          "yes"))))
+
+(define-app store
+  (entities purchase))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Purchase validate: expression must return bool, got string") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsCondWithoutElseInValidate(t *testing.T) {
+	src := `
+(define purchase
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (cond
+        ((> amount 100) true)
+        ((< amount 0) false)))))
+
+(define-app store
+  (entities purchase))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Purchase validate: cond requires a final else clause") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsWrongTypedStringFunctionCall(t *testing.T) {
+	src := `
+(define todo
+  (entity
+    (fields
+      ((title string)
+       (done bool)))
+    (validate
+      (contains done title))))
+
+(define-app todos
+  (entities todo))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Todo validate: contains expects string arguments, got bool") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsDynamicMatchesPattern(t *testing.T) {
+	src := `
+(define (has-match pattern value)
+  (matches pattern value))
+
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (validate
+      (has-match "^ship" title))))
+
+(define-app todos
+  (entities todo))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "function has_match: matches expects a static regex literal as first argument") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsInvalidStaticMatchesPattern(t *testing.T) {
+	src := `
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (validate
+      (matches "[" title))))
+
+(define-app todos
+  (entities todo))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Todo validate: matches regex is invalid") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsWrongTypedLengthCall(t *testing.T) {
+	src := `
+(define todo
+  (entity
+    (fields
+      ((title string)
+       (done bool)))
+    (validate
+      (> (length done) 0))))
+
+(define-app todos
+  (entities todo))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Todo validate: length expects string or list, got bool") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseInfersStringFunctionParameterConstraint(t *testing.T) {
+	src := `
+(define (has-prefix prefix value)
+  (starts-with prefix value))
+
+(define todo
+  (entity
+    (fields
+      ((done bool)))
+    (validate
+      (has-prefix "x" done))))
+
+(define-app todos
+  (entities todo))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Todo validate: has_prefix parameter value expects string, got bool") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsNonBoolQueryWhere(t *testing.T) {
+	src := `
+(define todo
+  (entity
+    (fields ((title string)))))
+
+(define (recent-todos)
+  (query todo
+    (where title)))
+
+(define-app todos
+  (entities todo)
+  (queries recent-todos))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "query recent-todos where: expression must return bool") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsActionFieldTypeMismatch(t *testing.T) {
+	src := `
+(define todo
+  (entity
+    (fields
+      ((title string)
+       (done bool)))))
+
+(define complete-todo
+  (action
+    (input
+      ((id int)))
+    (update todo input.id
+      ((done "yes")))))
+
+(define-app todos
+  (entities todo)
+  (actions complete-todo))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "action complete_todo step update Todo field done: expects bool, got string") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseInfersQueryParameterTypeFromWhereComparison(t *testing.T) {
+	src := `
+(define todo
+  (entity
+    (fields ((title string)))))
+
+(define (todos-by-title wanted-title)
+  (query todo
+    (where
+      (and
+        (= title wanted-title)
+        (if wanted-title true false)))))
+
+(define-app todos
+  (entities todo)
+  (queries todos-by-title))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "query todos-by-title where: if condition must be bool, got string") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseStoresInferredQueryParameterTypes(t *testing.T) {
+	src := `
+(define post
+  (entity
+    (fields
+      ((title string)
+       (published bool)
+       (score decimal)))))
+
+(define (matching-posts wanted-title wanted-published min-score)
+  (query post
+    (where
+      (and
+        (= title wanted-title)
+        (= published wanted-published)
+        (> score min-score)))))
+
+(define-app blog
+  (backend
+    (entities post)
+    (queries matching-posts)))
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if len(app.Queries) != 1 {
+		t.Fatalf("expected one query, got %+v", app.Queries)
+	}
+	got := app.Queries[0].ParameterTypes
+	if got["wanted_title"] != "String" || got["wanted_published"] != "Bool" || got["min_score"] != "Decimal" {
+		t.Fatalf("unexpected parameter types: %+v", got)
+	}
+}
+
+func TestParseRejectsUninferableQueryParameterType(t *testing.T) {
+	src := `
+(define todo
+  (entity
+    (fields ((title string)))))
+
+(define (todos value)
+  (query todo
+    (where true)))
+
+(define-app todos
+  (backend
+    (entities todo)
+    (queries todos)))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "query todos parameter value: type could not be inferred") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsWrongTypedFieldDefault(t *testing.T) {
+	src := `
+(define invoice
+  (entity
+    (fields
+      ((amount decimal)
+       (paid bool)))
+    (defaults
+      ((amount true)))))
+
+(define-app billing
+  (entities invoice))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity invoice default amount: expects decimal, got bool") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsWrongTypedBackendFunctionCall(t *testing.T) {
+	src := `
+(define (positive value)
+  (> value 0))
+
+(define todo
+  (entity
+    (fields ((title string)))
+    (validate
+      (positive title))))
+
+(define-app todos
+  (entities todo))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Todo validate: positive parameter value expects decimal, got string") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseInfersQueryParameterTypeFromFunctionConstraint(t *testing.T) {
+	src := `
+(define (positive value)
+  (> value 0))
+
+(define todo
+  (entity
+    (fields ((title string)))))
+
+(define (todos-by-threshold threshold)
+  (query todo
+    (where
+      (and
+        (positive threshold)
+        (if threshold true false)))))
+
+(define-app todos
+  (entities todo)
+  (queries todos-by-threshold))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "query todos-by-threshold where: if condition must be bool, got decimal") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateActionExpressionsPropagatesStepAliasTypes(t *testing.T) {
+	todo := model.Entity{
+		Name:       "Todo",
+		PrimaryKey: "id",
+		Fields: []model.Field{
+			{Name: "id", Type: "Int", Primary: true},
+			{Name: "title", Type: "String"},
+			{Name: "done", Type: "Bool"},
+		},
+	}
+	action := model.Action{
+		Name:       "copy_todo_title",
+		InputAlias: "CopyTodoTitleInput",
+		Steps: []model.ActionStep{
+			{
+				Kind:   "load",
+				Entity: "Todo",
+				Alias:  "loaded",
+				Values: []model.ActionFieldExpr{{Field: "id", Expression: "todo_id"}},
+			},
+			{
+				Kind:   "update",
+				Entity: "Todo",
+				Values: []model.ActionFieldExpr{
+					{Field: "id", Expression: "todo_id"},
+					{Field: "done", Expression: "loaded.title"},
+				},
+			},
+		},
+	}
+	aliases := map[string]*model.TypeAlias{
+		"CopyTodoTitleInput": {
+			Name:   "CopyTodoTitleInput",
+			Fields: []model.AliasField{{Name: "todo_id", Type: "Int"}},
+		},
+	}
+	entities := map[string]*model.Entity{"Todo": &todo}
+
+	err := validateActionExpressions(&action, aliases, nil, nil, nil, entities)
+	if err == nil {
+		t.Fatal("expected action type error")
+	}
+	if !strings.Contains(err.Error(), "action copy_todo_title step update Todo field done: expects bool, got string") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsOrderedComparisonOnStringField(t *testing.T) {
+	src := `
+(define todo
+  (entity
+    (fields ((title string)))
+    (validate
+      (> title "abc"))))
+
+(define-app todos
+  (entities todo))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Todo validate: operator > expects ordered values, got string") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsNonExhaustiveBackendMaybeMatch(t *testing.T) {
+	src := `
+(define profile
+  (entity
+    (fields
+      ((handle string optional)))
+    (validate
+      (match handle
+        ((just value) true)))))
+
+(define-app demo
+  (entities profile))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Profile validate: match is not exhaustive; missing nothing") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsNonExhaustiveBackendResultMatch(t *testing.T) {
+	src := `
+(define-record load-model
+  (value (result string int)))
+
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (let ((state (load-model (value (ok amount)))))
+        (match (get state value)
+          ((ok value) true))))))
+
+(define-app demo
+  (entities item))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Item validate: match is not exhaustive; missing err") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsUsingFirstWithoutHandlingMaybe(t *testing.T) {
+	src := `
+(define-record nums
+  (items (list int)))
+
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (let ((state (nums (items (cons amount ())))))
+        (= amount (first (get state items)))))))
+
+(define-app demo
+  (entities item))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Item validate: operator = expects compatible values, got int and (just int) | (nothing)") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsEmptyListWithoutInferredElementType(t *testing.T) {
+	src := `
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (match (first ())
+        ((nothing) true)
+        ((just value) true)))))
+
+(define-app demo
+  (entities item))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Item validate: first cannot infer the element type of empty list") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseAllowsEmptyListWhenRecordFieldTypeIsKnown(t *testing.T) {
+	src := `
+(define-record nums
+  (items (list int)))
+
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (let ((state (nums (items ()))))
+        (= (length (get state items)) 0)))))
+
+(define-app demo
+  (entities item))
+`
+
+	if _, err := Parse(src); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+}
+
+func TestParseRejectsAmbiguousMaybeConstructor(t *testing.T) {
+	src := `
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (match (if true (nothing) (nothing))
+        ((nothing) true)
+        ((just value) true)))))
+
+(define-app demo
+  (entities item))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Item validate: if result type could not be inferred") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseInfersMaybeConstructorFromBranch(t *testing.T) {
+	src := `
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (match (if true (nothing) (just amount))
+        ((nothing) true)
+        ((just value) (= value amount))))))
+
+(define-app demo
+  (entities item))
+`
+
+	if _, err := Parse(src); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+}
+
+func TestParseRejectsAmbiguousResultConstructor(t *testing.T) {
+	src := `
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (match (if true (ok amount) (ok amount))
+        ((ok value) true)
+        ((err error) false)))))
+
+(define-app demo
+  (entities item))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Item validate: if result type could not be inferred") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseInfersResultConstructorFromBranch(t *testing.T) {
+	src := `
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (match (if true (ok amount) (err "bad"))
+        ((ok value) (= value amount))
+        ((err error) false)))))
+
+(define-app demo
+  (entities item))
+`
+
+	if _, err := Parse(src); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+}
+
+func TestParseInfersMaybeAndResultConstructorsFromRecordFields(t *testing.T) {
+	src := `
+(define-record state
+  (maybe-value (maybe int))
+  (ok-value (result string int))
+  (err-value (result string int)))
+
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (let ((state (state
+                     (maybe-value (nothing))
+                     (ok-value (ok amount))
+                     (err-value (err "bad")))))
+        true))))
+
+(define-app demo
+  (entities item))
+`
+
+	if _, err := Parse(src); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+}
+
+func TestParseRejectsAmbiguousMaybeLetBinding(t *testing.T) {
+	src := `
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (let ((value (nothing)))
+        true))))
+
+(define-app demo
+  (entities item))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Item validate: let binding value type could not be inferred") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRejectsAmbiguousResultFunctionReturn(t *testing.T) {
+	src := `
+(define (save-value value)
+  (ok value))
+
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (match (save-value amount)
+        ((ok value) true)
+        ((err error) false)))))
+
+(define-app demo
+  (entities item))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Item validate: function save_value return type could not be inferred") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseAllowsFunctionReturnWhenMaybeTypeIsInferred(t *testing.T) {
+	src := `
+(define (maybe-value value)
+  (if true (nothing) (just value)))
+
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (match (maybe-value amount)
+        ((nothing) true)
+        ((just value) (= value amount))))))
+
+(define-app demo
+  (entities item))
+`
+
+	if _, err := Parse(src); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+}
+
+func TestParseRejectsAmbiguousMaybeListLiteral(t *testing.T) {
+	src := `
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (= (length ((nothing) (nothing))) 2))))
+
+(define-app demo
+  (entities item))
+`
+
+	_, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "entity Item validate: list element type could not be inferred") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseInfersMaybeAndResultListLiteralElements(t *testing.T) {
+	src := `
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (and
+        (= (length ((nothing) (just amount))) 2)
+        (= (length ((ok amount) (err "bad"))) 2)))))
+
+(define-app demo
+  (entities item))
+`
+
+	if _, err := Parse(src); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+}
+
+func TestParseAllowsEmptyPredicateOnEmptyList(t *testing.T) {
+	src := `
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (empty? ()))))
+
+(define-app demo
+  (entities item))
+`
+
+	if _, err := Parse(src); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+}
+
+func TestParseSupportsChildrenAndCreateInitialValues(t *testing.T) {
+	src := `
+(define user
+  (entity
+    (fields
+      ((display-name string optional)))))
+
+(define post
+  (entity
+    (fields
+      ((body string)))
+    (belongs-to
+      ((author user)))))
+
+(define comment
+  (entity
+    (fields
+      ((body string)))
+    (belongs-to
+      ((post)
+       (author user)))))
+
+(define (all-posts)
+  (query post))
+
+(define-record posts-model
+  (posts (list post)))
+
+(define-screen posts
+  (msg
+    (loaded items)
+    (failed message))
+  (init
+    ((posts-model (posts ()))
+     ((command (all-posts) loaded failed))))
+  (update msg model
+    (match msg
+      ((loaded items)
+       ((assoc model (posts items)) ()))
+      ((failed message)
+       (model ()))))
+  (view model
+    (section
+      ((list posts post
+         ((title body)
+          (open post-detail)))))))
+
+(define-screen (post-detail post)
+  (view
+    (section
+      "Actions"
+      ((create comment
+        ((value post post.id)
+          (field body)))))))
+
+(define-app demo
+  (backend
+    (entities user post comment)
+    (queries all-posts))
+  (frontend
+    (screens posts post-detail)))
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	screen := app.Screens.Screens[1]
+	items := screen.Sections[0].Items
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %+v", items)
+	}
+	if items[0].Kind != "create" || len(items[0].Values) != 1 {
+		t.Fatalf("expected create item with preset value, got %+v", items[0])
+	}
+	if items[0].Values[0].Field != "post" || items[0].Values[0].Expression != "post.id" {
+		t.Fatalf("unexpected create preset value: %+v", items[0].Values[0])
+	}
+}
+
+func TestParseSupportsRecordsAndMVUScreens(t *testing.T) {
+	src := `
+(define-record order
+  (id string)
+  (title string))
+
+(define-record orders-screen-model
+  (orders (list order-row))
+  (loading bool)
+  (error (maybe string)))
+
+(define order-row
+  (entity
+    (fields
+      ((title string)
+       (status string)))))
+
+(define (load-orders)
+  (query order-row
+    (where true)))
+
+(define-screen orders-by-status
+  (msg
+    (loaded orders)
+    (failed message)
+    back)
+  (init
+    ((orders-screen-model
+       (orders ())
+       (loading true)
+       (error (nothing)))
+     ((command (load-orders) loaded failed))))
+  (update msg model
+    (match msg
+      ((loaded orders)
+       ((assoc model
+          (orders orders)
+          (loading false)
+          (error (nothing)))
+        ()))
+      ((failed message)
+       ((assoc model
+          (loading false)
+          (error (just message)))
+        ()))
+      (back
+       (model
+        ((back))))))
+  (view model
+    (section
+      (title "Orders")
+      (text "Hello"))))
+
+(define-app pet-food-log
+  (backend
+    (entities order-row)
+    (queries load-orders))
+  (frontend
+    (screens orders-by-status)))
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	if len(app.Records) != 2 {
+		t.Fatalf("expected two records, got %d", len(app.Records))
+	}
+	var recordIndex = -1
+	for i := range app.Records {
+		if app.Records[i].Name == "orders_screen_model" {
+			recordIndex = i
 			break
 		}
 	}
-	if todo == nil {
-		t.Fatal("expected Todo entity to be present")
+	if recordIndex < 0 {
+		t.Fatalf("expected orders_screen_model record, got %+v", app.Records)
+	}
+	if got := app.Records[recordIndex].Fields[0].Type; got != "(list order_row)" {
+		t.Fatalf("unexpected record field type: %q", got)
 	}
 
-	assertFieldDefault := func(name string, expected any) {
-		t.Helper()
-		for _, field := range todo.Fields {
-			if field.Name == name {
-				if field.Default != expected {
-					t.Fatalf("expected default for %s to be %#v, got %#v", name, expected, field.Default)
-				}
-				return
-			}
-		}
-		t.Fatalf("expected field %s to be present", name)
+	if app.Screens == nil || len(app.Screens.Screens) != 1 {
+		t.Fatalf("expected one screen, got %+v", app.Screens)
 	}
-
-	assertFieldDefault("title", "Untitled task")
-	assertFieldDefault("done", false)
-	assertFieldDefault("points", int64(0))
-	assertFieldDefault("progress", 0.5)
-	assertFieldDefault("due_on", normalizeDateMillis(1742234567890))
-	assertFieldDefault("due_at", int64(1742203200000))
+	screen := app.Screens.Screens[0]
+	if screen.Name != "OrdersByStatus" {
+		t.Fatalf("unexpected screen name: %q", screen.Name)
+	}
+	if len(screen.Parameters) != 0 {
+		t.Fatalf("unexpected screen parameters: %+v", screen.Parameters)
+	}
+	if len(screen.Messages) != 3 {
+		t.Fatalf("unexpected messages: %+v", screen.Messages)
+	}
+	if screen.InitExpression == "" || screen.UpdateBody == "" || screen.ViewBody == "" {
+		t.Fatalf("expected MVU clauses to be captured: %+v", screen)
+	}
+	if screen.ViewModel != "model" || screen.UpdateMessage != "msg" || screen.UpdateModel != "model" {
+		t.Fatalf("unexpected MVU parameter names: %+v", screen)
+	}
 }
 
-func TestParseRejectsInvalidFieldDefaultType(t *testing.T) {
+func TestParseSupportsStaticScreenWithViewOnly(t *testing.T) {
 	src := `
-app TodoApi
+(define-screen about
+  (view
+    (section
+      (title "About")
+      (text "Pet Food Log"))))
 
-entity Todo {
-  done: Bool default "nope"
+(define-app pet-food-log
+  (screens about))
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	screen := app.Screens.Screens[0]
+	if screen.ViewBody == "" {
+		t.Fatalf("expected view body to be captured: %+v", screen)
+	}
+	if screen.UpdateBody != "" || screen.InitExpression != "" || len(screen.Messages) != 0 {
+		t.Fatalf("did not expect dynamic clauses on static screen: %+v", screen)
+	}
 }
+
+func TestParseSupportsButtonsInViewNodes(t *testing.T) {
+	src := `
+(define-screen counter
+  (msg
+    increment)
+  (init
+    ((unit) ()))
+  (update msg model
+    (match msg
+      (increment
+       (model ()))))
+  (view
+    (section
+      (title "Counter")
+      (button "Like" (increment)))))
+
+(define-app demo
+  (screens counter))
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	screen := app.Screens.Screens[0]
+	if screen.View == nil {
+		t.Fatalf("expected parsed view tree, got %+v", screen)
+	}
+	if len(screen.View.Children) != 1 {
+		t.Fatalf("expected one child in section, got %+v", screen.View)
+	}
+	button := screen.View.Children[0]
+	if button.Kind != "button" {
+		t.Fatalf("expected button node, got %+v", button)
+	}
+	if button.Label != "Like" {
+		t.Fatalf("unexpected button label: %+v", button)
+	}
+	if button.Message != "(increment)" {
+		t.Fatalf("unexpected button message: %+v", button)
+	}
+}
+
+func TestParseSupportsButtonsAndMVUClausesInRegularScreens(t *testing.T) {
+	src := `
+(define (all-posts)
+  (query post))
+
+(define-record posts-model
+  (posts (list post)))
+
+(define-screen posts
+  (msg
+    (loaded items)
+    (failed message))
+  (init
+    ((posts-model (posts ()))
+     ((command (all-posts) loaded failed))))
+  (update msg model
+    (match msg
+      ((loaded items)
+       ((assoc model (posts items)) ()))
+      ((failed message)
+       (model ()))))
+  (view model
+    (section
+      ((list posts post
+         ((title body)
+          (open post-detail)))))))
+
+(define-screen (post-detail post)
+  (title "Post")
+  (msg
+    (like-clicked post-id)
+    liked
+    (like-failed message))
+  (init
+    ((unit) ()))
+  (update msg model
+    (match msg
+      ((like-clicked post-id)
+       (model
+        ((command (like-post post-id) liked like-failed))))
+      (liked
+       (model ()))
+      ((like-failed message)
+       (model ()))))
+  (view model
+    (section
+      "Actions"
+      ((button "Like" (like-clicked post.id))))))
+
+(define like-post
+  (action
+    (input
+      ((post-id int)))
+    (create post-like
+      ((post post-id)))))
+
+(define post
+  (entity
+    (fields
+      ((body string)))))
+
+(define post-like
+  (entity
+    (belongs-to
+      ((post)))))
+
+(define-app demo
+  (backend
+    (entities post post-like)
+    (queries all-posts)
+    (actions like-post))
+  (frontend
+    (screens posts post-detail)))
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	screen := app.Screens.Screens[1]
+	if len(screen.Parameters) != 1 || screen.Parameters[0] != "post" {
+		t.Fatalf("unexpected screen parameters: %+v", screen.Parameters)
+	}
+	if screen.InitExpression == "" || screen.UpdateBody == "" || len(screen.Messages) != 3 {
+		t.Fatalf("expected mixed screen to keep MVU clauses: %+v", screen)
+	}
+	if len(screen.Sections) != 1 || len(screen.Sections[0].Items) != 1 {
+		t.Fatalf("expected screen section item, got %+v", screen.Sections)
+	}
+	button := screen.Sections[0].Items[0]
+	if button.Kind != "button" || button.Label != "Like" || button.Message != "(like-clicked post.id)" {
+		t.Fatalf("unexpected button item: %+v", button)
+	}
+}
+
+func TestParseSupportsConditionalItems(t *testing.T) {
+	src := `
+(define-screen post-detail
+  (msg save-clicked)
+  (init
+    ((unit) ()))
+  (update msg model
+    (match msg
+      (save-clicked
+       (model ()))))
+  (view model
+    (section
+      ((if
+         (get model can-edit)
+         (button "Save post" save-clicked)
+         (empty))))))
+
+(define post
+  (entity
+    (fields
+      ((body string)))
+    (belongs-to
+      ((author user)))))
+
+(define user
+  (entity
+    (fields
+      ((email string)))))
+
+(define-app demo
+  (backend
+    (entities user post))
+  (frontend
+    (screens post-detail)))
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	screen := app.Screens.Screens[0]
+	if len(screen.Sections) != 1 || len(screen.Sections[0].Items) != 1 {
+		t.Fatalf("expected one conditional item, got %+v", screen.Sections)
+	}
+	item := screen.Sections[0].Items[0]
+	if item.Kind != "button" || item.Condition != "(get model can-edit)" {
+		t.Fatalf("unexpected conditional item: %+v", item)
+	}
+}
+
+func TestParseSupportsInputItemsInRegularScreens(t *testing.T) {
+	src := `
+(define-record compose-model
+  (body string)
+  (submitting bool))
+
+(define-screen compose
+  (msg
+    (body-changed value)
+    submit-clicked
+    published
+    (publish-failed message))
+  (init
+    ((compose-model "" false) ()))
+  (update msg model
+    (match msg
+      ((body-changed value)
+       ((assoc model
+          (body value))
+        ()))
+      (submit-clicked
+       (model
+        ((command (publish-post (get model body)) published publish-failed))))
+      (published
+       ((compose-model "" false)
+        ()))
+      ((publish-failed message)
+       ((assoc model
+          (submitting false))
+        ()))))
+  (view model
+    (section
+      "Composer"
+      ((textarea "What's happening?" body body-changed (disabled submitting))
+       (button "Post" (submit-clicked) (disabled submitting))))))
+
+(define publish-post
+  (action
+    (input
+      ((body string)))
+    (create post
+      ((body body)))))
+
+(define post
+  (entity
+    (fields
+      ((body string)))))
+
+(define-app demo
+  (backend
+    (entities post)
+    (actions publish-post))
+  (frontend
+    (screens compose)))
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	screen := app.Screens.Screens[0]
+	if len(screen.Sections) != 1 || len(screen.Sections[0].Items) != 2 {
+		t.Fatalf("expected two section items, got %+v", screen.Sections)
+	}
+	textarea := screen.Sections[0].Items[0]
+	if textarea.Kind != "textarea" || textarea.Label != "What's happening?" || textarea.ModelField != "body" || textarea.Message != "body_changed" || textarea.Disabled != "submitting" {
+		t.Fatalf("unexpected textarea item: %+v", textarea)
+	}
+	button := screen.Sections[0].Items[1]
+	if button.Kind != "button" || button.Disabled != "submitting" {
+		t.Fatalf("unexpected button item: %+v", button)
+	}
+}
+
+func TestParseRejectsUninferredScreenMessagePayload(t *testing.T) {
+	src := `
+(define-record home-model
+  (count int))
+
+(define-screen home
+  (msg
+    (selected value))
+  (init
+    ((home-model 0)
+     ()))
+  (update msg model
+    (match msg
+      ((selected value)
+       ((assoc model (count value)) ()))))
+  (view model
+    (section
+      "Home"
+      ((field count)))))
+
+(define-app demo
+  (frontend
+    (screens home)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for invalid field default")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "field default for Bool must be true or false") {
+	if !strings.Contains(err.Error(), `screen Home: message "selected" parameter "value" type could not be inferred`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseRejectsDefaultOnAutoPrimaryField(t *testing.T) {
+func TestParseInfersScreenMessagePayloadFromButtonArgument(t *testing.T) {
 	src := `
-app TodoApi
+(define-record home-model
+  (count int))
 
-entity Todo {
-  id: Int primary auto default 1
-  title: String
+(define-screen home
+  (msg
+    (selected value))
+  (init
+    ((home-model 0)
+     ()))
+  (update msg model
+    (match msg
+      ((selected value)
+       ((assoc model (count value)) ()))))
+  (view model
+    (section
+      "Home"
+      ((button "Select" (selected (get model count)))))))
+
+(define-app demo
+  (frontend
+    (screens home)))
+`
+
+	if _, err := Parse(src); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
 }
+
+func TestParseRejectsInputMessagePayloadTypeMismatchInUpdate(t *testing.T) {
+	src := `
+(define-record compose-model
+  (body string)
+  (submitting bool))
+
+(define-screen compose
+  (msg
+    (body-changed value))
+  (init
+    ((compose-model "" false)
+     ()))
+  (update msg model
+    (match msg
+      ((body-changed value)
+       ((assoc model
+          (submitting value))
+        ()))))
+  (view model
+    (section
+      "Composer"
+      ((textarea "Body" body body-changed)))))
+
+(define-app demo
+  (frontend
+    (screens compose)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for default on auto primary field")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "cannot use default together with primary") {
+	if !strings.Contains(err.Error(), `screen Compose update: assoc field "submitting" expects bool, got string`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseSupportsDateEntityFields(t *testing.T) {
+func TestParseRejectsInputItemsWithWrongMessageArity(t *testing.T) {
 	src := `
-app TodoApi
+(define-record compose-model
+  (body string))
 
-entity Todo {
-  title: String
-  due_on: Date optional
-}
-`
+(define-screen compose
+  (msg
+    body-changed)
+  (init
+    ((compose-model "") ()))
+  (update msg model
+    (model ()))
+  (view model
+    (section
+      "Composer"
+      ((text-input "Handle" body body-changed)))))
 
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-
-	var todo *model.Entity
-	for i := range app.Entities {
-		if app.Entities[i].Name == "Todo" {
-			todo = &app.Entities[i]
-			break
-		}
-	}
-	if todo == nil {
-		t.Fatal("expected Todo entity to be present")
-	}
-
-	var dueOn *model.Field
-	for i := range todo.Fields {
-		if todo.Fields[i].Name == "due_on" {
-			dueOn = &todo.Fields[i]
-			break
-		}
-	}
-	if dueOn == nil {
-		t.Fatal("expected due_on field to be present")
-	}
-	if dueOn.Type != "Date" {
-		t.Fatalf("expected due_on type Date, got %q", dueOn.Type)
-	}
-	if !dueOn.Optional {
-		t.Fatal("expected due_on to be optional")
-	}
-}
-
-func TestParseSupportsDateTimeAliasFields(t *testing.T) {
-	src := `
-app TodoApi
-
-entity Todo {
-  title: String
-}
-
-type alias ScheduleTodoInput =
-  { due_at: DateTime
-  }
-
-action scheduleTodo {
-  input: ScheduleTodoInput
-
-  create Todo {
-    title: "Scheduled"
-  }
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if len(app.InputAliases) != 1 {
-		t.Fatalf("expected 1 type alias, got %d", len(app.InputAliases))
-	}
-	field := app.InputAliases[0].Fields[0]
-	if field.Name != "due_at" {
-		t.Fatalf("expected alias field due_at, got %q", field.Name)
-	}
-	if field.Type != "DateTime" {
-		t.Fatalf("expected alias field type DateTime, got %q", field.Type)
-	}
-}
-
-func TestParseSupportsRefEntityAliasFields(t *testing.T) {
-	src := `
-app Blog
-
-entity Post {
-  title: String
-}
-
-type alias PublishPostInput =
-  { post: ref Post
-  }
-
-action publishPost {
-  input: PublishPostInput
-
-  loadedPost = load Post {
-    id: input.post
-  }
-
-  update Post {
-    id: loadedPost.id
-    title: loadedPost.title
-  }
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if len(app.InputAliases) != 1 {
-		t.Fatalf("expected 1 type alias, got %d", len(app.InputAliases))
-	}
-	field := app.InputAliases[0].Fields[0]
-	if field.Name != "post" {
-		t.Fatalf("expected alias field post, got %q", field.Name)
-	}
-	if field.RelationEntity != "Post" {
-		t.Fatalf("expected alias field relation Post, got %q", field.RelationEntity)
-	}
-	if field.Type != "Int" {
-		t.Fatalf("expected alias field underlying type Int, got %q", field.Type)
-	}
-}
-
-func TestParseRejectsRefUnknownEntityAliasFields(t *testing.T) {
-	src := `
-app Blog
-
-entity Post {
-  title: String
-}
-
-type alias PublishPostInput =
-  { post: ref MissingPost
-  }
-
-action publishPost {
-  input: PublishPostInput
-
-  create Post {
-    title: "Hello"
-  }
-}
+(define-app demo
+  (frontend
+    (screens compose)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for unknown ref entity in type alias")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "references unknown entity MissingPost") {
+	if !strings.Contains(err.Error(), "must accept exactly one argument") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseSupportsBelongsToDefaultName(t *testing.T) {
+func TestParseSupportsToggleAndSelectItems(t *testing.T) {
 	src := `
-app TodoApi
+(define-record editor-model
+  (done bool)
+  (visibility string))
 
-entity Todo {
-  title: String
-  belongs_to User
-}
+(define-screen editor
+  (msg
+    (done-changed value)
+    (visibility-changed value))
+  (init
+    ((editor-model false "public") ()))
+  (update msg model
+    (match msg
+      ((done-changed value)
+       ((assoc model
+          (done value))
+        ()))
+      ((visibility-changed value)
+       ((assoc model
+          (visibility value))
+        ()))))
+  (view model
+    (section
+      "Editor"
+      ((toggle "Done" done done-changed)
+       (select "Visibility" visibility visibility-changed
+         ((public "Public") (private "Private")))))))
+
+(define-app demo
+  (frontend
+    (screens editor)))
 `
 
 	app, err := Parse(src)
@@ -1203,1728 +2685,612 @@ entity Todo {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 
-	var todo *model.Entity
-	for i := range app.Entities {
-		if app.Entities[i].Name == "Todo" {
-			todo = &app.Entities[i]
-			break
-		}
+	screen := app.Screens.Screens[0]
+	if got := screen.Sections[0].Items[0].Kind; got != "toggle" {
+		t.Fatalf("expected toggle item, got %q", got)
 	}
-	if todo == nil {
-		t.Fatal("expected Todo entity to be present")
-	}
-
-	var userField *model.Field
-	for i := range todo.Fields {
-		if todo.Fields[i].Name == "user" {
-			userField = &todo.Fields[i]
-			break
-		}
-	}
-	if userField == nil {
-		t.Fatal("expected user belongs_to field to be present")
-	}
-	if userField.RelationEntity != "User" {
-		t.Fatalf("expected relation entity User, got %q", userField.RelationEntity)
-	}
-	if userField.Type != "Int" {
-		t.Fatalf("expected user belongs_to field to resolve to Int, got %q", userField.Type)
+	selectItem := screen.Sections[0].Items[1]
+	if selectItem.Kind != "select" || len(selectItem.Options) != 2 || selectItem.Options[0].Value != "public" {
+		t.Fatalf("unexpected select item: %+v", selectItem)
 	}
 }
 
-func TestParseSupportsNamedOptionalBelongsTo(t *testing.T) {
+func TestParseRejectsInlineScreenCommandOperations(t *testing.T) {
 	src := `
-app BillingApi
+(define-screen counter
+  (msg posted (post-failed message))
+  (init
+    ((unit) ()))
+  (update msg model
+    (model
+      ((command (create post ((body "hello"))) posted post-failed))))
+  (view
+    (section
+      (title "Counter")
+      (text "Hello"))))
 
-entity Invoice {
-  total: Float
-  belongs_to customer: User
-  belongs_to approver: User optional
-}
-`
+(define post
+  (entity
+    (fields
+      ((body string)))))
 
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-
-	var invoice *model.Entity
-	for i := range app.Entities {
-		if app.Entities[i].Name == "Invoice" {
-			invoice = &app.Entities[i]
-			break
-		}
-	}
-	if invoice == nil {
-		t.Fatal("expected Invoice entity to be present")
-	}
-
-	var customer *model.Field
-	var approver *model.Field
-	for i := range invoice.Fields {
-		switch invoice.Fields[i].Name {
-		case "customer":
-			customer = &invoice.Fields[i]
-		case "approver":
-			approver = &invoice.Fields[i]
-		}
-	}
-	if customer == nil || approver == nil {
-		t.Fatalf("expected customer and approver belongs_to fields, got %+v", invoice.Fields)
-	}
-	if customer.RelationEntity != "User" || customer.Optional {
-		t.Fatalf("unexpected customer relation field: %+v", *customer)
-	}
-	if approver.RelationEntity != "User" || !approver.Optional {
-		t.Fatalf("unexpected approver relation field: %+v", *approver)
-	}
-}
-
-func TestParseSupportsBelongsToCurrentUser(t *testing.T) {
-	src := `
-app PersonalTodo
-
-entity Todo {
-  title: String
-  belongs_to current_user
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-
-	var todo *model.Entity
-	for i := range app.Entities {
-		if app.Entities[i].Name == "Todo" {
-			todo = &app.Entities[i]
-			break
-		}
-	}
-	if todo == nil {
-		t.Fatal("expected Todo entity to be present")
-	}
-
-	var userField *model.Field
-	for i := range todo.Fields {
-		if todo.Fields[i].Name == "user" {
-			userField = &todo.Fields[i]
-			break
-		}
-	}
-	if userField == nil {
-		t.Fatal("expected user field to be present")
-	}
-	if userField.RelationEntity != "User" {
-		t.Fatalf("expected relation entity User, got %q", userField.RelationEntity)
-	}
-	if !userField.CurrentUser {
-		t.Fatalf("expected current_user relation flag, got %+v", *userField)
-	}
-}
-
-func TestParseRejectsBelongsToCurrentUserWithModifiers(t *testing.T) {
-	src := `
-app PersonalTodo
-
-entity Todo {
-  title: String
-  belongs_to current_user optional
-}
+(define-app demo
+  (backend
+    (entities post))
+  (frontend
+    (screens counter)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for belongs_to current_user modifiers")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "belongs_to current_user does not support modifiers") {
+	if !strings.Contains(err.Error(), "command can only call a query or action") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseSupportsNamedBelongsToCurrentUser(t *testing.T) {
+func TestParseRejectsScreenEffectsInModelPosition(t *testing.T) {
 	src := `
-app PersonalTodo
+(define-screen profile
+  (title "Profile")
+  (view
+    (section
+      "Profile"
+      ((field id)))))
 
-entity Todo {
-  title: String
-  belongs_to reviewer: current_user
-}
-`
+(define-screen home
+  (msg open-profile)
+  (init
+    ((go profile) ()))
+  (update msg model
+    (model ()))
+  (view model
+    (section
+      "Home"
+      ((button "Open" open-profile)))))
 
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-
-	var todo *model.Entity
-	for i := range app.Entities {
-		if app.Entities[i].Name == "Todo" {
-			todo = &app.Entities[i]
-			break
-		}
-	}
-	if todo == nil {
-		t.Fatal("expected Todo entity to be present")
-	}
-
-	var reviewerField *model.Field
-	for i := range todo.Fields {
-		if todo.Fields[i].Name == "reviewer" {
-			reviewerField = &todo.Fields[i]
-			break
-		}
-	}
-	if reviewerField == nil {
-		t.Fatal("expected reviewer field to be present")
-	}
-	if reviewerField.RelationEntity != "User" {
-		t.Fatalf("expected relation entity User, got %q", reviewerField.RelationEntity)
-	}
-	if !reviewerField.CurrentUser {
-		t.Fatalf("expected current_user relation flag, got %+v", *reviewerField)
-	}
-}
-
-func TestParseRejectsBelongsToCurrentUserOnUserEntity(t *testing.T) {
-	src := `
-app PersonalTodo
-
-entity User {
-  title: String
-  belongs_to current_user
-}
+(define-app demo
+  (frontend
+    (screens home profile)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for User entity using belongs_to current_user")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "entity User field user cannot use belongs_to current_user") {
+	if !strings.Contains(err.Error(), "go can only be used inside the effects list returned by screen init/update") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseRejectsBelongsToUnknownEntity(t *testing.T) {
+func TestParseRejectsSingleScreenEffectInsteadOfEffectList(t *testing.T) {
 	src := `
-app TodoApi
+(define-screen home
+  (msg close)
+  (init
+    ((unit) (back)))
+  (update msg model
+    (model ()))
+  (view model
+    (section
+      "Home"
+      ((button "Close" close)))))
 
-entity Todo {
-  title: String
-  belongs_to Project
-}
+(define-app demo
+  (frontend
+    (screens home)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for unknown belongs_to target")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "references unknown entity Project") {
+	if !strings.Contains(err.Error(), "screen effects must be a list; wrap back in an extra pair of parentheses") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseRejectsHashComments(t *testing.T) {
+func TestParseRejectsButtonWithoutUpdate(t *testing.T) {
 	src := `
-# application
-app TodoApi
+(define-screen home
+  (msg open-profile)
+  (view
+    (section
+      "Home"
+      ((button "Open" open-profile)))))
 
-entity Todo {
-  title: String
-}
+(define-app demo
+  (frontend
+    (screens home)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for hash comment")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "unknown statement") {
-		t.Fatalf("unexpected error message: %v", err)
+	if !strings.Contains(err.Error(), "button requires a screen that defines update") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseUnknownTopLevelStatementSuggestsClosestKeyword(t *testing.T) {
+func TestParseRejectsButtonWithUnknownMessage(t *testing.T) {
 	src := `
-app TodoApi
+(define-screen home
+  (msg save-clicked)
+  (init
+    ((unit) ()))
+  (update msg model
+    (model ()))
+  (view model
+    (section
+      "Home"
+      ((button "Open" missing-message)))))
 
-entiti Todo {
-  title: String
-}
+(define-app demo
+  (frontend
+    (screens home)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for unknown top-level statement")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `Did you mean "entity"?`) {
-		t.Fatalf("expected top-level Did you mean suggestion, got: %v", err)
+	if !strings.Contains(err.Error(), "button references unknown message") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseAuthDefaults(t *testing.T) {
+func TestParseRejectsTransitionModelWithExtraRecordWrapper(t *testing.T) {
 	src := `
-app AuthApi
+(define-record home-model
+  (title string))
 
-entity User {
-  email: String
-  role: String
-}
+(define-screen home
+  (msg save-clicked)
+  (init
+    (((home-model "Hello")) ()))
+  (update msg model
+    (model ()))
+  (view model
+    (section
+      "Home"
+      ((button "Save" save-clicked)))))
 
-auth {
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.Auth == nil {
-		t.Fatal("expected auth block to be parsed")
-	}
-
-	if app.Auth.EmailField != "email" {
-		t.Fatalf("unexpected default email_field: %q", app.Auth.EmailField)
-	}
-	if app.Auth.RoleField != "role" {
-		t.Fatalf("unexpected default role_field: %q", app.Auth.RoleField)
-	}
-	if app.Auth.CodeTTLMinutes != 10 {
-		t.Fatalf("unexpected default code_ttl_minutes: %d", app.Auth.CodeTTLMinutes)
-	}
-	if app.Auth.SessionTTLHours != 24 {
-		t.Fatalf("unexpected default session_ttl_hours: %d", app.Auth.SessionTTLHours)
-	}
-	if app.Auth.EmailSubject != "Your Auth Api login code" {
-		t.Fatalf("unexpected default email_subject: %q", app.Auth.EmailSubject)
-	}
-}
-
-func TestParseAuthDefaultsHumanizedEmailSubjectWhenAppDeclaredLater(t *testing.T) {
-	src := `
-auth {
-}
-
-app SharedTodo
-
-entity User {
-  email: String
-  role: String
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.Auth == nil {
-		t.Fatal("expected auth block to be parsed")
-	}
-	if app.Auth.EmailSubject != "Your Shared Todo login code" {
-		t.Fatalf("unexpected default email_subject: %q", app.Auth.EmailSubject)
-	}
-}
-
-func TestParseAuthCodeTTLRejectsOutOfRange(t *testing.T) {
-	src := `
-app AuthApi
-
-entity User {
-  email: String
-  role: String
-}
-
-auth {
-  code_ttl_minutes 0
-}
+(define-app demo
+  (frontend
+    (screens home)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for out-of-range auth.code_ttl_minutes")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "auth.code_ttl_minutes must be between") {
-		t.Fatalf("unexpected error message: %v", err)
+	if !strings.Contains(err.Error(), "extra pair of parentheses") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseAuthSessionTTLRejectsOutOfRange(t *testing.T) {
+func TestParseRejectsFieldWithNonSymbol(t *testing.T) {
 	src := `
-app AuthApi
+(define-screen home
+  (view
+    (section
+      "Home"
+      ((field "title")))))
 
-entity User {
-  email: String
-  role: String
-}
-
-auth {
-  session_ttl_hours 9999
-}
+(define-app demo
+  (frontend
+    (screens home)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for out-of-range auth.session_ttl_hours")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "auth.session_ttl_hours must be an integer number of hours between") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseUnknownAuthStatementSuggestsClosestKeyword(t *testing.T) {
-	src := `
-app AuthApi
-
-entity User {
-  email: String
-  role: String
-}
-
-auth {
-  email_subjet "Login"
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for unknown auth statement")
-	}
-	if !strings.Contains(err.Error(), `Did you mean "email_subject"?`) {
-		t.Fatalf("expected auth Did you mean suggestion, got: %v", err)
+	if !strings.Contains(err.Error(), "field expects a symbol") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseMisplacedAuthStatementInSystemShowsHint(t *testing.T) {
-	src := `
-app Demo
+func TestParseRejectsLegacyAuthBuiltins(t *testing.T) {
+	for _, legacy := range []string{"user-authenticated", "user-id", "user-email", "user-role", "anonymous"} {
+		src := fmt.Sprintf(`
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      ((read %s)))))
 
-system {
-  admin_ui_session_ttl_hours 2
-}
+(define-app demo
+  (auth ())
+  (entities todo))
+`, legacy)
 
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for misplaced auth statement")
-	}
-	if !strings.Contains(err.Error(), `unknown system statement "admin_ui_session_ttl_hours 2"`) {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-	if !strings.Contains(err.Error(), "Hint:\n  \"admin_ui_session_ttl_hours\" looks like an auth setting. Try moving it into auth { ... }.") {
-		t.Fatalf("expected misplaced auth hint, got: %v", err)
-	}
-}
-
-func TestParseAuthSMTPConfig(t *testing.T) {
-	src := `
-app AuthApi
-
-auth {
-  email_from "no-reply@example.com"
-  email_subject "Your login code"
-  smtp_host "smtp.example.com"
-  smtp_port 587
-  smtp_username "resend"
-  smtp_password_env "RESEND_API_KEY"
-  smtp_starttls true
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.Auth == nil {
-		t.Fatal("expected auth block to be parsed")
-	}
-	if app.Auth.SMTPHost != "smtp.example.com" {
-		t.Fatalf("unexpected smtp_host: %q", app.Auth.SMTPHost)
-	}
-	if app.Auth.SMTPPort != 587 {
-		t.Fatalf("unexpected smtp_port: %d", app.Auth.SMTPPort)
-	}
-	if app.Auth.SMTPUsername != "resend" {
-		t.Fatalf("unexpected smtp_username: %q", app.Auth.SMTPUsername)
-	}
-	if app.Auth.SMTPPasswordEnv != "RESEND_API_KEY" {
-		t.Fatalf("unexpected smtp_password_env: %q", app.Auth.SMTPPasswordEnv)
-	}
-	if !app.Auth.SMTPStartTLS {
-		t.Fatal("expected smtp_starttls true")
-	}
-}
-
-func TestParseAuthSMTPRequiresHost(t *testing.T) {
-	src := `
-app AuthApi
-
-auth {
-  smtp_username "resend"
-  smtp_password_env "RESEND_API_KEY"
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for missing smtp_host")
-	}
-	if !strings.Contains(err.Error(), "auth.smtp_host is required") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseAuthorizeOperationListExpandsToCrudOperations(t *testing.T) {
-	src := `
-app TodoApi
-
-entity Todo {
-  title: String
-  authorize read, create, update, delete when user_authenticated
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-
-	var todo model.Entity
-	var found bool
-	for _, entity := range app.Entities {
-		if entity.Name == "Todo" {
-			todo = entity
-			found = true
-			break
+		_, err := Parse(src)
+		if err == nil {
+			t.Fatalf("expected parse error for %s", legacy)
 		}
-	}
-	if !found {
-		t.Fatal("expected Todo entity")
-	}
-
-	if len(todo.Authorizations) != 4 {
-		t.Fatalf("expected 4 expanded authorization rules, got %d", len(todo.Authorizations))
-	}
-
-	expected := map[string]string{
-		"read":   "user_authenticated",
-		"create": "user_authenticated",
-		"update": "user_authenticated",
-		"delete": "user_authenticated",
-	}
-	for _, authz := range todo.Authorizations {
-		if expected[authz.Action] != authz.Expression {
-			t.Fatalf("unexpected authorization for %s: %q", authz.Action, authz.Expression)
+		if !strings.Contains(err.Error(), "unknown variable") && !strings.Contains(err.Error(), "unknown identifier") {
+			t.Fatalf("unexpected error for %s: %v", legacy, err)
 		}
 	}
 }
 
-func TestParseAuthorizeAllowsAnonymousBuiltin(t *testing.T) {
+func TestParseSupportsTypedCurrentUserHelpers(t *testing.T) {
 	src := `
-app TodoApi
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      ((read
+         (or (has-role? current-user "admin")
+             (match current-user
+               ((authenticated id email role) true)
+               ((anonymous) false))))))))
 
-entity Todo {
-  title: String
-  authorize read when anonymous or user_authenticated
-}
+(define-app demo
+  (auth ())
+  (entities todo))
 `
 
-	app, err := Parse(src)
-	if err != nil {
+	if _, err := Parse(src); err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-
-	var todo model.Entity
-	var found bool
-	for _, entity := range app.Entities {
-		if entity.Name == "Todo" {
-			todo = entity
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatal("expected Todo entity")
-	}
-	if len(todo.Authorizations) != 1 {
-		t.Fatalf("expected 1 authorization rule, got %d", len(todo.Authorizations))
-	}
-	if got, want := todo.Authorizations[0].Expression, `anonymous or user_authenticated`; got != want {
-		t.Fatalf("expected authorization expression %q, got %q", want, got)
-	}
 }
 
-func TestParseAuthorizeRejectsLiteralTrue(t *testing.T) {
+func TestParseRejectsHasRoleWithNonStringRole(t *testing.T) {
 	src := `
-app TodoApi
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      ((read (has-role? current-user 1))))))
 
-entity Todo {
-  title: String
-  authorize read when true
-}
+(define-app demo
+  (auth ())
+  (entities todo))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for authorize read when true")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "authorization expressions cannot use true") {
+	if !strings.Contains(err.Error(), "has-role? expects string as second argument") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseAuthorizeOperationListRejectsDuplicateOverride(t *testing.T) {
+func TestParseRejectsCurrentUserMatchWithTooFewAuthenticatedBindings(t *testing.T) {
 	src := `
-app TodoApi
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      ((read
+         (match current-user
+           ((authenticated id) true)
+           ((anonymous) false)))))))
 
-entity Todo {
-  title: String
-  authorize read, create, update, delete when user_authenticated
-  authorize delete when user_role == "admin"
-}
+(define-app demo
+  (auth ())
+  (entities todo))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for duplicate authorize rule")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `duplicate authorize rule for "delete"`) {
+	if !strings.Contains(err.Error(), `match pattern "authenticated" expects 3 values: id email role`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseRuleExpectSyntax(t *testing.T) {
+func TestParseRejectsCurrentUserMatchWithTooManyAuthenticatedBindings(t *testing.T) {
 	src := `
-app TodoApi
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      ((read
+         (match current-user
+           ((authenticated id email role extra) true)
+           ((anonymous) false)))))))
 
-entity Todo {
-  title: String
-  rule "Title must have at least 3 chars" expect length title >= 3
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-
-	var todo model.Entity
-	var found bool
-	for _, entity := range app.Entities {
-		if entity.Name == "Todo" {
-			todo = entity
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatal("expected Todo entity")
-	}
-	if len(todo.Rules) != 1 {
-		t.Fatalf("expected 1 rule, got %d", len(todo.Rules))
-	}
-	if todo.Rules[0].Message != "Title must have at least 3 chars" {
-		t.Fatalf("unexpected rule message: %q", todo.Rules[0].Message)
-	}
-	if todo.Rules[0].Expression != "length title >= 3" {
-		t.Fatalf("unexpected rule expression: %q", todo.Rules[0].Expression)
-	}
-}
-
-func TestParseRuleErrorUsesOriginalRuleLine(t *testing.T) {
-	src := `
-app Demo
-
-entity Student {
-  fullName: String
-
-  rule "Student code must have at least 4 chars" expect length externalCode >= 4
-}
+(define-app demo
+  (auth ())
+  (entities todo))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for unknown identifier in rule")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `line 7: invalid rule expression "length externalCode >= 4" (unknown identifier "externalCode")`) {
+	if !strings.Contains(err.Error(), `match pattern "authenticated" expects 3 values: id email role`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseScreensReportErrorUsesOriginalReportLine(t *testing.T) {
+func TestParseRejectsMaybeMatchWithNamedExpectedPayload(t *testing.T) {
 	src := `
-app Demo
+(define profile
+  (entity
+    (fields
+      ((handle string optional)))
+    (validate
+      (match handle
+        ((just) true)
+        ((nothing) false)))))
 
-entity User {
-  authorize read when user_authenticated
-}
-
-entity FoodPurchase {
-  purchaseDate: Date
-
-  belongs_to current_user
-
-  authorize read when user_authenticated
-}
-
-screens {
-  screen Reports {
-    section "Monthly averages" {
-      report FoodPurchase where owner == user_id {
-        group by month(purchaseDate)
-        metric count() label "Entries"
-      }
-    }
-  }
-}
+(define-app demo
+  (entities profile))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for unknown identifier in frontend report filter")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `line 19: screen Reports report FoodPurchase: invalid expression "owner == user_id" (unknown identifier "owner")`) {
+	if !strings.Contains(err.Error(), `match pattern "just" expects 1 values: value`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseRuleRejectsIncompatibleComparisonTypes(t *testing.T) {
+func TestParseRejectsResultMatchWithNamedExpectedPayload(t *testing.T) {
 	src := `
-app Demo
+(define-record load-model
+  (value (result string int)))
 
-entity Student {
-  name: String
+(define item
+  (entity
+    (fields
+      ((amount int)))
+    (validate
+      (let ((state (load-model (value (ok amount)))))
+        (match (get state value)
+          ((ok) true)
+          ((err error) false))))))
 
-  rule "Name must have between 3 and 100 chars" expect length name >= 3 and name <= 100
-}
+(define-app demo
+  (entities item))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for incompatible comparison types in rule")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `operator <= expects comparable values, got String and Int`) {
+	if !strings.Contains(err.Error(), `match pattern "ok" expects 1 values: value`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseRuleRejectsNonBooleanExpression(t *testing.T) {
+func TestParseSupportsDefineTypeForScreenState(t *testing.T) {
 	src := `
-app Demo
+(define item
+  (entity
+    (fields
+      ((title string)))))
 
-entity Student {
-  name: String
+(define (all-items)
+  (query item))
 
-  rule "Name length" expect length name
+(define-type timeline-state
+  (loading)
+  (loaded (items (list item)))
+  (failed (message string)))
+
+(define-record timeline-model
+  (state timeline-state))
+
+(define-screen timeline
+  (msg
+    (loaded-items items)
+    (failed-load message))
+  (init
+    ((timeline-model (state (loading)))
+     ((command (all-items) loaded-items failed-load))))
+  (update msg model
+    (match msg
+      ((loaded-items items)
+       ((assoc model (state (loaded items))) ()))
+      ((failed-load message)
+       ((assoc model (state (failed message))) ()))))
+  (view model
+    (section
+      (title "Timeline")
+      (text "Timeline"))))
+
+(define-app demo
+  (backend
+    (entities item)
+    (queries all-items))
+  (frontend
+    (screens timeline)))
+`
+
+	app, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if len(app.Types) != 1 {
+		t.Fatalf("expected one type, got %+v", app.Types)
+	}
+	if got := app.Types[0].Variants[1].Fields[0].Name; got != "items" {
+		t.Fatalf("unexpected variant payload field name: %q", got)
+	}
 }
+
+func TestParseRejectsDefineTypeConstructorArityMismatch(t *testing.T) {
+	src := `
+(define-type load-state
+  (loaded (count int))
+  (failed (message string)))
+
+(define-record model
+  (state load-state))
+
+(define-screen home
+  (init
+    ((model (state (loaded))) ()))
+  (view model
+    (section (title "Home") (text "Home"))))
+
+(define-app demo
+  (frontend
+    (screens home)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for non-boolean rule expression")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `expression must evaluate to Bool, got Int`) {
+	if !strings.Contains(err.Error(), "loaded expects 1 arguments") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseAuthorizeRejectsIncompatibleBuiltinComparison(t *testing.T) {
+func TestParseRejectsDefineTypeConstructorPayloadTypeMismatch(t *testing.T) {
 	src := `
-app Demo
+(define-type load-state
+  (loaded (count int))
+  (failed (message string)))
 
-entity Student {
-  name: String
+(define-record model
+  (state load-state))
 
-  authorize read when user_role <= 10
-}
+(define-screen home
+  (init
+    ((model (state (loaded "many"))) ()))
+  (view model
+    (section (title "Home") (text "Home"))))
+
+(define-app demo
+  (frontend
+    (screens home)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for incompatible authorization expression")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `operator <= expects comparable values, got String and Int`) {
+	if !strings.Contains(err.Error(), "loaded argument count expects int, got string") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseUnknownPublicStatementSuggestsClosestKeyword(t *testing.T) {
+func TestParseRejectsDefineTypeMatchWithNamedPayloadError(t *testing.T) {
 	src := `
-app Demo
+(define-type load-state
+  (loaded (count int))
+  (failed (message string)))
 
-public {
-  mout "/"
-  dir "./dist"
-}
+(define-record model
+  (state load-state))
 
-entity Todo {
-  title: String
-}
+(define-screen home
+  (msg refresh)
+  (init
+    ((model (state (loaded 1))) ()))
+  (update msg model
+    (match (get model state)
+      ((loaded) (model ()))
+      ((failed message) (model ()))))
+  (view model
+    (section
+      (title "Home")
+      (text "Home"))))
+
+(define-app demo
+  (frontend
+    (screens home)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for unknown public statement")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `Did you mean "mount"?`) {
-		t.Fatalf("expected public Did you mean suggestion, got: %v", err)
+	if !strings.Contains(err.Error(), `match pattern "loaded" expects 1 values: count`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseUnknownSystemStatementSuggestsClosestKeyword(t *testing.T) {
+func TestParseRejectsLegacyDefrecord(t *testing.T) {
 	src := `
-app Demo
+(defrecord model
+  (title string))
 
-system {
-  sqlite_buzy_timeout_ms 5000
-}
-
-entity Todo {
-  title: String
-}
+(define-app demo)
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for unknown system statement")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `Did you mean "sqlite_busy_timeout_ms"?`) {
-		t.Fatalf("expected system Did you mean suggestion, got: %v", err)
+	if !strings.Contains(err.Error(), "use define-record") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseMisplacedSystemStatementInAuthShowsHint(t *testing.T) {
+func TestParseRejectsLegacyDefapp(t *testing.T) {
 	src := `
-app AuthApi
-
-entity User {
-  email: String
-  role: String
-}
-
-auth {
-  request_logs_buffer 500
-}
+(defapp demo)
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for misplaced system statement")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), `unknown auth statement "request_logs_buffer 500"`) {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-	if !strings.Contains(err.Error(), "Hint:\n  \"request_logs_buffer\" looks like a system setting. Try moving it into system { ... }.") {
-		t.Fatalf("expected misplaced system hint, got: %v", err)
+	if !strings.Contains(err.Error(), "use define-app") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseAuthAdminUISessionTTL(t *testing.T) {
+func TestParseRejectsLegacyDefineScreen(t *testing.T) {
 	src := `
-app AuthApi
+(define home
+  (screen
+    (view
+      (section
+        (title "Home")
+        (text "Home")))))
 
-entity User {
-  email: String
-  role: String
-}
-
-auth {
-  admin_ui_session_ttl_hours 6
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.Auth == nil {
-		t.Fatal("expected auth block to be parsed")
-	}
-	if app.Auth.AdminUISessionTTLHours == nil {
-		t.Fatal("expected admin_ui_session_ttl_hours to be parsed")
-	}
-	if *app.Auth.AdminUISessionTTLHours != 6 {
-		t.Fatalf("unexpected admin_ui_session_ttl_hours: %d", *app.Auth.AdminUISessionTTLHours)
-	}
-}
-
-func TestParseAuthAdminUISessionTTLRejectsOutOfRange(t *testing.T) {
-	src := `
-app AuthApi
-
-entity User {
-  email: String
-  role: String
-}
-
-auth {
-  admin_ui_session_ttl_hours 0
-}
+(define-app demo
+  (frontend
+    (screens home)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for out-of-range auth.admin_ui_session_ttl_hours")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "auth.admin_ui_session_ttl_hours must be an integer number of hours between") {
-		t.Fatalf("unexpected error message: %v", err)
+	if !strings.Contains(err.Error(), "use define-screen") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseAuthAdminUISessionTTLRejectsNonInteger(t *testing.T) {
+func TestParseRejectsDefineScreenWrapper(t *testing.T) {
 	src := `
-app AuthApi
+(define-screen home
+  (screen
+    (view
+      (section
+        (title "Home")
+        (text "Home")))))
 
-entity User {
-  email: String
-  role: String
-}
-
-auth {
-  admin_ui_session_ttl_hours 0.01
-}
+(define-app demo
+  (frontend
+    (screens home)))
 `
 
 	_, err := Parse(src)
 	if err == nil {
-		t.Fatal("expected parse error for non-integer auth.admin_ui_session_ttl_hours")
+		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "auth.admin_ui_session_ttl_hours must be an integer number of hours between") {
-		t.Fatalf("unexpected error message: %v", err)
+	if !strings.Contains(err.Error(), `unknown screen clause "screen"`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
-}
-
-func TestParseActionTypeMismatchShowsFriendlyError(t *testing.T) {
-	src := `
-app Demo
-
-entity Book {
-  title: String
-  price: Float
-}
-
-type alias CreateBookInput =
-  { title: String
-  , price: String
-  }
-
-action createBook {
-  input: CreateBookInput
-
-  create Book {
-    title: input.title
-    price: input.price
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for incompatible action field type")
-	}
-
-	if !strings.Contains(err.Error(), "action createBook field Book.price expects Float but got String") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseActionUnknownEntityFieldSuggestsClosestName(t *testing.T) {
-	src := `
-app Demo
-
-entity Todo {
-  title: String
-}
-
-type alias CreateTodoInput =
-  { title: String
-  }
-
-action createTodo {
-  input: CreateTodoInput
-
-  create Todo {
-    titel: input.title
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for unknown action field")
-	}
-	if !strings.Contains(err.Error(), "Did you mean \"title\"?") {
-		t.Fatalf("expected Did you mean suggestion, got: %v", err)
-	}
-}
-
-func TestParseActionUnknownInputFieldSuggestsClosestName(t *testing.T) {
-	src := `
-app Demo
-
-entity Todo {
-  title: String
-}
-
-type alias CreateTodoInput =
-  { title: String
-  }
-
-action createTodo {
-  input: CreateTodoInput
-
-  create Todo {
-    title: input.titel
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for unknown action input field")
-	}
-	if !strings.Contains(err.Error(), "Did you mean \"input.title\"?") {
-		t.Fatalf("expected Did you mean suggestion, got: %v", err)
-	}
-}
-
-func TestParseActionSupportsAliasedLoadAndUpdate(t *testing.T) {
-	src := `
-app Demo
-
-entity Todo {
-  title: String
-  done: Bool default false
-}
-
-type alias RenameTodoInput =
-  { id: Int
-  , title: String
-  }
-
-action renameTodo {
-  input: RenameTodoInput
-
-  todo = load Todo {
-    id: input.id
-  }
-
-  updatedTodo = update Todo {
-    id: todo.id
-    title: input.title
-  }
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if len(app.Actions) != 1 {
-		t.Fatalf("expected 1 action, got %d", len(app.Actions))
-	}
-	if got := app.Actions[0].Steps[0].Alias; got != "todo" {
-		t.Fatalf("expected first alias todo, got %q", got)
-	}
-	if got := app.Actions[0].Steps[0].Kind; got != "load" {
-		t.Fatalf("expected first step kind load, got %q", got)
-	}
-	if got := app.Actions[0].Steps[1].Alias; got != "updatedTodo" {
-		t.Fatalf("expected second alias updatedTodo, got %q", got)
-	}
-}
-
-func TestParseActionSupportsRulesAfterLoad(t *testing.T) {
-	src := `
-app Demo
-
-entity Todo {
-  title: String
-  done: Bool default false
-}
-
-type alias CompleteTodoInput =
-  { id: Int
-  }
-
-action completeTodo {
-  input: CompleteTodoInput
-
-  todo = load Todo {
-    id: input.id
-  }
-
-  rule "Todo must still be open" expect not todo.done
-
-  update Todo {
-    id: todo.id
-    done: true
-  }
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if len(app.Actions) != 1 {
-		t.Fatalf("expected 1 action, got %d", len(app.Actions))
-	}
-	if got := app.Actions[0].Steps[1].Kind; got != "rule" {
-		t.Fatalf("expected second step kind rule, got %q", got)
-	}
-	if got := app.Actions[0].Steps[1].Message; got != "Todo must still be open" {
-		t.Fatalf("unexpected rule message %q", got)
-	}
-}
-
-func TestParseActionRuleRejectsUnknownFutureAlias(t *testing.T) {
-	src := `
-app Demo
-
-entity Todo {
-  title: String
-}
-
-type alias CompleteTodoInput =
-  { id: Int
-  }
-
-action completeTodo {
-  input: CompleteTodoInput
-
-  rule "Todo must exist" expect todo.id == input.id
-
-  todo = load Todo {
-    id: input.id
-  }
-
-  update Todo {
-    id: todo.id
-    title: todo.title
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for action rule referencing future alias")
-	}
-	if !strings.Contains(err.Error(), `references unknown value "todo.id"`) {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseActionLoadRequiresAlias(t *testing.T) {
-	src := `
-app Demo
-
-entity Todo {
-  title: String
-}
-
-type alias LoadTodoInput =
-  { id: Int
-  }
-
-action loadTodo {
-  input: LoadTodoInput
-
-  load Todo {
-    id: input.id
-  }
-
-  create Todo {
-    title: "x"
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for load without alias")
-	}
-	if !strings.Contains(err.Error(), "invalid action statement") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseActionSupportsUpdateAndDeleteSteps(t *testing.T) {
-	src := `
-app Demo
-
-entity Todo {
-  title: String
-  done: Bool default false
-}
-
-type alias ChangeTodoInput =
-  { id: Int
-  , title: String
-  }
-
-action changeTodo {
-  input: ChangeTodoInput
-
-  update Todo {
-    id: input.id
-    title: input.title
-  }
-
-  delete Todo {
-    id: input.id
-  }
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if len(app.Actions) != 1 {
-		t.Fatalf("expected 1 action, got %d", len(app.Actions))
-	}
-	if got := app.Actions[0].Steps[0].Kind; got != "update" {
-		t.Fatalf("expected first step kind update, got %q", got)
-	}
-	if got := app.Actions[0].Steps[1].Kind; got != "delete" {
-		t.Fatalf("expected second step kind delete, got %q", got)
-	}
-}
-
-func TestParseActionUpdateRequiresPrimaryKey(t *testing.T) {
-	src := `
-app Demo
-
-entity Todo {
-  title: String
-}
-
-type alias UpdateTodoInput =
-  { title: String
-  }
-
-action updateTodo {
-  input: UpdateTodoInput
-
-  update Todo {
-    title: input.title
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for update without primary key")
-	}
-	if !strings.Contains(err.Error(), "must include primary key field id") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseActionDeleteOnlyAllowsPrimaryKey(t *testing.T) {
-	src := `
-app Demo
-
-entity Todo {
-  title: String
-}
-
-type alias DeleteTodoInput =
-  { id: Int
-  }
-
-action deleteTodo {
-  input: DeleteTodoInput
-
-  delete Todo {
-    id: input.id
-    title: "x"
-  }
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for delete with extra fields")
-	}
-	if !strings.Contains(err.Error(), "must only include primary key field id") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParsePublicBlock(t *testing.T) {
-	src := `
-app FrontApi
-port 4200
-database "./front.db"
-
-public {
-  dir "./frontend/dist"
-  mount "/"
-  spa_fallback "index.html"
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.Public == nil {
-		t.Fatal("expected public block to be parsed")
-	}
-	if app.Public.Dir != "./frontend/dist" {
-		t.Fatalf("unexpected public dir: %q", app.Public.Dir)
-	}
-	if app.Public.Mount != "/" {
-		t.Fatalf("unexpected public mount: %q", app.Public.Mount)
-	}
-	if app.Public.SPAFallback != "index.html" {
-		t.Fatalf("unexpected spa fallback: %q", app.Public.SPAFallback)
-	}
-}
-
-func TestParsePublicBlockRejectsAbsoluteFallback(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-public {
-  dir "./frontend/dist"
-  spa_fallback "/index.html"
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for invalid public.spa_fallback")
-	}
-	if !strings.Contains(err.Error(), "public.spa_fallback must be a relative file path") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseSystemRequestLogsBuffer(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-system {
-  request_logs_buffer 512
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.System == nil {
-		t.Fatal("expected system block to be parsed")
-	}
-	if app.System.RequestLogsBuffer != 512 {
-		t.Fatalf("unexpected request_logs_buffer: %d", app.System.RequestLogsBuffer)
-	}
-}
-
-func TestParseSystemRequestLogsBufferRejectsOutOfRange(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-system {
-  request_logs_buffer 999999
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for out-of-range request_logs_buffer")
-	}
-	if !strings.Contains(err.Error(), "system.request_logs_buffer must be between") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseSystemAndAuthSettings(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-system {
-  sqlite_journal_mode wal
-  sqlite_synchronous normal
-  sqlite_foreign_keys true
-  sqlite_busy_timeout_ms 5000
-  sqlite_wal_autocheckpoint 1000
-  sqlite_journal_size_limit_mb 64
-  sqlite_mmap_size_mb 128
-  sqlite_cache_size_kb 2000
-  http_max_request_body_mb 1
-}
-
-auth {
-  auth_request_code_rate_limit_per_minute 5
-  auth_login_rate_limit_per_minute 10
-  security_frame_policy sameorigin
-  security_referrer_policy strict-origin-when-cross-origin
-  security_content_type_nosniff true
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-	if app.System == nil {
-		t.Fatal("expected system block to be parsed")
-	}
-	if app.System.SQLiteJournalMode == nil || *app.System.SQLiteJournalMode != "wal" {
-		t.Fatalf("unexpected sqlite_journal_mode: %+v", app.System.SQLiteJournalMode)
-	}
-	if app.System.SQLiteSynchronous == nil || *app.System.SQLiteSynchronous != "normal" {
-		t.Fatalf("unexpected sqlite_synchronous: %+v", app.System.SQLiteSynchronous)
-	}
-	if app.System.SQLiteForeignKeys == nil || !*app.System.SQLiteForeignKeys {
-		t.Fatalf("unexpected sqlite_foreign_keys: %+v", app.System.SQLiteForeignKeys)
-	}
-	if app.Auth.SecurityFramePolicy == nil || *app.Auth.SecurityFramePolicy != "sameorigin" {
-		t.Fatalf("unexpected security_frame_policy: %+v", app.Auth.SecurityFramePolicy)
-	}
-	if app.Auth.SecurityReferrerPolicy == nil || *app.Auth.SecurityReferrerPolicy != "strict-origin-when-cross-origin" {
-		t.Fatalf("unexpected security_referrer_policy: %+v", app.Auth.SecurityReferrerPolicy)
-	}
-	if app.Auth.SecurityContentNoSniff == nil || !*app.Auth.SecurityContentNoSniff {
-		t.Fatalf("unexpected security_content_type_nosniff: %+v", app.Auth.SecurityContentNoSniff)
-	}
-	if app.Auth == nil || app.Auth.AuthRequestCodeRateLimit == nil || *app.Auth.AuthRequestCodeRateLimit != 5 {
-		t.Fatalf("unexpected auth_request_code_rate_limit_per_minute: %+v", app.Auth)
-	}
-	if app.Auth.AuthLoginRateLimit == nil || *app.Auth.AuthLoginRateLimit != 10 {
-		t.Fatalf("unexpected auth_login_rate_limit_per_minute: %+v", app.Auth.AuthLoginRateLimit)
-	}
-	if app.System.SQLiteBusyTimeoutMs == nil || *app.System.SQLiteBusyTimeoutMs != 5000 {
-		t.Fatalf("unexpected sqlite_busy_timeout_ms: %+v", app.System.SQLiteBusyTimeoutMs)
-	}
-	if app.System.SQLiteWALAutoCheckpoint == nil || *app.System.SQLiteWALAutoCheckpoint != 1000 {
-		t.Fatalf("unexpected sqlite_wal_autocheckpoint: %+v", app.System.SQLiteWALAutoCheckpoint)
-	}
-	if app.System.SQLiteJournalSizeLimitMB == nil || *app.System.SQLiteJournalSizeLimitMB != 64 {
-		t.Fatalf("unexpected sqlite_journal_size_limit_mb: %+v", app.System.SQLiteJournalSizeLimitMB)
-	}
-	if app.System.SQLiteMmapSizeMB == nil || *app.System.SQLiteMmapSizeMB != 128 {
-		t.Fatalf("unexpected sqlite_mmap_size_mb: %+v", app.System.SQLiteMmapSizeMB)
-	}
-	if app.System.SQLiteCacheSizeKB == nil || *app.System.SQLiteCacheSizeKB != 2000 {
-		t.Fatalf("unexpected sqlite_cache_size_kb: %+v", app.System.SQLiteCacheSizeKB)
-	}
-	if app.System.HTTPMaxRequestBodyMB == nil || *app.System.HTTPMaxRequestBodyMB != 1 {
-		t.Fatalf("unexpected http_max_request_body_mb: %+v", app.System.HTTPMaxRequestBodyMB)
-	}
-}
-
-func TestParseSystemSQLiteBusyTimeoutRejectsOutOfRange(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-system {
-  sqlite_busy_timeout_ms 700000
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for out-of-range sqlite_busy_timeout_ms")
-	}
-	if !strings.Contains(err.Error(), "system.sqlite_busy_timeout_ms must be between") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseSystemSQLiteCacheSizeRejectsOutOfRange(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-system {
-  sqlite_cache_size_kb 9999999
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for out-of-range sqlite_cache_size_kb")
-	}
-	if !strings.Contains(err.Error(), "system.sqlite_cache_size_kb must be between") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseSystemHTTPMaxRequestBodyRejectsOutOfRange(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-system {
-  http_max_request_body_mb 0
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for out-of-range http_max_request_body_mb")
-	}
-	if !strings.Contains(err.Error(), "system.http_max_request_body_mb must be between") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseAuthRequestCodeRateLimitRejectsOutOfRange(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-auth {
-  auth_request_code_rate_limit_per_minute 0
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for out-of-range auth_request_code_rate_limit_per_minute")
-	}
-	if !strings.Contains(err.Error(), "auth.auth_request_code_rate_limit_per_minute must be between") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseAuthLoginRateLimitRejectsOutOfRange(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-auth {
-  auth_login_rate_limit_per_minute 0
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for out-of-range auth_login_rate_limit_per_minute")
-	}
-	if !strings.Contains(err.Error(), "auth.auth_login_rate_limit_per_minute must be between") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseAuthSecurityFramePolicyRejectsInvalidValue(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-auth {
-  security_frame_policy allow
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for invalid security_frame_policy")
-	}
-	if !strings.Contains(err.Error(), "auth.security_frame_policy must be one of") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseAuthSecurityReferrerPolicyRejectsInvalidValue(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-auth {
-  security_referrer_policy unsafe-url
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for invalid security_referrer_policy")
-	}
-	if !strings.Contains(err.Error(), "auth.security_referrer_policy must be one of") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseAuthSecurityContentTypeNoSniffRejectsInvalidValue(t *testing.T) {
-	src := `
-app FrontApi
-database "./front.db"
-
-auth {
-  security_content_type_nosniff maybe
-}
-
-entity Todo {
-  title: String
-}
-`
-
-	_, err := Parse(src)
-	if err == nil {
-		t.Fatal("expected parse error for invalid security_content_type_nosniff")
-	}
-	if !strings.Contains(err.Error(), "auth.security_content_type_nosniff must be true or false") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestParseEnumTypesAndEnumLiterals(t *testing.T) {
-	src := `
-app GymClasses
-
-type UserRole {
-  Admin
-  Owner
-  Member
-}
-
-type EnrollmentStatus {
-  Confirmed
-  Canceled
-}
-
-entity User {
-  role: UserRole
-
-  authorize read when user_authenticated and (id == user_id or user_role == Admin)
-}
-
-entity ClassEnrollment {
-  status: EnrollmentStatus default Confirmed
-
-  authorize read, create when user_authenticated
-}
-
-type alias CreateEnrollmentInput =
-  { status : EnrollmentStatus
-  }
-
-action createEnrollment {
-  input: CreateEnrollmentInput
-
-  rule "Only members can create enrollments" expect user_role == Member or user_role == Admin
-
-  create ClassEnrollment {
-    status: input.status
-  }
-}
-`
-
-	app, err := Parse(src)
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-
-	if got := len(app.Types); got != 2 {
-		t.Fatalf("expected 2 types, got %d", got)
-	}
-
-	user := findEntity(app, "User")
-	if user == nil {
-		t.Fatal("expected built-in User entity")
-	}
-	role := findFieldByName(user, "role")
-	if role == nil {
-		t.Fatal("expected role field on User")
-	}
-	if role.Type != "UserRole" {
-		t.Fatalf("expected role type UserRole, got %s", role.Type)
-	}
-	if !reflect.DeepEqual(role.EnumValues, []string{"Admin", "Owner", "Member"}) {
-		t.Fatalf("unexpected role enum values: %#v", role.EnumValues)
-	}
-
-	enrollment := findEntity(app, "ClassEnrollment")
-	if enrollment == nil {
-		t.Fatal("expected ClassEnrollment entity")
-	}
-	status := findFieldByName(enrollment, "status")
-	if status == nil {
-		t.Fatal("expected status field")
-	}
-	if got, ok := status.Default.(string); !ok || got != "Confirmed" {
-		t.Fatalf("expected enum default Confirmed, got %#v", status.Default)
-	}
-}
-
-func findEntity(app *model.App, name string) *model.Entity {
-	for i := range app.Entities {
-		if app.Entities[i].Name == name {
-			return &app.Entities[i]
-		}
-	}
-	return nil
-}
-
-func findFieldByName(entity *model.Entity, name string) *model.Field {
-	if entity == nil {
-		return nil
-	}
-	for i := range entity.Fields {
-		if entity.Fields[i].Name == name {
-			return &entity.Fields[i]
-		}
-	}
-	return nil
 }

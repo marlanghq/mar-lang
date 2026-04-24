@@ -1,5 +1,7 @@
 package model
 
+import "strings"
+
 type App struct {
 	AppName      string        `json:"appName"`
 	Port         int           `json:"port"`
@@ -8,7 +10,10 @@ type App struct {
 	Public       *PublicConfig `json:"public,omitempty"`
 	System       *SystemConfig `json:"system,omitempty"`
 	Types        []EnumType    `json:"types,omitempty"`
+	Records      []Record      `json:"records,omitempty"`
+	Functions    []Function    `json:"functions,omitempty"`
 	Entities     []Entity      `json:"entities"`
+	Queries      []Query       `json:"queries,omitempty"`
 	Auth         *AuthConfig   `json:"auth,omitempty"`
 	InputAliases []TypeAlias   `json:"inputAliases,omitempty"`
 	Actions      []Action      `json:"actions,omitempty"`
@@ -17,8 +22,24 @@ type App struct {
 }
 
 type EnumType struct {
-	Name   string   `json:"name"`
-	Values []string `json:"values"`
+	Name     string        `json:"name"`
+	Values   []string      `json:"values,omitempty"`
+	Variants []TypeVariant `json:"variants,omitempty"`
+}
+
+type TypeVariant struct {
+	Name   string        `json:"name"`
+	Fields []RecordField `json:"fields,omitempty"`
+}
+
+type Record struct {
+	Name   string        `json:"name"`
+	Fields []RecordField `json:"fields"`
+}
+
+type RecordField struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
 }
 
 type IOSConfig struct {
@@ -68,13 +89,18 @@ type AuthConfig struct {
 }
 
 type Entity struct {
-	Name           string          `json:"name"`
-	Table          string          `json:"table"`
-	Resource       string          `json:"resource"`
-	PrimaryKey     string          `json:"primaryKey"`
-	Fields         []Field         `json:"fields"`
-	Rules          []Rule          `json:"rules,omitempty"`
-	Authorizations []Authorization `json:"authorizations,omitempty"`
+	Name           string             `json:"name"`
+	Table          string             `json:"table"`
+	Resource       string             `json:"resource"`
+	PrimaryKey     string             `json:"primaryKey"`
+	Fields         []Field            `json:"fields"`
+	Unique         []UniqueConstraint `json:"unique,omitempty"`
+	Validate       string             `json:"validate,omitempty"`
+	Authorizations []Authorization    `json:"authorizations,omitempty"`
+}
+
+type UniqueConstraint struct {
+	Fields []string `json:"fields"`
 }
 
 type Field struct {
@@ -111,16 +137,28 @@ func IsAuditTimestampField(field *Field) bool {
 	return IsCreatedAtField(field) || IsUpdatedAtField(field)
 }
 
-type Rule struct {
-	Message    string `json:"message"`
-	Expression string `json:"expression"`
-	LineNo     int    `json:"-"`
-}
-
 type Authorization struct {
 	Action     string `json:"action"`
 	Expression string `json:"expression"`
 	LineNo     int    `json:"-"`
+}
+
+type Query struct {
+	Name           string            `json:"name"`
+	Parameters     []string          `json:"parameters,omitempty"`
+	ParameterTypes map[string]string `json:"parameterTypes,omitempty"`
+	Entity         string            `json:"entity"`
+	Where          string            `json:"where,omitempty"`
+	OrderBy        string            `json:"orderBy,omitempty"`
+	OrderDir       string            `json:"orderDir,omitempty"`
+	Limit          *int              `json:"limit,omitempty"`
+}
+
+type Function struct {
+	Name       string   `json:"name"`
+	Parameters []string `json:"parameters,omitempty"`
+	Expression string   `json:"expression"`
+	LineNo     int      `json:"-"`
 }
 
 type TypeAlias struct {
@@ -141,13 +179,27 @@ type Action struct {
 	Steps      []ActionStep `json:"steps"`
 }
 
+func PublicActionName(name string) string {
+	return strings.ReplaceAll(strings.TrimSpace(name), "_", "-")
+}
+
+func PublicActionPath(name string) string {
+	return "/actions/" + PublicActionName(name)
+}
+
+func PublicQueryName(name string) string {
+	return strings.ReplaceAll(strings.TrimSpace(name), "_", "-")
+}
+
+func PublicQueryPath(name string) string {
+	return "/queries/" + PublicQueryName(name)
+}
+
 type ActionStep struct {
-	Alias      string            `json:"alias,omitempty"`
-	Kind       string            `json:"kind"`
-	Entity     string            `json:"entity,omitempty"`
-	Values     []ActionFieldExpr `json:"values,omitempty"`
-	Message    string            `json:"message,omitempty"`
-	Expression string            `json:"expression,omitempty"`
+	Alias  string            `json:"alias,omitempty"`
+	Kind   string            `json:"kind"`
+	Entity string            `json:"entity,omitempty"`
+	Values []ActionFieldExpr `json:"values,omitempty"`
 }
 
 type ActionFieldExpr struct {
@@ -161,13 +213,35 @@ type Frontend struct {
 
 type FrontendScreen struct {
 	Name            string                `json:"name"`
-	ForEntity       string                `json:"forEntity,omitempty"`
+	Parameters      []string              `json:"parameters,omitempty"`
 	Title           string                `json:"title,omitempty"`
 	TitleExpression string                `json:"titleExpression,omitempty"`
+	View            *FrontendViewNode     `json:"view,omitempty"`
+	Messages        []FrontendMessage     `json:"messages,omitempty"`
+	InitExpression  string                `json:"initExpression,omitempty"`
+	UpdateMessage   string                `json:"updateMessage,omitempty"`
+	UpdateModel     string                `json:"updateModel,omitempty"`
+	UpdateBody      string                `json:"updateBody,omitempty"`
+	ViewModel       string                `json:"viewModel,omitempty"`
+	ViewBody        string                `json:"viewBody,omitempty"`
 	ToolbarItems    []FrontendToolbarItem `json:"toolbarItems,omitempty"`
 	Sections        []FrontendSection     `json:"sections,omitempty"`
 	LineNo          int                   `json:"-"`
 	TitleLineNo     int                   `json:"-"`
+}
+
+type FrontendMessage struct {
+	Name       string   `json:"name"`
+	Parameters []string `json:"parameters,omitempty"`
+}
+
+type FrontendViewNode struct {
+	Kind     string             `json:"kind"`
+	Title    string             `json:"title,omitempty"`
+	Text     string             `json:"text,omitempty"`
+	Label    string             `json:"label,omitempty"`
+	Message  string             `json:"message,omitempty"`
+	Children []FrontendViewNode `json:"children,omitempty"`
 }
 
 type FrontendToolbarItem struct {
@@ -177,16 +251,19 @@ type FrontendToolbarItem struct {
 }
 
 type FrontendSection struct {
-	Title      string         `json:"title,omitempty"`
-	When       string         `json:"when,omitempty"`
-	Items      []FrontendItem `json:"items,omitempty"`
-	LineNo     int            `json:"-"`
-	WhenLineNo int            `json:"-"`
+	Title  string         `json:"title,omitempty"`
+	Items  []FrontendItem `json:"items,omitempty"`
+	LineNo int            `json:"-"`
 }
 
 type FrontendItem struct {
 	Kind          string                 `json:"kind"`
+	Condition     string                 `json:"condition,omitempty"`
 	Label         string                 `json:"label,omitempty"`
+	Message       string                 `json:"message,omitempty"`
+	ModelField    string                 `json:"modelField,omitempty"`
+	Disabled      string                 `json:"disabled,omitempty"`
+	Options       []FrontendOption       `json:"options,omitempty"`
 	Target        string                 `json:"target,omitempty"`
 	Entity        string                 `json:"entity,omitempty"`
 	RelationField string                 `json:"relationField,omitempty"`
@@ -202,6 +279,11 @@ type FrontendItem struct {
 	FormFields    []FrontendFormField    `json:"formFields,omitempty"`
 	LineNo        int                    `json:"-"`
 	FilterLineNo  int                    `json:"-"`
+}
+
+type FrontendOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
 }
 
 type FrontendReportMetric struct {

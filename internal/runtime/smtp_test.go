@@ -16,17 +16,17 @@ func TestSMTPStartupCheckRequiresPasswordEnv(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "smtp-missing-env.db"), `
-app MailApi
+(define app-auth
+  ((from "no-reply@example.com")
+   (subject "Your login code")
+   (smtp-host "smtp.example.com")
+   (smtp-port 587)
+   (smtp-username "resend")
+   (smtp-password-env "MISSING_SMTP_PASSWORD")
+   (smtp-starttls true)))
 
-auth {
-  email_from "no-reply@example.com"
-  email_subject "Your login code"
-  smtp_host "smtp.example.com"
-  smtp_port 587
-  smtp_username "resend"
-  smtp_password_env "MISSING_SMTP_PASSWORD"
-  smtp_starttls true
-}
+(define-app mail-api
+  (auth app-auth))
 `)
 
 	err := r.runStartupChecks()
@@ -57,17 +57,17 @@ func TestSMTPStartupCheckSucceedsWithReachableServer(t *testing.T) {
 	defer restore()
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "smtp-success.db"), fmt.Sprintf(`
-app MailApi
+(define app-auth
+  ((from "no-reply@example.com")
+   (subject "Your login code")
+   (smtp-host "%s")
+   (smtp-port %s)
+   (smtp-username "resend")
+   (smtp-password-env "TEST_SMTP_PASSWORD")
+   (smtp-starttls false)))
 
-auth {
-  email_from "no-reply@example.com"
-  email_subject "Your login code"
-  smtp_host "%s"
-  smtp_port %s
-  smtp_username "resend"
-  smtp_password_env "TEST_SMTP_PASSWORD"
-  smtp_starttls false
-}
+(define-app mail-api
+  (auth app-auth))
 `, host, port))
 
 	if err := r.runStartupChecks(); err != nil {
@@ -81,17 +81,17 @@ func TestSMTPStartupCheckIsSkippedInDevMode(t *testing.T) {
 	t.Setenv("MAR_DEV_MODE", "1")
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "smtp-dev-override.db"), `
-app MailApi
+(define app-auth
+  ((from "no-reply@example.com")
+   (subject "Your login code")
+   (smtp-host "smtp.example.com")
+   (smtp-port 587)
+   (smtp-username "resend")
+   (smtp-password-env "MISSING_SMTP_PASSWORD")
+   (smtp-starttls true)))
 
-auth {
-  email_from "no-reply@example.com"
-  email_subject "Your login code"
-  smtp_host "smtp.example.com"
-  smtp_port 587
-  smtp_username "resend"
-  smtp_password_env "MISSING_SMTP_PASSWORD"
-  smtp_starttls true
-}
+(define-app mail-api
+  (auth app-auth))
 `)
 
 	if err := r.runStartupChecks(); err != nil {

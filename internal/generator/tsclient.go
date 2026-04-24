@@ -296,7 +296,7 @@ func GenerateTSClient(app *model.App) (*TSClientOutput, error) {
 			inputType = "Record<string, unknown>"
 		}
 		writeTSLine(buf, "export async function run"+title+"(config: Config, payload: "+inputType+"): Promise<Row> {")
-		writeTSLine(buf, "  return requestJson<Row>(config, \"POST\", "+strconv.Quote("/actions/"+action.Name)+", payload);")
+		writeTSLine(buf, "  return requestJson<Row>(config, \"POST\", "+strconv.Quote(model.PublicActionPath(action.Name))+", payload);")
 		writeTSLine(buf, "}")
 		writeTSLine(buf, "")
 	}
@@ -384,8 +384,10 @@ func sanitizeTSFieldName(value string) string {
 
 func marTypeToTSType(typ string) string {
 	switch typ {
-	case "Int", "Float", "Date", "DateTime":
+	case "Int", "Date", "DateTime":
 		return "number"
+	case "Decimal":
+		return "string"
 	case "String":
 		return "string"
 	case "Bool":
@@ -410,6 +412,8 @@ func tsLiteralFromValue(value any) string {
 		return strconv.FormatInt(v, 10)
 	case float64:
 		return strconv.FormatFloat(v, 'f', -1, 64)
+	case fmt.Stringer:
+		return strconv.Quote(v.String())
 	default:
 		return "null"
 	}

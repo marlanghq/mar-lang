@@ -353,7 +353,7 @@ func GenerateElmClient(app *model.App) (*ElmClientOutput, error) {
 
 	for _, action := range app.Actions {
 		title := toTitle(action.Name)
-		path := "/actions/" + action.Name
+		path := model.PublicActionPath(action.Name)
 		writeLine(buf, "")
 		writeLine(buf, "")
 		writeLine(buf, "run"+title+" : Config -> Encode.Value -> (Result Http.Error Row -> msg) -> Cmd msg")
@@ -410,6 +410,8 @@ func elmMaybeValue(value any) string {
 		return "Just (Encode.float " + fmt.Sprintf("%d.0", v) + ")"
 	case float64:
 		return "Just (Encode.float " + fmt.Sprintf("%g", v) + ")"
+	case fmt.Stringer:
+		return "Just (Encode.string " + elmString(v.String()) + ")"
 	default:
 		return "Nothing"
 	}

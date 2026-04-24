@@ -3,7 +3,7 @@ import Foundation
 enum PayloadEncodingError: LocalizedError, Equatable {
     case requiredField(String)
     case invalidInt(String)
-    case invalidFloat(String)
+    case invalidDecimal(String)
     case invalidBool(String)
     case invalidDate(String)
     case invalidDateTime(String)
@@ -14,8 +14,8 @@ enum PayloadEncodingError: LocalizedError, Equatable {
             return "Field \(name) is required"
         case .invalidInt(let name):
             return "Field \(name) expects Int"
-        case .invalidFloat(let name):
-            return "Field \(name) expects Float"
+        case .invalidDecimal(let name):
+            return "Field \(name) expects Decimal"
         case .invalidBool(let name):
             return "Field \(name) expects Bool (true/false)"
         case .invalidDate(let name):
@@ -62,9 +62,9 @@ enum PayloadEncoder {
         case .int:
             guard let value = Int(raw) else { throw PayloadEncodingError.invalidInt(field.name) }
             return .number(Double(value))
-        case .float:
-            guard let value = Double(raw) else { throw PayloadEncodingError.invalidFloat(field.name) }
-            return .number(value)
+        case .decimal:
+            guard Double(raw) != nil else { throw PayloadEncodingError.invalidDecimal(field.name) }
+            return .string(raw)
         case .bool:
             switch raw.lowercased() {
             case "true", "1", "yes":

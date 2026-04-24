@@ -71,18 +71,16 @@ func TestAuthLoginUsesAdminUICookieTTLWhenRequested(t *testing.T) {
 	requireSQLite3(t)
 
 	src := `
-app TodoApi
-database "` + filepath.Join(t.TempDir(), "auth-cookie-admin-ttl.db") + `"
+(define app-config
+  ((database "` + filepath.Join(t.TempDir(), "auth-cookie-admin-ttl.db") + `")))
 
-entity User {
-  email: String
-  role: String
-}
+(define app-auth
+  ((session-ttl-hours 24)
+   (admin-ui-session-ttl-hours 2)))
 
-auth {
-  session_ttl_hours 24
-  admin_ui_session_ttl_hours 2
-}
+(define-app todo-api
+  (config app-config)
+  (auth app-auth))
 `
 
 	app, err := parser.Parse(src)

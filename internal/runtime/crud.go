@@ -31,7 +31,11 @@ func (r *Runtime) handleList(w http.ResponseWriter, req *http.Request, requestID
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		decoded := decodeEntityRow(entity, row)
-		if r.isAuthorized(entity, "read", auth, decoded) {
+		allowed, err := r.evaluateAuthorization(entity, "read", auth, decoded)
+		if err != nil {
+			return err
+		}
+		if allowed {
 			out = append(out, decoded)
 		}
 	}
@@ -83,7 +87,7 @@ func (r *Runtime) handleDelete(w http.ResponseWriter, requestID string, entity *
 	return nil
 }
 
-// handleCreate validates payload, checks rules/authorization, inserts, and returns the created row.
+// handleCreate validates payload, checks validation/authorization, inserts, and returns the created row.
 func (r *Runtime) handleCreate(w http.ResponseWriter, requestID string, entity *model.Entity, auth authSession, payload map[string]any) error {
 	insert, err := r.buildInsert(entity, payload, auth)
 	if err != nil {
@@ -95,7 +99,7 @@ func (r *Runtime) handleCreate(w http.ResponseWriter, requestID string, entity *
 	if err := r.ensureAuthorized(entity, "create", auth, insert.Context); err != nil {
 		return err
 	}
-	if err := r.validateEntityRules(entity, insert.Context); err != nil {
+	if err := r.validateEntity(entity, insert.Context); err != nil {
 		return err
 	}
 
@@ -141,7 +145,7 @@ func (r *Runtime) handleCreate(w http.ResponseWriter, requestID string, entity *
 	return nil
 }
 
-// handleUpdate validates payload, checks rules/authorization, updates, and returns the updated row.
+// handleUpdate validates payload, checks validation/authorization, updates, and returns the updated row.
 func (r *Runtime) handleUpdate(w http.ResponseWriter, requestID string, entity *model.Entity, auth authSession, id any, payload map[string]any) error {
 	row, ok, err := r.fetchByID(requestID, entity, id)
 	if err != nil {
@@ -161,7 +165,7 @@ func (r *Runtime) handleUpdate(w http.ResponseWriter, requestID string, entity *
 	if err := r.ensureAuthorized(entity, "update", auth, update.Context); err != nil {
 		return err
 	}
-	if err := r.validateEntityRules(entity, update.Context); err != nil {
+	if err := r.validateEntity(entity, update.Context); err != nil {
 		return err
 	}
 
@@ -216,22 +220,73 @@ func entityNullContext(entity *model.Entity) map[string]any {
 	return ctx
 }
 
-// validateEntityRules evaluates compiled entity rules against a request context.
-func (r *Runtime) validateEntityRules(entity *model.Entity, context map[string]any) error {
-	ctx := map[string]any{}
-	for key, value := range context {
-		ctx[key] = value
+func optionalExpressionValue(value any) any {
+	if value == nil {
+		return expr.TaggedValue{Tag: "nothing"}
 	}
-	for name, value := range r.enumLiteralValues {
-		ctx[name] = value
+	return expr.TaggedValue{Tag: "just", Values: []any{value}}
+}
+
+func entityExpressionValues(entity *model.Entity, entityContext map[string]any) map[string]any {
+	out := map[string]any{}
+	if entityContext == nil {
+		entityContext = map[string]any{}
 	}
-	for _, rule := range r.rules[entity.Name] {
-		v, err := rule.Expr.Eval(ctx)
-		if err != nil {
-			return &apiError{Status: http.StatusUnprocessableEntity, Code: "entity_rule_failed", Message: rule.Message, Details: map[string]any{"entity": entity.Name, "rule": rule.Expression}}
+	for key, value := range entityContext {
+		out[key] = value
+	}
+	if entity == nil {
+		return out
+	}
+	for _, field := range entity.Fields {
+		value := entityContext[field.Name]
+		if field.Optional {
+			value = optionalExpressionValue(value)
 		}
-		if !expr.ToBool(v) {
-			return &apiError{Status: http.StatusUnprocessableEntity, Code: "entity_rule_failed", Message: rule.Message, Details: map[string]any{"entity": entity.Name, "rule": rule.Expression}}
+		out[field.Name] = value
+	}
+	return out
+}
+
+// validateEntity evaluates the entity validation expression against a request context.
+func (r *Runtime) validateEntity(entity *model.Entity, context map[string]any) error {
+	validator, ok := r.validators[entity.Name]
+	if !ok {
+		return nil
+	}
+	ctx := r.evaluationContext(entity, context, authSession{}, false)
+	value, err := validator.Eval(ctx)
+	if err != nil {
+		if raised, ok := err.(expr.RaisedError); ok {
+			return &apiError{
+				Status:  http.StatusUnprocessableEntity,
+				Code:    "entity_validation_failed",
+				Message: raised.Message,
+				Details: map[string]any{"entity": entity.Name, "validate": entity.Validate},
+			}
+		}
+		return &apiError{
+			Status:  http.StatusUnprocessableEntity,
+			Code:    "entity_validation_failed",
+			Message: fmt.Sprintf("Validation failed for %s", entity.Name),
+			Details: map[string]any{"entity": entity.Name, "validate": entity.Validate},
+		}
+	}
+	valid, err := expr.RequireBool(value)
+	if err != nil {
+		return &apiError{
+			Status:  http.StatusUnprocessableEntity,
+			Code:    "entity_validation_failed",
+			Message: fmt.Sprintf("Validation for %s must return bool", entity.Name),
+			Details: map[string]any{"entity": entity.Name, "validate": entity.Validate},
+		}
+	}
+	if !valid {
+		return &apiError{
+			Status:  http.StatusUnprocessableEntity,
+			Code:    "entity_validation_failed",
+			Message: fmt.Sprintf("Validation failed for %s", entity.Name),
+			Details: map[string]any{"entity": entity.Name, "validate": entity.Validate},
 		}
 	}
 	return nil
@@ -248,7 +303,11 @@ func (r *Runtime) ensureAuthorized(entity *model.Entity, action string, auth aut
 		}
 		return newAPIError(http.StatusForbidden, "not_authorized", fmt.Sprintf("Not authorized to %s %s", action, entity.Name))
 	}
-	if !r.isAuthorized(entity, action, auth, entityContext) {
+	allowed, err := r.evaluateAuthorization(entity, action, auth, entityContext)
+	if err != nil {
+		return err
+	}
+	if !allowed {
 		if !auth.Authenticated {
 			return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
 		}
@@ -265,41 +324,60 @@ func (r *Runtime) hasAuthorizer(entity *model.Entity, action string, auth authSe
 		return true
 	}
 	authorizers := r.authorizers[entity.Name]
-	_, hasRule := authorizers[action]
-	return hasRule
+	_, hasAuthorization := authorizers[action]
+	return hasAuthorization
 }
 
-func (r *Runtime) isAuthorized(entity *model.Entity, action string, auth authSession, entityContext map[string]any) bool {
+func (r *Runtime) evaluateAuthorization(entity *model.Entity, action string, auth authSession, entityContext map[string]any) (bool, error) {
 	if !r.appAuthEnabled() {
-		return true
+		return true, nil
 	}
 	if r.allowAdminBuiltInUserAccess(entity, action, auth) {
-		return true
+		return true, nil
 	}
 	authorizers := r.authorizers[entity.Name]
-	rule, hasRule := authorizers[action]
-	if !hasRule {
-		return false
+	authorization, hasAuthorization := authorizers[action]
+	if !hasAuthorization {
+		return false, nil
 	}
+	ctx := r.evaluationContext(entity, entityContext, auth, true)
+	v, err := authorization.Eval(ctx)
+	if err != nil {
+		if raised, ok := err.(expr.RaisedError); ok {
+			status := http.StatusForbidden
+			code := "not_authorized"
+			if !auth.Authenticated {
+				status = http.StatusUnauthorized
+				code = "auth_required"
+			}
+			return false, newAPIError(status, code, raised.Message)
+		}
+		return false, nil
+	}
+	allowed, err := expr.RequireBool(v)
+	if err != nil {
+		return false, newAPIError(http.StatusInternalServerError, "authorization_misconfigured", fmt.Sprintf("Authorization for %s.%s must return bool", entity.Name, action))
+	}
+	return allowed, nil
+}
 
+func (r *Runtime) evaluationContext(entity *model.Entity, entityContext map[string]any, auth authSession, includeAuth bool) map[string]any {
 	ctx := map[string]any{}
-	for k, v := range entityContext {
+	for k, v := range entityExpressionValues(entity, entityContext) {
 		ctx[k] = v
 	}
-	ctx["user_authenticated"] = auth.Authenticated
-	ctx["anonymous"] = !auth.Authenticated
-	ctx["user_email"] = auth.Email
-	ctx["user_id"] = auth.UserID
-	ctx["user_role"] = auth.Role
+	if includeAuth {
+		if auth.Authenticated {
+			ctx["current_user"] = expr.TaggedValue{Tag: "authenticated", Values: []any{auth.UserID, auth.Email, auth.Role}}
+		} else {
+			ctx["current_user"] = expr.TaggedValue{Tag: "anonymous"}
+		}
+	}
 	for name, value := range r.enumLiteralValues {
 		ctx[name] = value
 	}
-
-	v, err := rule.Eval(ctx)
-	if err != nil {
-		return false
-	}
-	return expr.ToBool(v)
+	ctx["__functions"] = r.functions
+	return ctx
 }
 
 func (r *Runtime) allowAdminBuiltInUserAccess(entity *model.Entity, action string, auth authSession) bool {

@@ -13,20 +13,24 @@ func TestAdminHasBuiltInAccessToUserEntity(t *testing.T) {
 	requireSQLite3(t)
 
 	src := `
-app UserAdminAccess
+(define app-auth ())
 
-entity User {
-  displayName: String optional
-}
+(define user
+  (entity
+    (fields
+      ((display-name string optional)))))
 
-entity Todo {
-  title: String
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      (((read create update delete)
+         (authenticated? current-user))))))
 
-  authorize read, create, update, delete when user_authenticated
-}
-
-auth {
-}
+(define-app user-admin-access
+  (auth app-auth)
+  (entities user todo))
 `
 
 	app, err := parser.Parse(src)
@@ -66,7 +70,7 @@ auth {
 		t.Fatalf("expected admin to get user, got %d body=%s", getRec.Code, getRec.Body.String())
 	}
 
-	updateRec := doRuntimeRequest(r, http.MethodPatch, "/users/"+fmt.Sprint(memberID), `{"displayName":"Member name"}`, adminToken)
+	updateRec := doRuntimeRequest(r, http.MethodPatch, "/users/"+fmt.Sprint(memberID), `{"display_name":"Member name"}`, adminToken)
 	if updateRec.Code != http.StatusForbidden {
 		t.Fatalf("expected admin update to remain forbidden without explicit authorize, got %d body=%s", updateRec.Code, updateRec.Body.String())
 	}

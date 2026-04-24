@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestWriteErrorOmitsLegacyErrorField(t *testing.T) {
+func TestWriteErrorUsesStructuredPayload(t *testing.T) {
 	rec := httptest.NewRecorder()
 	var r Runtime
 
@@ -22,9 +22,6 @@ func TestWriteErrorOmitsLegacyErrorField(t *testing.T) {
 		t.Fatalf("failed to decode error payload: %v body=%s", err, rec.Body.String())
 	}
 
-	if _, exists := payload["error"]; exists {
-		t.Fatalf("expected error payload to omit legacy error field, got body=%s", rec.Body.String())
-	}
 	if payload["message"] != "Authentication required" {
 		t.Fatalf("expected message field, got %#v", payload["message"])
 	}

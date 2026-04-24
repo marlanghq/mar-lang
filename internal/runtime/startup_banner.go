@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"mar/internal/model"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,7 +58,14 @@ func (r *Runtime) printStartupBanner() {
 	if len(r.App.Actions) > 0 {
 		fmt.Printf("\n%s\n", colorize(useColor, ansiSection, "Actions"))
 		for _, action := range r.App.Actions {
-			fmt.Printf("  %s %s\n", "POST", "/actions/"+action.Name)
+			fmt.Printf("  %s %s\n", "POST", model.PublicActionPath(action.Name))
+		}
+	}
+
+	if len(r.App.Queries) > 0 {
+		fmt.Printf("\n%s\n", colorize(useColor, ansiSection, "Queries"))
+		for _, query := range r.App.Queries {
+			fmt.Printf("  %s %s\n", "GET ", model.PublicQueryPath(query.Name))
 		}
 	}
 

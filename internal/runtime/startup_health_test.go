@@ -11,11 +11,13 @@ func TestHealthReportsStartupPendingAndFailed(t *testing.T) {
 	requireSQLite3(t)
 
 	app := mustParseApp(t, `
-app StartupHealthApi
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  title: String
-}
+(define-app startup-health-api
+  (entities todo))
 `)
 	app.Database = filepath.Join(t.TempDir(), "startup-health.db")
 

@@ -205,7 +205,7 @@ func suggestedDefaultLiteral(fieldType string) string {
 		return `"Unknown"`
 	case "Bool":
 		return "false"
-	case "Float":
+	case "Decimal":
 		return "0.0"
 	case "Int", "Date", "DateTime":
 		return "0"

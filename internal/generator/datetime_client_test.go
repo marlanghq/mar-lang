@@ -36,6 +36,35 @@ func TestGenerateTSClientMapsDateTimeToNumber(t *testing.T) {
 	}
 }
 
+func TestGenerateTSClientMapsDecimalToString(t *testing.T) {
+	app := &model.App{
+		AppName:  "StoreApi",
+		Port:     4200,
+		Database: "store.db",
+		InputAliases: []model.TypeAlias{
+			{
+				Name: "CreateProductInput",
+				Fields: []model.AliasField{
+					{Name: "price", Type: "Decimal"},
+				},
+			},
+		},
+	}
+
+	out, err := GenerateTSClient(app)
+	if err != nil {
+		t.Fatalf("GenerateTSClient returned error: %v", err)
+	}
+
+	source := string(out.Source)
+	if !strings.Contains(source, "export interface CreateProductInput {") {
+		t.Fatalf("expected generated TypeScript client to include alias interface, source:\n%s", source)
+	}
+	if !strings.Contains(source, "price: string;") {
+		t.Fatalf("expected Decimal to map to string in TypeScript client, source:\n%s", source)
+	}
+}
+
 func TestGenerateElmClientSchemaIncludesDateFieldType(t *testing.T) {
 	app := &model.App{
 		AppName:  "TodoApi",

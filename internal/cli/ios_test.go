@@ -19,16 +19,27 @@ func TestRunIOSGenerateCreatesProject(t *testing.T) {
 	tempDir := t.TempDir()
 	appPath := filepath.Join(tempDir, "todo.mar")
 	source := `
-app TodoApi
+(define app-config
+  ((ios
+     ((bundle-identifier "com.example.todo")
+      (server-url "https://school.example.com")))))
 
-ios {
-  bundle_identifier "com.example.todo"
-  server_url "https://school.example.com"
-}
+(define todo
+  (entity
+    (fields
+      ((title string)
+       (price decimal)))))
 
-entity Todo {
-  title: String
-}
+(define-screen home
+  (view
+    (section
+      (title "Home")
+      (text "Hello from Mar"))))
+
+(define-app todo-api
+  (config app-config)
+  (entities todo)
+  (screens home))
 `
 	if err := os.WriteFile(appPath, []byte(source), 0o644); err != nil {
 		t.Fatalf("write app failed: %v", err)
@@ -50,13 +61,16 @@ entity Todo {
 	if !strings.Contains(project, `INFOPLIST_FILE = Info.plist;`) {
 		t.Fatalf("expected explicit Info.plist in generated project, got:\n%s", project)
 	}
+	if !strings.Contains(project, "FrontendRuntime.swift in Sources") {
+		t.Fatalf("expected frontend runtime source in generated project, got:\n%s", project)
+	}
 
 	infoPlistBytes, err := os.ReadFile(filepath.Join(outputDir, "Info.plist"))
 	if err != nil {
 		t.Fatalf("read Info.plist failed: %v", err)
 	}
 	infoPlist := string(infoPlistBytes)
-	if !strings.Contains(infoPlist, `<string>TodoApi</string>`) {
+	if !strings.Contains(infoPlist, `<string>todo-api</string>`) {
 		t.Fatalf("expected display name fallback from app name, got:\n%s", infoPlist)
 	}
 	if !strings.Contains(infoPlist, `<key>NSAllowsLocalNetworking</key>`) {
@@ -82,6 +96,26 @@ entity Todo {
 	if !strings.Contains(string(viewsBytes), `Section("Request Logs")`) {
 		t.Fatalf("expected request logs section in generated views, got:\n%s", string(viewsBytes))
 	}
+	if !strings.Contains(string(viewsBytes), "screen.view") {
+		t.Fatalf("expected generated views to support view-based screens, got:\n%s", string(viewsBytes))
+	}
+	if strings.Contains(string(viewsBytes), `"/_mar/frontend/screens`) {
+		t.Fatalf("expected generated views to evaluate frontend screens locally, got:\n%s", string(viewsBytes))
+	}
+	apiClientBytes, err := os.ReadFile(filepath.Join(outputDir, "Sources", "APIClient.swift"))
+	if err != nil {
+		t.Fatalf("read api client failed: %v", err)
+	}
+	apiClientSource := string(apiClientBytes)
+	if !strings.Contains(apiClientSource, "func executeFrontendCommand") {
+		t.Fatalf("expected command-only frontend API execution helper, got:\n%s", apiClientSource)
+	}
+	if strings.Contains(apiClientSource, `"/_mar/frontend/screens`) {
+		t.Fatalf("expected generated api client not to call frontend screen dispatch endpoints, got:\n%s", apiClientSource)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "Sources", "FrontendRuntime.swift")); err != nil {
+		t.Fatalf("expected generated FrontendRuntime source file: %v", err)
+	}
 	appViewModelBytes, err := os.ReadFile(filepath.Join(outputDir, "Sources", "AppViewModel.swift"))
 	if err != nil {
 		t.Fatalf("read app view model failed: %v", err)
@@ -106,6 +140,18 @@ entity Todo {
 	if !strings.Contains(string(modelsBytes), "var summaryFields: [Field]") {
 		t.Fatalf("expected summaryFields helper in generated models, got:\n%s", string(modelsBytes))
 	}
+	if !strings.Contains(string(modelsBytes), "let view: FrontendViewNodeInfo?") {
+		t.Fatalf("expected generated models to decode view-based screens, got:\n%s", string(modelsBytes))
+	}
+	if !strings.Contains(string(modelsBytes), "let queries: [QueryInfo]") {
+		t.Fatalf("expected generated models to decode backend queries, got:\n%s", string(modelsBytes))
+	}
+	if !strings.Contains(string(modelsBytes), "let records: [RecordInfo]") {
+		t.Fatalf("expected generated models to decode frontend records, got:\n%s", string(modelsBytes))
+	}
+	if !strings.Contains(string(modelsBytes), "let viewModel: String?") {
+		t.Fatalf("expected generated models to decode screen view models, got:\n%s", string(modelsBytes))
+	}
 	rowPresentationBytes, err := os.ReadFile(filepath.Join(outputDir, "Sources", "RowPresentation.swift"))
 	if err != nil {
 		t.Fatalf("read row presentation failed: %v", err)
@@ -119,6 +165,13 @@ entity Todo {
 	if _, err := os.Stat(filepath.Join(outputDir, "Sources", "PayloadEncoder.swift")); err != nil {
 		t.Fatalf("expected generated PayloadEncoder source file: %v", err)
 	}
+	payloadEncoderBytes, err := os.ReadFile(filepath.Join(outputDir, "Sources", "PayloadEncoder.swift"))
+	if err != nil {
+		t.Fatalf("read generated PayloadEncoder failed: %v", err)
+	}
+	if !strings.Contains(string(payloadEncoderBytes), "return .string(raw)") {
+		t.Fatalf("expected generated PayloadEncoder to send decimal fields as strings, got:\n%s", string(payloadEncoderBytes))
+	}
 	if _, err := os.Stat(filepath.Join(outputDir, "Sources", "SessionStore.swift")); err != nil {
 		t.Fatalf("expected generated SessionStore source file: %v", err)
 	}
@@ -131,16 +184,19 @@ func TestRunIOSGenerateAllowsArbitraryLoadsForHTTPServerURL(t *testing.T) {
 	tempDir := t.TempDir()
 	appPath := filepath.Join(tempDir, "todo.mar")
 	source := `
-app TodoApi
+(define app-config
+  ((ios
+     ((bundle-identifier "com.example.todo")
+      (server-url "http://192.168.15.180:4200")))))
 
-ios {
-  bundle_identifier "com.example.todo"
-  server_url "http://192.168.15.180:4200"
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  title: String
-}
+(define-app todo-api
+  (config app-config)
+  (entities todo))
 `
 	if err := os.WriteFile(appPath, []byte(source), 0o644); err != nil {
 		t.Fatalf("write app failed: %v", err)
@@ -165,11 +221,13 @@ func TestRunIOSGenerateRequiresIOSBlock(t *testing.T) {
 	tempDir := t.TempDir()
 	appPath := filepath.Join(tempDir, "todo.mar")
 	source := `
-app TodoApi
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  title: String
-}
+(define-app todo-api
+  (entities todo))
 `
 	if err := os.WriteFile(appPath, []byte(source), 0o644); err != nil {
 		t.Fatalf("write app failed: %v", err)
@@ -182,22 +240,22 @@ entity Todo {
 	if !strings.Contains(err.Error(), "iOS generation error") {
 		t.Fatalf("expected styled ios generation title, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "requires an ios block") {
+	if !strings.Contains(err.Error(), "requires ios config") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "bundle_identifier") {
-		t.Fatalf("expected bundle_identifier to be called out, got %v", err)
+	if !strings.Contains(err.Error(), "bundle-identifier") {
+		t.Fatalf("expected bundle-identifier to be called out, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "server_url") {
-		t.Fatalf("expected server_url to be called out, got %v", err)
+	if !strings.Contains(err.Error(), "server-url") {
+		t.Fatalf("expected server-url to be called out, got %v", err)
 	}
 	if !strings.Contains(err.Error(), appPath) {
 		t.Fatalf("expected source file path to be called out, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "bundle_identifier \"com.example.todoapi\"") {
+	if !strings.Contains(err.Error(), `(bundle-identifier "com.example.todoapi")`) {
 		t.Fatalf("expected ios hint example, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "server_url \"https://todoapi.example.com\"") {
+	if !strings.Contains(err.Error(), `(server-url "https://todoapi.example.com")`) {
 		t.Fatalf("expected ios hint example, got %v", err)
 	}
 }
@@ -206,16 +264,19 @@ func TestRunIOSGenerateRequiresConfirmationBeforeDeletingExistingProject(t *test
 	tempDir := t.TempDir()
 	appPath := filepath.Join(tempDir, "todo.mar")
 	source := `
-app TodoApi
+(define app-config
+  ((ios
+     ((bundle-identifier "com.example.todo")
+      (server-url "https://school.example.com")))))
 
-ios {
-  bundle_identifier "com.example.todo"
-  server_url "https://school.example.com"
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  title: String
-}
+(define-app todo-api
+  (config app-config)
+  (entities todo))
 `
 	if err := os.WriteFile(appPath, []byte(source), 0o644); err != nil {
 		t.Fatalf("write app failed: %v", err)

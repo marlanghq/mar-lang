@@ -92,7 +92,6 @@ func Run(binaryName string, args []string) error {
 	case "format":
 		return runFormat(binaryName, args[1:])
 	case "lsp":
-		// Accept optional extra args (e.g. --stdio) for editor/client compatibility.
 		return lsp.RunStdio()
 	case "version":
 		if len(args) != 1 {
@@ -282,7 +281,7 @@ func formatParseCLIError(err error) error {
 func parseCLIHintForMessage(message string) string {
 	switch strings.TrimSpace(message) {
 	case "missing app declaration":
-		return "Add an app declaration near the top of the file. Example: app Todo"
+		return "Add a define-app declaration near the bottom of the file. Example: (define-app todo)"
 	default:
 		return ""
 	}
@@ -313,6 +312,7 @@ func highlightParseCLIMessage(useColor bool, message string) string {
 
 	const unknownInputPlaceholder = "__MAR_UNKNOWN_INPUT__"
 
+	message, snippets := extractCLIMarSnippetPlaceholders(message, useColor)
 	unknownInputToken := ""
 	message = parseErrorUnknownInputRe.ReplaceAllStringFunc(message, func(match string) string {
 		parts := parseErrorUnknownInputRe.FindStringSubmatch(match)
@@ -343,8 +343,8 @@ func highlightParseCLIMessage(useColor bool, message string) string {
 	message = strings.ReplaceAll(message, "an ios block", "an "+colorizeCLI(true, "\033[1m", "ios")+" block")
 	message = strings.ReplaceAll(
 		message,
-		"app Todo",
-		colorizeCLI(true, "\033[1m", "app")+" "+colorizeCLI(true, "\033[1;36m", "Todo"),
+		"(define-app todo)",
+		"("+colorizeCLI(true, "\033[1m", "define-app")+" "+colorizeCLI(true, "\033[1;36m", "todo")+")",
 	)
 	message = parseErrorBlockLineRe.ReplaceAllStringFunc(message, func(match string) string {
 		parts := parseErrorBlockLineRe.FindStringSubmatch(match)
@@ -366,7 +366,73 @@ func highlightParseCLIMessage(useColor bool, message string) string {
 	if unknownInputToken != "" {
 		message = strings.Replace(message, unknownInputPlaceholder, colorizeCLI(true, "\033[1;31m", unknownInputToken), 1)
 	}
+	for i, snippet := range snippets {
+		placeholder := fmt.Sprintf("__MAR_SNIPPET_%d__", i)
+		message = strings.ReplaceAll(message, placeholder, snippet)
+	}
 	return message
+}
+
+func extractCLIMarSnippetPlaceholders(message string, useColor bool) (string, []string) {
+	var out strings.Builder
+	snippets := []string{}
+
+	for i := 0; i < len(message); {
+		if message[i] != '(' {
+			out.WriteByte(message[i])
+			i++
+			continue
+		}
+
+		end, ok := findCLIMarSnippetEnd(message, i)
+		if !ok {
+			out.WriteByte(message[i])
+			i++
+			continue
+		}
+
+		placeholder := fmt.Sprintf("__MAR_SNIPPET_%d__", len(snippets))
+		snippets = append(snippets, colorizeCLIMarSnippet(useColor, message[i:end]))
+		out.WriteString(placeholder)
+		i = end
+	}
+
+	return out.String(), snippets
+}
+
+func findCLIMarSnippetEnd(message string, start int) (int, bool) {
+	depth := 0
+	inString := false
+
+	for i := start; i < len(message); i++ {
+		switch message[i] {
+		case '"':
+			if !escapedCLISnippetByte(message, i) {
+				inString = !inString
+			}
+		case '(':
+			if !inString {
+				depth++
+			}
+		case ')':
+			if !inString {
+				depth--
+				if depth == 0 {
+					return i + 1, true
+				}
+			}
+		}
+	}
+
+	return 0, false
+}
+
+func escapedCLISnippetByte(message string, index int) bool {
+	backslashes := 0
+	for i := index - 1; i >= 0 && message[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
 }
 
 type buildOptions struct {

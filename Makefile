@@ -250,16 +250,25 @@ website-dev: check-elm check-elm-live
 
 vscode-plugin: check-npx check-npm
 	$(call print_title,VS Code extension)
-	@sh -c 'if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then printf "  %s\n" "Installing vscode-mar dependencies with npm ci"; else printf "  Installing vscode-mar dependencies with \033[1;32mnpm ci\033[0m\n"; fi'
 	$(call print_info,Packaging vscode-mar into a .vsix)
 	@cd vscode-mar && sh -c '\
 		publisher=$$(node -p "require(\"./package.json\").publisher"); \
 		name=$$(node -p "require(\"./package.json\").name"); \
 		version=$$(node -p "require(\"./package.json\").version"); \
 		out="../dist/vscode/$$publisher.$$name-$$version.vsix"; \
+		log=$$(mktemp); \
 		mkdir -p ../dist/vscode; \
-		install_output=$$(npm ci --no-audit --no-fund 2>&1) || { printf "%s\n" "$$install_output"; exit 1; }; \
-		output=$$(npx @vscode/vsce package --out "$$out" 2>&1) || { printf "%s\n" "$$output"; exit 1; }; \
+		if ! npm ci --no-audit --no-fund >"$$log" 2>&1; then \
+			cat "$$log"; \
+			rm -f "$$log"; \
+			exit 1; \
+		fi; \
+		if ! npx --yes @vscode/vsce package --out "$$out" >"$$log" 2>&1; then \
+			cat "$$log"; \
+			rm -f "$$log"; \
+			exit 1; \
+		fi; \
+		rm -f "$$log"; \
 		if [ -n "$$NO_COLOR" ] || ! [ -t 1 ]; then \
 			printf "  %s\n" "Output: $${out#../}"; \
 			printf "  %s\n" "Install in VS Code with: code --install-extension $${out#../} --force"; \

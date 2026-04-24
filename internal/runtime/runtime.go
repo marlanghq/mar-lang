@@ -29,8 +29,10 @@ type Runtime struct {
 	typesByName       map[string]*model.EnumType
 	aliasesByName     map[string]*model.TypeAlias
 	actionsByName     map[string]*model.Action
+	queriesByName     map[string]*model.Query
 	enumLiteralValues map[string]any
-	rules             map[string][]compiledRule
+	functions         map[string]expr.UserFunction
+	validators        map[string]expr.Expr
 	authorizers       map[string]map[string]expr.Expr
 	authUser          *model.Entity
 	metrics           *metricsCollector
@@ -52,12 +54,6 @@ type Runtime struct {
 }
 
 const schemaVersionHeader = "X-Mar-Schema-Version"
-
-type compiledRule struct {
-	Message    string
-	Expression string
-	Expr       expr.Expr
-}
 
 type authSession struct {
 	Authenticated bool
@@ -140,8 +136,10 @@ func New(app *model.App) (*Runtime, error) {
 		typesByName:       map[string]*model.EnumType{},
 		aliasesByName:     map[string]*model.TypeAlias{},
 		actionsByName:     map[string]*model.Action{},
+		queriesByName:     map[string]*model.Query{},
 		enumLiteralValues: map[string]any{},
-		rules:             map[string][]compiledRule{},
+		functions:         map[string]expr.UserFunction{},
+		validators:        map[string]expr.Expr{},
 		authorizers:       map[string]map[string]expr.Expr{},
 		metrics:           newMetricsCollector(),
 		requestLogs:       newRequestLogStore(requestLogsBufferSize(app)),
@@ -172,6 +170,10 @@ func New(app *model.App) (*Runtime, error) {
 	for i := range app.Actions {
 		action := &app.Actions[i]
 		r.actionsByName[action.Name] = action
+	}
+	for i := range app.Queries {
+		query := &app.Queries[i]
+		r.queriesByName[query.Name] = query
 	}
 	r.authUser = r.entitiesByName["User"]
 
@@ -587,6 +589,7 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 		if name == "" || strings.Contains(name, "/") {
 			return newAPIError(http.StatusNotFound, "route_not_found", "Route not found")
 		}
+		name = strings.ReplaceAll(name, "-", "_")
 		if method != http.MethodPost {
 			return newAPIError(http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 		}
@@ -595,6 +598,18 @@ func (r *Runtime) route(w http.ResponseWriter, req *http.Request, requestID stri
 			return err
 		}
 		return r.handleAction(w, requestID, name, auth, payload)
+	}
+
+	if strings.HasPrefix(path, "/queries/") {
+		name := strings.TrimPrefix(path, "/queries/")
+		if name == "" || strings.Contains(name, "/") {
+			return newAPIError(http.StatusNotFound, "route_not_found", "Route not found")
+		}
+		name = strings.ReplaceAll(name, "-", "_")
+		if method != http.MethodGet {
+			return newAPIError(http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return r.handleQuery(w, requestID, name, auth, req.URL.Query())
 	}
 
 	for i := range r.App.Entities {
@@ -803,6 +818,13 @@ func (r *Runtime) metricsRouteLabel(req *http.Request) string {
 		name := strings.TrimPrefix(path, "/actions/")
 		if name != "" && !strings.Contains(name, "/") {
 			return "/actions/:name"
+		}
+		return "/not-found"
+	}
+	if strings.HasPrefix(path, "/queries/") {
+		name := strings.TrimPrefix(path, "/queries/")
+		if name != "" && !strings.Contains(name, "/") {
+			return "/queries/:name"
 		}
 		return "/not-found"
 	}

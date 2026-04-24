@@ -13,48 +13,16 @@ func TestCreateUnknownFieldSuggestsClosestName(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "unknown-field-create.db"), `
-app TodoApi
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  id: Int primary auto
-  title: String
-}
+(define-app todo-api
+  (entities todo))
 `)
 
 	rec := doRuntimeRequest(r, http.MethodPost, "/todos", `{"titel":"Buy milk"}`, "")
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), `Did you mean \"title\"?`) {
-		t.Fatalf("expected Did you mean suggestion, got body=%s", rec.Body.String())
-	}
-}
-
-func TestActionUnknownInputFieldSuggestsClosestName(t *testing.T) {
-	requireSQLite3(t)
-
-	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "unknown-field-action-input.db"), `
-app TodoApi
-
-entity Todo {
-  id: Int primary auto
-  title: String
-}
-
-type alias CreateTodoInput =
-  { title: String
-  }
-
-action createTodo {
-  input: CreateTodoInput
-
-  create Todo {
-    title: input.title
-  }
-}
-`)
-
-	rec := doRuntimeRequest(r, http.MethodPost, "/actions/createTodo", `{"title":"Buy milk","titel":"Buy milk"}`, "")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
 	}

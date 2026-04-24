@@ -17,19 +17,19 @@ func TestCollectWorkspaceDocumentsUsesOpenDocumentDirectoryWithoutWorkspaceRoots
 	if err := os.MkdirAll(filepath.Dir(openPath), 0o755); err != nil {
 		t.Fatalf("mkdir examples: %v", err)
 	}
-	if err := os.WriteFile(rootOnlyPath, []byte("entity Root {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(rootOnlyPath, []byte("(define root (entity (fields ((title string)))))\n"), 0o644); err != nil {
 		t.Fatalf("write root file: %v", err)
 	}
-	if err := os.WriteFile(openPath, []byte("entity Todo {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(openPath, []byte("(define todo (entity (fields ((title string)))))\n"), 0o644); err != nil {
 		t.Fatalf("write open file: %v", err)
 	}
-	if err := os.WriteFile(siblingPath, []byte("entity Shared {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(siblingPath, []byte("(define shared (entity (fields ((title string)))))\n"), 0o644); err != nil {
 		t.Fatalf("write sibling file: %v", err)
 	}
 
 	srv := &server{
 		documents: map[string]string{
-			filePathToURI(openPath): "entity Todo {}\n",
+			filePathToURI(openPath): "(define todo (entity (fields ((title string)))))\n",
 		},
 	}
 
@@ -49,31 +49,36 @@ func TestCollectWorkspaceDocumentsUsesOpenDocumentDirectoryWithoutWorkspaceRoots
 func TestDefinitionOnBelongsToEntityReferenceResolvesToEntityDeclaration(t *testing.T) {
 	uri := filePathToURI(filepath.Join(t.TempDir(), "todo-owned.mar"))
 	text := strings.Join([]string{
-		"entity User {",
-		"}",
+		"(define user",
+		"  (entity",
+		"    (fields",
+		"      ((email string)))))",
 		"",
-		"entity Todo {",
-		"  belongs_to owner: User optional",
-		"}",
+		"(define todo",
+		"  (entity",
+		"    (fields",
+		"      ((title string)))",
+		"    (belongs-to",
+		"      ((owner user)))))",
 		"",
 	}, "\n")
 
 	index := buildWorkspaceSymbolIndex(map[string]string{uri: text})
-	line := 4
-	character := strings.Index("  belongs_to owner: User optional", "User")
+	line := 10
+	character := strings.Index("      ((owner user)))", "user")
 	if character < 0 {
-		t.Fatalf("expected test fixture to contain User reference")
+		t.Fatalf("expected test fixture to contain user reference")
 	}
 
 	symbol, ok := index.symbolAt(uri, lspPosition{Line: line, Character: character})
 	if !ok {
-		t.Fatalf("expected symbol at belongs_to entity reference")
+		t.Fatalf("expected symbol at belongs-to entity reference")
 	}
 	if symbol.Kind != symbolEntity {
 		t.Fatalf("expected entity symbol, got %q", symbol.Kind)
 	}
-	if symbol.Name != "User" {
-		t.Fatalf("expected symbol name User, got %q", symbol.Name)
+	if symbol.Name != "user" {
+		t.Fatalf("expected symbol name user, got %q", symbol.Name)
 	}
 
 	def, ok := index.definition(symbol.Key)
@@ -88,75 +93,49 @@ func TestDefinitionOnBelongsToEntityReferenceResolvesToEntityDeclaration(t *test
 	}
 }
 
-func TestDefinitionOnBelongsToCurrentUserResolvesToUserEntityDeclaration(t *testing.T) {
+func TestDefinitionOnShortBelongsToResolvesToEntityDeclaration(t *testing.T) {
 	uri := filePathToURI(filepath.Join(t.TempDir(), "personal-todo.mar"))
 	text := strings.Join([]string{
-		"entity User {",
-		"}",
+		"(define user",
+		"  (entity",
+		"    (fields",
+		"      ((email string)))))",
 		"",
-		"entity PersonalTodo {",
-		"  belongs_to current_user",
-		"}",
+		"(define personal-todo",
+		"  (entity",
+		"    (fields",
+		"      ((title string)))",
+		"    (belongs-to",
+		"      ((user)))))",
 		"",
 	}, "\n")
 
 	index := buildWorkspaceSymbolIndex(map[string]string{uri: text})
-	line := 4
-	character := strings.Index("  belongs_to current_user", "current_user")
+	line := 10
+	character := strings.Index("      ((user)))", "user")
 	if character < 0 {
-		t.Fatalf("expected test fixture to contain current_user reference")
+		t.Fatalf("expected test fixture to contain user reference")
 	}
 
 	symbol, ok := index.symbolAt(uri, lspPosition{Line: line, Character: character})
 	if !ok {
-		t.Fatalf("expected symbol at belongs_to current_user reference")
+		t.Fatalf("expected symbol at belongs-to user reference")
 	}
 	if symbol.Kind != symbolEntity {
 		t.Fatalf("expected entity symbol, got %q", symbol.Kind)
 	}
-	if symbol.Name != "User" {
-		t.Fatalf("expected symbol name User, got %q", symbol.Name)
+	if symbol.Name != "user" {
+		t.Fatalf("expected symbol name user, got %q", symbol.Name)
 	}
 
 	def, ok := index.definition(symbol.Key)
 	if !ok {
-		t.Fatalf("expected definition for current_user reference")
+		t.Fatalf("expected definition for user reference")
 	}
 	if def.URI != uri {
 		t.Fatalf("expected definition in same document, got %q", def.URI)
 	}
 	if def.Range.Start.Line != 0 {
 		t.Fatalf("expected definition on line 0, got %d", def.Range.Start.Line)
-	}
-}
-
-func TestDefinitionOnNamedBelongsToCurrentUserResolvesToUserEntityDeclaration(t *testing.T) {
-	uri := filePathToURI(filepath.Join(t.TempDir(), "reviews.mar"))
-	text := strings.Join([]string{
-		"entity User {",
-		"}",
-		"",
-		"entity Review {",
-		"  belongs_to reviewer: current_user",
-		"}",
-		"",
-	}, "\n")
-
-	index := buildWorkspaceSymbolIndex(map[string]string{uri: text})
-	line := 4
-	character := strings.Index("  belongs_to reviewer: current_user", "current_user")
-	if character < 0 {
-		t.Fatalf("expected test fixture to contain current_user reference")
-	}
-
-	symbol, ok := index.symbolAt(uri, lspPosition{Line: line, Character: character})
-	if !ok {
-		t.Fatalf("expected symbol at named belongs_to current_user reference")
-	}
-	if symbol.Kind != symbolEntity {
-		t.Fatalf("expected entity symbol, got %q", symbol.Kind)
-	}
-	if symbol.Name != "User" {
-		t.Fatalf("expected symbol name User, got %q", symbol.Name)
 	}
 }

@@ -98,22 +98,28 @@ func iosMissingConfigError(path string, appName string) error {
 		return colorizeCLI(useColor, "\033[36m", value)
 	}
 	exampleName := iosExampleName(appName)
+	example := colorizeCLIMarSnippet(useColor, strings.Join([]string{
+		"(define app-config",
+		"  ((ios",
+		"     ((bundle-identifier \"com.example." + exampleName + "\")",
+		"      (server-url \"https://" + exampleName + ".example.com\")))))",
+	}, "\n"))
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n", colorizeCLI(useColor, "\033[1;31m", "iOS generation error"))
 	fmt.Fprintf(
 		&b,
-		"  ios.generate requires an ios block with %s and %s in %s\n",
-		highlightValue("bundle_identifier"),
-		highlightValue("server_url"),
+		"  ios.generate requires ios config with %s and %s in %s\n",
+		highlightValue("bundle-identifier"),
+		highlightValue("server-url"),
 		highlightValue(path),
 	)
 	fmt.Fprintf(&b, "\n%s\n", colorizeCLI(useColor, "\033[1;33m", "Hint:"))
-	fmt.Fprintf(&b, "  Add an %s block like:\n", colorizeCLI(useColor, "\033[1m", "ios"))
-	fmt.Fprintf(&b, "    %s {\n", colorizeCLI(useColor, "\033[1m", "ios"))
-	fmt.Fprintf(&b, "      bundle_identifier %s\n", highlightValue(`"com.example.`+exampleName+`"`))
-	fmt.Fprintf(&b, "      server_url %s\n", highlightValue(`"https://`+exampleName+`.example.com"`))
-	fmt.Fprintf(&b, "    }\n")
+	fmt.Fprintf(&b, "  Define app config like:\n")
+	for _, line := range strings.Split(example, "\n") {
+		fmt.Fprintf(&b, "    %s\n", line)
+	}
+	fmt.Fprintf(&b, "  and reference it from %s with %s.\n", highlightValue("define-app"), highlightValue("(config app-config)"))
 	return styledCLIError(strings.TrimRight(b.String(), "\n") + "\n")
 }
 
@@ -295,11 +301,24 @@ func mustIOSEmbeddedSchemaJSON(app *model.App) string {
 		for _, action := range app.Actions {
 			actions = append(actions, map[string]any{
 				"name":       action.Name,
+				"path":       model.PublicActionPath(action.Name),
 				"inputAlias": action.InputAlias,
 				"steps":      len(action.Steps),
 			})
 		}
 		payload["actions"] = actions
+	}
+	if len(app.Queries) > 0 {
+		queries := make([]map[string]any, 0, len(app.Queries))
+		for _, query := range app.Queries {
+			queries = append(queries, map[string]any{
+				"name":       query.Name,
+				"path":       model.PublicQueryPath(query.Name),
+				"parameters": query.Parameters,
+				"entity":     query.Entity,
+			})
+		}
+		payload["queries"] = queries
 	}
 	if app.Screens != nil {
 		payload["screens"] = app.Screens

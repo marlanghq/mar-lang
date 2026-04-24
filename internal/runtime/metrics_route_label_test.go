@@ -10,12 +10,16 @@ func TestMetricsRouteLabelUsesNotFoundForUnknownRoutes(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "metrics-route-label.db"), `
-app TodoApi
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      (((read create update delete)
+         true)))))
 
-entity Todo {
-  title: String
-  authorize read, create, update, delete when anonymous or user_authenticated
-}
+(define-app todo-api
+  (entities todo))
 `)
 
 	cases := []struct {
@@ -26,6 +30,7 @@ entity Todo {
 		{path: "/apple-touch-icon.png", want: "/not-found"},
 		{path: "/auth/not-a-real-route", want: "/not-found"},
 		{path: "/actions/not/valid", want: "/not-found"},
+		{path: "/queries/not/valid", want: "/not-found"},
 	}
 
 	for _, tc := range cases {
@@ -41,12 +46,16 @@ func TestMetricsRouteLabelPreservesKnownSpecialRoutes(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "metrics-route-label-known.db"), `
-app TodoApi
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      (((read create update delete)
+         true)))))
 
-entity Todo {
-  title: String
-  authorize read, create, update, delete when anonymous or user_authenticated
-}
+(define-app todo-api
+  (entities todo))
 `)
 
 	cases := []struct {
@@ -59,6 +68,7 @@ entity Todo {
 		{path: "/auth/logout", want: "/auth/logout"},
 		{path: "/auth/me", want: "/auth/me"},
 		{path: "/actions/sendReminder", want: "/actions/:name"},
+		{path: "/queries/open-todos", want: "/queries/:name"},
 		{path: "/todos", want: "/todos"},
 		{path: "/todos/123", want: "/todos/:id"},
 	}

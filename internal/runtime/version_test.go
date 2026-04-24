@@ -38,7 +38,7 @@ func TestVersionEndpointPublicPayload(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected app object in payload: %+v", payload)
 	}
-	if app["name"] != "AuthBootstrapApi" {
+	if app["name"] != "auth-bootstrap-api" {
 		t.Fatalf("unexpected app.name: %+v", app)
 	}
 	if app["manifestHash"] != "sha256:test-manifest-hash" {

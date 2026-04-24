@@ -17,11 +17,13 @@ func TestMigrationsCreateAndAddOptionalField(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-safe.db")
 
 	appV1 := mustParseApp(t, `
-app MigrationApi
+(define book
+  (entity
+    (fields
+      ((title string)))))
 
-entity Book {
-  title: String
-}
+(define-app migration-api
+  (entities book))
 `)
 	appV1.Database = dbPath
 
@@ -30,12 +32,14 @@ entity Book {
 	}
 
 	appV2 := mustParseApp(t, `
-app MigrationApi
+(define book
+  (entity
+    (fields
+      ((title string)
+       (notes string optional)))))
 
-entity Book {
-  title: String
-  notes: String optional
-}
+(define-app migration-api
+  (entities book))
 `)
 	appV2.Database = dbPath
 
@@ -44,13 +48,13 @@ entity Book {
 	}
 
 	db := sqlitecli.Open(dbPath)
-	rows, err := db.QueryRows(`PRAGMA table_info("books")`)
+	rows, err := db.QueryRows(`PRAGMA table_info("book")`)
 	if err != nil {
 		t.Fatalf("PRAGMA table_info failed: %v", err)
 	}
 	notes, ok := findColumn(rows, "notes")
 	if !ok {
-		t.Fatalf("expected notes column in books table, got rows: %+v", rows)
+		t.Fatalf("expected notes column in book table, got rows: %+v", rows)
 	}
 	if got := strings.ToUpper(fmt.Sprintf("%v", notes["type"])); got != "TEXT" {
 		t.Fatalf("unexpected notes column type: %s", got)
@@ -66,12 +70,14 @@ func TestMigrationsBlockTypeChange(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-type-block.db")
 
 	appV1 := mustParseApp(t, `
-app MigrationApi
+(define book
+  (entity
+    (fields
+      ((title string)
+       (price decimal)))))
 
-entity Book {
-  title: String
-  price: Float
-}
+(define-app migration-api
+  (entities book))
 `)
 	appV1.Database = dbPath
 	if _, err := New(appV1); err != nil {
@@ -79,12 +85,14 @@ entity Book {
 	}
 
 	appV2 := mustParseApp(t, `
-app MigrationApi
+(define book
+  (entity
+    (fields
+      ((title string)
+       (price string)))))
 
-entity Book {
-  title: String
-  price: String
-}
+(define-app migration-api
+  (entities book))
 `)
 	appV2.Database = dbPath
 	_, err := New(appV2)
@@ -107,11 +115,13 @@ func TestMigrationsAllowAddingRequiredFieldToEmptyTable(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-required-empty.db")
 
 	appV1 := mustParseApp(t, `
-app MigrationApi
+(define book
+  (entity
+    (fields
+      ((title string)))))
 
-entity Book {
-  title: String
-}
+(define-app migration-api
+  (entities book))
 `)
 	appV1.Database = dbPath
 	if _, err := New(appV1); err != nil {
@@ -119,12 +129,14 @@ entity Book {
 	}
 
 	appV2 := mustParseApp(t, `
-app MigrationApi
+(define book
+  (entity
+    (fields
+      ((title string)
+       (stock int)))))
 
-entity Book {
-  title: String
-  stock: Int
-}
+(define-app migration-api
+  (entities book))
 `)
 	appV2.Database = dbPath
 	if _, err := New(appV2); err != nil {
@@ -132,13 +144,13 @@ entity Book {
 	}
 
 	db := sqlitecli.Open(dbPath)
-	rows, err := db.QueryRows(`PRAGMA table_info("books")`)
+	rows, err := db.QueryRows(`PRAGMA table_info("book")`)
 	if err != nil {
 		t.Fatalf("PRAGMA table_info failed: %v", err)
 	}
 	stock, ok := findColumn(rows, "stock")
 	if !ok {
-		t.Fatalf("expected stock column in books table, got rows: %+v", rows)
+		t.Fatalf("expected stock column in book table, got rows: %+v", rows)
 	}
 	if got := int64Value(stock["notnull"]); got != 1 {
 		t.Fatalf("expected stock to be not null, got notnull=%d", got)
@@ -151,28 +163,32 @@ func TestMigrationsBlockAddingRequiredFieldWhenTableHasRows(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-required-block.db")
 
 	appV1 := mustParseApp(t, `
-app MigrationApi
+(define book
+  (entity
+    (fields
+      ((title string)))))
 
-entity Book {
-  title: String
-}
+(define-app migration-api
+  (entities book))
 `)
 	appV1.Database = dbPath
 	r1, err := New(appV1)
 	if err != nil {
 		t.Fatalf("runtime.New(v1) failed: %v", err)
 	}
-	if _, err := r1.DB.Exec(`INSERT INTO books (title, created_at, updated_at) VALUES (?, ?, ?)`, "First book", int64(1), int64(1)); err != nil {
+	if _, err := r1.DB.Exec(`INSERT INTO book (title, created_at, updated_at) VALUES (?, ?, ?)`, "First book", int64(1), int64(1)); err != nil {
 		t.Fatalf("seed insert failed: %v", err)
 	}
 
 	appV2 := mustParseApp(t, `
-app MigrationApi
+(define book
+  (entity
+    (fields
+      ((title string)
+       (stock int)))))
 
-entity Book {
-  title: String
-  stock: Int
-}
+(define-app migration-api
+  (entities book))
 `)
 	appV2.Database = dbPath
 	_, err = New(appV2)
@@ -192,28 +208,34 @@ func TestMigrationsAutoAddRequiredFieldWithDefault(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-required-default.db")
 
 	appV1 := mustParseApp(t, `
-app MigrationApi
+(define book
+  (entity
+    (fields
+      ((title string)))))
 
-entity Book {
-  title: String
-}
+(define-app migration-api
+  (entities book))
 `)
 	appV1.Database = dbPath
 	r1, err := New(appV1)
 	if err != nil {
 		t.Fatalf("runtime.New(v1) failed: %v", err)
 	}
-	if _, err := r1.DB.Exec(`INSERT INTO books (title, created_at, updated_at) VALUES (?, ?, ?)`, "First book", int64(1), int64(1)); err != nil {
+	if _, err := r1.DB.Exec(`INSERT INTO book (title, created_at, updated_at) VALUES (?, ?, ?)`, "First book", int64(1), int64(1)); err != nil {
 		t.Fatalf("seed insert failed: %v", err)
 	}
 
 	appV2 := mustParseApp(t, `
-app MigrationApi
+(define book
+  (entity
+    (fields
+      ((title string)
+       (stock int)))
+    (defaults
+      ((stock 0)))))
 
-entity Book {
-  title: String
-  stock: Int default 0
-}
+(define-app migration-api
+  (entities book))
 `)
 	appV2.Database = dbPath
 
@@ -222,13 +244,13 @@ entity Book {
 	}
 
 	db := sqlitecli.Open(dbPath)
-	rows, err := db.QueryRows(`PRAGMA table_info("books")`)
+	rows, err := db.QueryRows(`PRAGMA table_info("book")`)
 	if err != nil {
 		t.Fatalf("PRAGMA table_info failed: %v", err)
 	}
 	stock, ok := findColumn(rows, "stock")
 	if !ok {
-		t.Fatalf("expected stock column in books table, got rows: %+v", rows)
+		t.Fatalf("expected stock column in book table, got rows: %+v", rows)
 	}
 	if got := int64Value(stock["notnull"]); got != 1 {
 		t.Fatalf("expected stock to be not null, got notnull=%d", got)
@@ -237,7 +259,7 @@ entity Book {
 		t.Fatalf("expected stock default 0, got %#v", stock["dflt_value"])
 	}
 
-	row, ok, err := db.QueryRow(`SELECT title, stock FROM books WHERE title = ?`, "First book")
+	row, ok, err := db.QueryRow(`SELECT title, stock FROM book WHERE title = ?`, "First book")
 	if err != nil {
 		t.Fatalf("select migrated row failed: %v", err)
 	}
@@ -249,17 +271,56 @@ entity Book {
 	}
 }
 
+func TestMigrationsCreateEntityUniqueIndex(t *testing.T) {
+	requireSQLite3(t)
+
+	dbPath := filepath.Join(t.TempDir(), "migration-entity-unique.db")
+
+	app := mustParseApp(t, `
+(define handle
+  (entity
+    (fields
+      ((realm string)
+       (value string)))
+    (unique
+      ((realm value)))))
+
+(define-app twitterish
+  (entities handle))
+`)
+	app.Database = dbPath
+
+	r, err := New(app)
+	if err != nil {
+		t.Fatalf("runtime.New failed: %v", err)
+	}
+
+	_, err = r.DB.Exec(`INSERT INTO handle (realm, value, created_at, updated_at) VALUES (?, ?, ?, ?)`, "user", "marcio", int64(1), int64(1))
+	if err != nil {
+		t.Fatalf("first insert failed: %v", err)
+	}
+	_, err = r.DB.Exec(`INSERT INTO handle (realm, value, created_at, updated_at) VALUES (?, ?, ?, ?)`, "user", "marcio", int64(2), int64(2))
+	if err == nil {
+		t.Fatal("expected duplicate composite unique insert to fail")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "unique") {
+		t.Fatalf("expected unique constraint error, got %v", err)
+	}
+}
+
 func TestMigrationsAllowNullabilityChangeWhenTableIsEmpty(t *testing.T) {
 	requireSQLite3(t)
 
 	dbPath := filepath.Join(t.TempDir(), "migration-nullability-empty.db")
 
 	appV1 := mustParseApp(t, `
-app MigrationApi
+(define student
+  (entity
+    (fields
+      ((birth-date date)))))
 
-entity Student {
-  birthDate: Date
-}
+(define-app migration-api
+  (entities student))
 `)
 	appV1.Database = dbPath
 	if _, err := New(appV1); err != nil {
@@ -267,11 +328,13 @@ entity Student {
 	}
 
 	appV2 := mustParseApp(t, `
-app MigrationApi
+(define student
+  (entity
+    (fields
+      ((birth-date date optional)))))
 
-entity Student {
-  birthDate: Date optional
-}
+(define-app migration-api
+  (entities student))
 `)
 	appV2.Database = dbPath
 	if _, err := New(appV2); err != nil {
@@ -279,13 +342,13 @@ entity Student {
 	}
 
 	db := sqlitecli.Open(dbPath)
-	rows, err := db.QueryRows(`PRAGMA table_info("students")`)
+	rows, err := db.QueryRows(`PRAGMA table_info("student")`)
 	if err != nil {
 		t.Fatalf("PRAGMA table_info failed: %v", err)
 	}
-	birthDate, ok := findColumn(rows, "birthDate")
+	birthDate, ok := findColumn(rows, "birth_date")
 	if !ok {
-		t.Fatalf("expected birthDate column in students table, got rows: %+v", rows)
+		t.Fatalf("expected birth_date column in student table, got rows: %+v", rows)
 	}
 	if got := int64Value(birthDate["notnull"]); got != 0 {
 		t.Fatalf("expected birthDate to be nullable, got notnull=%d", got)
@@ -298,27 +361,31 @@ func TestMigrationsBlockNullabilityChangeWhenTableHasRows(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-nullability-block.db")
 
 	appV1 := mustParseApp(t, `
-app MigrationApi
+(define student
+  (entity
+    (fields
+      ((birth-date date)))))
 
-entity Student {
-  birthDate: Date
-}
+(define-app migration-api
+  (entities student))
 `)
 	appV1.Database = dbPath
 	r1, err := New(appV1)
 	if err != nil {
 		t.Fatalf("runtime.New(v1) failed: %v", err)
 	}
-	if _, err := r1.DB.Exec(`INSERT INTO students (birthDate, created_at, updated_at) VALUES (?, ?, ?)`, int64(0), int64(1), int64(1)); err != nil {
+	if _, err := r1.DB.Exec(`INSERT INTO student (birth_date, created_at, updated_at) VALUES (?, ?, ?)`, int64(0), int64(1), int64(1)); err != nil {
 		t.Fatalf("seed insert failed: %v", err)
 	}
 
 	appV2 := mustParseApp(t, `
-app MigrationApi
+(define student
+  (entity
+    (fields
+      ((birth-date date optional)))))
 
-entity Student {
-  birthDate: Date optional
-}
+(define-app migration-api
+  (entities student))
 `)
 	appV2.Database = dbPath
 	_, err = New(appV2)
@@ -338,16 +405,15 @@ func TestMigrationsCreateForeignKeyForNewRelationTable(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-new-relation-fk.db")
 
 	app := mustParseApp(t, `
-app RelationCreateApi
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (belongs-to
+      ((user)))))
 
-entity User {
-  email: String
-}
-
-entity Todo {
-  title: String
-  belongs_to User
-}
+(define-app relation-create-api
+  (entities todo))
 `)
 	app.Database = dbPath
 
@@ -356,12 +422,12 @@ entity Todo {
 	}
 
 	db := sqlitecli.Open(dbPath)
-	rows, err := db.QueryRows(`PRAGMA foreign_key_list("todos")`)
+	rows, err := db.QueryRows(`PRAGMA foreign_key_list("todo")`)
 	if err != nil {
 		t.Fatalf("PRAGMA foreign_key_list failed: %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("expected one foreign key on todos, got %+v", rows)
+		t.Fatalf("expected one foreign key on todo, got %+v", rows)
 	}
 	fk := rows[0]
 	if fmt.Sprintf("%v", fk["from"]) != "user_id" {
@@ -381,15 +447,13 @@ func TestMigrationsBlockAddingRelationToExistingTable(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-existing-relation-block.db")
 
 	appV1 := mustParseApp(t, `
-app RelationBlockApi
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity User {
-  email: String
-}
-
-entity Todo {
-  title: String
-}
+(define-app relation-block-api
+  (entities todo))
 `)
 	appV1.Database = dbPath
 	if _, err := New(appV1); err != nil {
@@ -397,16 +461,15 @@ entity Todo {
 	}
 
 	appV2 := mustParseApp(t, `
-app RelationBlockApi
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (belongs-to
+      ((user)))))
 
-entity User {
-  email: String
-}
-
-entity Todo {
-  title: String
-  belongs_to User
-}
+(define-app relation-block-api
+  (entities todo))
 `)
 	appV2.Database = dbPath
 
@@ -416,10 +479,10 @@ entity Todo {
 	}
 
 	msg := err.Error()
-	if !strings.Contains(msg, `table "todos" already exists`) {
+	if !strings.Contains(msg, `table "todo" already exists`) {
 		t.Fatalf("unexpected error message: %v", err)
 	}
-	if !strings.Contains(msg, `todos.user_id -> users.id`) {
+	if !strings.Contains(msg, `todo.user_id -> users.id`) {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 	if !strings.Contains(msg, `Migrate the table manually, then restart the app.`) {
@@ -428,7 +491,7 @@ entity Todo {
 	if !strings.Contains(msg, `Suggested Manual Migration SQL:`) {
 		t.Fatalf("unexpected error message: %v", err)
 	}
-	if !strings.Contains(msg, `CREATE TABLE todos_new (`) {
+	if !strings.Contains(msg, `CREATE TABLE todo_new (`) {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 	if !strings.Contains(msg, `/* replace NULL with a valid users.id value */ NULL AS user_id`) {
@@ -441,11 +504,13 @@ func TestMigrationsCreateAuthEmailUniqueIndexForInternalUsers(t *testing.T) {
 
 	dbPath := filepath.Join(t.TempDir(), "migration-auth-index-internal.db")
 	app := mustParseApp(t, `
-app InternalAuthApi
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  title: String
-}
+(define-app internal-auth-api
+  (entities todo))
 `)
 	app.Database = dbPath
 
@@ -472,16 +537,14 @@ func TestMigrationsCreateAuthEmailUniqueIndexForAppUsers(t *testing.T) {
 
 	dbPath := filepath.Join(t.TempDir(), "migration-auth-index-app.db")
 	app := mustParseApp(t, `
-app AppAuthApi
+(define app-auth ())
 
-entity User {
-  id: Int primary auto
-  email: String
-  role: String
-}
+(define user
+  (entity))
 
-auth {
-}
+(define-app app-auth-api
+  (auth app-auth)
+  (entities user))
 `)
 	app.Database = dbPath
 

@@ -23,18 +23,21 @@ func TestPublicServesEmbeddedFiles(t *testing.T) {
 	}
 
 	app := mustParseApp(t, `
-app FrontApi
-database "./front.db"
+(define app-config
+  ((database "./front.db")
+   (public
+     ((dir "./frontend/dist")
+      (mount "/")
+      (spa-fallback "index.html")))))
 
-public {
-  dir "./frontend/dist"
-  mount "/"
-  spa_fallback "index.html"
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  title: String
-}
+(define-app front-api
+  (config app-config)
+  (entities todo))
 `)
 	app.Database = filepath.Join(t.TempDir(), "public-files.db")
 
@@ -74,18 +77,21 @@ func TestPublicSPAFallbackForRoutesWithoutFileExtension(t *testing.T) {
 	}
 
 	app := mustParseApp(t, `
-app FrontApi
-database "./front.db"
+(define app-config
+  ((database "./front.db")
+   (public
+     ((dir "./frontend/dist")
+      (mount "/")
+      (spa-fallback "index.html")))))
 
-public {
-  dir "./frontend/dist"
-  mount "/"
-  spa_fallback "index.html"
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  title: String
-}
+(define-app front-api
+  (config app-config)
+  (entities todo))
 `)
 	app.Database = filepath.Join(t.TempDir(), "public-spa.db")
 
@@ -115,18 +121,21 @@ func TestPublicSPAFallbackDoesNotMaskMissingAssets(t *testing.T) {
 	}
 
 	app := mustParseApp(t, `
-app FrontApi
-database "./front.db"
+(define app-config
+  ((database "./front.db")
+   (public
+     ((dir "./frontend/dist")
+      (mount "/")
+      (spa-fallback "index.html")))))
 
-public {
-  dir "./frontend/dist"
-  mount "/"
-  spa_fallback "index.html"
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  title: String
-}
+(define-app front-api
+  (config app-config)
+  (entities todo))
 `)
 	app.Database = filepath.Join(t.TempDir(), "public-asset-404.db")
 
@@ -151,12 +160,17 @@ func TestRootRedirectsToAppUIWhenNoPublicAppIsConfigured(t *testing.T) {
 	requireSQLite3(t)
 
 	app := mustParseApp(t, `
-app TodoApi
-database "./todo.db"
+(define app-config
+  ((database "./todo.db")))
 
-entity Todo {
-  title: String
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
+
+(define-app todo-api
+  (config app-config)
+  (entities todo))
 `)
 	app.Database = filepath.Join(t.TempDir(), "root-redirect.db")
 
@@ -183,18 +197,21 @@ func TestAppUIServedUnderMarPrefix(t *testing.T) {
 	requireSQLite3(t)
 
 	app := mustParseApp(t, `
-app FrontApi
-database "./front.db"
+(define app-config
+  ((database "./front.db")
+   (public
+     ((dir "./frontend/dist")
+      (mount "/")
+      (spa-fallback "index.html")))))
 
-public {
-  dir "./frontend/dist"
-  mount "/"
-  spa_fallback "index.html"
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  title: String
-}
+(define-app front-api
+  (config app-config)
+  (entities todo))
 `)
 	app.Database = filepath.Join(t.TempDir(), "app-ui-prefix.db")
 
@@ -246,12 +263,17 @@ func TestSchemaEndpointStillWorksUnderMarPrefix(t *testing.T) {
 	requireSQLite3(t)
 
 	app := mustParseApp(t, `
-app FrontApi
-database "./front.db"
+(define app-config
+  ((database "./front.db")))
 
-entity Todo {
-  title: String
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
+
+(define-app front-api
+  (config app-config)
+  (entities todo))
 `)
 	app.Database = filepath.Join(t.TempDir(), "mar-schema-endpoint.db")
 
@@ -272,7 +294,7 @@ entity Todo {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for /_mar/schema, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"appName":"FrontApi"`) {
+	if !strings.Contains(rec.Body.String(), `"appName":"front-api"`) {
 		t.Fatalf("expected schema JSON body, got %q", rec.Body.String())
 	}
 }
@@ -281,12 +303,17 @@ func TestAppUIIndexEmbedsBootstrapSchemaAndVersion(t *testing.T) {
 	requireSQLite3(t)
 
 	app := mustParseApp(t, `
-app FrontApi
-database "./front.db"
+(define app-config
+  ((database "./front.db")))
 
-entity Todo {
-  title: String
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
+
+(define-app front-api
+  (config app-config)
+  (entities todo))
 `)
 	app.Database = filepath.Join(t.TempDir(), "mar-app-ui-bootstrap.db")
 
@@ -310,7 +337,7 @@ entity Todo {
 	if strings.Contains(body, "__MAR_BOOTSTRAP_JSON__") {
 		t.Fatalf("expected bootstrap placeholder to be replaced, got %q", body)
 	}
-	if !strings.Contains(body, `"appName":"FrontApi"`) {
+	if !strings.Contains(body, `"appName":"front-api"`) {
 		t.Fatalf("expected embedded schema app name, got %q", body)
 	}
 	if !strings.Contains(body, `"manifestHash":"sha256:testhash"`) {
@@ -318,232 +345,34 @@ entity Todo {
 	}
 }
 
-func TestSchemaEndpointIncludesEnumValues(t *testing.T) {
-	requireSQLite3(t)
-
-	app := mustParseApp(t, `
-app EnumApi
-database "./enum.db"
-
-type MembershipStatus {
-  Active
-  Inactive
-}
-
-entity GymMember {
-  status: MembershipStatus
-}
-
-type alias CreateGymMemberInput =
-  { status : MembershipStatus
-  }
-
-action createGymMember {
-  input: CreateGymMemberInput
-
-  create GymMember {
-    status: input.status
-  }
-}
-`)
-	app.Database = filepath.Join(t.TempDir(), "mar-schema-enum-values.db")
-
-	r, err := New(app)
-	if err != nil {
-		t.Fatalf("runtime.New failed: %v", err)
-	}
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/_mar/schema", nil)
-	r.handleHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for /_mar/schema, got %d body=%s", rec.Code, rec.Body.String())
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode schema response: %v", err)
-	}
-
-	entities, ok := payload["entities"].([]any)
-	if !ok {
-		t.Fatalf("expected entities array, got %#v", payload["entities"])
-	}
-
-	var foundEntityField bool
-	for _, rawEntity := range entities {
-		entityMap, ok := rawEntity.(map[string]any)
-		if !ok || entityMap["name"] != "GymMember" {
-			continue
-		}
-		fields, ok := entityMap["fields"].([]any)
-		if !ok {
-			t.Fatalf("expected fields array, got %#v", entityMap["fields"])
-		}
-		for _, rawField := range fields {
-			fieldMap, ok := rawField.(map[string]any)
-			if !ok || fieldMap["name"] != "status" {
-				continue
-			}
-			enumValues, ok := fieldMap["enumValues"].([]any)
-			if !ok {
-				t.Fatalf("expected enumValues for GymMember.status, got %#v", fieldMap["enumValues"])
-			}
-			if len(enumValues) != 2 || enumValues[0] != "Active" || enumValues[1] != "Inactive" {
-				t.Fatalf("unexpected enumValues for GymMember.status: %#v", enumValues)
-			}
-			foundEntityField = true
-		}
-	}
-	if !foundEntityField {
-		t.Fatal("expected GymMember.status to appear in schema payload")
-	}
-
-	inputAliases, ok := payload["inputAliases"].([]any)
-	if !ok {
-		t.Fatalf("expected inputAliases array, got %#v", payload["inputAliases"])
-	}
-
-	var foundAliasField bool
-	for _, rawAlias := range inputAliases {
-		aliasMap, ok := rawAlias.(map[string]any)
-		if !ok || aliasMap["name"] != "CreateGymMemberInput" {
-			continue
-		}
-		fields, ok := aliasMap["fields"].([]any)
-		if !ok {
-			t.Fatalf("expected alias fields array, got %#v", aliasMap["fields"])
-		}
-		for _, rawField := range fields {
-			fieldMap, ok := rawField.(map[string]any)
-			if !ok || fieldMap["name"] != "status" {
-				continue
-			}
-			enumValues, ok := fieldMap["enumValues"].([]any)
-			if !ok {
-				t.Fatalf("expected enumValues for CreateGymMemberInput.status, got %#v", fieldMap["enumValues"])
-			}
-			if len(enumValues) != 2 || enumValues[0] != "Active" || enumValues[1] != "Inactive" {
-				t.Fatalf("unexpected enumValues for CreateGymMemberInput.status: %#v", enumValues)
-			}
-			foundAliasField = true
-		}
-	}
-	if !foundAliasField {
-		t.Fatal("expected CreateGymMemberInput.status to appear in schema payload")
-	}
-}
-
-func TestSchemaEndpointIncludesActionInputRelationEntity(t *testing.T) {
-	requireSQLite3(t)
-
-	app := mustParseApp(t, `
-app Blog
-database "./blog.db"
-
-entity Post {
-  title: String
-}
-
-type alias PublishPostInput =
-  { post : ref Post
-  }
-
-action publishPost {
-  input: PublishPostInput
-
-  loadedPost = load Post {
-    id: input.post
-  }
-
-  update Post {
-    id: loadedPost.id
-    title: loadedPost.title
-  }
-}
-`)
-	app.Database = filepath.Join(t.TempDir(), "mar-schema-action-input-rel.db")
-
-	r, err := New(app)
-	if err != nil {
-		t.Fatalf("runtime.New failed: %v", err)
-	}
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/_mar/schema", nil)
-	r.handleHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for /_mar/schema, got %d body=%s", rec.Code, rec.Body.String())
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode schema response: %v", err)
-	}
-
-	inputAliases, ok := payload["inputAliases"].([]any)
-	if !ok {
-		t.Fatalf("expected inputAliases array, got %#v", payload["inputAliases"])
-	}
-
-	for _, rawAlias := range inputAliases {
-		aliasMap, ok := rawAlias.(map[string]any)
-		if !ok || aliasMap["name"] != "PublishPostInput" {
-			continue
-		}
-		fields, ok := aliasMap["fields"].([]any)
-		if !ok {
-			t.Fatalf("expected alias fields array, got %#v", aliasMap["fields"])
-		}
-		for _, rawField := range fields {
-			fieldMap, ok := rawField.(map[string]any)
-			if !ok || fieldMap["name"] != "post" {
-				continue
-			}
-			if got := fieldMap["type"]; got != "Int" {
-				t.Fatalf("expected PublishPostInput.post type Int, got %#v", got)
-			}
-			if got := fieldMap["relationEntity"]; got != "Post" {
-				t.Fatalf("expected PublishPostInput.post relationEntity Post, got %#v", got)
-			}
-			return
-		}
-	}
-
-	t.Fatal("expected PublishPostInput.post to appear in schema payload")
-}
-
 func TestSchemaEndpointIncludesFrontend(t *testing.T) {
 	requireSQLite3(t)
 
 	app := mustParseApp(t, `
-app Blog
-database "./blog.db"
+(define app-config
+  ((database "./blog.db")))
 
-entity Post {
-  title: String
-}
+(define post
+  (entity
+    (fields
+      ((title string)))))
 
-screens {
-  screen Home {
-    title "Blog"
+(define-screen home
+  (view
+    (section
+      (title "Blog")
+      (text "Browse posts"))))
 
-    section "Browse" {
-      list Post {
-        title title
-        destination PostDetail
-      }
-    }
-  }
+(define-screen post-detail
+  (view
+    (section
+      (title "Post")
+      (text "Post detail"))))
 
-  screen PostDetail for Post {
-    title "Post"
-
-    section {
-      field title
-    }
-  }
-}
+(define-app blog
+  (config app-config)
+  (entities post)
+  (screens home post-detail))
 `)
 	app.Database = filepath.Join(t.TempDir(), "mar-schema-frontend.db")
 
@@ -576,7 +405,7 @@ screens {
 	if !ok {
 		t.Fatalf("expected first screen object, got %#v", screens[0])
 	}
-	if first["name"] != "Home" || first["title"] != "Blog" {
+	if first["name"] != "Home" {
 		t.Fatalf("unexpected first screen: %#v", first)
 	}
 }

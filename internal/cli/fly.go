@@ -680,7 +680,7 @@ func runFlyDeploy(inputPath string, assumeYes bool) error {
 
 	if app.Auth != nil && looksLikePlaceholderEmail(strings.TrimSpace(app.Auth.EmailFrom)) {
 		fmt.Printf("\n%s\n", colorizeCLI(useColor, "\033[1;31m", "Warnings"))
-		fmt.Printf("  %s\n", "auth.email_from still looks like a placeholder: "+strings.TrimSpace(app.Auth.EmailFrom))
+		fmt.Printf("  %s\n", "app-auth from still looks like a placeholder: "+strings.TrimSpace(app.Auth.EmailFrom))
 	}
 
 	fmt.Printf("\n%s\n", colorizeCLI(useColor, "\033[1;33m", "Step 3/3"))
@@ -1190,13 +1190,16 @@ func looksLikePlaceholderEmail(value string) bool {
 
 func placeholderEmailFlyInitError(email string) error {
 	useColor := cliSupportsANSIStream(os.Stderr)
-	fieldName := colorizeCLI(useColor, "\033[1m", "auth.email_from")
+	fieldName := colorizeCLI(useColor, "\033[1m", "app-auth from")
 	emailValue := colorizeCLI(useColor, "\033[36m", email)
 	url := colorizeCLI(useColor, "\033[34m", "https://mar-lang.dev/#advanced/deploy")
-	authKeyword := colorizeCLI(useColor, "\033[1m", "auth")
-	exampleValues := func(value string) string {
-		return colorizeCLI(useColor, "\033[36m", value)
-	}
+	example := colorizeCLIMarSnippet(useColor, strings.Join([]string{
+		"(define app-auth",
+		"  ((from \"no-reply@yourdomain.com\")",
+		"   (smtp-host \"smtp.resend.com\")",
+		"   (smtp-username \"resend\")",
+		"   (smtp-password-env \"RESEND_API_KEY\")))",
+	}, "\n"))
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n", colorizeCLI(useColor, "\033[1;31m", "Fly init blocked"))
@@ -1209,12 +1212,9 @@ func placeholderEmailFlyInitError(email string) error {
 	fmt.Fprintf(&b, "  We currently recommend Resend for the simplest setup.\n")
 	fmt.Fprintf(&b, "\n")
 	fmt.Fprintf(&b, "  Example:\n")
-	fmt.Fprintf(&b, "    %s {\n", authKeyword)
-	fmt.Fprintf(&b, "      email_from %s\n", exampleValues("\"no-reply@yourdomain.com\""))
-	fmt.Fprintf(&b, "      smtp_host %s\n", exampleValues("\"smtp.resend.com\""))
-	fmt.Fprintf(&b, "      smtp_username %s\n", exampleValues("\"resend\""))
-	fmt.Fprintf(&b, "      smtp_password_env %s\n", exampleValues("\"RESEND_API_KEY\""))
-	fmt.Fprintf(&b, "    }\n")
+	for _, line := range strings.Split(example, "\n") {
+		fmt.Fprintf(&b, "    %s\n", line)
+	}
 	fmt.Fprintf(&b, "\n")
 	fmt.Fprintf(&b, "  Learn more:\n")
 	fmt.Fprintf(&b, "    %s\n", url)
@@ -1239,10 +1239,13 @@ func validateFlyAuthForDeploy(app *model.App, title string) error {
 func missingSMTPFlyDeployError(title string) error {
 	useColor := cliSupportsANSIStream(os.Stderr)
 	url := colorizeCLI(useColor, "\033[34m", "https://mar-lang.dev/#advanced/deploy")
-	authKeyword := colorizeCLI(useColor, "\033[1m", "auth")
-	exampleValues := func(value string) string {
-		return colorizeCLI(useColor, "\033[36m", value)
-	}
+	example := colorizeCLIMarSnippet(useColor, strings.Join([]string{
+		"(define app-auth",
+		"  ((from \"no-reply@yourdomain.com\")",
+		"   (smtp-host \"smtp.resend.com\")",
+		"   (smtp-username \"resend\")",
+		"   (smtp-password-env \"RESEND_API_KEY\")))",
+	}, "\n"))
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n", colorizeCLI(useColor, "\033[1;31m", title))
@@ -1254,12 +1257,9 @@ func missingSMTPFlyDeployError(title string) error {
 	fmt.Fprintf(&b, "  We currently recommend Resend for the simplest setup.\n")
 	fmt.Fprintf(&b, "\n")
 	fmt.Fprintf(&b, "  Example:\n")
-	fmt.Fprintf(&b, "    %s {\n", authKeyword)
-	fmt.Fprintf(&b, "      email_from %s\n", exampleValues("\"no-reply@yourdomain.com\""))
-	fmt.Fprintf(&b, "      smtp_host %s\n", exampleValues("\"smtp.resend.com\""))
-	fmt.Fprintf(&b, "      smtp_username %s\n", exampleValues("\"resend\""))
-	fmt.Fprintf(&b, "      smtp_password_env %s\n", exampleValues("\"RESEND_API_KEY\""))
-	fmt.Fprintf(&b, "    }\n")
+	for _, line := range strings.Split(example, "\n") {
+		fmt.Fprintf(&b, "    %s\n", line)
+	}
 	fmt.Fprintf(&b, "\n")
 	fmt.Fprintf(&b, "  Learn more:\n")
 	fmt.Fprintf(&b, "    %s\n", url)

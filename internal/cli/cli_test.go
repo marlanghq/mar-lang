@@ -72,7 +72,7 @@ func TestFormatParseCLIErrorAddsHintForMissingAppDeclaration(t *testing.T) {
 	if !strings.Contains(msg, "missing app declaration") {
 		t.Fatalf("expected base parse message, got %q", msg)
 	}
-	if !strings.Contains(msg, "Hint:\n  Add an app declaration near the top of the file. Example: app Todo") {
+	if !strings.Contains(msg, "Hint:\n  Add a define-app declaration near the bottom of the file. Example: (define-app todo)") {
 		t.Fatalf("expected missing app declaration hint, got %q", msg)
 	}
 }
@@ -80,7 +80,7 @@ func TestFormatParseCLIErrorAddsHintForMissingAppDeclaration(t *testing.T) {
 func TestFormatParseCLIErrorSeparatesExplicitParserHintBlock(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 
-	err := formatParseCLIError(errors.New("line 46: ios.server_url is required.\n\nHint:\n  Add an ios block like:\n  ios {\n    bundle_identifier \"com.example.school\"\n    server_url \"https://school.example.com\"\n  }"))
+	err := formatParseCLIError(errors.New("line 46: ios.server-url is required.\n\nHint:\n  Add a config definition like:\n  (define app-config\n    ((ios\n       ((bundle-identifier \"com.example.school\")\n        (server-url \"https://school.example.com\")))))"))
 	if err == nil {
 		t.Fatal("expected formatted parse error")
 	}
@@ -89,11 +89,36 @@ func TestFormatParseCLIErrorSeparatesExplicitParserHintBlock(t *testing.T) {
 	if !strings.Contains(msg, "Parse error") {
 		t.Fatalf("expected parse error title, got %q", msg)
 	}
-	if !strings.Contains(msg, "line 46: ios.server_url is required.") {
+	if !strings.Contains(msg, "line 46: ios.server-url is required.") {
 		t.Fatalf("expected base parse message, got %q", msg)
 	}
-	if !strings.Contains(msg, "Hint:\n  Add an ios block like:\n  ios {\n    bundle_identifier \"com.example.school\"\n    server_url \"https://school.example.com\"\n  }") {
+	if !strings.Contains(msg, "Hint:\n  Add a config definition like:\n  (define app-config\n    ((ios\n       ((bundle-identifier \"com.example.school\")\n        (server-url \"https://school.example.com\")))))") {
 		t.Fatalf("expected explicit parser hint block, got %q", msg)
+	}
+}
+
+func TestHighlightParseCLIMessageColorsInlineMarSnippet(t *testing.T) {
+	got := highlightParseCLIMessage(true, "Add a define-app declaration near the bottom of the file. Example: (define-app todo)")
+
+	if !strings.Contains(got, "\033[38;5;141mdefine-app\033[0m") {
+		t.Fatalf("expected define-app form to use Mar snippet color, got %q", got)
+	}
+	if !strings.Contains(got, "\033[38;5;110mtodo\033[0m") {
+		t.Fatalf("expected todo symbol to use Mar snippet color, got %q", got)
+	}
+}
+
+func TestHighlightParseCLIMessageColorsMultilineMarSnippet(t *testing.T) {
+	got := highlightParseCLIMessage(true, "Add a config definition like:\n(define app-config\n  ((ios\n     ((bundle-identifier \"com.example.school\")\n      (server-url \"https://school.example.com\")))))")
+
+	if !strings.Contains(got, "\033[38;5;141mdefine\033[0m") {
+		t.Fatalf("expected define form to use Mar snippet color, got %q", got)
+	}
+	if !strings.Contains(got, "\033[38;5;141mserver-url\033[0m") {
+		t.Fatalf("expected server-url form to use Mar snippet color, got %q", got)
+	}
+	if !strings.Contains(got, "\033[38;5;114m\"https://school.example.com\"\033[0m") {
+		t.Fatalf("expected string literal to use Mar snippet string color, got %q", got)
 	}
 }
 

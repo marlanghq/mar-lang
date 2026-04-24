@@ -62,12 +62,13 @@ func mustNewRuntimeWithoutExplicitAuth(t *testing.T, dbPath string) *Runtime {
 	t.Helper()
 
 	app, err := parser.Parse(strings.TrimSpace(`
-app TodoApi
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  id: Int primary auto
-  title: String
-}
+(define-app todo-api
+  (entities todo))
 `) + "\n")
 	if err != nil {
 		t.Fatalf("failed to parse app: %v", err)
@@ -85,21 +86,22 @@ func mustNewRuntimeForSMTPAuth(t *testing.T, dbPath string) *Runtime {
 	t.Helper()
 
 	app, err := parser.Parse(strings.TrimSpace(`
-app TodoApi
+(define app-auth
+  ((from "no-reply@example.com")
+   (smtp-host "127.0.0.1")
+   (smtp-port 587)
+   (smtp-username "resend")
+   (smtp-password-env "TEST_SMTP_PASSWORD")
+   (smtp-starttls false)))
 
-auth {
-  email_from "no-reply@example.com"
-  smtp_host "127.0.0.1"
-  smtp_port 587
-  smtp_username "resend"
-  smtp_password_env "TEST_SMTP_PASSWORD"
-  smtp_starttls false
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  id: Int primary auto
-  title: String
-}
+(define-app todo-api
+  (auth app-auth)
+  (entities todo))
 `) + "\n")
 	if err != nil {
 		t.Fatalf("failed to parse app: %v", err)

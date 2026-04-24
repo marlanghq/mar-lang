@@ -31,6 +31,9 @@ func (r *Runtime) runMigrations() error {
 		if err := r.migrateEntityTable(entity); err != nil {
 			return err
 		}
+		if err := r.migrateEntityUniqueIndexes(entity); err != nil {
+			return err
+		}
 	}
 	if err := r.migrateStaticTable("mar_auth_codes", []staticColumn{
 		{Name: "id", Type: "INTEGER", Primary: true, Auto: true},
@@ -374,7 +377,70 @@ func (r *Runtime) migrateUniqueNoCaseIndex(indexName, tableName, fieldName strin
 	return r.recordMigration(tableName, "create_index_"+indexName, sqlText)
 }
 
+func (r *Runtime) migrateEntityUniqueIndexes(entity *model.Entity) error {
+	if entity == nil {
+		return nil
+	}
+	for _, constraint := range entity.Unique {
+		if len(constraint.Fields) == 0 {
+			continue
+		}
+		indexName := entityUniqueIndexName(entity.Table, constraint.Fields)
+		fieldNames := make([]string, 0, len(constraint.Fields))
+		for _, fieldName := range constraint.Fields {
+			field := findField(entity, fieldName)
+			if field == nil {
+				return fmt.Errorf("entity %s unique references unknown field %s", entity.Name, fieldName)
+			}
+			fieldNames = append(fieldNames, model.FieldStorageName(field))
+		}
+		if err := r.migrateUniqueIndex(indexName, entity.Table, fieldNames); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runtime) migrateUniqueIndex(indexName, tableName string, fieldNames []string) error {
+	exists, err := r.indexExists(indexName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	index, err := quoteIdentifier(indexName)
+	if err != nil {
+		return err
+	}
+	table, err := quoteIdentifier(tableName)
+	if err != nil {
+		return err
+	}
+	quotedFields := make([]string, 0, len(fieldNames))
+	for _, fieldName := range fieldNames {
+		field, err := quoteIdentifier(fieldName)
+		if err != nil {
+			return err
+		}
+		quotedFields = append(quotedFields, field)
+	}
+	sqlText := fmt.Sprintf("CREATE UNIQUE INDEX %s ON %s(%s);", index, table, strings.Join(quotedFields, ", "))
+	if _, err := r.DB.Exec(sqlText); err != nil {
+		return fmt.Errorf("migration blocked for %s.%s: duplicate values prevent unique index creation in table %s", tableName, strings.Join(fieldNames, ","), tableName)
+	}
+	return r.recordMigration(tableName, "create_index_"+indexName, sqlText)
+}
+
 func authEmailUniqueIndexName(tableName, emailField string) string {
+	return uniqueIndexName(tableName, []string{emailField})
+}
+
+func entityUniqueIndexName(tableName string, fields []string) string {
+	return uniqueIndexName(tableName, fields)
+}
+
+func uniqueIndexName(tableName string, fields []string) string {
 	sanitize := func(value string) string {
 		builder := strings.Builder{}
 		for _, ch := range strings.TrimSpace(value) {
@@ -390,15 +456,20 @@ func authEmailUniqueIndexName(tableName, emailField string) string {
 		}
 		return strings.ToLower(out)
 	}
-	return fmt.Sprintf("idx_%s_%s_unique", sanitize(tableName), sanitize(emailField))
+	parts := make([]string, 0, len(fields)+1)
+	parts = append(parts, sanitize(tableName))
+	for _, field := range fields {
+		parts = append(parts, sanitize(field))
+	}
+	return fmt.Sprintf("idx_%s_unique", strings.Join(parts, "_"))
 }
 
 func staticTypeToMar(sqlType string) string {
 	switch strings.ToUpper(strings.TrimSpace(sqlType)) {
 	case "INTEGER":
 		return "Int"
-	case "REAL":
-		return "Float"
+	case "DECIMAL_TEXT":
+		return "Decimal"
 	case "TEXT":
 		return "String"
 	default:
@@ -610,12 +681,12 @@ func fieldDefaultSQL(field *model.Field) (string, bool) {
 			number = normalizeDateMillis(number)
 		}
 		return strconv.FormatInt(number, 10), true
-	case "Float":
-		number, ok := toFloat64(field.Default)
+	case "Decimal":
+		number, ok := toDecimal(field.Default)
 		if !ok {
 			return "", false
 		}
-		return strconv.FormatFloat(number, 'f', -1, 64), true
+		return "'" + strings.ReplaceAll(number.String(), "'", "''") + "'", true
 	default:
 		return "", false
 	}

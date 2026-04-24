@@ -10,17 +10,22 @@ func TestListReadAuthorizationWhereTranslatesSimpleOwnedReadRule(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "read-auth-sql.db"), `
-app TodoReadFilter
+(define app-auth ())
 
-auth {
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (belongs-to
+      ((user)))
+    (authorize
+      ((read
+         (or (same-user? current-user user)
+             (has-role? current-user "admin")))))))
 
-entity Todo {
-  title: String
-  belongs_to User
-
-  authorize read when user_authenticated and (user == user_id or user_role == "admin")
-}
+(define-app todo-read-filter
+  (auth app-auth)
+  (entities todo))
 `)
 
 	entity := r.entitiesByName["Todo"]
@@ -63,16 +68,18 @@ func TestListReadAuthorizationWhereFallsBackForFunctionCalls(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "read-auth-sql-fallback.db"), `
-app TodoReadFilter
+(define app-auth ())
 
-auth {
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      ((read (starts-with "Admin" title))))))
 
-entity Todo {
-  title: String
-
-  authorize read when starts_with "Admin" title
-}
+(define-app todo-read-filter
+  (auth app-auth)
+  (entities todo))
 `)
 
 	entity := r.entitiesByName["Todo"]
@@ -89,17 +96,22 @@ func TestListReadAuthorizationWhereOmitsWhereForAlwaysTrueAdminRule(t *testing.T
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "read-auth-sql-admin.db"), `
-app TodoReadFilter
+(define app-auth ())
 
-auth {
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (belongs-to
+      ((user)))
+    (authorize
+      ((read
+         (or (same-user? current-user user)
+             (has-role? current-user "admin")))))))
 
-entity Todo {
-  title: String
-  belongs_to User
-
-  authorize read when user_authenticated and (user == user_id or user_role == "admin")
-}
+(define-app todo-read-filter
+  (auth app-auth)
+  (entities todo))
 `)
 
 	entity := r.entitiesByName["Todo"]
@@ -112,7 +124,7 @@ entity Todo {
 		UserID:        int64(1),
 		Role:          "admin",
 	}); ok || sqlText != "" || len(args) != 0 {
-		t.Fatalf("expected always-true admin rule to omit WHERE, got sql=%q args=%v ok=%v", sqlText, args, ok)
+		t.Fatalf("expected always-true admin authorization to omit WHERE, got sql=%q args=%v ok=%v", sqlText, args, ok)
 	}
 }
 
@@ -120,16 +132,18 @@ func TestListReadAuthorizationWhereOmitsWhereForAnonymousOrAuthenticatedRule(t *
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "read-auth-sql-public.db"), `
-app TodoReadFilter
+(define app-auth ())
 
-auth {
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (authorize
+      ((read true)))))
 
-entity Todo {
-  title: String
-
-  authorize read when anonymous or user_authenticated
-}
+(define-app todo-read-filter
+  (auth app-auth)
+  (entities todo))
 `)
 
 	entity := r.entitiesByName["Todo"]
@@ -138,10 +152,10 @@ entity Todo {
 	}
 
 	if sqlText, args, ok := r.listReadAuthorizationWhere(entity, authSession{}); ok || sqlText != "" || len(args) != 0 {
-		t.Fatalf("expected anonymous or authenticated rule to omit WHERE for anonymous access, got sql=%q args=%v ok=%v", sqlText, args, ok)
+		t.Fatalf("expected anonymous or authenticated authorization to omit WHERE for anonymous access, got sql=%q args=%v ok=%v", sqlText, args, ok)
 	}
 
 	if sqlText, args, ok := r.listReadAuthorizationWhere(entity, authSession{Authenticated: true, UserID: int64(1), Role: "member"}); ok || sqlText != "" || len(args) != 0 {
-		t.Fatalf("expected anonymous or authenticated rule to omit WHERE for authenticated access, got sql=%q args=%v ok=%v", sqlText, args, ok)
+		t.Fatalf("expected anonymous or authenticated authorization to omit WHERE for authenticated access, got sql=%q args=%v ok=%v", sqlText, args, ok)
 	}
 }

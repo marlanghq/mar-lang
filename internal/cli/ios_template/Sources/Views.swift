@@ -10,17 +10,21 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            switch model.phase {
-            case .setup:
-                StartupErrorView(model: model)
-            case .connecting:
-                StartupLoadingView()
-            case .authenticationRequired:
-                LoginView(model: model)
-            case .ready:
-                if let schema = model.schema, let client = model.client {
-                    ShellView(model: model, schema: schema, client: client)
+            if let schema = model.schema, let client = model.client {
+                if model.phase == .authenticationRequired {
+                    LoginView(model: model)
                 } else {
+                    ShellView(model: model, schema: schema, client: client)
+                }
+            } else {
+                switch model.phase {
+                case .setup:
+                    StartupErrorView(model: model)
+                case .connecting:
+                    StartupLoadingView()
+                case .authenticationRequired:
+                    LoginView(model: model)
+                case .ready:
                     ProgressView("Loading…")
                 }
             }
@@ -188,7 +192,10 @@ struct LoginView: View {
 
                     if let auth = model.schema?.auth, auth.needsBootstrap {
                         Section("Not implemented yet") {
-                            Text("Bootstrap-first-admin flow is not implemented in this iOS runtime yet. Use the web Admin for the first admin creation.")
+                            Text(
+                                "Bootstrap-first-admin flow is not implemented in this iOS runtime yet. " +
+                                    "Use the web Admin for the first admin creation."
+                            )
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
@@ -252,7 +259,17 @@ struct ShellView: View {
     var body: some View {
         if let frontend = schema.screens, let firstScreen = frontend.screens.first {
             NavigationStack {
-                FrontendScreenView(screen: firstScreen, row: nil, parentEntity: nil, parentRow: nil, schema: schema, client: client, model: model)
+                FrontendScreenView(
+                    screen: firstScreen,
+                    row: nil,
+                    rowEntity: nil,
+                    parameters: nil,
+                    parentEntity: nil,
+                    parentRow: nil,
+                    schema: schema,
+                    client: client,
+                    model: model
+                )
             }
         } else {
             NavigationStack {
@@ -395,6 +412,8 @@ private struct ShellTabDestinationView: View {
 private struct FrontendScreenView: View {
     let screen: FrontendScreenInfo
     let row: Row?
+    let rowEntity: Entity?
+    let parameters: Row?
     let parentEntity: Entity?
     let parentRow: Row?
     let schema: Schema
@@ -402,38 +421,61 @@ private struct FrontendScreenView: View {
     let model: AppViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var editingListEntities: Set<String> = []
+    @State private var frontendScreenModel: JSONValue = .null
+    @State private var hasInitializedFrontendScreen = false
+    @State private var frontendScreenErrorMessage: String?
+    @State private var frontendNavigationDestination: FrontendScreenNavigationDestination?
 
     var body: some View {
         List {
-            if screen.forEntity != nil && row == nil {
+            if let rootView = screen.view {
+                FrontendStaticViewNode(
+                    node: rootView,
+                    onScreenMessage: sendFrontendScreenMessage
+                )
+            } else if rowEntity != nil && row == nil {
                 Section {
                     ContentUnavailableView("No record selected", systemImage: "questionmark.circle")
                 }
             } else {
-                ForEach(Array(screen.sections.enumerated()), id: \.offset) { _, section in
-                    if frontendCondition(section.when, row: row, model: model) {
-                        Section(section.title ?? "") {
-                            ForEach(Array(section.items.enumerated()), id: \.offset) { _, item in
-                                FrontendItemView(
-                                    item: item,
-                                    screen: screen,
-                                    sectionTitle: section.title,
-                                    row: row,
-                                    parentEntity: parentEntity,
-                                    parentRow: parentRow,
-                                    schema: schema,
-                                    client: client,
-                                    model: model,
-                                    editingListEntities: editingListEntities
-                                )
-                            }
-                        }
-                    }
-                }
+                FrontendScreenSectionsView(
+                    screen: screen,
+                    frontendScreenModel: frontendScreenModel,
+                    row: row,
+                    rowEntity: rowEntity,
+                    parentEntity: parentEntity,
+                    parentRow: parentRow,
+                    schema: schema,
+                    client: client,
+                    model: model,
+                    editingListEntities: editingListEntities,
+                    onScreenMessage: sendFrontendScreenMessage,
+                    onScreenInputMessage: sendFrontendScreenInputMessage
+                )
             }
         }
         .listStyle(.insetGrouped)
         .navigationTitle(screenTitle)
+        .task {
+            await initializeFrontendScreenIfNeeded()
+        }
+        .alert(
+            "Something went wrong",
+            isPresented: Binding(
+                get: { frontendScreenErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        frontendScreenErrorMessage = nil
+                    }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                frontendScreenErrorMessage = nil
+            }
+        } message: {
+            Text(frontendScreenErrorMessage ?? "")
+        }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 ForEach(Array(trailingToolbarItems.enumerated()), id: \.offset) { _, toolbarItem in
@@ -456,6 +498,21 @@ private struct FrontendScreenView: View {
                 }
             }
         }
+        .navigationDestination(item: $frontendNavigationDestination) { destination in
+            LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                FrontendScreenView(
+                    screen: destination.screen,
+                    row: nil,
+                    rowEntity: nil,
+                    parameters: destination.parameters,
+                    parentEntity: rowEntity,
+                    parentRow: row,
+                    schema: liveSchema,
+                    client: client,
+                    model: model
+                )
+            }
+        }
     }
 
     private var trailingToolbarItems: [FrontendToolbarItemInfo] {
@@ -476,7 +533,10 @@ private struct FrontendScreenView: View {
         if let title = screen.title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return title
         }
-        if let forEntity = screen.forEntity, let entity = schema.entities.first(where: { $0.name == forEntity }), let row {
+        if let viewTitle = screen.view?.title, !viewTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return viewTitle
+        }
+        if let entity = rowEntity, let row {
             return RowPresentation.rowTitle(entity: entity, row: row)
         }
         return RowPresentation.humanizeIdentifier(screen.name)
@@ -539,8 +599,287 @@ private struct FrontendScreenView: View {
     }
 
     private var toolbarScreenEntity: Entity? {
-        guard let name = screen.forEntity else { return nil }
-        return schema.entities.first(where: { $0.name == name })
+        rowEntity
+    }
+
+    private var usesFrontendScreenRuntime: Bool {
+        screen.initExpression != nil || screen.updateBody != nil
+    }
+
+    private func initializeFrontendScreenIfNeeded() async {
+        guard usesFrontendScreenRuntime, !hasInitializedFrontendScreen else { return }
+        hasInitializedFrontendScreen = true
+
+        do {
+            let transition = try FrontendRuntime.initialize(
+                schema: schema,
+                screen: screen,
+                runtimeContext: frontendRuntimeContext
+            )
+            frontendScreenModel = transition.model
+            await applyFrontendScreenEffects(transition.effects)
+        } catch {
+            frontendScreenErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func sendFrontendScreenMessage(_ message: String) {
+        Task {
+            await dispatchFrontendScreenMessage(message)
+        }
+    }
+
+    private func sendFrontendScreenInputMessage(fieldName: String?, fieldValue: JSONValue, message: String) {
+        frontendScreenModel = FrontendRuntime.modelBySetting(model: frontendScreenModel, fieldName: fieldName, value: fieldValue)
+        sendFrontendScreenMessage(message)
+    }
+
+    private func dispatchFrontendScreenMessage(_ message: String) async {
+        guard usesFrontendScreenRuntime else { return }
+
+        do {
+            let transition = try FrontendRuntime.update(
+                schema: schema,
+                screen: screen,
+                currentModel: frontendScreenModel,
+                message: message,
+                runtimeContext: frontendRuntimeContext
+            )
+            frontendScreenModel = transition.model
+            await applyFrontendScreenEffects(transition.effects)
+        } catch {
+            frontendScreenErrorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func applyFrontendScreenEffects(_ effects: [FrontendLocalEffect]) async {
+        for effect in effects {
+            switch effect {
+            case .back:
+                dismiss()
+            case .go(let targetName, let arguments):
+                guard let targetScreen = schema.screens?.screens.first(where: { $0.name == targetName }) else {
+                    frontendScreenErrorMessage = "This screen asked to navigate to a screen that does not exist."
+                    continue
+                }
+                frontendNavigationDestination = FrontendScreenNavigationDestination(
+                    screen: targetScreen,
+                    parameters: frontendEffectParameters(for: targetScreen, arguments: arguments)
+                )
+            case .command(let operation, let success, let failure):
+                await runFrontendCommand(operation: operation, success: success, failure: failure)
+            }
+        }
+    }
+
+    @MainActor
+    private func runFrontendCommand(operation: String, success: String, failure: String) async {
+        do {
+            let request = try FrontendRuntime.commandRequest(
+                schema: schema,
+                screen: screen,
+                currentModel: frontendScreenModel,
+                operation: operation,
+                runtimeContext: frontendRuntimeContext
+            )
+            let value = try await client.executeFrontendCommand(
+                method: request.method,
+                path: request.path,
+                body: request.body
+            )
+            await dispatchFrontendScreenRuntimeMessage(
+                name: success,
+                payload: value
+            )
+        } catch {
+            await dispatchFrontendScreenRuntimeMessage(
+                name: failure,
+                payload: .string(error.localizedDescription)
+            )
+        }
+    }
+
+    private func dispatchFrontendScreenRuntimeMessage(name: String, payload: JSONValue?) async {
+        guard usesFrontendScreenRuntime else { return }
+
+        do {
+            let transition = try FrontendRuntime.update(
+                schema: schema,
+                screen: screen,
+                currentModel: frontendScreenModel,
+                messageName: name,
+                payload: payload,
+                runtimeContext: frontendRuntimeContext
+            )
+            frontendScreenModel = transition.model
+            await applyFrontendScreenEffects(transition.effects)
+        } catch {
+            frontendScreenErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func frontendEffectParameters(for targetScreen: FrontendScreenInfo, arguments: [JSONValue]) -> Row? {
+        let pairs = zip(targetScreen.parameters, arguments)
+        var parameterValues: Row = [:]
+
+        for (rawName, value) in pairs {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                parameterValues[name] = value
+            }
+        }
+
+        return parameterValues.isEmpty ? nil : parameterValues
+    }
+
+    private var frontendRuntimeContext: FrontendRuntimeContext {
+        FrontendRuntimeContext(
+            row: row,
+            parameters: parameters,
+            currentUserID: model.authenticatedUserID,
+            currentUserEmail: model.authenticatedEmail,
+            currentUserRole: model.authenticatedRole,
+            isAuthenticated: model.authenticatedEmail != nil || model.authenticatedUserID != nil
+        )
+    }
+}
+
+private struct FrontendScreenNavigationDestination: Hashable, Identifiable {
+    let screen: FrontendScreenInfo
+    let parameters: Row?
+
+    var id: String {
+        let encodedParameters: String
+        if let parameters {
+            encodedParameters = JSONValue.object(parameters).encodedJSONString ?? ""
+        } else {
+            encodedParameters = ""
+        }
+        return screen.id + ":" + encodedParameters
+    }
+}
+
+private struct FrontendScreenSectionsView: View {
+    let screen: FrontendScreenInfo
+    let frontendScreenModel: JSONValue
+    let row: Row?
+    let rowEntity: Entity?
+    let parentEntity: Entity?
+    let parentRow: Row?
+    let schema: Schema
+    let client: MarAPIClient
+    let model: AppViewModel
+    let editingListEntities: Set<String>
+    let onScreenMessage: (String) -> Void
+    let onScreenInputMessage: (String?, JSONValue, String) -> Void
+
+    var body: some View {
+        ForEach(Array(screen.sections.indices), id: \.self) { sectionIndex in
+            FrontendScreenSectionView(
+                screen: screen,
+                section: screen.sections[sectionIndex],
+                frontendScreenModel: frontendScreenModel,
+                row: row,
+                rowEntity: rowEntity,
+                parentEntity: parentEntity,
+                parentRow: parentRow,
+                schema: schema,
+                client: client,
+                model: model,
+                editingListEntities: editingListEntities,
+                onScreenMessage: onScreenMessage,
+                onScreenInputMessage: onScreenInputMessage
+            )
+        }
+    }
+}
+
+private struct FrontendScreenSectionView: View {
+    let screen: FrontendScreenInfo
+    let section: FrontendSectionInfo
+    let frontendScreenModel: JSONValue
+    let row: Row?
+    let rowEntity: Entity?
+    let parentEntity: Entity?
+    let parentRow: Row?
+    let schema: Schema
+    let client: MarAPIClient
+    let model: AppViewModel
+    let editingListEntities: Set<String>
+    let onScreenMessage: (String) -> Void
+    let onScreenInputMessage: (String?, JSONValue, String) -> Void
+
+    var body: some View {
+        Section(section.title ?? "") {
+            ForEach(Array(section.items.indices), id: \.self) { itemIndex in
+                FrontendItemView(
+                    item: section.items[itemIndex],
+                    screen: screen,
+                    sectionTitle: section.title,
+                    frontendScreenModel: frontendScreenModel,
+                    row: row,
+                    rowEntity: rowEntity,
+                    parentEntity: parentEntity,
+                    parentRow: parentRow,
+                    schema: schema,
+                    client: client,
+                    model: model,
+                    editingListEntities: editingListEntities,
+                    onScreenMessage: onScreenMessage,
+                    onScreenInputMessage: onScreenInputMessage
+                )
+            }
+        }
+    }
+}
+
+private struct FrontendStaticViewNode: View {
+    let node: FrontendViewNodeInfo
+    let onScreenMessage: (String) -> Void
+
+    var body: some View {
+        switch node.kind {
+        case "section":
+            Section(node.title ?? "") {
+                ForEach(node.children) { child in
+                    FrontendStaticViewRow(node: child, onScreenMessage: onScreenMessage)
+                }
+            }
+        default:
+            FrontendStaticViewRow(node: node, onScreenMessage: onScreenMessage)
+        }
+    }
+}
+
+private struct FrontendStaticViewRow: View {
+    let node: FrontendViewNodeInfo
+    let onScreenMessage: (String) -> Void
+
+    var body: some View {
+        switch node.kind {
+        case "text":
+            Text(node.text ?? "")
+        case "button":
+            Button(node.label ?? "Button") {
+                if let message = node.message {
+                    onScreenMessage(message)
+                }
+            }
+            .disabled(node.message == nil)
+        case "section":
+            VStack(alignment: .leading, spacing: 8) {
+                if let title = node.title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(title)
+                        .font(.headline)
+                }
+                ForEach(node.children) { child in
+                    FrontendStaticViewRow(node: child, onScreenMessage: onScreenMessage)
+                }
+            }
+        default:
+            EmptyView()
+        }
     }
 }
 
@@ -548,157 +887,288 @@ private struct FrontendItemView: View {
     let item: FrontendItemInfo
     let screen: FrontendScreenInfo
     let sectionTitle: String?
+    let frontendScreenModel: JSONValue
     let row: Row?
+    let rowEntity: Entity?
     let parentEntity: Entity?
     let parentRow: Row?
     let schema: Schema
     let client: MarAPIClient
     let model: AppViewModel
     let editingListEntities: Set<String>
+    let onScreenMessage: (String) -> Void
+    let onScreenInputMessage: (String?, JSONValue, String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingDelete = false
     @State private var deleteErrorMessage: String?
 
     @ViewBuilder
     var body: some View {
-        switch item.kind {
-        case "link":
-            if frontendCondition(item.filter, row: row, model: model),
-               let targetName = item.target,
-               let target = schema.screens?.screens.first(where: { $0.name == targetName }) {
-                NavigationLink {
-                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
-                        FrontendScreenView(screen: target, row: nil, parentEntity: screenEntity, parentRow: row, schema: liveSchema, client: client, model: model)
-                    }
-                } label: {
-                    Text(item.label ?? RowPresentation.humanizeIdentifier(target.name))
-                }
-            }
-        case "field":
-            if let fieldName = item.field,
-               let entity = screenEntity,
-               let (labelText, text) = frontendFieldDisplay(entity: entity, fieldPath: fieldName, row: row) {
-                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    LabeledContent(labelText, value: text)
-                }
-            }
-        case "create":
-            if let entityName = item.entity, let entity = schema.entities.first(where: { $0.name == entityName }) {
-                NavigationLink("Create \(entity.displayName)") {
-                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
-                        EntityFormView(
-                            entity: entity,
-                            schema: liveSchema,
-                            client: client,
-                            mode: .create,
-                            initialValues: frontendActionValues(item.values, binding: frontendScreenBindingName(screen), row: row, model: model),
-                            formFields: item.formFields
-                        ) { _ in }
-                    }
-                }
-            }
-        case "edit":
-            if let entity = screenEntity, let row {
-                NavigationLink {
-                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
-                        EntityFormView(
-                            entity: entity,
-                            schema: liveSchema,
-                            client: client,
-                            mode: .edit(row),
-                            formFields: item.formFields
-                        ) { _ in
-                            dismiss()
-                        } onDeleted: { _ in
-                            dismiss()
+        if frontendItemCondition(item.condition, model: frontendScreenModel) {
+            switch item.kind {
+            case "empty":
+                EmptyView()
+            case "link":
+                if frontendCondition(item.filter, row: row, model: model),
+                   let targetName = item.target,
+                   let target = schema.screens?.screens.first(where: { $0.name == targetName }) {
+                    NavigationLink {
+                        LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                            FrontendScreenView(
+                                screen: target,
+                                row: nil,
+                                rowEntity: nil,
+                                parameters: nil,
+                                parentEntity: screenEntity,
+                                parentRow: row,
+                                schema: liveSchema,
+                                client: client,
+                                model: model
+                            )
                         }
-                    }
-                } label: {
-                    Text("Edit \(entity.displayName)")
-                }
-            }
-        case "delete":
-            if let entity = screenEntity, row != nil {
-                VStack(alignment: .leading, spacing: 8) {
-                    Button {
-                        confirmingDelete = true
                     } label: {
-                        HStack {
-                            Text("Delete \(entity.displayName)")
-                                .foregroundStyle(.red)
-                            Spacer()
+                        Text(item.label ?? RowPresentation.humanizeIdentifier(target.name))
+                    }
+                }
+            case "field":
+                if let fieldName = item.field,
+                   let entity = screenEntity,
+                   let (labelText, text) = frontendFieldDisplay(entity: entity, fieldPath: fieldName, row: row) {
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        LabeledContent(labelText, value: text)
+                    }
+                }
+            case "button":
+                Button(item.label ?? "Button") {
+                    if let message = item.message {
+                        onScreenMessage(message)
+                    }
+                }
+                .disabled(frontendItemDisabled(item, model: frontendScreenModel) || item.message == nil)
+            case "textInput":
+                VStack(alignment: .leading, spacing: 6) {
+                    if let label = item.label, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(label)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    TextField(
+                        item.label ?? "",
+                        text: Binding(
+                            get: {
+                                frontendScreenModelFieldText(frontendScreenModel, fieldName: item.modelField)
+                            },
+                            set: { newValue in
+                                if let message = frontendScreenInputMessage(item.message, value: newValue) {
+                                    onScreenInputMessage(item.modelField, .string(newValue), message)
+                                }
+                            }
+                        )
+                    )
+                    .disabled(
+                        frontendItemDisabled(item, model: frontendScreenModel) ||
+                            item.message == nil ||
+                            item.modelField == nil
+                    )
+                    .textInputAutocapitalization(.sentences)
+                }
+            case "textarea":
+                VStack(alignment: .leading, spacing: 6) {
+                    if let label = item.label, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(label)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    TextEditor(
+                        text: Binding(
+                            get: {
+                                frontendScreenModelFieldText(frontendScreenModel, fieldName: item.modelField)
+                            },
+                            set: { newValue in
+                                if let message = frontendScreenInputMessage(item.message, value: newValue) {
+                                    onScreenInputMessage(item.modelField, .string(newValue), message)
+                                }
+                            }
+                        )
+                    )
+                    .frame(minHeight: 120)
+                    .disabled(
+                        frontendItemDisabled(item, model: frontendScreenModel) ||
+                            item.message == nil ||
+                            item.modelField == nil
+                    )
+                }
+            case "toggle":
+                Toggle(isOn: Binding(
+                    get: {
+                        frontendScreenModelFieldBool(frontendScreenModel, fieldName: item.modelField)
+                    },
+                    set: { newValue in
+                        if let message = frontendScreenToggleMessage(item.message, value: newValue) {
+                            onScreenInputMessage(item.modelField, .bool(newValue), message)
                         }
                     }
-                    .buttonStyle(.plain)
-                    if let deleteErrorMessage, !deleteErrorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(deleteErrorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
+                )) {
+                    Text(item.label ?? "Toggle")
                 }
-                .alert("Delete \(entity.displayName)?", isPresented: $confirmingDelete) {
-                    Button("Delete", role: .destructive) {
-                        Task { await deleteCurrentRow(entity: entity) }
-                    }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("This cannot be undone.")
-                }
-            }
-        case "list", "children":
-            if let entityName = item.entity, let entity = schema.entities.first(where: { $0.name == entityName }) {
-                FrontendRowsView(
-                    item: item,
-                    entity: entity,
-                    sectionTitle: sectionTitle,
-                    screenTitle: screen.title,
-                    parentEntity: screenEntity,
-                    parentRow: row,
-                    schema: schema,
-                    client: client,
-                    model: model,
-                    isEditingList: editingListEntities.contains(entity.name)
+                .disabled(
+                    frontendItemDisabled(item, model: frontendScreenModel) ||
+                        item.message == nil ||
+                        item.modelField == nil
                 )
-            }
-        case "report":
-            if let entityName = item.entity, let entity = schema.entities.first(where: { $0.name == entityName }) {
-                FrontendReportView(
-                    item: item,
-                    entity: entity,
-                    schema: schema,
-                    client: client,
-                    model: model
-                )
-            }
-        case "action":
-            if let actionName = item.action,
-               let action = schema.actions.first(where: { $0.name == actionName }) {
-                NavigationLink(RowPresentation.humanizeIdentifier(action.name)) {
-                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
-                        ActionFormView(
-                            action: action,
-                            alias: liveSchema.inputAliases.first(where: { $0.name == action.inputAlias }),
-                            schema: liveSchema,
-                            client: client,
-                            initialValues: frontendActionValues(item.values, binding: frontendScreenBindingName(screen), row: row, model: model),
-                            formFields: item.formFields
-                        )
+            case "select":
+                Picker(item.label ?? "Select", selection: Binding(
+                    get: {
+                        frontendScreenModelFieldText(frontendScreenModel, fieldName: item.modelField)
+                    },
+                    set: { newValue in
+                        if let message = frontendScreenInputMessage(item.message, value: newValue) {
+                            onScreenInputMessage(item.modelField, .string(newValue), message)
+                        }
+                    }
+                )) {
+                    ForEach(item.options, id: \.value) { option in
+                        Text(option.label).tag(option.value)
                     }
                 }
+                .pickerStyle(.navigationLink)
+                .disabled(
+                    frontendItemDisabled(item, model: frontendScreenModel) ||
+                        item.message == nil ||
+                        item.modelField == nil ||
+                        item.options.isEmpty
+                )
+            case "create":
+                if let entityName = item.entity, let entity = schema.entities.first(where: { $0.name == entityName }) {
+                    NavigationLink("Create \(entity.displayName)") {
+                        LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                            EntityFormView(
+                                entity: entity,
+                                schema: liveSchema,
+                                client: client,
+                                mode: .create,
+                                initialValues: frontendActionValues(
+                                    item.values,
+                                    binding: frontendScreenBindingName(screen),
+                                    row: row,
+                                    model: model
+                                ),
+                                formFields: item.formFields
+                            ) { _ in }
+                        }
+                    }
+                }
+            case "edit":
+                if let entity = screenEntity, let row {
+                    NavigationLink {
+                        LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                            EntityFormView(
+                                entity: entity,
+                                schema: liveSchema,
+                                client: client,
+                                mode: .edit(row),
+                                formFields: item.formFields
+                            ) { _ in
+                                dismiss()
+                            } onDeleted: { _ in
+                                dismiss()
+                            }
+                        }
+                    } label: {
+                        Text("Edit \(entity.displayName)")
+                    }
+                }
+            case "delete":
+                if let entity = screenEntity, row != nil {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button {
+                            confirmingDelete = true
+                        } label: {
+                            HStack {
+                                Text("Delete \(entity.displayName)")
+                                    .foregroundStyle(.red)
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        if let deleteErrorMessage, !deleteErrorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(deleteErrorMessage)
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                    .alert("Delete \(entity.displayName)?", isPresented: $confirmingDelete) {
+                        Button("Delete", role: .destructive) {
+                            Task { await deleteCurrentRow(entity: entity) }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("This cannot be undone.")
+                    }
+                }
+            case "list":
+                if let entityName = item.entity, let entity = schema.entities.first(where: { $0.name == entityName }) {
+                    FrontendModelRowsView(
+                        item: item,
+                        entity: entity,
+                        rows: FrontendRuntime.fieldRows(frontendScreenModel, fieldName: item.modelField),
+                        sectionTitle: sectionTitle,
+                        screenTitle: screen.title,
+                        parentEntity: screenEntity,
+                        parentRow: row,
+                        schema: schema,
+                        client: client,
+                        model: model,
+                        isEditingList: editingListEntities.contains(entity.name)
+                    )
+                } else {
+                    Text("List data must come from the screen model.")
+                        .foregroundStyle(.red)
+                }
+            case "report":
+                if let entityName = item.entity, let entity = schema.entities.first(where: { $0.name == entityName }) {
+                    FrontendModelReportView(
+                        item: item,
+                        entity: entity,
+                        rows: FrontendRuntime.fieldRows(frontendScreenModel, fieldName: item.modelField)
+                    )
+                } else {
+                    Text("Report data must come from the screen model.")
+                        .foregroundStyle(.red)
+                }
+            case "action":
+                if let actionName = item.action,
+                   let action = schema.actions.first(where: { $0.name == actionName }) {
+                    NavigationLink(RowPresentation.humanizeIdentifier(action.name)) {
+                        LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                            ActionFormView(
+                                action: action,
+                                alias: liveSchema.inputAliases.first(where: { $0.name == action.inputAlias }),
+                                schema: liveSchema,
+                                client: client,
+                                initialValues: frontendActionValues(
+                                    item.values,
+                                    binding: frontendScreenBindingName(screen),
+                                    row: row,
+                                    model: model
+                                ),
+                                formFields: item.formFields
+                            )
+                        }
+                    }
+                }
+            default:
+                EmptyView()
             }
-        default:
-            EmptyView()
         }
     }
-
     private var screenEntity: Entity? {
-        guard let name = screen.forEntity else { return nil }
-        return schema.entities.first(where: { $0.name == name })
+        rowEntity
     }
 
     private func frontendFieldDisplay(entity: Entity, fieldPath: String, row: Row?) -> (String, String)? {
         guard let row else { return nil }
-        let (fieldName, _) = parseFrontendDisplayFieldPath(fieldPath)
+        let fieldName = parseFrontendDisplayFieldPath(fieldPath)
         guard let field = entity.fields.first(where: { $0.name == fieldName }),
               let value = row[field.name] else {
             return nil
@@ -707,12 +1177,15 @@ private struct FrontendItemView: View {
         return (RowPresentation.fieldLabel(field.name), text)
     }
 
-    private func parseFrontendDisplayFieldPath(_ raw: String) -> (String, String?) {
-        let parts = raw.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-        if parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty {
-            return (parts[0], parts[1])
+    private func parseFrontendDisplayFieldPath(_ raw: String) -> String {
+        let expression = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let binding = frontendScreenBindingName(screen) {
+            let prefix = binding + "."
+            if expression.hasPrefix(prefix) {
+                return String(expression.dropFirst(prefix.count))
+            }
         }
-        return (raw, nil)
+        return expression
     }
 
     private func frontendFieldText(field: Field, value: JSONValue) -> String {
@@ -748,6 +1221,30 @@ private struct FrontendItemView: View {
     }
 }
 
+private func frontendScreenModelFieldText(_ model: JSONValue, fieldName: String?) -> String {
+    FrontendRuntime.fieldText(model, fieldName: fieldName)
+}
+
+private func frontendScreenModelFieldBool(_ model: JSONValue, fieldName: String?) -> Bool {
+    FrontendRuntime.fieldBool(model, fieldName: fieldName)
+}
+
+private func frontendScreenInputMessage(_ name: String?, value: String) -> String? {
+    FrontendRuntime.inputMessage(name, value: value)
+}
+
+private func frontendScreenToggleMessage(_ name: String?, value: Bool) -> String? {
+    FrontendRuntime.toggleMessage(name, value: value)
+}
+
+private func frontendItemDisabled(_ item: FrontendItemInfo, model: JSONValue) -> Bool {
+    FrontendRuntime.fieldBool(model, fieldName: item.disabled)
+}
+
+private func frontendItemCondition(_ raw: String?, model: JSONValue) -> Bool {
+    FrontendRuntime.boolCondition(raw, model: model)
+}
+
 private struct FrontendComputedReport: Identifiable {
     let sortKey: String
     let label: String
@@ -761,53 +1258,92 @@ private enum FrontendReportGroupSpec {
     case month(String)
 }
 
-private struct FrontendReportView: View {
+private struct FrontendModelRowsView: View {
     let item: FrontendItemInfo
     let entity: Entity
+    let rows: [Row]
+    let sectionTitle: String?
+    let screenTitle: String?
+    let parentEntity: Entity?
+    let parentRow: Row?
     let schema: Schema
     let client: MarAPIClient
     let model: AppViewModel
-
-    @State private var rows: [Row] = []
-    @State private var isLoading = false
-    @State private var hasStartedLoading = false
-    @State private var errorMessage: String?
+    let isEditingList: Bool
 
     var body: some View {
         Group {
-            if let errorMessage, !errorMessage.isEmpty {
-                Text(errorMessage)
-                    .foregroundStyle(.red)
-            } else if isLoading && rows.isEmpty {
-                HStack {
-                    ProgressView()
-                    Text("Loading...")
-                        .foregroundStyle(.secondary)
-                }
-            } else if reportRows.isEmpty {
-                Text("No data yet.")
+            if filteredRows.isEmpty {
+                Text("No \(emptyRowsLabel) yet")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(reportRows) { report in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(report.label)
-                            .font(.headline)
-                        ForEach(Array(report.metrics.enumerated()), id: \.offset) { _, metric in
-                            LabeledContent(metric.0, value: metric.1)
+                ForEach(Array(filteredRows.enumerated()), id: \.offset) { _, row in
+                    if let destination = destinationScreen {
+                        NavigationLink {
+                            LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
+                                FrontendScreenView(
+                                    screen: destination,
+                                    row: row,
+                                    rowEntity: entity,
+                                    parameters: nil,
+                                    parentEntity: parentEntity ?? entity,
+                                    parentRow: parentRow ?? row,
+                                    schema: liveSchema,
+                                    client: client,
+                                    model: model
+                                )
+                            }
+                        } label: {
+                            FrontendRowSummaryView(item: item, entity: entity, row: row, relationLabelsByEntity: [:])
                         }
+                    } else {
+                        FrontendRowSummaryView(item: item, entity: entity, row: row, relationLabelsByEntity: [:])
                     }
                 }
             }
         }
-        .onAppear {
-            guard !hasStartedLoading else { return }
-            hasStartedLoading = true
-            Task { await load() }
+    }
+
+    private var filteredRows: [Row] {
+        rows.filter { row in
+            frontendCondition(item.filter, row: row, model: model)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .marRowsChanged)) { notification in
-            let changedEntity = notification.object as? String
-            guard changedEntity == nil || changedEntity == entity.name else { return }
-            Task { await load() }
+    }
+
+    private var destinationScreen: FrontendScreenInfo? {
+        guard let destinationName = item.destination else { return nil }
+        return schema.screens?.screens.first(where: { $0.name == destinationName })
+    }
+
+    private var emptyRowsLabel: String {
+        let label = frontendNonEmpty(item.label) ?? frontendNonEmpty(sectionTitle) ?? frontendNonEmpty(screenTitle) ?? entity.displayName
+        let lowercased = label.lowercased()
+        if lowercased.hasPrefix("my ") {
+            return String(lowercased.dropFirst(3))
+        }
+        return lowercased
+    }
+}
+
+private struct FrontendModelReportView: View {
+    let item: FrontendItemInfo
+    let entity: Entity
+    let rows: [Row]
+
+    var body: some View {
+        if reportRows.isEmpty {
+            Text("No data yet.")
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(reportRows) { report in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(report.label)
+                        .font(.headline)
+                    ForEach(Array(report.metrics.enumerated()), id: \.offset) { _, metric in
+                        LabeledContent(metric.0, value: metric.1)
+                    }
+                }
+            }
         }
     }
 
@@ -815,7 +1351,7 @@ private struct FrontendReportView: View {
         guard let groupSpec = parseReportGroup(item.reportGroup, entity: entity) else { return [] }
 
         var grouped: [String: (label: String, rows: [Row])] = [:]
-        for row in rows where frontendCondition(item.filter, row: row, model: model) {
+        for row in rows {
             guard let group = reportGroupKey(groupSpec, row: row) else { continue }
             var entry = grouped[group.sortKey] ?? (label: group.label, rows: [])
             entry.rows.append(row)
@@ -831,20 +1367,6 @@ private struct FrontendReportView: View {
                 )
             }
             .sorted { $0.sortKey < $1.sortKey }
-    }
-
-    private func load() async {
-        guard !isLoading else { return }
-        isLoading = true
-        errorMessage = nil
-
-        do {
-            rows = try await client.listRows(entity: entity)
-            isLoading = false
-        } catch {
-            isLoading = false
-            errorMessage = error.localizedDescription
-        }
     }
 
     private func parseReportGroup(_ raw: String?, entity: Entity) -> FrontendReportGroupSpec? {
@@ -916,8 +1438,7 @@ private struct FrontendReportView: View {
               entity.fields.contains(where: { $0.name == fieldName }) else {
             return nil
         }
-        let values = rows.compactMap { $0[fieldName]?.doubleValue }
-        return reducer(values)
+        return reducer(rows.compactMap { $0[fieldName]?.doubleValue })
     }
 
     private func average(_ values: [Double]) -> Double? {
@@ -967,212 +1488,6 @@ private struct FrontendReportView: View {
     }
 }
 
-private struct FrontendRowsView: View {
-    let item: FrontendItemInfo
-    let entity: Entity
-    let sectionTitle: String?
-    let screenTitle: String?
-    let parentEntity: Entity?
-    let parentRow: Row?
-    let schema: Schema
-    let client: MarAPIClient
-    let model: AppViewModel
-    let isEditingList: Bool
-
-    @State private var rows: [Row] = []
-    @State private var relationLabelsByEntity: [String: [String: String]] = [:]
-    @State private var isLoading = false
-    @State private var hasStartedLoading = false
-    @State private var errorMessage: String?
-
-    var body: some View {
-        Group {
-            if let message = errorMessage {
-                Text(message)
-                    .foregroundStyle(.red)
-            } else if isLoading && rows.isEmpty {
-                HStack {
-                    ProgressView()
-                    Text("Loading...")
-                        .foregroundStyle(.secondary)
-                }
-            } else if filteredRows.isEmpty {
-                Text("No \(emptyRowsLabel) yet")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(Array(filteredRows.enumerated()), id: \.offset) { _, row in
-                    if isEditingList {
-                        VStack(alignment: .leading, spacing: 10) {
-                            FrontendRowSummaryView(item: item, entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity)
-                            HStack(spacing: 10) {
-                                NavigationLink("Edit") {
-                                    LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
-                                        EntityFormView(
-                                            entity: entity,
-                                            schema: liveSchema,
-                                            client: client,
-                                            mode: .edit(row)
-                                        ) { _ in } onDeleted: { deletedRow in
-                                            rows.removeAll { candidate in
-                                                RowPresentation.rowID(entity: entity, row: candidate) ==
-                                                    RowPresentation.rowID(entity: entity, row: deletedRow)
-                                            }
-                                        }
-                                    }
-                                }
-                                Button("Delete", role: .destructive) {
-                                    Task { await deleteRow(row) }
-                                }
-                            }
-                            .font(.subheadline)
-                        }
-                    } else if let destination = destinationScreen {
-                        NavigationLink {
-                            LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
-                                FrontendScreenView(screen: destination, row: row, parentEntity: parentEntity ?? entity, parentRow: parentRow ?? row, schema: liveSchema, client: client, model: model)
-                            }
-                        } label: {
-                            FrontendRowSummaryView(item: item, entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity)
-                        }
-                    } else {
-                        NavigationLink {
-                            LatestSchemaDestination(model: model, fallbackSchema: schema) { liveSchema in
-                                RowDetailView(
-                                    entity: entity,
-                                    schema: liveSchema,
-                                    client: client,
-                                    row: row,
-                                    onSaved: { _ in },
-                                    onDelete: { _ in },
-                                    relationLabelsByEntity: relationLabelsByEntity
-                                )
-                            }
-                        } label: {
-                            FrontendRowSummaryView(item: item, entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity)
-                        }
-                    }
-                }
-            }
-        }
-        .onAppear {
-            guard !hasStartedLoading else { return }
-            hasStartedLoading = true
-            Task { await load() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .marRowsChanged)) { notification in
-            let changedEntity = notification.object as? String
-            guard changedEntity == nil || changedEntity == entity.name else { return }
-            Task { await load() }
-        }
-    }
-
-    private var filteredRows: [Row] {
-        rows.filter { row in
-            if item.kind == "children" {
-                guard let relationField = item.relationField,
-                      let parentEntity,
-                      let parentRow,
-                      let parentID = RowPresentation.rowID(entity: parentEntity, row: parentRow) else {
-                    return false
-                }
-                let childValue = row[relationField]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if childValue != parentID {
-                    return false
-                }
-            }
-            return frontendCondition(item.filter, row: row, model: model)
-        }
-    }
-
-    private var destinationScreen: FrontendScreenInfo? {
-        guard let destinationName = item.destination else { return nil }
-        return schema.screens?.screens.first(where: { $0.name == destinationName })
-    }
-
-    private var emptyRowsLabel: String {
-        let label = nonEmpty(item.label) ?? nonEmpty(sectionTitle) ?? nonEmpty(screenTitle) ?? entity.displayName
-        let lowercased = label.lowercased()
-        if lowercased.hasPrefix("my ") {
-            return String(lowercased.dropFirst(3))
-        }
-        return lowercased
-    }
-
-    private func load() async {
-        guard !isLoading else { return }
-        isLoading = true
-        errorMessage = nil
-
-        do {
-            let loadedRows = try await client.listRows(entity: entity)
-            rows = loadedRows
-            isLoading = false
-            guard !loadedRows.isEmpty else {
-                relationLabelsByEntity = [:]
-                return
-            }
-            relationLabelsByEntity = await loadRelationLabelsBestEffort()
-        } catch {
-            isLoading = false
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func deleteRow(_ row: Row) async {
-        guard let id = RowPresentation.rowID(entity: entity, row: row) else { return }
-        do {
-            try await client.deleteRow(entity: entity, id: id)
-            rows.removeAll { RowPresentation.rowID(entity: entity, row: $0) == id }
-            NotificationCenter.default.post(name: .marRowsChanged, object: entity.name)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func loadRelationLabelsBestEffort() async -> [String: [String: String]] {
-        let relationNames = relationNamesNeededForSummary()
-        guard !relationNames.isEmpty else { return [:] }
-
-        var result: [String: [String: String]] = [:]
-        for relationName in relationNames {
-            guard let relationEntity = schema.entities.first(where: { $0.name == relationName }) else { continue }
-            guard let relationRows = try? await client.listRows(entity: relationEntity) else { continue }
-            result[relationName] = Dictionary(
-                uniqueKeysWithValues: relationRows.compactMap { row in
-                    guard let id = RowPresentation.rowID(entity: relationEntity, row: row) else { return nil }
-                    return (id, RowPresentation.relatedRowLabel(entity: relationEntity, row: row))
-                }
-            )
-        }
-        return result
-    }
-
-    private func relationNamesNeededForSummary() -> Set<String> {
-        var fieldNames: [String] = []
-
-        if let titleField = item.titleField {
-            fieldNames.append(titleField)
-        }
-
-        if let subtitleField = item.subtitleField {
-            fieldNames.append(subtitleField)
-        }
-
-        if fieldNames.isEmpty {
-            fieldNames.append(contentsOf: entity.summaryFields.prefix(1).map(\.name))
-        }
-
-        return Set(fieldNames.compactMap { fieldName in
-            entity.fields.first(where: { $0.name == fieldName })?.relationEntity
-        })
-    }
-
-    private func nonEmpty(_ value: String?) -> String? {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
-    }
-}
-
 private struct FrontendRowSummaryView: View {
     let item: FrontendItemInfo
     let entity: Entity
@@ -1181,7 +1496,14 @@ private struct FrontendRowSummaryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(rowText(fieldName: item.titleField) ?? RowPresentation.rowTitle(entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity))
+            Text(
+                rowText(fieldName: item.titleField) ??
+                    RowPresentation.rowTitle(
+                        entity: entity,
+                        row: row,
+                        relationLabelsByEntity: relationLabelsByEntity
+                    )
+            )
                 .font(.headline)
 
             if let subtitle = rowText(fieldName: item.subtitleField), !subtitle.isEmpty {
@@ -1189,7 +1511,13 @@ private struct FrontendRowSummaryView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if item.titleField == nil {
-                let summaryRows = Array(RowPresentation.summaryRows(entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity).prefix(1))
+                let summaryRows = Array(
+                    RowPresentation.summaryRows(
+                        entity: entity,
+                        row: row,
+                        relationLabelsByEntity: relationLabelsByEntity
+                    ).prefix(1)
+                )
                 ForEach(Array(summaryRows.enumerated()), id: \.offset) { _, item in
                     Text("\(item.label): \(item.value)")
                         .font(.caption)
@@ -1216,28 +1544,13 @@ private func frontendCondition(_ raw: String?, row: Row?, model: AppViewModel) -
     let expression = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     guard !expression.isEmpty else { return true }
 
-    switch expression {
-    case "user_authenticated":
-        return model.authenticatedEmail != nil || model.authenticatedUserID != nil
-    case "anonymous":
-        return model.authenticatedEmail == nil && model.authenticatedUserID == nil
-    default:
-        break
-    }
-
     let parts = expression.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
     guard parts.count == 3, let row else { return true }
     let left = parts[0]
     let op = parts[1]
     let right = parts[2]
     let leftValue = row[left]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    let rightValue: String
-    switch right {
-    case "user_id":
-        rightValue = model.authenticatedUserID ?? ""
-    default:
-        rightValue = right.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-    }
+    let rightValue = right.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
 
     switch op {
     case "==":
@@ -1250,7 +1563,12 @@ private func frontendCondition(_ raw: String?, row: Row?, model: AppViewModel) -
 }
 
 @MainActor
-private func frontendActionValues(_ values: [FrontendActionValueInfo], binding: String?, row: Row?, model: AppViewModel) -> [String: String] {
+private func frontendActionValues(
+    _ values: [FrontendActionValueInfo],
+    binding: String?,
+    row: Row?,
+    model: AppViewModel
+) -> [String: String] {
     Dictionary(uniqueKeysWithValues: values.compactMap { value in
         let resolved = frontendActionExpression(value.expression, binding: binding, row: row, model: model)
         return resolved == nil ? nil : (value.field, resolved!)
@@ -1260,9 +1578,6 @@ private func frontendActionValues(_ values: [FrontendActionValueInfo], binding: 
 @MainActor
 private func frontendActionExpression(_ raw: String, binding: String?, row: Row?, model: AppViewModel) -> String? {
     let expression = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    if expression == "user_id" {
-        return model.authenticatedUserID
-    }
     if let fieldName = frontendBoundFieldName(expression, binding: binding) {
         return row?[fieldName]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -1279,9 +1594,16 @@ private func frontendBoundFieldName(_ expression: String, binding: String?) -> S
     return String(expression.dropFirst(prefix.count))
 }
 
+private func frontendNonEmpty(_ value: String?) -> String? {
+    let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return trimmed.isEmpty ? nil : trimmed
+}
+
 private func frontendScreenBindingName(_ screen: FrontendScreenInfo) -> String? {
-    guard let entityName = screen.forEntity, let first = entityName.first else { return nil }
-    return String(first).lowercased() + entityName.dropFirst()
+    guard let first = screen.parameters.first?.trimmingCharacters(in: .whitespacesAndNewlines), !first.isEmpty else {
+        return nil
+    }
+    return first
 }
 
 struct EntityRowsView: View {
@@ -1390,7 +1712,13 @@ struct EntityRowSummaryView: View {
             Text(RowPresentation.rowTitle(entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity))
                 .font(.headline)
 
-            let summaryRows = Array(RowPresentation.summaryRows(entity: entity, row: row, relationLabelsByEntity: relationLabelsByEntity).prefix(2))
+            let summaryRows = Array(
+                RowPresentation.summaryRows(
+                    entity: entity,
+                    row: row,
+                    relationLabelsByEntity: relationLabelsByEntity
+                ).prefix(2)
+            )
             ForEach(Array(summaryRows.enumerated()), id: \.offset) { _, item in
                 Text("\(item.label): \(item.value)")
                     .font(.caption)
@@ -1691,7 +2019,7 @@ struct DynamicFieldView: View {
             case .int:
             TextField(RowPresentation.fieldLabel(field.name), text: $value)
                 .keyboardType(.numberPad)
-            case .float:
+            case .decimal:
             TextField(RowPresentation.fieldLabel(field.name), text: $value)
                 .keyboardType(.decimalPad)
             default:
@@ -1853,7 +2181,12 @@ struct ActionsHomeView: View {
             }
         }
         .navigationDestination(for: ActionInfo.self) { action in
-            ActionFormView(action: action, alias: schema.inputAliases.first(where: { $0.name == action.inputAlias }), schema: schema, client: client)
+            ActionFormView(
+                action: action,
+                alias: schema.inputAliases.first(where: { $0.name == action.inputAlias }),
+                schema: schema,
+                client: client
+            )
         }
         .navigationTitle("Actions")
     }
@@ -1873,7 +2206,14 @@ struct ActionFormView: View {
     @State private var errorMessage: String?
     @State private var isRunning = false
 
-    init(action: ActionInfo, alias: InputAliasInfo?, schema: Schema, client: MarAPIClient, initialValues: [String: String] = [:], formFields: [FrontendFormFieldInfo] = []) {
+    init(
+        action: ActionInfo,
+        alias: InputAliasInfo?,
+        schema: Schema,
+        client: MarAPIClient,
+        initialValues: [String: String] = [:],
+        formFields: [FrontendFormFieldInfo] = []
+    ) {
         self.action = action
         self.alias = alias
         self.schema = schema
@@ -2006,7 +2346,7 @@ struct ActionFormView: View {
             actionDateNavigationLink(field: field, includesTime: true)
         } else {
             TextField(RowPresentation.fieldLabel(field.name), text: binding(for: field.name))
-                .keyboardType(field.fieldType == "Int" ? .numberPad : (field.fieldType == "Float" ? .decimalPad : .default))
+                .keyboardType(field.fieldType == "Int" ? .numberPad : (field.fieldType == "Decimal" ? .decimalPad : .default))
         }
     }
 
@@ -2130,15 +2470,31 @@ struct ActionFormView: View {
         for field in fields {
             let raw = valuesByName[field.name, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
             guard !raw.isEmpty else {
-                throw APIErrorResponse(errorCode: "missing_field", message: "\(field.name) is required", details: nil)
+                throw APIErrorResponse(
+                    errorCode: "missing_field",
+                    message: "\(field.name) is required",
+                    details: nil
+                )
             }
             switch field.fieldType {
             case "Int":
-                guard let value = Int(raw) else { throw APIErrorResponse(errorCode: "invalid_field", message: "\(field.name) expects Int", details: nil) }
+                guard let value = Int(raw) else {
+                    throw APIErrorResponse(
+                        errorCode: "invalid_field",
+                        message: "\(field.name) expects Int",
+                        details: nil
+                    )
+                }
                 payload[field.name] = .number(Double(value))
-            case "Float":
-                guard let value = Double(raw) else { throw APIErrorResponse(errorCode: "invalid_field", message: "\(field.name) expects Float", details: nil) }
-                payload[field.name] = .number(value)
+            case "Decimal":
+                guard Double(raw) != nil else {
+                    throw APIErrorResponse(
+                        errorCode: "invalid_field",
+                        message: "\(field.name) expects Decimal",
+                        details: nil
+                    )
+                }
+                payload[field.name] = .string(raw)
             case "Bool":
                 switch raw.lowercased() {
                 case "true", "1", "yes":
@@ -2146,16 +2502,28 @@ struct ActionFormView: View {
                 case "false", "0", "no":
                     payload[field.name] = .bool(false)
                 default:
-                    throw APIErrorResponse(errorCode: "invalid_field", message: "\(field.name) expects Bool", details: nil)
+                    throw APIErrorResponse(
+                        errorCode: "invalid_field",
+                        message: "\(field.name) expects Bool",
+                        details: nil
+                    )
                 }
             case "Date":
                 guard let value = DateCodec.parseDateInput(raw) else {
-                    throw APIErrorResponse(errorCode: "invalid_field", message: "\(field.name) expects a date or Unix milliseconds", details: nil)
+                    throw APIErrorResponse(
+                        errorCode: "invalid_field",
+                        message: "\(field.name) expects a date or Unix milliseconds",
+                        details: nil
+                    )
                 }
                 payload[field.name] = .number(value)
             case "DateTime":
                 guard let value = DateCodec.parseDateTimeInput(raw) else {
-                    throw APIErrorResponse(errorCode: "invalid_field", message: "\(field.name) expects a date/time or Unix milliseconds", details: nil)
+                    throw APIErrorResponse(
+                        errorCode: "invalid_field",
+                        message: "\(field.name) expects a date/time or Unix milliseconds",
+                        details: nil
+                    )
                 }
                 payload[field.name] = .number(value)
             default:
@@ -2348,7 +2716,8 @@ private struct AdminRequestLogsView: View {
                                         .foregroundStyle(.secondary)
                                 }
 
-                                if let errorMessage = log.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines), !errorMessage.isEmpty {
+                                if let errorMessage = log.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   !errorMessage.isEmpty {
                                     Text(errorMessage)
                                         .font(.caption)
                                         .foregroundStyle(.red)

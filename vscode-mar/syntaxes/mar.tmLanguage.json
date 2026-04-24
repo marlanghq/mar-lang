@@ -4,36 +4,42 @@
   "scopeName": "source.mar",
   "patterns": [
     {
-      "include": "#strings"
-    },
-    {
       "include": "#comments"
     },
     {
-      "include": "#declarations"
+      "include": "#strings"
     },
     {
-      "include": "#keywords"
+      "include": "#definition-forms"
+    },
+    {
+      "include": "#typed-field-heads"
+    },
+    {
+      "include": "#forms"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#modifiers"
     },
     {
       "include": "#types"
     },
     {
-      "include": "#literals"
+      "include": "#symbols"
     },
     {
       "include": "#numbers"
-    },
-    {
-      "include": "#operators"
     }
   ],
   "repository": {
     "comments": {
       "patterns": [
         {
-          "name": "comment.line.double-dash.mar",
-          "match": "--.*$"
+          "name": "comment.line.semicolon.mar",
+          "match": ";.*$"
         }
       ]
     },
@@ -42,17 +48,7 @@
         {
           "name": "string.quoted.double.mar",
           "begin": "\"",
-          "beginCaptures": {
-            "0": {
-              "name": "punctuation.definition.string.begin.mar"
-            }
-          },
           "end": "\"",
-          "endCaptures": {
-            "0": {
-              "name": "punctuation.definition.string.end.mar"
-            }
-          },
           "patterns": [
             {
               "name": "constant.character.escape.mar",
@@ -62,454 +58,96 @@
         }
       ]
     },
-    "declarations": {
+    "definition-forms": {
       "patterns": [
         {
-          "name": "meta.app.declaration.mar",
-          "match": "\\b(app)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "name": "meta.definition.function.mar",
+          "match": "(\\()\\s*(define)\\s+(\\()\\s*([a-z][a-z0-9-]*(?:-[a-z0-9]+)*)",
           "captures": {
             "1": {
-              "name": "keyword.control.declaration.mar"
+              "name": "punctuation.section.parens.begin.mar"
             },
             "2": {
-              "name": "entity.name.type.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.entity.declaration.mar",
-          "match": "\\b(entity)\\s+([A-Z][A-Za-z0-9_]*)\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "entity.name.type.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.public.declaration.mar",
-          "match": "\\b(public)\\s*(\\{)",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "punctuation.section.block.begin.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.system.declaration.mar",
-          "match": "\\b(system)\\s*(\\{)",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "punctuation.section.block.begin.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.auth.declaration.mar",
-          "match": "\\b(auth)\\s*(\\{)",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "punctuation.section.block.begin.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.frontend.declaration.mar",
-          "match": "\\b(screens)\\s*(\\{)",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "punctuation.section.block.begin.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.frontend.screen.declaration.mar",
-          "match": "\\b(screen)\\s+([A-Z][A-Za-z0-9_]*)(?:\\s+(for)\\s+([A-Z][A-Za-z0-9_]*))?\\s*(\\{)",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "entity.name.type.mar"
+              "name": "keyword.control.definition.mar"
             },
             "3": {
-              "name": "keyword.control.declaration.mar"
+              "name": "punctuation.section.parens.begin.mar"
             },
             "4": {
-              "name": "entity.name.type.mar"
-            },
-            "5": {
-              "name": "punctuation.section.block.begin.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.frontend.list.declaration.mar",
-          "match": "\\b(list|children)\\s+([A-Z][A-Za-z0-9_]*)(?:\\s+(by)\\s+([a-z][A-Za-z0-9_]*))?\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "entity.name.type.mar"
-            },
-            "3": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "4": {
-              "name": "variable.other.member.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.frontend.report.declaration.mar",
-          "match": "\\b(report)\\s+([A-Z][A-Za-z0-9_]*)(?:\\s+(where))?\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "entity.name.type.mar"
-            },
-            "3": {
-              "name": "keyword.control.rule.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.frontend.report.group-by.mar",
-          "match": "\\b(group)\\s+(by)\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "keyword.control.declaration.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.frontend.report.metric.mar",
-          "match": "\\b(metric)\\s+([a-z][A-Za-z0-9_]*)\\s*(label)\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
               "name": "entity.name.function.mar"
-            },
-            "3": {
-              "name": "keyword.control.declaration.mar"
             }
           }
         },
         {
-          "name": "meta.frontend.toolbar.create.mar",
-          "match": "\\b(trailing|primary)\\s+(create)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "name": "meta.definition.mar",
+          "match": "(\\()\\s*(define-app|define-screen|define|define-record|define-type)\\s+([a-z][a-z0-9-]*(?:-[a-z0-9]+)*)",
           "captures": {
             "1": {
-              "name": "keyword.control.declaration.mar"
+              "name": "punctuation.section.parens.begin.mar"
             },
             "2": {
-              "name": "keyword.control.rule.mar"
+              "name": "keyword.control.definition.mar"
             },
             "3": {
               "name": "entity.name.type.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.frontend.toolbar.edit-list.mar",
-          "match": "\\b(trailing|primary)\\s+(edit)\\s+(list)\\s+([A-Z][A-Za-z0-9_]*)\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "keyword.control.rule.mar"
-            },
-            "3": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "4": {
-              "name": "entity.name.type.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.frontend.toolbar.edit.mar",
-          "match": "\\b(trailing|primary)\\s+(edit)\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "keyword.control.rule.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.typealias.declaration.mar",
-          "match": "\\b(type)\\s+(alias)\\s+([A-Z][A-Za-z0-9_]*)\\s*(=)",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "3": {
-              "name": "entity.name.type.mar"
-            },
-            "4": {
-              "name": "keyword.operator.assignment.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.type.declaration.mar",
-          "match": "\\b(type)\\s+([A-Z][A-Za-z0-9_]*)\\s*(\\{)",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "entity.name.type.mar"
-            },
-            "3": {
-              "name": "punctuation.section.block.begin.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.action.declaration.mar",
-          "match": "\\b(action)\\s+([a-z][A-Za-z0-9_]*)\\s*(\\{)",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "entity.name.function.mar"
-            },
-            "3": {
-              "name": "punctuation.section.block.begin.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.action.input.mar",
-          "match": "\\b(input)\\s*(:)\\s*([A-Z][A-Za-z0-9_]*)\\b",
-          "captures": {
-            "1": {
-              "name": "variable.language.mar"
-            },
-            "2": {
-              "name": "punctuation.separator.key-value.mar"
-            },
-            "3": {
-              "name": "entity.name.type.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.action.step.mar",
-          "match": "\\b(?:([a-z][A-Za-z0-9_]*)\\s*=\\s*)?(load|create|update|delete)\\s+([A-Z][A-Za-z0-9_]*)\\b",
-          "captures": {
-            "1": {
-              "name": "variable.language.mar"
-            },
-            "2": {
-              "name": "keyword.control.rule.mar"
-            },
-            "3": {
-              "name": "entity.name.type.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.alias.ref-field.declaration.mar",
-          "match": "\\b([a-z][A-Za-z0-9_]*)\\s*(:)\\s*(ref)\\s+([A-Z][A-Za-z0-9_]*)\\b",
-          "captures": {
-            "1": {
-              "name": "variable.other.member.mar"
-            },
-            "2": {
-              "name": "punctuation.separator.key-value.mar"
-            },
-            "3": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "4": {
-              "name": "storage.type.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.field.declaration.mar",
-          "match": "\\b([a-z][A-Za-z0-9_]*)\\s*(:)\\s*([A-Z][A-Za-z0-9_]*)\\b",
-          "captures": {
-            "1": {
-              "name": "variable.other.member.mar"
-            },
-            "2": {
-              "name": "punctuation.separator.key-value.mar"
-            },
-            "3": {
-              "name": "storage.type.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.belongs-to.named-current-user.mar",
-          "match": "\\b(belongs_to)\\s+([a-z][A-Za-z0-9_]*)\\s*(:)\\s*(current_user)\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "variable.other.member.mar"
-            },
-            "3": {
-              "name": "punctuation.separator.key-value.mar"
-            },
-            "4": {
-              "name": "variable.language.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.belongs-to.current-user.mar",
-          "match": "\\b(belongs_to)\\s+(current_user)\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "variable.language.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.belongs-to.declaration.mar",
-          "match": "\\b(belongs_to)\\s+(?:([a-z][A-Za-z0-9_]*)\\s*(:)\\s*)?([A-Z][A-Za-z0-9_]*)(?:\\s+(optional))?\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.declaration.mar"
-            },
-            "2": {
-              "name": "variable.other.member.mar"
-            },
-            "3": {
-              "name": "punctuation.separator.key-value.mar"
-            },
-            "4": {
-              "name": "entity.name.type.mar"
-            },
-            "5": {
-              "name": "storage.modifier.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.authorize.action.mar",
-          "match": "\\b(authorize)\\s+((?:read|create|update|delete)(?:\\s*,\\s*(?:read|create|update|delete))*)\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.authorization.mar"
-            },
-            "2": {
-              "name": "support.constant.action.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.rule.declaration.mar",
-          "match": "\\b(rule)\\s+(\"[^\"]*\")\\s+(expect)\\b",
-          "captures": {
-            "1": {
-              "name": "keyword.control.rule.mar"
-            },
-            "2": {
-              "name": "string.quoted.double.mar"
-            },
-            "3": {
-              "name": "keyword.control.rule.mar"
-            }
-          }
-        },
-        {
-          "name": "meta.action.field.assignment.mar",
-          "match": "\\b([a-z][A-Za-z0-9_]*)\\s*(:)",
-          "captures": {
-            "1": {
-              "name": "variable.other.member.mar"
-            },
-            "2": {
-              "name": "punctuation.separator.key-value.mar"
             }
           }
         }
       ]
     },
-    "keywords": {
+    "typed-field-heads": {
       "patterns": [
         {
-          "name": "keyword.control.declaration.mar",
-          "match": "\\b(app|port|database|ios|system|public|screens|screen|section|toolbar|link|to|list|children|report|group|by|metric|label|destination|field|title|subtitle|entity|auth|type|alias|belongs_to|ref|trailing)\\b"
-        },
+          "name": "meta.field.typed-head.mar",
+          "match": "(\\()\\s*((?!(?:maybe|list|result|unit)\\b)[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*)\\s+(?=(?:string|int|decimal|bool|date|datetime|cursor|\\((?:maybe|list|result|unit)\\b))",
+          "captures": {
+            "1": {
+              "name": "punctuation.section.parens.begin.mar"
+            },
+            "2": {
+              "name": "variable.other.member.mar"
+            }
+          }
+        }
+      ]
+    },
+    "forms": {
+      "patterns": [
         {
-          "name": "keyword.control.rule.mar",
-          "match": "\\b(rule|expect|when|authorize|action|load|create|update|delete|edit)\\b"
-        },
-        {
-          "name": "keyword.other.auth.mar",
-          "match": "\\b(code_ttl_minutes|session_ttl_hours|auth_request_code_rate_limit_per_minute|auth_login_rate_limit_per_minute|admin_ui_session_ttl_hours|security_frame_policy|security_referrer_policy|security_content_type_nosniff|email_from|email_subject|smtp_host|smtp_port|smtp_username|smtp_password_env|smtp_starttls)\\b"
-        },
-        {
-          "name": "keyword.other.public.mar",
-          "match": "\\b(dir|mount|spa_fallback)\\b"
-        },
-        {
-          "name": "keyword.other.system.mar",
-          "match": "\\b(request_logs_buffer|http_max_request_body_mb|sqlite_journal_mode|sqlite_synchronous|sqlite_foreign_keys|sqlite_busy_timeout_ms|sqlite_wal_autocheckpoint|sqlite_journal_size_limit_mb|sqlite_mmap_size_mb|sqlite_cache_size_kb)\\b"
-        },
-        {
-          "name": "storage.modifier.mar",
-          "match": "\\b(primary|auto|optional|default)\\b"
-        },
-        {
-          "name": "keyword.operator.logical.mar",
-          "match": "\\b(and|or|not)\\b"
+          "name": "keyword.control.mar",
+          "match": "(?<=\\()\\s*(backend|frontend|entity|screen|action|input|fields|belongs-to|unique|defaults|default|primary|auto|validate|authorize|query|where|order-by|limit|config|auth|entities|queries|actions|screens|public|system|database|server|port|ios|bundle-identifier|display-name|server-url|dir|mount|spa-fallback|request-logs-buffer|http-max-request-body-mb|sqlite-journal-mode|sqlite-synchronous|sqlite-foreign-keys|sqlite-busy-timeout-ms|sqlite-wal-autocheckpoint|sqlite-journal-size-limit-mb|sqlite-mmap-size-mb|sqlite-cache-size-kb|from|subject|smtp-host|smtp-port|smtp-username|smtp-password-env|smtp-starttls|code-ttl-minutes|session-ttl-hours|auth-request-code-rate-limit-per-minute|auth-login-rate-limit-per-minute|admin-ui-session-ttl-hours|security-frame-policy|security-referrer-policy|security-content-type-nosniff|msg|init|update|view|section|empty|button|link|list|create|edit|delete|load|read|go|back|command|row|title|subtitle|text|field|value|open|destination|disabled|text-input|textarea|toggle|select)(?![-_.a-z0-9])"
         },
         {
           "name": "support.function.mar",
-          "match": "\\b(contains|starts_with|ends_with|length|matches|avg|sum|count|min|max|month|year)\\b"
+          "match": "(?<=\\()\\s*(if|cond|match|let|let\\*|lambda|begin|error|and|or|not|get|assoc|authenticated\\?|anonymous\\?|same-user\\?|has-role\\?|just|nothing|ok|err|unit|cons|first|rest|empty\\?|map|filter|fold-left|fold-right|length|contains|starts-with|ends-with|matches)(?![-_.a-z0-9])"
         },
         {
-          "name": "variable.language.mar",
-          "match": "\\b(?:input|[a-z][A-Za-z0-9_]*)\\.([a-z][A-Za-z0-9_]*)\\b"
-        },
+          "name": "support.function.mar",
+          "match": "(?<=\\()\\s*(=|!=|>|>=|<|<=|\\+|-|\\*|/)(?=\\s|\\))"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
         {
-          "name": "variable.language.mar",
-          "match": "\\b(input|anonymous|user_authenticated|user_email|user_id|user_role)\\b"
-        },
+          "name": "constant.language.mar",
+          "match": "\\b(true|false|else|current-user|asc|desc)(?![-_.a-z0-9])"
+        }
+      ]
+    },
+    "modifiers": {
+      "patterns": [
         {
-          "name": "support.constant.action.mar",
-          "match": "\\b(read|load|create|update|delete)\\b"
+          "name": "storage.modifier.mar",
+          "match": "\\boptional\\b"
+        }
+      ]
+    },
+    "symbols": {
+      "patterns": [
+        {
+          "name": "variable.other.mar",
+          "match": "\\b[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*\\b"
         }
       ]
     },
@@ -517,19 +155,7 @@
       "patterns": [
         {
           "name": "storage.type.mar",
-          "match": "\\b([A-Z][A-Za-z0-9_]*)\\b"
-        }
-      ]
-    },
-    "literals": {
-      "patterns": [
-        {
-          "name": "constant.language.boolean.mar",
-          "match": "\\b(true|false)\\b"
-        },
-        {
-          "name": "constant.language.null.mar",
-          "match": "\\bnull\\b"
+          "match": "\\b(string|int|decimal|bool|date|datetime|cursor|maybe|list|result|unit)(?![-_.a-z0-9])"
         }
       ]
     },
@@ -537,55 +163,7 @@
       "patterns": [
         {
           "name": "constant.numeric.mar",
-          "match": "\\b\\d+(?:\\.\\d+)?\\b"
-        }
-      ]
-    },
-    "operators": {
-      "patterns": [
-        {
-          "name": "keyword.operator.comparison.mar",
-          "match": "==|!=|>=|<=|>|<"
-        },
-        {
-          "name": "keyword.operator.arithmetic.mar",
-          "match": "\\+|-|\\*|/"
-        },
-        {
-          "name": "keyword.operator.assignment.mar",
-          "match": "="
-        },
-        {
-          "name": "keyword.operator.arrow.mar",
-          "match": "->"
-        },
-        {
-          "name": "punctuation.section.block.begin.mar",
-          "match": "\\{"
-        },
-        {
-          "name": "punctuation.section.block.end.mar",
-          "match": "\\}"
-        },
-        {
-          "name": "punctuation.section.parens.begin.mar",
-          "match": "\\("
-        },
-        {
-          "name": "punctuation.section.parens.end.mar",
-          "match": "\\)"
-        },
-        {
-          "name": "punctuation.section.brackets.begin.mar",
-          "match": "\\["
-        },
-        {
-          "name": "punctuation.section.brackets.end.mar",
-          "match": "\\]"
-        },
-        {
-          "name": "punctuation.separator.comma.mar",
-          "match": ","
+          "match": "\\b-?[0-9]+(?:\\.[0-9]+)?\\b"
         }
       ]
     }

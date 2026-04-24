@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
 	"mar/internal/expr"
+	"mar/internal/sexp"
 )
 
 type lspDocumentSymbol struct {
@@ -27,93 +27,99 @@ type lspCodeAction struct {
 	Edit        lspWorkspaceEdit `json:"edit,omitempty"`
 }
 
-var (
-	appDeclRe                = regexp.MustCompile(`^\s*app\s+([A-Za-z][A-Za-z0-9_]*)\s*$`)
-	unknownInputTypeErrorRe  = regexp.MustCompile(`action\s+[a-z][A-Za-z0-9_]*\s+references unknown input type\s+"([A-Za-z][A-Za-z0-9_]*)"$`)
-	keywordHoverDescriptions = map[string]string{
-		"app":                          "Declares the app name. Example: `app BookStoreApi`.",
-		"port":                         "Sets the HTTP server port. Example: `port 4100`.",
-		"database":                     "Sets the SQLite file path. Example: `database \"app.db\"`. Relative paths use the current working directory.",
-		"ios":                          "Declares iOS project generation settings.",
-		"bundle_identifier":            "Sets the required iOS bundle identifier. Example: `bundle_identifier \"com.example.app\"`.",
-		"display_name":                 "Sets the optional iOS Home Screen app name. Falls back to the Mar app name when omitted.",
-		"server_url":                   "Sets the required server URL used by the generated iOS app. Example: `server_url \"https://school.example.com\"`.",
-		"system":                       "Declares system runtime options.",
-		"request_logs_buffer":          "Sets in-memory request log capacity. Default `200`, range `10..5000`.",
-		"http_max_request_body_mb":     "Sets max HTTP request body size in megabytes. Default `1`, range `1..1024`.",
-		"sqlite_journal_mode":          "Sets SQLite journal mode. Example: `sqlite_journal_mode wal`.",
-		"sqlite_synchronous":           "Sets SQLite synchronous mode. Example: `sqlite_synchronous normal`.",
-		"sqlite_foreign_keys":          "Enables or disables SQLite foreign key checks. Example: `sqlite_foreign_keys true`.",
-		"sqlite_busy_timeout_ms":       "Sets SQLite busy timeout in milliseconds. Default `5000`, range `0..600000`.",
-		"sqlite_wal_autocheckpoint":    "Sets SQLite WAL auto-checkpoint size in pages. Default `1000`, range `0..1000000`.",
-		"sqlite_journal_size_limit_mb": "Sets SQLite journal size limit in megabytes. Default `64`, range `-1..4096` (`-1` unlimited).",
-		"sqlite_mmap_size_mb":          "Sets SQLite mmap size in megabytes. Default `128`, range `0..16384`.",
-		"sqlite_cache_size_kb":         "Sets SQLite cache size in KiB. Default `2000`, range `0..1048576`.",
-		"public":                       "Declares embedded static frontend files and optional SPA fallback.",
-		"dir":                          "Sets the source directory for embedded static files. Example: `dir \"./frontend/dist\"`.",
-		"mount":                        "Sets where static files are served. Example: `mount \"/\"` or `mount \"/app\"`.",
-		"spa_fallback":                 "Sets a fallback file for SPA routes when no static file matches.",
-		"screens":                      "Declares an App UI navigation model made of screens, sections, lists, links, fields, and actions.",
-		"screen":                       "Declares a screen. Use `screen PostDetail for Post { ... }` to render one entity row.",
-		"section":                      "Declares a list-style section. Sections may include an optional title and `when` condition.",
-		"link":                         "Adds a navigation row to another screen. Example: `link \"Public blogs\" to PublicBlogs`.",
-		"to":                           "Used by screen links to name the destination screen.",
-		"list":                         "Displays rows for an entity in a screen. Example: `list Blog { title name destination BlogDetail }`.",
-		"children":                     "Displays rows that belong to the current entity row. Example: `children Comment by post { title body }`.",
-		"by":                           "Used by child lists to name the belongs_to field that points back to the current row.",
-		"destination":                  "Sets the detail screen opened by list rows.",
-		"field":                        "Displays a field from the current row in a `screen ... for Entity` screen.",
-		"title":                        "Sets a screen title or the title field for list rows.",
-		"subtitle":                     "Sets the subtitle field for list rows.",
-		"entity":                       "Declares an entity. Mar generates CRUD endpoints for it.",
-		"auth":                         "Configures built-in email-code authentication for the app. Mar always includes a built-in `User` entity.",
-		"code_ttl_minutes":             "Sets login code lifetime in minutes. Default `10`, range `1..1440`.",
-		"session_ttl_hours":            "Sets session lifetime in hours. Default `24`, range `1..8760` (up to 365 days).",
-		"auth_request_code_rate_limit_per_minute": "Sets per-minute rate limit for `POST /auth/request-code`. Default `5`, range `1..10000`.",
-		"auth_login_rate_limit_per_minute":        "Sets per-minute rate limit for `POST /auth/login`. Default `10`, range `1..10000`.",
-		"admin_ui_session_ttl_hours":              "Sets the generated admin session lifetime in hours. Range `1..8760` (up to 365 days). Falls back to `auth.session_ttl_hours` when omitted.",
-		"security_frame_policy":                   "Sets `X-Frame-Options`. Options: `sameorigin` (default) or `deny`.",
-		"security_referrer_policy":                "Sets `Referrer-Policy`. Options: `strict-origin-when-cross-origin` (default) or `no-referrer`.",
-		"security_content_type_nosniff":           "Controls `X-Content-Type-Options: nosniff`. Default `true`.",
-		"email_from":                              "Sets the sender email used by auth code messages.",
-		"email_subject":                           "Sets the subject used by auth code messages.",
-		"smtp_host":                               "Sets the SMTP server host used outside `mar dev`.",
-		"smtp_port":                               "Sets the SMTP server port used outside `mar dev`.",
-		"smtp_username":                           "Sets the SMTP username used outside `mar dev`.",
-		"smtp_password_env":                       "Sets the environment variable name that holds the SMTP password.",
-		"smtp_starttls":                           "Controls whether Mar upgrades the SMTP connection with STARTTLS.",
-		"rule":                                    "Adds validation logic for entity records.",
-		"expect":                                  "Used in `rule` clauses to declare the condition that must be true.",
-		"authorize":                               "Adds authorization rules for one or more CRUD actions. Example: `authorize read, create, update, delete when ...`.",
-		"read":                                    "Used in authorize clauses to control single-record reads and which rows appear in list responses.",
-		"belongs_to":                              "Declares a singular relationship to another entity. Example: `belongs_to User`, `belongs_to customer: User optional`, `belongs_to current_user`, or `belongs_to reviewer: current_user`.",
-		"ref":                                     "Used in action input `type alias` records to reference another entity by primary key. Example: `post : ref Post`.",
-		"current_user":                            "Used in `belongs_to current_user` or `belongs_to reviewer: current_user` to create a required relationship to the authenticated built-in `User` automatically.",
-		"type":                                    "Declares either a closed set of named values like `type UserRole { Admin Member }` or, together with `alias`, an action input record.",
-		"alias":                                   "Used with `type alias` to define an action input record.",
-		"action":                                  "Declares an action endpoint with `input` and one or more `load`, `create`, `update`, or `delete` steps. Steps may bind aliases like `todo = load Todo { ... }`.",
-		"load":                                    "Loads one row inside an action block. `load` must bind to an alias and must select by primary key.",
-		"create":                                  "Adds one create step inside an action block. Steps may bind aliases like `order = create Order { ... }`.",
-		"update":                                  "Adds one update step inside an action block. Include the entity primary key plus the fields to change. Steps may bind aliases like `updatedOrder = update Order { ... }`.",
-		"delete":                                  "Adds one delete step inside an action block. Include the entity primary key to select the row to remove. Steps may bind aliases like `deletedOrder = delete Order { ... }`.",
-		"optional":                                "Marks a field as nullable.",
-		"default":                                 "Sets a literal default value for a field. New required fields with defaults can be added automatically during migration.",
-		"primary":                                 "Marks a field as primary key.",
-		"auto":                                    "Marks a field as auto-generated.",
-		"input":                                   "References the action input record (for example `input.userId`). Action step aliases may also be referenced like `todo.id`.",
-		"length":                                  "Returns the string length. Example: `length title >= 3`.",
-		"contains":                                "Returns true when text contains a substring. Example: `contains \"@\" email`.",
-		"starts_with":                             "Returns true when text starts with a prefix. Example: `starts_with \"SKU-\" code`.",
-		"ends_with":                               "Returns true when text ends with a suffix. Example: `ends_with \"@company.com\" email`.",
-		"matches":                                 "Returns true when text matches a regex pattern. Example: `matches \"^[^@]+$\" email`.",
-		"Int":                                     "Mar primitive type for whole numbers.",
-		"String":                                  "Mar primitive type for text values.",
-		"Bool":                                    "Mar primitive type for booleans (`true`/`false`).",
-		"Float":                                   "Mar primitive type for decimal numbers.",
-		"Date":                                    "Mar primitive type for calendar dates. Internally stored as POSIX milliseconds normalized to 00:00 UTC, and returned in JSON as POSIX milliseconds.",
-		"DateTime":                                "Mar primitive type for timestamps. Internally stored as POSIX milliseconds and returned in JSON as POSIX milliseconds.",
-	}
-)
+var keywordHoverDescriptions = map[string]string{
+	"define-app":                   "Declares the root app and explicitly separates backend and frontend blocks.",
+	"config":                       "Attaches a named config value to the app.",
+	"database":                     "Sets the SQLite file path. Example: `database \"app.db\"`. Relative paths use the current working directory.",
+	"ios":                          "Declares iOS project generation settings.",
+	"bundle-identifier":            "Sets the required iOS bundle identifier. Example: `(bundle-identifier \"com.example.app\")`.",
+	"display-name":                 "Sets the optional iOS Home Screen app name. Falls back to the Mar app name when omitted.",
+	"server-url":                   "Sets the required server URL used by the generated iOS app. Example: `(server-url \"https://school.example.com\")`.",
+	"system":                       "Declares system runtime options.",
+	"request-logs-buffer":          "Sets in-memory request log capacity. Default `200`, range `10..5000`.",
+	"http-max-request-body-mb":     "Sets max HTTP request body size in megabytes. Default `1`, range `1..1024`.",
+	"sqlite-journal-mode":          "Sets SQLite journal mode. Example: `(sqlite-journal-mode wal)`.",
+	"sqlite-synchronous":           "Sets SQLite synchronous mode. Example: `(sqlite-synchronous normal)`.",
+	"sqlite-foreign-keys":          "Enables or disables SQLite foreign key checks. Example: `(sqlite-foreign-keys true)`.",
+	"sqlite-busy-timeout-ms":       "Sets SQLite busy timeout in milliseconds. Default `5000`, range `0..600000`.",
+	"sqlite-wal-autocheckpoint":    "Sets SQLite WAL auto-checkpoint size in pages. Default `1000`, range `0..1000000`.",
+	"sqlite-journal-size-limit-mb": "Sets SQLite journal size limit in megabytes. Default `64`, range `-1..4096` (`-1` unlimited).",
+	"sqlite-mmap-size-mb":          "Sets SQLite mmap size in megabytes. Default `128`, range `0..16384`.",
+	"sqlite-cache-size-kb":         "Sets SQLite cache size in KiB. Default `2000`, range `0..1048576`.",
+	"public":                       "Declares embedded static frontend files and optional SPA fallback.",
+	"backend":                      "Groups backend declarations inside define-app, such as entities, queries, and actions.",
+	"frontend":                     "Groups frontend declarations inside define-app, such as screens.",
+	"dir":                          "Sets the source directory for embedded static files. Example: `dir \"./frontend/dist\"`.",
+	"mount":                        "Sets where static files are served. Example: `mount \"/\"` or `mount \"/app\"`.",
+	"spa-fallback":                 "Sets a fallback file for SPA routes when no static file matches.",
+	"screens":                      "Declares an App UI navigation model made of screens, sections, lists, links, fields, and actions.",
+	"queries":                      "Publishes named backend read models inside the define-app backend block.",
+	"actions":                      "Publishes named backend mutation endpoints inside the define-app backend block.",
+	"define-screen":                "Declares a screen. Parameterized screens use `(define-screen (post-detail post) ...)` and their parameters must be inferred from callers.",
+	"screen":                       "Legacy wrapper name; new screen declarations should use top-level `define-screen` directly.",
+	"section":                      "Declares a list-style section. Conditional UI should use normal expressions like `(if condition item (empty))`.",
+	"list":                         "Displays rows for an entity in a screen.",
+	"row":                          "Declares how each list row is rendered.",
+	"field":                        "Displays a field from the current row of a screen, typically the first screen argument.",
+	"title":                        "Sets a screen title or the title field for list rows.",
+	"subtitle":                     "Sets the subtitle field for list rows.",
+	"text":                         "Renders static text inside a `view` tree.",
+	"button":                       "Renders a button that emits a screen message. Buttons are only valid on screens that define `update`.",
+	"text-input":                   "Renders a text input bound to the screen model. Requires a screen with `update`.",
+	"textarea":                     "Renders a multiline text input bound to the screen model. Requires a screen with `update`.",
+	"toggle":                       "Renders a boolean input bound to the screen model. Requires a screen with `update`.",
+	"select":                       "Renders a select input bound to the screen model. Requires a screen with `update`.",
+	"define":                       "Defines a named value or function. Example: `(define app-config ...)` or `(define (my-posts) ...)`.",
+	"define-record":                "Declares a record type with named fields.",
+	"define-type":                  "Declares a tagged union type with named variants.",
+	"entity":                       "Declares an entity. Mar generates CRUD endpoints for it.",
+	"auth":                         "Configures built-in email-code authentication for the app. Mar always includes a built-in `User` entity.",
+	"code-ttl-minutes":             "Sets login code lifetime in minutes. Default `10`, range `1..1440`.",
+	"session-ttl-hours":            "Sets session lifetime in hours. Default `24`, range `1..8760` (up to 365 days).",
+	"auth-request-code-rate-limit-per-minute": "Sets per-minute rate limit for `POST /auth/request-code`. Default `5`, range `1..10000`.",
+	"auth-login-rate-limit-per-minute":        "Sets per-minute rate limit for `POST /auth/login`. Default `10`, range `1..10000`.",
+	"admin-ui-session-ttl-hours":              "Sets the generated admin session lifetime in hours. Range `1..8760` (up to 365 days). Falls back to `auth.session-ttl-hours` when omitted.",
+	"security-frame-policy":                   "Sets `X-Frame-Options`. Options: `sameorigin` (default) or `deny`.",
+	"security-referrer-policy":                "Sets `Referrer-Policy`. Options: `strict-origin-when-cross-origin` (default) or `no-referrer`.",
+	"security-content-type-nosniff":           "Controls `X-Content-Type-Options: nosniff`. Default `true`.",
+	"from":                                    "Sets the sender email used by auth code messages.",
+	"subject":                                 "Sets the subject used by auth code messages.",
+	"smtp-host":                               "Sets the SMTP server host used outside `mar dev`.",
+	"smtp-port":                               "Sets the SMTP server port used outside `mar dev`.",
+	"smtp-username":                           "Sets the SMTP username used outside `mar dev`.",
+	"smtp-password-env":                       "Sets the environment variable name that holds the SMTP password.",
+	"smtp-starttls":                           "Controls whether Mar upgrades the SMTP connection with STARTTLS.",
+	"validate":                                "Adds an entity validation expression. Return `false` for a default error or use `(error \"...\")` for a custom message.",
+	"authorize":                               "Adds authorization expressions for CRUD actions. Return `false` for the default auth error or use `(error \"...\")` for a custom message.",
+	"error":                                   "Aborts the current expression immediately with a custom error message.",
+	"action":                                  "Declares a backend REST mutation. Define it like `(define complete-todo (action ...))`.",
+	"input":                                   "Declares the request payload accepted by an action.",
+	"command":                                 "Creates a managed backend effect inside a screen transition. Only valid inside the effects list returned by screen `init` or `update`.",
+	"go":                                      "Navigation effect that pushes another screen. Only valid inside the effects list returned by screen `init` or `update`.",
+	"back":                                    "Navigation effect that pops the current screen. Only valid inside the effects list returned by screen `init` or `update`.",
+	"read":                                    "Used in authorize clauses to control single-record reads and which rows appear in list responses.",
+	"belongs-to":                              "Declares a relationship to another entity. Example: `(belongs-to ((user)))` or `(belongs-to ((author user)))`.",
+	"unique":                                  "Declares one or more unique constraints for an entity.",
+	"load":                                    "Loads one row inside an action block by primary key. Example: `(load todo todo-id)`.",
+	"create":                                  "Adds a create step inside an action block.",
+	"update":                                  "Adds an update step inside an action block. Pass the entity, id expression, and changed fields.",
+	"delete":                                  "Adds a delete step inside an action block. Pass the entity and id expression.",
+	"optional":                                "Marks a field as nullable.",
+	"default":                                 "Sets a literal default value for a field. New required fields with defaults can be added automatically during migration.",
+	"primary":                                 "Marks a field as primary key.",
+	"auto":                                    "Marks a field as auto-generated.",
+	"length":                                  "Returns the string length. Example: `(length title)`.",
+	"contains":                                "Returns true when text contains a substring. Example: `(contains email \"@\")`.",
+	"starts-with":                             "Returns true when text starts with a prefix.",
+	"ends-with":                               "Returns true when text ends with a suffix.",
+	"matches":                                 "Returns true when text matches a regex pattern. Example: `matches \"^[^@]+$\" email`.",
+	"int":                                     "Mar primitive type for whole numbers.",
+	"string":                                  "Mar primitive type for text values.",
+	"bool":                                    "Mar primitive type for booleans (`true`/`false`).",
+	"decimal":                                 "Mar primitive type for exact decimal numbers.",
+	"date":                                    "Mar primitive type for calendar dates.",
+	"datetime":                                "Mar primitive type for timestamps.",
+}
 
 func (s *server) handleHover(id json.RawMessage, params textDocumentPositionParams) {
 	text, ok := s.documentText(params.TextDocument.URI)
@@ -144,16 +150,8 @@ func (s *server) handleHover(id json.RawMessage, params textDocumentPositionPara
 	doc, ok := keywordHoverDescriptions[word]
 	if !ok && expr.IsBuiltinValueName(word) {
 		switch word {
-		case "anonymous":
-			doc = "Returns true when the current request is not authenticated."
-		case "user_authenticated":
-			doc = "Returns true when the current request is authenticated."
-		case "user_email":
-			doc = "Returns the authenticated user's email for the current request."
-		case "user_id":
-			doc = "Returns the authenticated user's id for the current request."
-		case "user_role":
-			doc = "Returns the authenticated user's role for the current request."
+		case "current_user":
+			doc = "Returns the current user state: `(authenticated id email role)` or `(anonymous)`."
 		}
 		ok = doc != ""
 	}
@@ -200,160 +198,79 @@ func (s *server) documentText(uri string) (string, bool) {
 }
 
 func buildDocumentSymbols(text string) []lspDocumentSymbol {
-	lines := splitNormalizedLines(text)
+	nodes, err := sexp.Parse(text)
+	if err != nil {
+		return []lspDocumentSymbol{}
+	}
 	out := make([]lspDocumentSymbol, 0, 16)
 
-	for lineNo := 0; lineNo < len(lines); lineNo++ {
-		line := lines[lineNo]
-		trimmed := strings.TrimSpace(line)
-		if isCommentOrBlankLSP(trimmed) {
+	for _, node := range nodes {
+		if isListNamed(node, "define-app") && len(node.Children) >= 2 && node.Children[1].Kind == sexp.KindSymbol {
+			out = append(out, documentSymbol(node.Children[1], "app", 2, nil))
 			continue
 		}
 
-		if match := appDeclRe.FindStringSubmatchIndex(line); match != nil {
-			name := line[match[2]:match[3]]
-			out = append(out, lspDocumentSymbol{
-				Name:           name,
-				Detail:         "app",
-				Kind:           2, // Module
-				Range:          makeRange(lineNo, 0, len(line)),
-				SelectionRange: makeRange(lineNo, match[2], match[3]),
-			})
+		if isListNamed(node, "define-record") && len(node.Children) >= 2 && node.Children[1].Kind == sexp.KindSymbol {
+			out = append(out, recordDocumentSymbol(node))
 			continue
 		}
 
-		if match := entityDeclRe.FindStringSubmatchIndex(line); match != nil {
-			entity, next := parseEntityDocumentSymbol(lines, lineNo, match)
-			out = append(out, entity)
-			lineNo = next
+		nameNode, valueNode, ok := defineBinding(node)
+		if !ok {
 			continue
 		}
-
-		if match := typeAliasDeclRe.FindStringSubmatchIndex(line); match != nil {
-			alias, next := parseAliasDocumentSymbol(lines, lineNo, match)
-			out = append(out, alias)
-			lineNo = next
-			continue
-		}
-
-		if match := actionDeclRe.FindStringSubmatchIndex(line); match != nil {
-			action, next := parseActionDocumentSymbol(lines, lineNo, match)
-			out = append(out, action)
-			lineNo = next
+		switch listName(valueNode) {
+		case "entity":
+			out = append(out, entityDocumentSymbol(nameNode, valueNode))
+		case "action":
+			out = append(out, documentSymbol(nameNode, "action", 12, nil))
+		case "screen":
+			out = append(out, documentSymbol(nameNode, "screen", 12, nil))
 		}
 	}
 
 	return out
 }
 
-func parseActionDocumentSymbol(lines []string, startLine int, match []int) (lspDocumentSymbol, int) {
-	name := lines[startLine][match[2]:match[3]]
-	endLine := startLine
-	inputAlias := ""
-	depth := 1
-
-	for i := startLine + 1; i < len(lines); i++ {
-		line := lines[i]
-		if m := actionInputRe.FindStringSubmatchIndex(line); m != nil && inputAlias == "" {
-			inputAlias = line[m[2]:m[3]]
-		}
-		depth += strings.Count(line, "{")
-		depth -= strings.Count(line, "}")
-		endLine = i
-		if depth <= 0 {
-			break
+func entityDocumentSymbol(nameNode sexp.Node, entityNode sexp.Node) lspDocumentSymbol {
+	children := make([]lspDocumentSymbol, 0, 8)
+	for _, clause := range entityNode.Children[1:] {
+		switch listName(clause) {
+		case "fields", "belongs-to":
+			for _, spec := range secondListChildren(clause) {
+				symbols, ok := listSymbols(spec)
+				if !ok || len(symbols) == 0 {
+					continue
+				}
+				children = append(children, documentSymbol(symbols[0], "field", 8, nil))
+			}
 		}
 	}
+	return documentSymbol(nameNode, "entity", 23, children)
+}
 
-	detail := "action"
-	if inputAlias != "" {
-		detail = "action input: " + inputAlias
+func recordDocumentSymbol(node sexp.Node) lspDocumentSymbol {
+	nameNode := node.Children[1]
+	children := make([]lspDocumentSymbol, 0, 8)
+	for _, fieldNode := range node.Children[2:] {
+		symbols, ok := listSymbols(fieldNode)
+		if !ok || len(symbols) == 0 {
+			continue
+		}
+		children = append(children, documentSymbol(symbols[0], "field", 8, nil))
 	}
+	return documentSymbol(nameNode, "record", 23, children)
+}
+
+func documentSymbol(nameNode sexp.Node, detail string, kind int, children []lspDocumentSymbol) lspDocumentSymbol {
 	return lspDocumentSymbol{
-		Name:           name,
+		Name:           nameNode.Value,
 		Detail:         detail,
-		Kind:           12, // Function
-		Range:          lspRange{Start: lspPosition{Line: startLine, Character: 0}, End: lspPosition{Line: endLine, Character: len(lines[endLine])}},
-		SelectionRange: makeRange(startLine, match[2], match[3]),
-	}, endLine
-}
-
-func parseEntityDocumentSymbol(lines []string, startLine int, match []int) (lspDocumentSymbol, int) {
-	name := lines[startLine][match[2]:match[3]]
-	children := make([]lspDocumentSymbol, 0, 8)
-	endLine := startLine
-
-	for i := startLine + 1; i < len(lines); i++ {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "}" {
-			endLine = i
-			break
-		}
-		if field := fieldDeclRe.FindStringSubmatchIndex(line); field != nil {
-			fieldName := line[field[2]:field[3]]
-			children = append(children, lspDocumentSymbol{
-				Name:           fieldName,
-				Detail:         "field",
-				Kind:           8, // Field
-				Range:          makeRange(i, 0, len(line)),
-				SelectionRange: makeRange(i, field[2], field[3]),
-			})
-		} else if fieldName, start, end, ok := belongsToFieldDeclaration(line); ok {
-			children = append(children, lspDocumentSymbol{
-				Name:           fieldName,
-				Detail:         "field",
-				Kind:           8, // Field
-				Range:          makeRange(i, 0, len(line)),
-				SelectionRange: makeRange(i, start, end),
-			})
-		}
-		endLine = i
-	}
-
-	return lspDocumentSymbol{
-		Name:           name,
-		Detail:         "entity",
-		Kind:           23, // Struct
-		Range:          lspRange{Start: lspPosition{Line: startLine, Character: 0}, End: lspPosition{Line: endLine, Character: len(lines[endLine])}},
-		SelectionRange: makeRange(startLine, match[2], match[3]),
+		Kind:           kind,
+		Range:          nodeRange(nameNode),
+		SelectionRange: nodeRange(nameNode),
 		Children:       children,
-	}, endLine
-}
-
-func parseAliasDocumentSymbol(lines []string, startLine int, match []int) (lspDocumentSymbol, int) {
-	name := lines[startLine][match[2]:match[3]]
-	children := make([]lspDocumentSymbol, 0, 8)
-	endLine := startLine
-
-	for i := startLine; i < len(lines); i++ {
-		line := lines[i]
-		fields := aliasFieldDeclRe.FindAllStringSubmatchIndex(line, -1)
-		for _, field := range fields {
-			fieldName := line[field[2]:field[3]]
-			children = append(children, lspDocumentSymbol{
-				Name:           fieldName,
-				Detail:         "field",
-				Kind:           8, // Field
-				Range:          makeRange(i, 0, len(line)),
-				SelectionRange: makeRange(i, field[2], field[3]),
-			})
-		}
-		if strings.Contains(line, "}") {
-			endLine = i
-			break
-		}
-		endLine = i
 	}
-
-	return lspDocumentSymbol{
-		Name:           name,
-		Detail:         "type alias",
-		Kind:           11, // Interface
-		Range:          lspRange{Start: lspPosition{Line: startLine, Character: 0}, End: lspPosition{Line: endLine, Character: len(lines[endLine])}},
-		SelectionRange: makeRange(startLine, match[2], match[3]),
-		Children:       children,
-	}, endLine
 }
 
 func buildQuickFixCodeActions(uri string, text string, diagnostics []lspCodeActionDiagnostic) []lspCodeAction {
@@ -375,16 +292,16 @@ func buildQuickFixCodeActions(uri string, text string, diagnostics []lspCodeActi
 	for _, diag := range diagnostics {
 		msg := strings.TrimSpace(diag.Message)
 		switch {
-		case msg == "missing app declaration":
+		case msg == "missing define-app declaration":
 			add(lspCodeAction{
-				Title:       "Add app declaration",
+				Title:       "Add define-app declaration",
 				Kind:        "quickfix",
 				IsPreferred: true,
 				Edit: lspWorkspaceEdit{
 					Changes: map[string][]lspTextEdit{
 						uri: {{
 							Range:   makeRange(0, 0, 0),
-							NewText: "app Main\n\n",
+							NewText: "(define-app app)\n\n",
 						}},
 					},
 				},
@@ -398,42 +315,11 @@ func buildQuickFixCodeActions(uri string, text string, diagnostics []lspCodeActi
 					Changes: map[string][]lspTextEdit{
 						uri: {{
 							Range:   lspRange{Start: eof, End: eof},
-							NewText: ensurePrefixNewline(text, "entity Todo {\n  title: String\n}\n"),
+							NewText: ensurePrefixNewline(text, "(define todo\n  (entity\n    (fields\n      ((title string)))))\n"),
 						}},
 					},
 				},
 			})
-
-		case strings.Contains(msg, "is missing closing }"), strings.Contains(msg, "missing closing }"):
-			add(lspCodeAction{
-				Title: "Insert missing closing brace",
-				Kind:  "quickfix",
-				Edit: lspWorkspaceEdit{
-					Changes: map[string][]lspTextEdit{
-						uri: {{
-							Range:   lspRange{Start: eof, End: eof},
-							NewText: ensurePrefixNewline(text, "}\n"),
-						}},
-					},
-				},
-			})
-
-		default:
-			if m := unknownInputTypeErrorRe.FindStringSubmatch(msg); m != nil {
-				aliasName := m[1]
-				add(lspCodeAction{
-					Title: "Create type alias " + aliasName,
-					Kind:  "quickfix",
-					Edit: lspWorkspaceEdit{
-						Changes: map[string][]lspTextEdit{
-							uri: {{
-								Range:   lspRange{Start: eof, End: eof},
-								NewText: ensurePrefixNewline(text, "type alias "+aliasName+" = {\n  value : String\n}\n"),
-							}},
-						},
-					},
-				})
-			}
 		}
 	}
 
@@ -459,17 +345,17 @@ func hoverForSymbol(index *workspaceSymbolIndex, symbol symbolOccurrence) string
 		if entityName != "" {
 			detail = "Belongs to entity `" + entityName + "`."
 		}
-	case symbolAlias:
-		header = "Type alias `" + symbol.Name + "`"
-		detail = "Used as a typed input record for actions."
-	case symbolAliasField:
-		aliasName, fieldName := splitFieldKey(symbol.Key, "alias-field:")
+	case symbolRecord:
+		header = "Record `" + symbol.Name + "`"
+		detail = "Closed data shape used by screens and helpers."
+	case symbolRecordField:
+		recordName, fieldName := splitFieldKey(symbol.Key, "record-field:")
 		if fieldName == "" {
 			fieldName = symbol.Name
 		}
-		header = "Input field `" + fieldName + "`"
-		if aliasName != "" {
-			detail = "Belongs to type alias `" + aliasName + "`."
+		header = "Field `" + fieldName + "`"
+		if recordName != "" {
+			detail = "Belongs to record `" + recordName + "`."
 		}
 	case symbolAction:
 		header = "Action `" + symbol.Name + "`"
@@ -566,5 +452,6 @@ func isWordByte(value byte) bool {
 	return (value >= 'a' && value <= 'z') ||
 		(value >= 'A' && value <= 'Z') ||
 		(value >= '0' && value <= '9') ||
-		value == '_'
+		value == '_' ||
+		value == '-'
 }

@@ -30,8 +30,8 @@ func (r *Runtime) buildListQuery(entity *model.Entity, auth authSession, queryVa
 
 	query := fmt.Sprintf("SELECT * FROM %s", table)
 	var (
-		args          []any
-		whereClauses  []string
+		args         []any
+		whereClauses []string
 	)
 	if whereSQL, whereArgs, ok := r.listReadAuthorizationWhere(entity, auth); ok {
 		whereClauses = append(whereClauses, whereSQL)
@@ -122,12 +122,12 @@ func normalizeListFilterValue(field *model.Field, raw string) (any, error) {
 			return nil, fmt.Errorf("filter %s must be DateTime (Unix milliseconds)", field.Name)
 		}
 		return n, nil
-	case "Float":
-		f, ok := toFloat64(strings.TrimSpace(raw))
+	case "Decimal":
+		f, ok := toDecimal(strings.TrimSpace(raw))
 		if !ok {
-			return nil, fmt.Errorf("filter %s must be Float", field.Name)
+			return nil, fmt.Errorf("filter %s must be Decimal", field.Name)
 		}
-		return f, nil
+		return f.String(), nil
 	case "Bool":
 		switch strings.ToLower(strings.TrimSpace(raw)) {
 		case "true":
@@ -161,12 +161,12 @@ func (r *Runtime) listReadAuthorizationWhere(entity *model.Entity, auth authSess
 	}
 
 	authorizers := r.authorizers[entity.Name]
-	rule, ok := authorizers["read"]
+	authorization, ok := authorizers["read"]
 	if !ok {
 		return "", nil, false
 	}
 
-	compiled, ok := r.compileReadAuthPredicateSQL(entity, auth, rule)
+	compiled, ok := r.compileReadAuthPredicateSQL(entity, auth, authorization)
 	if !ok || compiled.sql == "" {
 		return "", nil, false
 	}
@@ -260,6 +260,66 @@ func (r *Runtime) compileReadAuthPredicateSQL(entity *model.Entity, auth authSes
 		default:
 			return readAuthSQLExpr{}, false
 		}
+	case expr.Call:
+		switch n.Name {
+		case "authenticated?":
+			if len(n.Args) != 1 {
+				return readAuthSQLExpr{}, false
+			}
+			return readAuthSQLExpr{sql: boolSQL(auth.Authenticated), isBool: true, boolVal: auth.Authenticated}, true
+		case "anonymous?":
+			if len(n.Args) != 1 {
+				return readAuthSQLExpr{}, false
+			}
+			value := !auth.Authenticated
+			return readAuthSQLExpr{sql: boolSQL(value), isBool: true, boolVal: value}, true
+		case "same_user?":
+			if len(n.Args) != 2 {
+				return readAuthSQLExpr{}, false
+			}
+			if !auth.Authenticated {
+				return readAuthSQLExpr{sql: "0", isBool: true, boolVal: false}, true
+			}
+			right, ok := r.compileReadAuthScalarSQL(entity, auth, n.Args[1])
+			if !ok || right.isNull {
+				return readAuthSQLExpr{}, false
+			}
+			userID, ok := readAuthScalarExprFromValue(auth.UserID)
+			if !ok {
+				return readAuthSQLExpr{}, false
+			}
+			if simplified, ok := simplifyComparisonPredicateSQL("==", right, userID); ok {
+				return simplified, true
+			}
+			return readAuthSQLExpr{
+				sql:  fmt.Sprintf("(%s = %s)", right.sql, userID.sql),
+				args: append(append([]any{}, right.args...), userID.args...),
+			}, true
+		case "has_role?":
+			if len(n.Args) != 2 {
+				return readAuthSQLExpr{}, false
+			}
+			if !auth.Authenticated {
+				return readAuthSQLExpr{sql: "0", isBool: true, boolVal: false}, true
+			}
+			role, ok := r.compileReadAuthScalarSQL(entity, auth, n.Args[1])
+			if !ok || role.isNull {
+				return readAuthSQLExpr{}, false
+			}
+			currentRole, ok := readAuthScalarExprFromValue(auth.Role)
+			if !ok {
+				return readAuthSQLExpr{}, false
+			}
+			if simplified, ok := simplifyComparisonPredicateSQL("==", currentRole, role); ok {
+				return simplified, true
+			}
+			return readAuthSQLExpr{
+				sql:  fmt.Sprintf("(%s = %s)", currentRole.sql, role.sql),
+				args: append(append([]any{}, currentRole.args...), role.args...),
+			}, true
+		default:
+			return readAuthSQLExpr{}, false
+		}
 	default:
 		return readAuthSQLExpr{}, false
 	}
@@ -320,16 +380,6 @@ func readAuthScalarExprFromValue(value any) (readAuthSQLExpr, bool) {
 
 func readAuthBuiltinValue(auth authSession, name string) (any, bool) {
 	switch name {
-	case "anonymous":
-		return !auth.Authenticated, true
-	case "user_authenticated":
-		return auth.Authenticated, true
-	case "user_email":
-		return auth.Email, true
-	case "user_id":
-		return auth.UserID, true
-	case "user_role":
-		return auth.Role, true
 	default:
 		return nil, false
 	}

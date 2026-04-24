@@ -7,10 +7,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
+
+	"mar/internal/sexp"
 )
 
 type lspLocation struct {
@@ -32,8 +33,8 @@ type symbolKind string
 const (
 	symbolEntity      symbolKind = "entity"
 	symbolEntityField symbolKind = "entity-field"
-	symbolAlias       symbolKind = "type-alias"
-	symbolAliasField  symbolKind = "alias-field"
+	symbolRecord      symbolKind = "record"
+	symbolRecordField symbolKind = "record-field"
 	symbolAction      symbolKind = "action"
 )
 
@@ -55,85 +56,9 @@ type workspaceSymbolIndex struct {
 type symbolCatalog struct {
 	entities     map[string]string
 	entityFields map[string]map[string]string
-	aliases      map[string]string
-	aliasFields  map[string]map[string]string
+	records      map[string]string
+	recordFields map[string]map[string]string
 	actions      map[string]string
-	actionInputs map[string]string
-}
-
-var (
-	entityDeclRe                = regexp.MustCompile(`^\s*entity\s+([A-Za-z][A-Za-z0-9_]*)\s*\{`)
-	fieldDeclRe                 = regexp.MustCompile(`^\s*([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|DateTime|Date)\b`)
-	belongsToNamedRe            = regexp.MustCompile(`^\s*belongs_to\s+([a-z][A-Za-z0-9_]*)\s*:\s*([A-Za-z][A-Za-z0-9_]*)\b`)
-	belongsToNamedCurrentUserRe = regexp.MustCompile(`^\s*belongs_to\s+([a-z][A-Za-z0-9_]*)\s*:\s*(current_user)\b`)
-	belongsToCurrentUserRe      = regexp.MustCompile(`^\s*belongs_to\s+(current_user)\b`)
-	belongsToShortRe            = regexp.MustCompile(`^\s*belongs_to\s+([A-Za-z][A-Za-z0-9_]*)\b`)
-
-	typeAliasDeclRe  = regexp.MustCompile(`^\s*type\s+alias\s+([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.*)$`)
-	aliasFieldDeclRe = regexp.MustCompile(`([a-z][A-Za-z0-9_]*)\s*:\s*(Int|String|Bool|Float|DateTime|Date)\b`)
-
-	actionDeclRe        = regexp.MustCompile(`^\s*action\s+([a-z][A-Za-z0-9_]*)\s*\{\s*$`)
-	actionInputRe       = regexp.MustCompile(`^\s*input\s*:\s*([A-Za-z][A-Za-z0-9_]*)\s*$`)
-	actionStepDeclRe    = regexp.MustCompile(`^\s*(?:([a-z][A-Za-z0-9_]*)\s*=\s*)?(load|create|update|delete)\s+([A-Za-z][A-Za-z0-9_]*)\s*\{\s*$`)
-	actionFieldAssignRe = regexp.MustCompile(`^\s*([a-z][A-Za-z0-9_]*)\s*:\s*(.+)$`)
-	actionInputRefRe    = regexp.MustCompile(`\binput\.([a-z][A-Za-z0-9_]*)\b`)
-	actionAliasRefRe    = regexp.MustCompile(`\b([a-z][A-Za-z0-9_]*)\.([a-z][A-Za-z0-9_]*)\b`)
-
-	ruleLineRe      = regexp.MustCompile(`^\s*rule\s+"[^"]+"\s+expect\s+(.+)$`)
-	authorizeLineRe = regexp.MustCompile(`^\s*authorize\s+(?:(?:read|create|update|delete)(?:\s*,\s*(?:read|create|update|delete))*)\s+when\s+(.+)$`)
-	wordRe          = regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\b`)
-
-	authOpenRe = regexp.MustCompile(`^\s*auth\s*\{\s*$`)
-
-	upperIdentifierRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
-	lowerIdentifierRe = regexp.MustCompile(`^[a-z][A-Za-z0-9_]*$`)
-)
-
-func belongsToFieldDeclaration(line string) (string, int, int, bool) {
-	if match := belongsToNamedCurrentUserRe.FindStringSubmatchIndex(line); match != nil {
-		return line[match[2]:match[3]], match[2], match[3], true
-	}
-	if match := belongsToCurrentUserRe.FindStringSubmatchIndex(line); match != nil {
-		return "user", match[2], match[3], true
-	}
-	if match := belongsToNamedRe.FindStringSubmatchIndex(line); match != nil {
-		return line[match[2]:match[3]], match[2], match[3], true
-	}
-	if match := belongsToShortRe.FindStringSubmatchIndex(line); match != nil {
-		target := line[match[2]:match[3]]
-		return toSnakeIdentifier(target), match[2], match[3], true
-	}
-	return "", 0, 0, false
-}
-
-func belongsToEntityReference(line string) (string, int, int, bool) {
-	if match := belongsToNamedCurrentUserRe.FindStringSubmatchIndex(line); match != nil {
-		return "User", match[4], match[5], true
-	}
-	if match := belongsToCurrentUserRe.FindStringSubmatchIndex(line); match != nil {
-		return "User", match[2], match[3], true
-	}
-	if match := belongsToNamedRe.FindStringSubmatchIndex(line); match != nil {
-		return line[match[4]:match[5]], match[4], match[5], true
-	}
-	if match := belongsToShortRe.FindStringSubmatchIndex(line); match != nil {
-		return line[match[2]:match[3]], match[2], match[3], true
-	}
-	return "", 0, 0, false
-}
-
-func toSnakeIdentifier(value string) string {
-	var b strings.Builder
-	for i, r := range value {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			prev := rune(value[i-1])
-			if (prev >= 'a' && prev <= 'z') || (prev >= '0' && prev <= '9') {
-				b.WriteByte('_')
-			}
-		}
-		b.WriteRune(r)
-	}
-	return strings.ToLower(b.String())
 }
 
 func (s *server) handleDefinition(id json.RawMessage, params textDocumentPositionParams) {
@@ -171,10 +96,10 @@ func (s *server) handleRename(id json.RawMessage, params renameParams) {
 	index := s.buildWorkspaceSymbolIndex()
 	symbol, ok := index.symbolAt(params.TextDocument.URI, params.Position)
 	if !ok {
-		s.respondError(id, -32602, "Cannot rename here. Place the cursor on an entity, field, type alias, or action name.")
+		s.respondError(id, -32602, "Cannot rename here. Place the cursor on an entity, field, record, or action name.")
 		return
 	}
-	if err := validateRenameName(symbol.Kind, newName); err != nil {
+	if err := validateRenameName(newName); err != nil {
 		s.respondError(id, -32602, err.Error())
 		return
 	}
@@ -327,10 +252,9 @@ func buildWorkspaceSymbolIndex(documents map[string]string) *workspaceSymbolInde
 	catalog := &symbolCatalog{
 		entities:     map[string]string{},
 		entityFields: map[string]map[string]string{},
-		aliases:      map[string]string{},
-		aliasFields:  map[string]map[string]string{},
+		records:      map[string]string{},
+		recordFields: map[string]map[string]string{},
 		actions:      map[string]string{},
-		actionInputs: map[string]string{},
 	}
 
 	uris := make([]string, 0, len(documents))
@@ -339,394 +263,276 @@ func buildWorkspaceSymbolIndex(documents map[string]string) *workspaceSymbolInde
 	}
 	sort.Strings(uris)
 
+	parsed := map[string][]sexp.Node{}
 	for _, uri := range uris {
-		indexDeclarations(uri, documents[uri], catalog, index)
+		nodes, err := sexp.Parse(documents[uri])
+		if err != nil {
+			continue
+		}
+		parsed[uri] = nodes
+		indexDeclarations(uri, nodes, catalog, index)
 	}
 	for _, uri := range uris {
-		indexReferences(uri, documents[uri], catalog, index)
+		indexReferences(uri, parsed[uri], catalog, index)
 	}
 
 	return index
 }
 
-func indexDeclarations(uri, text string, catalog *symbolCatalog, index *workspaceSymbolIndex) {
-	lines := splitNormalizedLines(text)
-	currentEntity := ""
-	currentAlias := ""
-	currentAction := ""
-	actionInStep := false
-
-	for lineNo, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if isCommentOrBlankLSP(trimmed) {
+func indexDeclarations(uri string, nodes []sexp.Node, catalog *symbolCatalog, index *workspaceSymbolIndex) {
+	for _, node := range nodes {
+		if !isListNamed(node, "define") && !isListNamed(node, "define-record") {
 			continue
 		}
 
-		if currentEntity != "" {
-			if trimmed == "}" {
-				currentEntity = ""
-				continue
-			}
-			if match := fieldDeclRe.FindStringSubmatchIndex(line); match != nil {
-				fieldName := line[match[2]:match[3]]
-				key := catalog.entityFieldKey(currentEntity, fieldName)
-				index.add(symbolOccurrence{
-					URI:         uri,
-					Range:       makeRange(lineNo, match[2], match[3]),
-					Key:         key,
-					Name:        fieldName,
-					Kind:        symbolEntityField,
-					Declaration: true,
-				})
-			} else if fieldName, start, end, ok := belongsToFieldDeclaration(line); ok {
-				key := catalog.entityFieldKey(currentEntity, fieldName)
-				index.add(symbolOccurrence{
-					URI:         uri,
-					Range:       makeRange(lineNo, start, end),
-					Key:         key,
-					Name:        fieldName,
-					Kind:        symbolEntityField,
-					Declaration: true,
-				})
-			}
+		if isListNamed(node, "define-record") {
+			indexRecordDeclaration(uri, node, catalog, index)
 			continue
 		}
 
-		if currentAlias != "" {
-			indexAliasFieldDeclarations(uri, lineNo, line, currentAlias, catalog, index)
-			if strings.Contains(line, "}") {
-				currentAlias = ""
-			}
-			continue
-		}
-
-		if currentAction != "" {
-			if actionInStep {
-				if trimmed == "}" {
-					actionInStep = false
-				}
-				continue
-			}
-			if match := actionInputRe.FindStringSubmatchIndex(line); match != nil {
-				inputAlias := line[match[2]:match[3]]
-				catalog.actionInputs[currentAction] = inputAlias
-				continue
-			}
-			if actionStepDeclRe.MatchString(line) {
-				actionInStep = true
-				continue
-			}
-			if trimmed == "}" {
-				currentAction = ""
-				continue
-			}
-			continue
-		}
-
-		if match := entityDeclRe.FindStringSubmatchIndex(line); match != nil {
-			entityName := line[match[2]:match[3]]
-			key := catalog.entityKey(entityName)
-			index.add(symbolOccurrence{
-				URI:         uri,
-				Range:       makeRange(lineNo, match[2], match[3]),
-				Key:         key,
-				Name:        entityName,
-				Kind:        symbolEntity,
-				Declaration: true,
-			})
-			currentEntity = entityName
-			continue
-		}
-
-		if match := typeAliasDeclRe.FindStringSubmatchIndex(line); match != nil {
-			aliasName := line[match[2]:match[3]]
-			key := catalog.aliasKey(aliasName)
-			index.add(symbolOccurrence{
-				URI:         uri,
-				Range:       makeRange(lineNo, match[2], match[3]),
-				Key:         key,
-				Name:        aliasName,
-				Kind:        symbolAlias,
-				Declaration: true,
-			})
-			currentAlias = aliasName
-			indexAliasFieldDeclarations(uri, lineNo, line, currentAlias, catalog, index)
-			if strings.Contains(line, "}") {
-				currentAlias = ""
-			}
-			continue
-		}
-
-		if match := actionDeclRe.FindStringSubmatchIndex(line); match != nil {
-			actionName := line[match[2]:match[3]]
-			key := catalog.actionKey(actionName)
-			index.add(symbolOccurrence{
-				URI:         uri,
-				Range:       makeRange(lineNo, match[2], match[3]),
-				Key:         key,
-				Name:        actionName,
-				Kind:        symbolAction,
-				Declaration: true,
-			})
-			currentAction = actionName
-		}
-	}
-}
-
-func indexAliasFieldDeclarations(uri string, lineNo int, line string, aliasName string, catalog *symbolCatalog, index *workspaceSymbolIndex) {
-	matches := aliasFieldDeclRe.FindAllStringSubmatchIndex(line, -1)
-	for _, match := range matches {
-		fieldName := line[match[2]:match[3]]
-		key := catalog.aliasFieldKey(aliasName, fieldName)
-		index.add(symbolOccurrence{
-			URI:         uri,
-			Range:       makeRange(lineNo, match[2], match[3]),
-			Key:         key,
-			Name:        fieldName,
-			Kind:        symbolAliasField,
-			Declaration: true,
-		})
-	}
-}
-
-func indexReferences(uri, text string, catalog *symbolCatalog, index *workspaceSymbolIndex) {
-	lines := splitNormalizedLines(text)
-	currentEntity := ""
-	currentAlias := ""
-	inAuth := false
-	activeAction := ""
-	activeActionInputAlias := ""
-	activeStepEntity := ""
-	inStep := false
-	actionAliases := map[string]string{}
-
-	for lineNo, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if isCommentOrBlankLSP(trimmed) {
-			continue
-		}
-
-		if currentEntity != "" {
-			if trimmed == "}" {
-				currentEntity = ""
-				continue
-			}
-			if entityName, start, end, ok := belongsToEntityReference(line); ok {
-				if key, ok := catalog.entities[entityName]; ok {
-					index.add(symbolOccurrence{
-						URI:   uri,
-						Range: makeRange(lineNo, start, end),
-						Key:   key,
-						Name:  entityName,
-						Kind:  symbolEntity,
-					})
-				}
-			}
-			if match := ruleLineRe.FindStringSubmatchIndex(line); match != nil {
-				indexExpressionFieldReferences(uri, lineNo, line, match[2], match[3], currentEntity, catalog, index)
-			}
-			if match := authorizeLineRe.FindStringSubmatchIndex(line); match != nil {
-				indexExpressionFieldReferences(uri, lineNo, line, match[2], match[3], currentEntity, catalog, index)
-			}
-			continue
-		}
-
-		if currentAlias != "" {
-			if strings.Contains(line, "}") {
-				currentAlias = ""
-			}
-			continue
-		}
-
-		if inAuth {
-			if trimmed == "}" {
-				inAuth = false
-				continue
-			}
-		}
-
-		if authOpenRe.MatchString(line) {
-			inAuth = true
-			continue
-		}
-
-		if match := entityDeclRe.FindStringSubmatchIndex(line); match != nil {
-			currentEntity = line[match[2]:match[3]]
-			continue
-		}
-		if match := typeAliasDeclRe.FindStringSubmatchIndex(line); match != nil {
-			currentAlias = line[match[2]:match[3]]
-			if strings.Contains(line, "}") {
-				currentAlias = ""
-			}
-			continue
-		}
-
-		if match := actionDeclRe.FindStringSubmatchIndex(line); match != nil {
-			actionName := line[match[2]:match[3]]
-			activeAction = actionName
-			activeActionInputAlias = catalog.actionInputs[actionName]
-			activeStepEntity = ""
-			inStep = false
-			actionAliases = map[string]string{}
-			if key, ok := catalog.actions[actionName]; ok {
-				index.add(symbolOccurrence{
-					URI:   uri,
-					Range: makeRange(lineNo, match[2], match[3]),
-					Key:   key,
-					Name:  actionName,
-					Kind:  symbolAction,
-				})
-			}
-			continue
-		}
-
-		if activeAction == "" {
-			continue
-		}
-
-		if inStep {
-			if trimmed == "}" {
-				inStep = false
-				activeStepEntity = ""
-				continue
-			}
-
-			if match := actionFieldAssignRe.FindStringSubmatchIndex(line); match != nil {
-				fieldName := line[match[2]:match[3]]
-				if key, ok := catalog.lookupEntityField(activeStepEntity, fieldName); ok {
-					index.add(symbolOccurrence{
-						URI:   uri,
-						Range: makeRange(lineNo, match[2], match[3]),
-						Key:   key,
-						Name:  fieldName,
-						Kind:  symbolEntityField,
-					})
-				}
-			}
-
-			inputMatches := actionInputRefRe.FindAllStringSubmatchIndex(line, -1)
-			for _, inputMatch := range inputMatches {
-				fieldName := line[inputMatch[2]:inputMatch[3]]
-				if key, ok := catalog.lookupAliasField(activeActionInputAlias, fieldName); ok {
-					index.add(symbolOccurrence{
-						URI:   uri,
-						Range: makeRange(lineNo, inputMatch[2], inputMatch[3]),
-						Key:   key,
-						Name:  fieldName,
-						Kind:  symbolAliasField,
-					})
-				}
-			}
-
-			aliasMatches := actionAliasRefRe.FindAllStringSubmatchIndex(line, -1)
-			for _, aliasMatch := range aliasMatches {
-				aliasName := line[aliasMatch[2]:aliasMatch[3]]
-				if aliasName == "input" {
-					continue
-				}
-				fieldName := line[aliasMatch[4]:aliasMatch[5]]
-				entityName, ok := actionAliases[aliasName]
-				if !ok {
-					continue
-				}
-				if key, ok := catalog.lookupEntityField(entityName, fieldName); ok {
-					index.add(symbolOccurrence{
-						URI:   uri,
-						Range: makeRange(lineNo, aliasMatch[4], aliasMatch[5]),
-						Key:   key,
-						Name:  fieldName,
-						Kind:  symbolEntityField,
-					})
-				}
-			}
-			continue
-		}
-
-		if match := actionInputRe.FindStringSubmatchIndex(line); match != nil {
-			aliasName := line[match[2]:match[3]]
-			activeActionInputAlias = aliasName
-			if key, ok := catalog.aliases[aliasName]; ok {
-				index.add(symbolOccurrence{
-					URI:   uri,
-					Range: makeRange(lineNo, match[2], match[3]),
-					Key:   key,
-					Name:  aliasName,
-					Kind:  symbolAlias,
-				})
-			}
-			continue
-		}
-
-		if match := actionStepDeclRe.FindStringSubmatchIndex(line); match != nil {
-			aliasName := ""
-			if match[2] != -1 && match[3] != -1 {
-				aliasName = line[match[2]:match[3]]
-			}
-			entityName := line[match[6]:match[7]]
-			activeStepEntity = entityName
-			inStep = true
-			if aliasName != "" {
-				actionAliases[aliasName] = entityName
-			}
-			if key, ok := catalog.entities[entityName]; ok {
-				index.add(symbolOccurrence{
-					URI:   uri,
-					Range: makeRange(lineNo, match[6], match[7]),
-					Key:   key,
-					Name:  entityName,
-					Kind:  symbolEntity,
-				})
-			}
-			continue
-		}
-
-		if trimmed == "}" {
-			activeAction = ""
-			activeActionInputAlias = ""
-			activeStepEntity = ""
-			inStep = false
-			actionAliases = map[string]string{}
-		}
-	}
-}
-
-func indexExpressionFieldReferences(uri string, lineNo int, line string, exprStart int, exprEnd int, entityName string, catalog *symbolCatalog, index *workspaceSymbolIndex) {
-	if exprStart < 0 || exprEnd <= exprStart || exprEnd > len(line) {
-		return
-	}
-	exprValue := line[exprStart:exprEnd]
-	tokens := wordRe.FindAllStringSubmatchIndex(exprValue, -1)
-	for _, token := range tokens {
-		name := exprValue[token[0]:token[1]]
-		key, ok := catalog.lookupEntityField(entityName, name)
+		nameNode, valueNode, ok := defineBinding(node)
 		if !ok {
 			continue
 		}
-		start := exprStart + token[0]
-		end := exprStart + token[1]
-		index.add(symbolOccurrence{
-			URI:   uri,
-			Range: makeRange(lineNo, start, end),
-			Key:   key,
-			Name:  name,
-			Kind:  symbolEntityField,
-		})
+		switch listName(valueNode) {
+		case "entity":
+			name := nameNode.Value
+			index.add(symbolOccurrence{URI: uri, Range: nodeRange(nameNode), Key: catalog.entityKey(name), Name: name, Kind: symbolEntity, Declaration: true})
+			indexEntityFieldDeclarations(uri, name, valueNode, catalog, index)
+		case "action":
+			name := nameNode.Value
+			index.add(symbolOccurrence{URI: uri, Range: nodeRange(nameNode), Key: catalog.actionKey(name), Name: name, Kind: symbolAction, Declaration: true})
+		}
 	}
 }
 
-func validateRenameName(kind symbolKind, name string) error {
-	switch kind {
-	case symbolEntity, symbolAlias:
-		if !upperIdentifierRe.MatchString(name) {
-			return fmt.Errorf("this symbol requires UpperCamelCase. Example: %q", "OrderItem")
+func indexRecordDeclaration(uri string, node sexp.Node, catalog *symbolCatalog, index *workspaceSymbolIndex) {
+	if len(node.Children) < 2 || node.Children[1].Kind != sexp.KindSymbol {
+		return
+	}
+	nameNode := node.Children[1]
+	name := nameNode.Value
+	index.add(symbolOccurrence{URI: uri, Range: nodeRange(nameNode), Key: catalog.recordKey(name), Name: name, Kind: symbolRecord, Declaration: true})
+	for _, fieldNode := range node.Children[2:] {
+		children, ok := listSymbols(fieldNode)
+		if !ok || len(children) < 1 {
+			continue
 		}
-	case symbolAction, symbolEntityField, symbolAliasField:
-		if !lowerIdentifierRe.MatchString(name) {
-			return fmt.Errorf("this symbol requires lowerCamelCase. Example: %q", "orderItem")
+		field := children[0]
+		index.add(symbolOccurrence{URI: uri, Range: nodeRange(field), Key: catalog.recordFieldKey(name, field.Value), Name: field.Value, Kind: symbolRecordField, Declaration: true})
+	}
+}
+
+func indexEntityFieldDeclarations(uri, entityName string, entityNode sexp.Node, catalog *symbolCatalog, index *workspaceSymbolIndex) {
+	for _, clause := range entityNode.Children[1:] {
+		switch listName(clause) {
+		case "fields":
+			for _, fieldSpec := range secondListChildren(clause) {
+				children, ok := listSymbols(fieldSpec)
+				if !ok || len(children) < 1 {
+					continue
+				}
+				field := children[0]
+				index.add(symbolOccurrence{URI: uri, Range: nodeRange(field), Key: catalog.entityFieldKey(entityName, field.Value), Name: field.Value, Kind: symbolEntityField, Declaration: true})
+			}
+		case "belongs-to":
+			for _, relationSpec := range secondListChildren(clause) {
+				children, ok := listSymbols(relationSpec)
+				if !ok || len(children) < 1 {
+					continue
+				}
+				field := children[0]
+				index.add(symbolOccurrence{URI: uri, Range: nodeRange(field), Key: catalog.entityFieldKey(entityName, field.Value), Name: field.Value, Kind: symbolEntityField, Declaration: true})
+			}
 		}
 	}
+}
+
+func indexReferences(uri string, nodes []sexp.Node, catalog *symbolCatalog, index *workspaceSymbolIndex) {
+	for _, node := range nodes {
+		if !isListNamed(node, "define") && !isListNamed(node, "define-app") {
+			continue
+		}
+
+		if isListNamed(node, "define-app") {
+			indexDefappReferences(uri, node, catalog, index)
+			continue
+		}
+
+		nameNode, valueNode, ok := defineBinding(node)
+		if !ok {
+			continue
+		}
+		switch listName(valueNode) {
+		case "entity":
+			indexEntityReferences(uri, nameNode.Value, valueNode, catalog, index)
+		case "action":
+			indexActionReferences(uri, valueNode, catalog, index)
+		}
+	}
+}
+
+func indexEntityReferences(uri string, entityName string, entityNode sexp.Node, catalog *symbolCatalog, index *workspaceSymbolIndex) {
+	for _, clause := range entityNode.Children[1:] {
+		switch listName(clause) {
+		case "belongs-to":
+			for _, relationSpec := range secondListChildren(clause) {
+				children, ok := listSymbols(relationSpec)
+				if !ok || len(children) < 1 {
+					continue
+				}
+				target := children[0]
+				if len(children) >= 2 {
+					target = children[1]
+				}
+				if key, ok := catalog.entities[target.Value]; ok {
+					index.add(symbolOccurrence{URI: uri, Range: nodeRange(target), Key: key, Name: target.Value, Kind: symbolEntity})
+				}
+			}
+		case "validate", "authorize":
+			if entityName != "" {
+				indexFieldReferences(uri, clause, entityName, catalog, index)
+			}
+		}
+	}
+}
+
+func indexActionReferences(uri string, actionNode sexp.Node, catalog *symbolCatalog, index *workspaceSymbolIndex) {
+	for _, clause := range actionNode.Children[1:] {
+		head := listName(clause)
+		switch head {
+		case "load", "create", "update", "delete":
+			if len(clause.Children) < 2 || clause.Children[1].Kind != sexp.KindSymbol {
+				continue
+			}
+			entityNode := clause.Children[1]
+			entityName := entityNode.Value
+			if key, ok := catalog.entities[entityName]; ok {
+				index.add(symbolOccurrence{URI: uri, Range: nodeRange(entityNode), Key: key, Name: entityName, Kind: symbolEntity})
+			}
+			valuesIndex := 2
+			if head == "update" {
+				valuesIndex = 3
+			}
+			if len(clause.Children) > valuesIndex {
+				indexActionValueFields(uri, clause.Children[valuesIndex], entityName, catalog, index)
+			}
+		}
+	}
+}
+
+func indexActionValueFields(uri string, valuesNode sexp.Node, entityName string, catalog *symbolCatalog, index *workspaceSymbolIndex) {
+	for _, valueSpec := range valuesNode.Children {
+		children, ok := listSymbols(valueSpec)
+		if !ok || len(children) < 1 {
+			continue
+		}
+		field := children[0]
+		if key, ok := catalog.lookupEntityField(entityName, field.Value); ok {
+			index.add(symbolOccurrence{URI: uri, Range: nodeRange(field), Key: key, Name: field.Value, Kind: symbolEntityField})
+		}
+	}
+}
+
+func indexDefappReferences(uri string, node sexp.Node, catalog *symbolCatalog, index *workspaceSymbolIndex) {
+	var walk func(sexp.Node)
+	walk = func(current sexp.Node) {
+		if current.Kind == sexp.KindSymbol {
+			if key, ok := catalog.entities[current.Value]; ok {
+				index.add(symbolOccurrence{URI: uri, Range: nodeRange(current), Key: key, Name: current.Value, Kind: symbolEntity})
+				return
+			}
+			if key, ok := catalog.actions[current.Value]; ok {
+				index.add(symbolOccurrence{URI: uri, Range: nodeRange(current), Key: key, Name: current.Value, Kind: symbolAction})
+				return
+			}
+		}
+		for _, child := range current.Children {
+			walk(child)
+		}
+	}
+	for _, child := range node.Children[2:] {
+		walk(child)
+	}
+}
+
+func indexFieldReferences(uri string, node sexp.Node, entityName string, catalog *symbolCatalog, index *workspaceSymbolIndex) {
+	if node.Kind == sexp.KindSymbol {
+		if key, ok := catalog.lookupEntityField(entityName, node.Value); ok {
+			index.add(symbolOccurrence{URI: uri, Range: nodeRange(node), Key: key, Name: node.Value, Kind: symbolEntityField})
+		}
+		return
+	}
+	for _, child := range node.Children {
+		indexFieldReferences(uri, child, entityName, catalog, index)
+	}
+}
+
+func defineBinding(node sexp.Node) (sexp.Node, sexp.Node, bool) {
+	if len(node.Children) < 3 {
+		return sexp.Node{}, sexp.Node{}, false
+	}
+	nameNode := node.Children[1]
+	if nameNode.Kind == sexp.KindList && len(nameNode.Children) > 0 {
+		nameNode = nameNode.Children[0]
+	}
+	if nameNode.Kind != sexp.KindSymbol {
+		return sexp.Node{}, sexp.Node{}, false
+	}
+	return nameNode, node.Children[2], true
+}
+
+func listSymbols(node sexp.Node) ([]sexp.Node, bool) {
+	if node.Kind != sexp.KindList {
+		return nil, false
+	}
+	for _, child := range node.Children {
+		if child.Kind != sexp.KindSymbol {
+			return nil, false
+		}
+	}
+	return node.Children, true
+}
+
+func secondListChildren(node sexp.Node) []sexp.Node {
+	if len(node.Children) < 2 || node.Children[1].Kind != sexp.KindList {
+		return nil
+	}
+	return node.Children[1].Children
+}
+
+func isListNamed(node sexp.Node, name string) bool {
+	return listName(node) == name
+}
+
+func listName(node sexp.Node) string {
+	if node.Kind != sexp.KindList || len(node.Children) == 0 || node.Children[0].Kind != sexp.KindSymbol {
+		return ""
+	}
+	return node.Children[0].Value
+}
+
+func validateRenameName(name string) error {
+	if !isSourceIdentifier(name) {
+		return fmt.Errorf("this symbol requires kebab-case. Example: %q", "order-item")
+	}
 	return nil
+}
+
+func isSourceIdentifier(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9' && i > 0:
+		case r == '-' && i > 0 && i < len(name)-1:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (index *workspaceSymbolIndex) add(occ symbolOccurrence) {
@@ -875,34 +681,25 @@ func (catalog *symbolCatalog) lookupEntityField(entity, field string) (string, b
 	return key, ok
 }
 
-func (catalog *symbolCatalog) aliasKey(name string) string {
-	if key, ok := catalog.aliases[name]; ok {
+func (catalog *symbolCatalog) recordKey(name string) string {
+	if key, ok := catalog.records[name]; ok {
 		return key
 	}
-	key := "alias:" + name
-	catalog.aliases[name] = key
+	key := "record:" + name
+	catalog.records[name] = key
 	return key
 }
 
-func (catalog *symbolCatalog) aliasFieldKey(alias, field string) string {
-	if _, ok := catalog.aliasFields[alias]; !ok {
-		catalog.aliasFields[alias] = map[string]string{}
+func (catalog *symbolCatalog) recordFieldKey(record, field string) string {
+	if _, ok := catalog.recordFields[record]; !ok {
+		catalog.recordFields[record] = map[string]string{}
 	}
-	if key, ok := catalog.aliasFields[alias][field]; ok {
+	if key, ok := catalog.recordFields[record][field]; ok {
 		return key
 	}
-	key := "alias-field:" + alias + "." + field
-	catalog.aliasFields[alias][field] = key
+	key := "record-field:" + record + "." + field
+	catalog.recordFields[record][field] = key
 	return key
-}
-
-func (catalog *symbolCatalog) lookupAliasField(alias, field string) (string, bool) {
-	aliasMap, ok := catalog.aliasFields[alias]
-	if !ok {
-		return "", false
-	}
-	key, ok := aliasMap[field]
-	return key, ok
 }
 
 func (catalog *symbolCatalog) actionKey(name string) string {
@@ -937,14 +734,14 @@ func makeRange(line, start, end int) lspRange {
 	}
 }
 
-func splitNormalizedLines(text string) []string {
-	normalized := strings.ReplaceAll(text, "\r\n", "\n")
-	normalized = strings.ReplaceAll(normalized, "\r", "\n")
-	return strings.Split(normalized, "\n")
+func nodeRange(node sexp.Node) lspRange {
+	start := node.Column - 1
+	return makeRange(node.Line-1, start, start+len(node.Value))
 }
 
-func isCommentOrBlankLSP(trimmed string) bool {
-	return trimmed == "" || strings.HasPrefix(trimmed, "--")
+func splitNormalizedLines(text string) []string {
+	base := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	return strings.Split(base, "\n")
 }
 
 func fileURIToPath(rawURI string) (string, error) {
@@ -952,28 +749,29 @@ func fileURIToPath(rawURI string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if parsed.Scheme == "" {
+		return filepath.Clean(rawURI), nil
+	}
 	if parsed.Scheme != "file" {
-		return "", fmt.Errorf("unsupported uri scheme %q", parsed.Scheme)
+		return "", fmt.Errorf("unsupported URI scheme %q", parsed.Scheme)
 	}
-	path := parsed.Path
-	if path == "" {
-		return "", fmt.Errorf("empty file uri")
+	path, err := url.PathUnescape(parsed.Path)
+	if err != nil {
+		return "", err
 	}
-	if runtime.GOOS == "windows" && strings.HasPrefix(path, "/") && len(path) > 2 && path[2] == ':' {
+	if runtime.GOOS == "windows" && strings.HasPrefix(path, "/") && len(path) >= 3 && path[2] == ':' {
 		path = path[1:]
 	}
-	path = filepath.FromSlash(path)
 	return filepath.Clean(path), nil
 }
 
 func filePathToURI(path string) string {
-	absPath, err := filepath.Abs(path)
-	if err == nil {
-		path = absPath
+	clean := filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		clean = filepath.ToSlash(clean)
+		if !strings.HasPrefix(clean, "/") {
+			clean = "/" + clean
+		}
 	}
-	slashPath := filepath.ToSlash(path)
-	if runtime.GOOS == "windows" && !strings.HasPrefix(slashPath, "/") {
-		slashPath = "/" + slashPath
-	}
-	return (&url.URL{Scheme: "file", Path: slashPath}).String()
+	return (&url.URL{Scheme: "file", Path: clean}).String()
 }

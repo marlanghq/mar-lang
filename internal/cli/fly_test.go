@@ -111,12 +111,12 @@ func TestRunFlyLogsRequiresFlyConfigFile(t *testing.T) {
 	tempDir := t.TempDir()
 	inputPath := filepath.Join(tempDir, "todo.mar")
 	source := strings.Join([]string{
-		"app Todo",
+		"(define todo",
+		"  ((fields",
+		"     ((title string)))))",
 		"",
-		"entity Todo {",
-		"  title: String",
-		"}",
-		"",
+		"(define-app todo",
+		"  (entities todo))",
 	}, "\n")
 	if err := os.WriteFile(inputPath, []byte(source), 0o644); err != nil {
 		t.Fatalf("write .mar file: %v", err)
@@ -173,8 +173,17 @@ func TestValidateFlyInitPrereqsBlocksPlaceholderEmailBeforePrompts(t *testing.T)
 	if !strings.Contains(err.Error(), "Fly init blocked") {
 		t.Fatalf("expected fly init blocked message, got %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), "auth.email_from is still using a placeholder value") {
+	if !strings.Contains(err.Error(), "app-auth from is still using a placeholder value") {
 		t.Fatalf("expected placeholder email explanation, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "(define app-auth") {
+		t.Fatalf("expected updated auth example, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "(email-login") {
+		t.Fatalf("expected simplified auth example without email-login, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "auth {") {
+		t.Fatalf("expected old auth block syntax to be removed, got %q", err.Error())
 	}
 }
 
@@ -193,6 +202,15 @@ func TestValidateFlyInitPrereqsBlocksMissingSMTPConfig(t *testing.T) {
 	if !strings.Contains(err.Error(), "missing part of the SMTP configuration required outside mar dev") {
 		t.Fatalf("expected missing SMTP explanation, got %q", err.Error())
 	}
+	if !strings.Contains(err.Error(), "(define app-auth") {
+		t.Fatalf("expected updated auth example, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "(smtp-host") {
+		t.Fatalf("expected kebab-case SMTP fields in example, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "auth {") {
+		t.Fatalf("expected old auth block syntax to be removed, got %q", err.Error())
+	}
 }
 
 func TestValidateFlyAuthForDeployBlocksMissingSMTPConfig(t *testing.T) {
@@ -206,6 +224,9 @@ func TestValidateFlyAuthForDeployBlocksMissingSMTPConfig(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Fly deploy blocked") {
 		t.Fatalf("expected fly deploy blocked title, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "(define app-auth") {
+		t.Fatalf("expected updated auth example, got %q", err.Error())
 	}
 }
 

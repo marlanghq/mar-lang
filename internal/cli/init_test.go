@@ -7,23 +7,6 @@ import (
 	"testing"
 )
 
-func TestProjectNameToAppName(t *testing.T) {
-	t.Parallel()
-
-	cases := map[string]string{
-		"todo":       "Todo",
-		"my-app":     "MyApp",
-		"my_app":     "MyApp",
-		"PocketBase": "PocketBase",
-	}
-
-	for input, want := range cases {
-		if got := projectNameToAppName(input); got != want {
-			t.Fatalf("projectNameToAppName(%q) = %q, want %q", input, got, want)
-		}
-	}
-}
-
 func TestCreateInitProjectCreatesStarterFiles(t *testing.T) {
 	t.Parallel()
 
@@ -33,7 +16,7 @@ func TestCreateInitProjectCreatesStarterFiles(t *testing.T) {
 		t.Fatalf("createInitProject returned error: %v", err)
 	}
 
-	if got, want := result.AppName, "TodoApp"; got != want {
+	if got, want := result.AppName, "todo-app"; got != want {
 		t.Fatalf("unexpected app name: got %q want %q", got, want)
 	}
 
@@ -42,19 +25,19 @@ func TestCreateInitProjectCreatesStarterFiles(t *testing.T) {
 		t.Fatalf("read .mar file: %v", err)
 	}
 	marText := string(marSource)
-	if !strings.Contains(marText, "app TodoApp") {
-		t.Fatalf("expected app declaration in starter .mar, got %q", marText)
+	if !strings.Contains(marText, "(define-app todo-app") {
+		t.Fatalf("expected define-app declaration in starter .mar, got %q", marText)
 	}
-	if strings.Contains(marText, "\nport ") {
+	if strings.Contains(marText, "\n(config ") {
 		t.Fatalf("did not expect explicit port in starter .mar, got %q", marText)
 	}
-	if strings.Contains(marText, "\ndatabase ") {
+	if strings.Contains(marText, "\n(auth ") {
 		t.Fatalf("did not expect explicit database in starter .mar, got %q", marText)
 	}
-	if strings.Contains(marText, "\n  id: ") {
+	if strings.Contains(marText, "\n      (id ") {
 		t.Fatalf("did not expect explicit id field in starter .mar, got %q", marText)
 	}
-	if !strings.Contains(marText, `authorize read, create, update, delete when user_authenticated`) {
+	if !strings.Contains(marText, `(authorize`) {
 		t.Fatalf("expected starter authorize rule in .mar, got %q", marText)
 	}
 	if _, err := parseMarFile(filepath.Join(tmpDir, "todo-app", "todo-app.mar")); err != nil {

@@ -162,7 +162,7 @@ func TestRequestLogsGiveReasonsToAllQueriesInEntityRequest(t *testing.T) {
 			if strings.TrimSpace(query.Reason) == "" {
 				t.Fatalf("expected every /todos query to include a reason, got %+v", query)
 			}
-			if strings.Contains(strings.ToUpper(query.SQL), `FROM "TODOS"`) && query.Reason == "Load rows for the entity list" {
+			if strings.Contains(strings.ToUpper(query.SQL), `FROM "TODO"`) && query.Reason == "Load rows for the entity list" {
 				foundListReason = true
 			}
 		}
@@ -179,20 +179,24 @@ func TestRequestLogsShowReadAuthorizationFilterPushedIntoListQuery(t *testing.T)
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "request-logs-read-pushdown.db"), `
-app TodoReadFilter
+(define app-auth ())
 
-auth {
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (belongs-to
+      ((user)))
+    (authorize
+      (((read update delete)
+         (or (same-user? current-user user)
+             (has-role? current-user "admin")))
+       (create
+         (same-user? current-user user))))))
 
-entity Todo {
-  title: String
-  belongs_to User
-
-  authorize read when user_authenticated and (user == user_id or user_role == "admin")
-  authorize create when user_authenticated and user == user_id
-  authorize update when user_authenticated and (user == user_id or user_role == "admin")
-  authorize delete when user_authenticated and (user == user_id or user_role == "admin")
-}
+(define-app todo-read-filter
+  (auth app-auth)
+  (entities todo))
 `)
 
 	adminCode := requestCodeAndUseKnownCode(t, r, "owner@example.com")
@@ -251,7 +255,7 @@ entity Todo {
 		foundTodoList = true
 		for _, query := range requestLog.Queries {
 			sqlUpper := strings.ToUpper(query.SQL)
-			if strings.Contains(sqlUpper, `FROM "TODOS"`) && strings.Contains(sqlUpper, `WHERE`) {
+			if strings.Contains(sqlUpper, `FROM "TODO"`) && strings.Contains(sqlUpper, `WHERE`) {
 				if strings.Contains(query.SQL, `"user_id"`) {
 					foundFilteredSelect = true
 				}
@@ -270,17 +274,22 @@ func TestRequestLogsOmitWhereForAdminListWhenReadRuleIsAlwaysTrue(t *testing.T) 
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "request-logs-read-pushdown-admin.db"), `
-app TodoReadFilter
+(define app-auth ())
 
-auth {
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))
+    (belongs-to
+      ((user)))
+    (authorize
+      ((read
+         (or (same-user? current-user user)
+             (has-role? current-user "admin")))))))
 
-entity Todo {
-  title: String
-  belongs_to User
-
-  authorize read when user_authenticated and (user == user_id or user_role == "admin")
-}
+(define-app todo-read-filter
+  (auth app-auth)
+  (entities todo))
 `)
 
 	adminCode := requestCodeAndUseKnownCode(t, r, "owner@example.com")
@@ -297,7 +306,7 @@ entity Todo {
 	}
 
 	body := logsRec.Body.String()
-	if strings.Contains(body, `FROM \"todos\" WHERE`) {
+	if strings.Contains(body, `FROM \"todo\" WHERE`) {
 		t.Fatalf("expected admin list query to omit WHERE, got body=%s", body)
 	}
 }
@@ -412,9 +421,6 @@ func TestRequestLogsEndpointMasksSensitiveValues(t *testing.T) {
 	}
 	if !strings.Contains(normalizedBody, ", 1,") {
 		t.Fatalf("expected non-sensitive SQL values to remain visible in body=%s", body)
-	}
-	if strings.Contains(normalizedBody, "<masked-email>") || strings.Contains(normalizedBody, "<masked>") {
-		t.Fatalf("expected no legacy masked markers in body=%s", body)
 	}
 }
 

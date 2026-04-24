@@ -1,33 +1,20 @@
--- =========================================
--- A very small shared todo app.
--- Authenticated users can create, edit, delete and complete shared tasks.
--- Admin can read and manage every todo.
--- =========================================
+(define todo-list
+  (entity
+    (fields ((name string)))))
 
-app SharedTodo
+(define todo
+  (entity
+    (fields ((title string) (done bool)))
+    (belongs-to ((todo-list) (owner user)))
+    (defaults ((owner current-user)))))
 
--- Authentication
+(define-screen home
+  (view
+    (section
+      (title "Shared todo")
+      (text
+        "Shared todo models lists plus items that belong to a current-user owner."))))
 
--- This app uses the built-in User entity that every Mar app gets automatically.
-
--- When running in dev mode (for example, `mar dev todo.mar`),
--- login codes are printed to the console.
--- To send real email in production, configure SMTP here.
--- Replace the host, username, password environment variable, and sender with real values.
--- The password is not stored in the `.mar` file.  It must be provided through an
--- environment variable.
--- You may use any SMTP provider, but we recommend Resend (https://resend.com).
-auth {
-  email_from "no-reply@yourdomain.com"
-  email_subject "Your Shared Todo login code"
-  smtp_host "smtp.resend.com"
-  smtp_username "resend"
-  smtp_password_env "RESEND_API_KEY"
-}
-
-entity SharedTodo {
-  title: String
-  done: Bool
-
-  authorize read, create, update, delete when user_authenticated
-}
+(define-app shared-todo
+  (backend (entities todo-list todo))
+  (frontend (screens home)))

@@ -1,0 +1,482 @@
+(define app-config
+  ((database "./mini-twitter.db")
+   (server ((port 4310)))
+   (ios
+     ((bundle-identifier "dev.mar.minitwitter")
+      (display-name "Mini Twitter")
+      (server-url "http://127.0.0.1:4310")))))
+
+(define app-auth
+  ((from "no-reply@mini-twitter.local")
+   (subject "Your Mini Twitter login code")
+   (smtp-host "smtp.resend.com")
+   (smtp-username "resend")
+   (smtp-password-env "RESEND_API_KEY")))
+
+(define user
+  (entity
+    (fields
+      ((display-name string optional)
+       (handle string optional)
+       (bio string optional)))
+    (unique ((handle)))
+    (validate
+      (match handle
+        ((nothing) true)
+        ((just value)
+         (if (>= (length value) 3)
+           true
+           (error "handle must have at least 3 characters")))))
+    (authorize ((read true) ((update delete) (same-user? current-user id))))))
+
+(define post
+  (entity
+    (fields ((body string)))
+    (belongs-to ((author user)))
+    (defaults ((author current-user)))
+    (validate
+      (if (>= (length body) 1) true (error "post body cannot be empty")))
+    (authorize
+      ((read true)
+       (create (authenticated? current-user))
+       ((update delete) (same-user? current-user author))))))
+
+(define comment
+  (entity
+    (fields ((body string)))
+    (belongs-to ((post) (author user)))
+    (defaults ((author current-user)))
+    (validate
+      (if (>= (length body) 1) true (error "comment body cannot be empty")))
+    (authorize
+      ((read true)
+       (create (authenticated? current-user))
+       ((update delete) (same-user? current-user author))))))
+
+(define post-like
+  (entity
+    (belongs-to ((post) (user)))
+    (defaults ((user current-user)))
+    (unique ((user post)))
+    (authorize
+      ((read true)
+       (create (authenticated? current-user))
+       ((update delete) (same-user? current-user user))))))
+
+(define comment-like
+  (entity
+    (belongs-to ((comment) (user)))
+    (defaults ((user current-user)))
+    (unique ((user comment)))
+    (authorize
+      ((read true)
+       (create (authenticated? current-user))
+       ((update delete) (same-user? current-user user))))))
+
+(define follow
+  (entity
+    (belongs-to ((follower user) (followed user)))
+    (defaults ((follower current-user)))
+    (unique ((follower followed)))
+    (validate
+      (if (!= follower followed) true (error "you cannot follow yourself")))
+    (authorize
+      ((read true)
+       (create (authenticated? current-user))
+       ((update delete) (same-user? current-user follower))))))
+
+(define follow-user
+  (action (input ((user-id int))) (create follow ((followed user-id)))))
+
+(define like-post
+  (action (input ((post-id int))) (create post-like ((post post-id)))))
+
+(define like-comment
+  (action
+    (input ((comment-id int)))
+    (create comment-like ((comment comment-id)))))
+
+(define publish-post
+  (action (input ((body string))) (create post ((body body)))))
+
+(define (timeline-posts)
+  (query post (order-by created-at desc) (limit 20)))
+
+(define (all-users)
+  (query user (order-by handle asc)))
+
+(define (posts-by-author author-id)
+  (query post (where (= author author-id)) (order-by created-at desc)))
+
+(define (comments-for-post post-id)
+  (query comment (where (= post post-id)) (order-by created-at asc)))
+
+(define publish-comment
+  (action
+    (input ((post-id int) (body string)))
+    (create comment ((post post-id) (body body)))))
+
+(define update-profile
+  (action
+    (input
+      ((user-id int) (display-name string) (handle string) (bio string)))
+    (update user user-id
+      ((display-name display-name) (handle handle) (bio bio)))))
+
+(define update-post
+  (action
+    (input ((post-id int) (body string)))
+    (update post post-id ((body body)))))
+
+(define update-comment
+  (action
+    (input ((comment-id int) (body string)))
+    (update comment comment-id ((body body)))))
+
+(define-record
+  timeline-model
+  (body string)
+  (submitting bool)
+  (posts (list post)))
+
+(define-record profiles-model (people (list user)))
+
+(define-record
+  profile-detail-model
+  (display-name string)
+  (handle string)
+  (bio string)
+  (saving bool)
+  (can-edit bool)
+  (editor-disabled bool)
+  (follow-disabled bool)
+  (posts (list post)))
+
+(define-record
+  post-detail-model
+  (body string)
+  (comment-body string)
+  (saving bool)
+  (commenting bool)
+  (can-edit bool)
+  (editor-disabled bool)
+  (comment-disabled bool)
+  (comments (list comment)))
+
+(define-record
+  comment-detail-model
+  (body string)
+  (saving bool)
+  (can-edit bool)
+  (editor-disabled bool))
+
+(define-screen home
+  (title "Mini Twitter")
+  (view (section ((link "Timeline" timeline) (link "Profiles" profiles)))))
+
+(define-screen timeline
+  (title "Timeline")
+  (msg
+    (body-changed value)
+    (timeline-loaded posts)
+    (timeline-load-failed message)
+    submit-clicked
+    published
+    (publish-failed message))
+  (init
+    ((timeline-model "" false ())
+     ((command (timeline-posts) timeline-loaded timeline-load-failed))))
+  (update msg model
+    (match msg
+      ((body-changed value) ((assoc model (body value)) ()))
+      ((timeline-loaded posts) ((assoc model (posts posts)) ()))
+      ((timeline-load-failed message) (model ()))
+      (submit-clicked
+        ((assoc model (submitting true))
+         ((command (publish-post (get model body)) published publish-failed))))
+      (published
+        ((assoc model (body "") (submitting false))
+         ((command (timeline-posts) timeline-loaded timeline-load-failed))))
+      ((publish-failed message) ((assoc model (submitting false)) ()))))
+  (view model
+    (section
+      ((textarea "What's happening?" body body-changed (disabled submitting))
+       (button "Post" (submit-clicked) (disabled submitting))))
+    (section
+      "Recent posts"
+      ((list posts post ((title body) (subtitle author) (open post-detail)))))))
+
+(define-screen profiles
+  (title "Profiles")
+  (msg (profiles-loaded people) (profiles-load-failed message))
+  (init
+    ((profiles-model ())
+     ((command (all-users) profiles-loaded profiles-load-failed))))
+  (update msg model
+    (match msg
+      ((profiles-loaded people) ((assoc model (people people)) ()))
+      ((profiles-load-failed message) (model ()))))
+  (view model
+    (section
+      "People"
+      ((list people
+         user
+         ((title handle) (subtitle display-name) (open profile-detail)))))))
+
+(define-screen (profile-detail user)
+  (title "Profile")
+  (msg
+    (follow-clicked user-id)
+    followed
+    (follow-failed message)
+    (display-name-changed value)
+    (handle-changed value)
+    (bio-changed value)
+    save-clicked
+    saved
+    (save-failed message)
+    (profile-posts-loaded posts)
+    (profile-posts-failed message))
+  (init
+    ((profile-detail-model
+       (match user.display-name ((nothing) "") ((just value) value))
+       (match user.handle ((nothing) "") ((just value) value))
+       (match user.bio ((nothing) "") ((just value) value))
+       false
+       (same-user? current-user user.id)
+       (not (same-user? current-user user.id))
+       (same-user? current-user user.id)
+       ())
+     ((command (posts-by-author user.id)
+        profile-posts-loaded
+        profile-posts-failed))))
+  (update msg model
+    (match msg
+      ((follow-clicked user-id)
+       (model ((command (follow-user user-id) followed follow-failed))))
+      (followed (model ()))
+      ((follow-failed message) (model ()))
+      ((display-name-changed value) ((assoc model (display-name value)) ()))
+      ((handle-changed value) ((assoc model (handle value)) ()))
+      ((bio-changed value) ((assoc model (bio value)) ()))
+      (save-clicked
+        (if (get model can-edit)
+          ((assoc model (saving true) (editor-disabled true))
+           ((command
+              (update-profile
+                user.id
+                (get model display-name)
+                (get model handle)
+                (get model bio))
+              saved
+              save-failed)))
+          (model ())))
+      (saved
+        ((assoc
+           model
+           (saving false)
+           (editor-disabled (not (get model can-edit))))
+         ()))
+      ((save-failed message)
+       ((assoc
+          model
+          (saving false)
+          (editor-disabled (not (get model can-edit))))
+        ()))
+      ((profile-posts-loaded posts) ((assoc model (posts posts)) ()))
+      ((profile-posts-failed message) (model ()))))
+  (view model
+    (section
+      "Info"
+      ((text-input "Handle" handle handle-changed (disabled editor-disabled))
+       (text-input
+         "Display name"
+         display-name
+         display-name-changed
+         (disabled editor-disabled))
+       (textarea "Bio" bio bio-changed (disabled editor-disabled))
+       (field email)
+       (button "Save profile" save-clicked (disabled editor-disabled))
+       (button "Follow" (follow-clicked user.id) (disabled follow-disabled))))
+    (section
+      "Posts"
+      ((list posts
+         post
+         ((title body) (subtitle created-at) (open post-detail)))))))
+
+(define-screen (post-detail post)
+  (title "Post")
+  (msg
+    (like-clicked post-id)
+    liked
+    (like-failed message)
+    (body-changed value)
+    save-clicked
+    saved
+    (save-failed message)
+    (comment-body-changed value)
+    comment-submit-clicked
+    comment-published
+    (comment-failed message)
+    (comments-loaded comments)
+    (comments-failed message))
+  (init
+    ((post-detail-model
+       post.body
+       ""
+       false
+       false
+       (same-user? current-user post.author)
+       (not (same-user? current-user post.author))
+       false
+       ())
+     ((command (comments-for-post post.id) comments-loaded comments-failed))))
+  (update msg model
+    (match msg
+      ((like-clicked post-id)
+       (model ((command (like-post post-id) liked like-failed))))
+      (liked (model ()))
+      ((like-failed message) (model ()))
+      ((body-changed value) ((assoc model (body value)) ()))
+      (save-clicked
+        (if (get model can-edit)
+          ((assoc model (saving true) (editor-disabled true))
+           ((command (update-post post.id (get model body)) saved save-failed)))
+          (model ())))
+      (saved
+        ((assoc
+           model
+           (saving false)
+           (editor-disabled (not (get model can-edit))))
+         ()))
+      ((save-failed message)
+       ((assoc
+          model
+          (saving false)
+          (editor-disabled (not (get model can-edit))))
+        ()))
+      ((comment-body-changed value) ((assoc model (comment-body value)) ()))
+      (comment-submit-clicked
+        ((assoc model (commenting true) (comment-disabled true))
+         ((command (publish-comment post.id (get model comment-body))
+            comment-published
+            comment-failed))))
+      (comment-published
+        ((assoc
+           model
+           (comment-body "")
+           (commenting false)
+           (comment-disabled false))
+         ((command (comments-for-post post.id) comments-loaded comments-failed))))
+      ((comment-failed message)
+       ((assoc model (commenting false) (comment-disabled false)) ()))
+      ((comments-loaded comments) ((assoc model (comments comments)) ()))
+      ((comments-failed message) (model ()))))
+  (view model
+    (section
+      "Post"
+      ((textarea "Post" body body-changed (disabled editor-disabled))
+       (field author)
+       (field created-at)
+       (field updated-at)
+       (button "Like" (like-clicked post.id))
+       (if (get model can-edit)
+         (button "Save post" save-clicked (disabled editor-disabled))
+         (empty))))
+    (section
+      "Comment"
+      ((textarea
+         "Add a comment"
+         comment-body
+         comment-body-changed
+         (disabled comment-disabled))
+       (button "Comment" comment-submit-clicked (disabled comment-disabled))))
+    (section
+      "Comments"
+      ((list comments
+         comment
+         ((title body) (subtitle author) (open comment-detail)))))))
+
+(define-screen (comment-detail comment)
+  (title "Comment")
+  (msg
+    (like-clicked comment-id)
+    liked
+    (like-failed message)
+    (body-changed value)
+    save-clicked
+    saved
+    (save-failed message))
+  (init
+    ((comment-detail-model
+       comment.body
+       false
+       (same-user? current-user comment.author)
+       (not (same-user? current-user comment.author)))
+     ()))
+  (update msg model
+    (match msg
+      ((like-clicked comment-id)
+       (model ((command (like-comment comment-id) liked like-failed))))
+      (liked (model ()))
+      ((like-failed message) (model ()))
+      ((body-changed value) ((assoc model (body value)) ()))
+      (save-clicked
+        (if (get model can-edit)
+          ((assoc model (saving true) (editor-disabled true))
+           ((command (update-comment comment.id (get model body)) saved save-failed)))
+          (model ())))
+      (saved
+        ((assoc
+           model
+           (saving false)
+           (editor-disabled (not (get model can-edit))))
+         ()))
+      ((save-failed message)
+       ((assoc
+          model
+          (saving false)
+          (editor-disabled (not (get model can-edit))))
+        ()))))
+  (view model
+    (section
+      "Comment"
+      ((textarea "Comment" body body-changed (disabled editor-disabled))
+       (button "Save comment" save-clicked (disabled editor-disabled))
+       (field author)
+       (field created-at)
+       (button "Like" (like-clicked comment.id))))))
+
+(define-app mini-twitter
+  (config app-config)
+  (auth app-auth)
+  (backend
+    (entities
+      user
+      post
+      comment
+      post-like
+      comment-like
+      follow)
+    (queries
+      timeline-posts
+      all-users
+      posts-by-author
+      comments-for-post)
+    (actions
+      follow-user
+      like-post
+      like-comment
+      publish-post
+      publish-comment
+      update-profile
+      update-post
+      update-comment))
+  (frontend
+    (screens
+      home
+      timeline
+      profiles
+      profile-detail
+      post-detail
+      comment-detail)))

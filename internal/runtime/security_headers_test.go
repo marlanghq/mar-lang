@@ -11,11 +11,13 @@ func TestDefaultSecurityHeaders(t *testing.T) {
 	requireSQLite3(t)
 
 	app := mustParseApp(t, `
-app SecurityHeadersApi
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-entity Todo {
-  title: String
-}
+(define-app security-headers-api
+  (entities todo))
 `)
 	app.Database = filepath.Join(t.TempDir(), "security-defaults.db")
 
@@ -43,17 +45,19 @@ func TestSystemSecurityHeadersOverride(t *testing.T) {
 	requireSQLite3(t)
 
 	app := mustParseApp(t, `
-app SecurityHeadersApi
+(define app-auth
+  ((security-frame-policy "deny")
+   (security-referrer-policy "no-referrer")
+   (security-content-type-nosniff false)))
 
-entity Todo {
-  title: String
-}
+(define todo
+  (entity
+    (fields
+      ((title string)))))
 
-auth {
-  security_frame_policy deny
-  security_referrer_policy no-referrer
-  security_content_type_nosniff false
-}
+(define-app security-headers-api
+  (auth app-auth)
+  (entities todo))
 `)
 	app.Database = filepath.Join(t.TempDir(), "security-overrides.db")
 

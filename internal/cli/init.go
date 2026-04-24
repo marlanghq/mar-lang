@@ -151,7 +151,7 @@ func createInitProject(baseDir, projectName string) (*initProjectResult, error) 
 		return nil, err
 	}
 
-	appName := projectNameToAppName(projectName)
+	appName := strings.TrimSpace(projectName)
 	marFileName := projectName + ".mar"
 	marFilePath := filepath.Join(projectDir, marFileName)
 	gitIgnorePath := filepath.Join(projectDir, ".gitignore")
@@ -177,49 +177,33 @@ func createInitProject(baseDir, projectName string) (*initProjectResult, error) 
 	}, nil
 }
 
-func projectNameToAppName(projectName string) string {
-	parts := strings.FieldsFunc(strings.TrimSpace(projectName), func(r rune) bool {
-		return !(r >= 'A' && r <= 'Z') && !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
-	})
-	if len(parts) == 0 {
-		return "App"
-	}
-
-	var b strings.Builder
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		runes := []rune(part)
-		first := runes[0]
-		if first >= 'a' && first <= 'z' {
-			first = first - 'a' + 'A'
-		}
-		b.WriteRune(first)
-		if len(runes) > 1 {
-			b.WriteString(string(runes[1:]))
-		}
-	}
-
-	value := b.String()
-	if value == "" {
-		return "App"
-	}
-	return value
-}
-
 func renderInitMar(appName string) string {
 	return strings.TrimSpace(fmt.Sprintf(`
-app %s
+(define todo
+  (entity
+    (fields
+      ((title string)
+       (done bool)))
+    (validate
+      (if (>= (length title) 3)
+          true
+          (error "title must have at least 3 chars")))
+    (authorize
+      (((read create update delete)
+         (authenticated? current-user))))))
 
-entity Todo {
-  title: String
-  done: Bool
+(define-record home-model
+  (message string))
 
-  rule "Title must have at least 3 chars" expect length title >= 3
+(define-screen home
+  (view
+    (section
+      (title "Home")
+      (text "Hello from Mar"))))
 
-  authorize read, create, update, delete when user_authenticated
-}
+(define-app %s
+  (entities todo)
+  (screens home))
 `, appName)) + "\n"
 }
 

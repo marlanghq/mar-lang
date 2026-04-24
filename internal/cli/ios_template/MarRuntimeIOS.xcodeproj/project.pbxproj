@@ -13,6 +13,7 @@
 		560B2C0A5BA411E800000002 /* PayloadEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 560B2C0A5BA411E800000012 /* PayloadEncoder.swift */; };
 		560B2C0A5BA411E800000003 /* RowPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 560B2C0A5BA411E800000013 /* RowPresentation.swift */; };
 		560B2C0A5BA411E800000004 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 560B2C0A5BA411E800000014 /* SessionStore.swift */; };
+		560B2C0A5BA411E800000005 /* FrontendRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 560B2C0A5BA411E800000015 /* FrontendRuntime.swift */; };
 		7E9B7C8E5AA4897BC2083A25 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 936FF1D9B8A0D3B3F1DA2D06 /* Views.swift */; };
 		AB4FDA629113DA1A25BAF86B /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB34E92DC160D7671C51FA4B /* APIClient.swift */; };
 		F3173B5D3E8E37DFE65D01ED /* MarRuntimeIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C2D7FF40416498F5A13EDC5 /* MarRuntimeIOSApp.swift */; };
@@ -25,6 +26,7 @@
 		560B2C0A5BA411E800000012 /* PayloadEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayloadEncoder.swift; sourceTree = "<group>"; };
 		560B2C0A5BA411E800000013 /* RowPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RowPresentation.swift; sourceTree = "<group>"; };
 		560B2C0A5BA411E800000014 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		560B2C0A5BA411E800000015 /* FrontendRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrontendRuntime.swift; sourceTree = "<group>"; };
 		936FF1D9B8A0D3B3F1DA2D06 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
 		A88D9537727A5BAA1EB3A172 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		BB34E92DC160D7671C51FA4B /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
@@ -46,6 +48,7 @@
 				BB34E92DC160D7671C51FA4B /* APIClient.swift */,
 				005A7E9F81C5C27775E6BE2C /* AppViewModel.swift */,
 				560B2C0A5BA411E800000011 /* DateCodec.swift */,
+				560B2C0A5BA411E800000015 /* FrontendRuntime.swift */,
 				1C2D7FF40416498F5A13EDC5 /* MarRuntimeIOSApp.swift */,
 				A88D9537727A5BAA1EB3A172 /* Models.swift */,
 				560B2C0A5BA411E800000012 /* PayloadEncoder.swift */,
@@ -125,6 +128,7 @@
 				AB4FDA629113DA1A25BAF86B /* APIClient.swift in Sources */,
 				1FD57D8A32FE387509ED47A1 /* AppViewModel.swift in Sources */,
 				560B2C0A5BA411E800000001 /* DateCodec.swift in Sources */,
+				560B2C0A5BA411E800000005 /* FrontendRuntime.swift in Sources */,
 				F3173B5D3E8E37DFE65D01ED /* MarRuntimeIOSApp.swift in Sources */,
 				48AADA0650E4B724377C7C5A /* Models.swift in Sources */,
 				560B2C0A5BA411E800000002 /* PayloadEncoder.swift in Sources */,

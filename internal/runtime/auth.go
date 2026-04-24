@@ -440,7 +440,7 @@ func (r *Runtime) createBootstrapAdminUser(requestID, email string, payload map[
 		)
 	}
 
-	if err := r.validateEntityRules(r.authUser, ctx); err != nil {
+	if err := r.validateEntity(r.authUser, ctx); err != nil {
 		return nil, err
 	}
 
@@ -524,7 +524,7 @@ func (r *Runtime) tryAutoCreateAuthUserWithRole(requestID, email, roleValue stri
 		return nil, false, nil
 	}
 
-	if err := r.validateEntityRules(r.authUser, ctx); err != nil {
+	if err := r.validateEntity(r.authUser, ctx); err != nil {
 		return nil, false, nil
 	}
 

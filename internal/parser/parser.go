@@ -2,3529 +2,2267 @@ package parser
 
 import (
 	"fmt"
-	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 
 	"mar/internal/expr"
 	"mar/internal/model"
-	"mar/internal/suggest"
+	"mar/internal/sexp"
 )
 
-var (
-	upperNameRe  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
-	fieldNameRe  = regexp.MustCompile(`^[a-z][A-Za-z0-9_]*$`)
-	envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-)
-
-var frontendDisplayFieldNames = []string{"name", "title", "email", "label", "slug"}
-
-const marTypeRefPattern = `[A-Za-z][A-Za-z0-9_]*`
-
-var (
-	topLevelStatementCandidates = []string{
-		"app",
-		"port",
-		"database",
-		"ios",
-		"system",
-		"public",
-		"screens",
-		"auth",
-		"entity",
-		"type",
-		"type alias",
-		"action",
-	}
-	iosStatementCandidates = []string{
-		"bundle_identifier",
-		"display_name",
-		"server_url",
-	}
-	authStatementCandidates = []string{
-		"code_ttl_minutes",
-		"session_ttl_hours",
-		"auth_request_code_rate_limit_per_minute",
-		"auth_login_rate_limit_per_minute",
-		"admin_ui_session_ttl_hours",
-		"security_frame_policy",
-		"security_referrer_policy",
-		"security_content_type_nosniff",
-		"email_from",
-		"email_subject",
-		"smtp_host",
-		"smtp_port",
-		"smtp_username",
-		"smtp_password_env",
-		"smtp_starttls",
-	}
-	publicStatementCandidates = []string{
-		"dir",
-		"mount",
-		"spa_fallback",
-	}
-	systemStatementCandidates = []string{
-		"request_logs_buffer",
-		"http_max_request_body_mb",
-		"sqlite_journal_mode",
-		"sqlite_synchronous",
-		"sqlite_foreign_keys",
-		"sqlite_busy_timeout_ms",
-		"sqlite_wal_autocheckpoint",
-		"sqlite_journal_size_limit_mb",
-		"sqlite_mmap_size_mb",
-		"sqlite_cache_size_kb",
-	}
-)
-
-const (
-	defaultRequestLogsBuffer = 200
-	minRequestLogsBuffer     = 10
-	maxRequestLogsBuffer     = 5000
-
-	minHTTPMaxRequestBodyMB = 1
-	maxHTTPMaxRequestBodyMB = 1024
-
-	minAuthRateLimitPerMinute = 1
-	maxAuthRateLimitPerMinute = 10000
-
-	minCodeTTLMinutes = 1
-	maxCodeTTLMinutes = 1440
-
-	minSessionTTLHours = 1
-	maxSessionTTLHours = 8760
-
-	minSQLiteBusyTimeoutMs = 0
-	maxSQLiteBusyTimeoutMs = 600000
-
-	minSQLiteWALAutoCheckpoint = 0
-	maxSQLiteWALAutoCheckpoint = 1000000
-
-	minSQLiteJournalSizeLimitMB = -1
-	maxSQLiteJournalSizeLimitMB = 4096
-
-	minSQLiteMmapSizeMB = 0
-	maxSQLiteMmapSizeMB = 16384
-
-	minSQLiteCacheSizeKB = 0
-	maxSQLiteCacheSizeKB = 1048576
-)
-
-type line struct {
-	number int
-	text   string
+type namedValue struct {
+	Name string
+	Body sexp.Node
 }
 
-// Parse reads Mar source and returns an App model.
+type queryDef struct {
+	Name         string
+	Parameters   []string
+	EntitySymbol string
+	Where        sexp.Node
+	OrderBy      string
+	OrderDir     string
+	Limit        *int
+}
+
+type functionDef struct {
+	Name       string
+	Parameters []string
+	Body       sexp.Node
+	LineNo     int
+}
+
+type recordDef struct {
+	Name   string
+	Fields []model.RecordField
+}
+
+type typeDef struct {
+	Name     string
+	Variants []model.TypeVariant
+}
+
+type screenDef struct {
+	Name       string
+	Parameters []string
+	Body       sexp.Node
+}
+
+type actionDef struct {
+	Name string
+	Body sexp.Node
+}
+
+type appDef struct {
+	Name          string
+	ConfigRef     string
+	AuthRef       string
+	EntitySymbols []string
+	QuerySymbols  []string
+	ActionSymbols []string
+	ScreenSymbols []string
+}
+
+// Parse reads Mar source in the simplified Scheme-like syntax and returns an App model.
 func Parse(source string) (*model.App, error) {
-	lines := splitLines(source)
-	idx := 0
-	var userExtension *model.Entity
-	seenEntities := map[string]bool{}
-	explicitDatabase := false
-	authEmailSubjectExplicit := false
+	nodes, err := sexp.Parse(source)
+	if err != nil {
+		return nil, err
+	}
+
+	values := map[string]namedValue{}
+	queries := map[string]*queryDef{}
+	functions := map[string]*functionDef{}
+	records := map[string]*recordDef{}
+	types := map[string]*typeDef{}
+	screens := map[string]*screenDef{}
+	actions := map[string]*actionDef{}
+	var appDecl *appDef
+
+	for _, node := range nodes {
+		if node.Kind != sexp.KindList || len(node.Children) == 0 {
+			return nil, parseError(node, "top-level form must be a list")
+		}
+		head, ok := symbolValue(node.Children[0])
+		if !ok {
+			return nil, parseError(node.Children[0], "top-level form name must be a symbol")
+		}
+		switch head {
+		case "define":
+			if len(node.Children) != 3 {
+				return nil, parseError(node, "define expects a name/signature and a body")
+			}
+			if signature := node.Children[1]; signature.Kind == sexp.KindList {
+				query, fn, screen, err := parseCallableDef(node)
+				if err != nil {
+					return nil, err
+				}
+				if query != nil {
+					queries[query.Name] = query
+				}
+				if fn != nil {
+					functions[fn.Name] = fn
+				}
+				if screen != nil {
+					return nil, parseError(node.Children[2], "unknown define body %q; use define-screen", "screen")
+				}
+				continue
+			}
+			name, ok := symbolValue(node.Children[1])
+			if !ok {
+				return nil, parseError(node.Children[1], "define name must be a symbol")
+			}
+			if bodyItems, err := listChildren(node.Children[2], "define body"); err == nil && len(bodyItems) > 0 {
+				if head, _ := symbolValue(bodyItems[0]); head == "action" {
+					actions[name] = &actionDef{Name: name, Body: node.Children[2]}
+					continue
+				} else if head == "screen" {
+					return nil, parseError(bodyItems[0], "unknown define body %q; use define-screen", head)
+				}
+			}
+			values[name] = namedValue{Name: name, Body: node.Children[2]}
+		case "define-screen":
+			screen, err := parseScreenDef(node)
+			if err != nil {
+				return nil, err
+			}
+			screens[screen.Name] = screen
+		case "define-record":
+			record, err := parseRecordDef(node)
+			if err != nil {
+				return nil, err
+			}
+			records[record.Name] = record
+		case "defrecord":
+			return nil, parseError(node.Children[0], "unknown top-level form %q; use define-record", head)
+		case "define-type":
+			typeDef, err := parseTypeDef(node)
+			if err != nil {
+				return nil, err
+			}
+			types[typeDef.Name] = typeDef
+		case "define-app":
+			if appDecl != nil {
+				return nil, parseError(node, "define-app already declared")
+			}
+			appDecl, err = parseAppDef(node)
+			if err != nil {
+				return nil, err
+			}
+		case "defapp":
+			return nil, parseError(node.Children[0], "unknown top-level form %q; use define-app", head)
+		default:
+			return nil, parseError(node.Children[0], "unknown top-level form %q", head)
+		}
+	}
+
+	if appDecl == nil {
+		return nil, fmt.Errorf("define-app is required")
+	}
 
 	app := &model.App{
-		Port: 4200,
+		AppName:  appDecl.Name,
+		Port:     4200,
+		Database: defaultDatabaseName(appDecl.Name),
+		Auth:     defaultAuthConfig(appDecl.Name),
 	}
 
-	next := func() *line {
-		if idx >= len(lines) {
-			return nil
-		}
-		return &lines[idx]
-	}
-	advance := func() {
-		idx++
-	}
-
-	for {
-		cur := next()
-		if cur == nil {
-			break
-		}
-		trimmed := strings.TrimSpace(cur.text)
-		if isCommentOrBlank(trimmed) {
-			advance()
-			continue
-		}
-
-		if m := match(`^app\s+([A-Za-z][A-Za-z0-9_]*)$`, trimmed); m != nil {
-			app.AppName = m[1]
-			if !explicitDatabase {
-				app.Database = defaultDatabaseName(app.AppName)
-			}
-			if app.Auth != nil && !authEmailSubjectExplicit {
-				app.Auth.EmailSubject = defaultAuthEmailSubject(app.AppName)
-			}
-			advance()
-			continue
-		}
-
-		if m := match(`^port\s+([0-9]{1,5})$`, trimmed); m != nil {
-			port := mustInt(m[1])
-			if port < 1 || port > 65535 {
-				return nil, parserErrorf("line %d: invalid port %d", cur.number, port)
-			}
-			app.Port = port
-			advance()
-			continue
-		}
-
-		if m := match(`^database\s+"([^"]+)"$`, trimmed); m != nil {
-			app.Database = m[1]
-			explicitDatabase = true
-			advance()
-			continue
-		}
-
-		if trimmed == "system {" {
-			if app.System != nil {
-				return nil, parserErrorf("line %d: system block already declared", cur.number)
-			}
-			systemCfg, err := parseSystemBlock(lines, &idx)
-			if err != nil {
-				return nil, err
-			}
-			app.System = systemCfg
-			continue
-		}
-
-		if trimmed == "ios {" {
-			if app.IOS != nil {
-				return nil, parserErrorf("line %d: ios block already declared", cur.number)
-			}
-			iosCfg, err := parseIOSBlock(lines, &idx, app.AppName)
-			if err != nil {
-				return nil, err
-			}
-			app.IOS = iosCfg
-			continue
-		}
-
-		if trimmed == "public {" {
-			if app.Public != nil {
-				return nil, parserErrorf("line %d: public block already declared", cur.number)
-			}
-			publicCfg, err := parsePublicBlock(lines, &idx)
-			if err != nil {
-				return nil, err
-			}
-			app.Public = publicCfg
-			continue
-		}
-
-		if trimmed == "screens {" {
-			if app.Screens != nil {
-				return nil, parserErrorf("line %d: screens block already declared", cur.number)
-			}
-			frontend, err := parseFrontendBlock(lines, &idx)
-			if err != nil {
-				return nil, err
-			}
-			app.Screens = frontend
-			continue
-		}
-
-		if trimmed == "auth {" {
-			if app.Auth != nil {
-				return nil, parserErrorf("line %d: auth block already declared", cur.number)
-			}
-			auth, emailSubjectExplicit, err := parseAuthBlock(lines, &idx, app.AppName)
-			if err != nil {
-				return nil, err
-			}
-			app.Auth = auth
-			authEmailSubjectExplicit = emailSubjectExplicit
-			continue
-		}
-
-		if m := match(`^entity\s+([A-Za-z][A-Za-z0-9_]*)\s*\{$`, trimmed); m != nil {
-			entityName := m[1]
-			if entityName == "User" {
-				if userExtension != nil {
-					return nil, parserErrorf("line %d: entity User already declared", cur.number)
-				}
-				entity, err := parseUserExtensionBlock(lines, &idx)
-				if err != nil {
-					return nil, err
-				}
-				userExtension = entity
-				continue
-			}
-			if seenEntities[entityName] {
-				return nil, parserErrorf("line %d: entity %q already declared", cur.number, entityName)
-			}
-			entity, err := parseEntityBlock(lines, &idx, entityName)
-			if err != nil {
-				return nil, err
-			}
-			seenEntities[entityName] = true
-			app.Entities = append(app.Entities, *entity)
-			continue
-		}
-
-		if match(`^type\s+alias\s+([A-Za-z][A-Za-z0-9_]*)\s*=.*$`, trimmed) != nil {
-			alias, err := parseTypeAlias(lines, &idx)
-			if err != nil {
-				return nil, err
-			}
-			app.InputAliases = append(app.InputAliases, *alias)
-			continue
-		}
-
-		if match(`^type\s+([A-Za-z][A-Za-z0-9_]*)\s*\{.*$`, trimmed) != nil {
-			enumType, err := parseEnumType(lines, &idx)
-			if err != nil {
-				return nil, err
-			}
-			app.Types = append(app.Types, *enumType)
-			continue
-		}
-
-		if m := match(`^action\s+([a-z][A-Za-z0-9_]*)\s*\{$`, trimmed); m != nil {
-			action, err := parseActionBlock(lines, &idx, m[1])
-			if err != nil {
-				return nil, err
-			}
-			app.Actions = append(app.Actions, *action)
-			continue
-		}
-
-		return nil, unknownStatementError(cur.number, "", trimmed, topLevelStatementCandidates)
-	}
-
-	if app.AppName == "" {
-		return nil, parserErrorf("missing app declaration")
-	}
-	if app.Auth == nil {
-		app.Auth = defaultAuthConfig(app.AppName)
-	}
-	if err := injectImplicitUserEntity(app, userExtension); err != nil {
-		return nil, err
-	}
-	if err := validateDeclaredTypes(app); err != nil {
-		return nil, err
-	}
-	if err := resolveEntityRelations(app); err != nil {
-		return nil, err
-	}
-	if err := resolveAliasRelations(app); err != nil {
-		return nil, err
-	}
-	if err := validateEntityPredicates(app); err != nil {
-		return nil, err
-	}
-	if err := validateAuthConfig(app); err != nil {
-		return nil, err
-	}
-	if err := validateActions(app); err != nil {
-		return nil, err
-	}
-	if err := validateFrontend(app); err != nil {
-		return nil, err
-	}
-	app.Warnings = append(app.Warnings, authBootstrapWarnings(app)...)
-
-	return app, nil
-}
-
-func defaultAuthConfig(appName string) *model.AuthConfig {
-	return &model.AuthConfig{
-		UserEntity:      "User",
-		EmailField:      "email",
-		RoleField:       "role",
-		CodeTTLMinutes:  10,
-		SessionTTLHours: 24,
-		EmailFrom:       "no-reply@mar.local",
-		EmailSubject:    defaultAuthEmailSubject(appName),
-		SMTPPort:        587,
-		SMTPStartTLS:    true,
-	}
-}
-
-func defaultAuthEmailSubject(appName string) string {
-	humanName := model.HumanizeIdentifier(appName)
-	if humanName == "" {
-		humanName = "Mar"
-	}
-	return "Your " + humanName + " login code"
-}
-
-func parseIOSBlock(lines []line, idx *int, appName string) (*model.IOSConfig, error) {
-	cfg := &model.IOSConfig{}
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			if cfg.BundleIdentifier == "" {
-				return nil, parserErrorf("line %d: ios.bundle_identifier is required\n\nHint:\n  %s", ln.number, iosConfigHint(appName))
-			}
-			if cfg.ServerURL == "" {
-				return nil, parserErrorf("line %d: ios.server_url is required\n\nHint:\n  %s", ln.number, iosConfigHint(appName))
-			}
-			return cfg, nil
-		}
-
-		var matched bool
-		if m := match(`^bundle_identifier\s+"([^"]*)"$`, trimmed); m != nil {
-			value := strings.TrimSpace(m[1])
-			if !isValidIOSBundleIdentifier(value) {
-				return nil, parserErrorf("line %d: ios.bundle_identifier must be a reverse-DNS identifier like \"com.example.app\"", ln.number)
-			}
-			cfg.BundleIdentifier = value
-			matched = true
-		}
-		if m := match(`^display_name\s+"([^"]*)"$`, trimmed); m != nil {
-			value := strings.TrimSpace(m[1])
-			if value == "" {
-				return nil, parserErrorf("line %d: ios.display_name must not be empty", ln.number)
-			}
-			cfg.DisplayName = value
-			matched = true
-		}
-		if m := match(`^server_url\s+"([^"]*)"$`, trimmed); m != nil {
-			value := strings.TrimSpace(m[1])
-			if !isValidIOSServerURL(value) {
-				return nil, parserErrorf("line %d: ios.server_url must be a valid http or https URL", ln.number)
-			}
-			cfg.ServerURL = value
-			matched = true
-		}
-
-		if !matched {
-			return nil, unknownStatementError(ln.number, "ios", trimmed, iosStatementCandidates)
-		}
-		(*idx)++
-	}
-
-	return nil, parserErrorf("ios block is missing closing }")
-}
-
-func iosConfigHint(appName string) string {
-	exampleName := iosExampleName(appName)
-	return "Add an ios block like:\n  ios {\n    bundle_identifier \"com.example." + exampleName + "\"\n    server_url \"https://" + exampleName + ".example.com\"\n  }"
-}
-
-func iosExampleName(appName string) string {
-	var b strings.Builder
-	for _, r := range appName {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(unicode.ToLower(r))
-		}
-	}
-	if b.Len() == 0 {
-		return "app"
-	}
-	return b.String()
-}
-
-func isValidIOSBundleIdentifier(value string) bool {
-	if value == "" || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") || !strings.Contains(value, ".") {
-		return false
-	}
-	for _, part := range strings.Split(value, ".") {
-		if part == "" {
-			return false
-		}
-		for _, r := range part {
-			if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-') {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func isValidIOSServerURL(value string) bool {
-	parsed, err := url.Parse(strings.TrimSpace(value))
-	if err != nil || parsed == nil {
-		return false
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return false
-	}
-	if strings.TrimSpace(parsed.Host) == "" {
-		return false
-	}
-	if parsed.RawQuery != "" || parsed.Fragment != "" {
-		return false
-	}
-	return true
-}
-
-// parseAuthBlock parses the auth configuration block and applies defaults.
-func parseAuthBlock(lines []line, idx *int, appName string) (*model.AuthConfig, bool, error) {
-	auth := defaultAuthConfig(appName)
-	emailSubjectExplicit := false
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			return auth, emailSubjectExplicit, nil
-		}
-
-		var matched bool
-		if m := match(`^code_ttl_minutes\s+([0-9]{1,4})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minCodeTTLMinutes || value > maxCodeTTLMinutes {
-				return nil, false, parserErrorf(
-					"line %d: auth.code_ttl_minutes must be between %d and %d",
-					ln.number,
-					minCodeTTLMinutes,
-					maxCodeTTLMinutes,
-				)
-			}
-			auth.CodeTTLMinutes = value
-			matched = true
-		} else if m := match(`^code_ttl_minutes\s+(.+)$`, trimmed); m != nil {
-			return nil, false, parserErrorf("line %d: auth.code_ttl_minutes must be an integer between %d and %d.", ln.number, minCodeTTLMinutes, maxCodeTTLMinutes)
-		}
-		if m := match(`^session_ttl_hours\s+([0-9]{1,4})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minSessionTTLHours || value > maxSessionTTLHours {
-				return nil, false, parserErrorf(
-					"line %d: auth.session_ttl_hours must be an integer number of hours between %d and %d (up to 365 days)",
-					ln.number,
-					minSessionTTLHours,
-					maxSessionTTLHours,
-				)
-			}
-			auth.SessionTTLHours = value
-			matched = true
-		} else if m := match(`^session_ttl_hours\s+(.+)$`, trimmed); m != nil {
-			return nil, false, parserErrorf("line %d: auth.session_ttl_hours must be an integer number of hours between %d and %d (up to 365 days).", ln.number, minSessionTTLHours, maxSessionTTLHours)
-		}
-		if m := match(`^auth_request_code_rate_limit_per_minute\s+([0-9]{1,5})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minAuthRateLimitPerMinute || value > maxAuthRateLimitPerMinute {
-				return nil, false, parserErrorf(
-					"line %d: auth.auth_request_code_rate_limit_per_minute must be between %d and %d",
-					ln.number,
-					minAuthRateLimitPerMinute,
-					maxAuthRateLimitPerMinute,
-				)
-			}
-			auth.AuthRequestCodeRateLimit = intPtr(value)
-			matched = true
-		} else if m := match(`^auth_request_code_rate_limit_per_minute\s+(.+)$`, trimmed); m != nil {
-			return nil, false, parserErrorf("line %d: auth.auth_request_code_rate_limit_per_minute must be an integer between %d and %d.", ln.number, minAuthRateLimitPerMinute, maxAuthRateLimitPerMinute)
-		}
-		if m := match(`^auth_login_rate_limit_per_minute\s+([0-9]{1,5})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minAuthRateLimitPerMinute || value > maxAuthRateLimitPerMinute {
-				return nil, false, parserErrorf(
-					"line %d: auth.auth_login_rate_limit_per_minute must be between %d and %d",
-					ln.number,
-					minAuthRateLimitPerMinute,
-					maxAuthRateLimitPerMinute,
-				)
-			}
-			auth.AuthLoginRateLimit = intPtr(value)
-			matched = true
-		} else if m := match(`^auth_login_rate_limit_per_minute\s+(.+)$`, trimmed); m != nil {
-			return nil, false, parserErrorf("line %d: auth.auth_login_rate_limit_per_minute must be an integer between %d and %d.", ln.number, minAuthRateLimitPerMinute, maxAuthRateLimitPerMinute)
-		}
-		if m := match(`^admin_ui_session_ttl_hours\s+([0-9]{1,4})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minSessionTTLHours || value > maxSessionTTLHours {
-				return nil, false, parserErrorf(
-					"line %d: auth.admin_ui_session_ttl_hours must be an integer number of hours between %d and %d (up to 365 days)",
-					ln.number,
-					minSessionTTLHours,
-					maxSessionTTLHours,
-				)
-			}
-			auth.AdminUISessionTTLHours = intPtr(value)
-			matched = true
-		} else if m := match(`^admin_ui_session_ttl_hours\s+(.+)$`, trimmed); m != nil {
-			return nil, false, parserErrorf("line %d: auth.admin_ui_session_ttl_hours must be an integer number of hours between %d and %d (up to 365 days).", ln.number, minSessionTTLHours, maxSessionTTLHours)
-		}
-		if m := match(`^security_frame_policy\s+(deny|sameorigin)$`, trimmed); m != nil {
-			auth.SecurityFramePolicy = stringPtr(m[1])
-			matched = true
-		} else if m := match(`^security_frame_policy\s+(.+)$`, trimmed); m != nil {
-			return nil, false, parserErrorf(
-				"line %d: auth.security_frame_policy must be one of: deny, sameorigin",
-				ln.number,
-			)
-		}
-		if m := match(`^security_referrer_policy\s+(strict-origin-when-cross-origin|no-referrer)$`, trimmed); m != nil {
-			auth.SecurityReferrerPolicy = stringPtr(m[1])
-			matched = true
-		} else if m := match(`^security_referrer_policy\s+(.+)$`, trimmed); m != nil {
-			return nil, false, parserErrorf(
-				"line %d: auth.security_referrer_policy must be one of: strict-origin-when-cross-origin, no-referrer",
-				ln.number,
-			)
-		}
-		if m := match(`^security_content_type_nosniff\s+(true|false)$`, trimmed); m != nil {
-			auth.SecurityContentNoSniff = boolPtr(m[1] == "true")
-			matched = true
-		} else if m := match(`^security_content_type_nosniff\s+(.+)$`, trimmed); m != nil {
-			return nil, false, parserErrorf(
-				"line %d: auth.security_content_type_nosniff must be true or false",
-				ln.number,
-			)
-		}
-		if m := match(`^email_from\s+"([^"]+)"$`, trimmed); m != nil {
-			auth.EmailFrom = m[1]
-			matched = true
-		}
-		if m := match(`^email_subject\s+"([^"]+)"$`, trimmed); m != nil {
-			auth.EmailSubject = m[1]
-			emailSubjectExplicit = true
-			matched = true
-		}
-		if m := match(`^smtp_host\s+"([^"]+)"$`, trimmed); m != nil {
-			auth.SMTPHost = m[1]
-			matched = true
-		}
-		if m := match(`^smtp_port\s+([0-9]{1,5})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < 1 || value > 65535 {
-				return nil, false, parserErrorf("line %d: auth.smtp_port must be between 1 and 65535", ln.number)
-			}
-			auth.SMTPPort = value
-			matched = true
-		} else if m := match(`^smtp_port\s+(.+)$`, trimmed); m != nil {
-			return nil, false, parserErrorf("line %d: auth.smtp_port must be an integer between 1 and 65535.", ln.number)
-		}
-		if m := match(`^smtp_username\s+"([^"]+)"$`, trimmed); m != nil {
-			auth.SMTPUsername = m[1]
-			matched = true
-		}
-		if m := match(`^smtp_password_env\s+"([^"]+)"$`, trimmed); m != nil {
-			auth.SMTPPasswordEnv = m[1]
-			matched = true
-		}
-		if m := match(`^smtp_starttls\s+(true|false)$`, trimmed); m != nil {
-			auth.SMTPStartTLS = m[1] == "true"
-			matched = true
-		} else if m := match(`^smtp_starttls\s+(.+)$`, trimmed); m != nil {
-			return nil, false, parserErrorf("line %d: auth.smtp_starttls must be true or false.", ln.number)
-		}
-		if !matched {
-			return nil, false, unknownStatementError(ln.number, "auth", trimmed, authStatementCandidates)
-		}
-		(*idx)++
-	}
-
-	return nil, false, parserErrorf("auth block is missing closing }")
-}
-
-func parseUserExtensionBlock(lines []line, idx *int) (*model.Entity, error) {
-	ent := &model.Entity{Name: "User"}
-	rawRules := make([]model.Rule, 0, 4)
-	rawAuthz := make([]model.Authorization, 0, 4)
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			ent.Rules = rawRules
-			ent.Authorizations = rawAuthz
-			return ent, nil
-		}
-
-		if m := match(`^rule\s+"([^"]+)"\s+expect\s+(.+)$`, trimmed); m != nil {
-			rawRules = append(rawRules, model.Rule{
-				Message:    strings.TrimSpace(m[1]),
-				Expression: strings.TrimSpace(m[2]),
-				LineNo:     ln.number,
-			})
-			(*idx)++
-			continue
-		}
-
-		if authz, ok, err := parseAuthorizeClause(trimmed, ln.number); ok {
-			if err != nil {
-				return nil, err
-			}
-			rawAuthz = append(rawAuthz, authz...)
-			(*idx)++
-			continue
-		}
-
-		if m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(`+marTypeRefPattern+`)(?:\s+(.*))?$`, trimmed); m != nil {
-			fieldName := m[1]
-			field := model.Field{Name: fieldName, Type: m[2]}
-			if err := parseFieldAttributes(&field, strings.TrimSpace(m[3]), ln.number); err != nil {
-				return nil, err
-			}
-			if isBuiltInUserField(fieldName) {
-				if !matchesBuiltInUserField(field) {
-					return nil, parserErrorf("line %d: entity User cannot redefine built-in field %q", ln.number, fieldName)
-				}
-			}
-			ent.Fields = append(ent.Fields, field)
-			(*idx)++
-			continue
-		}
-
-		if field, ok, err := parseBelongsToStatement(trimmed, ln.number); ok {
-			if err != nil {
-				return nil, err
-			}
-			ent.Fields = append(ent.Fields, *field)
-			(*idx)++
-			continue
-		}
-
-		return nil, parserErrorf("line %d: invalid entity statement %q", ln.number, trimmed)
-	}
-
-	return nil, parserErrorf("entity User is missing closing }")
-}
-
-func parseAuthorizeClause(trimmed string, lineNo int) ([]model.Authorization, bool, error) {
-	m := match(`^authorize\s+(.+?)\s+when\s+(.+)$`, trimmed)
-	if m == nil {
-		return nil, false, nil
-	}
-
-	actions, err := parseAuthorizeActions(strings.TrimSpace(m[1]))
-	if err != nil {
-		return nil, true, parserErrorf("line %d: %w", lineNo, err)
-	}
-	expression := strings.TrimSpace(m[2])
-	if expression == "" {
-		return nil, true, parserErrorf("line %d: authorize expression cannot be empty", lineNo)
-	}
-
-	out := make([]model.Authorization, 0, len(actions))
-	for _, action := range actions {
-		out = append(out, model.Authorization{
-			Action:     action,
-			Expression: expression,
-			LineNo:     lineNo,
+	for _, record := range records {
+		app.Records = append(app.Records, model.Record{
+			Name:   canonicalFieldName(record.Name),
+			Fields: record.Fields,
 		})
 	}
-	return out, true, nil
-}
 
-func containsLiteralTrueExpr(node expr.Expr) bool {
-	switch n := node.(type) {
-	case expr.Unary:
-		return containsLiteralTrueExpr(n.Right)
-	case expr.Binary:
-		return containsLiteralTrueExpr(n.Left) || containsLiteralTrueExpr(n.Right)
-	case expr.Call:
-		for _, arg := range n.Args {
-			if containsLiteralTrueExpr(arg) {
-				return true
-			}
-		}
-		return false
-	}
-	lit, ok := node.(expr.Literal)
-	if !ok {
-		return false
-	}
-	value, ok := lit.Value.(bool)
-	return ok && value
-}
-
-func parseAuthorizeActions(raw string) ([]string, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, parserErrorf("authorize must list one or more operations before when")
-	}
-
-	parts := strings.Split(raw, ",")
-	actions := make([]string, 0, len(parts))
-	valid := map[string]bool{
-		"read":   true,
-		"create": true,
-		"update": true,
-		"delete": true,
-	}
-
-	for _, part := range parts {
-		action := strings.TrimSpace(part)
-		if action == "" {
-			return nil, parserErrorf("authorize operations must be separated by commas")
-		}
-		if !valid[action] {
-			return nil, parserErrorf(
-				"unknown authorize operation %q. Expected one or more of: read, create, update, delete",
-				action,
-			)
-		}
-		actions = append(actions, action)
-	}
-
-	return actions, nil
-}
-
-func isBuiltInUserField(name string) bool {
-	return name == "id" || name == "email" || name == "role"
-}
-
-func matchesBuiltInUserField(field model.Field) bool {
-	switch field.Name {
-	case "id":
-		return field.Type == "Int" && field.Primary && field.Auto && !field.Optional && field.Default == nil
-	case "email":
-		return field.Type == "String" && !field.Primary && !field.Auto && !field.Optional && field.Default == nil
-	case "role":
-		return !field.Primary && !field.Auto && !field.Optional && field.Default == nil && field.RelationEntity == "" && !field.CurrentUser
-	default:
-		return false
-	}
-}
-
-func injectImplicitUserEntity(app *model.App, extension *model.Entity) error {
-	user := model.Entity{
-		Name: "User",
-		Fields: []model.Field{
-			{Name: "id", Type: "Int", Primary: true, Auto: true},
-			{Name: "email", Type: "String"},
-			{Name: "role", Type: "String"},
-		},
-	}
-
-	rawRules := []model.Rule{}
-	rawAuthz := []model.Authorization{}
-	if extension != nil {
-		for _, field := range extension.Fields {
-			replaced := false
-			for i := range user.Fields {
-				if user.Fields[i].Name == field.Name {
-					user.Fields[i] = field
-					replaced = true
-					break
-				}
-			}
-			if !replaced {
-				user.Fields = append(user.Fields, field)
-			}
-		}
-		rawRules = append(rawRules, extension.Rules...)
-		rawAuthz = append(rawAuthz, extension.Authorizations...)
-	}
-
-	if err := finalizeEntity(&user, rawRules, rawAuthz); err != nil {
-		return err
-	}
-
-	app.Entities = append([]model.Entity{user}, app.Entities...)
-	return nil
-}
-
-// parsePublicBlock parses static frontend embedding config.
-func parsePublicBlock(lines []line, idx *int) (*model.PublicConfig, error) {
-	publicCfg := &model.PublicConfig{
-		Mount: "/",
-	}
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			if strings.TrimSpace(publicCfg.Dir) == "" {
-				return nil, parserErrorf("line %d: public.dir is required", ln.number)
-			}
-
-			publicCfg.Mount = normalizePublicMount(publicCfg.Mount)
-			if !strings.HasPrefix(publicCfg.Mount, "/") {
-				return nil, parserErrorf("line %d: public.mount must start with '/'", ln.number)
-			}
-			if publicCfg.SPAFallback != "" {
-				if strings.HasPrefix(publicCfg.SPAFallback, "/") {
-					return nil, parserErrorf("line %d: public.spa_fallback must be a relative file path", ln.number)
-				}
-				if strings.Contains(publicCfg.SPAFallback, "..") {
-					return nil, parserErrorf("line %d: public.spa_fallback cannot contain '..'", ln.number)
-				}
-			}
-			return publicCfg, nil
-		}
-
-		var matched bool
-		if m := match(`^dir\s+"([^"]+)"$`, trimmed); m != nil {
-			publicCfg.Dir = m[1]
-			matched = true
-		}
-		if m := match(`^mount\s+"([^"]+)"$`, trimmed); m != nil {
-			publicCfg.Mount = m[1]
-			matched = true
-		}
-		if m := match(`^spa_fallback\s+"([^"]+)"$`, trimmed); m != nil {
-			publicCfg.SPAFallback = m[1]
-			matched = true
-		}
-
-		if !matched {
-			return nil, unknownStatementError(ln.number, "public", trimmed, publicStatementCandidates)
-		}
-		(*idx)++
-	}
-
-	return nil, parserErrorf("public block is missing closing }")
-}
-
-func normalizePublicMount(mount string) string {
-	value := strings.TrimSpace(mount)
-	if value == "" {
-		return "/"
-	}
-	if value != "/" {
-		value = strings.TrimSuffix(value, "/")
-	}
-	if value == "" {
-		return "/"
-	}
-	return value
-}
-
-func parseFrontendBlock(lines []line, idx *int) (*model.Frontend, error) {
-	frontend := &model.Frontend{Screens: []model.FrontendScreen{}}
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			if len(frontend.Screens) == 0 {
-				return nil, parserErrorf("line %d: screens must declare at least one screen", ln.number)
-			}
-			return frontend, nil
-		}
-		if m := match(`^screen\s+([A-Za-z][A-Za-z0-9_]*)(?:\s+for\s+([A-Za-z][A-Za-z0-9_]*))?\s*\{$`, trimmed); m != nil {
-			screen, err := parseFrontendScreenBlock(lines, idx, m[1], m[2])
-			if err != nil {
-				return nil, err
-			}
-			frontend.Screens = append(frontend.Screens, *screen)
-			continue
-		}
-
-		return nil, parserErrorf("line %d: invalid screens statement %q", ln.number, trimmed)
-	}
-
-	return nil, parserErrorf("screens block is missing closing }")
-}
-
-func parseFrontendScreenBlock(lines []line, idx *int, name, forEntity string) (*model.FrontendScreen, error) {
-	screen := &model.FrontendScreen{
-		Name:         name,
-		ForEntity:    forEntity,
-		ToolbarItems: []model.FrontendToolbarItem{},
-		Sections:     []model.FrontendSection{},
-		LineNo:       lines[*idx].number,
-	}
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			return screen, nil
-		}
-		if m := match(`^title\s+"([^"]+)"$`, trimmed); m != nil {
-			screen.Title = m[1]
-			screen.TitleExpression = ""
-			screen.TitleLineNo = ln.number
-			(*idx)++
-			continue
-		}
-		if m := match(`^title\s+(.+)$`, trimmed); m != nil {
-			screen.Title = ""
-			screen.TitleExpression = strings.TrimSpace(m[1])
-			screen.TitleLineNo = ln.number
-			(*idx)++
-			continue
-		}
-		if m := match(`^section(?:\s+"([^"]+)")?(?:\s+when\s+(.+))?\s*\{$`, trimmed); m != nil {
-			section, err := parseFrontendSectionBlock(lines, idx, m[1], strings.TrimSpace(m[2]))
-			if err != nil {
-				return nil, err
-			}
-			screen.Sections = append(screen.Sections, *section)
-			continue
-		}
-		if trimmed == "toolbar {" {
-			items, err := parseFrontendToolbarBlock(lines, idx)
-			if err != nil {
-				return nil, err
-			}
-			screen.ToolbarItems = append(screen.ToolbarItems, items...)
-			continue
-		}
-
-		return nil, parserErrorf("line %d: invalid screen statement %q", ln.number, trimmed)
-	}
-
-	return nil, parserErrorf("screen %s is missing closing }", name)
-}
-
-func parseFrontendToolbarBlock(lines []line, idx *int) ([]model.FrontendToolbarItem, error) {
-	items := []model.FrontendToolbarItem{}
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			return items, nil
-		}
-		if m := match(`^(primary|trailing)\s+create\s+([A-Za-z][A-Za-z0-9_]*)$`, trimmed); m != nil {
-			items = append(items, model.FrontendToolbarItem{
-				Placement: m[1],
-				LineNo:    ln.number,
-				Item: model.FrontendItem{
-					Kind:   "create",
-					Entity: m[2],
-					LineNo: ln.number,
-				},
-			})
-			(*idx)++
-			continue
-		}
-		if m := match(`^(primary|trailing)\s+edit\s+list\s+([A-Za-z][A-Za-z0-9_]*)$`, trimmed); m != nil {
-			items = append(items, model.FrontendToolbarItem{
-				Placement: m[1],
-				LineNo:    ln.number,
-				Item: model.FrontendItem{
-					Kind:   "editList",
-					Entity: m[2],
-					LineNo: ln.number,
-				},
-			})
-			(*idx)++
-			continue
-		}
-		if m := match(`^(primary|trailing)\s+edit$`, trimmed); m != nil {
-			items = append(items, model.FrontendToolbarItem{
-				Placement: m[1],
-				LineNo:    ln.number,
-				Item: model.FrontendItem{
-					Kind:   "edit",
-					LineNo: ln.number,
-				},
-			})
-			(*idx)++
-			continue
-		}
-
-		return nil, parserErrorf("line %d: invalid toolbar statement %q", ln.number, trimmed)
-	}
-
-	return nil, parserErrorf("screens toolbar is missing closing }")
-}
-
-func parseFrontendSectionBlock(lines []line, idx *int, title, when string) (*model.FrontendSection, error) {
-	section := &model.FrontendSection{
-		Title:      title,
-		When:       when,
-		Items:      []model.FrontendItem{},
-		LineNo:     lines[*idx].number,
-		WhenLineNo: lines[*idx].number,
-	}
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			return section, nil
-		}
-		if m := match(`^link\s+"([^"]+)"\s+to\s+([A-Za-z][A-Za-z0-9_]*)(?:\s+when\s+(.+))?$`, trimmed); m != nil {
-			item := model.FrontendItem{
-				Kind:         "link",
-				Label:        m[1],
-				Target:       m[2],
-				Filter:       strings.TrimSpace(m[3]),
-				LineNo:       ln.number,
-				FilterLineNo: ln.number,
-			}
-			section.Items = append(section.Items, item)
-			(*idx)++
-			continue
-		}
-		if m := match(`^field\s+([a-z][A-Za-z0-9_]*(?:\.[a-z][A-Za-z0-9_]*)?)$`, trimmed); m != nil {
-			section.Items = append(section.Items, model.FrontendItem{Kind: "field", Field: m[1], LineNo: ln.number})
-			(*idx)++
-			continue
-		}
-		if trimmed == "edit" {
-			section.Items = append(section.Items, model.FrontendItem{Kind: "edit", LineNo: ln.number})
-			(*idx)++
-			continue
-		}
-		if trimmed == "edit {" {
-			item := &model.FrontendItem{Kind: "edit", FormFields: []model.FrontendFormField{}, LineNo: ln.number}
-			if err := parseFrontendItemValues(lines, idx, item, "edit", "current"); err != nil {
-				return nil, err
-			}
-			section.Items = append(section.Items, *item)
-			continue
-		}
-		if trimmed == "delete" {
-			section.Items = append(section.Items, model.FrontendItem{Kind: "delete", LineNo: ln.number})
-			(*idx)++
-			continue
-		}
-		if m := match(`^create\s+([A-Za-z][A-Za-z0-9_]*)\s*\{$`, trimmed); m != nil {
-			item, err := parseFrontendCreateBlock(lines, idx, m[1])
-			if err != nil {
-				return nil, err
-			}
-			section.Items = append(section.Items, *item)
-			continue
-		}
-		if m := match(`^create\s+([A-Za-z][A-Za-z0-9_]*)$`, trimmed); m != nil {
-			section.Items = append(section.Items, model.FrontendItem{Kind: "create", Entity: m[1], LineNo: ln.number})
-			(*idx)++
-			continue
-		}
-		if m := match(`^list\s+([A-Za-z][A-Za-z0-9_]*)(?:\s+where\s+(.+))?\s*\{$`, trimmed); m != nil {
-			item, err := parseFrontendListBlock(lines, idx, "list", m[1], "", strings.TrimSpace(m[2]))
-			if err != nil {
-				return nil, err
-			}
-			section.Items = append(section.Items, *item)
-			continue
-		}
-		if m := match(`^children\s+([A-Za-z][A-Za-z0-9_]*)\s+by\s+([a-z][A-Za-z0-9_]*)(?:\s+where\s+(.+))?\s*\{$`, trimmed); m != nil {
-			item, err := parseFrontendListBlock(lines, idx, "children", m[1], m[2], strings.TrimSpace(m[3]))
-			if err != nil {
-				return nil, err
-			}
-			section.Items = append(section.Items, *item)
-			continue
-		}
-		if m := match(`^report\s+([A-Za-z][A-Za-z0-9_]*)(?:\s+where\s+(.+))?\s*\{$`, trimmed); m != nil {
-			item, err := parseFrontendReportBlock(lines, idx, m[1], strings.TrimSpace(m[2]))
-			if err != nil {
-				return nil, err
-			}
-			section.Items = append(section.Items, *item)
-			continue
-		}
-		if m := match(`^action\s+([a-z][A-Za-z0-9_]*)\s*\{$`, trimmed); m != nil {
-			item, err := parseFrontendActionBlock(lines, idx, m[1])
-			if err != nil {
-				return nil, err
-			}
-			section.Items = append(section.Items, *item)
-			continue
-		}
-
-		return nil, parserErrorf("line %d: invalid screens section statement %q", ln.number, trimmed)
-	}
-
-	return nil, parserErrorf("screens section is missing closing }")
-}
-
-func parseFrontendListBlock(lines []line, idx *int, kind, entity, relationField, filter string) (*model.FrontendItem, error) {
-	item := &model.FrontendItem{
-		Kind:          kind,
-		Entity:        entity,
-		RelationField: relationField,
-		Filter:        filter,
-		LineNo:        lines[*idx].number,
-		FilterLineNo:  lines[*idx].number,
-	}
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			return item, nil
-		}
-		if m := match(`^title\s+([a-z][A-Za-z0-9_]*)$`, trimmed); m != nil {
-			item.TitleField = m[1]
-			(*idx)++
-			continue
-		}
-		if m := match(`^subtitle\s+([a-z][A-Za-z0-9_]*)$`, trimmed); m != nil {
-			item.SubtitleField = m[1]
-			(*idx)++
-			continue
-		}
-		if m := match(`^destination\s+([A-Za-z][A-Za-z0-9_]*)$`, trimmed); m != nil {
-			item.Destination = m[1]
-			(*idx)++
-			continue
-		}
-
-		return nil, parserErrorf("line %d: invalid screens list statement %q", ln.number, trimmed)
-	}
-
-	return nil, parserErrorf("screens %s %s is missing closing }", kind, entity)
-}
-
-func parseFrontendReportBlock(lines []line, idx *int, entity, filter string) (*model.FrontendItem, error) {
-	item := &model.FrontendItem{
-		Kind:          "report",
-		Entity:        entity,
-		Filter:        filter,
-		ReportMetrics: []model.FrontendReportMetric{},
-		LineNo:        lines[*idx].number,
-		FilterLineNo:  lines[*idx].number,
-	}
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			return item, nil
-		}
-		if m := match(`^group\s+by\s+(.+)$`, trimmed); m != nil {
-			if item.ReportGroup != "" {
-				return nil, parserErrorf("line %d: duplicate screens report group", ln.number)
-			}
-			item.ReportGroup = strings.TrimSpace(m[1])
-			(*idx)++
-			continue
-		}
-		if m := match(`^metric\s+([a-z]+)\(([^)]*)\)(?:\s+label\s+"([^"]+)")?$`, trimmed); m != nil {
-			item.ReportMetrics = append(item.ReportMetrics, model.FrontendReportMetric{
-				Aggregate: strings.TrimSpace(m[1]),
-				Field:     strings.TrimSpace(m[2]),
-				Label:     strings.TrimSpace(m[3]),
-				LineNo:    ln.number,
-			})
-			(*idx)++
-			continue
-		}
-
-		return nil, parserErrorf("line %d: invalid screens report statement %q", ln.number, trimmed)
-	}
-
-	return nil, parserErrorf("screens report %s is missing closing }", entity)
-}
-
-func parseFrontendActionBlock(lines []line, idx *int, name string) (*model.FrontendItem, error) {
-	item := &model.FrontendItem{Kind: "action", Action: name, Values: []model.FrontendActionValue{}, FormFields: []model.FrontendFormField{}, LineNo: lines[*idx].number}
-	if err := parseFrontendItemValues(lines, idx, item, "action", name); err != nil {
-		return nil, err
-	}
-	return item, nil
-}
-
-func parseFrontendCreateBlock(lines []line, idx *int, entity string) (*model.FrontendItem, error) {
-	item := &model.FrontendItem{Kind: "create", Entity: entity, Values: []model.FrontendActionValue{}, FormFields: []model.FrontendFormField{}, LineNo: lines[*idx].number}
-	if err := parseFrontendItemValues(lines, idx, item, "create", entity); err != nil {
-		return nil, err
-	}
-	return item, nil
-}
-
-func parseFrontendItemValues(lines []line, idx *int, item *model.FrontendItem, kind, name string) error {
-	seen := map[string]bool{}
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			return nil
-		}
-		if trimmed == "form {" {
-			if len(item.FormFields) > 0 {
-				return parserErrorf("line %d: screens %s %s already declares form fields", ln.number, kind, name)
-			}
-			formFields, err := parseFrontendFormFields(lines, idx, kind, name)
-			if err != nil {
-				return err
-			}
-			item.FormFields = formFields
-			continue
-		}
-		m := match(`^([a-z][A-Za-z0-9_]*)\s*=\s*(.+)$`, trimmed)
-		if m == nil {
-			return parserErrorf("line %d: invalid screens %s value %q. Expected `field = expression` or `form { ... }`", ln.number, kind, trimmed)
-		}
-		field := m[1]
-		if seen[field] {
-			return parserErrorf("line %d: duplicate screens %s value %q", ln.number, kind, field)
-		}
-		seen[field] = true
-		item.Values = append(item.Values, model.FrontendActionValue{Field: field, Expression: strings.TrimSpace(m[2]), LineNo: ln.number})
-		(*idx)++
-	}
-
-	return parserErrorf("screens %s %s is missing closing }", kind, name)
-}
-
-func parseFrontendFormFields(lines []line, idx *int, kind, name string) ([]model.FrontendFormField, error) {
-	fields := []model.FrontendFormField{}
-	seen := map[string]bool{}
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			return fields, nil
-		}
-		m := match(`^field\s+([a-z][A-Za-z0-9_]*)(?:\s+where\s+(.+))?$`, trimmed)
-		if m == nil {
-			return nil, parserErrorf("line %d: invalid screens %s form field %q. Expected `field name` or `field name where relation == form.otherField`", ln.number, kind, trimmed)
-		}
-		fieldName := m[1]
-		if seen[fieldName] {
-			return nil, parserErrorf("line %d: duplicate screens %s form field %q", ln.number, kind, fieldName)
-		}
-		seen[fieldName] = true
-		fields = append(fields, model.FrontendFormField{
-			Field:        fieldName,
-			Filter:       strings.TrimSpace(m[2]),
-			LineNo:       ln.number,
-			FilterLineNo: ln.number,
+	for _, typ := range types {
+		app.Types = append(app.Types, model.EnumType{
+			Name:     canonicalFieldName(typ.Name),
+			Variants: typ.Variants,
 		})
-		(*idx)++
 	}
 
-	return nil, parserErrorf("screens %s %s form is missing closing }", kind, name)
-}
-
-// parseSystemBlock parses system-level runtime options.
-func parseSystemBlock(lines []line, idx *int) (*model.SystemConfig, error) {
-	cfg := &model.SystemConfig{
-		RequestLogsBuffer: defaultRequestLogsBuffer,
+	for _, fn := range functions {
+		app.Functions = append(app.Functions, model.Function{
+			Name:       canonicalFunctionName(fn.Name),
+			Parameters: canonicalFunctionParameters(fn.Parameters),
+			Expression: sexp.InlineString(fn.Body),
+			LineNo:     fn.LineNo,
+		})
 	}
 
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			return cfg, nil
-		}
-
-		if m := match(`^request_logs_buffer\s+([0-9]{1,6})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minRequestLogsBuffer || value > maxRequestLogsBuffer {
-				return nil, parserErrorf(
-					"line %d: system.request_logs_buffer must be between %d and %d",
-					ln.number,
-					minRequestLogsBuffer,
-					maxRequestLogsBuffer,
-				)
-			}
-			cfg.RequestLogsBuffer = value
-			(*idx)++
-			continue
-		} else if m := match(`^request_logs_buffer\s+(.+)$`, trimmed); m != nil {
-			return nil, parserErrorf("line %d: system.request_logs_buffer must be an integer between %d and %d.", ln.number, minRequestLogsBuffer, maxRequestLogsBuffer)
-		}
-		if m := match(`^http_max_request_body_mb\s+([0-9]{1,4})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minHTTPMaxRequestBodyMB || value > maxHTTPMaxRequestBodyMB {
-				return nil, parserErrorf(
-					"line %d: system.http_max_request_body_mb must be between %d and %d",
-					ln.number,
-					minHTTPMaxRequestBodyMB,
-					maxHTTPMaxRequestBodyMB,
-				)
-			}
-			cfg.HTTPMaxRequestBodyMB = intPtr(value)
-			(*idx)++
-			continue
-		} else if m := match(`^http_max_request_body_mb\s+(.+)$`, trimmed); m != nil {
-			return nil, parserErrorf("line %d: system.http_max_request_body_mb must be an integer between %d and %d.", ln.number, minHTTPMaxRequestBodyMB, maxHTTPMaxRequestBodyMB)
-		}
-		if m := match(`^sqlite_journal_mode\s+(wal|delete|truncate|persist|memory|off)$`, trimmed); m != nil {
-			cfg.SQLiteJournalMode = stringPtr(m[1])
-			(*idx)++
-			continue
-		} else if m := match(`^sqlite_journal_mode\s+(.+)$`, trimmed); m != nil {
-			return nil, parserErrorf("line %d: system.sqlite_journal_mode must be one of: wal, delete, truncate, persist, memory, off.", ln.number)
-		}
-		if m := match(`^sqlite_synchronous\s+(off|normal|full|extra)$`, trimmed); m != nil {
-			cfg.SQLiteSynchronous = stringPtr(m[1])
-			(*idx)++
-			continue
-		} else if m := match(`^sqlite_synchronous\s+(.+)$`, trimmed); m != nil {
-			return nil, parserErrorf("line %d: system.sqlite_synchronous must be one of: off, normal, full, extra.", ln.number)
-		}
-		if m := match(`^sqlite_foreign_keys\s+(true|false)$`, trimmed); m != nil {
-			cfg.SQLiteForeignKeys = boolPtr(m[1] == "true")
-			(*idx)++
-			continue
-		} else if m := match(`^sqlite_foreign_keys\s+(.+)$`, trimmed); m != nil {
-			return nil, parserErrorf("line %d: system.sqlite_foreign_keys must be true or false.", ln.number)
-		}
-		if m := match(`^sqlite_busy_timeout_ms\s+([0-9]{1,7})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minSQLiteBusyTimeoutMs || value > maxSQLiteBusyTimeoutMs {
-				return nil, parserErrorf(
-					"line %d: system.sqlite_busy_timeout_ms must be between %d and %d",
-					ln.number,
-					minSQLiteBusyTimeoutMs,
-					maxSQLiteBusyTimeoutMs,
-				)
-			}
-			cfg.SQLiteBusyTimeoutMs = intPtr(value)
-			(*idx)++
-			continue
-		} else if m := match(`^sqlite_busy_timeout_ms\s+(.+)$`, trimmed); m != nil {
-			return nil, parserErrorf("line %d: system.sqlite_busy_timeout_ms must be an integer between %d and %d.", ln.number, minSQLiteBusyTimeoutMs, maxSQLiteBusyTimeoutMs)
-		}
-		if m := match(`^sqlite_wal_autocheckpoint\s+([0-9]{1,7})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minSQLiteWALAutoCheckpoint || value > maxSQLiteWALAutoCheckpoint {
-				return nil, parserErrorf(
-					"line %d: system.sqlite_wal_autocheckpoint must be between %d and %d",
-					ln.number,
-					minSQLiteWALAutoCheckpoint,
-					maxSQLiteWALAutoCheckpoint,
-				)
-			}
-			cfg.SQLiteWALAutoCheckpoint = intPtr(value)
-			(*idx)++
-			continue
-		} else if m := match(`^sqlite_wal_autocheckpoint\s+(.+)$`, trimmed); m != nil {
-			return nil, parserErrorf("line %d: system.sqlite_wal_autocheckpoint must be an integer between %d and %d.", ln.number, minSQLiteWALAutoCheckpoint, maxSQLiteWALAutoCheckpoint)
-		}
-		if m := match(`^sqlite_journal_size_limit_mb\s+(-?[0-9]{1,4})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minSQLiteJournalSizeLimitMB || value > maxSQLiteJournalSizeLimitMB {
-				return nil, parserErrorf(
-					"line %d: system.sqlite_journal_size_limit_mb must be between %d and %d",
-					ln.number,
-					minSQLiteJournalSizeLimitMB,
-					maxSQLiteJournalSizeLimitMB,
-				)
-			}
-			cfg.SQLiteJournalSizeLimitMB = intPtr(value)
-			(*idx)++
-			continue
-		} else if m := match(`^sqlite_journal_size_limit_mb\s+(.+)$`, trimmed); m != nil {
-			return nil, parserErrorf("line %d: system.sqlite_journal_size_limit_mb must be an integer between %d and %d.", ln.number, minSQLiteJournalSizeLimitMB, maxSQLiteJournalSizeLimitMB)
-		}
-		if m := match(`^sqlite_mmap_size_mb\s+([0-9]{1,5})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minSQLiteMmapSizeMB || value > maxSQLiteMmapSizeMB {
-				return nil, parserErrorf(
-					"line %d: system.sqlite_mmap_size_mb must be between %d and %d",
-					ln.number,
-					minSQLiteMmapSizeMB,
-					maxSQLiteMmapSizeMB,
-				)
-			}
-			cfg.SQLiteMmapSizeMB = intPtr(value)
-			(*idx)++
-			continue
-		} else if m := match(`^sqlite_mmap_size_mb\s+(.+)$`, trimmed); m != nil {
-			return nil, parserErrorf("line %d: system.sqlite_mmap_size_mb must be an integer between %d and %d.", ln.number, minSQLiteMmapSizeMB, maxSQLiteMmapSizeMB)
-		}
-		if m := match(`^sqlite_cache_size_kb\s+([0-9]{1,7})$`, trimmed); m != nil {
-			value := mustInt(m[1])
-			if value < minSQLiteCacheSizeKB || value > maxSQLiteCacheSizeKB {
-				return nil, parserErrorf(
-					"line %d: system.sqlite_cache_size_kb must be between %d and %d",
-					ln.number,
-					minSQLiteCacheSizeKB,
-					maxSQLiteCacheSizeKB,
-				)
-			}
-			cfg.SQLiteCacheSizeKB = intPtr(value)
-			(*idx)++
-			continue
-		} else if m := match(`^sqlite_cache_size_kb\s+(.+)$`, trimmed); m != nil {
-			return nil, parserErrorf("line %d: system.sqlite_cache_size_kb must be an integer between %d and %d.", ln.number, minSQLiteCacheSizeKB, maxSQLiteCacheSizeKB)
-		}
-
-		return nil, unknownStatementError(ln.number, "system", trimmed, systemStatementCandidates)
-	}
-
-	return nil, parserErrorf("system block is missing closing }")
-}
-
-func stringPtr(v string) *string {
-	return &v
-}
-
-func intPtr(v int) *int {
-	return &v
-}
-
-func boolPtr(v bool) *bool {
-	return &v
-}
-
-type punctuatedParserError struct {
-	message string
-	base    error
-}
-
-func (e punctuatedParserError) Error() string {
-	return e.message
-}
-
-func (e punctuatedParserError) Unwrap() error {
-	return e.base
-}
-
-func parserErrorf(format string, args ...any) error {
-	base := fmt.Errorf(format, args...)
-	message := finalizeParserErrorMessage(base.Error())
-	if message == base.Error() {
-		return base
-	}
-	return punctuatedParserError{
-		message: message,
-		base:    base,
-	}
-}
-
-func parserErrorAtLinef(lineNo int, format string, args ...any) error {
-	if lineNo > 0 {
-		lineArgs := append([]any{lineNo}, args...)
-		return parserErrorf("line %d: "+format, lineArgs...)
-	}
-	return parserErrorf(format, args...)
-}
-
-func finalizeParserErrorMessage(message string) string {
-	if idx := strings.LastIndex(message, "\n\nHint:\n"); idx >= 0 {
-		base := finalizeParserErrorMessage(message[:idx])
-		return base + message[idx:]
-	}
-
-	trimmed := strings.TrimSpace(message)
-	if trimmed == "" {
-		return message
-	}
-	last := trimmed[len(trimmed)-1]
-	if last == '.' || last == '?' {
-		return message
-	}
-	return message + "."
-}
-
-func unknownStatementError(lineNumber int, scope, trimmed string, candidates []string) error {
-	label := "unknown statement"
-	if strings.TrimSpace(scope) != "" {
-		label = "unknown " + strings.TrimSpace(scope) + " statement"
-	}
-	key := statementSuggestionKey(trimmed)
-	base := fmt.Sprintf("line %d: %s %q%s", lineNumber, label, trimmed, suggest.DidYouMeanSuffix(key, candidates))
-	if hint := misplacedStatementHint(scope, key); hint != "" {
-		base += "\n\nHint:\n  " + hint
-	}
-	return parserErrorf("%s", base)
-}
-
-func misplacedStatementHint(scope, key string) string {
-	current := strings.TrimSpace(scope)
-	if current == "" || key == "" {
-		return ""
-	}
-
-	targetScope := ""
-	switch {
-	case candidateContains(authStatementCandidates, key):
-		targetScope = "auth"
-	case candidateContains(iosStatementCandidates, key):
-		targetScope = "ios"
-	case candidateContains(systemStatementCandidates, key):
-		targetScope = "system"
-	case candidateContains(publicStatementCandidates, key):
-		targetScope = "public"
-	}
-
-	if targetScope == "" || targetScope == current {
-		return ""
-	}
-
-	switch targetScope {
-	case "auth":
-		return fmt.Sprintf("%q looks like an auth setting. Try moving it into auth { ... }.", key)
-	case "ios":
-		return fmt.Sprintf("%q looks like an iOS setting. Try moving it into ios { ... }.", key)
-	case "system":
-		return fmt.Sprintf("%q looks like a system setting. Try moving it into system { ... }.", key)
-	case "public":
-		return fmt.Sprintf("%q looks like a public setting. Try moving it into public { ... }.", key)
-	default:
-		return ""
-	}
-}
-
-func candidateContains(candidates []string, key string) bool {
-	for _, candidate := range candidates {
-		if candidate == key {
-			return true
-		}
-	}
-	return false
-}
-
-func hasLinePrefixedError(err error) bool {
-	return err != nil && strings.HasPrefix(err.Error(), "line ")
-}
-
-func statementSuggestionKey(trimmed string) string {
-	parts := strings.Fields(strings.TrimSpace(trimmed))
-	if len(parts) == 0 {
-		return ""
-	}
-	if parts[0] == "type" && len(parts) == 1 {
-		return parts[0]
-	}
-	if parts[0] == "type" && len(parts) > 1 {
-		return parts[0] + " " + parts[1]
-	}
-	return parts[0]
-}
-
-// parseEntityBlock parses a single entity body including fields, rules, and authorize clauses.
-func parseEntityBlock(lines []line, idx *int, name string) (*model.Entity, error) {
-	if !upperNameRe.MatchString(name) {
-		return nil, parserErrorf("entity name %q is invalid", name)
-	}
-
-	ent := &model.Entity{Name: name}
-	rawRules := make([]model.Rule, 0, 4)
-	rawAuthz := make([]model.Authorization, 0, 4)
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			if err := finalizeEntity(ent, rawRules, rawAuthz); err != nil {
-				if hasLinePrefixedError(err) {
-					return nil, err
-				}
-				return nil, parserErrorf("line %d: %w", ln.number, err)
-			}
-			return ent, nil
-		}
-
-		if m := match(`^rule\s+"([^"]+)"\s+expect\s+(.+)$`, trimmed); m != nil {
-			rawRules = append(rawRules, model.Rule{
-				Message:    strings.TrimSpace(m[1]),
-				Expression: strings.TrimSpace(m[2]),
-				LineNo:     ln.number,
-			})
-			(*idx)++
-			continue
-		}
-
-		if authz, ok, err := parseAuthorizeClause(trimmed, ln.number); ok {
-			if err != nil {
-				return nil, err
-			}
-			rawAuthz = append(rawAuthz, authz...)
-			(*idx)++
-			continue
-		}
-
-		if m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(`+marTypeRefPattern+`)(?:\s+(.*))?$`, trimmed); m != nil {
-			field := model.Field{Name: m[1], Type: m[2]}
-			if err := parseFieldAttributes(&field, strings.TrimSpace(m[3]), ln.number); err != nil {
-				return nil, err
-			}
-			ent.Fields = append(ent.Fields, field)
-			(*idx)++
-			continue
-		}
-
-		if field, ok, err := parseBelongsToStatement(trimmed, ln.number); ok {
-			if err != nil {
-				return nil, err
-			}
-			ent.Fields = append(ent.Fields, *field)
-			(*idx)++
-			continue
-		}
-
-		return nil, parserErrorf("line %d: invalid entity statement %q", ln.number, trimmed)
-	}
-
-	return nil, parserErrorf("entity %s is missing closing }", name)
-}
-
-// finalizeEntity resolves derived metadata and validates rule/authorization expressions.
-func finalizeEntity(ent *model.Entity, rawRules []model.Rule, rawAuthz []model.Authorization) error {
-	if len(ent.Fields) == 0 {
-		return parserErrorf("entity %s has no fields", ent.Name)
-	}
-	ent.Fields = append(ent.Fields,
-		model.Field{Name: "created_at", Type: "DateTime", Auto: true},
-		model.Field{Name: "updated_at", Type: "DateTime", Auto: true},
-	)
-
-	primaryCount := 0
-	seenFields := map[string]bool{}
-	for _, f := range ent.Fields {
-		if !fieldNameRe.MatchString(f.Name) {
-			return parserErrorf("field name %q in %s is invalid", f.Name, ent.Name)
-		}
-		if seenFields[f.Name] {
-			return parserErrorf("duplicate field %q in %s", f.Name, ent.Name)
-		}
-		seenFields[f.Name] = true
-		if f.Default != nil && f.Primary {
-			return parserErrorf("field %s in %s cannot use default together with primary", f.Name, ent.Name)
-		}
-		if f.Default != nil && f.Auto {
-			return parserErrorf("field %s in %s cannot use default together with auto", f.Name, ent.Name)
-		}
-		if f.Primary {
-			primaryCount++
-		}
-	}
-	if primaryCount > 1 {
-		return parserErrorf("entity %s has multiple primary fields", ent.Name)
-	}
-	if primaryCount == 0 {
-		ent.Fields = append([]model.Field{{
-			Name:    "id",
-			Type:    "Int",
-			Primary: true,
-			Auto:    true,
-		}}, ent.Fields...)
-	}
-	for _, f := range ent.Fields {
-		if f.Primary {
-			ent.PrimaryKey = f.Name
-			break
-		}
-	}
-	if ent.PrimaryKey == "" {
-		return parserErrorf("entity %s requires a primary key", ent.Name)
-	}
-
-	ent.Table = pluralize(toSnake(ent.Name))
-	ent.Resource = "/" + ent.Table
-
-	allowedVars := make(map[string]struct{}, len(ent.Fields))
-	for _, f := range ent.Fields {
-		allowedVars[f.Name] = struct{}{}
-	}
-
-	for _, rule := range rawRules {
-		if strings.TrimSpace(rule.Message) == "" {
-			if rule.LineNo > 0 {
-				return parserErrorf("line %d: rule message cannot be empty", rule.LineNo)
-			}
-			return parserErrorf("rule message cannot be empty")
-		}
-		if strings.TrimSpace(rule.Expression) == "" {
-			if rule.LineNo > 0 {
-				return parserErrorf("line %d: rule expression cannot be empty", rule.LineNo)
-			}
-			return parserErrorf("rule expression cannot be empty")
-		}
-		ruleAllowedVars := allowedVariablesForRawExpression(rule.Expression, allowedVars, false)
-		if _, err := expr.Parse(rule.Expression, expr.ParserOptions{AllowedVariables: ruleAllowedVars}); err != nil {
-			if rule.LineNo > 0 {
-				return parserErrorf("line %d: invalid rule expression %q (%w)", rule.LineNo, rule.Expression, err)
-			}
-			return parserErrorf("invalid rule expression %q (%w)", rule.Expression, err)
-		}
-		ent.Rules = append(ent.Rules, rule)
-	}
-
-	seenAction := map[string]bool{}
-	for _, authz := range rawAuthz {
-		if seenAction[authz.Action] {
-			if authz.LineNo > 0 {
-				return parserErrorf("line %d: duplicate authorize rule for %q", authz.LineNo, authz.Action)
-			}
-			return parserErrorf("duplicate authorize rule for %q", authz.Action)
-		}
-		seenAction[authz.Action] = true
-		authAllowedVars := allowedVariablesForRawExpression(authz.Expression, allowedVars, true)
-		parsed, err := expr.Parse(authz.Expression, expr.ParserOptions{AllowedVariables: authAllowedVars})
+	if appDecl.ConfigRef != "" {
+		cfg, err := parseConfigValue(values[appDecl.ConfigRef])
 		if err != nil {
-			if authz.LineNo > 0 {
-				return parserErrorf("line %d: invalid authorization expression %q (%w)", authz.LineNo, authz.Expression, err)
-			}
-			return parserErrorf("invalid authorization expression %q (%w)", authz.Expression, err)
+			return nil, err
 		}
-		if containsLiteralTrueExpr(parsed) {
-			if authz.LineNo > 0 {
-				return parserErrorf("line %d: authorization expressions cannot use true. Use anonymous or user_authenticated instead", authz.LineNo)
-			}
-			return parserErrorf("authorization expressions cannot use true. Use anonymous or user_authenticated instead")
+		app.Port = cfg.Port
+		if cfg.Database != "" {
+			app.Database = cfg.Database
 		}
-		ent.Authorizations = append(ent.Authorizations, authz)
+		if cfg.IOS != nil {
+			app.IOS = cfg.IOS
+		}
+		if cfg.Public != nil {
+			app.Public = cfg.Public
+		}
+		if cfg.System != nil {
+			app.System = cfg.System
+		}
+	}
+	if appDecl.AuthRef != "" {
+		auth, err := parseAuthValue(values[appDecl.AuthRef])
+		if err != nil {
+			return nil, err
+		}
+		applyAuthSettings(app.Auth, auth)
 	}
 
-	return nil
-}
-
-func validateEntityPredicates(app *model.App) error {
-	if app == nil {
-		return nil
+	var userExtension *model.Entity
+	app.Entities = []model.Entity{}
+	for _, symbol := range appDecl.EntitySymbols {
+		value, ok := values[symbol]
+		if !ok {
+			return nil, fmt.Errorf("define-app references unknown entity %q", symbol)
+		}
+		entity, err := parseEntityValue(value)
+		if err != nil {
+			return nil, err
+		}
+		if entity.Name == "User" {
+			userExtension = &entity
+			continue
+		}
+		app.Entities = append(app.Entities, entity)
 	}
-	enumLiteralTypes := appEnumLiteralTypes(app)
+
+	userEntity := buildBuiltinUser()
+	if userExtension != nil {
+		userEntity = mergeUserEntity(userEntity, *userExtension)
+	}
+	app.Entities = append([]model.Entity{userEntity}, app.Entities...)
+
+	entityByName := map[string]*model.Entity{}
 	for i := range app.Entities {
-		ent := &app.Entities[i]
-		variableTypes := make(map[string]string, len(ent.Fields))
-		for _, field := range ent.Fields {
-			variableTypes[field.Name] = field.Type
-		}
-		for _, rule := range ent.Rules {
-			if err := validateBooleanExpr(rule.Expression, variableTypes, nil, false, enumLiteralTypes); err != nil {
-				if rule.LineNo > 0 {
-					return parserErrorf("line %d: invalid rule expression %q (%w)", rule.LineNo, rule.Expression, err)
-				}
-				return parserErrorf("invalid rule expression %q (%w)", rule.Expression, err)
-			}
-		}
-		for _, authz := range ent.Authorizations {
-			authBuiltins := authBuiltinTypes(app)
-			if err := validateBooleanExpr(authz.Expression, variableTypes, authBuiltins, true, enumLiteralTypes); err != nil {
-				if authz.LineNo > 0 {
-					return parserErrorf("line %d: invalid authorization expression %q (%w)", authz.LineNo, authz.Expression, err)
-				}
-				return parserErrorf("invalid authorization expression %q (%w)", authz.Expression, err)
-			}
-		}
-	}
-	return nil
-}
-
-func validateDeclaredTypes(app *model.App) error {
-	if app == nil {
-		return nil
+		entityByName[app.Entities[i].Name] = &app.Entities[i]
 	}
 
-	typesByName := map[string]*model.EnumType{}
-	literalOwners := map[string]string{}
+	functionByName := map[string]*model.Function{}
+	for i := range app.Functions {
+		functionByName[app.Functions[i].Name] = &app.Functions[i]
+	}
+
+	recordByName := map[string]*model.Record{}
+	for i := range app.Records {
+		recordByName[app.Records[i].Name] = &app.Records[i]
+	}
+
+	typeByName := map[string]*model.EnumType{}
 	for i := range app.Types {
-		enumType := &app.Types[i]
-		if _, exists := typesByName[enumType.Name]; exists {
-			return parserErrorf("duplicate type %q", enumType.Name)
+		if _, exists := typeByName[app.Types[i].Name]; exists {
+			return nil, fmt.Errorf("duplicate type %q", app.Types[i].Name)
 		}
-		typesByName[enumType.Name] = enumType
-		for _, value := range enumType.Values {
-			if owner, exists := literalOwners[value]; exists {
-				return parserErrorf("type value %q is declared in both %s and %s. Enum values must be globally unique", value, owner, enumType.Name)
+		typeByName[app.Types[i].Name] = &app.Types[i]
+	}
+	variantOwners := map[string]string{}
+	for _, typ := range app.Types {
+		for _, variant := range typ.Variants {
+			if owner, exists := variantOwners[variant.Name]; exists {
+				return nil, fmt.Errorf("type variant %q is declared in both %s and %s", variant.Name, owner, typ.Name)
 			}
-			literalOwners[value] = enumType.Name
+			variantOwners[variant.Name] = typ.Name
+		}
+	}
+
+	for i := range app.Records {
+		if err := validateRecordTypes(&app.Records[i], recordByName, typeByName, entityByName); err != nil {
+			return nil, err
+		}
+	}
+	for i := range app.Types {
+		if err := validateSumType(&app.Types[i], recordByName, typeByName, entityByName); err != nil {
+			return nil, err
+		}
+	}
+
+	for i := range app.Functions {
+		if err := validateFunctionExpression(&app.Functions[i], functionByName, recordByName, typeByName, entityByName); err != nil {
+			return nil, err
 		}
 	}
 
 	for i := range app.Entities {
-		for j := range app.Entities[i].Fields {
-			field := &app.Entities[i].Fields[j]
-			if field.RelationEntity != "" {
-				continue
-			}
-			enumValues, ok := enumValuesForType(field.Type, typesByName)
-			if !ok {
-				return parserErrorf("entity %s field %s uses unknown type %s", app.Entities[i].Name, field.Name, field.Type)
-			}
-			field.EnumValues = append([]string{}, enumValues...)
-			if err := validateFieldDefault(field, app.Entities[i].Name, typesByName); err != nil {
-				return err
-			}
+		if err := validateEntityExpressions(&app.Entities[i], functionByName, recordByName, typeByName, entityByName); err != nil {
+			return nil, err
+		}
+		if err := validateEntitySchema(&app.Entities[i], entityByName); err != nil {
+			return nil, err
 		}
 	}
 
-	for i := range app.InputAliases {
-		for j := range app.InputAliases[i].Fields {
-			field := &app.InputAliases[i].Fields[j]
-			if field.RelationEntity != "" {
-				continue
+	selectedQueries := queries
+	if len(appDecl.QuerySymbols) > 0 {
+		selectedQueries = map[string]*queryDef{}
+		for _, symbol := range appDecl.QuerySymbols {
+			query := queries[symbol]
+			if query == nil {
+				return nil, fmt.Errorf("define-app references unknown query %q", symbol)
 			}
-			enumValues, ok := enumValuesForType(field.Type, typesByName)
-			if !ok {
-				return parserErrorf("type alias %s field %s uses unknown type %s", app.InputAliases[i].Name, field.Name, field.Type)
-			}
-			field.EnumValues = append([]string{}, enumValues...)
+			selectedQueries[symbol] = query
+			app.Queries = append(app.Queries, model.Query{
+				Name:           canonicalFunctionName(query.Name),
+				Parameters:     canonicalFunctionParameters(query.Parameters),
+				ParameterTypes: map[string]string{},
+				Entity:         canonicalTypeName(query.EntitySymbol),
+				Where:          inlineNodeString(query.Where),
+				OrderBy:        canonicalFieldName(query.OrderBy),
+				OrderDir:       query.OrderDir,
+				Limit:          query.Limit,
+			})
 		}
 	}
 
-	return nil
-}
-
-func validateFieldDefault(field *model.Field, entityName string, typesByName map[string]*model.EnumType) error {
-	if field == nil || field.Default == nil {
-		return nil
-	}
-	if isPrimitiveFieldType(field.Type) {
-		return nil
-	}
-	enumType := typesByName[field.Type]
-	if enumType == nil {
-		return parserErrorf("entity %s field %s uses unknown type %s", entityName, field.Name, field.Type)
-	}
-	defaultValue, ok := field.Default.(string)
-	if !ok {
-		return parserErrorf("entity %s field %s default must be a value from type %s", entityName, field.Name, field.Type)
-	}
-	for _, value := range enumType.Values {
-		if value == defaultValue {
-			return nil
-		}
-	}
-	return parserErrorf("entity %s field %s default %q is not a value of type %s", entityName, field.Name, defaultValue, field.Type)
-}
-
-func enumValuesForType(typeName string, typesByName map[string]*model.EnumType) ([]string, bool) {
-	if isPrimitiveFieldType(typeName) {
-		return nil, true
-	}
-	enumType := typesByName[typeName]
-	if enumType == nil {
-		return nil, false
-	}
-	return enumType.Values, true
-}
-
-func allowedVariablesForRawExpression(raw string, base map[string]struct{}, includeBuiltins bool) map[string]struct{} {
-	out := make(map[string]struct{}, len(base)+8)
-	for name := range base {
-		out[name] = struct{}{}
-	}
-	if includeBuiltins {
-		out = expr.AllowedVariablesWithBuiltins(out)
-	}
-	for _, token := range regexp.MustCompile(`\b[A-Z][A-Za-z0-9_]*\b`).FindAllString(raw, -1) {
-		out[token] = struct{}{}
-	}
-	return out
-}
-
-func resolveEntityRelations(app *model.App) error {
-	if app == nil {
-		return nil
-	}
-
-	entitiesByName := make(map[string]*model.Entity, len(app.Entities))
-	for i := range app.Entities {
-		entitiesByName[app.Entities[i].Name] = &app.Entities[i]
-	}
-
-	for i := range app.Entities {
-		ent := &app.Entities[i]
-		seenStorageNames := map[string]bool{}
-		for j := range ent.Fields {
-			field := &ent.Fields[j]
-			if field.RelationEntity != "" {
-				if field.CurrentUser && ent.Name == "User" {
-					return parserErrorf("entity %s field %s cannot use belongs_to current_user", ent.Name, field.Name)
-				}
-				target := entitiesByName[field.RelationEntity]
-				if target == nil {
-					return parserErrorf("entity %s field %s references unknown entity %s", ent.Name, field.Name, field.RelationEntity)
-				}
-				pk := entityPrimaryField(target)
-				if pk == nil || !isPrimitiveFieldType(pk.Type) {
-					return parserErrorf("entity %s field %s cannot belong_to %s because %s primary key is unsupported", ent.Name, field.Name, field.RelationEntity, field.RelationEntity)
-				}
-				field.Type = pk.Type
-			}
-
-			storageName := model.FieldStorageName(field)
-			if seenStorageNames[storageName] {
-				return parserErrorf("entity %s has duplicate stored field %q", ent.Name, storageName)
-			}
-			seenStorageNames[storageName] = true
-		}
-	}
-
-	return nil
-}
-
-func resolveAliasRelations(app *model.App) error {
-	if app == nil {
-		return nil
-	}
-
-	entitiesByName := make(map[string]*model.Entity, len(app.Entities))
-	for i := range app.Entities {
-		entitiesByName[app.Entities[i].Name] = &app.Entities[i]
-	}
-
-	for i := range app.InputAliases {
-		alias := &app.InputAliases[i]
-		for j := range alias.Fields {
-			field := &alias.Fields[j]
-			if field.RelationEntity == "" {
-				continue
-			}
-			target := entitiesByName[field.RelationEntity]
-			if target == nil {
-				return parserErrorf("type alias %s field %s references unknown entity %s", alias.Name, field.Name, field.RelationEntity)
-			}
-			pk := entityPrimaryField(target)
-			if pk == nil || !isPrimitiveFieldType(pk.Type) {
-				return parserErrorf("type alias %s field %s cannot reference %s because %s primary key is unsupported", alias.Name, field.Name, field.RelationEntity, field.RelationEntity)
-			}
-			field.Type = pk.Type
-		}
-	}
-
-	return nil
-}
-
-func parseTypeAlias(lines []line, idx *int) (*model.TypeAlias, error) {
-	start := lines[*idx]
-	trimmed := strings.TrimSpace(start.text)
-	m := match(`^type\s+alias\s+([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.*)$`, trimmed)
-	if m == nil {
-		return nil, parserErrorf("line %d: invalid type alias declaration", start.number)
-	}
-	name := m[1]
-	rest := strings.TrimSpace(m[2])
-	alias := &model.TypeAlias{Name: name, Fields: []model.AliasField{}}
-	seen := map[string]bool{}
-
-	curLine := start.number
-	if rest == "" {
-		(*idx)++
-		for *idx < len(lines) {
-			curLine = lines[*idx].number
-			rest = strings.TrimSpace(lines[*idx].text)
-			if isCommentOrBlank(rest) {
-				(*idx)++
-				continue
-			}
-			break
-		}
-	}
-
-	if !strings.HasPrefix(rest, "{") {
-		return nil, parserErrorf("line %d: type alias %s must start with a record. Try: type alias %s = { field : String }", curLine, name, name)
-	}
-	rest = strings.TrimSpace(strings.TrimPrefix(rest, "{"))
-	for {
-		if rest == "" {
-			(*idx)++
-			if *idx >= len(lines) {
-				return nil, parserErrorf("type alias %s is missing closing }", name)
-			}
-			curLine = lines[*idx].number
-			rest = strings.TrimSpace(lines[*idx].text)
-			if isCommentOrBlank(rest) {
-				continue
-			}
-		}
-
-		if strings.Contains(rest, "}") {
-			before, after, _ := strings.Cut(rest, "}")
-			before = strings.TrimSpace(before)
-			if before != "" {
-				if err := parseAliasFieldToken(alias, seen, before, curLine); err != nil {
+	if len(appDecl.ScreenSymbols) > 0 {
+		frontend := &model.Frontend{Screens: []model.FrontendScreen{}}
+		for _, symbol := range appDecl.ScreenSymbols {
+			if screenDef := screens[symbol]; screenDef != nil {
+				screen, err := parseScreenDefinition(screenDef.Name, screenDef.Parameters, screenDef.Body, selectedQueries)
+				if err != nil {
 					return nil, err
 				}
-			}
-			if strings.TrimSpace(after) != "" {
-				return nil, parserErrorf("line %d: unexpected tokens after type alias %s record", curLine, name)
-			}
-			(*idx)++
-			if len(alias.Fields) == 0 {
-				return nil, parserErrorf("line %d: type alias %s must declare at least one field", start.number, name)
-			}
-			return alias, nil
-		}
-
-		if err := parseAliasFieldToken(alias, seen, rest, curLine); err != nil {
-			return nil, err
-		}
-		rest = ""
-	}
-}
-
-func parseEnumType(lines []line, idx *int) (*model.EnumType, error) {
-	start := lines[*idx]
-	trimmed := strings.TrimSpace(start.text)
-	m := match(`^type\s+([A-Za-z][A-Za-z0-9_]*)\s*\{(.*)$`, trimmed)
-	if m == nil {
-		return nil, parserErrorf("line %d: invalid type declaration", start.number)
-	}
-
-	enumType := &model.EnumType{Name: m[1], Values: []string{}}
-	seen := map[string]bool{}
-	rest := strings.TrimSpace(m[2])
-	curLine := start.number
-
-	for {
-		if rest == "" {
-			(*idx)++
-			if *idx >= len(lines) {
-				return nil, parserErrorf("type %s is missing closing }", enumType.Name)
-			}
-			curLine = lines[*idx].number
-			rest = strings.TrimSpace(lines[*idx].text)
-			if isCommentOrBlank(rest) {
+				frontend.Screens = append(frontend.Screens, screen)
 				continue
 			}
+			return nil, fmt.Errorf("define-app references unknown screen %q", symbol)
 		}
+		app.Screens = frontend
+	}
 
-		if strings.Contains(rest, "}") {
-			before, after, _ := strings.Cut(rest, "}")
-			if err := parseEnumValueTokens(enumType, seen, before, curLine); err != nil {
-				return nil, err
-			}
-			if strings.TrimSpace(after) != "" {
-				return nil, parserErrorf("line %d: unexpected tokens after type %s declaration", curLine, enumType.Name)
-			}
-			(*idx)++
-			if len(enumType.Values) == 0 {
-				return nil, parserErrorf("line %d: type %s must declare at least one value", start.number, enumType.Name)
-			}
-			return enumType, nil
+	for _, symbol := range appDecl.ActionSymbols {
+		actionValue := actions[symbol]
+		if actionValue == nil {
+			return nil, fmt.Errorf("define-app references unknown action %q", symbol)
 		}
-
-		if err := parseEnumValueTokens(enumType, seen, rest, curLine); err != nil {
-			return nil, err
-		}
-		rest = ""
-	}
-}
-
-func parseEnumValueTokens(enumType *model.EnumType, seen map[string]bool, raw string, lineNo int) error {
-	normalized := strings.TrimSpace(strings.ReplaceAll(raw, ",", " "))
-	if normalized == "" {
-		return nil
-	}
-	for _, value := range strings.Fields(normalized) {
-		if !upperNameRe.MatchString(value) || len(value) == 0 || !unicode.IsUpper(rune(value[0])) {
-			return parserErrorf("line %d: invalid value %q in type %s. Values must use PascalCase like Admin", lineNo, value, enumType.Name)
-		}
-		if seen[value] {
-			return parserErrorf("line %d: duplicate value %q in type %s", lineNo, value, enumType.Name)
-		}
-		seen[value] = true
-		enumType.Values = append(enumType.Values, value)
-	}
-	return nil
-}
-
-func parseAliasFieldToken(alias *model.TypeAlias, seen map[string]bool, token string, lineNo int) error {
-	token = strings.TrimSpace(strings.TrimPrefix(token, ","))
-	token = strings.TrimSpace(strings.TrimSuffix(token, ","))
-	if token == "" {
-		return nil
-	}
-	m := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(?:(ref)\s+(`+marTypeRefPattern+`)|(`+marTypeRefPattern+`))$`, token)
-	if m == nil {
-		return parserErrorf("line %d: invalid field in type alias %s. Expected `name : Type` or `name : ref Entity`", lineNo, alias.Name)
-	}
-	name := m[1]
-	if seen[name] {
-		return parserErrorf("line %d: duplicate field %q in type alias %s", lineNo, name, alias.Name)
-	}
-	seen[name] = true
-	field := model.AliasField{Name: name}
-	if m[2] == "ref" {
-		field.RelationEntity = m[3]
-	} else {
-		field.Type = m[4]
-	}
-	alias.Fields = append(alias.Fields, field)
-	return nil
-}
-
-func parseBelongsToStatement(trimmed string, lineNo int) (*model.Field, bool, error) {
-	if !strings.HasPrefix(trimmed, "belongs_to ") {
-		return nil, false, nil
-	}
-
-	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "belongs_to"))
-	if rest == "" {
-		return nil, true, parserErrorf("line %d: belongs_to requires a target entity", lineNo)
-	}
-
-	if rest == "current_user" {
-		return &model.Field{
-			Name:           "user",
-			RelationEntity: "User",
-			CurrentUser:    true,
-		}, true, nil
-	}
-	if strings.HasPrefix(rest, "current_user ") {
-		return nil, true, parserErrorf("line %d: belongs_to current_user does not support modifiers", lineNo)
-	}
-
-	var fieldName string
-	var targetEntity string
-	var rawAttrs string
-
-	if before, after, ok := strings.Cut(rest, ":"); ok {
-		fieldName = strings.TrimSpace(before)
-		after = strings.TrimSpace(after)
-		parts := strings.Fields(after)
-		if len(parts) == 0 {
-			return nil, true, parserErrorf("line %d: belongs_to %s requires a target entity", lineNo, fieldName)
-		}
-		targetEntity = parts[0]
-		rawAttrs = strings.TrimSpace(strings.TrimPrefix(after, targetEntity))
-	} else {
-		parts := strings.Fields(rest)
-		targetEntity = parts[0]
-		fieldName = toSnake(targetEntity)
-		if len(parts) > 1 {
-			rawAttrs = strings.Join(parts[1:], " ")
-		}
-	}
-
-	if !fieldNameRe.MatchString(fieldName) {
-		return nil, true, parserErrorf("line %d: belongs_to field name %q is invalid", lineNo, fieldName)
-	}
-	if targetEntity == "current_user" {
-		if rawAttrs != "" {
-			return nil, true, parserErrorf("line %d: belongs_to current_user does not support modifiers", lineNo)
-		}
-		return &model.Field{
-			Name:           fieldName,
-			RelationEntity: "User",
-			CurrentUser:    true,
-		}, true, nil
-	}
-	if !upperNameRe.MatchString(targetEntity) {
-		return nil, true, parserErrorf("line %d: belongs_to target %q is invalid", lineNo, targetEntity)
-	}
-
-	field := &model.Field{
-		Name:           fieldName,
-		RelationEntity: targetEntity,
-	}
-	if err := parseBelongsToAttributes(field, rawAttrs, lineNo); err != nil {
-		return nil, true, err
-	}
-	return field, true, nil
-}
-
-func parseBelongsToAttributes(field *model.Field, raw string, lineNo int) error {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-
-	tokens, err := tokenizeFieldAttributes(raw)
-	if err != nil {
-		return parserErrorf("line %d: %w", lineNo, err)
-	}
-	for _, token := range tokens {
-		switch token {
-		case "optional":
-			field.Optional = true
-		default:
-			return parserErrorf("line %d: belongs_to only supports the optional modifier", lineNo)
-		}
-	}
-	return nil
-}
-
-func parseActionBlock(lines []line, idx *int, name string) (*model.Action, error) {
-	action := &model.Action{Name: name, Steps: []model.ActionStep{}}
-	hasInput := false
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			if !hasInput {
-				return nil, parserErrorf("line %d: action %s is missing `input: TypeAlias`", ln.number, name)
-			}
-			if len(action.Steps) == 0 {
-				return nil, parserErrorf("line %d: action %s must contain at least one write step", ln.number, name)
-			}
-			return action, nil
-		}
-
-		if m := match(`^input\s*:\s*([A-Za-z][A-Za-z0-9_]*)$`, trimmed); m != nil {
-			if hasInput {
-				return nil, parserErrorf("line %d: action %s already declares input", ln.number, name)
-			}
-			action.InputAlias = m[1]
-			hasInput = true
-			(*idx)++
-			continue
-		}
-
-		if m := match(`^rule\s+"([^"]+)"\s+expect\s+(.+)$`, trimmed); m != nil {
-			action.Steps = append(action.Steps, model.ActionStep{
-				Kind:       "rule",
-				Message:    m[1],
-				Expression: strings.TrimSpace(m[2]),
-			})
-			(*idx)++
-			continue
-		}
-
-		if m := match(`^([a-z][A-Za-z0-9_]*)\s*=\s*(load|create|update|delete)\s+([A-Za-z][A-Za-z0-9_]*)\s*\{$`, trimmed); m != nil {
-			step, err := parseActionStepBlock(lines, idx, name, m[2], m[3], m[1])
-			if err != nil {
-				return nil, err
-			}
-			action.Steps = append(action.Steps, *step)
-			continue
-		}
-
-		if m := match(`^(create|update|delete)\s+([A-Za-z][A-Za-z0-9_]*)\s*\{$`, trimmed); m != nil {
-			step, err := parseActionStepBlock(lines, idx, name, m[1], m[2], "")
-			if err != nil {
-				return nil, err
-			}
-			action.Steps = append(action.Steps, *step)
-			continue
-		}
-
-		return nil, parserErrorf("line %d: invalid action statement %q", ln.number, trimmed)
-	}
-
-	return nil, parserErrorf("action %s is missing closing }", name)
-}
-
-func parseActionStepBlock(lines []line, idx *int, actionName, kind, entityName, alias string) (*model.ActionStep, error) {
-	step := &model.ActionStep{Alias: alias, Kind: kind, Entity: entityName, Values: []model.ActionFieldExpr{}}
-	seen := map[string]bool{}
-
-	(*idx)++
-	for *idx < len(lines) {
-		ln := lines[*idx]
-		trimmed := strings.TrimSpace(ln.text)
-		if isCommentOrBlank(trimmed) {
-			(*idx)++
-			continue
-		}
-		if trimmed == "}" {
-			(*idx)++
-			if len(step.Values) == 0 {
-				return nil, parserErrorf("line %d: %s %s in action %s must define at least one field", ln.number, kind, entityName, actionName)
-			}
-			return step, nil
-		}
-
-		assign := match(`^([a-z][A-Za-z0-9_]*)\s*:\s*(.+)$`, trimmed)
-		if assign == nil {
-			return nil, parserErrorf("line %d: invalid %s field %q. Expected `field: value`", ln.number, kind, trimmed)
-		}
-		field := assign[1]
-		if seen[field] {
-			return nil, parserErrorf("line %d: duplicate field %q in %s %s", ln.number, field, kind, entityName)
-		}
-		seen[field] = true
-
-		expr, err := parseActionFieldExpr(strings.TrimSpace(assign[2]), ln.number)
+		inputAlias, action, err := parseActionDefinition(actionValue.Name, actionValue.Body, entityByName)
 		if err != nil {
 			return nil, err
 		}
-		expr.Field = field
-		step.Values = append(step.Values, *expr)
-		(*idx)++
+		app.InputAliases = append(app.InputAliases, inputAlias)
+		app.Actions = append(app.Actions, action)
 	}
 
-	return nil, parserErrorf("%s %s in action %s is missing closing }", kind, entityName, actionName)
-}
-
-func parseActionFieldExpr(raw string, lineNo int) (*model.ActionFieldExpr, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, parserErrorf("line %d: action value cannot be empty", lineNo)
-	}
-	return &model.ActionFieldExpr{
-		Expression: raw,
-	}, nil
-}
-
-// validateAuthConfig ensures auth settings reference valid fields in the selected user entity.
-func validateAuthConfig(app *model.App) error {
-	if app.Auth == nil {
-		return nil
-	}
-
-	var userEntity *model.Entity
-	for i := range app.Entities {
-		if app.Entities[i].Name == app.Auth.UserEntity {
-			userEntity = &app.Entities[i]
-			break
-		}
-	}
-	if userEntity == nil {
-		return parserErrorf("auth.user_entity %q does not match any declared entity", app.Auth.UserEntity)
-	}
-
-	if !hasField(userEntity, app.Auth.EmailField, "String") {
-		return parserErrorf("auth.email_field %q must exist in entity %s with type String", app.Auth.EmailField, userEntity.Name)
-	}
-
-	if app.Auth.RoleField != "" {
-		roleField := findEntityField(userEntity, app.Auth.RoleField)
-		if roleField != nil && roleField.RelationEntity != "" {
-			return parserErrorf("auth.role_field %q cannot be a relation field in entity %s", app.Auth.RoleField, userEntity.Name)
-		}
-		if roleField != nil && !isPrimitiveFieldType(roleField.Type) && len(roleField.EnumValues) == 0 {
-			return parserErrorf("auth.role_field %q must be String or a declared type when present in entity %s", app.Auth.RoleField, userEntity.Name)
-		}
-	}
-
-	if strings.TrimSpace(app.Auth.SMTPHost) == "" &&
-		strings.TrimSpace(app.Auth.SMTPUsername) == "" &&
-		strings.TrimSpace(app.Auth.SMTPPasswordEnv) == "" &&
-		app.Auth.SMTPPort == 587 &&
-		app.Auth.SMTPStartTLS {
-		return nil
-	}
-
-	if strings.TrimSpace(app.Auth.SMTPHost) == "" {
-		return parserErrorf("auth.smtp_host is required when SMTP is configured")
-	}
-	if app.Auth.SMTPPort < 1 || app.Auth.SMTPPort > 65535 {
-		return parserErrorf("auth.smtp_port must be between 1 and 65535 when SMTP is configured")
-	}
-	if strings.TrimSpace(app.Auth.SMTPUsername) == "" {
-		return parserErrorf("auth.smtp_username is required when SMTP is configured")
-	}
-	if strings.TrimSpace(app.Auth.SMTPPasswordEnv) == "" {
-		return parserErrorf("auth.smtp_password_env is required when SMTP is configured")
-	}
-	if !envVarNameRe.MatchString(strings.TrimSpace(app.Auth.SMTPPasswordEnv)) {
-		return parserErrorf("auth.smtp_password_env %q must be a valid environment variable name", app.Auth.SMTPPasswordEnv)
-	}
-
-	return nil
-}
-
-func validateActions(app *model.App) error {
-	enumLiteralTypes := appEnumLiteralTypes(app)
-	aliasByName := map[string]*model.TypeAlias{}
-	for i := range app.InputAliases {
-		alias := &app.InputAliases[i]
-		if _, exists := aliasByName[alias.Name]; exists {
-			return parserErrorf("duplicate type alias %q", alias.Name)
-		}
-		aliasByName[alias.Name] = alias
-	}
-
-	entityByName := map[string]*model.Entity{}
-	for i := range app.Entities {
-		entityByName[app.Entities[i].Name] = &app.Entities[i]
-	}
-
-	seenActions := map[string]bool{}
-	for _, action := range app.Actions {
-		if seenActions[action.Name] {
-			return parserErrorf("duplicate action %q", action.Name)
-		}
-		seenActions[action.Name] = true
-
-		alias := aliasByName[action.InputAlias]
-		if alias == nil {
-			return parserErrorf("action %s references unknown input type %q", action.Name, action.InputAlias)
-		}
-		inputFieldTypes := map[string]string{}
-		aliasFieldNames := make([]string, 0, len(alias.Fields))
-		for _, f := range alias.Fields {
-			inputFieldTypes[f.Name] = f.Type
-			aliasFieldNames = append(aliasFieldNames, f.Name)
-		}
-		availableVariables := map[string]string{}
-		for _, f := range alias.Fields {
-			availableVariables["input."+f.Name] = f.Type
-		}
-		availableAliases := map[string]string{}
-		writeSteps := 0
-
-		if len(action.Steps) == 0 {
-			return parserErrorf("action %s must have at least one write step", action.Name)
-		}
-		for _, step := range action.Steps {
-			if step.Kind == "rule" {
-				if strings.TrimSpace(step.Message) == "" {
-					return parserErrorf("action %s has a rule with an empty message", action.Name)
-				}
-				if strings.TrimSpace(step.Expression) == "" {
-					return parserErrorf("action %s rule %q has an empty expression", action.Name, step.Message)
-				}
-				if err := validateBooleanExpr(step.Expression, availableVariables, authBuiltinTypes(app), true, enumLiteralTypes); err != nil {
-					return parserErrorf("action %s rule %q: %w", action.Name, step.Message, err)
-				}
-				continue
-			}
-
-			entity := entityByName[step.Entity]
-			if entity == nil {
-				return parserErrorf("action %s references unknown entity %q", action.Name, step.Entity)
-			}
-			if step.Alias != "" {
-				if step.Alias == "input" {
-					return parserErrorf("action %s cannot use reserved alias name %q", action.Name, step.Alias)
-				}
-				if _, ok := inputFieldTypes[step.Alias]; ok {
-					return parserErrorf("action %s alias %q conflicts with input field name", action.Name, step.Alias)
-				}
-				if existing, ok := availableAliases[step.Alias]; ok {
-					return parserErrorf("action %s alias %q is already bound to %s", action.Name, step.Alias, existing)
-				}
-			}
-			pkField := findEntityField(entity, entity.PrimaryKey)
-			if pkField == nil {
-				return parserErrorf("action %s references entity %s without a primary key field", action.Name, entity.Name)
-			}
-			assignments := map[string]model.ActionFieldExpr{}
-			for _, item := range step.Values {
-				field := findEntityField(entity, item.Field)
-				if field == nil {
-					return parserErrorf("action %s assigns unknown field %s.%s%s", action.Name, entity.Name, item.Field, suggest.DidYouMeanSuffix(item.Field, entityFieldNames(entity)))
-				}
-				if step.Kind == "create" && field.Auto {
-					return parserErrorf("action %s cannot assign auto-generated field %s.%s", action.Name, entity.Name, item.Field)
-				}
-				if step.Kind == "create" && field.CurrentUser {
-					return parserErrorf("action %s cannot assign current user field %s.%s because it is managed automatically", action.Name, entity.Name, item.Field)
-				}
-				if step.Kind == "update" && field.Auto && !field.Primary {
-					return parserErrorf("action %s cannot assign auto-generated field %s.%s", action.Name, entity.Name, item.Field)
-				}
-				assignments[item.Field] = item
-
-				sourceType, err := resolveActionExprType(item.Expression, availableVariables, nil, aliasFieldNames, enumLiteralTypes)
-				if err != nil {
-					return parserErrorf("action %s field %s.%s: %w", action.Name, entity.Name, item.Field, err)
-				}
-				if sourceType == "Null" {
-					if !field.Optional && !field.Primary {
-						return parserErrorf("action %s field %s.%s: null is only allowed on optional fields", action.Name, entity.Name, item.Field)
-					}
-					if field.Primary {
-						return parserErrorf("action %s field %s.%s: null is not allowed on primary key fields", action.Name, entity.Name, item.Field)
-					}
-					continue
-				}
-				if !isTypeAssignable(field.Type, sourceType) {
-					return parserErrorf("action %s field %s.%s expects %s but got %s", action.Name, entity.Name, item.Field, field.Type, sourceType)
-				}
-			}
-
-			switch step.Kind {
-			case "load":
-				if step.Alias == "" {
-					return parserErrorf("action %s load %s must bind its result to an alias", action.Name, entity.Name)
-				}
-				if len(assignments) != 1 {
-					return parserErrorf("action %s load %s must only include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
-				}
-				if _, ok := assignments[entity.PrimaryKey]; !ok {
-					return parserErrorf("action %s load %s must include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
-				}
-			case "create":
-				writeSteps++
-				for _, field := range entity.Fields {
-					if field.Auto {
-						continue
-					}
-					if field.CurrentUser {
-						continue
-					}
-					if field.Optional || field.Default != nil {
-						continue
-					}
-					if _, ok := assignments[field.Name]; !ok {
-						return parserErrorf("action %s is missing required field %s.%s", action.Name, entity.Name, field.Name)
-					}
-				}
-			case "update":
-				writeSteps++
-				if _, ok := assignments[entity.PrimaryKey]; !ok {
-					return parserErrorf("action %s update %s must include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
-				}
-				if len(assignments) == 1 {
-					return parserErrorf("action %s update %s must change at least one non-primary field", action.Name, entity.Name)
-				}
-			case "delete":
-				writeSteps++
-				if len(assignments) != 1 {
-					return parserErrorf("action %s delete %s must only include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
-				}
-				if _, ok := assignments[entity.PrimaryKey]; !ok {
-					return parserErrorf("action %s delete %s must include primary key field %s", action.Name, entity.Name, entity.PrimaryKey)
-				}
-			default:
-				return parserErrorf("action %s has unsupported step kind %q", action.Name, step.Kind)
-			}
-
-			if step.Alias != "" {
-				availableAliases[step.Alias] = entity.Name
-				for _, field := range entity.Fields {
-					availableVariables[step.Alias+"."+field.Name] = field.Type
-				}
-			}
-		}
-		if writeSteps == 0 {
-			return parserErrorf("action %s must have at least one create, update, or delete step", action.Name)
-		}
-	}
-	return nil
-}
-
-func validateFrontend(app *model.App) error {
-	if app == nil || app.Screens == nil {
-		return nil
-	}
-
-	entityByName := map[string]*model.Entity{}
-	for i := range app.Entities {
-		entityByName[app.Entities[i].Name] = &app.Entities[i]
-	}
-	actionByName := map[string]*model.Action{}
-	for i := range app.Actions {
-		actionByName[app.Actions[i].Name] = &app.Actions[i]
-	}
 	aliasByName := map[string]*model.TypeAlias{}
 	for i := range app.InputAliases {
 		aliasByName[app.InputAliases[i].Name] = &app.InputAliases[i]
 	}
-	enumLiteralNames := map[string]struct{}{}
-	for _, enumType := range app.Types {
-		for _, value := range enumType.Values {
-			enumLiteralNames[value] = struct{}{}
+
+	for _, query := range queries {
+		entity := entityByName[canonicalTypeName(query.EntitySymbol)]
+		if entity == nil {
+			return nil, fmt.Errorf("query %s references unknown entity %q", query.Name, query.EntitySymbol)
+		}
+		if query.Where.Kind != "" {
+			allowed := queryAllowedVariables(entity)
+			for _, param := range canonicalFunctionParameters(query.Parameters) {
+				allowed[param] = struct{}{}
+			}
+			if _, err := expr.Parse(sexp.InlineString(query.Where), expr.ParserOptions{
+				AllowedVariables: allowed,
+				AllowedFunctions: allowedFunctionArities(functionByName),
+				AllowedRecords:   allowedRecordFields(recordByName),
+				AllowedVariants:  allowedTypeVariants(typeByName),
+			}); err != nil {
+				return nil, fmt.Errorf("query %s where: %w", query.Name, err)
+			}
+			parameterTypes, err := validateBackendQueryWhere(query.Name, inlineNodeString(query.Where), entity, canonicalFunctionParameters(query.Parameters), functionByName, recordByName, typeByName, entityByName)
+			if err != nil {
+				return nil, err
+			}
+			for i := range app.Queries {
+				if app.Queries[i].Name == canonicalFunctionName(query.Name) {
+					app.Queries[i].ParameterTypes = parameterTypes
+				}
+			}
+		} else if len(query.Parameters) > 0 {
+			return nil, fmt.Errorf("query %s parameter %s: type could not be inferred", query.Name, canonicalFunctionParameters(query.Parameters)[0])
+		}
+		if query.OrderBy != "" && findEntityField(entity, canonicalFieldName(query.OrderBy)) == nil {
+			return nil, fmt.Errorf("query %s order-by references unknown field %q", query.Name, query.OrderBy)
 		}
 	}
 
-	screenByName := map[string]*model.FrontendScreen{}
-	for i := range app.Screens.Screens {
-		screen := &app.Screens.Screens[i]
-		if _, exists := screenByName[screen.Name]; exists {
-			return parserErrorf("duplicate screen %q", screen.Name)
-		}
-		screenByName[screen.Name] = screen
-		if screen.ForEntity != "" && entityByName[screen.ForEntity] == nil {
-			return parserErrorf("screen %s references unknown entity %s", screen.Name, screen.ForEntity)
+	for _, action := range app.Actions {
+		if err := validateActionExpressions(&action, aliasByName, functionByName, recordByName, typeByName, entityByName); err != nil {
+			return nil, err
 		}
 	}
 
-	for i := range app.Screens.Screens {
-		screen := &app.Screens.Screens[i]
-		var screenEntity *model.Entity
-		if screen.ForEntity != "" {
-			screenEntity = entityByName[screen.ForEntity]
+	if app.Screens != nil {
+		if err := validateFrontendScreens(app.Screens, app.Queries, app.Actions, aliasByName, functionByName, recordByName, typeByName, entityByName); err != nil {
+			return nil, err
 		}
-		if strings.TrimSpace(screen.TitleExpression) != "" {
-			if screenEntity == nil {
-				return parserErrorAtLinef(screen.TitleLineNo, "screen %s dynamic title requires `screen %s for Entity`", screen.Name, screen.Name)
-			}
-			if err := validateFrontendActionExpression(screen.TitleExpression, screenEntity, enumLiteralNames); err != nil {
-				return parserErrorAtLinef(screen.TitleLineNo, "screen %s title: %w", screen.Name, err)
-			}
+	}
+	if err := validateUnusedTopLevelDefinitions(appDecl, queries, actions, screens, values); err != nil {
+		return nil, err
+	}
+	if err := validateUnusedFunctions(app); err != nil {
+		return nil, err
+	}
+
+	return app, nil
+}
+
+type configValue struct {
+	Database string
+	Port     int
+	IOS      *model.IOSConfig
+	Public   *model.PublicConfig
+	System   *model.SystemConfig
+}
+
+func parseConfigValue(value namedValue) (*configValue, error) {
+	if value.Name == "" {
+		return nil, fmt.Errorf("define-app references unknown config")
+	}
+	body := value.Body
+	if body.Kind != sexp.KindList {
+		return nil, parseError(body, "config %s must be a list of clauses", value.Name)
+	}
+	cfg := &configValue{Port: 4200}
+	for _, clause := range body.Children {
+		items, err := listChildren(clause, "config clause")
+		if err != nil {
+			return nil, err
 		}
-		for _, toolbarItem := range screen.ToolbarItems {
-			switch toolbarItem.Item.Kind {
-			case "create":
-				entity := entityByName[toolbarItem.Item.Entity]
-				if entity == nil {
-					return parserErrorAtLinef(toolbarItem.LineNo, "screen %s toolbar create references unknown entity %s", screen.Name, toolbarItem.Item.Entity)
-				}
-			case "edit":
-				if screenEntity == nil {
-					return parserErrorAtLinef(toolbarItem.LineNo, "screen %s toolbar edit requires `screen %s for Entity`", screen.Name, screen.Name)
-				}
-			case "editList":
-				entity := entityByName[toolbarItem.Item.Entity]
-				if entity == nil {
-					return parserErrorAtLinef(toolbarItem.LineNo, "screen %s toolbar edit list references unknown entity %s", screen.Name, toolbarItem.Item.Entity)
-				}
-			default:
-				return parserErrorAtLinef(toolbarItem.LineNo, "screen %s toolbar uses unsupported item kind %s", screen.Name, toolbarItem.Item.Kind)
+		head, _ := symbolValue(items[0])
+		switch head {
+		case "database":
+			if len(items) != 2 || items[1].Kind != sexp.KindString {
+				return nil, parseError(clause, "(database ...) expects one string")
 			}
-		}
-		for j := range screen.Sections {
-			section := &screen.Sections[j]
-			if strings.TrimSpace(section.When) != "" {
-				if err := validateFrontendExpression(section.When, screenEntity, enumLiteralNames); err != nil {
-					return parserErrorAtLinef(section.WhenLineNo, "screen %s section %q: %w", screen.Name, section.Title, err)
-				}
+			cfg.Database = items[1].Value
+		case "server":
+			nestedClauses, err := nestedClauseList(items, clause, 1, "server")
+			if err != nil {
+				return nil, err
 			}
-			for k := range section.Items {
-				item := &section.Items[k]
-				switch item.Kind {
-				case "link":
-					if screenByName[item.Target] == nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s links to unknown screen %s", screen.Name, item.Target)
+			for _, nested := range nestedClauses {
+				parts, err := listChildren(nested, "server clause")
+				if err != nil {
+					return nil, err
+				}
+				key, _ := symbolValue(parts[0])
+				switch key {
+				case "port":
+					port, err := intLiteral(parts[1])
+					if err != nil {
+						return nil, parseError(parts[1], "port must be an integer")
 					}
-					if strings.TrimSpace(item.Filter) != "" {
-						if err := validateFrontendExpression(item.Filter, screenEntity, enumLiteralNames); err != nil {
-							return parserErrorAtLinef(item.FilterLineNo, "screen %s link %q: %w", screen.Name, item.Label, err)
-						}
-					}
-				case "field":
-					if screenEntity == nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s field %s requires `screen %s for Entity`", screen.Name, item.Field, screen.Name)
-					}
-					baseFieldName, displayFieldName, hasDisplayPath := parseFrontendDisplayFieldPath(item.Field)
-					baseField := findEntityField(screenEntity, baseFieldName)
-					if baseField == nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s field %s does not exist on %s", screen.Name, item.Field, screenEntity.Name)
-					}
-					if hasDisplayPath {
-						if baseField.RelationEntity == "" {
-							return parserErrorAtLinef(item.LineNo, "screen %s field %s must reference a relation field", screen.Name, item.Field)
-						}
-						relationEntity := entityByName[baseField.RelationEntity]
-						if relationEntity == nil {
-							return parserErrorAtLinef(item.LineNo, "screen %s field %s references unknown entity %s", screen.Name, item.Field, baseField.RelationEntity)
-						}
-						preferred := preferredFrontendDisplayField(relationEntity)
-						if preferred == nil || !strings.EqualFold(preferred.Name, displayFieldName) {
-							if preferred != nil {
-								return parserErrorAtLinef(item.LineNo, "screen %s field %s is unsupported; %s displays as %s.%s", screen.Name, item.Field, relationEntity.Name, baseFieldName, preferred.Name)
-							}
-							return parserErrorAtLinef(item.LineNo, "screen %s field %s is unsupported; %s has no display field", screen.Name, item.Field, relationEntity.Name)
-						}
-					}
-				case "edit", "delete":
-					if screenEntity == nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s %s requires `screen %s for Entity`", screen.Name, item.Kind, screen.Name)
-					}
-					if item.Kind == "edit" {
-						if err := validateFrontendFormFieldsForEntity(item.FormFields, screenEntity, entityByName); err != nil {
-							return parserErrorAtLinef(item.LineNo, "screen %s edit: %w", screen.Name, err)
-						}
-					}
-				case "create":
-					entity := entityByName[item.Entity]
-					if entity == nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s create references unknown entity %s", screen.Name, item.Entity)
-					}
-					for _, value := range item.Values {
-						field := findEntityField(entity, value.Field)
-						if field == nil {
-							return parserErrorAtLinef(value.LineNo, "screen %s create %s assigns unknown field %s", screen.Name, entity.Name, value.Field)
-						}
-						if field.Primary || field.Auto || field.CurrentUser {
-							return parserErrorAtLinef(value.LineNo, "screen %s create %s cannot assign generated field %s", screen.Name, entity.Name, value.Field)
-						}
-						if strings.TrimSpace(value.Expression) == "" {
-							return parserErrorAtLinef(value.LineNo, "screen %s create %s field %s cannot be empty", screen.Name, entity.Name, value.Field)
-						}
-						if err := validateFrontendActionExpression(value.Expression, screenEntity, enumLiteralNames); err != nil {
-							return parserErrorAtLinef(value.LineNo, "screen %s create %s field %s: %w", screen.Name, entity.Name, value.Field, err)
-						}
-					}
-					if err := validateFrontendFormFieldsForEntity(item.FormFields, entity, entityByName); err != nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s create %s: %w", screen.Name, entity.Name, err)
-					}
-				case "list", "children":
-					entity := entityByName[item.Entity]
-					if entity == nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s %s references unknown entity %s", screen.Name, item.Kind, item.Entity)
-					}
-					if item.Kind == "children" {
-						if screenEntity == nil {
-							return parserErrorAtLinef(item.LineNo, "screen %s children %s requires `screen %s for Entity`", screen.Name, item.Entity, screen.Name)
-						}
-						relation := findEntityField(entity, item.RelationField)
-						if relation == nil || relation.RelationEntity != screenEntity.Name {
-							return parserErrorAtLinef(item.LineNo, "screen %s children %s by %s must reference a belongs_to field pointing to %s", screen.Name, item.Entity, item.RelationField, screenEntity.Name)
-						}
-					}
-					if item.TitleField != "" && findEntityField(entity, item.TitleField) == nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s %s %s title field %s does not exist", screen.Name, item.Kind, item.Entity, item.TitleField)
-					}
-					if item.SubtitleField != "" && findEntityField(entity, item.SubtitleField) == nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s %s %s subtitle field %s does not exist", screen.Name, item.Kind, item.Entity, item.SubtitleField)
-					}
-					if item.Destination != "" {
-						destination := screenByName[item.Destination]
-						if destination == nil {
-							return parserErrorAtLinef(item.LineNo, "screen %s %s %s references unknown destination screen %s", screen.Name, item.Kind, item.Entity, item.Destination)
-						}
-						if destination.ForEntity != "" && destination.ForEntity != item.Entity {
-							return parserErrorAtLinef(item.LineNo, "screen %s %s %s destination %s is for %s, expected %s", screen.Name, item.Kind, item.Entity, item.Destination, destination.ForEntity, item.Entity)
-						}
-					}
-					if strings.TrimSpace(item.Filter) != "" {
-						if err := validateFrontendExpression(item.Filter, entity, enumLiteralNames); err != nil {
-							return parserErrorAtLinef(item.FilterLineNo, "screen %s %s %s: %w", screen.Name, item.Kind, item.Entity, err)
-						}
-					}
-				case "report":
-					entity := entityByName[item.Entity]
-					if entity == nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s report references unknown entity %s", screen.Name, item.Entity)
-					}
-					if strings.TrimSpace(item.Filter) != "" {
-						if err := validateFrontendExpression(item.Filter, entity, enumLiteralNames); err != nil {
-							return parserErrorAtLinef(item.FilterLineNo, "screen %s report %s: %w", screen.Name, item.Entity, err)
-						}
-					}
-					if err := validateFrontendReport(item, entity); err != nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s report %s: %w", screen.Name, item.Entity, err)
-					}
-				case "action":
-					action := actionByName[item.Action]
-					if action == nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s action references unknown action %s", screen.Name, item.Action)
-					}
-					alias := aliasByName[action.InputAlias]
-					if alias == nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s action %s references unknown input %s", screen.Name, action.Name, action.InputAlias)
-					}
-					for _, value := range item.Values {
-						if !aliasHasField(alias, value.Field) {
-							return parserErrorAtLinef(value.LineNo, "screen %s action %s assigns unknown input field %s", screen.Name, action.Name, value.Field)
-						}
-						if strings.TrimSpace(value.Expression) == "" {
-							return parserErrorAtLinef(value.LineNo, "screen %s action %s input %s cannot be empty", screen.Name, action.Name, value.Field)
-						}
-						if err := validateFrontendActionExpression(value.Expression, screenEntity, enumLiteralNames); err != nil {
-							return parserErrorAtLinef(value.LineNo, "screen %s action %s input %s: %w", screen.Name, action.Name, value.Field, err)
-						}
-					}
-					if err := validateFrontendFormFieldsForAlias(item.FormFields, alias, entityByName); err != nil {
-						return parserErrorAtLinef(item.LineNo, "screen %s action %s: %w", screen.Name, action.Name, err)
-					}
+					cfg.Port = port
 				default:
-					return parserErrorAtLinef(item.LineNo, "screen %s uses unsupported item kind %s", screen.Name, item.Kind)
+					return nil, parseError(parts[0], "unknown server clause %q", key)
 				}
 			}
-		}
-	}
-
-	return nil
-}
-
-func validateFrontendActionExpression(raw string, entity *model.Entity, enumLiteralNames map[string]struct{}) error {
-	allowed := map[string]struct{}{}
-	if entity != nil {
-		bindingName := frontendEntityBindingName(entity.Name)
-		for _, field := range entity.Fields {
-			allowed[bindingName+"."+field.Name] = struct{}{}
-		}
-	}
-	for name := range enumLiteralNames {
-		allowed[name] = struct{}{}
-	}
-	allowed = expr.AllowedVariablesWithBuiltins(allowed)
-	if _, err := expr.Parse(raw, expr.ParserOptions{AllowedVariables: allowed}); err != nil {
-		return fmt.Errorf("invalid expression %q (%w)", raw, err)
-	}
-	return nil
-}
-
-func frontendEntityBindingName(name string) string {
-	if name == "" {
-		return ""
-	}
-	runes := []rune(name)
-	runes[0] = unicode.ToLower(runes[0])
-	return string(runes)
-}
-
-func validateFrontendExpression(raw string, entity *model.Entity, enumLiteralNames map[string]struct{}) error {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	allowed := map[string]struct{}{}
-	if entity != nil {
-		for _, field := range entity.Fields {
-			allowed[field.Name] = struct{}{}
-		}
-	}
-	for name := range enumLiteralNames {
-		allowed[name] = struct{}{}
-	}
-	allowed = expr.AllowedVariablesWithBuiltins(allowed)
-	if _, err := expr.Parse(raw, expr.ParserOptions{AllowedVariables: allowed}); err != nil {
-		return fmt.Errorf("invalid expression %q (%w)", raw, err)
-	}
-	return nil
-}
-
-func validateFrontendFormFieldsForEntity(formFields []model.FrontendFormField, entity *model.Entity, entityByName map[string]*model.Entity) error {
-	if len(formFields) == 0 {
-		return nil
-	}
-	for _, formField := range formFields {
-		field := findEntityField(entity, formField.Field)
-		if field == nil {
-			return fmt.Errorf("form field %s does not exist on %s", formField.Field, entity.Name)
-		}
-		if err := validateFrontendFormFieldFilter(formField.Filter, field, entityByName, func(name string) (string, string, bool) {
-			parent := findEntityField(entity, name)
-			if parent == nil {
-				return "", "", false
+		case "ios":
+			nestedClauses, err := nestedClauseList(items, clause, 1, "ios")
+			if err != nil {
+				return nil, err
 			}
-			return parent.Type, parent.RelationEntity, true
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateFrontendFormFieldsForAlias(formFields []model.FrontendFormField, alias *model.TypeAlias, entityByName map[string]*model.Entity) error {
-	if len(formFields) == 0 {
-		return nil
-	}
-	for _, formField := range formFields {
-		field := aliasField(alias, formField.Field)
-		if field == nil {
-			return fmt.Errorf("form field %s does not exist on %s", formField.Field, alias.Name)
-		}
-		if err := validateFrontendFormFieldFilter(formField.Filter, &model.Field{
-			Name:           field.Name,
-			Type:           field.Type,
-			RelationEntity: field.RelationEntity,
-			EnumValues:     field.EnumValues,
-		}, entityByName, func(name string) (string, string, bool) {
-			parent := aliasField(alias, name)
-			if parent == nil {
-				return "", "", false
+			iosCfg := &model.IOSConfig{}
+			for _, nested := range nestedClauses {
+				parts, err := listChildren(nested, "ios clause")
+				if err != nil {
+					return nil, err
+				}
+				key, _ := symbolValue(parts[0])
+				switch key {
+				case "bundle-identifier":
+					iosCfg.BundleIdentifier = stringLiteral(parts[1])
+				case "display-name":
+					iosCfg.DisplayName = stringLiteral(parts[1])
+				case "server-url":
+					iosCfg.ServerURL = stringLiteral(parts[1])
+				default:
+					return nil, parseError(parts[0], "unknown ios clause %q", key)
+				}
 			}
-			return parent.Type, parent.RelationEntity, true
-		}); err != nil {
-			return err
+			cfg.IOS = iosCfg
+		case "public":
+			nestedClauses, err := nestedClauseList(items, clause, 1, "public")
+			if err != nil {
+				return nil, err
+			}
+			publicCfg := &model.PublicConfig{}
+			for _, nested := range nestedClauses {
+				parts, err := listChildren(nested, "public clause")
+				if err != nil {
+					return nil, err
+				}
+				key, _ := symbolValue(parts[0])
+				switch key {
+				case "dir":
+					publicCfg.Dir = stringLiteral(parts[1])
+				case "mount":
+					publicCfg.Mount = stringLiteral(parts[1])
+				case "spa-fallback":
+					publicCfg.SPAFallback = stringLiteral(parts[1])
+				default:
+					return nil, parseError(parts[0], "unknown public clause %q", key)
+				}
+			}
+			cfg.Public = publicCfg
+		case "system":
+			nestedClauses, err := nestedClauseList(items, clause, 1, "system")
+			if err != nil {
+				return nil, err
+			}
+			systemCfg := &model.SystemConfig{}
+			for _, nested := range nestedClauses {
+				parts, err := listChildren(nested, "system clause")
+				if err != nil {
+					return nil, err
+				}
+				key, _ := symbolValue(parts[0])
+				switch key {
+				case "request-logs-buffer":
+					value, err := intLiteral(parts[1])
+					if err != nil {
+						return nil, parseError(parts[1], "request-logs-buffer must be an integer")
+					}
+					systemCfg.RequestLogsBuffer = value
+				case "http-max-request-body-mb":
+					value, err := intLiteral(parts[1])
+					if err != nil {
+						return nil, parseError(parts[1], "http-max-request-body-mb must be an integer")
+					}
+					systemCfg.HTTPMaxRequestBodyMB = &value
+				case "sqlite-journal-mode":
+					value, err := symbolOrStringValue(parts[1])
+					if err != nil {
+						return nil, parseError(parts[1], "sqlite-journal-mode must be a symbol or string")
+					}
+					systemCfg.SQLiteJournalMode = &value
+				case "sqlite-synchronous":
+					value, err := symbolOrStringValue(parts[1])
+					if err != nil {
+						return nil, parseError(parts[1], "sqlite-synchronous must be a symbol or string")
+					}
+					systemCfg.SQLiteSynchronous = &value
+				case "sqlite-foreign-keys":
+					value, err := boolLiteral(parts[1])
+					if err != nil {
+						return nil, parseError(parts[1], "sqlite-foreign-keys must be true or false")
+					}
+					systemCfg.SQLiteForeignKeys = &value
+				case "sqlite-busy-timeout-ms":
+					value, err := intLiteral(parts[1])
+					if err != nil {
+						return nil, parseError(parts[1], "sqlite-busy-timeout-ms must be an integer")
+					}
+					systemCfg.SQLiteBusyTimeoutMs = &value
+				case "sqlite-wal-autocheckpoint":
+					value, err := intLiteral(parts[1])
+					if err != nil {
+						return nil, parseError(parts[1], "sqlite-wal-autocheckpoint must be an integer")
+					}
+					systemCfg.SQLiteWALAutoCheckpoint = &value
+				case "sqlite-journal-size-limit-mb":
+					value, err := intLiteral(parts[1])
+					if err != nil {
+						return nil, parseError(parts[1], "sqlite-journal-size-limit-mb must be an integer")
+					}
+					systemCfg.SQLiteJournalSizeLimitMB = &value
+				case "sqlite-mmap-size-mb":
+					value, err := intLiteral(parts[1])
+					if err != nil {
+						return nil, parseError(parts[1], "sqlite-mmap-size-mb must be an integer")
+					}
+					systemCfg.SQLiteMmapSizeMB = &value
+				case "sqlite-cache-size-kb":
+					value, err := intLiteral(parts[1])
+					if err != nil {
+						return nil, parseError(parts[1], "sqlite-cache-size-kb must be an integer")
+					}
+					systemCfg.SQLiteCacheSizeKB = &value
+				default:
+					return nil, parseError(parts[0], "unknown system clause %q", key)
+				}
+			}
+			cfg.System = systemCfg
+		default:
+			return nil, parseError(items[0], "unknown config clause %q", head)
 		}
 	}
-	return nil
+	return cfg, nil
 }
 
-func validateFrontendFormFieldFilter(raw string, field *model.Field, entityByName map[string]*model.Entity, lookupParent func(string) (string, string, bool)) error {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
+type authValue struct {
+	CodeTTLMinutes           *int
+	SessionTTLHours          *int
+	AuthRequestCodeRateLimit *int
+	AuthLoginRateLimit       *int
+	AdminUISessionTTLHours   *int
+	SecurityFramePolicy      *string
+	SecurityReferrerPolicy   *string
+	SecurityContentNoSniff   *bool
+	EmailFrom                string
+	EmailSubject             string
+	SMTPHost                 string
+	SMTPPort                 *int
+	SMTPUsername             string
+	SMTPPasswordEnv          string
+	SMTPStartTLS             *bool
+}
+
+func parseAuthValue(value namedValue) (*authValue, error) {
+	if value.Name == "" {
+		return nil, fmt.Errorf("define-app references unknown auth")
 	}
-	if field == nil || field.RelationEntity == "" {
-		return fmt.Errorf("form field %s can only use where when it references another entity", field.Name)
+	body := value.Body
+	if body.Kind != sexp.KindList {
+		return nil, parseError(body, "auth %s must be a list of clauses", value.Name)
 	}
-	m := match(`^([a-z][A-Za-z0-9_]*)\s*==\s*form\.([a-z][A-Za-z0-9_]*)$`, raw)
-	if m == nil {
-		return fmt.Errorf("form field %s has invalid filter %q. Expected `relationField == form.parentField`", field.Name, raw)
+	out := &authValue{}
+	for _, clause := range body.Children {
+		items, err := listChildren(clause, "auth clause")
+		if err != nil {
+			return nil, err
+		}
+		head, _ := symbolValue(items[0])
+		switch head {
+		case "code-ttl-minutes":
+			v, err := intLiteral(items[1])
+			if err != nil {
+				return nil, parseError(items[1], "code-ttl-minutes must be an integer")
+			}
+			out.CodeTTLMinutes = &v
+		case "session-ttl-hours":
+			v, err := intLiteral(items[1])
+			if err != nil {
+				return nil, parseError(items[1], "session-ttl-hours must be an integer")
+			}
+			out.SessionTTLHours = &v
+		case "auth-request-code-rate-limit-per-minute":
+			v, err := intLiteral(items[1])
+			if err != nil {
+				return nil, parseError(items[1], "auth-request-code-rate-limit-per-minute must be an integer")
+			}
+			out.AuthRequestCodeRateLimit = &v
+		case "auth-login-rate-limit-per-minute":
+			v, err := intLiteral(items[1])
+			if err != nil {
+				return nil, parseError(items[1], "auth-login-rate-limit-per-minute must be an integer")
+			}
+			out.AuthLoginRateLimit = &v
+		case "admin-ui-session-ttl-hours":
+			v, err := intLiteral(items[1])
+			if err != nil {
+				return nil, parseError(items[1], "admin-ui-session-ttl-hours must be an integer")
+			}
+			out.AdminUISessionTTLHours = &v
+		case "security-frame-policy":
+			v, err := symbolOrStringValue(items[1])
+			if err != nil {
+				return nil, parseError(items[1], "security-frame-policy must be a symbol or string")
+			}
+			out.SecurityFramePolicy = &v
+		case "security-referrer-policy":
+			v, err := symbolOrStringValue(items[1])
+			if err != nil {
+				return nil, parseError(items[1], "security-referrer-policy must be a symbol or string")
+			}
+			out.SecurityReferrerPolicy = &v
+		case "security-content-type-nosniff":
+			v, err := boolLiteral(items[1])
+			if err != nil {
+				return nil, parseError(items[1], "security-content-type-nosniff must be true or false")
+			}
+			out.SecurityContentNoSniff = &v
+		case "from":
+			out.EmailFrom = stringLiteral(items[1])
+		case "subject":
+			out.EmailSubject = stringLiteral(items[1])
+		case "smtp-host":
+			out.SMTPHost = stringLiteral(items[1])
+		case "smtp-port":
+			v, err := intLiteral(items[1])
+			if err != nil {
+				return nil, parseError(items[1], "smtp-port must be an integer")
+			}
+			out.SMTPPort = &v
+		case "smtp-username":
+			out.SMTPUsername = stringLiteral(items[1])
+		case "smtp-password-env":
+			out.SMTPPasswordEnv = stringLiteral(items[1])
+		case "smtp-starttls":
+			v, err := boolLiteral(items[1])
+			if err != nil {
+				return nil, parseError(items[1], "smtp-starttls must be true or false")
+			}
+			out.SMTPStartTLS = &v
+		default:
+			return nil, parseError(items[0], "unknown auth clause %q", head)
+		}
 	}
-	relationFieldName := m[1]
-	parentFieldName := m[2]
-	parentType, parentRelationEntity, ok := lookupParent(parentFieldName)
+	return out, nil
+}
+
+func parseEntityValue(value namedValue) (model.Entity, error) {
+	body, err := unwrapDefinitionBody(value.Body, "entity", "entity "+value.Name)
+	if err != nil {
+		return model.Entity{}, err
+	}
+	entity := model.Entity{
+		Name:       canonicalTypeName(value.Name),
+		Table:      canonicalFieldName(value.Name),
+		Resource:   "/" + strings.ReplaceAll(pluralizeSnake(value.Name), "_", "-"),
+		PrimaryKey: "id",
+		Fields: []model.Field{
+			{Name: "id", Type: "Int", Primary: true, Auto: true},
+		},
+	}
+
+	defaults := map[string]sexp.Node{}
+	belongsTo := []struct {
+		field  string
+		target string
+	}{}
+	uniqueClauses := [][]string{}
+
+	for _, clause := range body.Children {
+		items, err := listChildren(clause, "entity clause")
+		if err != nil {
+			return model.Entity{}, err
+		}
+		head, _ := symbolValue(items[0])
+		switch head {
+		case "fields":
+			fieldClauses, err := nestedClauseList(items, clause, 1, "fields")
+			if err != nil {
+				return model.Entity{}, err
+			}
+			for _, fieldClause := range fieldClauses {
+				parts, err := listChildren(fieldClause, "field")
+				if err != nil {
+					return model.Entity{}, err
+				}
+				if len(parts) < 2 || len(parts) > 3 {
+					return model.Entity{}, parseError(fieldClause, "field must look like (name type) or (name type optional)")
+				}
+				fieldName, _ := symbolValue(parts[0])
+				typeName, _ := symbolValue(parts[1])
+				fieldType, err := mapPrimitiveType(typeName)
+				if err != nil {
+					return model.Entity{}, fmt.Errorf("entity %s field %s: %w", value.Name, fieldName, err)
+				}
+				field := model.Field{Name: canonicalFieldName(fieldName), Type: fieldType}
+				if len(parts) == 3 {
+					modifier, _ := symbolValue(parts[2])
+					if modifier != "optional" {
+						return model.Entity{}, parseError(parts[2], "unknown field modifier %q", modifier)
+					}
+					field.Optional = true
+				}
+				entity.Fields = append(entity.Fields, field)
+			}
+		case "belongs-to":
+			relClauses, err := nestedClauseList(items, clause, 1, "belongs-to")
+			if err != nil {
+				return model.Entity{}, err
+			}
+			for _, relClause := range relClauses {
+				parts, err := listChildren(relClause, "belongs-to item")
+				if err != nil {
+					return model.Entity{}, err
+				}
+				if len(parts) < 1 || len(parts) > 2 {
+					return model.Entity{}, parseError(relClause, "belongs-to item must look like (user) or (reviewer user)")
+				}
+				fieldName, _ := symbolValue(parts[0])
+				target := fieldName
+				if len(parts) == 2 {
+					target, _ = symbolValue(parts[1])
+				}
+				belongsTo = append(belongsTo, struct {
+					field  string
+					target string
+				}{field: fieldName, target: target})
+			}
+		case "defaults":
+			defaultClauses, err := nestedClauseList(items, clause, 1, "defaults")
+			if err != nil {
+				return model.Entity{}, err
+			}
+			for _, defaultClause := range defaultClauses {
+				parts, err := listChildren(defaultClause, "default")
+				if err != nil {
+					return model.Entity{}, err
+				}
+				if len(parts) != 2 {
+					return model.Entity{}, parseError(defaultClause, "default must look like (field value)")
+				}
+				fieldName, _ := symbolValue(parts[0])
+				defaults[fieldName] = parts[1]
+			}
+		case "unique":
+			constraintClauses, err := nestedClauseList(items, clause, 1, "unique")
+			if err != nil {
+				return model.Entity{}, err
+			}
+			for _, constraintClause := range constraintClauses {
+				parts, err := listChildren(constraintClause, "unique constraint")
+				if err != nil {
+					return model.Entity{}, err
+				}
+				if len(parts) == 0 {
+					return model.Entity{}, parseError(constraintClause, "unique constraint must include at least one field")
+				}
+				fields := make([]string, 0, len(parts))
+				for _, part := range parts {
+					fieldName, ok := symbolValue(part)
+					if !ok {
+						return model.Entity{}, parseError(part, "unique fields must be symbols")
+					}
+					fields = append(fields, canonicalFieldName(fieldName))
+				}
+				uniqueClauses = append(uniqueClauses, fields)
+			}
+		case "validate":
+			if len(items) != 2 {
+				return model.Entity{}, parseError(clause, "validate expects one expression")
+			}
+			entity.Validate = sexp.InlineString(items[1])
+		case "authorize":
+			authClauses, err := nestedClauseList(items, clause, 1, "authorize")
+			if err != nil {
+				return model.Entity{}, err
+			}
+			for _, authClause := range authClauses {
+				parts, err := listChildren(authClause, "authorize item")
+				if err != nil {
+					return model.Entity{}, err
+				}
+				if len(parts) != 2 {
+					return model.Entity{}, parseError(authClause, "authorize item must look like (read expr) or ((read update) expr)")
+				}
+				actions, err := parseAuthorizeActions(parts[0])
+				if err != nil {
+					return model.Entity{}, err
+				}
+				for _, action := range actions {
+					entity.Authorizations = append(entity.Authorizations, model.Authorization{
+						Action:     action,
+						Expression: sexp.InlineString(parts[1]),
+						LineNo:     authClause.Line,
+					})
+				}
+			}
+		default:
+			return model.Entity{}, parseError(items[0], "unknown entity clause %q", head)
+		}
+	}
+
+	for _, relation := range belongsTo {
+		field := model.Field{
+			Name:           canonicalFieldName(relation.field),
+			Type:           "Int",
+			RelationEntity: canonicalTypeName(relation.target),
+		}
+		if defaultNode, ok := defaults[relation.field]; ok {
+			if defaultNode.Kind == sexp.KindSymbol && defaultNode.Value == "current-user" {
+				field.CurrentUser = true
+				field.RelationEntity = "User"
+			} else {
+				return model.Entity{}, fmt.Errorf("entity %s default %s: belongs-to defaults currently only support current-user", value.Name, relation.field)
+			}
+		}
+		entity.Fields = append(entity.Fields, field)
+	}
+
+	for i := 1; i < len(entity.Fields); i++ {
+		field := &entity.Fields[i]
+		original := strings.ReplaceAll(field.Name, "_", "-")
+		if defaultNode, ok := defaults[original]; ok && field.RelationEntity == "" {
+			literal, err := literalValue(defaultNode)
+			if err != nil {
+				return model.Entity{}, fmt.Errorf("entity %s default %s: %w", value.Name, original, err)
+			}
+			if err := validateFieldDefaultLiteral(value.Name, original, *field, literal); err != nil {
+				return model.Entity{}, err
+			}
+			field.Default = literal
+		}
+	}
+
+	for _, fields := range uniqueClauses {
+		entity.Unique = append(entity.Unique, model.UniqueConstraint{Fields: fields})
+	}
+
+	entity.Fields = append(entity.Fields,
+		model.Field{Name: "created_at", Type: "DateTime", Auto: true},
+		model.Field{Name: "updated_at", Type: "DateTime", Auto: true},
+	)
+
+	return entity, nil
+}
+
+func parseScreenDefinition(name string, parameters []string, bodyNode sexp.Node, queries map[string]*queryDef) (model.FrontendScreen, error) {
+	body, err := unwrapDefinitionBody(bodyNode, "screen", "screen "+name)
+	if err != nil {
+		return model.FrontendScreen{}, err
+	}
+	screen := model.FrontendScreen{
+		Name:       canonicalScreenName(name),
+		Parameters: canonicalFunctionParameters(parameters),
+		Sections:   []model.FrontendSection{},
+		LineNo:     1,
+	}
+
+	var hasMsg bool
+	var hasInit bool
+	var hasUpdate bool
+	var hasView bool
+	var initNode sexp.Node
+	var updateNode sexp.Node
+	var viewRawNodes []sexp.Node
+	var sectionNodes []sexp.Node
+	for _, clause := range body.Children {
+		items, err := listChildren(clause, "screen clause")
+		if err != nil {
+			return model.FrontendScreen{}, err
+		}
+		head, _ := symbolValue(items[0])
+		switch head {
+		case "msg":
+			hasMsg = true
+		case "init":
+			hasInit = true
+		case "update":
+			hasUpdate = true
+		case "view":
+			hasView = true
+		}
+	}
+
+	for _, clause := range body.Children {
+		items, err := listChildren(clause, "screen clause")
+		if err != nil {
+			return model.FrontendScreen{}, err
+		}
+		head, _ := symbolValue(items[0])
+		switch head {
+		case "title":
+			if len(items) != 2 {
+				return model.FrontendScreen{}, parseError(clause, "title expects one value")
+			}
+			switch items[1].Kind {
+			case sexp.KindString:
+				screen.Title = items[1].Value
+			case sexp.KindSymbol:
+				screen.TitleExpression = canonicalFieldName(items[1].Value)
+			default:
+				return model.FrontendScreen{}, parseError(items[1], "title must be a string or symbol")
+			}
+		case "msg":
+			for _, item := range items[1:] {
+				switch item.Kind {
+				case sexp.KindSymbol:
+					screen.Messages = append(screen.Messages, model.FrontendMessage{Name: canonicalFieldName(item.Value)})
+				case sexp.KindList:
+					if len(item.Children) == 0 || item.Children[0].Kind != sexp.KindSymbol {
+						return model.FrontendScreen{}, parseError(item, "message pattern must start with a symbol")
+					}
+					message := model.FrontendMessage{Name: canonicalFieldName(item.Children[0].Value)}
+					for _, param := range item.Children[1:] {
+						if param.Kind != sexp.KindSymbol {
+							return model.FrontendScreen{}, parseError(param, "message parameter must be a symbol")
+						}
+						message.Parameters = append(message.Parameters, canonicalFieldName(param.Value))
+					}
+					screen.Messages = append(screen.Messages, message)
+				default:
+					return model.FrontendScreen{}, parseError(item, "invalid msg clause item")
+				}
+			}
+		case "init":
+			if len(items) != 2 {
+				return model.FrontendScreen{}, parseError(clause, "init expects a single expression")
+			}
+			screen.InitExpression = sexp.InlineString(items[1])
+			initNode = items[1]
+		case "update":
+			if len(items) != 4 {
+				return model.FrontendScreen{}, parseError(clause, "update expects (update msg model expr)")
+			}
+			msgName, ok := symbolValue(items[1])
+			if !ok {
+				return model.FrontendScreen{}, parseError(items[1], "update message parameter must be a symbol")
+			}
+			modelName, ok := symbolValue(items[2])
+			if !ok {
+				return model.FrontendScreen{}, parseError(items[2], "update model parameter must be a symbol")
+			}
+			screen.UpdateMessage = canonicalFieldName(msgName)
+			screen.UpdateModel = canonicalFieldName(modelName)
+			screen.UpdateBody = sexp.InlineString(items[3])
+			updateNode = items[3]
+		case "view":
+			if len(items) < 2 {
+				return model.FrontendScreen{}, parseError(clause, "view expects one or more UI nodes")
+			}
+			viewStart := 1
+			if items[1].Kind == sexp.KindSymbol && len(items) >= 3 {
+				modelName, ok := symbolValue(items[1])
+				if !ok {
+					return model.FrontendScreen{}, parseError(items[1], "view model parameter must be a symbol")
+				}
+				screen.ViewModel = canonicalFieldName(modelName)
+				viewStart = 2
+			}
+			viewNodes := items[viewStart:]
+			if len(viewNodes) == 0 {
+				return model.FrontendScreen{}, parseError(clause, "view expects one or more UI nodes")
+			}
+			screen.ViewBody = inlineNodes(viewNodes)
+			for _, viewNode := range viewNodes {
+				if section, ok, err := parseViewSection(viewNode, queries); err != nil {
+					return model.FrontendScreen{}, err
+				} else if ok {
+					screen.Sections = append(screen.Sections, section)
+					sectionNodes = append(sectionNodes, viewNode)
+					continue
+				}
+				parsedView, err := parseViewNode(viewNode)
+				if err != nil {
+					return model.FrontendScreen{}, err
+				}
+				if screen.View != nil {
+					return model.FrontendScreen{}, parseError(viewNode, "view with static nodes expects a single root node")
+				}
+				viewRawNodes = append(viewRawNodes, viewNode)
+				screen.View = parsedView
+			}
+		default:
+			return model.FrontendScreen{}, parseError(items[0], "unknown screen clause %q", head)
+		}
+	}
+
+	if hasUpdate && (!hasMsg || !hasInit) {
+		return model.FrontendScreen{}, fmt.Errorf("screen %s requires msg and init when update is present", screen.Name)
+	}
+	if hasInit {
+		if err := validateFrontendTransitionStructure(initNode); err != nil {
+			return model.FrontendScreen{}, err
+		}
+	}
+	if hasUpdate {
+		if err := validateFrontendTransitionStructure(updateNode); err != nil {
+			return model.FrontendScreen{}, err
+		}
+	}
+	if err := validateFrontendScreenUIContext(screen, hasUpdate, viewRawNodes, sectionNodes); err != nil {
+		return model.FrontendScreen{}, err
+	}
+	if !hasView {
+		return model.FrontendScreen{}, fmt.Errorf("screen %s requires view", screen.Name)
+	}
+	return screen, nil
+}
+
+func parseScreenDef(node sexp.Node) (*screenDef, error) {
+	if len(node.Children) < 3 {
+		return nil, parseError(node, "define-screen expects a name/signature and a body")
+	}
+	signature := node.Children[1]
+	var name string
+	var params []string
+	if signature.Kind == sexp.KindList {
+		items, err := listChildren(signature, "define-screen signature")
+		if err != nil {
+			return nil, err
+		}
+		if len(items) == 0 {
+			return nil, parseError(signature, "define-screen signature cannot be empty")
+		}
+		var ok bool
+		name, ok = symbolValue(items[0])
+		if !ok {
+			return nil, parseError(items[0], "define-screen name must be a symbol")
+		}
+		for _, item := range items[1:] {
+			param, ok := symbolValue(item)
+			if !ok {
+				return nil, parseError(item, "define-screen parameters must be symbols")
+			}
+			params = append(params, param)
+		}
+	} else {
+		var ok bool
+		name, ok = symbolValue(signature)
+		if !ok {
+			return nil, parseError(signature, "define-screen name must be a symbol")
+		}
+	}
+	return &screenDef{Name: name, Parameters: params, Body: sexp.Node{
+		Kind:     sexp.KindList,
+		Children: node.Children[2:],
+		Line:     node.Line,
+		Column:   node.Column,
+	}}, nil
+}
+
+func parseViewSection(node sexp.Node, queries map[string]*queryDef) (model.FrontendSection, bool, error) {
+	head, ok := listHead(node)
+	if !ok || head != "section" {
+		return model.FrontendSection{}, false, nil
+	}
+	section, err := parseSection(node, queries)
+	if err == nil {
+		return section, true, nil
+	}
+	if strings.Contains(err.Error(), "section does not support metadata") || strings.Contains(err.Error(), "section expects one nested list of clauses") {
+		return model.FrontendSection{}, false, nil
+	}
+	return model.FrontendSection{}, false, err
+}
+
+func inlineNodes(nodes []sexp.Node) string {
+	if len(nodes) == 1 {
+		return sexp.InlineString(nodes[0])
+	}
+	parts := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		parts = append(parts, sexp.InlineString(node))
+	}
+	return "(" + strings.Join(parts, " ") + ")"
+}
+
+func parseViewNode(node sexp.Node) (*model.FrontendViewNode, error) {
+	if node.Kind != sexp.KindList || len(node.Children) == 0 {
+		return nil, parseError(node, "view body must be a non-empty list")
+	}
+	head, ok := symbolValue(node.Children[0])
 	if !ok {
-		return fmt.Errorf("form field %s filter references unknown form field %s", field.Name, parentFieldName)
+		return nil, parseError(node.Children[0], "view node head must be a symbol")
 	}
-	relationEntity := entityByName[field.RelationEntity]
-	if relationEntity == nil {
-		return fmt.Errorf("form field %s references unknown relation entity %s", field.Name, field.RelationEntity)
+
+	switch head {
+	case "section":
+		view := &model.FrontendViewNode{Kind: "section"}
+		for _, child := range node.Children[1:] {
+			if child.Kind != sexp.KindList || len(child.Children) == 0 {
+				return nil, parseError(child, "section children must be nodes or section metadata")
+			}
+			key, _ := symbolValue(child.Children[0])
+			if key == "title" {
+				if len(child.Children) != 2 || child.Children[1].Kind != sexp.KindString {
+					return nil, parseError(child, "section title expects a string")
+				}
+				view.Title = child.Children[1].Value
+				continue
+			}
+			parsedChild, err := parseViewNode(child)
+			if err != nil {
+				return nil, err
+			}
+			view.Children = append(view.Children, *parsedChild)
+		}
+		return view, nil
+	case "text":
+		if len(node.Children) != 2 {
+			return nil, parseError(node, "text expects one argument")
+		}
+		switch node.Children[1].Kind {
+		case sexp.KindString:
+			return &model.FrontendViewNode{Kind: "text", Text: node.Children[1].Value}, nil
+		case sexp.KindSymbol:
+			return &model.FrontendViewNode{Kind: "text", Text: node.Children[1].Value}, nil
+		default:
+			return nil, parseError(node.Children[1], "text expects a string or symbol")
+		}
+	case "button":
+		if len(node.Children) != 3 {
+			return nil, parseError(node, "button expects a label and a message")
+		}
+		if node.Children[1].Kind != sexp.KindString {
+			return nil, parseError(node.Children[1], "button label expects a string")
+		}
+		return &model.FrontendViewNode{
+			Kind:    "button",
+			Label:   node.Children[1].Value,
+			Message: sexp.InlineString(node.Children[2]),
+		}, nil
+	default:
+		return nil, parseError(node.Children[0], "unsupported view node %q", head)
 	}
-	relationField := findEntityField(relationEntity, relationFieldName)
-	if relationField == nil {
-		return fmt.Errorf("form field %s filter references unknown relation field %s", field.Name, relationFieldName)
+}
+
+func unwrapDefinitionBody(body sexp.Node, wrapper string, label string) (sexp.Node, error) {
+	if body.Kind != sexp.KindList {
+		return sexp.Node{}, parseError(body, "%s must be a list", label)
 	}
-	relationFieldEntity := relationField.RelationEntity
-	if relationFieldEntity == "" {
-		return fmt.Errorf("form field %s filter field %s must be a relation field", field.Name, relationFieldName)
+	if len(body.Children) == 0 {
+		return body, nil
 	}
-	if parentRelationEntity != "" && parentRelationEntity != relationFieldEntity {
-		return fmt.Errorf("form field %s filter expects form.%s to reference %s", field.Name, parentFieldName, relationFieldEntity)
+	head, ok := symbolValue(body.Children[0])
+	if ok && head == wrapper {
+		return sexp.Node{
+			Kind:     sexp.KindList,
+			Children: body.Children[1:],
+			Line:     body.Line,
+			Column:   body.Column,
+		}, nil
 	}
-	if parentType == "" {
-		return fmt.Errorf("form field %s filter references invalid form field %s", field.Name, parentFieldName)
+	return body, nil
+}
+
+func parseSection(clause sexp.Node, queries map[string]*queryDef) (model.FrontendSection, error) {
+	items, err := listChildren(clause, "section")
+	if err != nil {
+		return model.FrontendSection{}, err
+	}
+	section, index, err := parseSectionMetadata(items, clause)
+	if err != nil {
+		return model.FrontendSection{}, err
+	}
+	section.Items = []model.FrontendItem{}
+	children, err := nestedClauseList(items, clause, index, "section")
+	if err != nil {
+		return model.FrontendSection{}, err
+	}
+	for _, child := range children {
+		item, err := parseScreenItem(child, queries)
+		if err != nil {
+			return model.FrontendSection{}, err
+		}
+		section.Items = append(section.Items, item)
+	}
+	return section, nil
+}
+
+func parseSectionMetadata(items []sexp.Node, clause sexp.Node) (model.FrontendSection, int, error) {
+	section := model.FrontendSection{}
+	index := 1
+	if len(items) > 1 && items[1].Kind == sexp.KindString {
+		section.Title = items[1].Value
+		index = 2
+	}
+	for index < len(items)-1 {
+		return model.FrontendSection{}, 0, parseError(items[index], "section does not support metadata; use item expressions such as (if condition item (empty))")
+	}
+	return section, index, nil
+}
+
+func parseScreenItem(node sexp.Node, queries map[string]*queryDef) (model.FrontendItem, error) {
+	items, err := listChildren(node, "screen item")
+	if err != nil {
+		return model.FrontendItem{}, err
+	}
+	head, _ := symbolValue(items[0])
+	switch head {
+	case "if":
+		if len(items) != 4 {
+			return model.FrontendItem{}, parseError(node, "if item expects (if condition item (empty))")
+		}
+		elseHead, ok := listHead(items[3])
+		if !ok || elseHead != "empty" {
+			return model.FrontendItem{}, parseError(items[3], "if item currently expects (empty) as the else branch")
+		}
+		item, err := parseScreenItem(items[2], queries)
+		if err != nil {
+			return model.FrontendItem{}, err
+		}
+		if item.Kind == "empty" {
+			return model.FrontendItem{}, parseError(items[2], "if item then branch cannot be empty")
+		}
+		item.Condition = combineItemConditions(sexp.InlineString(items[1]), item.Condition)
+		return item, nil
+	case "empty":
+		if len(items) != 1 {
+			return model.FrontendItem{}, parseError(node, "empty does not accept arguments")
+		}
+		return model.FrontendItem{Kind: "empty"}, nil
+	case "field":
+		if len(items) != 2 {
+			return model.FrontendItem{}, parseError(node, "field expects one symbol")
+		}
+		field, ok := symbolValue(items[1])
+		if !ok {
+			return model.FrontendItem{}, parseError(items[1], "field expects a symbol")
+		}
+		return model.FrontendItem{Kind: "field", Field: canonicalFieldName(field)}, nil
+	case "link":
+		if len(items) != 3 || items[1].Kind != sexp.KindString {
+			return model.FrontendItem{}, parseError(node, "link expects (link \"Label\" destination)")
+		}
+		destination, ok := symbolValue(items[2])
+		if !ok {
+			return model.FrontendItem{}, parseError(items[2], "link destination must be a symbol")
+		}
+		return model.FrontendItem{Kind: "link", Label: items[1].Value, Target: canonicalScreenName(destination)}, nil
+	case "button":
+		if len(items) < 3 || items[1].Kind != sexp.KindString {
+			return model.FrontendItem{}, parseError(node, "button expects (button \"Label\" message)")
+		}
+		item := model.FrontendItem{
+			Kind:    "button",
+			Label:   items[1].Value,
+			Message: sexp.InlineString(items[2]),
+		}
+		if err := applyFrontendItemOptions(&item, items[3:]); err != nil {
+			return model.FrontendItem{}, err
+		}
+		return item, nil
+	case "text-input", "textarea", "toggle":
+		if len(items) < 4 || items[1].Kind != sexp.KindString {
+			return model.FrontendItem{}, parseError(node, "%s expects (%s \"Label\" model-field changed-message)", head, head)
+		}
+		modelField, ok := symbolValue(items[2])
+		if !ok {
+			return model.FrontendItem{}, parseError(items[2], "%s model field must be a symbol", head)
+		}
+		messageName, ok := symbolValue(items[3])
+		if !ok {
+			return model.FrontendItem{}, parseError(items[3], "%s changed message must be a symbol", head)
+		}
+		item := model.FrontendItem{
+			Kind:       canonicalFrontendInputKind(head),
+			Label:      items[1].Value,
+			ModelField: canonicalFieldName(modelField),
+			Message:    canonicalFieldName(messageName),
+		}
+		if err := applyFrontendItemOptions(&item, items[4:]); err != nil {
+			return model.FrontendItem{}, err
+		}
+		return item, nil
+	case "select":
+		if len(items) < 5 || items[1].Kind != sexp.KindString {
+			return model.FrontendItem{}, parseError(node, "select expects (select \"Label\" model-field changed-message ((value \"Label\") ...))")
+		}
+		modelField, ok := symbolValue(items[2])
+		if !ok {
+			return model.FrontendItem{}, parseError(items[2], "select model field must be a symbol")
+		}
+		messageName, ok := symbolValue(items[3])
+		if !ok {
+			return model.FrontendItem{}, parseError(items[3], "select changed message must be a symbol")
+		}
+		options, err := parseFrontendOptions(items[4])
+		if err != nil {
+			return model.FrontendItem{}, err
+		}
+		item := model.FrontendItem{
+			Kind:       "select",
+			Label:      items[1].Value,
+			ModelField: canonicalFieldName(modelField),
+			Message:    canonicalFieldName(messageName),
+			Options:    options,
+		}
+		if err := applyFrontendItemOptions(&item, items[5:]); err != nil {
+			return model.FrontendItem{}, err
+		}
+		return item, nil
+	case "list":
+		if len(items) < 4 || items[1].Kind != sexp.KindSymbol || items[2].Kind != sexp.KindSymbol {
+			return model.FrontendItem{}, parseError(node, "list expects (list model-field entity ((title field) ...))")
+		}
+		modelField, _ := symbolValue(items[1])
+		entity, _ := symbolValue(items[2])
+		item := model.FrontendItem{
+			Kind:       "list",
+			ModelField: canonicalFieldName(modelField),
+			Entity:     canonicalTypeName(entity),
+		}
+		clausesIndex := 3
+		clauses, err := nestedClauseList(items, node, clausesIndex, "list")
+		if err != nil {
+			return model.FrontendItem{}, err
+		}
+		for _, clause := range clauses {
+			parts, err := listChildren(clause, "list clause")
+			if err != nil {
+				return model.FrontendItem{}, err
+			}
+			if len(parts) != 2 {
+				return model.FrontendItem{}, parseError(clause, "list clause must be a pair")
+			}
+			key, _ := symbolValue(parts[0])
+			value, ok := symbolValue(parts[1])
+			if !ok {
+				return model.FrontendItem{}, parseError(parts[1], "list clause value must be a symbol")
+			}
+			switch key {
+			case "title":
+				item.TitleField = canonicalFieldName(value)
+			case "subtitle":
+				item.SubtitleField = canonicalFieldName(value)
+			case "open", "destination":
+				item.Destination = canonicalScreenName(value)
+			case "action":
+				item.Action = canonicalFunctionName(value)
+			default:
+				return model.FrontendItem{}, parseError(parts[0], "unknown list clause %q", key)
+			}
+		}
+		return item, nil
+	case "create", "edit":
+		if len(items) < 2 {
+			return model.FrontendItem{}, parseError(node, "%s expects an entity", head)
+		}
+		entity, ok := symbolValue(items[1])
+		if !ok {
+			return model.FrontendItem{}, parseError(items[1], "%s entity must be a symbol", head)
+		}
+		item := model.FrontendItem{Kind: head, Entity: canonicalTypeName(entity)}
+		clauses, err := nestedClauseList(items, node, 2, head)
+		if err != nil {
+			return model.FrontendItem{}, err
+		}
+		for _, clause := range clauses {
+			parts, err := listChildren(clause, head+" clause")
+			if err != nil {
+				return model.FrontendItem{}, err
+			}
+			key, _ := symbolValue(parts[0])
+			switch key {
+			case "field":
+				if len(parts) != 2 {
+					return model.FrontendItem{}, parseError(clause, "%s field clause must be (field name)", head)
+				}
+				field, _ := symbolValue(parts[1])
+				item.FormFields = append(item.FormFields, model.FrontendFormField{Field: canonicalFieldName(field)})
+			case "value":
+				if len(parts) != 3 {
+					return model.FrontendItem{}, parseError(clause, "%s value clause must be (value field expr)", head)
+				}
+				field, ok := symbolValue(parts[1])
+				if !ok {
+					return model.FrontendItem{}, parseError(parts[1], "%s value field must be a symbol", head)
+				}
+				item.Values = append(item.Values, model.FrontendActionValue{
+					Field:      canonicalFieldName(field),
+					Expression: sexp.InlineString(parts[2]),
+					LineNo:     clause.Line,
+				})
+			default:
+				return model.FrontendItem{}, parseError(parts[0], "%s clause must be (field name) or (value field expr)", head)
+			}
+		}
+		return item, nil
+	case "delete":
+		if len(items) != 2 {
+			return model.FrontendItem{}, parseError(node, "delete expects an entity")
+		}
+		entity, ok := symbolValue(items[1])
+		if !ok {
+			return model.FrontendItem{}, parseError(items[1], "delete entity must be a symbol")
+		}
+		return model.FrontendItem{Kind: "delete", Entity: canonicalTypeName(entity)}, nil
+	default:
+		return model.FrontendItem{}, parseError(items[0], "unknown screen item %q", head)
+	}
+}
+
+func listHead(node sexp.Node) (string, bool) {
+	if node.Kind != sexp.KindList || len(node.Children) == 0 {
+		return "", false
+	}
+	return symbolValue(node.Children[0])
+}
+
+func combineItemConditions(left string, right string) string {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" {
+		return right
+	}
+	if right == "" {
+		return left
+	}
+	return "(and " + left + " " + right + ")"
+}
+
+func canonicalFrontendInputKind(kind string) string {
+	switch strings.TrimSpace(kind) {
+	case "text-input":
+		return "textInput"
+	case "textarea":
+		return "textarea"
+	case "toggle":
+		return "toggle"
+	default:
+		return canonicalFieldName(kind)
+	}
+}
+
+func applyFrontendItemOptions(item *model.FrontendItem, options []sexp.Node) error {
+	for _, option := range options {
+		parts, err := listChildren(option, "screen item option")
+		if err != nil {
+			return err
+		}
+		if len(parts) != 2 {
+			return parseError(option, "screen item option must be a pair")
+		}
+		key, ok := symbolValue(parts[0])
+		if !ok {
+			return parseError(parts[0], "screen item option name must be a symbol")
+		}
+		switch key {
+		case "disabled":
+			name, ok := symbolValue(parts[1])
+			if !ok {
+				return parseError(parts[1], "disabled expects a symbol")
+			}
+			item.Disabled = canonicalFieldName(name)
+		default:
+			return parseError(parts[0], "unknown screen item option %q", key)
+		}
 	}
 	return nil
 }
 
-func validateFrontendReport(item *model.FrontendItem, entity *model.Entity) error {
-	if item == nil || entity == nil {
-		return nil
+func parseFrontendOptions(node sexp.Node) ([]model.FrontendOption, error) {
+	optionNodes, err := listChildren(node, "select options")
+	if err != nil {
+		return nil, err
 	}
-	if strings.TrimSpace(item.ReportGroup) == "" {
-		return fmt.Errorf("missing `group by` clause")
+	if len(optionNodes) == 0 {
+		return nil, parseError(node, "select requires at least one option")
 	}
-	if len(item.ReportMetrics) == 0 {
-		return fmt.Errorf("report must declare at least one metric")
+	options := make([]model.FrontendOption, 0, len(optionNodes))
+	for _, optionNode := range optionNodes {
+		parts, err := listChildren(optionNode, "select option")
+		if err != nil {
+			return nil, err
+		}
+		if len(parts) != 2 {
+			return nil, parseError(optionNode, "select option must look like (value \"Label\")")
+		}
+		var value string
+		switch parts[0].Kind {
+		case sexp.KindSymbol:
+			value = canonicalFieldName(parts[0].Value)
+		case sexp.KindString:
+			value = parts[0].Value
+		default:
+			return nil, parseError(parts[0], "select option value must be a symbol or string")
+		}
+		if parts[1].Kind != sexp.KindString {
+			return nil, parseError(parts[1], "select option label must be a string")
+		}
+		options = append(options, model.FrontendOption{
+			Value: value,
+			Label: parts[1].Value,
+		})
 	}
-	if _, err := parseFrontendReportGroup(item.ReportGroup, entity); err != nil {
+	return options, nil
+}
+
+func parseCallableDef(node sexp.Node) (*queryDef, *functionDef, *screenDef, error) {
+	if len(node.Children) != 3 {
+		return nil, nil, nil, parseError(node, "define expects a signature and a body")
+	}
+	signature := node.Children[1]
+	items, err := listChildren(signature, "define signature")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil, nil, parseError(signature, "define signature cannot be empty")
+	}
+	name, _ := symbolValue(items[0])
+	for _, item := range items[1:] {
+		if _, ok := symbolValue(item); !ok {
+			return nil, nil, nil, parseError(item, "define parameters must be symbols")
+		}
+	}
+	bodyItems, err := listChildren(node.Children[2], "define body")
+	if err != nil {
+		return nil, &functionDef{
+			Name:       name,
+			Parameters: symbolValues(items[1:]),
+			Body:       node.Children[2],
+			LineNo:     node.Line,
+		}, nil, nil
+	}
+	if len(bodyItems) == 0 {
+		return nil, &functionDef{
+			Name:       name,
+			Parameters: symbolValues(items[1:]),
+			Body:       node.Children[2],
+			LineNo:     node.Line,
+		}, nil, nil
+	}
+	head, _ := symbolValue(bodyItems[0])
+	if head != "query" {
+		if head == "screen" {
+			return nil, nil, &screenDef{
+				Name:       name,
+				Parameters: symbolValues(items[1:]),
+				Body:       node.Children[2],
+			}, nil
+		}
+		return nil, &functionDef{
+			Name:       name,
+			Parameters: symbolValues(items[1:]),
+			Body:       node.Children[2],
+			LineNo:     node.Line,
+		}, nil, nil
+	}
+	if len(bodyItems) < 2 {
+		return nil, nil, nil, parseError(node.Children[2], "query expects an entity symbol")
+	}
+	entitySymbol, _ := symbolValue(bodyItems[1])
+	query := &queryDef{Name: name, Parameters: symbolValues(items[1:]), EntitySymbol: entitySymbol, OrderDir: "desc"}
+	for _, clause := range bodyItems[2:] {
+		parts, err := listChildren(clause, "query clause")
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		head, _ := symbolValue(parts[0])
+		switch head {
+		case "where":
+			if len(parts) != 2 {
+				return nil, nil, nil, parseError(clause, "where expects one expression")
+			}
+			query.Where = parts[1]
+		case "order-by":
+			if len(parts) < 2 || len(parts) > 3 {
+				return nil, nil, nil, parseError(clause, "order-by expects (order-by field [asc|desc])")
+			}
+			query.OrderBy, _ = symbolValue(parts[1])
+			if len(parts) == 3 {
+				query.OrderDir, _ = symbolValue(parts[2])
+			}
+		case "limit":
+			if len(parts) != 2 {
+				return nil, nil, nil, parseError(clause, "limit expects one integer")
+			}
+			limit, err := intLiteral(parts[1])
+			if err != nil {
+				return nil, nil, nil, parseError(parts[1], "limit must be an integer")
+			}
+			query.Limit = &limit
+		default:
+			return nil, nil, nil, parseError(parts[0], "unknown query clause %q", head)
+		}
+	}
+	return query, nil, nil, nil
+}
+
+func parseActionDefinition(name string, bodyNode sexp.Node, entities map[string]*model.Entity) (model.TypeAlias, model.Action, error) {
+	body, err := unwrapDefinitionBody(bodyNode, "action", "action "+name)
+	if err != nil {
+		return model.TypeAlias{}, model.Action{}, err
+	}
+
+	inputAlias := model.TypeAlias{Name: canonicalTypeName(name) + "Input"}
+	action := model.Action{Name: canonicalFunctionName(name), InputAlias: inputAlias.Name}
+
+	for _, clause := range body.Children {
+		items, err := listChildren(clause, "action clause")
+		if err != nil {
+			return model.TypeAlias{}, model.Action{}, err
+		}
+		head, _ := symbolValue(items[0])
+		switch head {
+		case "input":
+			if len(items) != 2 {
+				return model.TypeAlias{}, model.Action{}, parseError(clause, "input expects one field list")
+			}
+			fieldClauses, err := listChildren(items[1], "action input fields")
+			if err != nil {
+				return model.TypeAlias{}, model.Action{}, err
+			}
+			for _, fieldClause := range fieldClauses {
+				parts, err := listChildren(fieldClause, "action input field")
+				if err != nil {
+					return model.TypeAlias{}, model.Action{}, err
+				}
+				if len(parts) != 2 {
+					return model.TypeAlias{}, model.Action{}, parseError(fieldClause, "action input field must look like (name type)")
+				}
+				fieldName, ok := symbolValue(parts[0])
+				if !ok {
+					return model.TypeAlias{}, model.Action{}, parseError(parts[0], "action input field name must be a symbol")
+				}
+				typeName, ok := symbolValue(parts[1])
+				if !ok {
+					return model.TypeAlias{}, model.Action{}, parseError(parts[1], "action input field type must be a symbol")
+				}
+				fieldType, err := mapPrimitiveType(typeName)
+				if err != nil {
+					return model.TypeAlias{}, model.Action{}, fmt.Errorf("action %s input %s: %w", name, fieldName, err)
+				}
+				inputAlias.Fields = append(inputAlias.Fields, model.AliasField{
+					Name: canonicalFieldName(fieldName),
+					Type: fieldType,
+				})
+			}
+		case "load":
+			step, err := parseActionLoadStep(name, items, entities)
+			if err != nil {
+				return model.TypeAlias{}, model.Action{}, err
+			}
+			action.Steps = append(action.Steps, step)
+		case "create":
+			step, err := parseActionCreateStep(name, items, entities)
+			if err != nil {
+				return model.TypeAlias{}, model.Action{}, err
+			}
+			action.Steps = append(action.Steps, step)
+		case "update":
+			step, err := parseActionUpdateStep(name, items, entities)
+			if err != nil {
+				return model.TypeAlias{}, model.Action{}, err
+			}
+			action.Steps = append(action.Steps, step)
+		case "delete":
+			step, err := parseActionDeleteStep(name, items, entities)
+			if err != nil {
+				return model.TypeAlias{}, model.Action{}, err
+			}
+			action.Steps = append(action.Steps, step)
+		default:
+			return model.TypeAlias{}, model.Action{}, parseError(items[0], "unknown action clause %q", head)
+		}
+	}
+
+	if len(inputAlias.Fields) == 0 {
+		return model.TypeAlias{}, model.Action{}, fmt.Errorf("action %s requires input", name)
+	}
+	if len(action.Steps) == 0 {
+		return model.TypeAlias{}, model.Action{}, fmt.Errorf("action %s requires at least one step", name)
+	}
+
+	return inputAlias, action, nil
+}
+
+func parseActionLoadStep(actionName string, items []sexp.Node, entities map[string]*model.Entity) (model.ActionStep, error) {
+	if len(items) != 3 {
+		return model.ActionStep{}, parseError(items[0], "load expects (load entity id-expr)")
+	}
+	entityName, entity, err := actionStepEntity(items[1], entities)
+	if err != nil {
+		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
+	}
+	return model.ActionStep{
+		Kind:   "load",
+		Entity: entityName,
+		Values: []model.ActionFieldExpr{{
+			Field:      entity.PrimaryKey,
+			Expression: sexp.InlineString(items[2]),
+		}},
+	}, nil
+}
+
+func parseActionCreateStep(actionName string, items []sexp.Node, entities map[string]*model.Entity) (model.ActionStep, error) {
+	if len(items) != 3 {
+		return model.ActionStep{}, parseError(items[0], "create expects (create entity ((field expr) ...))")
+	}
+	entityName, _, err := actionStepEntity(items[1], entities)
+	if err != nil {
+		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
+	}
+	values, err := parseActionStepValues(items[2])
+	if err != nil {
+		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
+	}
+	return model.ActionStep{Kind: "create", Entity: entityName, Values: values}, nil
+}
+
+func parseActionUpdateStep(actionName string, items []sexp.Node, entities map[string]*model.Entity) (model.ActionStep, error) {
+	if len(items) != 4 {
+		return model.ActionStep{}, parseError(items[0], "update expects (update entity id-expr ((field expr) ...))")
+	}
+	entityName, entity, err := actionStepEntity(items[1], entities)
+	if err != nil {
+		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
+	}
+	values, err := parseActionStepValues(items[3])
+	if err != nil {
+		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
+	}
+	values = append([]model.ActionFieldExpr{{
+		Field:      entity.PrimaryKey,
+		Expression: sexp.InlineString(items[2]),
+	}}, values...)
+	return model.ActionStep{Kind: "update", Entity: entityName, Values: values}, nil
+}
+
+func parseActionDeleteStep(actionName string, items []sexp.Node, entities map[string]*model.Entity) (model.ActionStep, error) {
+	if len(items) != 3 {
+		return model.ActionStep{}, parseError(items[0], "delete expects (delete entity id-expr)")
+	}
+	entityName, entity, err := actionStepEntity(items[1], entities)
+	if err != nil {
+		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
+	}
+	return model.ActionStep{
+		Kind:   "delete",
+		Entity: entityName,
+		Values: []model.ActionFieldExpr{{
+			Field:      entity.PrimaryKey,
+			Expression: sexp.InlineString(items[2]),
+		}},
+	}, nil
+}
+
+func parseActionStepValues(node sexp.Node) ([]model.ActionFieldExpr, error) {
+	fieldClauses, err := listChildren(node, "action step values")
+	if err != nil {
+		return nil, err
+	}
+	values := make([]model.ActionFieldExpr, 0, len(fieldClauses))
+	for _, fieldClause := range fieldClauses {
+		parts, err := listChildren(fieldClause, "action step value")
+		if err != nil {
+			return nil, err
+		}
+		if len(parts) != 2 {
+			return nil, parseError(fieldClause, "action step values must look like (field expr)")
+		}
+		fieldName, ok := symbolValue(parts[0])
+		if !ok {
+			return nil, parseError(parts[0], "action step field name must be a symbol")
+		}
+		values = append(values, model.ActionFieldExpr{
+			Field:      canonicalFieldName(fieldName),
+			Expression: sexp.InlineString(parts[1]),
+		})
+	}
+	return values, nil
+}
+
+func actionStepEntity(node sexp.Node, entities map[string]*model.Entity) (string, *model.Entity, error) {
+	entitySymbol, ok := symbolValue(node)
+	if !ok {
+		return "", nil, parseError(node, "action entity must be a symbol")
+	}
+	entityName := canonicalTypeName(entitySymbol)
+	entity := entities[entityName]
+	if entity == nil {
+		return "", nil, fmt.Errorf("unknown entity %q", entitySymbol)
+	}
+	return entityName, entity, nil
+}
+
+func parseRecordDef(node sexp.Node) (*recordDef, error) {
+	if len(node.Children) < 2 {
+		return nil, parseError(node, "define-record expects a name")
+	}
+	name, ok := symbolValue(node.Children[1])
+	if !ok {
+		return nil, parseError(node.Children[1], "define-record name must be a symbol")
+	}
+	record := &recordDef{Name: name}
+	for _, fieldNode := range node.Children[2:] {
+		parts, err := listChildren(fieldNode, "record field")
+		if err != nil {
+			return nil, err
+		}
+		if len(parts) != 2 {
+			return nil, parseError(fieldNode, "record fields must look like (name type)")
+		}
+		fieldName, ok := symbolValue(parts[0])
+		if !ok {
+			return nil, parseError(parts[0], "record field name must be a symbol")
+		}
+		fieldType, err := parseRecordType(parts[1])
+		if err != nil {
+			return nil, fmt.Errorf("record %s field %s: %w", name, fieldName, err)
+		}
+		record.Fields = append(record.Fields, model.RecordField{
+			Name: canonicalFieldName(fieldName),
+			Type: fieldType,
+		})
+	}
+	return record, nil
+}
+
+func parseTypeDef(node sexp.Node) (*typeDef, error) {
+	if len(node.Children) < 3 {
+		return nil, parseError(node, "define-type expects a name and at least one variant")
+	}
+	name, ok := symbolValue(node.Children[1])
+	if !ok {
+		return nil, parseError(node.Children[1], "define-type name must be a symbol")
+	}
+	out := &typeDef{Name: name}
+	seen := map[string]bool{}
+	for _, variantNode := range node.Children[2:] {
+		parts, err := listChildren(variantNode, "type variant")
+		if err != nil {
+			return nil, err
+		}
+		if len(parts) == 0 {
+			return nil, parseError(variantNode, "type variant cannot be empty")
+		}
+		variantName, ok := symbolValue(parts[0])
+		if !ok {
+			return nil, parseError(parts[0], "type variant name must be a symbol")
+		}
+		canonicalVariant := canonicalFieldName(variantName)
+		if seen[canonicalVariant] {
+			return nil, parseError(parts[0], "type variant %q is declared more than once", variantName)
+		}
+		seen[canonicalVariant] = true
+		variant := model.TypeVariant{Name: canonicalVariant}
+		for _, fieldNode := range parts[1:] {
+			fieldParts, err := listChildren(fieldNode, "type variant field")
+			if err != nil {
+				return nil, err
+			}
+			if len(fieldParts) != 2 {
+				return nil, parseError(fieldNode, "type variant fields must look like (name type)")
+			}
+			fieldName, ok := symbolValue(fieldParts[0])
+			if !ok {
+				return nil, parseError(fieldParts[0], "type variant field name must be a symbol")
+			}
+			fieldType, err := parseRecordType(fieldParts[1])
+			if err != nil {
+				return nil, fmt.Errorf("type %s variant %s field %s: %w", name, variantName, fieldName, err)
+			}
+			variant.Fields = append(variant.Fields, model.RecordField{
+				Name: canonicalFieldName(fieldName),
+				Type: fieldType,
+			})
+		}
+		out.Variants = append(out.Variants, variant)
+	}
+	return out, nil
+}
+
+func parseAppDef(node sexp.Node) (*appDef, error) {
+	if len(node.Children) < 2 {
+		return nil, parseError(node, "define-app expects a name")
+	}
+	name, ok := symbolValue(node.Children[1])
+	if !ok {
+		return nil, parseError(node.Children[1], "define-app name must be a symbol")
+	}
+	app := &appDef{Name: name}
+	for _, clause := range node.Children[2:] {
+		parts, err := listChildren(clause, "define-app clause")
+		if err != nil {
+			return nil, err
+		}
+		head, _ := symbolValue(parts[0])
+		switch head {
+		case "config":
+			if len(parts) != 2 {
+				return nil, parseError(clause, "config expects one symbol")
+			}
+			app.ConfigRef, _ = symbolValue(parts[1])
+		case "auth":
+			if len(parts) != 2 {
+				return nil, parseError(clause, "auth expects one symbol")
+			}
+			app.AuthRef, _ = symbolValue(parts[1])
+		case "entities":
+			for _, part := range parts[1:] {
+				symbol, ok := symbolValue(part)
+				if !ok {
+					return nil, parseError(part, "entities expects symbols")
+				}
+				app.EntitySymbols = append(app.EntitySymbols, symbol)
+			}
+		case "queries":
+			for _, part := range parts[1:] {
+				symbol, ok := symbolValue(part)
+				if !ok {
+					return nil, parseError(part, "queries expects symbols")
+				}
+				app.QuerySymbols = append(app.QuerySymbols, symbol)
+			}
+		case "actions":
+			for _, part := range parts[1:] {
+				symbol, ok := symbolValue(part)
+				if !ok {
+					return nil, parseError(part, "actions expects symbols")
+				}
+				app.ActionSymbols = append(app.ActionSymbols, symbol)
+			}
+		case "screens":
+			for _, part := range parts[1:] {
+				symbol, ok := symbolValue(part)
+				if !ok {
+					return nil, parseError(part, "screens expects symbols")
+				}
+				app.ScreenSymbols = append(app.ScreenSymbols, symbol)
+			}
+		case "backend":
+			if err := parseAppSection(parts[1:], "backend", app); err != nil {
+				return nil, err
+			}
+		case "frontend":
+			if err := parseFrontendSection(parts[1:], app); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, parseError(parts[0], "unknown define-app clause %q", head)
+		}
+	}
+	return app, nil
+}
+
+func parseAppSection(clauses []sexp.Node, label string, app *appDef) error {
+	for _, clause := range clauses {
+		parts, err := listChildren(clause, label+" clause")
+		if err != nil {
+			return err
+		}
+		head, _ := symbolValue(parts[0])
+		switch head {
+		case "entities":
+			for _, part := range parts[1:] {
+				symbol, ok := symbolValue(part)
+				if !ok {
+					return parseError(part, "entities expects symbols")
+				}
+				app.EntitySymbols = append(app.EntitySymbols, symbol)
+			}
+		case "queries":
+			for _, part := range parts[1:] {
+				symbol, ok := symbolValue(part)
+				if !ok {
+					return parseError(part, "queries expects symbols")
+				}
+				app.QuerySymbols = append(app.QuerySymbols, symbol)
+			}
+		case "actions":
+			for _, part := range parts[1:] {
+				symbol, ok := symbolValue(part)
+				if !ok {
+					return parseError(part, "actions expects symbols")
+				}
+				app.ActionSymbols = append(app.ActionSymbols, symbol)
+			}
+		default:
+			return parseError(parts[0], "unknown %s clause %q", label, head)
+		}
+	}
+	return nil
+}
+
+func parseFrontendSection(clauses []sexp.Node, app *appDef) error {
+	for _, clause := range clauses {
+		parts, err := listChildren(clause, "frontend clause")
+		if err != nil {
+			return err
+		}
+		head, _ := symbolValue(parts[0])
+		switch head {
+		case "screens":
+			for _, part := range parts[1:] {
+				symbol, ok := symbolValue(part)
+				if !ok {
+					return parseError(part, "screens expects symbols")
+				}
+				app.ScreenSymbols = append(app.ScreenSymbols, symbol)
+			}
+		default:
+			return parseError(parts[0], "unknown frontend clause %q", head)
+		}
+	}
+	return nil
+}
+
+func validateFrontendScreens(frontend *model.Frontend, queries []model.Query, actions []model.Action, aliases map[string]*model.TypeAlias, functions map[string]*model.Function, records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
+	allowedCommands := allowedCommandArities(queries, actions, aliases)
+	commandKinds := allowedCommandKinds(queries, actions)
+	allowedFunctions := allowedFunctionArities(functions)
+	allowedRecords := allowedRecordFields(records)
+	allowedVariants := allowedTypeVariants(types)
+	screenParamTypes, err := inferScreenParameterTypes(frontend, actions, aliases, functions, records, types, entities)
+	if err != nil {
 		return err
 	}
-	for _, metric := range item.ReportMetrics {
-		if err := validateFrontendReportMetric(metric, entity); err != nil {
-			return err
-		}
+	baseTypeChecker := newFrontendTypeChecker(functions, records, types, entities, screenParamTypes, nil)
+	screenMessageTypes, err := inferScreenMessagePayloadTypes(frontend, queries, actions, aliases, baseTypeChecker)
+	if err != nil {
+		return err
 	}
-	return nil
-}
-
-func parseFrontendReportGroup(raw string, entity *model.Entity) (string, error) {
-	group := strings.TrimSpace(raw)
-	if group == "" {
-		return "", fmt.Errorf("missing `group by` clause")
+	typeChecker := newFrontendTypeChecker(functions, records, types, entities, screenParamTypes, screenMessageTypes)
+	screenByName := map[string]model.FrontendScreen{}
+	for _, screen := range frontend.Screens {
+		screenByName[screen.Name] = screen
 	}
-	if m := match(`^month\(([a-z][A-Za-z0-9_]*)\)$`, group); m != nil {
-		field := findEntityField(entity, m[1])
-		if field == nil {
-			return "", fmt.Errorf("group field %s does not exist on %s", m[1], entity.Name)
-		}
-		if field.Type != "Date" && field.Type != "DateTime" {
-			return "", fmt.Errorf("group field %s must be Date or DateTime", m[1])
-		}
-		return group, nil
-	}
-	field := findEntityField(entity, group)
-	if field == nil {
-		return "", fmt.Errorf("group field %s does not exist on %s", group, entity.Name)
-	}
-	return group, nil
-}
-
-func validateFrontendReportMetric(metric model.FrontendReportMetric, entity *model.Entity) error {
-	aggregate := strings.TrimSpace(metric.Aggregate)
-	fieldName := strings.TrimSpace(metric.Field)
-	switch aggregate {
-	case "count":
-		if fieldName != "" {
-			return fmt.Errorf("metric count() cannot specify a field")
-		}
-		return nil
-	case "avg", "sum", "min", "max":
-		if fieldName == "" {
-			return fmt.Errorf("metric %s(...) requires a field", aggregate)
-		}
-		field := findEntityField(entity, fieldName)
-		if field == nil {
-			return fmt.Errorf("metric field %s does not exist on %s", fieldName, entity.Name)
-		}
-		if field.Type != "Int" && field.Type != "Float" {
-			return fmt.Errorf("metric %s(%s) requires an Int or Float field", aggregate, fieldName)
-		}
-		return nil
-	default:
-		return fmt.Errorf("unsupported metric %s", aggregate)
-	}
-}
-
-func parseFrontendDisplayFieldPath(raw string) (string, string, bool) {
-	parts := strings.Split(raw, ".")
-	if len(parts) == 2 && fieldNameRe.MatchString(parts[0]) && fieldNameRe.MatchString(parts[1]) {
-		return parts[0], parts[1], true
-	}
-	return raw, "", false
-}
-
-func preferredFrontendDisplayField(entity *model.Entity) *model.Field {
-	if entity == nil {
-		return nil
+	actionNames := map[string]struct{}{}
+	for _, action := range actions {
+		actionNames[action.Name] = struct{}{}
 	}
 
-	candidates := make([]*model.Field, 0, len(entity.Fields))
-	for i := range entity.Fields {
-		field := &entity.Fields[i]
-		if strings.EqualFold(field.Name, "id") || field.Primary || field.Auto || field.RelationEntity != "" {
-			continue
-		}
-		candidates = append(candidates, field)
-	}
-
-	for _, preferred := range frontendDisplayFieldNames {
-		for _, field := range candidates {
-			if strings.EqualFold(field.Name, preferred) {
-				return field
+	for _, screen := range frontend.Screens {
+		messageArities := frontendMessageArities(screen.Messages)
+		modelType := anyFrontendType()
+		if screen.InitExpression != "" {
+			node, err := sexp.ParseOne(screen.InitExpression)
+			if err != nil {
+				return fmt.Errorf("screen %s init: %w", screen.Name, err)
+			}
+			if err := validateFrontendCommandForms(node, allowedCommands, commandKinds, messageArities); err != nil {
+				return fmt.Errorf("screen %s init: %w", screen.Name, err)
+			}
+			if _, err := expr.Parse(screen.InitExpression, expr.ParserOptions{
+				AllowedVariables: expr.AllowedVariablesWithBuiltins(frontendCompileTimeVariables(screen, node, false)),
+				AllowedFunctions: allowedFunctions,
+				AllowedCommands:  allowedCommands,
+				AllowedRecords:   allowedRecords,
+				AllowedVariants:  allowedVariants,
+			}); err != nil {
+				return fmt.Errorf("screen %s init: %w", screen.Name, err)
+			}
+			modelType, err = typeChecker.inferInitModelType(screen)
+			if err != nil {
+				return fmt.Errorf("screen %s init: %w", screen.Name, err)
 			}
 		}
-	}
-
-	for _, field := range candidates {
-		if field.Type == "String" {
-			return field
+		uiMessageTypes, err := inferScreenUIMessagePayloadTypes(screen, modelType, typeChecker, messageArities)
+		if err != nil {
+			return fmt.Errorf("screen %s: %w", screen.Name, err)
 		}
-	}
+		screenOut := screenMessageTypes[screen.Name]
+		if screenOut == nil {
+			screenOut = map[string][]frontendType{}
+			screenMessageTypes[screen.Name] = screenOut
+		}
+		for messageName, payloads := range uiMessageTypes {
+			for index, payload := range payloads {
+				if payload.Kind == "" {
+					continue
+				}
+				if err := mergeScreenMessagePayloadType(screenOut, messageName, index, payload); err != nil {
+					return fmt.Errorf("screen %s: message %s has incompatible payloads: %w", screen.Name, messageName, err)
+				}
+			}
+		}
 
-	if len(candidates) > 0 {
-		return candidates[0]
+		if screen.UpdateBody != "" {
+			node, err := sexp.ParseOne(screen.UpdateBody)
+			if err != nil {
+				return fmt.Errorf("screen %s update: %w", screen.Name, err)
+			}
+			if err := validateFrontendCommandForms(node, allowedCommands, commandKinds, messageArities); err != nil {
+				return fmt.Errorf("screen %s update: %w", screen.Name, err)
+			}
+			if _, err := expr.Parse(screen.UpdateBody, expr.ParserOptions{
+				AllowedVariables: expr.AllowedVariablesWithBuiltins(frontendCompileTimeVariables(screen, node, true)),
+				AllowedFunctions: allowedFunctions,
+				AllowedCommands:  allowedCommands,
+				AllowedRecords:   allowedRecords,
+				AllowedVariants:  allowedVariants,
+			}); err != nil {
+				return fmt.Errorf("screen %s update: %w", screen.Name, err)
+			}
+			if err := typeChecker.validateUpdate(screen, modelType); err != nil {
+				return fmt.Errorf("screen %s update: %w", screen.Name, err)
+			}
+		}
+		if err := validateScreenMessagePayloadTypesResolved(screen, screenOut); err != nil {
+			return fmt.Errorf("screen %s: %w", screen.Name, err)
+		}
+		if err := validateFrontendScreenNavigation(screen, screenByName, typeChecker, modelType); err != nil {
+			return fmt.Errorf("screen %s: %w", screen.Name, err)
+		}
+		if err := validateFrontendScreenItems(screen, screenByName, messageArities, allowedFunctions, allowedRecords, typeChecker, modelType, actionNames); err != nil {
+			return fmt.Errorf("screen %s: %w", screen.Name, err)
+		}
 	}
 
 	return nil
 }
 
-func aliasHasField(alias *model.TypeAlias, name string) bool {
-	if alias == nil {
-		return false
-	}
-	for _, field := range alias.Fields {
-		if field.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func aliasField(alias *model.TypeAlias, name string) *model.AliasField {
-	if alias == nil {
-		return nil
-	}
-	for i := range alias.Fields {
-		if alias.Fields[i].Name == name {
-			return &alias.Fields[i]
-		}
-	}
-	return nil
-}
-
-func authBootstrapWarnings(app *model.App) []string {
-	if app == nil || app.Auth == nil {
-		return nil
-	}
-
-	var userEntity *model.Entity
-	for i := range app.Entities {
-		if app.Entities[i].Name == app.Auth.UserEntity {
-			userEntity = &app.Entities[i]
-			break
-		}
-	}
-	if userEntity == nil {
-		return nil
-	}
-
-	blockingFields := make([]string, 0, len(userEntity.Fields))
-	for _, field := range userEntity.Fields {
-		if field.Auto {
-			continue
-		}
-		if field.Name == app.Auth.EmailField {
-			continue
-		}
-		if app.Auth.RoleField != "" && field.Name == app.Auth.RoleField {
-			continue
-		}
-		if field.Default != nil || field.Optional {
-			continue
-		}
+func validateEntitySchema(entity *model.Entity, entities map[string]*model.Entity) error {
+	for _, field := range entity.Fields {
 		if field.RelationEntity == "" {
 			continue
 		}
-		blockingFields = append(blockingFields, field.Name)
+		if entities[field.RelationEntity] == nil {
+			return fmt.Errorf("entity %s field %s references unknown entity %s", entity.Name, field.Name, field.RelationEntity)
+		}
 	}
-	if len(blockingFields) == 0 {
-		return nil
-	}
-
-	fieldLabel := "fields"
-	defaultLabel := "defaults"
-	optionLabel := "these fields"
-	if len(blockingFields) == 1 {
-		fieldLabel = "field"
-		defaultLabel = "default"
-		optionLabel = "this field"
-	}
-	for i := range blockingFields {
-		blockingFields[i] = "`" + blockingFields[i] + "`"
-	}
-
-	return []string{
-		fmt.Sprintf(
-			"Automatic creation of the first admin will not be possible.\nAuth user entity %s has required relation %s without %s: %s.\nYou can make %s optional, or create the first admin manually in the database.",
-			userEntity.Name,
-			fieldLabel,
-			defaultLabel,
-			strings.Join(blockingFields, ", "),
-			optionLabel,
-		),
-	}
-}
-
-func resolveActionExprType(raw string, variableTypes map[string]string, builtinTypes map[string]string, aliasFieldNames []string, enumLiteralTypes map[string]string) (string, error) {
-	parsed, err := parseTypedExpr(raw, variableTypes, builtinTypes, false, aliasFieldNames, enumLiteralTypes)
-	if err != nil {
-		return "", err
-	}
-	return inferActionExprType(parsed, typedExprVariables(variableTypes, builtinTypes, false, enumLiteralTypes))
-}
-
-func allowedExprVariables(variableTypes map[string]string) map[string]struct{} {
-	out := make(map[string]struct{}, len(variableTypes))
-	for name := range variableTypes {
-		out[name] = struct{}{}
-	}
-	return out
-}
-
-func validateBooleanExpr(raw string, variableTypes map[string]string, builtinTypes map[string]string, includeBuiltins bool, enumLiteralTypes map[string]string) error {
-	parsed, err := parseTypedExpr(raw, variableTypes, builtinTypes, includeBuiltins, nil, enumLiteralTypes)
-	if err != nil {
-		return err
-	}
-	typ, err := inferActionExprType(parsed, typedExprVariables(variableTypes, builtinTypes, includeBuiltins, enumLiteralTypes))
-	if err != nil {
-		return err
-	}
-	if typ != "Bool" {
-		return parserErrorf("expression must evaluate to Bool, got %s", typ)
+	for _, constraint := range entity.Unique {
+		if len(constraint.Fields) == 0 {
+			return fmt.Errorf("entity %s has an empty unique constraint", entity.Name)
+		}
+		for _, fieldName := range constraint.Fields {
+			if findEntityField(entity, fieldName) == nil {
+				return fmt.Errorf("entity %s unique references unknown field %s", entity.Name, fieldName)
+			}
+		}
 	}
 	return nil
 }
 
-func parseTypedExpr(raw string, variableTypes map[string]string, builtinTypes map[string]string, includeBuiltins bool, aliasFieldNames []string, enumLiteralTypes map[string]string) (expr.Expr, error) {
-	allowed := allowedExprVariables(variableTypes)
-	if includeBuiltins {
-		allowed = expr.AllowedVariablesWithBuiltins(allowed)
-	}
-	for name := range enumLiteralTypes {
-		allowed[name] = struct{}{}
-	}
-	if includeBuiltins {
-		for name := range builtinTypes {
-			allowed[name] = struct{}{}
+func validateRecordTypes(record *model.Record, records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
+	for _, field := range record.Fields {
+		if err := validateRecordTypeExpr(field.Type, records, types, entities); err != nil {
+			return fmt.Errorf("record %s field %s: %w", record.Name, field.Name, err)
 		}
 	}
-	parsed, err := expr.Parse(raw, expr.ParserOptions{AllowedVariables: allowed})
-	if err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "unknown identifier") {
-			name := strings.Trim(strings.TrimPrefix(msg, "unknown identifier "), `"`)
-			return nil, parserErrorf("references unknown value %q%s", name, suggest.DidYouMeanSuffix(name, actionVariableNames(typedExprVariables(variableTypes, builtinTypes, includeBuiltins, enumLiteralTypes), aliasFieldNames)))
-		}
-		return nil, err
-	}
-	return parsed, nil
+	return nil
 }
 
-func typedExprVariables(variableTypes map[string]string, builtinTypes map[string]string, includeBuiltins bool, enumLiteralTypes map[string]string) map[string]string {
-	out := make(map[string]string, len(variableTypes)+len(enumLiteralTypes)+len(builtinTypes))
-	for name, typ := range variableTypes {
-		out[name] = typ
+func validateSumType(sumType *model.EnumType, records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
+	if len(sumType.Variants) == 0 {
+		return fmt.Errorf("type %s must have at least one variant", sumType.Name)
 	}
-	if includeBuiltins {
-		for name, typ := range builtinTypes {
-			out[name] = typ
+	for _, variant := range sumType.Variants {
+		for _, field := range variant.Fields {
+			if err := validateRecordTypeExpr(field.Type, records, types, entities); err != nil {
+				return fmt.Errorf("type %s variant %s field %s: %w", sumType.Name, variant.Name, field.Name, err)
+			}
 		}
 	}
-	for name, typ := range enumLiteralTypes {
-		out[name] = typ
-	}
-	return out
+	return nil
 }
 
-func appEnumLiteralTypes(app *model.App) map[string]string {
-	out := map[string]string{}
-	if app == nil {
-		return out
+func validateRecordTypeExpr(typeExpr string, records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
+	switch typeExpr {
+	case "string", "bool", "int", "decimal", "date", "datetime", "cursor", "(unit)":
+		return nil
 	}
-	for _, enumType := range app.Types {
-		for _, value := range enumType.Values {
-			out[value] = enumType.Name
-		}
-	}
-	return out
-}
-
-func authBuiltinTypes(app *model.App) map[string]string {
-	out := map[string]string{
-		"anonymous":          "Bool",
-		"user_authenticated": "Bool",
-		"user_email":         "String",
-		"user_id":            "Int",
-		"user_role":          "String",
-	}
-	if app == nil || app.Auth == nil {
-		return out
-	}
-	for i := range app.Entities {
-		entity := &app.Entities[i]
-		if entity.Name != app.Auth.UserEntity {
-			continue
-		}
-		if field := findEntityField(entity, app.Auth.RoleField); field != nil {
-			out["user_role"] = field.Type
-		}
-		break
-	}
-	return out
-}
-
-func actionVariableNames(variableTypes map[string]string, aliasFieldNames []string) []string {
-	out := make([]string, 0, len(variableTypes)+len(aliasFieldNames))
-	seen := map[string]struct{}{}
-	for name := range variableTypes {
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		out = append(out, name)
-	}
-	for _, name := range aliasFieldNames {
-		full := "input." + name
-		if _, ok := seen[full]; ok {
-			continue
-		}
-		seen[full] = struct{}{}
-		out = append(out, full)
-	}
-	return out
-}
-
-func inferActionExprType(node expr.Expr, variableTypes map[string]string) (string, error) {
-	switch n := node.(type) {
-	case expr.Literal:
-		switch n.Value.(type) {
-		case nil:
-			return "Null", nil
-		case bool:
-			return "Bool", nil
-		case string:
-			return "String", nil
-		case int64, int:
-			return "Int", nil
-		case float64, float32:
-			return "Float", nil
-		default:
-			return "", parserErrorf("unsupported literal value")
-		}
-	case expr.Variable:
-		t := variableTypes[n.Name]
-		if t == "" {
-			return "", parserErrorf("references unknown value %q", n.Name)
-		}
-		return t, nil
-	case expr.Unary:
-		rightType, err := inferActionExprType(n.Right, variableTypes)
+	if strings.HasPrefix(typeExpr, "(maybe ") || strings.HasPrefix(typeExpr, "(list ") || strings.HasPrefix(typeExpr, "(result ") {
+		node, err := sexp.ParseOne(typeExpr)
 		if err != nil {
-			return "", err
+			return err
 		}
-		switch n.Op {
-		case "not":
-			if rightType != "Bool" {
-				return "", parserErrorf("operator not expects Bool, got %s", rightType)
+		if len(node.Children) == 0 || node.Children[0].Kind != sexp.KindSymbol {
+			return fmt.Errorf("invalid composite type")
+		}
+		switch node.Children[0].Value {
+		case "maybe", "list":
+			if len(node.Children) != 2 {
+				return fmt.Errorf("invalid composite type")
 			}
-			return "Bool", nil
-		case "-":
-			switch rightType {
-			case "Int":
-				return "Int", nil
-			case "Float":
-				return "Float", nil
-			default:
-				return "", parserErrorf("operator - expects Int or Float")
+			return validateRecordTypeExpr(sexp.InlineString(node.Children[1]), records, types, entities)
+		case "result":
+			if len(node.Children) != 3 {
+				return fmt.Errorf("invalid composite type")
 			}
+			if err := validateRecordTypeExpr(sexp.InlineString(node.Children[1]), records, types, entities); err != nil {
+				return err
+			}
+			return validateRecordTypeExpr(sexp.InlineString(node.Children[2]), records, types, entities)
 		default:
-			return "", parserErrorf("unknown unary operator %q", n.Op)
+			return fmt.Errorf("invalid composite type")
 		}
-	case expr.Binary:
-		leftType, err := inferActionExprType(n.Left, variableTypes)
-		if err != nil {
-			return "", err
-		}
-		rightType, err := inferActionExprType(n.Right, variableTypes)
-		if err != nil {
-			return "", err
-		}
-		switch n.Op {
-		case "and", "or":
-			if leftType != "Bool" || rightType != "Bool" {
-				return "", parserErrorf("operator %s expects Bool operands", n.Op)
-			}
-			return "Bool", nil
-		case "==", "!=":
-			if !areEqualityComparable(leftType, rightType) {
-				return "", parserErrorf("operator %s expects compatible values, got %s and %s", n.Op, leftType, rightType)
-			}
-			return "Bool", nil
-		case ">", ">=", "<", "<=":
-			if !areOrderedComparable(leftType, rightType) {
-				return "", parserErrorf("operator %s expects comparable values, got %s and %s", n.Op, leftType, rightType)
-			}
-			return "Bool", nil
-		case "+":
-			if leftType == "String" || rightType == "String" {
-				return "String", nil
-			}
-			if isTemporalType(leftType) && rightType == "Int" {
-				return leftType, nil
-			}
-			if leftType == "Int" && isTemporalType(rightType) {
-				return rightType, nil
-			}
-			if leftType == "Float" || rightType == "Float" {
-				return "Float", nil
-			}
-			if leftType == "Int" && rightType == "Int" {
-				return "Int", nil
-			}
-			return "", parserErrorf("operator + expects compatible values")
-		case "-":
-			if isTemporalType(leftType) && rightType == "Int" {
-				return leftType, nil
-			}
-			if isTemporalType(leftType) && isTemporalType(rightType) {
-				return "Int", nil
-			}
-			if leftType == "Float" || rightType == "Float" {
-				return "Float", nil
-			}
-			if leftType == "Int" && rightType == "Int" {
-				return "Int", nil
-			}
-			return "", parserErrorf("operator - expects compatible numeric values")
-		case "*":
-			if leftType == "Float" || rightType == "Float" {
-				return "Float", nil
-			}
-			if leftType == "Int" && rightType == "Int" {
-				return "Int", nil
-			}
-			return "", parserErrorf("operator * expects numeric values")
-		case "/":
-			if (leftType == "Int" || leftType == "Float") && (rightType == "Int" || rightType == "Float") {
-				return "Float", nil
-			}
-			return "", parserErrorf("operator / expects numeric values")
-		default:
-			return "", parserErrorf("unknown operator %q", n.Op)
-		}
-	case expr.Call:
-		argTypes := make([]string, 0, len(n.Args))
-		for _, arg := range n.Args {
-			argType, err := inferActionExprType(arg, variableTypes)
-			if err != nil {
-				return "", err
-			}
-			argTypes = append(argTypes, argType)
-		}
-		switch n.Name {
-		case "contains", "starts_with", "ends_with", "matches":
-			if len(argTypes) != 2 || argTypes[0] != "String" || argTypes[1] != "String" {
-				return "", parserErrorf("function %s expects String arguments", n.Name)
-			}
-			return "Bool", nil
-		case "length":
-			if len(argTypes) != 1 || argTypes[0] != "String" {
-				return "", parserErrorf("function length expects a String argument")
-			}
-			return "Int", nil
-		default:
-			return "", parserErrorf("unsupported function %q", n.Name)
-		}
-	default:
-		return "", parserErrorf("unsupported expression type")
 	}
+	if records[typeExpr] == nil && types[typeExpr] == nil && entities[canonicalTypeName(typeExpr)] == nil {
+		return fmt.Errorf("unknown type %q", typeExpr)
+	}
+	return nil
 }
 
-func areEqualityComparable(leftType, rightType string) bool {
-	if leftType == "Null" || rightType == "Null" {
-		return true
+func queryAllowedVariables(entity *model.Entity) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, field := range entity.Fields {
+		out[field.Name] = struct{}{}
 	}
-	if leftType == rightType {
-		return true
-	}
-	return areNumericComparable(leftType, rightType)
-}
-
-func areOrderedComparable(leftType, rightType string) bool {
-	if leftType == "String" || rightType == "String" {
-		return leftType == "String" && rightType == "String"
-	}
-	return areNumericComparable(leftType, rightType)
-}
-
-func areNumericComparable(leftType, rightType string) bool {
-	return isNumericLikeType(leftType) && isNumericLikeType(rightType)
-}
-
-func isNumericLikeType(typ string) bool {
-	switch typ {
-	case "Int", "Float", "Date", "DateTime":
-		return true
-	default:
-		return false
-	}
-}
-
-func isTemporalType(typ string) bool {
-	switch typ {
-	case "Date", "DateTime":
-		return true
-	default:
-		return false
-	}
-}
-
-func isTypeAssignable(targetType, sourceType string) bool {
-	if targetType == sourceType {
-		return true
-	}
-	if targetType == "Float" && sourceType == "Int" {
-		return true
-	}
-	if isTemporalType(targetType) && (sourceType == "Int" || isTemporalType(sourceType)) {
-		return true
-	}
-	return false
+	return out
 }
 
 func findEntityField(entity *model.Entity, name string) *model.Field {
@@ -3536,256 +2274,1600 @@ func findEntityField(entity *model.Entity, name string) *model.Field {
 	return nil
 }
 
-func entityFieldNames(entity *model.Entity) []string {
-	out := make([]string, 0, len(entity.Fields))
-	for i := range entity.Fields {
-		out = append(out, entity.Fields[i].Name)
+func buildBuiltinUser() model.Entity {
+	return model.Entity{
+		Name:       "User",
+		Table:      "users",
+		Resource:   "/users",
+		PrimaryKey: "id",
+		Fields: []model.Field{
+			{Name: "id", Type: "Int", Primary: true, Auto: true},
+			{Name: "email", Type: "String"},
+			{Name: "role", Type: "String"},
+			{Name: "created_at", Type: "DateTime", Auto: true},
+			{Name: "updated_at", Type: "DateTime", Auto: true},
+		},
+	}
+}
+
+func mergeUserEntity(base, extension model.Entity) model.Entity {
+	for _, field := range extension.Fields {
+		if field.Name == "id" || field.Name == "created_at" || field.Name == "updated_at" {
+			continue
+		}
+		replaced := false
+		for i := range base.Fields {
+			if base.Fields[i].Name == field.Name {
+				base.Fields[i] = field
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			base.Fields = append(base.Fields[:len(base.Fields)-2], append([]model.Field{field}, base.Fields[len(base.Fields)-2:]...)...)
+		}
+	}
+	base.Unique = extension.Unique
+	base.Validate = extension.Validate
+	base.Authorizations = extension.Authorizations
+	return base
+}
+
+func parameterVariables(params []string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, param := range params {
+		out[param] = struct{}{}
 	}
 	return out
 }
 
-func hasField(ent *model.Entity, name, typ string) bool {
-	for _, f := range ent.Fields {
-		if f.Name == name && f.Type == typ {
-			return true
+func frontendMessageArities(messages []model.FrontendMessage) map[string]int {
+	out := map[string]int{}
+	for _, message := range messages {
+		out[message.Name] = len(message.Parameters)
+	}
+	return out
+}
+
+func allowedCommandArities(queries []model.Query, actions []model.Action, aliases map[string]*model.TypeAlias) map[string]int {
+	out := map[string]int{}
+	for _, query := range queries {
+		out[query.Name] = len(query.Parameters)
+	}
+	for _, action := range actions {
+		alias := aliases[action.InputAlias]
+		if alias == nil {
+			continue
+		}
+		out[action.Name] = len(alias.Fields)
+	}
+	return out
+}
+
+func allowedCommandKinds(queries []model.Query, actions []model.Action) map[string]string {
+	out := map[string]string{}
+	for _, query := range queries {
+		out[query.Name] = "query"
+	}
+	for _, action := range actions {
+		out[action.Name] = "action"
+	}
+	return out
+}
+
+func inferScreenMessagePayloadTypes(frontend *model.Frontend, queries []model.Query, actions []model.Action, aliases map[string]*model.TypeAlias, typeChecker *frontendTypeChecker) (map[string]map[string][]frontendType, error) {
+	if frontend == nil {
+		return map[string]map[string][]frontendType{}, nil
+	}
+	commandReturnTypes, err := frontendCommandReturnTypes(queries, actions, typeChecker)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]map[string][]frontendType{}
+	for _, screen := range frontend.Screens {
+		screenOut := map[string][]frontendType{}
+		messageArities := frontendMessageArities(screen.Messages)
+		for _, raw := range []string{screen.InitExpression, screen.UpdateBody} {
+			if strings.TrimSpace(raw) == "" {
+				continue
+			}
+			node, err := sexp.ParseOne(raw)
+			if err != nil {
+				return nil, err
+			}
+			if err := collectScreenCommandMessagePayloadTypes(node, screenOut, messageArities, commandReturnTypes); err != nil {
+				return nil, fmt.Errorf("screen %s: %w", screen.Name, err)
+			}
+		}
+		out[screen.Name] = screenOut
+	}
+	return out, nil
+}
+
+func frontendCommandReturnTypes(queries []model.Query, actions []model.Action, typeChecker *frontendTypeChecker) (map[string]frontendType, error) {
+	out := map[string]frontendType{}
+	for _, query := range queries {
+		entityType, ok, err := typeChecker.namedType(query.Entity)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("query %s references unknown entity %s", query.Name, query.Entity)
+		}
+		out[query.Name] = listFrontendType(entityType)
+	}
+	for _, action := range actions {
+		out[action.Name] = frontendType{}
+	}
+	return out, nil
+}
+
+func collectScreenCommandMessagePayloadTypes(node sexp.Node, screenOut map[string][]frontendType, messageArities map[string]int, commandReturnTypes map[string]frontendType) error {
+	if node.Kind != sexp.KindList {
+		return nil
+	}
+	if len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol && node.Children[0].Value == "command" {
+		if len(node.Children) == 4 && node.Children[1].Kind == sexp.KindList && len(node.Children[1].Children) > 0 && node.Children[1].Children[0].Kind == sexp.KindSymbol {
+			commandName := canonicalFunctionName(node.Children[1].Children[0].Value)
+			successName := canonicalFieldName(node.Children[2].Value)
+			failureName := canonicalFieldName(node.Children[3].Value)
+			if messageArities[successName] == 1 {
+				successType := commandReturnTypes[commandName]
+				if successType.Kind != "" {
+					if err := mergeScreenMessagePayloadType(screenOut, successName, 0, successType); err != nil {
+						return fmt.Errorf("message %s has incompatible command payloads: %w", successName, err)
+					}
+				}
+			}
+			if messageArities[failureName] == 1 {
+				if err := mergeScreenMessagePayloadType(screenOut, failureName, 0, stringFrontendType()); err != nil {
+					return fmt.Errorf("message %s has incompatible failure payloads: %w", failureName, err)
+				}
+			}
 		}
 	}
-	return false
-}
-
-func isCommentOrBlank(s string) bool {
-	return s == "" || strings.HasPrefix(s, "--")
-}
-
-func splitLines(source string) []line {
-	raw := strings.Split(strings.ReplaceAll(source, "\r", ""), "\n")
-	lines := make([]line, 0, len(raw))
-	for i, text := range raw {
-		lines = append(lines, line{number: i + 1, text: text})
-	}
-	return lines
-}
-
-func match(pattern, value string) []string {
-	re := regexp.MustCompile(pattern)
-	return re.FindStringSubmatch(value)
-}
-
-func mustInt(s string) int {
-	n := 0
-	for _, ch := range s {
-		n = n*10 + int(ch-'0')
-	}
-	return n
-}
-
-func defaultDatabaseName(appName string) string {
-	return toKebab(appName) + ".db"
-}
-
-func parseFieldAttributes(field *model.Field, raw string, lineNo int) error {
-	tokens, err := tokenizeFieldAttributes(raw)
-	if err != nil {
-		return parserErrorf("line %d: %w", lineNo, err)
-	}
-	for i := 0; i < len(tokens); i++ {
-		switch tokens[i] {
-		case "":
-			continue
-		case "primary":
-			field.Primary = true
-		case "auto":
-			field.Auto = true
-		case "optional":
-			field.Optional = true
-		case "default":
-			if i+1 >= len(tokens) {
-				return parserErrorf("line %d: default requires a literal value", lineNo)
-			}
-			defaultValue, err := parseFieldDefaultLiteral(field.Type, tokens[i+1], lineNo)
-			if err != nil {
-				return err
-			}
-			field.Default = defaultValue
-			i++
-		default:
-			return parserErrorf("line %d: unknown field attribute %q", lineNo, tokens[i])
+	for _, child := range node.Children {
+		if err := collectScreenCommandMessagePayloadTypes(child, screenOut, messageArities, commandReturnTypes); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func tokenizeFieldAttributes(raw string) ([]string, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return nil, nil
+func mergeScreenMessagePayloadType(screenOut map[string][]frontendType, messageName string, index int, next frontendType) error {
+	current := screenOut[messageName]
+	if index >= len(current) {
+		expanded := make([]frontendType, index+1)
+		copy(expanded, current)
+		current = expanded
+	}
+	if current[index].Kind == "" {
+		current[index] = next
+		screenOut[messageName] = current
+		return nil
+	}
+	merged, err := mergeCompatibleFrontendTypes(current[index], next)
+	if err != nil {
+		return err
+	}
+	current[index] = merged
+	screenOut[messageName] = current
+	return nil
+}
+
+func inferScreenUIMessagePayloadTypes(screen model.FrontendScreen, modelType frontendType, typeChecker *frontendTypeChecker, messageArities map[string]int) (map[string][]frontendType, error) {
+	out := map[string][]frontendType{}
+	env := typeChecker.baseEnv(screen)
+	if screen.ViewModel != "" {
+		env[screen.ViewModel] = modelType
+	}
+	for _, section := range screen.Sections {
+		for _, item := range section.Items {
+			if err := inferScreenItemMessagePayloadTypes(item, modelType, env, typeChecker, messageArities, out); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if screen.View != nil {
+		if err := inferFrontendViewNodeMessagePayloadTypes(*screen.View, env, typeChecker, messageArities, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func inferScreenItemMessagePayloadTypes(item model.FrontendItem, modelType frontendType, env frontendTypeEnv, typeChecker *frontendTypeChecker, messageArities map[string]int, out map[string][]frontendType) error {
+	switch item.Kind {
+	case "textInput", "textarea", "toggle", "select":
+		arity, ok := messageArities[item.Message]
+		if !ok || arity != 1 {
+			return nil
+		}
+		fieldType, err := frontendModelFieldType(modelType, item.ModelField)
+		if err != nil {
+			return err
+		}
+		if err := mergeScreenMessagePayloadType(out, item.Message, 0, fieldType); err != nil {
+			return fmt.Errorf("message %s has incompatible UI payloads: %w", item.Message, err)
+		}
+	case "button":
+		if strings.TrimSpace(item.Message) == "" {
+			return nil
+		}
+		node, err := sexp.ParseOne(item.Message)
+		if err != nil {
+			return err
+		}
+		if err := inferFrontendMessageNodePayloadTypes(node, env, typeChecker, messageArities, "button", out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func inferFrontendViewNodeMessagePayloadTypes(node model.FrontendViewNode, env frontendTypeEnv, typeChecker *frontendTypeChecker, messageArities map[string]int, out map[string][]frontendType) error {
+	if node.Kind == "button" && strings.TrimSpace(node.Message) != "" {
+		messageNode, err := sexp.ParseOne(node.Message)
+		if err != nil {
+			return err
+		}
+		if err := inferFrontendMessageNodePayloadTypes(messageNode, env, typeChecker, messageArities, "button", out); err != nil {
+			return err
+		}
+	}
+	for _, child := range node.Children {
+		if err := inferFrontendViewNodeMessagePayloadTypes(child, env, typeChecker, messageArities, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func inferFrontendMessageNodePayloadTypes(node sexp.Node, env frontendTypeEnv, typeChecker *frontendTypeChecker, messageArities map[string]int, context string, out map[string][]frontendType) error {
+	switch node.Kind {
+	case sexp.KindSymbol:
+		return nil
+	case sexp.KindList:
+		if len(node.Children) == 0 || node.Children[0].Kind != sexp.KindSymbol {
+			return nil
+		}
+		name := canonicalFieldName(node.Children[0].Value)
+		arity, ok := messageArities[name]
+		if !ok || len(node.Children)-1 != arity {
+			return nil
+		}
+		for index, arg := range node.Children[1:] {
+			argType, err := typeChecker.inferExprType(arg, env)
+			if err != nil {
+				return fmt.Errorf("%s message %q argument %d: %w", context, node.Children[0].Value, index+1, err)
+			}
+			if frontendTypeIsUnresolved(argType) {
+				return fmt.Errorf("%s message %q argument %d type could not be inferred", context, node.Children[0].Value, index+1)
+			}
+			if err := mergeScreenMessagePayloadType(out, name, index, argType); err != nil {
+				return fmt.Errorf("message %s has incompatible UI payloads: %w", name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validateScreenMessagePayloadTypesResolved(screen model.FrontendScreen, payloads map[string][]frontendType) error {
+	for _, message := range screen.Messages {
+		for index, param := range message.Parameters {
+			var value frontendType
+			if index < len(payloads[message.Name]) {
+				value = payloads[message.Name][index]
+			}
+			if frontendTypeIsUnresolved(value) {
+				return fmt.Errorf("message %q parameter %q type could not be inferred", message.Name, param)
+			}
+		}
+	}
+	return nil
+}
+
+func validateFrontendCommandForms(node sexp.Node, allowedCommands map[string]int, commandKinds map[string]string, messageArities map[string]int) error {
+	if node.Kind != sexp.KindList {
+		return nil
+	}
+	if len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol && node.Children[0].Value == "command" {
+		if len(node.Children) != 4 {
+			return fmt.Errorf("command expects a backend call, a success reply, and a failure reply")
+		}
+		call := node.Children[1]
+		if call.Kind != sexp.KindList || len(call.Children) == 0 {
+			return fmt.Errorf("command expects a backend call like (load-orders) or (like-post post-id)")
+		}
+		if call.Children[0].Kind != sexp.KindSymbol {
+			return fmt.Errorf("command backend call must start with a symbol")
+		}
+		commandName := canonicalFunctionName(call.Children[0].Value)
+		arity, ok := allowedCommands[commandName]
+		if !ok {
+			return fmt.Errorf("command can only call a query or action, got %q", call.Children[0].Value)
+		}
+		if len(call.Children)-1 != arity {
+			return fmt.Errorf("%s expects %d arguments", call.Children[0].Value, arity)
+		}
+		for index, messageNode := range node.Children[2:] {
+			if messageNode.Kind != sexp.KindSymbol {
+				return fmt.Errorf("command reply message must be a symbol")
+			}
+			name := canonicalFieldName(messageNode.Value)
+			arity, ok := messageArities[name]
+			if !ok {
+				return fmt.Errorf("command references unknown message %q", messageNode.Value)
+			}
+			if arity > 1 {
+				return fmt.Errorf("command reply %q must accept at most one argument", messageNode.Value)
+			}
+			if index == 0 && commandKinds[commandName] == "action" && arity != 0 {
+				return fmt.Errorf("action success reply %q must not accept a payload", messageNode.Value)
+			}
+		}
+	}
+	for _, child := range node.Children {
+		if err := validateFrontendCommandForms(child, allowedCommands, commandKinds, messageArities); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateFrontendTransitionStructure(node sexp.Node) error {
+	if err := validateFrontendTransitionResult(node); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateFrontendTransitionResult(node sexp.Node) error {
+	if node.Kind == sexp.KindList && len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
+		switch node.Children[0].Value {
+		case "if":
+			if len(node.Children) != 4 {
+				return nil
+			}
+			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
+				return err
+			}
+			if err := validateFrontendTransitionResult(node.Children[2]); err != nil {
+				return err
+			}
+			return validateFrontendTransitionResult(node.Children[3])
+		case "cond":
+			for _, clause := range node.Children[1:] {
+				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
+					return nil
+				}
+				head := clause.Children[0]
+				if !(head.Kind == sexp.KindSymbol && head.Value == "else") {
+					if err := validateNoFrontendEffectForms(head); err != nil {
+						return err
+					}
+				}
+				if err := validateFrontendTransitionResult(clause.Children[1]); err != nil {
+					return err
+				}
+			}
+			return nil
+		case "match":
+			if len(node.Children) < 3 {
+				return nil
+			}
+			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
+				return err
+			}
+			for _, clause := range node.Children[2:] {
+				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
+					return nil
+				}
+				if err := validateFrontendTransitionResult(clause.Children[1]); err != nil {
+					return err
+				}
+			}
+			return nil
+		case "let", "let*":
+			if len(node.Children) != 3 {
+				return nil
+			}
+			bindings := node.Children[1]
+			if bindings.Kind != sexp.KindList {
+				return nil
+			}
+			for _, binding := range bindings.Children {
+				if binding.Kind != sexp.KindList || len(binding.Children) != 2 {
+					return nil
+				}
+				if err := validateNoFrontendEffectForms(binding.Children[1]); err != nil {
+					return err
+				}
+			}
+			return validateFrontendTransitionResult(node.Children[2])
+		case "begin":
+			if len(node.Children) < 2 {
+				return nil
+			}
+			for _, exprNode := range node.Children[1 : len(node.Children)-1] {
+				if err := validateNoFrontendEffectForms(exprNode); err != nil {
+					return err
+				}
+			}
+			return validateFrontendTransitionResult(node.Children[len(node.Children)-1])
+		}
 	}
 
-	var tokens []string
-	var current strings.Builder
-	inString := false
-	escaped := false
+	if node.Kind != sexp.KindList || len(node.Children) != 2 {
+		return parseError(node, "screen transition must return (model effects)")
+	}
+	if looksLikeExtraModelWrapper(node.Children[0]) {
+		return parseError(node.Children[0], "screen transition model has an extra pair of parentheses; use (record ...) instead of ((record ...))")
+	}
+	if err := validateNoFrontendEffectForms(node.Children[0]); err != nil {
+		return err
+	}
+	return validateFrontendEffectsExpression(node.Children[1])
+}
 
-	for _, r := range trimmed {
-		switch {
-		case inString:
-			current.WriteRune(r)
-			if escaped {
-				escaped = false
-			} else if r == '\\' {
-				escaped = true
-			} else if r == '"' {
-				inString = false
+func looksLikeExtraModelWrapper(node sexp.Node) bool {
+	return node.Kind == sexp.KindList &&
+		len(node.Children) == 1 &&
+		node.Children[0].Kind == sexp.KindList &&
+		len(node.Children[0].Children) > 0 &&
+		node.Children[0].Children[0].Kind == sexp.KindSymbol
+}
+
+func validateFrontendEffectsExpression(node sexp.Node) error {
+	if node.Kind == sexp.KindList && len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
+		switch node.Children[0].Value {
+		case "if":
+			if len(node.Children) != 4 {
+				return nil
 			}
-		case unicode.IsSpace(r):
-			if current.Len() > 0 {
-				tokens = append(tokens, current.String())
-				current.Reset()
+			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
+				return err
+			}
+			if err := validateFrontendEffectsExpression(node.Children[2]); err != nil {
+				return err
+			}
+			return validateFrontendEffectsExpression(node.Children[3])
+		case "cond":
+			for _, clause := range node.Children[1:] {
+				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
+					return nil
+				}
+				head := clause.Children[0]
+				if !(head.Kind == sexp.KindSymbol && head.Value == "else") {
+					if err := validateNoFrontendEffectForms(head); err != nil {
+						return err
+					}
+				}
+				if err := validateFrontendEffectsExpression(clause.Children[1]); err != nil {
+					return err
+				}
+			}
+			return nil
+		case "match":
+			if len(node.Children) < 3 {
+				return nil
+			}
+			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
+				return err
+			}
+			for _, clause := range node.Children[2:] {
+				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
+					return nil
+				}
+				if err := validateFrontendEffectsExpression(clause.Children[1]); err != nil {
+					return err
+				}
+			}
+			return nil
+		case "let", "let*":
+			if len(node.Children) != 3 {
+				return nil
+			}
+			bindings := node.Children[1]
+			if bindings.Kind != sexp.KindList {
+				return nil
+			}
+			for _, binding := range bindings.Children {
+				if binding.Kind != sexp.KindList || len(binding.Children) != 2 {
+					return nil
+				}
+				if err := validateNoFrontendEffectForms(binding.Children[1]); err != nil {
+					return err
+				}
+			}
+			return validateFrontendEffectsExpression(node.Children[2])
+		case "begin":
+			if len(node.Children) < 2 {
+				return nil
+			}
+			for _, exprNode := range node.Children[1 : len(node.Children)-1] {
+				if err := validateNoFrontendEffectForms(exprNode); err != nil {
+					return err
+				}
+			}
+			return validateFrontendEffectsExpression(node.Children[len(node.Children)-1])
+		case "command", "go", "back":
+			return parseError(node, "screen effects must be a list; wrap %s in an extra pair of parentheses", node.Children[0].Value)
+		}
+	}
+
+	if node.Kind != sexp.KindList {
+		return parseError(node, "screen effects must be a list")
+	}
+	for _, child := range node.Children {
+		if err := validateFrontendEffect(child); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateFrontendEffect(node sexp.Node) error {
+	if node.Kind == sexp.KindList && len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
+		switch node.Children[0].Value {
+		case "if":
+			if len(node.Children) != 4 {
+				return nil
+			}
+			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
+				return err
+			}
+			if err := validateFrontendEffect(node.Children[2]); err != nil {
+				return err
+			}
+			return validateFrontendEffect(node.Children[3])
+		case "cond":
+			for _, clause := range node.Children[1:] {
+				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
+					return nil
+				}
+				head := clause.Children[0]
+				if !(head.Kind == sexp.KindSymbol && head.Value == "else") {
+					if err := validateNoFrontendEffectForms(head); err != nil {
+						return err
+					}
+				}
+				if err := validateFrontendEffect(clause.Children[1]); err != nil {
+					return err
+				}
+			}
+			return nil
+		case "match":
+			if len(node.Children) < 3 {
+				return nil
+			}
+			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
+				return err
+			}
+			for _, clause := range node.Children[2:] {
+				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
+					return nil
+				}
+				if err := validateFrontendEffect(clause.Children[1]); err != nil {
+					return err
+				}
+			}
+			return nil
+		case "let", "let*":
+			if len(node.Children) != 3 {
+				return nil
+			}
+			bindings := node.Children[1]
+			if bindings.Kind != sexp.KindList {
+				return nil
+			}
+			for _, binding := range bindings.Children {
+				if binding.Kind != sexp.KindList || len(binding.Children) != 2 {
+					return nil
+				}
+				if err := validateNoFrontendEffectForms(binding.Children[1]); err != nil {
+					return err
+				}
+			}
+			return validateFrontendEffect(node.Children[2])
+		case "begin":
+			if len(node.Children) < 2 {
+				return nil
+			}
+			for _, exprNode := range node.Children[1 : len(node.Children)-1] {
+				if err := validateNoFrontendEffectForms(exprNode); err != nil {
+					return err
+				}
+			}
+			return validateFrontendEffect(node.Children[len(node.Children)-1])
+		case "command", "go", "back":
+			return validateFrontendEffectShape(node)
+		}
+	}
+
+	return parseError(node, "screen effects can only contain (command ...), (go ...), or (back)")
+}
+
+func validateNoFrontendEffectForms(node sexp.Node) error {
+	if node.Kind != sexp.KindList {
+		return nil
+	}
+	if len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
+		switch node.Children[0].Value {
+		case "command", "go", "back":
+			return parseError(node, "%s can only be used inside the effects list returned by screen init/update", node.Children[0].Value)
+		}
+	}
+	for _, child := range node.Children {
+		if err := validateNoFrontendEffectForms(child); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateFrontendEffectShape(node sexp.Node) error {
+	if node.Kind != sexp.KindList || len(node.Children) == 0 || node.Children[0].Kind != sexp.KindSymbol {
+		return parseError(node, "screen effect must be an operation")
+	}
+	switch node.Children[0].Value {
+	case "command":
+		if len(node.Children) != 4 {
+			return parseError(node, "command expects a backend call, a success reply, and a failure reply")
+		}
+		call := node.Children[1]
+		if call.Kind != sexp.KindList || len(call.Children) == 0 {
+			return parseError(node, "command expects a backend call like (load-orders) or (like-post post-id)")
+		}
+		if call.Children[0].Kind != sexp.KindSymbol {
+			return parseError(node, "command backend call must start with a symbol")
+		}
+		if node.Children[2].Kind != sexp.KindSymbol {
+			return parseError(node, "command reply message must be a symbol")
+		}
+		if node.Children[3].Kind != sexp.KindSymbol {
+			return parseError(node, "command failure reply must be a symbol")
+		}
+	case "go":
+		if len(node.Children) < 2 {
+			return parseError(node, "go expects a destination")
+		}
+		if node.Children[1].Kind != sexp.KindSymbol {
+			return parseError(node, "go destination must be a symbol")
+		}
+	case "back":
+		if len(node.Children) != 1 {
+			return parseError(node, "back does not accept arguments")
+		}
+	}
+	return nil
+}
+
+func validateFrontendScreenNavigation(screen model.FrontendScreen, screens map[string]model.FrontendScreen, typeChecker *frontendTypeChecker, modelType frontendType) error {
+	if strings.TrimSpace(screen.InitExpression) != "" {
+		if err := validateFrontendGoCallsInTransition(screen.InitExpression, typeChecker.baseEnv(screen), typeChecker, screens); err != nil {
+			return fmt.Errorf("init: %w", err)
+		}
+	}
+	if strings.TrimSpace(screen.UpdateBody) != "" {
+		env := typeChecker.baseEnv(screen)
+		if screen.UpdateMessage != "" {
+			env[screen.UpdateMessage] = typeChecker.screenMessageType(screen)
+		}
+		if screen.UpdateModel != "" {
+			env[screen.UpdateModel] = modelType
+		}
+		if err := validateFrontendGoCallsInTransition(screen.UpdateBody, env, typeChecker, screens); err != nil {
+			return fmt.Errorf("update: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateFrontendScreenItems(screen model.FrontendScreen, screens map[string]model.FrontendScreen, messageArities map[string]int, allowedFunctions map[string]int, allowedRecords map[string][]string, typeChecker *frontendTypeChecker, modelType frontendType, actionNames map[string]struct{}) error {
+	for _, section := range screen.Sections {
+		for _, item := range section.Items {
+			if err := validateFrontendScreenItem(screen, screens, item, messageArities, allowedFunctions, allowedRecords, typeChecker, modelType, actionNames); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateFrontendScreenItem(screen model.FrontendScreen, screens map[string]model.FrontendScreen, item model.FrontendItem, messageArities map[string]int, allowedFunctions map[string]int, allowedRecords map[string][]string, typeChecker *frontendTypeChecker, modelType frontendType, actionNames map[string]struct{}) error {
+	if strings.TrimSpace(item.Condition) != "" {
+		allowed := map[string]struct{}{"model": {}}
+		for _, param := range screen.Parameters {
+			allowed[param] = struct{}{}
+		}
+		if _, err := expr.Parse(item.Condition, expr.ParserOptions{
+			AllowedVariables: expr.AllowedVariablesWithBuiltins(allowed),
+			AllowedFunctions: allowedFunctions,
+			AllowedRecords:   allowedRecords,
+			AllowedVariants:  allowedTypeVariants(typeChecker.types),
+		}); err != nil {
+			return fmt.Errorf("%s condition: %w", item.Kind, err)
+		}
+	}
+	if item.Disabled != "" {
+		fieldType, err := frontendModelFieldType(modelType, item.Disabled)
+		if err != nil {
+			return fmt.Errorf("%s disabled: %w", item.Kind, err)
+		}
+		if !frontendAssignable(fieldType, boolFrontendType()) {
+			return fmt.Errorf("%s disabled expects bool field, got %s", item.Kind, fieldType.String())
+		}
+	}
+	switch item.Kind {
+	case "field":
+		if len(screen.Parameters) == 0 {
+			return fmt.Errorf("field requires a screen row parameter")
+		}
+		if item.Field == "" {
+			return fmt.Errorf("field requires a row field")
+		}
+		rowType := anyFrontendType()
+		if typeChecker != nil && len(screen.Parameters) > 0 {
+			rowType = typeChecker.screenParameterType(screen.Name, 0)
+		}
+		if rowType.Kind == frontendTypeAny {
+			return fmt.Errorf("field cannot be type-checked because screen parameter %q is unresolved", screen.Parameters[0])
+		}
+		if _, err := frontendRecordFieldType(rowType, item.Field); err != nil {
+			return err
+		}
+	case "textInput", "textarea", "toggle", "select":
+		if strings.TrimSpace(item.ModelField) == "" {
+			return fmt.Errorf("%s requires a model field", item.Kind)
+		}
+		arity, ok := messageArities[item.Message]
+		if !ok {
+			return fmt.Errorf("%s references unknown message %q", item.Kind, item.Message)
+		}
+		if arity != 1 {
+			return fmt.Errorf("%s message %q must accept exactly one argument", item.Kind, item.Message)
+		}
+		fieldType, err := frontendModelFieldType(modelType, item.ModelField)
+		if err != nil {
+			return err
+		}
+		switch item.Kind {
+		case "toggle":
+			if !frontendAssignable(fieldType, boolFrontendType()) {
+				return fmt.Errorf("toggle model field %q must be bool, got %s", item.ModelField, fieldType.String())
 			}
 		default:
-			current.WriteRune(r)
-			if r == '"' {
-				inString = true
+			if !frontendAssignable(fieldType, stringFrontendType()) {
+				return fmt.Errorf("%s model field %q must be string, got %s", item.Kind, item.ModelField, fieldType.String())
+			}
+		}
+		if item.Kind == "select" && len(item.Options) == 0 {
+			return fmt.Errorf("select requires at least one option")
+		}
+	case "list":
+		if strings.TrimSpace(item.ModelField) == "" {
+			return fmt.Errorf("list requires a model field")
+		}
+		fieldType, err := frontendModelFieldType(modelType, item.ModelField)
+		if err != nil {
+			return err
+		}
+		if fieldType.Kind != frontendTypeList || fieldType.Element == nil {
+			return fmt.Errorf("list model field %q must be a list, got %s", item.ModelField, fieldType.String())
+		}
+		if typeChecker != nil {
+			entityType, ok, err := typeChecker.namedType(canonicalFieldName(item.Entity))
+			if err != nil {
+				return err
+			}
+			if ok && !frontendRecordTypesMatch(*fieldType.Element, entityType) {
+				return fmt.Errorf("list model field %q must contain %s, got %s", item.ModelField, entityType.String(), fieldType.String())
+			}
+			if item.TitleField != "" {
+				if _, err := frontendRecordFieldType(*fieldType.Element, item.TitleField); err != nil {
+					return fmt.Errorf("list title: %w", err)
+				}
+			}
+			if item.SubtitleField != "" {
+				if _, err := frontendRecordFieldType(*fieldType.Element, item.SubtitleField); err != nil {
+					return fmt.Errorf("list subtitle: %w", err)
+				}
+			}
+			if item.Destination != "" {
+				target, ok := screens[item.Destination]
+				if !ok {
+					return fmt.Errorf("list destination references unknown screen %q", item.Destination)
+				}
+				if len(target.Parameters) != 1 {
+					return fmt.Errorf("list destination %s expects %d arguments, but list open provides exactly 1 row", target.Name, len(target.Parameters))
+				}
+				targetType := typeChecker.screenParameterType(target.Name, 0)
+				if targetType.Kind == frontendTypeAny {
+					return fmt.Errorf("list destination %s cannot be type-checked because parameter %q is unresolved", target.Name, target.Parameters[0])
+				}
+				if !frontendAssignable(entityType, targetType) {
+					return fmt.Errorf("list destination %s expects %s, got %s", target.Name, targetType.String(), entityType.String())
+				}
+			}
+		}
+		if item.Action != "" {
+			if _, ok := actionNames[item.Action]; !ok {
+				return fmt.Errorf("list action references unknown action %q", item.Action)
 			}
 		}
 	}
-
-	if inString {
-		return nil, parserErrorf("unterminated string literal in field attributes")
-	}
-	if current.Len() > 0 {
-		tokens = append(tokens, current.String())
-	}
-	return tokens, nil
+	return nil
 }
 
-func parseFieldDefaultLiteral(fieldType string, raw string, lineNo int) (any, error) {
-	switch fieldType {
-	case "String":
-		if !(strings.HasPrefix(raw, "\"") && strings.HasSuffix(raw, "\"")) {
-			return nil, parserErrorf("line %d: field default for %s must be a string literal", lineNo, fieldType)
+func frontendModelFieldType(modelType frontendType, fieldName string) (frontendType, error) {
+	return frontendRecordFieldType(modelType, fieldName)
+}
+
+func frontendRecordFieldType(recordType frontendType, fieldName string) (frontendType, error) {
+	if recordType.Kind != frontendTypeRecord {
+		return frontendType{}, fmt.Errorf("model must be a record, got %s", recordType.String())
+	}
+	value, ok := recordType.Fields[canonicalFieldName(fieldName)]
+	if !ok {
+		return frontendType{}, fmt.Errorf("record %s has no field %q", recordType.Name, canonicalFieldName(fieldName))
+	}
+	return value, nil
+}
+
+func frontendRecordTypesMatch(left frontendType, right frontendType) bool {
+	if left.Kind == frontendTypeAny || right.Kind == frontendTypeAny {
+		return true
+	}
+	if left.Kind != frontendTypeRecord || right.Kind != frontendTypeRecord {
+		return frontendAssignable(left, right)
+	}
+	return true
+}
+
+func validateFrontendGoCallsInTransition(raw string, env frontendTypeEnv, typeChecker *frontendTypeChecker, screens map[string]model.FrontendScreen) error {
+	node, err := sexp.ParseOne(raw)
+	if err != nil {
+		return err
+	}
+	return validateFrontendGoCallsInTransitionNode(node, env, typeChecker, screens)
+}
+
+func validateFrontendGoCallsInTransitionNode(node sexp.Node, env frontendTypeEnv, typeChecker *frontendTypeChecker, screens map[string]model.FrontendScreen) error {
+	if node.Kind == sexp.KindList && len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
+		switch node.Children[0].Value {
+		case "if":
+			if err := validateFrontendGoCallsInTransitionNode(node.Children[2], env, typeChecker, screens); err != nil {
+				return err
+			}
+			return validateFrontendGoCallsInTransitionNode(node.Children[3], env, typeChecker, screens)
+		case "cond":
+			for _, clause := range node.Children[1:] {
+				if err := validateFrontendGoCallsInTransitionNode(clause.Children[1], env, typeChecker, screens); err != nil {
+					return err
+				}
+			}
+			return nil
+		case "match":
+			_, clauses, err := typeChecker.prepareMatch(node.Children[1:], env)
+			if err != nil {
+				return err
+			}
+			for _, clause := range clauses {
+				if err := validateFrontendGoCallsInTransitionNode(clause.Body, clause.Env, typeChecker, screens); err != nil {
+					return err
+				}
+			}
+			return nil
+		case "let":
+			child, err := typeChecker.bindLetEnv(node.Children[1:], env, false)
+			if err != nil {
+				return err
+			}
+			return validateFrontendGoCallsInTransitionNode(node.Children[2], child, typeChecker, screens)
+		case "let*":
+			child, err := typeChecker.bindLetEnv(node.Children[1:], env, true)
+			if err != nil {
+				return err
+			}
+			return validateFrontendGoCallsInTransitionNode(node.Children[2], child, typeChecker, screens)
+		case "begin":
+			if len(node.Children) < 2 {
+				return nil
+			}
+			return validateFrontendGoCallsInTransitionNode(node.Children[len(node.Children)-1], env, typeChecker, screens)
 		}
-		unquoted, err := strconv.Unquote(raw)
+	}
+	if node.Kind != sexp.KindList || len(node.Children) != 2 || node.Children[1].Kind != sexp.KindList {
+		return nil
+	}
+	return validateFrontendGoCallsInEffects(node.Children[1], env, typeChecker, screens)
+}
+
+func validateFrontendGoCallsInEffects(node sexp.Node, env frontendTypeEnv, typeChecker *frontendTypeChecker, screens map[string]model.FrontendScreen) error {
+	if node.Kind == sexp.KindList && len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
+		switch node.Children[0].Value {
+		case "if":
+			if err := validateFrontendGoCallsInEffects(node.Children[2], env, typeChecker, screens); err != nil {
+				return err
+			}
+			return validateFrontendGoCallsInEffects(node.Children[3], env, typeChecker, screens)
+		case "cond":
+			for _, clause := range node.Children[1:] {
+				if err := validateFrontendGoCallsInEffects(clause.Children[1], env, typeChecker, screens); err != nil {
+					return err
+				}
+			}
+			return nil
+		case "match":
+			_, clauses, err := typeChecker.prepareMatch(node.Children[1:], env)
+			if err != nil {
+				return err
+			}
+			for _, clause := range clauses {
+				if err := validateFrontendGoCallsInEffects(clause.Body, clause.Env, typeChecker, screens); err != nil {
+					return err
+				}
+			}
+			return nil
+		case "let":
+			child, err := typeChecker.bindLetEnv(node.Children[1:], env, false)
+			if err != nil {
+				return err
+			}
+			return validateFrontendGoCallsInEffects(node.Children[2], child, typeChecker, screens)
+		case "let*":
+			child, err := typeChecker.bindLetEnv(node.Children[1:], env, true)
+			if err != nil {
+				return err
+			}
+			return validateFrontendGoCallsInEffects(node.Children[2], child, typeChecker, screens)
+		case "begin":
+			if len(node.Children) < 2 {
+				return nil
+			}
+			return validateFrontendGoCallsInEffects(node.Children[len(node.Children)-1], env, typeChecker, screens)
+		case "go":
+			return validateFrontendGoCall(node, env, typeChecker, screens)
+		case "command", "back":
+			return nil
+		}
+	}
+	if node.Kind != sexp.KindList {
+		return nil
+	}
+	for _, child := range node.Children {
+		if err := validateFrontendGoCallsInEffects(child, env, typeChecker, screens); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateFrontendGoCall(node sexp.Node, env frontendTypeEnv, typeChecker *frontendTypeChecker, screens map[string]model.FrontendScreen) error {
+	if len(node.Children) < 2 || node.Children[1].Kind != sexp.KindSymbol {
+		return fmt.Errorf("go expects a screen")
+	}
+	target := canonicalScreenName(node.Children[1].Value)
+	targetScreen, ok := screens[target]
+	if !ok {
+		return fmt.Errorf("go references unknown screen %q", node.Children[1].Value)
+	}
+	args := node.Children[2:]
+	if len(args) != len(targetScreen.Parameters) {
+		return fmt.Errorf("go to %s expects %d argument(s), got %d", target, len(targetScreen.Parameters), len(args))
+	}
+	for index, arg := range args {
+		targetType := typeChecker.screenParameterType(target, index)
+		if targetType.Kind == frontendTypeAny {
+			return fmt.Errorf("go to %s cannot be type-checked because parameter %q is unresolved", target, targetScreen.Parameters[index])
+		}
+		argType, err := typeChecker.inferExprType(arg, env)
 		if err != nil {
-			return nil, parserErrorf("line %d: invalid string literal %q", lineNo, raw)
+			return err
 		}
-		return unquoted, nil
-	case "Bool":
-		if raw == "true" {
-			return true, nil
+		if !frontendAssignable(argType, targetType) {
+			return fmt.Errorf("go to %s expects %s for parameter %q, got %s", target, targetType.String(), targetScreen.Parameters[index], argType.String())
 		}
-		if raw == "false" {
-			return false, nil
+	}
+	return nil
+}
+
+func validateFrontendScreenUIContext(screen model.FrontendScreen, hasUpdate bool, viewRawNodes []sexp.Node, sectionNodes []sexp.Node) error {
+	messageArities := frontendMessageArities(screen.Messages)
+	for _, viewRawNode := range viewRawNodes {
+		if err := validateFrontendViewNodeContext(viewRawNode, hasUpdate, messageArities); err != nil {
+			return err
 		}
-		return nil, parserErrorf("line %d: field default for %s must be true or false", lineNo, fieldType)
-	case "Int", "Date", "DateTime":
-		n, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil {
-			return nil, parserErrorf("line %d: field default for %s must be an integer literal", lineNo, fieldType)
+	}
+	for _, sectionNode := range sectionNodes {
+		if err := validateFrontendSectionContext(sectionNode, hasUpdate, messageArities); err != nil {
+			return err
 		}
-		if fieldType == "Date" {
-			n = normalizeDateMillis(n)
+	}
+	return nil
+}
+
+func validateFrontendViewNodeContext(node sexp.Node, hasUpdate bool, messageArities map[string]int) error {
+	if node.Kind != sexp.KindList || len(node.Children) == 0 {
+		return nil
+	}
+	head, ok := symbolValue(node.Children[0])
+	if !ok {
+		return nil
+	}
+	switch head {
+	case "section":
+		for _, child := range node.Children[1:] {
+			if child.Kind != sexp.KindList || len(child.Children) == 0 {
+				continue
+			}
+			key, _ := symbolValue(child.Children[0])
+			if key == "title" {
+				continue
+			}
+			if err := validateFrontendViewNodeContext(child, hasUpdate, messageArities); err != nil {
+				return err
+			}
 		}
-		return n, nil
-	case "Float":
-		if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			return float64(n), nil
+	case "button":
+		if !hasUpdate {
+			return parseError(node, "button requires a screen that defines update")
 		}
-		f, err := strconv.ParseFloat(raw, 64)
-		if err != nil {
-			return nil, parserErrorf("line %d: field default for %s must be a numeric literal", lineNo, fieldType)
+		if len(node.Children) >= 3 {
+			if err := validateFrontendMessageNode(node.Children[2], messageArities, "button"); err != nil {
+				return err
+			}
 		}
-		return f, nil
+	}
+	return nil
+}
+
+func validateFrontendSectionContext(sectionNode sexp.Node, hasUpdate bool, messageArities map[string]int) error {
+	items, err := listChildren(sectionNode, "section")
+	if err != nil {
+		return err
+	}
+	_, index, err := parseSectionMetadata(items, sectionNode)
+	if err != nil {
+		return err
+	}
+	children, err := nestedClauseList(items, sectionNode, index, "section")
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		if err := validateFrontendSectionItemContext(child, hasUpdate, messageArities); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateFrontendSectionItemContext(node sexp.Node, hasUpdate bool, messageArities map[string]int) error {
+	items, err := listChildren(node, "screen item")
+	if err != nil {
+		return err
+	}
+	head, _ := symbolValue(items[0])
+	switch head {
+	case "if":
+		if len(items) >= 3 {
+			return validateFrontendSectionItemContext(items[2], hasUpdate, messageArities)
+		}
+	case "empty":
+		return nil
+	case "button":
+		if !hasUpdate {
+			return parseError(node, "button requires a screen that defines update")
+		}
+		if len(items) >= 3 {
+			if err := validateFrontendMessageNode(items[2], messageArities, "button"); err != nil {
+				return err
+			}
+		}
+	case "text-input", "textarea", "toggle", "select":
+		if !hasUpdate {
+			return parseError(node, "%s requires a screen that defines update", head)
+		}
+	}
+	return nil
+}
+
+func validateFrontendMessageNode(node sexp.Node, messageArities map[string]int, context string) error {
+	switch node.Kind {
+	case sexp.KindSymbol:
+		name := canonicalFieldName(node.Value)
+		arity, ok := messageArities[name]
+		if !ok {
+			return parseError(node, "%s references unknown message %q", context, node.Value)
+		}
+		if arity != 0 {
+			return parseError(node, "%s message %q expects %d arguments", context, node.Value, arity)
+		}
+		return nil
+	case sexp.KindList:
+		if len(node.Children) == 0 || node.Children[0].Kind != sexp.KindSymbol {
+			return parseError(node, "%s message must start with a symbol", context)
+		}
+		head := node.Children[0].Value
+		switch head {
+		case "command", "go", "back":
+			return parseError(node, "%s can only be used inside the effects list returned by screen init/update", head)
+		}
+		name := canonicalFieldName(head)
+		arity, ok := messageArities[name]
+		if !ok {
+			return parseError(node.Children[0], "%s references unknown message %q", context, head)
+		}
+		if len(node.Children)-1 != arity {
+			return parseError(node, "%s message %q expects %d arguments", context, head, arity)
+		}
+		return nil
 	default:
-		if upperNameRe.MatchString(raw) && unicode.IsUpper(rune(raw[0])) {
-			return raw, nil
-		}
-		return nil, parserErrorf("line %d: field default for %s must be a declared value like %sValue", lineNo, fieldType, fieldType)
+		return parseError(node, "%s message must be a symbol or list", context)
 	}
 }
 
-func isPrimitiveFieldType(fieldType string) bool {
-	switch strings.TrimSpace(fieldType) {
-	case "Int", "String", "Bool", "Float", "Date", "DateTime":
+func allowedFunctionArities(functions map[string]*model.Function) map[string]int {
+	out := map[string]int{}
+	for name, fn := range functions {
+		out[name] = len(fn.Parameters)
+	}
+	return out
+}
+
+func allowedRecordFields(records map[string]*model.Record) map[string][]string {
+	out := map[string][]string{}
+	for name, record := range records {
+		fields := make([]string, 0, len(record.Fields))
+		for _, field := range record.Fields {
+			fields = append(fields, field.Name)
+		}
+		out[name] = fields
+	}
+	return out
+}
+
+func allowedTypeVariants(types map[string]*model.EnumType) map[string]int {
+	out := map[string]int{}
+	for _, typ := range types {
+		for _, variant := range typ.Variants {
+			out[variant.Name] = len(variant.Fields)
+		}
+	}
+	return out
+}
+
+func frontendCompileTimeVariables(screen model.FrontendScreen, node sexp.Node, includeUpdate bool) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, param := range screen.Parameters {
+		out[param] = struct{}{}
+	}
+	if includeUpdate {
+		if screen.UpdateMessage != "" {
+			out[screen.UpdateMessage] = struct{}{}
+		}
+		if screen.UpdateModel != "" {
+			out[screen.UpdateModel] = struct{}{}
+		}
+	}
+	collectNonHeadSymbols(node, out)
+	return out
+}
+
+func collectNonHeadSymbols(node sexp.Node, out map[string]struct{}) {
+	switch node.Kind {
+	case sexp.KindSymbol:
+		out[canonicalFieldName(node.Value)] = struct{}{}
+	case sexp.KindList:
+		skipHead := len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol
+		for index, child := range node.Children {
+			if skipHead && index == 0 {
+				continue
+			}
+			collectNonHeadSymbols(child, out)
+		}
+	}
+}
+
+func symbolValues(nodes []sexp.Node) []string {
+	out := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		symbol, _ := symbolValue(node)
+		out = append(out, symbol)
+	}
+	return out
+}
+
+func canonicalFunctionName(value string) string {
+	return canonicalFieldName(value)
+}
+
+func canonicalFunctionParameters(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, canonicalFieldName(value))
+	}
+	return out
+}
+
+func applyAuthSettings(target *model.AuthConfig, auth *authValue) {
+	if auth.CodeTTLMinutes != nil {
+		target.CodeTTLMinutes = *auth.CodeTTLMinutes
+	}
+	if auth.SessionTTLHours != nil {
+		target.SessionTTLHours = *auth.SessionTTLHours
+	}
+	if auth.AuthRequestCodeRateLimit != nil {
+		target.AuthRequestCodeRateLimit = auth.AuthRequestCodeRateLimit
+	}
+	if auth.AuthLoginRateLimit != nil {
+		target.AuthLoginRateLimit = auth.AuthLoginRateLimit
+	}
+	if auth.AdminUISessionTTLHours != nil {
+		target.AdminUISessionTTLHours = auth.AdminUISessionTTLHours
+	}
+	if auth.SecurityFramePolicy != nil {
+		target.SecurityFramePolicy = auth.SecurityFramePolicy
+	}
+	if auth.SecurityReferrerPolicy != nil {
+		target.SecurityReferrerPolicy = auth.SecurityReferrerPolicy
+	}
+	if auth.SecurityContentNoSniff != nil {
+		target.SecurityContentNoSniff = auth.SecurityContentNoSniff
+	}
+	if auth.EmailFrom != "" {
+		target.EmailFrom = auth.EmailFrom
+	}
+	if auth.EmailSubject != "" {
+		target.EmailSubject = auth.EmailSubject
+	}
+	if auth.SMTPHost != "" {
+		target.SMTPHost = auth.SMTPHost
+	}
+	if auth.SMTPPort != nil {
+		target.SMTPPort = *auth.SMTPPort
+	}
+	if auth.SMTPUsername != "" {
+		target.SMTPUsername = auth.SMTPUsername
+	}
+	if auth.SMTPPasswordEnv != "" {
+		target.SMTPPasswordEnv = auth.SMTPPasswordEnv
+	}
+	if auth.SMTPStartTLS != nil {
+		target.SMTPStartTLS = *auth.SMTPStartTLS
+	}
+}
+
+func defaultAuthConfig(appName string) *model.AuthConfig {
+	return &model.AuthConfig{
+		UserEntity:      "User",
+		EmailField:      "email",
+		RoleField:       "role",
+		CodeTTLMinutes:  10,
+		SessionTTLHours: 24,
+		EmailFrom:       "no-reply@mar.local",
+		EmailSubject:    "Your " + humanizeKebab(appName) + " login code",
+		SMTPPort:        587,
+		SMTPStartTLS:    true,
+	}
+}
+
+func defaultDatabaseName(appName string) string {
+	return appName + ".db"
+}
+
+func mapPrimitiveType(name string) (string, error) {
+	switch name {
+	case "string":
+		return "String", nil
+	case "int":
+		return "Int", nil
+	case "decimal":
+		return "Decimal", nil
+	case "bool":
+		return "Bool", nil
+	case "date":
+		return "Date", nil
+	case "datetime":
+		return "DateTime", nil
+	default:
+		return "", fmt.Errorf("unknown type %q", name)
+	}
+}
+
+func parseRecordType(node sexp.Node) (string, error) {
+	switch node.Kind {
+	case sexp.KindSymbol:
+		switch node.Value {
+		case "string", "bool", "int", "decimal", "date", "datetime", "cursor":
+			return node.Value, nil
+		default:
+			return canonicalFieldName(node.Value), nil
+		}
+	case sexp.KindList:
+		if len(node.Children) == 0 {
+			return "", fmt.Errorf("type list cannot be empty")
+		}
+		head, ok := symbolValue(node.Children[0])
+		if !ok {
+			return "", fmt.Errorf("type head must be a symbol")
+		}
+		switch head {
+		case "maybe", "list":
+			if len(node.Children) != 2 {
+				return "", fmt.Errorf("%s expects one type argument", head)
+			}
+			arg, err := parseRecordType(node.Children[1])
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("(%s %s)", head, arg), nil
+		case "result":
+			if len(node.Children) != 3 {
+				return "", fmt.Errorf("result expects two type arguments")
+			}
+			left, err := parseRecordType(node.Children[1])
+			if err != nil {
+				return "", err
+			}
+			right, err := parseRecordType(node.Children[2])
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("(result %s %s)", left, right), nil
+		case "unit":
+			if len(node.Children) != 1 {
+				return "", fmt.Errorf("unit does not accept arguments")
+			}
+			return "(unit)", nil
+		default:
+			return "", fmt.Errorf("unknown type form %q", head)
+		}
+	default:
+		return "", fmt.Errorf("unsupported type expression")
+	}
+}
+
+func listChildren(node sexp.Node, context string) ([]sexp.Node, error) {
+	if node.Kind != sexp.KindList || len(node.Children) == 0 {
+		return nil, parseError(node, "%s must be a non-empty list", context)
+	}
+	return node.Children, nil
+}
+
+func nestedClauseList(items []sexp.Node, parent sexp.Node, index int, label string) ([]sexp.Node, error) {
+	if len(items) == index {
+		return []sexp.Node{}, nil
+	}
+	if len(items) != index+1 || items[index].Kind != sexp.KindList {
+		return nil, parseError(parent, "%s expects one nested list of clauses", label)
+	}
+	return items[index].Children, nil
+}
+
+func symbolValue(node sexp.Node) (string, bool) {
+	if node.Kind != sexp.KindSymbol {
+		return "", false
+	}
+	return node.Value, true
+}
+
+func parseAuthorizeActions(node sexp.Node) ([]string, error) {
+	switch node.Kind {
+	case sexp.KindSymbol:
+		return []string{node.Value}, nil
+	case sexp.KindList:
+		if len(node.Children) == 0 {
+			return nil, parseError(node, "authorize action list cannot be empty")
+		}
+		actions := make([]string, 0, len(node.Children))
+		for _, child := range node.Children {
+			action, ok := symbolValue(child)
+			if !ok {
+				return nil, parseError(child, "authorize action names must be symbols")
+			}
+			actions = append(actions, action)
+		}
+		return actions, nil
+	default:
+		return nil, parseError(node, "authorize action name must be a symbol or a list of symbols")
+	}
+}
+
+func stringLiteral(node sexp.Node) string {
+	return node.Value
+}
+
+func symbolOrStringValue(node sexp.Node) (string, error) {
+	switch node.Kind {
+	case sexp.KindString, sexp.KindSymbol:
+		return node.Value, nil
+	default:
+		return "", fmt.Errorf("expected symbol or string")
+	}
+}
+
+func boolLiteral(node sexp.Node) (bool, error) {
+	if node.Kind != sexp.KindSymbol {
+		return false, fmt.Errorf("expected bool")
+	}
+	switch node.Value {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("expected bool")
+	}
+}
+
+func intLiteral(node sexp.Node) (int, error) {
+	if node.Kind != sexp.KindNumber && node.Kind != sexp.KindSymbol {
+		return 0, fmt.Errorf("expected integer")
+	}
+	value, err := strconv.Atoi(node.Value)
+	if err != nil {
+		return 0, err
+	}
+	return value, nil
+}
+
+func literalValue(node sexp.Node) (any, error) {
+	switch node.Kind {
+	case sexp.KindString:
+		return node.Value, nil
+	case sexp.KindNumber:
+		if strings.Contains(node.Value, ".") {
+			return expr.ParseDecimal(node.Value)
+		}
+		return strconv.ParseInt(node.Value, 10, 64)
+	case sexp.KindSymbol:
+		switch node.Value {
+		case "true":
+			return true, nil
+		case "false":
+			return false, nil
+		default:
+			return nil, fmt.Errorf("unsupported default literal %q", node.Value)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported default literal")
+	}
+}
+
+func validateFieldDefaultLiteral(entityName, fieldName string, field model.Field, literal any) error {
+	if field.RelationEntity != "" {
+		return nil
+	}
+	switch field.Type {
+	case "String":
+		if _, ok := literal.(string); !ok {
+			return fmt.Errorf("entity %s default %s: expects string, got %s", entityName, fieldName, literalTypeName(literal))
+		}
+	case "Bool":
+		if _, ok := literal.(bool); !ok {
+			return fmt.Errorf("entity %s default %s: expects bool, got %s", entityName, fieldName, literalTypeName(literal))
+		}
+	case "Int":
+		if _, ok := literal.(int64); !ok {
+			return fmt.Errorf("entity %s default %s: expects int, got %s", entityName, fieldName, literalTypeName(literal))
+		}
+	case "Decimal":
+		switch literal.(type) {
+		case int64, expr.Decimal:
+		default:
+			return fmt.Errorf("entity %s default %s: expects decimal, got %s", entityName, fieldName, literalTypeName(literal))
+		}
+	case "Date":
+		if _, ok := literal.(int64); !ok {
+			return fmt.Errorf("entity %s default %s: expects date, got %s", entityName, fieldName, literalTypeName(literal))
+		}
+	case "DateTime":
+		if _, ok := literal.(int64); !ok {
+			return fmt.Errorf("entity %s default %s: expects datetime, got %s", entityName, fieldName, literalTypeName(literal))
+		}
+	default:
+		if len(field.EnumValues) == 0 {
+			return nil
+		}
+		text, ok := literal.(string)
+		if !ok {
+			return fmt.Errorf("entity %s default %s: expects %s, got %s", entityName, fieldName, field.Type, literalTypeName(literal))
+		}
+		for _, enumValue := range field.EnumValues {
+			if text == enumValue {
+				return nil
+			}
+		}
+		return fmt.Errorf("entity %s default %s: must be one of: %s", entityName, fieldName, strings.Join(field.EnumValues, ", "))
+	}
+	return nil
+}
+
+func literalTypeName(literal any) string {
+	switch literal.(type) {
+	case string:
+		return "string"
+	case bool:
+		return "bool"
+	case int64:
+		return "int"
+	case expr.Decimal:
+		return "decimal"
+	default:
+		return "unknown"
+	}
+}
+
+func canonicalTypeName(symbol string) string {
+	parts := strings.FieldsFunc(symbol, func(r rune) bool {
+		return r == '-' || r == '_'
+	})
+	var b strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		runes := []rune(part)
+		b.WriteRune(unicode.ToUpper(runes[0]))
+		if len(runes) > 1 {
+			b.WriteString(string(runes[1:]))
+		}
+	}
+	return b.String()
+}
+
+func canonicalFieldName(symbol string) string {
+	return strings.ReplaceAll(symbol, "-", "_")
+}
+
+func canonicalScreenName(symbol string) string {
+	return canonicalTypeName(symbol)
+}
+
+func inlineNodeString(node sexp.Node) string {
+	if node.Kind == "" {
+		return ""
+	}
+	return sexp.InlineString(node)
+}
+
+func pluralizeSnake(symbol string) string {
+	base := canonicalFieldName(symbol)
+	switch {
+	case strings.HasSuffix(base, "s"), strings.HasSuffix(base, "x"), strings.HasSuffix(base, "ch"), strings.HasSuffix(base, "sh"):
+		return base + "es"
+	case strings.HasSuffix(base, "y") && len(base) > 1 && !isVowel(rune(base[len(base)-2])):
+		return base[:len(base)-1] + "ies"
+	default:
+		return base + "s"
+	}
+}
+
+func isVowel(ch rune) bool {
+	switch unicode.ToLower(ch) {
+	case 'a', 'e', 'i', 'o', 'u':
 		return true
 	default:
 		return false
 	}
 }
 
-func normalizeDateMillis(value int64) int64 {
-	t := time.UnixMilli(value).UTC()
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC).UnixMilli()
+func humanizeKebab(value string) string {
+	parts := strings.Split(value, "-")
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		runes := []rune(part)
+		runes[0] = unicode.ToUpper(runes[0])
+		parts[i] = string(runes)
+	}
+	return strings.Join(parts, " ")
 }
 
-func entityPrimaryField(entity *model.Entity) *model.Field {
-	if entity == nil {
-		return nil
-	}
-	for i := range entity.Fields {
-		if entity.Fields[i].Name == entity.PrimaryKey {
-			return &entity.Fields[i]
-		}
-	}
-	return nil
-}
-
-func toKebab(v string) string {
-	var b strings.Builder
-	var prevLowerOrDigit bool
-	var prevWasDash bool
-
-	for _, ch := range v {
-		switch {
-		case ch == '_' || ch == '-' || ch == ' ':
-			if b.Len() > 0 && !prevWasDash {
-				b.WriteByte('-')
-				prevWasDash = true
-			}
-			prevLowerOrDigit = false
-
-		case ch >= 'A' && ch <= 'Z':
-			if b.Len() > 0 && prevLowerOrDigit && !prevWasDash {
-				b.WriteByte('-')
-			}
-			b.WriteByte(byte(ch + 32))
-			prevLowerOrDigit = false
-			prevWasDash = false
-
-		default:
-			b.WriteRune(ch)
-			prevLowerOrDigit = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')
-			prevWasDash = false
-		}
-	}
-
-	return strings.Trim(b.String(), "-")
-}
-
-func toSnake(v string) string {
-	var b strings.Builder
-	for i, ch := range v {
-		if i > 0 && ch >= 'A' && ch <= 'Z' {
-			b.WriteByte('_')
-		}
-		if ch >= 'A' && ch <= 'Z' {
-			b.WriteByte(byte(ch + 32))
-		} else {
-			b.WriteRune(ch)
-		}
-	}
-	return b.String()
-}
-
-func pluralize(v string) string {
-	if strings.HasSuffix(v, "y") && len(v) > 1 {
-		prev := v[len(v)-2]
-		if !strings.ContainsRune("aeiou", rune(prev)) {
-			return v[:len(v)-1] + "ies"
-		}
-	}
-	if strings.HasSuffix(v, "s") {
-		return v + "es"
-	}
-	return v + "s"
+func parseError(node sexp.Node, format string, args ...any) error {
+	return fmt.Errorf("line %d:%d: %s", node.Line, node.Column, fmt.Sprintf(format, args...))
 }
