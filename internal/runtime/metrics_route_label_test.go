@@ -10,13 +10,12 @@ func TestMetricsRouteLabelUsesNotFoundForUnknownRoutes(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "metrics-route-label.db"), `
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
 (define-app todo-api
   (entities todo))
@@ -46,13 +45,12 @@ func TestMetricsRouteLabelPreservesKnownSpecialRoutes(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "metrics-route-label-known.db"), `
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
 (define-app todo-api
   (entities todo))

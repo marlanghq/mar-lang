@@ -17,10 +17,9 @@ func TestMigrationsCreateAndAddOptionalField(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-safe.db")
 
 	appV1 := mustParseApp(t, `
-(define book
-  (entity
+(define-entity book
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app migration-api
   (entities book))
@@ -32,11 +31,10 @@ func TestMigrationsCreateAndAddOptionalField(t *testing.T) {
 	}
 
 	appV2 := mustParseApp(t, `
-(define book
-  (entity
+(define-entity book
     (fields
       ((title string)
-       (notes string optional)))))
+       (notes string optional))))
 
 (define-app migration-api
   (entities book))
@@ -70,11 +68,10 @@ func TestMigrationsBlockTypeChange(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-type-block.db")
 
 	appV1 := mustParseApp(t, `
-(define book
-  (entity
+(define-entity book
     (fields
       ((title string)
-       (price decimal)))))
+       (price decimal))))
 
 (define-app migration-api
   (entities book))
@@ -85,11 +82,10 @@ func TestMigrationsBlockTypeChange(t *testing.T) {
 	}
 
 	appV2 := mustParseApp(t, `
-(define book
-  (entity
+(define-entity book
     (fields
       ((title string)
-       (price string)))))
+       (price string))))
 
 (define-app migration-api
   (entities book))
@@ -115,10 +111,9 @@ func TestMigrationsAllowAddingRequiredFieldToEmptyTable(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-required-empty.db")
 
 	appV1 := mustParseApp(t, `
-(define book
-  (entity
+(define-entity book
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app migration-api
   (entities book))
@@ -129,11 +124,10 @@ func TestMigrationsAllowAddingRequiredFieldToEmptyTable(t *testing.T) {
 	}
 
 	appV2 := mustParseApp(t, `
-(define book
-  (entity
+(define-entity book
     (fields
       ((title string)
-       (stock int)))))
+       (stock int))))
 
 (define-app migration-api
   (entities book))
@@ -163,10 +157,9 @@ func TestMigrationsBlockAddingRequiredFieldWhenTableHasRows(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-required-block.db")
 
 	appV1 := mustParseApp(t, `
-(define book
-  (entity
+(define-entity book
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app migration-api
   (entities book))
@@ -181,11 +174,10 @@ func TestMigrationsBlockAddingRequiredFieldWhenTableHasRows(t *testing.T) {
 	}
 
 	appV2 := mustParseApp(t, `
-(define book
-  (entity
+(define-entity book
     (fields
       ((title string)
-       (stock int)))))
+       (stock int))))
 
 (define-app migration-api
   (entities book))
@@ -208,10 +200,9 @@ func TestMigrationsAutoAddRequiredFieldWithDefault(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-required-default.db")
 
 	appV1 := mustParseApp(t, `
-(define book
-  (entity
+(define-entity book
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app migration-api
   (entities book))
@@ -226,13 +217,12 @@ func TestMigrationsAutoAddRequiredFieldWithDefault(t *testing.T) {
 	}
 
 	appV2 := mustParseApp(t, `
-(define book
-  (entity
+(define-entity book
     (fields
       ((title string)
        (stock int)))
     (defaults
-      ((stock 0)))))
+      ((stock 0))))
 
 (define-app migration-api
   (entities book))
@@ -277,13 +267,12 @@ func TestMigrationsCreateEntityUniqueIndex(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-entity-unique.db")
 
 	app := mustParseApp(t, `
-(define handle
-  (entity
+(define-entity handle
     (fields
       ((realm string)
        (value string)))
     (unique
-      ((realm value)))))
+      ((realm value))))
 
 (define-app twitterish
   (entities handle))
@@ -314,10 +303,9 @@ func TestMigrationsAllowNullabilityChangeWhenTableIsEmpty(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-nullability-empty.db")
 
 	appV1 := mustParseApp(t, `
-(define student
-  (entity
+(define-entity student
     (fields
-      ((birth-date date)))))
+      ((birth-date date))))
 
 (define-app migration-api
   (entities student))
@@ -328,10 +316,9 @@ func TestMigrationsAllowNullabilityChangeWhenTableIsEmpty(t *testing.T) {
 	}
 
 	appV2 := mustParseApp(t, `
-(define student
-  (entity
+(define-entity student
     (fields
-      ((birth-date date optional)))))
+      ((birth-date date optional))))
 
 (define-app migration-api
   (entities student))
@@ -361,10 +348,9 @@ func TestMigrationsBlockNullabilityChangeWhenTableHasRows(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-nullability-block.db")
 
 	appV1 := mustParseApp(t, `
-(define student
-  (entity
+(define-entity student
     (fields
-      ((birth-date date)))))
+      ((birth-date date))))
 
 (define-app migration-api
   (entities student))
@@ -379,10 +365,9 @@ func TestMigrationsBlockNullabilityChangeWhenTableHasRows(t *testing.T) {
 	}
 
 	appV2 := mustParseApp(t, `
-(define student
-  (entity
+(define-entity student
     (fields
-      ((birth-date date optional)))))
+      ((birth-date date optional))))
 
 (define-app migration-api
   (entities student))
@@ -405,12 +390,11 @@ func TestMigrationsCreateForeignKeyForNewRelationTable(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-new-relation-fk.db")
 
 	app := mustParseApp(t, `
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (belongs-to
-      ((user)))))
+      ((user))))
 
 (define-app relation-create-api
   (entities todo))
@@ -447,10 +431,9 @@ func TestMigrationsBlockAddingRelationToExistingTable(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migration-existing-relation-block.db")
 
 	appV1 := mustParseApp(t, `
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app relation-block-api
   (entities todo))
@@ -461,12 +444,11 @@ func TestMigrationsBlockAddingRelationToExistingTable(t *testing.T) {
 	}
 
 	appV2 := mustParseApp(t, `
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (belongs-to
-      ((user)))))
+      ((user))))
 
 (define-app relation-block-api
   (entities todo))
@@ -504,10 +486,9 @@ func TestMigrationsCreateAuthEmailUniqueIndexForInternalUsers(t *testing.T) {
 
 	dbPath := filepath.Join(t.TempDir(), "migration-auth-index-internal.db")
 	app := mustParseApp(t, `
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app internal-auth-api
   (entities todo))
@@ -539,8 +520,7 @@ func TestMigrationsCreateAuthEmailUniqueIndexForAppUsers(t *testing.T) {
 	app := mustParseApp(t, `
 (define app-auth ())
 
-(define user
-  (entity))
+(define-entity user)
 
 (define-app app-auth-api
   (auth app-auth)

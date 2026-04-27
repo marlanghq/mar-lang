@@ -282,6 +282,31 @@ enum FrontendRuntime {
             return nil
         }
     }
+
+    static func text(
+        schema: Schema,
+        screen: FrontendScreenInfo,
+        currentModel: JSONValue,
+        expression: String?,
+        runtimeContext: FrontendRuntimeContext
+    ) -> String {
+        guard let raw = expression?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return ""
+        }
+        do {
+            var context = screenContext(screen: screen, runtimeContext: runtimeContext)
+            if let modelName = screen.updateModel {
+                context[frontendNormalizeSymbol(modelName)] = localValue(from: currentModel)
+            }
+            let value = try evaluate(schema: schema, context: context, raw: raw)
+            if case .string(let string) = value {
+                return string
+            }
+            return comparableString(value)
+        } catch {
+            return ""
+        }
+    }
 }
 
 private func runtimeMessageValue(screen: FrontendScreenInfo, name: String, payload: JSONValue?) -> FrontendLocalValue {
@@ -390,6 +415,9 @@ private func evaluateList(schema: Schema, context: [String: FrontendLocalValue],
     }
     if let comparisonValue = try evaluateComparisonForm(schema: schema, context: context, name: normalizedHead, args: args) {
         return comparisonValue
+    }
+    if let stringValue = try evaluateStringForm(schema: schema, context: context, name: normalizedHead, args: args) {
+        return stringValue
     }
     return try evaluateApplication(schema: schema, context: context, name: normalizedHead, items: items, args: args)
 }
@@ -529,6 +557,36 @@ private func evaluateComparisonForm(
         return try numericComparable(schema: schema, context: context, args: args) { $0 < $1 }
     case "<=":
         return try numericComparable(schema: schema, context: context, args: args) { $0 <= $1 }
+    default:
+        return nil
+    }
+}
+
+private func evaluateStringForm(
+    schema: Schema,
+    context: [String: FrontendLocalValue],
+    name: String,
+    args: [FrontendSexpNode]
+) throws -> FrontendLocalValue? {
+    switch name {
+    case "string_append":
+        let values = try args.map { try evaluate(schema: schema, context: context, node: $0) }
+        let pieces = try values.map { value -> String in
+            guard case .string(let string) = value else {
+                throw FrontendRuntimeError.message("string-append expects string arguments")
+            }
+            return string
+        }
+        return .string(pieces.joined())
+    case "number->string":
+        guard args.count == 1 else { throw FrontendRuntimeError.message("number->string expects 1 argument") }
+        return .string(numberString(try numberValue(evaluate(schema: schema, context: context, node: args[0]))))
+    case "date->string":
+        guard args.count == 1 else { throw FrontendRuntimeError.message("date->string expects 1 argument") }
+        return .string(DateCodec.formatDateDisplay(milliseconds: try numberValue(evaluate(schema: schema, context: context, node: args[0]))))
+    case "datetime->string":
+        guard args.count == 1 else { throw FrontendRuntimeError.message("datetime->string expects 1 argument") }
+        return .string(DateCodec.formatDateTimeDisplay(milliseconds: try numberValue(evaluate(schema: schema, context: context, node: args[0]))))
     default:
         return nil
     }
@@ -824,7 +882,7 @@ private func comparableString(_ value: FrontendLocalValue) -> String {
     case .string(let value):
         return value
     case .number(let value):
-        return value.rounded() == value ? String(Int(value)) : String(value)
+        return numberString(value)
     case .bool(let value):
         return value ? "true" : "false"
     case .null:
@@ -834,6 +892,10 @@ private func comparableString(_ value: FrontendLocalValue) -> String {
     default:
         return jsonInline(jsonValue(from: value))
     }
+}
+
+private func numberString(_ value: Double) -> String {
+    value.rounded() == value ? String(Int(value)) : String(value)
 }
 
 private func createCommandRequest(

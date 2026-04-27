@@ -66,6 +66,16 @@ func compileNode(node sexp.Node, opts ParserOptions) (Expr, error) {
 		if IsBuiltinValueName(name) {
 			return Variable{Name: name}, nil
 		}
+		// Dotted access: foo.bar.baz produces nested Get expressions when
+		// the leftmost prefix is a known variable. Mirrors how mar-lang
+		// already accesses record fields via dotted symbols (e.g. user.id,
+		// post.author, input.id in actions).
+		if dotted, ok := compileDottedSymbol(node.Value, opts); ok {
+			return dotted, nil
+		}
+		if hint := suggestKnownIdent(name, opts); hint != "" {
+			return nil, fmt.Errorf("unknown identifier %q. Did you mean %q?", node.Value, hint)
+		}
 		return nil, fmt.Errorf("unknown identifier %q", node.Value)
 	case sexp.KindList:
 		return compileList(node, opts)
@@ -89,6 +99,13 @@ func compileList(node sexp.Node, opts ParserOptions) (Expr, error) {
 		case "if", "cond", "let", "let*", "begin", "lambda", "match", "get", "assoc", "error", "from", "create", "update", "delete", "command", "go", "back", "not", "-", "+", "*", "/", "=", "!=", ">", ">=", "<", "<=", "and", "or":
 		default:
 			if _, isFunction := opts.AllowedFunctions[name]; !isFunction {
+				// First-class function call: when a variable is followed by
+				// arguments, treat it as a function application. Bare list
+				// literals with a variable head and no args still fall into
+				// compileListLiteral.
+				if len(node.Children) > 1 {
+					return compileFirstClassCall(name, node.Children[1:], opts)
+				}
 				return compileListLiteral(node.Children, opts)
 			}
 		}
@@ -199,6 +216,114 @@ func compileList(node sexp.Node, opts ParserOptions) (Expr, error) {
 		}
 		return Call{Name: name, Args: compiledArgs}, nil
 	}
+}
+
+// suggestKnownIdent finds the closest in-scope identifier (variable or
+// function name) for did-you-mean hints. Returns empty when nothing is
+// close enough.
+func suggestKnownIdent(want string, opts ParserOptions) string {
+	best := ""
+	bestDist := len(want)/2 + 1
+	consider := func(name string) {
+		if strings.HasPrefix(name, "__") {
+			return
+		}
+		d := editDistance(want, name)
+		if d < bestDist {
+			bestDist = d
+			best = name
+		}
+	}
+	for name := range opts.AllowedVariables {
+		consider(name)
+	}
+	for name := range opts.AllowedFunctions {
+		consider(name)
+	}
+	for name := range opts.AllowedRecords {
+		consider(name)
+	}
+	for name := range opts.AllowedVariants {
+		consider(name)
+	}
+	return best
+}
+
+// editDistance is the standard Levenshtein distance. Kept simple — used only
+// for did-you-mean hints.
+func editDistance(a, b string) int {
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = minOf(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
+func minOf(xs ...int) int {
+	m := xs[0]
+	for _, x := range xs[1:] {
+		if x < m {
+			m = x
+		}
+	}
+	return m
+}
+
+// compileDottedSymbol turns "input.id" or "post.author.email" into nested Get
+// expressions when the leftmost prefix is a known variable. Returns the
+// expression and true on success; (nil, false) if the prefix isn't allowed.
+func compileDottedSymbol(raw string, opts ParserOptions) (Expr, bool) {
+	if !strings.Contains(raw, ".") {
+		return nil, false
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) < 2 {
+		return nil, false
+	}
+	prefix := normalizeSymbol(parts[0])
+	if _, ok := opts.AllowedVariables[prefix]; !ok {
+		if !IsBuiltinValueName(prefix) {
+			return nil, false
+		}
+	}
+	var cur Expr = Variable{Name: prefix}
+	for _, field := range parts[1:] {
+		cur = Get{Target: cur, Field: normalizeSymbol(field)}
+	}
+	return cur, true
+}
+
+// compileFirstClassCall produces a Call against a variable-bound callable
+// (let-bound lambda, lambda parameter holding a function, etc.). At runtime
+// the Call dispatches through ctx[name] when name isn't a known function.
+func compileFirstClassCall(name string, args []sexp.Node, opts ParserOptions) (Expr, error) {
+	compiled := make([]Expr, 0, len(args))
+	for _, arg := range args {
+		expr, err := compileNode(arg, opts)
+		if err != nil {
+			return nil, err
+		}
+		compiled = append(compiled, expr)
+	}
+	return Call{Name: name, Args: compiled}, nil
 }
 
 func compileRegexMatch(args []sexp.Node, opts ParserOptions) (Expr, error) {
@@ -566,16 +691,12 @@ func compileOperator(op string, args []sexp.Node, opts ParserOptions) (Expr, err
 }
 
 func normalizeSymbol(value string) string {
-	switch value {
-	case "current-user":
-		return "current_user"
-	}
 	return strings.ReplaceAll(value, "-", "_")
 }
 
 func isBuiltinFunctionName(name string) bool {
 	switch name {
-	case "authenticated?", "anonymous?", "same_user?", "has_role?", "contains", "starts_with", "ends_with", "length", "matches", "just", "nothing", "unit", "ok", "err", "cons", "first", "rest", "empty?", "map", "filter", "fold_left", "fold_right":
+	case "authenticated?", "anonymous?", "same_user?", "has_role?", "contains", "starts_with", "ends_with", "length", "matches", "just", "nothing", "unit", "ok", "err", "cons", "first", "rest", "empty?", "map", "filter", "fold_left", "fold_right", "string_append", "number_>string", "date_>string", "datetime_>string":
 		return true
 	default:
 		return false

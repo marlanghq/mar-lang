@@ -13,8 +13,7 @@
    (smtp-username "resend")
    (smtp-password-env "RESEND_API_KEY")))
 
-(define user
-  (entity
+(define-entity user
     (fields
       ((display-name string optional)
        (handle string optional)
@@ -27,10 +26,9 @@
          (if (>= (length value) 3)
            true
            (error "handle must have at least 3 characters")))))
-    (authorize ((read true) ((update delete) (same-user? current-user id))))))
+    (authorize ((read true) ((update delete) (same-user? current-user id)))))
 
-(define post
-  (entity
+(define-entity post
     (fields ((body string)))
     (belongs-to ((author user)))
     (defaults ((author current-user)))
@@ -39,10 +37,9 @@
     (authorize
       ((read true)
        (create (authenticated? current-user))
-       ((update delete) (same-user? current-user author))))))
+       ((update delete) (same-user? current-user author)))))
 
-(define comment
-  (entity
+(define-entity comment
     (fields ((body string)))
     (belongs-to ((post) (author user)))
     (defaults ((author current-user)))
@@ -51,30 +48,27 @@
     (authorize
       ((read true)
        (create (authenticated? current-user))
-       ((update delete) (same-user? current-user author))))))
+       ((update delete) (same-user? current-user author)))))
 
-(define post-like
-  (entity
+(define-entity post-like
     (belongs-to ((post) (user)))
     (defaults ((user current-user)))
     (unique ((user post)))
     (authorize
       ((read true)
        (create (authenticated? current-user))
-       ((update delete) (same-user? current-user user))))))
+       ((update delete) (same-user? current-user user)))))
 
-(define comment-like
-  (entity
+(define-entity comment-like
     (belongs-to ((comment) (user)))
     (defaults ((user current-user)))
     (unique ((user comment)))
     (authorize
       ((read true)
        (create (authenticated? current-user))
-       ((update delete) (same-user? current-user user))))))
+       ((update delete) (same-user? current-user user)))))
 
-(define follow
-  (entity
+(define-entity follow
     (belongs-to ((follower user) (followed user)))
     (defaults ((follower current-user)))
     (unique ((follower followed)))
@@ -83,55 +77,54 @@
     (authorize
       ((read true)
        (create (authenticated? current-user))
-       ((update delete) (same-user? current-user follower))))))
+       ((update delete) (same-user? current-user follower)))))
 
-(define follow-user
-  (action (input ((user-id int))) (create follow ((followed user-id)))))
+(define-action follow-user (input ((user-id int))) (create follow ((followed user-id))))
 
-(define like-post
-  (action (input ((post-id int))) (create post-like ((post post-id)))))
+(define-action like-post (input ((post-id int))) (create post-like ((post post-id))))
 
-(define like-comment
-  (action
+(define-action like-comment
     (input ((comment-id int)))
-    (create comment-like ((comment comment-id)))))
+    (create comment-like ((comment comment-id))))
 
-(define publish-post
-  (action (input ((body string))) (create post ((body body)))))
+(define-action publish-post (input ((body string))) (create post ((body body))))
 
-(define (timeline-posts)
-  (query post (order-by created-at desc) (limit 20)))
+(define-query (timeline-posts)
+  (from post)
+  (order-by created-at desc)
+  (limit 20))
 
-(define (all-users)
-  (query user (order-by handle asc)))
+(define-query (all-users)
+  (from user)
+  (order-by handle asc))
 
-(define (posts-by-author author-id)
-  (query post (where (= author author-id)) (order-by created-at desc)))
+(define-query (posts-by-author author-id)
+  (from post)
+  (where (= author author-id))
+  (order-by created-at desc))
 
-(define (comments-for-post post-id)
-  (query comment (where (= post post-id)) (order-by created-at asc)))
+(define-query (comments-for-post post-id)
+  (from comment)
+  (where (= post post-id))
+  (order-by created-at asc))
 
-(define publish-comment
-  (action
+(define-action publish-comment
     (input ((post-id int) (body string)))
-    (create comment ((post post-id) (body body)))))
+    (create comment ((post post-id) (body body))))
 
-(define update-profile
-  (action
+(define-action update-profile
     (input
       ((user-id int) (display-name string) (handle string) (bio string)))
     (update user user-id
-      ((display-name display-name) (handle handle) (bio bio)))))
+      ((display-name display-name) (handle handle) (bio bio))))
 
-(define update-post
-  (action
+(define-action update-post
     (input ((post-id int) (body string)))
-    (update post post-id ((body body)))))
+    (update post post-id ((body body))))
 
-(define update-comment
-  (action
+(define-action update-comment
     (input ((comment-id int) (body string)))
-    (update comment comment-id ((body body)))))
+    (update comment comment-id ((body body))))
 
 (define-record
   timeline-model
@@ -443,7 +436,8 @@
       ((textarea "Comment" body body-changed (disabled editor-disabled))
        (button "Save comment" save-clicked (disabled editor-disabled))
        (text (string-append "Author " (number->string comment.author)))
-       (text (string-append "Created at " (datetime->string comment.created-at)))
+       (text
+         (string-append "Created at " (datetime->string comment.created-at)))
        (button "Like" (like-clicked comment.id))))))
 
 (define-app mini-twitter

@@ -17,19 +17,19 @@ func TestCollectWorkspaceDocumentsUsesOpenDocumentDirectoryWithoutWorkspaceRoots
 	if err := os.MkdirAll(filepath.Dir(openPath), 0o755); err != nil {
 		t.Fatalf("mkdir examples: %v", err)
 	}
-	if err := os.WriteFile(rootOnlyPath, []byte("(define root (entity (fields ((title string)))))\n"), 0o644); err != nil {
+	if err := os.WriteFile(rootOnlyPath, []byte("(define-entity root (fields ((title string))))\n"), 0o644); err != nil {
 		t.Fatalf("write root file: %v", err)
 	}
-	if err := os.WriteFile(openPath, []byte("(define todo (entity (fields ((title string)))))\n"), 0o644); err != nil {
+	if err := os.WriteFile(openPath, []byte("(define-entity todo (fields ((title string))))\n"), 0o644); err != nil {
 		t.Fatalf("write open file: %v", err)
 	}
-	if err := os.WriteFile(siblingPath, []byte("(define shared (entity (fields ((title string)))))\n"), 0o644); err != nil {
+	if err := os.WriteFile(siblingPath, []byte("(define-entity shared (fields ((title string))))\n"), 0o644); err != nil {
 		t.Fatalf("write sibling file: %v", err)
 	}
 
 	srv := &server{
 		documents: map[string]string{
-			filePathToURI(openPath): "(define todo (entity (fields ((title string)))))\n",
+			filePathToURI(openPath): "(define-entity todo (fields ((title string))))\n",
 		},
 	}
 

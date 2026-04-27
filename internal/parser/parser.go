@@ -94,18 +94,19 @@ func Parse(source string) (*model.App, error) {
 				return nil, parseError(node, "define expects a name/signature and a body")
 			}
 			if signature := node.Children[1]; signature.Kind == sexp.KindList {
+				// (define (name params) body) — function form.
 				query, fn, screen, err := parseCallableDef(node)
 				if err != nil {
 					return nil, err
 				}
 				if query != nil {
-					queries[query.Name] = query
+					return nil, parseError(node.Children[2], "unknown define body %q", "query")
 				}
 				if fn != nil {
 					functions[fn.Name] = fn
 				}
 				if screen != nil {
-					return nil, parseError(node.Children[2], "unknown define body %q; use define-screen", "screen")
+					return nil, parseError(node.Children[2], "unknown define body %q", "screen")
 				}
 				continue
 			}
@@ -113,29 +114,55 @@ func Parse(source string) (*model.App, error) {
 			if !ok {
 				return nil, parseError(node.Children[1], "define name must be a symbol")
 			}
-			if bodyItems, err := listChildren(node.Children[2], "define body"); err == nil && len(bodyItems) > 0 {
-				if head, _ := symbolValue(bodyItems[0]); head == "action" {
-					actions[name] = &actionDef{Name: name, Body: node.Children[2]}
-					continue
-				} else if head == "screen" {
-					return nil, parseError(bodyItems[0], "unknown define body %q; use define-screen", head)
-				}
-			}
 			values[name] = namedValue{Name: name, Body: node.Children[2]}
+		case "define-entity":
+			if len(node.Children) < 2 {
+				return nil, parseError(node, "define-entity expects a name and clauses")
+			}
+			name, ok := symbolValue(node.Children[1])
+			if !ok {
+				return nil, parseError(node.Children[1], "define-entity name must be a symbol")
+			}
+			body := sexp.Node{
+				Kind:     sexp.KindList,
+				Children: node.Children[2:],
+				Line:     node.Line,
+				Column:   node.Column,
+			}
+			values[name] = namedValue{Name: name, Body: body}
+		case "define-action":
+			if len(node.Children) < 2 {
+				return nil, parseError(node, "define-action expects a name and clauses")
+			}
+			name, ok := symbolValue(node.Children[1])
+			if !ok {
+				return nil, parseError(node.Children[1], "define-action name must be a symbol")
+			}
+			body := sexp.Node{
+				Kind:     sexp.KindList,
+				Children: node.Children[2:],
+				Line:     node.Line,
+				Column:   node.Column,
+			}
+			actions[name] = &actionDef{Name: name, Body: body}
 		case "define-screen":
 			screen, err := parseScreenDef(node)
 			if err != nil {
 				return nil, err
 			}
 			screens[screen.Name] = screen
+		case "define-query":
+			query, err := parseQueryDef(node)
+			if err != nil {
+				return nil, err
+			}
+			queries[query.Name] = query
 		case "define-record":
 			record, err := parseRecordDef(node)
 			if err != nil {
 				return nil, err
 			}
 			records[record.Name] = record
-		case "defrecord":
-			return nil, parseError(node.Children[0], "unknown top-level form %q; use define-record", head)
 		case "define-type":
 			typeDef, err := parseTypeDef(node)
 			if err != nil {
@@ -150,8 +177,6 @@ func Parse(source string) (*model.App, error) {
 			if err != nil {
 				return nil, err
 			}
-		case "defapp":
-			return nil, parseError(node.Children[0], "unknown top-level form %q; use define-app", head)
 		default:
 			return nil, parseError(node.Children[0], "unknown top-level form %q", head)
 		}
@@ -284,20 +309,14 @@ func Parse(source string) (*model.App, error) {
 			return nil, err
 		}
 	}
-	if err := validateNamedTypeInference(recordByName, typeByName, entityByName); err != nil {
-		return nil, err
-	}
+	// validateNamedTypeInference removed; HM (internal/types.BuildAppTypes)
+	// catches the same issues during CheckApp.
 
-	for i := range app.Functions {
-		if err := validateFunctionExpression(&app.Functions[i], functionByName, recordByName, typeByName, entityByName); err != nil {
-			return nil, err
-		}
-	}
-
+	// Function bodies, entity validate/authorize, query where, action steps:
+	// all of these are now type-checked by the HM checker in
+	// internal/types.CheckApp, called from cli.parseMarFile after Parse.
+	// Only schema validation (referenced entity/field existence) stays here.
 	for i := range app.Entities {
-		if err := validateEntityExpressions(&app.Entities[i], functionByName, recordByName, typeByName, entityByName); err != nil {
-			return nil, err
-		}
 		if err := validateEntitySchema(&app.Entities[i], entityByName); err != nil {
 			return nil, err
 		}
@@ -365,6 +384,9 @@ func Parse(source string) (*model.App, error) {
 			return nil, fmt.Errorf("query %s references unknown entity %q", query.Name, query.EntitySymbol)
 		}
 		if query.Where.Kind != "" {
+			// Parser-level checks: only validate that the where clause parses
+			// against the entity's fields. Type-checking and parameter type
+			// inference moved to HM (internal/types.CheckApp).
 			allowed := queryAllowedVariables(entity)
 			for _, param := range canonicalFunctionParameters(query.Parameters) {
 				allowed[param] = struct{}{}
@@ -377,15 +399,6 @@ func Parse(source string) (*model.App, error) {
 			}); err != nil {
 				return nil, fmt.Errorf("query %s where: %w", query.Name, err)
 			}
-			parameterTypes, err := validateBackendQueryWhere(query.Name, inlineNodeString(query.Where), entity, canonicalFunctionParameters(query.Parameters), functionByName, recordByName, typeByName, entityByName)
-			if err != nil {
-				return nil, err
-			}
-			for i := range app.Queries {
-				if app.Queries[i].Name == canonicalFunctionName(query.Name) {
-					app.Queries[i].ParameterTypes = parameterTypes
-				}
-			}
 		} else if len(query.Parameters) > 0 {
 			return nil, fmt.Errorf("query %s parameter %s: type could not be inferred", query.Name, canonicalFunctionParameters(query.Parameters)[0])
 		}
@@ -394,17 +407,10 @@ func Parse(source string) (*model.App, error) {
 		}
 	}
 
-	for _, action := range app.Actions {
-		if err := validateActionExpressions(&action, aliasByName, functionByName, recordByName, typeByName, entityByName); err != nil {
-			return nil, err
-		}
-	}
+	// Action expression checks now live in HM (internal/types.CheckApp).
 
-	if app.Screens != nil {
-		if err := validateFrontendScreens(app.Screens, app.Queries, app.Actions, aliasByName, functionByName, recordByName, typeByName, entityByName); err != nil {
-			return nil, err
-		}
-	}
+	// Frontend screen validation moved to HM (internal/types).
+	// See checkScreens / CheckApp.
 	if err := validateUnusedTopLevelDefinitions(appDecl, queries, actions, screens, values); err != nil {
 		return nil, err
 	}
@@ -412,7 +418,26 @@ func Parse(source string) (*model.App, error) {
 		return nil, err
 	}
 
+	// HM type checker — final pass. Catches type errors in entity validate /
+	// authorize, query where, action steps, and user function bodies. Returns
+	// a parse error so callers see typing problems at Parse time.
+	if err := hmCheck(app); err != nil {
+		return nil, err
+	}
+
 	return app, nil
+}
+
+// hmCheck is wired up at init time to avoid the parser → types circular
+// import. types.RegisterHMCheck assigns the actual implementation.
+var hmCheck = func(app *model.App) error { return nil }
+
+// RegisterHMCheck lets the types package register itself as the HM checker
+// invoked at the end of Parse. Called from types.init().
+func RegisterHMCheck(check func(app *model.App) error) {
+	if check != nil {
+		hmCheck = check
+	}
 }
 
 type configValue struct {
@@ -711,7 +736,7 @@ func parseAuthValue(value namedValue) (*authValue, error) {
 }
 
 func parseEntityValue(value namedValue) (model.Entity, error) {
-	body, err := unwrapDefinitionBody(value.Body, "entity", "entity "+value.Name)
+	body, err := requireListBody(value.Body, "entity "+value.Name)
 	if err != nil {
 		return model.Entity{}, err
 	}
@@ -910,7 +935,7 @@ func parseEntityValue(value namedValue) (model.Entity, error) {
 }
 
 func parseScreenDefinition(name string, parameters []string, bodyNode sexp.Node, queries map[string]*queryDef) (model.FrontendScreen, error) {
-	body, err := unwrapDefinitionBody(bodyNode, "screen", "screen "+name)
+	body, err := requireListBody(bodyNode, "screen "+name)
 	if err != nil {
 		return model.FrontendScreen{}, err
 	}
@@ -1114,6 +1139,100 @@ func parseScreenDef(node sexp.Node) (*screenDef, error) {
 	}}, nil
 }
 
+func parseQueryDef(node sexp.Node) (*queryDef, error) {
+	if len(node.Children) < 3 {
+		return nil, parseError(node, "define-query expects a name/signature and a body")
+	}
+	signature := node.Children[1]
+	var name string
+	var params []string
+	if signature.Kind == sexp.KindList {
+		items, err := listChildren(signature, "define-query signature")
+		if err != nil {
+			return nil, err
+		}
+		if len(items) == 0 {
+			return nil, parseError(signature, "define-query signature cannot be empty")
+		}
+		var ok bool
+		name, ok = symbolValue(items[0])
+		if !ok {
+			return nil, parseError(items[0], "define-query name must be a symbol")
+		}
+		for _, item := range items[1:] {
+			param, ok := symbolValue(item)
+			if !ok {
+				return nil, parseError(item, "define-query parameters must be symbols")
+			}
+			params = append(params, param)
+		}
+	} else {
+		var ok bool
+		name, ok = symbolValue(signature)
+		if !ok {
+			return nil, parseError(signature, "define-query name must be a symbol")
+		}
+	}
+	query := &queryDef{Name: name, Parameters: params, OrderDir: "desc"}
+	for _, clause := range node.Children[2:] {
+		parts, err := listChildren(clause, "define-query clause")
+		if err != nil {
+			return nil, err
+		}
+		if len(parts) == 0 {
+			return nil, parseError(clause, "define-query clause cannot be empty")
+		}
+		head, _ := symbolValue(parts[0])
+		switch head {
+		case "from":
+			if len(parts) != 2 {
+				return nil, parseError(clause, "from expects one entity symbol")
+			}
+			entity, ok := symbolValue(parts[1])
+			if !ok {
+				return nil, parseError(parts[1], "from expects an entity symbol")
+			}
+			query.EntitySymbol = entity
+		case "where":
+			if len(parts) != 2 {
+				return nil, parseError(clause, "where expects one expression")
+			}
+			query.Where = parts[1]
+		case "order-by":
+			if len(parts) < 2 || len(parts) > 3 {
+				return nil, parseError(clause, "order-by expects (order-by field [asc|desc])")
+			}
+			field, ok := symbolValue(parts[1])
+			if !ok {
+				return nil, parseError(parts[1], "order-by field must be a symbol")
+			}
+			query.OrderBy = field
+			if len(parts) == 3 {
+				dir, ok := symbolValue(parts[2])
+				if !ok {
+					return nil, parseError(parts[2], "order-by direction must be a symbol")
+				}
+				query.OrderDir = dir
+			}
+		case "limit":
+			if len(parts) != 2 {
+				return nil, parseError(clause, "limit expects one integer")
+			}
+			limit, err := intLiteral(parts[1])
+			if err != nil {
+				return nil, parseError(parts[1], "limit must be an integer")
+			}
+			query.Limit = &limit
+		default:
+			return nil, parseError(parts[0], "unknown define-query clause %q", head)
+		}
+	}
+	if query.EntitySymbol == "" {
+		return nil, parseError(node, "define-query requires a from clause")
+	}
+	return query, nil
+}
+
 func parseViewSection(node sexp.Node, queries map[string]*queryDef) (model.FrontendSection, bool, error) {
 	head, ok := listHead(node)
 	if !ok || head != "section" {
@@ -1200,21 +1319,12 @@ func parseViewNode(node sexp.Node) (*model.FrontendViewNode, error) {
 	}
 }
 
-func unwrapDefinitionBody(body sexp.Node, wrapper string, label string) (sexp.Node, error) {
+// requireListBody returns body when it is a list, else a parse error.
+// Used by entity/screen/action definitions to validate the shape before
+// iterating clauses.
+func requireListBody(body sexp.Node, label string) (sexp.Node, error) {
 	if body.Kind != sexp.KindList {
 		return sexp.Node{}, parseError(body, "%s must be a list", label)
-	}
-	if len(body.Children) == 0 {
-		return body, nil
-	}
-	head, ok := symbolValue(body.Children[0])
-	if ok && head == wrapper {
-		return sexp.Node{
-			Kind:     sexp.KindList,
-			Children: body.Children[1:],
-			Line:     body.Line,
-			Column:   body.Column,
-		}, nil
 	}
 	return body, nil
 }
@@ -1594,64 +1704,26 @@ func parseCallableDef(node sexp.Node) (*queryDef, *functionDef, *screenDef, erro
 		}, nil, nil
 	}
 	head, _ := symbolValue(bodyItems[0])
-	if head != "query" {
-		if head == "screen" {
-			return nil, nil, &screenDef{
-				Name:       name,
-				Parameters: symbolValues(items[1:]),
-				Body:       node.Children[2],
-			}, nil
-		}
-		return nil, &functionDef{
+	if head == "screen" {
+		return nil, nil, &screenDef{
 			Name:       name,
 			Parameters: symbolValues(items[1:]),
 			Body:       node.Children[2],
-			LineNo:     node.Line,
-		}, nil, nil
+		}, nil
 	}
-	if len(bodyItems) < 2 {
-		return nil, nil, nil, parseError(node.Children[2], "query expects an entity symbol")
+	if head == "query" {
+		return nil, nil, nil, parseError(bodyItems[0], "unknown define body %q", head)
 	}
-	entitySymbol, _ := symbolValue(bodyItems[1])
-	query := &queryDef{Name: name, Parameters: symbolValues(items[1:]), EntitySymbol: entitySymbol, OrderDir: "desc"}
-	for _, clause := range bodyItems[2:] {
-		parts, err := listChildren(clause, "query clause")
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		head, _ := symbolValue(parts[0])
-		switch head {
-		case "where":
-			if len(parts) != 2 {
-				return nil, nil, nil, parseError(clause, "where expects one expression")
-			}
-			query.Where = parts[1]
-		case "order-by":
-			if len(parts) < 2 || len(parts) > 3 {
-				return nil, nil, nil, parseError(clause, "order-by expects (order-by field [asc|desc])")
-			}
-			query.OrderBy, _ = symbolValue(parts[1])
-			if len(parts) == 3 {
-				query.OrderDir, _ = symbolValue(parts[2])
-			}
-		case "limit":
-			if len(parts) != 2 {
-				return nil, nil, nil, parseError(clause, "limit expects one integer")
-			}
-			limit, err := intLiteral(parts[1])
-			if err != nil {
-				return nil, nil, nil, parseError(parts[1], "limit must be an integer")
-			}
-			query.Limit = &limit
-		default:
-			return nil, nil, nil, parseError(parts[0], "unknown query clause %q", head)
-		}
-	}
-	return query, nil, nil, nil
+	return nil, &functionDef{
+		Name:       name,
+		Parameters: symbolValues(items[1:]),
+		Body:       node.Children[2],
+		LineNo:     node.Line,
+	}, nil, nil
 }
 
 func parseActionDefinition(name string, bodyNode sexp.Node, entities map[string]*model.Entity) (model.TypeAlias, model.Action, error) {
-	body, err := unwrapDefinitionBody(bodyNode, "action", "action "+name)
+	body, err := requireListBody(bodyNode, "action "+name)
 	if err != nil {
 		return model.TypeAlias{}, model.Action{}, err
 	}
@@ -2069,110 +2141,6 @@ func parseFrontendSection(clauses []sexp.Node, app *appDef) error {
 	return nil
 }
 
-func validateFrontendScreens(frontend *model.Frontend, queries []model.Query, actions []model.Action, aliases map[string]*model.TypeAlias, functions map[string]*model.Function, records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
-	allowedCommands := allowedCommandArities(queries, actions, aliases)
-	commandKinds := allowedCommandKinds(queries, actions)
-	allowedFunctions := allowedFunctionArities(functions)
-	allowedRecords := allowedRecordFields(records)
-	allowedVariants := allowedTypeVariants(types)
-	screenParamTypes, err := inferScreenParameterTypes(frontend, actions, aliases, functions, records, types, entities)
-	if err != nil {
-		return err
-	}
-	baseTypeChecker := newFrontendTypeChecker(functions, records, types, entities, screenParamTypes, nil)
-	screenMessageTypes, err := inferScreenMessagePayloadTypes(frontend, queries, actions, aliases, baseTypeChecker)
-	if err != nil {
-		return err
-	}
-	typeChecker := newFrontendTypeChecker(functions, records, types, entities, screenParamTypes, screenMessageTypes)
-	screenByName := map[string]model.FrontendScreen{}
-	for _, screen := range frontend.Screens {
-		screenByName[screen.Name] = screen
-	}
-	actionNames := map[string]struct{}{}
-	for _, action := range actions {
-		actionNames[action.Name] = struct{}{}
-	}
-
-	for _, screen := range frontend.Screens {
-		messageArities := frontendMessageArities(screen.Messages)
-		modelType := anyFrontendType()
-		if screen.InitExpression != "" {
-			node, err := sexp.ParseOne(screen.InitExpression)
-			if err != nil {
-				return fmt.Errorf("screen %s init: %w", screen.Name, err)
-			}
-			if err := validateFrontendCommandForms(node, allowedCommands, commandKinds, messageArities); err != nil {
-				return fmt.Errorf("screen %s init: %w", screen.Name, err)
-			}
-			if _, err := expr.Parse(screen.InitExpression, expr.ParserOptions{
-				AllowedVariables: expr.AllowedVariablesWithBuiltins(frontendCompileTimeVariables(screen, node, false)),
-				AllowedFunctions: allowedFunctions,
-				AllowedCommands:  allowedCommands,
-				AllowedRecords:   allowedRecords,
-				AllowedVariants:  allowedVariants,
-			}); err != nil {
-				return fmt.Errorf("screen %s init: %w", screen.Name, err)
-			}
-			modelType, err = typeChecker.inferInitModelType(screen)
-			if err != nil {
-				return fmt.Errorf("screen %s init: %w", screen.Name, err)
-			}
-		}
-		uiMessageTypes, err := inferScreenUIMessagePayloadTypes(screen, modelType, typeChecker, messageArities)
-		if err != nil {
-			return fmt.Errorf("screen %s: %w", screen.Name, err)
-		}
-		screenOut := screenMessageTypes[screen.Name]
-		if screenOut == nil {
-			screenOut = map[string][]frontendType{}
-			screenMessageTypes[screen.Name] = screenOut
-		}
-		for messageName, payloads := range uiMessageTypes {
-			for index, payload := range payloads {
-				if payload.Kind == "" {
-					continue
-				}
-				if err := mergeScreenMessagePayloadType(screenOut, messageName, index, payload); err != nil {
-					return fmt.Errorf("screen %s: message %s has incompatible payloads: %w", screen.Name, messageName, err)
-				}
-			}
-		}
-
-		if screen.UpdateBody != "" {
-			node, err := sexp.ParseOne(screen.UpdateBody)
-			if err != nil {
-				return fmt.Errorf("screen %s update: %w", screen.Name, err)
-			}
-			if err := validateFrontendCommandForms(node, allowedCommands, commandKinds, messageArities); err != nil {
-				return fmt.Errorf("screen %s update: %w", screen.Name, err)
-			}
-			if _, err := expr.Parse(screen.UpdateBody, expr.ParserOptions{
-				AllowedVariables: expr.AllowedVariablesWithBuiltins(frontendCompileTimeVariables(screen, node, true)),
-				AllowedFunctions: allowedFunctions,
-				AllowedCommands:  allowedCommands,
-				AllowedRecords:   allowedRecords,
-				AllowedVariants:  allowedVariants,
-			}); err != nil {
-				return fmt.Errorf("screen %s update: %w", screen.Name, err)
-			}
-			if err := typeChecker.validateUpdate(screen, modelType); err != nil {
-				return fmt.Errorf("screen %s update: %w", screen.Name, err)
-			}
-		}
-		if err := validateScreenMessagePayloadTypesResolved(screen, screenOut); err != nil {
-			return fmt.Errorf("screen %s: %w", screen.Name, err)
-		}
-		if err := validateFrontendScreenNavigation(screen, screenByName, typeChecker, modelType); err != nil {
-			return fmt.Errorf("screen %s: %w", screen.Name, err)
-		}
-		if err := validateFrontendScreenItems(screen, screenByName, messageArities, allowedFunctions, allowedRecords, typeChecker, modelType, actionNames); err != nil {
-			return fmt.Errorf("screen %s: %w", screen.Name, err)
-		}
-	}
-
-	return nil
-}
 
 func validateEntitySchema(entity *model.Entity, entities map[string]*model.Entity) error {
 	for _, field := range entity.Fields {
@@ -2219,20 +2187,6 @@ func validateSumType(sumType *model.EnumType, records map[string]*model.Record, 
 	return nil
 }
 
-func validateNamedTypeInference(records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
-	checker := newFrontendTypeChecker(nil, records, types, entities, nil, nil)
-	for name := range records {
-		if _, _, err := checker.namedType(name); err != nil {
-			return err
-		}
-	}
-	for name := range types {
-		if _, _, err := checker.namedType(name); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func validateRecordTypeExpr(typeExpr string, records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
 	switch typeExpr {
@@ -2369,217 +2323,14 @@ func allowedCommandKinds(queries []model.Query, actions []model.Action) map[stri
 	return out
 }
 
-func inferScreenMessagePayloadTypes(frontend *model.Frontend, queries []model.Query, actions []model.Action, aliases map[string]*model.TypeAlias, typeChecker *frontendTypeChecker) (map[string]map[string][]frontendType, error) {
-	if frontend == nil {
-		return map[string]map[string][]frontendType{}, nil
-	}
-	commandReturnTypes, err := frontendCommandReturnTypes(queries, actions, typeChecker)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]map[string][]frontendType{}
-	for _, screen := range frontend.Screens {
-		screenOut := map[string][]frontendType{}
-		messageArities := frontendMessageArities(screen.Messages)
-		for _, raw := range []string{screen.InitExpression, screen.UpdateBody} {
-			if strings.TrimSpace(raw) == "" {
-				continue
-			}
-			node, err := sexp.ParseOne(raw)
-			if err != nil {
-				return nil, err
-			}
-			if err := collectScreenCommandMessagePayloadTypes(node, screenOut, messageArities, commandReturnTypes); err != nil {
-				return nil, fmt.Errorf("screen %s: %w", screen.Name, err)
-			}
-		}
-		out[screen.Name] = screenOut
-	}
-	return out, nil
-}
 
-func frontendCommandReturnTypes(queries []model.Query, actions []model.Action, typeChecker *frontendTypeChecker) (map[string]frontendType, error) {
-	out := map[string]frontendType{}
-	for _, query := range queries {
-		entityType, ok, err := typeChecker.namedType(query.Entity)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, fmt.Errorf("query %s references unknown entity %s", query.Name, query.Entity)
-		}
-		out[query.Name] = listFrontendType(entityType)
-	}
-	for _, action := range actions {
-		out[action.Name] = frontendType{}
-	}
-	return out, nil
-}
 
-func collectScreenCommandMessagePayloadTypes(node sexp.Node, screenOut map[string][]frontendType, messageArities map[string]int, commandReturnTypes map[string]frontendType) error {
-	if node.Kind != sexp.KindList {
-		return nil
-	}
-	if len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol && node.Children[0].Value == "command" {
-		if len(node.Children) == 4 && node.Children[1].Kind == sexp.KindList && len(node.Children[1].Children) > 0 && node.Children[1].Children[0].Kind == sexp.KindSymbol {
-			commandName := canonicalFunctionName(node.Children[1].Children[0].Value)
-			successName := canonicalFieldName(node.Children[2].Value)
-			failureName := canonicalFieldName(node.Children[3].Value)
-			if messageArities[successName] == 1 {
-				successType := commandReturnTypes[commandName]
-				if successType.Kind != "" {
-					if err := mergeScreenMessagePayloadType(screenOut, successName, 0, successType); err != nil {
-						return fmt.Errorf("message %s has incompatible command payloads: %w", successName, err)
-					}
-				}
-			}
-			if messageArities[failureName] == 1 {
-				if err := mergeScreenMessagePayloadType(screenOut, failureName, 0, stringFrontendType()); err != nil {
-					return fmt.Errorf("message %s has incompatible failure payloads: %w", failureName, err)
-				}
-			}
-		}
-	}
-	for _, child := range node.Children {
-		if err := collectScreenCommandMessagePayloadTypes(child, screenOut, messageArities, commandReturnTypes); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
-func mergeScreenMessagePayloadType(screenOut map[string][]frontendType, messageName string, index int, next frontendType) error {
-	current := screenOut[messageName]
-	if index >= len(current) {
-		expanded := make([]frontendType, index+1)
-		copy(expanded, current)
-		current = expanded
-	}
-	if current[index].Kind == "" {
-		current[index] = next
-		screenOut[messageName] = current
-		return nil
-	}
-	merged, err := mergeCompatibleFrontendTypes(current[index], next)
-	if err != nil {
-		return err
-	}
-	current[index] = merged
-	screenOut[messageName] = current
-	return nil
-}
 
-func inferScreenUIMessagePayloadTypes(screen model.FrontendScreen, modelType frontendType, typeChecker *frontendTypeChecker, messageArities map[string]int) (map[string][]frontendType, error) {
-	out := map[string][]frontendType{}
-	env := typeChecker.baseEnv(screen)
-	if screen.ViewModel != "" {
-		env[screen.ViewModel] = modelType
-	}
-	for _, section := range screen.Sections {
-		for _, item := range section.Items {
-			if err := inferScreenItemMessagePayloadTypes(item, modelType, env, typeChecker, messageArities, out); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if screen.View != nil {
-		if err := inferFrontendViewNodeMessagePayloadTypes(*screen.View, env, typeChecker, messageArities, out); err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
-}
 
-func inferScreenItemMessagePayloadTypes(item model.FrontendItem, modelType frontendType, env frontendTypeEnv, typeChecker *frontendTypeChecker, messageArities map[string]int, out map[string][]frontendType) error {
-	switch item.Kind {
-	case "textInput", "textarea", "toggle", "select":
-		arity, ok := messageArities[item.Message]
-		if !ok || arity != 1 {
-			return nil
-		}
-		fieldType, err := frontendModelFieldType(modelType, item.ModelField)
-		if err != nil {
-			return err
-		}
-		if err := mergeScreenMessagePayloadType(out, item.Message, 0, fieldType); err != nil {
-			return fmt.Errorf("message %s has incompatible UI payloads: %w", item.Message, err)
-		}
-	case "button":
-		if strings.TrimSpace(item.Message) == "" {
-			return nil
-		}
-		node, err := sexp.ParseOne(item.Message)
-		if err != nil {
-			return err
-		}
-		if err := inferFrontendMessageNodePayloadTypes(node, env, typeChecker, messageArities, "button", out); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
-func inferFrontendViewNodeMessagePayloadTypes(node model.FrontendViewNode, env frontendTypeEnv, typeChecker *frontendTypeChecker, messageArities map[string]int, out map[string][]frontendType) error {
-	if node.Kind == "button" && strings.TrimSpace(node.Message) != "" {
-		messageNode, err := sexp.ParseOne(node.Message)
-		if err != nil {
-			return err
-		}
-		if err := inferFrontendMessageNodePayloadTypes(messageNode, env, typeChecker, messageArities, "button", out); err != nil {
-			return err
-		}
-	}
-	for _, child := range node.Children {
-		if err := inferFrontendViewNodeMessagePayloadTypes(child, env, typeChecker, messageArities, out); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
-func inferFrontendMessageNodePayloadTypes(node sexp.Node, env frontendTypeEnv, typeChecker *frontendTypeChecker, messageArities map[string]int, context string, out map[string][]frontendType) error {
-	switch node.Kind {
-	case sexp.KindSymbol:
-		return nil
-	case sexp.KindList:
-		if len(node.Children) == 0 || node.Children[0].Kind != sexp.KindSymbol {
-			return nil
-		}
-		name := canonicalFieldName(node.Children[0].Value)
-		arity, ok := messageArities[name]
-		if !ok || len(node.Children)-1 != arity {
-			return nil
-		}
-		for index, arg := range node.Children[1:] {
-			argType, err := typeChecker.inferExprType(arg, env)
-			if err != nil {
-				return fmt.Errorf("%s message %q argument %d: %w", context, node.Children[0].Value, index+1, err)
-			}
-			if frontendTypeIsUnresolved(argType) {
-				return fmt.Errorf("%s message %q argument %d type could not be inferred", context, node.Children[0].Value, index+1)
-			}
-			if err := mergeScreenMessagePayloadType(out, name, index, argType); err != nil {
-				return fmt.Errorf("message %s has incompatible UI payloads: %w", name, err)
-			}
-		}
-	}
-	return nil
-}
 
-func validateScreenMessagePayloadTypesResolved(screen model.FrontendScreen, payloads map[string][]frontendType) error {
-	for _, message := range screen.Messages {
-		for index, param := range message.Parameters {
-			var value frontendType
-			if index < len(payloads[message.Name]) {
-				value = payloads[message.Name][index]
-			}
-			if frontendTypeIsUnresolved(value) {
-				return fmt.Errorf("message %q parameter %q type could not be inferred", message.Name, param)
-			}
-		}
-	}
-	return nil
-}
 
 func validateFrontendCommandForms(node sexp.Node, allowedCommands map[string]int, commandKinds map[string]string, messageArities map[string]int) error {
 	if node.Kind != sexp.KindList {
@@ -2957,337 +2708,15 @@ func validateFrontendEffectShape(node sexp.Node) error {
 	return nil
 }
 
-func validateFrontendScreenNavigation(screen model.FrontendScreen, screens map[string]model.FrontendScreen, typeChecker *frontendTypeChecker, modelType frontendType) error {
-	if strings.TrimSpace(screen.InitExpression) != "" {
-		if err := validateFrontendGoCallsInTransition(screen.InitExpression, typeChecker.baseEnv(screen), typeChecker, screens); err != nil {
-			return fmt.Errorf("init: %w", err)
-		}
-	}
-	if strings.TrimSpace(screen.UpdateBody) != "" {
-		env := typeChecker.baseEnv(screen)
-		if screen.UpdateMessage != "" {
-			env[screen.UpdateMessage] = typeChecker.screenMessageType(screen)
-		}
-		if screen.UpdateModel != "" {
-			env[screen.UpdateModel] = modelType
-		}
-		if err := validateFrontendGoCallsInTransition(screen.UpdateBody, env, typeChecker, screens); err != nil {
-			return fmt.Errorf("update: %w", err)
-		}
-	}
-	return nil
-}
 
-func validateFrontendScreenItems(screen model.FrontendScreen, screens map[string]model.FrontendScreen, messageArities map[string]int, allowedFunctions map[string]int, allowedRecords map[string][]string, typeChecker *frontendTypeChecker, modelType frontendType, actionNames map[string]struct{}) error {
-	for _, section := range screen.Sections {
-		for _, item := range section.Items {
-			if err := validateFrontendScreenItem(screen, screens, item, messageArities, allowedFunctions, allowedRecords, typeChecker, modelType, actionNames); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
 
-func validateFrontendScreenItem(screen model.FrontendScreen, screens map[string]model.FrontendScreen, item model.FrontendItem, messageArities map[string]int, allowedFunctions map[string]int, allowedRecords map[string][]string, typeChecker *frontendTypeChecker, modelType frontendType, actionNames map[string]struct{}) error {
-	if strings.TrimSpace(item.Condition) != "" {
-		allowed := map[string]struct{}{"model": {}}
-		for _, param := range screen.Parameters {
-			allowed[param] = struct{}{}
-		}
-		if _, err := expr.Parse(item.Condition, expr.ParserOptions{
-			AllowedVariables: expr.AllowedVariablesWithBuiltins(allowed),
-			AllowedFunctions: allowedFunctions,
-			AllowedRecords:   allowedRecords,
-			AllowedVariants:  allowedTypeVariants(typeChecker.types),
-		}); err != nil {
-			return fmt.Errorf("%s condition: %w", item.Kind, err)
-		}
-	}
-	if item.Disabled != "" {
-		fieldType, err := frontendModelFieldType(modelType, item.Disabled)
-		if err != nil {
-			return fmt.Errorf("%s disabled: %w", item.Kind, err)
-		}
-		if !frontendAssignable(fieldType, boolFrontendType()) {
-			return fmt.Errorf("%s disabled expects bool field, got %s", item.Kind, fieldType.String())
-		}
-	}
-	switch item.Kind {
-	case "text":
-		if strings.TrimSpace(item.Text) == "" {
-			return fmt.Errorf("text requires an expression")
-		}
-		node, err := sexp.ParseOne(item.Text)
-		if err != nil {
-			return fmt.Errorf("text: %w", err)
-		}
-		env := typeChecker.baseEnv(screen)
-		if screen.ViewModel != "" {
-			env[screen.ViewModel] = modelType
-		}
-		valueType, err := typeChecker.inferExprType(node, env)
-		if err != nil {
-			return fmt.Errorf("text: %w", err)
-		}
-		if !frontendAssignable(valueType, stringFrontendType()) {
-			return fmt.Errorf("text expects string, got %s", valueType.String())
-		}
-	case "textInput", "textarea", "toggle", "select":
-		if strings.TrimSpace(item.ModelField) == "" {
-			return fmt.Errorf("%s requires a model field", item.Kind)
-		}
-		arity, ok := messageArities[item.Message]
-		if !ok {
-			return fmt.Errorf("%s references unknown message %q", item.Kind, item.Message)
-		}
-		if arity != 1 {
-			return fmt.Errorf("%s message %q must accept exactly one argument", item.Kind, item.Message)
-		}
-		fieldType, err := frontendModelFieldType(modelType, item.ModelField)
-		if err != nil {
-			return err
-		}
-		switch item.Kind {
-		case "toggle":
-			if !frontendAssignable(fieldType, boolFrontendType()) {
-				return fmt.Errorf("toggle model field %q must be bool, got %s", item.ModelField, fieldType.String())
-			}
-		default:
-			if !frontendAssignable(fieldType, stringFrontendType()) {
-				return fmt.Errorf("%s model field %q must be string, got %s", item.Kind, item.ModelField, fieldType.String())
-			}
-		}
-		if item.Kind == "select" && len(item.Options) == 0 {
-			return fmt.Errorf("select requires at least one option")
-		}
-	case "list":
-		if strings.TrimSpace(item.ModelField) == "" {
-			return fmt.Errorf("list requires a model field")
-		}
-		fieldType, err := frontendModelFieldType(modelType, item.ModelField)
-		if err != nil {
-			return err
-		}
-		if fieldType.Kind != frontendTypeList || fieldType.Element == nil {
-			return fmt.Errorf("list model field %q must be a list, got %s", item.ModelField, fieldType.String())
-		}
-		if typeChecker != nil {
-			entityType, ok, err := typeChecker.namedType(canonicalFieldName(item.Entity))
-			if err != nil {
-				return err
-			}
-			if ok && !frontendRecordTypesMatch(*fieldType.Element, entityType) {
-				return fmt.Errorf("list model field %q must contain %s, got %s", item.ModelField, entityType.String(), fieldType.String())
-			}
-			if item.TitleField != "" {
-				if _, err := frontendRecordFieldType(*fieldType.Element, item.TitleField); err != nil {
-					return fmt.Errorf("list title: %w", err)
-				}
-			}
-			if item.SubtitleField != "" {
-				if _, err := frontendRecordFieldType(*fieldType.Element, item.SubtitleField); err != nil {
-					return fmt.Errorf("list subtitle: %w", err)
-				}
-			}
-			if item.Destination != "" {
-				target, ok := screens[item.Destination]
-				if !ok {
-					return fmt.Errorf("list destination references unknown screen %q", item.Destination)
-				}
-				if len(target.Parameters) != 1 {
-					return fmt.Errorf("list destination %s expects %d arguments, but list open provides exactly 1 row", target.Name, len(target.Parameters))
-				}
-				targetType := typeChecker.screenParameterType(target.Name, 0)
-				if targetType.Kind == frontendTypeAny {
-					return fmt.Errorf("list destination %s cannot be type-checked because parameter %q is unresolved", target.Name, target.Parameters[0])
-				}
-				if !frontendAssignable(entityType, targetType) {
-					return fmt.Errorf("list destination %s expects %s, got %s", target.Name, targetType.String(), entityType.String())
-				}
-			}
-		}
-		if item.Action != "" {
-			if _, ok := actionNames[item.Action]; !ok {
-				return fmt.Errorf("list action references unknown action %q", item.Action)
-			}
-		}
-	}
-	return nil
-}
 
-func frontendModelFieldType(modelType frontendType, fieldName string) (frontendType, error) {
-	return frontendRecordFieldType(modelType, fieldName)
-}
 
-func frontendRecordFieldType(recordType frontendType, fieldName string) (frontendType, error) {
-	if recordType.Kind != frontendTypeRecord {
-		return frontendType{}, fmt.Errorf("model must be a record, got %s", recordType.String())
-	}
-	value, ok := recordType.Fields[canonicalFieldName(fieldName)]
-	if !ok {
-		return frontendType{}, fmt.Errorf("record %s has no field %q", recordType.Name, canonicalFieldName(fieldName))
-	}
-	return value, nil
-}
 
-func frontendRecordTypesMatch(left frontendType, right frontendType) bool {
-	if left.Kind == frontendTypeAny || right.Kind == frontendTypeAny {
-		return true
-	}
-	if left.Kind != frontendTypeRecord || right.Kind != frontendTypeRecord {
-		return frontendAssignable(left, right)
-	}
-	return true
-}
 
-func validateFrontendGoCallsInTransition(raw string, env frontendTypeEnv, typeChecker *frontendTypeChecker, screens map[string]model.FrontendScreen) error {
-	node, err := sexp.ParseOne(raw)
-	if err != nil {
-		return err
-	}
-	return validateFrontendGoCallsInTransitionNode(node, env, typeChecker, screens)
-}
 
-func validateFrontendGoCallsInTransitionNode(node sexp.Node, env frontendTypeEnv, typeChecker *frontendTypeChecker, screens map[string]model.FrontendScreen) error {
-	if node.Kind == sexp.KindList && len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
-		switch node.Children[0].Value {
-		case "if":
-			if err := validateFrontendGoCallsInTransitionNode(node.Children[2], env, typeChecker, screens); err != nil {
-				return err
-			}
-			return validateFrontendGoCallsInTransitionNode(node.Children[3], env, typeChecker, screens)
-		case "cond":
-			for _, clause := range node.Children[1:] {
-				if err := validateFrontendGoCallsInTransitionNode(clause.Children[1], env, typeChecker, screens); err != nil {
-					return err
-				}
-			}
-			return nil
-		case "match":
-			_, clauses, err := typeChecker.prepareMatch(node.Children[1:], env)
-			if err != nil {
-				return err
-			}
-			for _, clause := range clauses {
-				if err := validateFrontendGoCallsInTransitionNode(clause.Body, clause.Env, typeChecker, screens); err != nil {
-					return err
-				}
-			}
-			return nil
-		case "let":
-			child, err := typeChecker.bindLetEnv(node.Children[1:], env, false)
-			if err != nil {
-				return err
-			}
-			return validateFrontendGoCallsInTransitionNode(node.Children[2], child, typeChecker, screens)
-		case "let*":
-			child, err := typeChecker.bindLetEnv(node.Children[1:], env, true)
-			if err != nil {
-				return err
-			}
-			return validateFrontendGoCallsInTransitionNode(node.Children[2], child, typeChecker, screens)
-		case "begin":
-			if len(node.Children) < 2 {
-				return nil
-			}
-			return validateFrontendGoCallsInTransitionNode(node.Children[len(node.Children)-1], env, typeChecker, screens)
-		}
-	}
-	if node.Kind != sexp.KindList || len(node.Children) != 2 || node.Children[1].Kind != sexp.KindList {
-		return nil
-	}
-	return validateFrontendGoCallsInEffects(node.Children[1], env, typeChecker, screens)
-}
 
-func validateFrontendGoCallsInEffects(node sexp.Node, env frontendTypeEnv, typeChecker *frontendTypeChecker, screens map[string]model.FrontendScreen) error {
-	if node.Kind == sexp.KindList && len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
-		switch node.Children[0].Value {
-		case "if":
-			if err := validateFrontendGoCallsInEffects(node.Children[2], env, typeChecker, screens); err != nil {
-				return err
-			}
-			return validateFrontendGoCallsInEffects(node.Children[3], env, typeChecker, screens)
-		case "cond":
-			for _, clause := range node.Children[1:] {
-				if err := validateFrontendGoCallsInEffects(clause.Children[1], env, typeChecker, screens); err != nil {
-					return err
-				}
-			}
-			return nil
-		case "match":
-			_, clauses, err := typeChecker.prepareMatch(node.Children[1:], env)
-			if err != nil {
-				return err
-			}
-			for _, clause := range clauses {
-				if err := validateFrontendGoCallsInEffects(clause.Body, clause.Env, typeChecker, screens); err != nil {
-					return err
-				}
-			}
-			return nil
-		case "let":
-			child, err := typeChecker.bindLetEnv(node.Children[1:], env, false)
-			if err != nil {
-				return err
-			}
-			return validateFrontendGoCallsInEffects(node.Children[2], child, typeChecker, screens)
-		case "let*":
-			child, err := typeChecker.bindLetEnv(node.Children[1:], env, true)
-			if err != nil {
-				return err
-			}
-			return validateFrontendGoCallsInEffects(node.Children[2], child, typeChecker, screens)
-		case "begin":
-			if len(node.Children) < 2 {
-				return nil
-			}
-			return validateFrontendGoCallsInEffects(node.Children[len(node.Children)-1], env, typeChecker, screens)
-		case "go":
-			return validateFrontendGoCall(node, env, typeChecker, screens)
-		case "command", "back":
-			return nil
-		}
-	}
-	if node.Kind != sexp.KindList {
-		return nil
-	}
-	for _, child := range node.Children {
-		if err := validateFrontendGoCallsInEffects(child, env, typeChecker, screens); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
-func validateFrontendGoCall(node sexp.Node, env frontendTypeEnv, typeChecker *frontendTypeChecker, screens map[string]model.FrontendScreen) error {
-	if len(node.Children) < 2 || node.Children[1].Kind != sexp.KindSymbol {
-		return fmt.Errorf("go expects a screen")
-	}
-	target := canonicalScreenName(node.Children[1].Value)
-	targetScreen, ok := screens[target]
-	if !ok {
-		return fmt.Errorf("go references unknown screen %q", node.Children[1].Value)
-	}
-	args := node.Children[2:]
-	if len(args) != len(targetScreen.Parameters) {
-		return fmt.Errorf("go to %s expects %d argument(s), got %d", target, len(targetScreen.Parameters), len(args))
-	}
-	for index, arg := range args {
-		targetType := typeChecker.screenParameterType(target, index)
-		if targetType.Kind == frontendTypeAny {
-			return fmt.Errorf("go to %s cannot be type-checked because parameter %q is unresolved", target, targetScreen.Parameters[index])
-		}
-		argType, err := typeChecker.inferExprType(arg, env)
-		if err != nil {
-			return err
-		}
-		if !frontendAssignable(argType, targetType) {
-			return fmt.Errorf("go to %s expects %s for parameter %q, got %s", target, targetType.String(), targetScreen.Parameters[index], argType.String())
-		}
-	}
-	return nil
-}
 
 func validateFrontendScreenUIContext(screen model.FrontendScreen, hasUpdate bool, viewRawNodes []sexp.Node, sectionNodes []sexp.Node) error {
 	messageArities := frontendMessageArities(screen.Messages)

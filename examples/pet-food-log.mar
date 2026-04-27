@@ -11,8 +11,7 @@
    (smtp-username "resend")
    (smtp-password-env "RESEND_API_KEY")))
 
-(define food-purchase
-  (entity
+(define-entity food-purchase
     (fields
       ((purchase-date date) (amount-kg decimal) (amount-paid decimal)))
     (belongs-to ((user)))
@@ -23,14 +22,14 @@
         (error "amounts must be greater than zero")))
     (authorize
       (((read update delete) (same-user? current-user user))
-       (create (authenticated? current-user))))))
+       (create (authenticated? current-user)))))
 
 (define-record purchases-model (message string))
 
-(define (my-purchases)
-  (query food-purchase
-    (where (same-user? current-user user))
-    (order-by purchase-date desc)))
+(define-query (my-purchases)
+  (from food-purchase)
+  (where (same-user? current-user user))
+  (order-by purchase-date desc))
 
 (define-screen purchases
   (view (section (title "Purchases") (text "Pet Food Log"))))

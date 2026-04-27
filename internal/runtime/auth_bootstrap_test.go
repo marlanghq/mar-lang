@@ -104,11 +104,10 @@ func TestBootstrapAdminAcceptsRequiredScalarFields(t *testing.T) {
 	r := mustNewAuthRuntimeFromSource(t, filepath.Join(t.TempDir(), "bootstrap-required-scalars.db"), `
 (define app-auth ())
 
-(define user
-  (entity
+(define-entity user
     (fields
       ((name string)
-       (surname string)))))
+       (surname string))))
 
 (define-app auth-bootstrap-api
   (auth app-auth)
@@ -145,11 +144,10 @@ func TestBootstrapAdminReportsMissingRequiredScalarFields(t *testing.T) {
 	r := mustNewAuthRuntimeFromSource(t, filepath.Join(t.TempDir(), "bootstrap-missing-required.db"), `
 (define app-auth ())
 
-(define user
-  (entity
+(define-entity user
     (fields
       ((name string)
-       (surname string)))))
+       (surname string))))
 
 (define-app auth-bootstrap-api
   (auth app-auth)
@@ -183,15 +181,13 @@ func TestBootstrapAdminBlocksRequiredRelationFields(t *testing.T) {
 	r := mustNewAuthRuntimeFromSource(t, filepath.Join(t.TempDir(), "bootstrap-required-relation.db"), `
 (define app-auth ())
 
-(define team
-  (entity
+(define-entity team
     (fields
-      ((name string)))))
+      ((name string))))
 
-(define user
-  (entity
+(define-entity user
     (belongs-to
-      ((team)))))
+      ((team))))
 
 (define-app auth-bootstrap-api
   (auth app-auth)
@@ -260,13 +256,12 @@ func mustNewAuthRuntime(t *testing.T, dbPath string) *Runtime {
 	app, err := parser.Parse(strings.TrimSpace(`
 (define app-auth ())
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (authorize
       (((read create update delete)
-         (authenticated? current-user))))))
+         (authenticated? current-user)))))
 
 (define-app auth-bootstrap-api
   (auth app-auth)

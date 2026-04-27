@@ -313,9 +313,60 @@ func (t TaggedConstructor) Eval(ctx map[string]any) (any, error) {
 }
 
 const functionsContextKey = "__functions"
+const fuelContextKey = "__fuel__"
+
+// DefaultExecutionFuel is the default operation budget assigned to each
+// expression evaluation context. One unit is consumed per function call
+// (named user function, closure, or first-class call). Once the budget
+// reaches zero, evaluation aborts with a RaisedError that callers convert
+// to a proper HTTP error rather than letting the Go process stack-overflow.
+const DefaultExecutionFuel int64 = 5_000_000
 
 func FunctionsContextKey() string {
 	return functionsContextKey
+}
+
+// SetFuel attaches an execution budget to ctx. Each function call decrements
+// the counter; reaching zero aborts evaluation. If ctx already has a fuel
+// counter, it is replaced. Pass <= 0 to remove fuel tracking.
+func SetFuel(ctx map[string]any, n int64) {
+	if n <= 0 {
+		delete(ctx, fuelContextKey)
+		return
+	}
+	v := n
+	ctx[fuelContextKey] = &v
+}
+
+// consumeFuel decrements the budget and returns a structured RaisedError
+// when the budget runs out. callee is the name of the function being called
+// (recorded in the message so the user knows where the runaway evaluation
+// happened). If no fuel counter is attached, returns nil (untracked contexts
+// are not constrained).
+func consumeFuel(ctx map[string]any, callee string) error {
+	raw, ok := ctx[fuelContextKey]
+	if !ok {
+		return nil
+	}
+	counter, ok := raw.(*int64)
+	if !ok || counter == nil {
+		return nil
+	}
+	if *counter <= 0 {
+		hint := "infinite or very deep recursion"
+		if callee != "" {
+			return RaisedError{Message: fmt.Sprintf(
+				"execution budget exceeded after %d operations while calling %q (likely %s)",
+				DefaultExecutionFuel, callee, hint,
+			)}
+		}
+		return RaisedError{Message: fmt.Sprintf(
+			"execution budget exceeded after %d operations (likely %s)",
+			DefaultExecutionFuel, hint,
+		)}
+	}
+	*counter--
+	return nil
 }
 
 type callable interface {
@@ -327,6 +378,9 @@ type namedFunction struct {
 }
 
 func (n namedFunction) Call(args []any, ctx map[string]any) (any, error) {
+	if err := consumeFuel(ctx, n.Name); err != nil {
+		return nil, err
+	}
 	fn, ok := lookupUserFunction(ctx, n.Name)
 	if !ok {
 		return nil, fmt.Errorf("unknown function %q", n.Name)
@@ -347,13 +401,23 @@ type closure struct {
 	Env    map[string]any
 }
 
-func (c closure) Call(args []any, _ map[string]any) (any, error) {
+func (c closure) Call(args []any, callerCtx map[string]any) (any, error) {
+	// Use the caller's fuel counter (so the budget is per-evaluation, not
+	// per-closure). Closures stored in c.Env don't carry the counter — the
+	// caller does.
+	if err := consumeFuel(callerCtx, "<lambda>"); err != nil {
+		return nil, err
+	}
 	if len(args) != len(c.Params) {
 		return nil, fmt.Errorf("lambda expects %d arguments", len(c.Params))
 	}
 	child := cloneContext(c.Env)
 	for index, param := range c.Params {
 		child[param] = args[index]
+	}
+	// Propagate fuel from caller into child so nested calls keep counting.
+	if raw, ok := callerCtx[fuelContextKey]; ok {
+		child[fuelContextKey] = raw
 	}
 	return c.Body.Eval(child)
 }
@@ -836,6 +900,9 @@ func (c Call) Eval(ctx map[string]any) (any, error) {
 		return acc, nil
 	default:
 		if fn, ok := lookupUserFunction(ctx, c.Name); ok {
+			if err := consumeFuel(ctx, c.Name); err != nil {
+				return nil, err
+			}
 			if len(vals) != len(fn.Params) {
 				return nil, fmt.Errorf("%s expects %d arguments", c.Name, len(fn.Params))
 			}
@@ -844,6 +911,15 @@ func (c Call) Eval(ctx map[string]any) (any, error) {
 				child[param] = vals[index]
 			}
 			return fn.Body.Eval(child)
+		}
+		// First-class functions: a let-bound or lambda-bound name can hold a
+		// callable value (a closure, or a namedFunction reference). Look up
+		// the runtime value and dispatch through callable. (callable.Call
+		// handles its own fuel decrement.)
+		if value, ok := ctx[c.Name]; ok {
+			if callable, ok := value.(callable); ok {
+				return callable.Call(vals, ctx)
+			}
 		}
 		return nil, fmt.Errorf("unknown function %q", c.Name)
 	}

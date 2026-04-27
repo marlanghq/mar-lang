@@ -15,18 +15,16 @@ func TestAdminHasBuiltInAccessToUserEntity(t *testing.T) {
 	src := `
 (define app-auth ())
 
-(define user
-  (entity
+(define-entity user
     (fields
-      ((display-name string optional)))))
+      ((display-name string optional))))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (authorize
       (((read create update delete)
-         (authenticated? current-user))))))
+         (authenticated? current-user)))))
 
 (define-app user-admin-access
   (auth app-auth)

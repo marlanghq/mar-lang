@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	marversion "mar"
@@ -16,6 +17,7 @@ import (
 	"mar/internal/lsp"
 	"mar/internal/model"
 	"mar/internal/parser"
+	"mar/internal/types"
 )
 
 var (
@@ -220,8 +222,11 @@ func parseMarFile(path string) (*model.App, error) {
 	}
 	app, err := parser.Parse(string(content))
 	if err != nil {
-		return nil, formatParseCLIError(err)
+		return nil, formatParseCLIErrorWithSource(err, path, string(content))
 	}
+	// HM type check is now wired into parser.Parse via types.init() —
+	// no extra invocation needed here. Importing types ensures init runs.
+	_ = types.CheckApp
 	return app, nil
 }
 
@@ -261,6 +266,14 @@ func highlightAppWarning(useColor bool, message string) string {
 }
 
 func formatParseCLIError(err error) error {
+	return formatParseCLIErrorWithSource(err, "", "")
+}
+
+// formatParseCLIErrorWithSource produces a structured, colorized error
+// message. When path and source are non-empty and the error message contains
+// a recognizable line marker (e.g., "(line 12)"), the relevant source line
+// is shown with a caret pointing at it (Elm-inspired layout).
+func formatParseCLIErrorWithSource(err error, path string, source string) error {
 	useColor := cliSupportsANSIStream(os.Stderr)
 	message := strings.TrimSpace(err.Error())
 	baseMessage, hint := splitSuggestionHint(message)
@@ -268,15 +281,122 @@ func formatParseCLIError(err error) error {
 		hint = parseCLIHintForMessage(baseMessage)
 	}
 
+	category := classifyParseCLIError(baseMessage)
+	lineNo := extractParseCLILine(baseMessage)
+
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n", colorizeCLI(useColor, "\033[1;31m", "Parse error"))
+	fmt.Fprintf(&b, "%s\n", colorizeCLI(useColor, "\033[1;31m", category))
 	fmt.Fprintf(&b, "  %s\n", highlightParseCLIMessage(useColor, baseMessage))
+	if lineNo > 0 && source != "" {
+		if snippet := renderParseCLISourceSnippet(source, lineNo, useColor); snippet != "" {
+			fmt.Fprintf(&b, "\n%s\n", snippet)
+		}
+	}
 	if hint != "" {
 		fmt.Fprintf(&b, "\n%s\n", colorizeCLI(useColor, "\033[1;33m", "Hint:"))
 		fmt.Fprintf(&b, "  %s\n", highlightParseCLIMessage(useColor, hint))
 	}
 	return styledCLIError(strings.TrimRight(b.String(), "\n") + "\n")
 }
+
+// classifyParseCLIError maps the leading content of a message to a friendly
+// category label so the header reads e.g. "TYPE MISMATCH" rather than the
+// generic "Parse error". Falls back to "Parse error".
+func classifyParseCLIError(message string) string {
+	switch {
+	case strings.Contains(message, "match is not exhaustive"):
+		return "Match not exhaustive"
+	case strings.Contains(message, "does not appear to terminate"):
+		return "Recursion never terminates"
+	case strings.Contains(message, "unknown identifier"),
+		strings.Contains(message, "unknown function"),
+		strings.Contains(message, "unknown record"):
+		return "Unknown name"
+	case strings.Contains(message, "has no field"):
+		return "Missing field"
+	case strings.Contains(message, "must be bool"),
+		strings.Contains(message, "must return bool"),
+		strings.Contains(message, "expects bool"),
+		strings.Contains(message, "expects int"),
+		strings.Contains(message, "expects string"),
+		strings.Contains(message, "expects decimal"),
+		strings.Contains(message, "cannot unify"),
+		strings.Contains(message, "cannot compare"),
+		strings.Contains(message, "operator"):
+		return "Type mismatch"
+	}
+	return "Parse error"
+}
+
+// extractParseCLILine pulls the first "(line N)" or "line N:" mention out
+// of an error message so the formatter can show the corresponding source
+// snippet. Returns 0 when not found.
+func extractParseCLILine(message string) int {
+	m := parseErrorLineMarkerRe.FindStringSubmatch(message)
+	if len(m) < 3 {
+		return 0
+	}
+	for i := 1; i < len(m); i++ {
+		if m[i] == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(m[i]); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+// renderParseCLISourceSnippet returns a 3-line snippet centered on lineNo
+// from source, with a caret indicator. Empty when source doesn't contain
+// the line.
+func renderParseCLISourceSnippet(source string, lineNo int, useColor bool) string {
+	lines := strings.Split(source, "\n")
+	if lineNo < 1 || lineNo > len(lines) {
+		return ""
+	}
+	idx := lineNo - 1
+	var b strings.Builder
+	width := len(strconv.Itoa(lineNo + 1))
+	gutterFmt := "%" + strconv.Itoa(width) + "d"
+	emptyGutter := strings.Repeat(" ", width)
+
+	writeLine := func(n int, content string, highlight bool) {
+		gutter := fmt.Sprintf(gutterFmt, n)
+		if highlight {
+			gutter = colorizeCLI(useColor, "\033[1;31m", gutter)
+		} else {
+			gutter = colorizeCLI(useColor, "\033[2m", gutter)
+		}
+		separator := colorizeCLI(useColor, "\033[2m", " | ")
+		fmt.Fprintf(&b, "  %s%s%s\n", gutter, separator, content)
+	}
+	if idx-1 >= 0 {
+		writeLine(idx, lines[idx-1], false)
+	}
+	writeLine(lineNo, lines[idx], true)
+	// Caret pointing at the start of the offending line.
+	leading := 0
+	for leading < len(lines[idx]) && (lines[idx][leading] == ' ' || lines[idx][leading] == '\t') {
+		leading++
+	}
+	caret := strings.Repeat(" ", leading) + colorizeCLI(useColor, "\033[1;31m", strings.Repeat("^", maxInt(1, len(strings.TrimRight(lines[idx], " \t"))-leading)))
+	separator := colorizeCLI(useColor, "\033[2m", " | ")
+	fmt.Fprintf(&b, "  %s%s%s\n", emptyGutter, separator, caret)
+	if idx+1 < len(lines) {
+		writeLine(lineNo+1, lines[idx+1], false)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+var parseErrorLineMarkerRe = regexp.MustCompile(`(?:\(\s*line\s+(\d+)\s*\)|\bline\s+(\d+)\s*:)`)
 
 func parseCLIHintForMessage(message string) string {
 	switch strings.TrimSpace(message) {

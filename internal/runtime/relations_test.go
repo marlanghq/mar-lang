@@ -14,23 +14,21 @@ func TestEntityCRUDSupportsBelongsToFields(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "belongs-to-crud.db"), `
-(define book
-  (entity
+(define-entity book
     (fields
       ((title string)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
-(define review
-  (entity
+(define-entity review
     (fields
       ((body string)))
     (belongs-to
       ((book)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
 (define-app store-api
   (entities book review))
@@ -70,30 +68,27 @@ func TestEntityCRUDSupportsManyToManyViaJoinEntityBelongsTo(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "belongs-to-join.db"), `
-(define student
-  (entity
+(define-entity student
     (fields
       ((name string)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
-(define course
-  (entity
+(define-entity course
     (fields
       ((title string)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
-(define enrollment
-  (entity
+(define-entity enrollment
     (belongs-to
       ((student)
        (course)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
 (define-app enrollment-api
   (entities student course enrollment))
@@ -124,23 +119,21 @@ func TestListSupportsQueryFiltersByEntityField(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "list-query-filters.db"), `
-(define clinic
-  (entity
+(define-entity clinic
     (fields
       ((name string)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
-(define veterinarian
-  (entity
+(define-entity veterinarian
     (fields
       ((name string)))
     (belongs-to
       ((clinic clinic)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
 (define-app pet-care-log
   (entities clinic veterinarian))
@@ -182,8 +175,7 @@ func TestReadAuthorizationFiltersListAndProtectsGet(t *testing.T) {
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "read-filter.db"), `
 (define app-auth ())
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (belongs-to
@@ -193,7 +185,7 @@ func TestReadAuthorizationFiltersListAndProtectsGet(t *testing.T) {
          (or (same-user? current-user user)
              (has-role? current-user "admin")))
        (create
-         (same-user? current-user user))))))
+         (same-user? current-user user)))))
 
 (define-app todo-read-filter
   (auth app-auth)
@@ -267,8 +259,7 @@ func TestEntityCRUDSupportsBelongsToCurrentUser(t *testing.T) {
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "belongs-to-current-user.db"), `
 (define app-auth ())
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (belongs-to
@@ -279,7 +270,7 @@ func TestEntityCRUDSupportsBelongsToCurrentUser(t *testing.T) {
        (((read update delete)
          (or (same-user? current-user user)
              (has-role? current-user "admin")))
-       (create (authenticated? current-user))))))
+       (create (authenticated? current-user)))))
 
 (define-app personal-todo
   (auth app-auth)
@@ -333,8 +324,7 @@ func TestEntityCRUDRejectsManualPayloadForBelongsToCurrentUser(t *testing.T) {
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "belongs-to-current-user-reject.db"), `
 (define app-auth ())
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (belongs-to
@@ -344,7 +334,7 @@ func TestEntityCRUDRejectsManualPayloadForBelongsToCurrentUser(t *testing.T) {
     (authorize
       ((create (authenticated? current-user))
        ((read update delete)
-        (same-user? current-user user))))))
+        (same-user? current-user user)))))
 
 (define-app personal-todo
   (auth app-auth)
@@ -382,8 +372,7 @@ func TestEntityCRUDSupportsNamedBelongsToCurrentUser(t *testing.T) {
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "belongs-to-named-current-user.db"), `
 (define app-auth ())
 
-(define review
-  (entity
+(define-entity review
     (fields
       ((rating int)))
     (belongs-to
@@ -393,7 +382,7 @@ func TestEntityCRUDSupportsNamedBelongsToCurrentUser(t *testing.T) {
     (authorize
       (((read update delete)
          (same-user? current-user reviewer))
-       (create (authenticated? current-user))))))
+       (create (authenticated? current-user)))))
 
 (define-app book-reviews
   (auth app-auth)
@@ -453,13 +442,12 @@ func TestEntityCRUDAutoTimestamps(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "timestamps.db"), `
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
 (define-app timestamp-api
   (entities todo))

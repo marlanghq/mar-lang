@@ -306,7 +306,7 @@ func shouldForceMultiline(node Node) bool {
 	switch head.Value {
 	case "entity", "screen":
 		return len(node.Children) > 1
-	case "define-app", "define-screen", "define", "fields", "belongs-to", "defaults", "validate", "authorize", "section":
+	case "define-app", "define-screen", "define-query", "define", "define-entity", "define-action", "fields", "belongs-to", "defaults", "validate", "authorize", "section":
 		return len(node.Children) > 2
 	case "entities", "queries", "actions", "screens":
 		return len(node.Children) > 2
@@ -326,7 +326,7 @@ func inlineHeaderArgumentCount(node Node) int {
 	switch head.Value {
 	case "update":
 		return 2
-	case "define-app", "define-screen", "define", "query", "list", "create", "edit", "link", "match", "view", "if", "go", "command":
+	case "define-app", "define-screen", "define-query", "define", "define-entity", "define-action", "list", "create", "edit", "link", "match", "view", "if", "go", "command":
 		return 1
 	default:
 		return 0

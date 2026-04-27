@@ -62,10 +62,9 @@ func mustNewRuntimeWithoutExplicitAuth(t *testing.T, dbPath string) *Runtime {
 	t.Helper()
 
 	app, err := parser.Parse(strings.TrimSpace(`
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app todo-api
   (entities todo))
@@ -94,10 +93,9 @@ func mustNewRuntimeForSMTPAuth(t *testing.T, dbPath string) *Runtime {
    (smtp-password-env "TEST_SMTP_PASSWORD")
    (smtp-starttls false)))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app todo-api
   (auth app-auth)

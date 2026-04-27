@@ -414,6 +414,9 @@ func keywordCompletionItems() []map[string]any {
 	keywords := []string{
 		"define-app",
 		"define-screen",
+		"define-query",
+		"define-entity",
+		"define-action",
 		"define",
 		"define-record",
 		"define-type",
@@ -445,7 +448,7 @@ func keywordCompletionItems() []map[string]any {
 		"fields",
 		"belongs-to",
 		"defaults",
-		"query",
+		"from",
 		"where",
 		"order-by",
 		"validate",

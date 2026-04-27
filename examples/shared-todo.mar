@@ -1,12 +1,10 @@
-(define todo-list
-  (entity
-    (fields ((name string)))))
+(define-entity todo-list
+    (fields ((name string))))
 
-(define todo
-  (entity
+(define-entity todo
     (fields ((title string) (done bool)))
     (belongs-to ((todo-list) (owner user)))
-    (defaults ((owner current-user)))))
+    (defaults ((owner current-user))))
 
 (define-screen home
   (view

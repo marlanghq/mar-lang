@@ -3,18 +3,17 @@
     "prefix": "define-app",
     "description": "Create a Mar app scaffold",
     "body": [
-      "(define ${1:todo}",
-      "  (entity",
-      "    (fields",
-      "      ((title string)",
-      "       (done bool)))",
-      "    (validate",
-      "      (if (>= (length title) 3)",
-      "          true",
-      "          (error \"title must have at least 3 chars\")))",
-      "    (authorize",
-      "      (((read create update delete)",
-      "         (authenticated? current-user))))))",
+      "(define-entity ${1:todo}",
+      "  (fields",
+      "    ((title string)",
+      "     (done bool)))",
+      "  (validate",
+      "    (if (>= (length title) 3)",
+      "        true",
+      "        (error \"title must have at least 3 chars\")))",
+      "  (authorize",
+      "    (((read create update delete)",
+      "       (authenticated? current-user)))))",
       "",
       "(define-record ${2:home-model}",
       "  (error (maybe string)))",
@@ -52,31 +51,37 @@
     ]
   },
   "Mar Entity": {
-    "prefix": "entity",
-    "description": "Create a named entity value",
+    "prefix": "define-entity",
+    "description": "Create an entity definition",
     "body": [
-      "(define ${1:entity-name}",
-      "  (entity",
-      "    (fields",
-      "      ((${2:field-name} ${3|string,int,decimal,bool,date,datetime,cursor|})))",
-      "    (unique",
-      "      ((${2:field-name}))))"
+      "(define-entity ${1:entity-name}",
+      "  (fields",
+      "    ((${2:field-name} ${3|string,int,decimal,bool,date,datetime,cursor|})))",
+      "  (unique",
+      "    ((${2:field-name}))))"
     ]
   },
   "Mar Action": {
-    "prefix": "action",
+    "prefix": "define-action",
     "description": "Create a backend action definition",
     "body": [
-      "(define ${1:create-item}",
-      "  (action",
-      "    (input",
-      "      ((${2:title} ${3|string,int,decimal,bool,date,datetime,cursor|})))",
-      "    (create ${4:todo}",
-      "      ((${2:title} ${2:title})))))"
+      "(define-action ${1:create-item}",
+      "  (input",
+      "    ((${2:title} ${3|string,int,decimal,bool,date,datetime,cursor|})))",
+      "  (create ${4:todo}",
+      "    ((${2:title} ${2:title}))))"
+    ]
+  },
+  "Mar Function": {
+    "prefix": "define-function",
+    "description": "Create a function definition",
+    "body": [
+      "(define (${1:function-name} ${2:arg})",
+      "  ${3:body})"
     ]
   },
   "Mar Screen": {
-    "prefix": "screen",
+    "prefix": "define-screen",
     "description": "Create a dynamic MVU screen",
     "body": [
       "(define-screen (${1:orders-by-status} ${2:wanted-status})",
@@ -100,9 +105,9 @@
       "          (${7:loading} false))",
       "        ()))))",
       "  (view model",
-        "    (section",
-        "      (title \"${9:Items}\")",
-        "      (text \"${10:Loading...}\"))))"
+      "    (section",
+      "      (title \"${9:Items}\")",
+      "      (text \"${10:Loading...}\"))))"
     ]
   },
   "Mar Static Screen": {
@@ -117,14 +122,14 @@
     ]
   },
   "Mar Query": {
-    "prefix": "query",
+    "prefix": "define-query",
     "description": "Create a zero-arg query definition",
     "body": [
-      "(define (${1:my-items})",
-      "  (query ${2:entity}",
-      "    (where ${3:(authenticated? current-user)})",
-      "    (order-by ${4:title} desc)",
-      "    (limit ${5:20})))"
+      "(define-query ${1:my-items}",
+      "  (from ${2:entity})",
+      "  (where ${3:(authenticated? current-user)})",
+      "  (order-by ${4:title} desc)",
+      "  (limit ${5:20}))"
     ]
   },
   "Mar Button": {

@@ -123,10 +123,9 @@ func mustNewAuthRateLimitRuntime(t *testing.T, dbPath, authBlock string) *Runtim
 (define app-auth
   (`+authBlock+`))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app auth-rate-api
   (auth app-auth)

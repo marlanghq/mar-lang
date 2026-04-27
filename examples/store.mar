@@ -1,12 +1,10 @@
-(define product
-  (entity
-    (fields ((name string) (price decimal)))))
+(define-entity product
+    (fields ((name string) (price decimal))))
 
-(define order
-  (entity
+(define-entity order
     (fields ((status string)))
     (belongs-to ((customer user)))
-    (defaults ((customer current-user)))))
+    (defaults ((customer current-user))))
 
 (define-screen products
   (view

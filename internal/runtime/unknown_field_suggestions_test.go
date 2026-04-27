@@ -13,10 +13,9 @@ func TestCreateUnknownFieldSuggestsClosestName(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "unknown-field-create.db"), `
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app todo-api
   (entities todo))

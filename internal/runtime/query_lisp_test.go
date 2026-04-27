@@ -15,18 +15,17 @@ func TestLispyQueryEndpointRunsAgainstRuntime(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "query-lisp.db"), `
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)
        (done bool)))
     (authorize
-      (((read create update delete) true)))))
+      (((read create update delete) true))))
 
-(define (open-todos)
-  (query todo
+(define-query (open-todos)
+  (from todo)
     (where (= done false))
-    (order-by title asc)))
+    (order-by title asc))
 
 (define-app demo
   (backend
@@ -71,13 +70,12 @@ func TestSchemaPayloadExposesPublicQueryPath(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "query-schema.db"), `
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
-(define (open-todos)
-  (query todo))
+(define-query (open-todos)
+  (from todo))
 
 (define-app demo
   (backend
@@ -113,18 +111,17 @@ func TestLispyQueryEndpointAcceptsParameters(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "query-params.db"), `
-(define post
-  (entity
+(define-entity post
     (fields
       ((body string)
        (author int)))
     (authorize
-      (((read create update delete) true)))))
+      (((read create update delete) true))))
 
-(define (posts-by-author wanted-author)
-  (query post
+(define-query (posts-by-author wanted-author)
+  (from post)
     (where (= author wanted-author))
-    (order-by body asc)))
+    (order-by body asc))
 
 (define-app demo
   (backend
@@ -161,17 +158,16 @@ func TestLispyQueryEndpointValidatesParametersWithInferredTypes(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "query-param-types.db"), `
-(define post
-  (entity
+(define-entity post
     (fields
       ((body string)
        (author int)))
     (authorize
-      (((read create update delete) true)))))
+      (((read create update delete) true))))
 
-(define (posts-by-author wanted-author)
-  (query post
-    (where (= author wanted-author))))
+(define-query (posts-by-author wanted-author)
+  (from post)
+    (where (= author wanted-author)))
 
 (define-app demo
   (backend

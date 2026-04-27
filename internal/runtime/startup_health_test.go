@@ -11,10 +11,9 @@ func TestHealthReportsStartupPendingAndFailed(t *testing.T) {
 	requireSQLite3(t)
 
 	app := mustParseApp(t, `
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app startup-health-api
   (entities todo))

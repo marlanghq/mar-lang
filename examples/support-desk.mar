@@ -1,8 +1,7 @@
-(define ticket
-  (entity
+(define-entity ticket
     (fields ((subject string) (status string)))
     (belongs-to ((requester user)))
-    (defaults ((requester current-user)))))
+    (defaults ((requester current-user))))
 
 (define-screen tickets
   (view

@@ -11,10 +11,9 @@ func TestDefaultSecurityHeaders(t *testing.T) {
 	requireSQLite3(t)
 
 	app := mustParseApp(t, `
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app security-headers-api
   (entities todo))
@@ -50,10 +49,9 @@ func TestSystemSecurityHeadersOverride(t *testing.T) {
    (security-referrer-policy "no-referrer")
    (security-content-type-nosniff false)))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app security-headers-api
   (auth app-auth)

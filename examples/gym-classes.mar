@@ -1,11 +1,9 @@
-(define gym
-  (entity
-    (fields ((name string)))))
+(define-entity gym
+    (fields ((name string))))
 
-(define workout-class
-  (entity
+(define-entity workout-class
     (fields ((title string) (starts-at datetime)))
-    (belongs-to ((gym)))))
+    (belongs-to ((gym))))
 
 (define-screen classes
   (view

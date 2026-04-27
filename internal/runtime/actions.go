@@ -329,6 +329,12 @@ func evalActionExpression(raw string, contextValues map[string]any) (any, error)
 	if err != nil {
 		return nil, err
 	}
+	// Inject fuel if the caller's context doesn't already have one. Action
+	// step expressions can call user functions, so unbounded recursion is
+	// possible without a budget.
+	if _, hasFuel := contextValues["__fuel__"]; !hasFuel {
+		expr.SetFuel(contextValues, expr.DefaultExecutionFuel)
+	}
 	return node.Eval(contextValues)
 }
 

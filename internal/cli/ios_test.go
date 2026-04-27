@@ -24,11 +24,10 @@ func TestRunIOSGenerateCreatesProject(t *testing.T) {
      ((bundle-identifier "com.example.todo")
       (server-url "https://school.example.com")))))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)
-       (price decimal)))))
+       (price decimal))))
 
 (define-screen home
   (view
@@ -189,10 +188,9 @@ func TestRunIOSGenerateAllowsArbitraryLoadsForHTTPServerURL(t *testing.T) {
      ((bundle-identifier "com.example.todo")
       (server-url "http://192.168.15.180:4200")))))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app todo-api
   (config app-config)
@@ -221,10 +219,9 @@ func TestRunIOSGenerateRequiresIOSBlock(t *testing.T) {
 	tempDir := t.TempDir()
 	appPath := filepath.Join(tempDir, "todo.mar")
 	source := `
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app todo-api
   (entities todo))
@@ -269,10 +266,9 @@ func TestRunIOSGenerateRequiresConfirmationBeforeDeletingExistingProject(t *test
      ((bundle-identifier "com.example.todo")
       (server-url "https://school.example.com")))))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app todo-api
   (config app-config)

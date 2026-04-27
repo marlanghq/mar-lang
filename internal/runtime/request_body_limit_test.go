@@ -12,12 +12,11 @@ func TestRequestBodyLimitDefaultIs1MB(t *testing.T) {
 	requireSQLite3(t)
 
 	app := mustParseApp(t, `
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (authorize
-      ((create true)))))
+      ((create true))))
 
 (define-app body-limit-api
   (entities todo))
@@ -52,12 +51,11 @@ func TestRequestBodyLimitCanBeOverridden(t *testing.T) {
   ((system
      ((http-max-request-body-mb 2)))))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (authorize
-      ((create true)))))
+      ((create true))))
 
 (define-app body-limit-api
   (config app-config)

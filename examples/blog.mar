@@ -1,8 +1,7 @@
-(define post
-  (entity
+(define-entity post
     (fields ((title string) (body string)))
     (belongs-to ((author user)))
-    (defaults ((author current-user)))))
+    (defaults ((author current-user))))
 
 (define-screen posts
   (view

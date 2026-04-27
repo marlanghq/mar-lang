@@ -931,7 +931,7 @@ private struct FrontendItemView: View {
                     }
                 }
             case "text":
-                Text(item.text ?? "")
+                Text(frontendTextValue)
             case "button":
                 Button(item.label ?? "Button") {
                     if let message = item.message {
@@ -1158,6 +1158,27 @@ private struct FrontendItemView: View {
     }
     private var screenEntity: Entity? {
         rowEntity
+    }
+
+    private var frontendTextValue: String {
+        FrontendRuntime.text(
+            schema: schema,
+            screen: screen,
+            currentModel: frontendScreenModel,
+            expression: item.text,
+            runtimeContext: frontendRuntimeContext
+        )
+    }
+
+    private var frontendRuntimeContext: FrontendRuntimeContext {
+        FrontendRuntimeContext(
+            row: row,
+            parameters: nil,
+            currentUserID: model.authenticatedUserID,
+            currentUserEmail: model.authenticatedEmail,
+            currentUserRole: model.authenticatedRole,
+            isAuthenticated: model.authenticatedEmail != nil || model.authenticatedUserID != nil
+        )
     }
 
     private func deleteCurrentRow(entity: Entity) async {

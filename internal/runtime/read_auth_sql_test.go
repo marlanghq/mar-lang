@@ -12,8 +12,7 @@ func TestListReadAuthorizationWhereTranslatesSimpleOwnedReadRule(t *testing.T) {
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "read-auth-sql.db"), `
 (define app-auth ())
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (belongs-to
@@ -21,7 +20,7 @@ func TestListReadAuthorizationWhereTranslatesSimpleOwnedReadRule(t *testing.T) {
     (authorize
       ((read
          (or (same-user? current-user user)
-             (has-role? current-user "admin")))))))
+             (has-role? current-user "admin"))))))
 
 (define-app todo-read-filter
   (auth app-auth)
@@ -70,12 +69,11 @@ func TestListReadAuthorizationWhereFallsBackForFunctionCalls(t *testing.T) {
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "read-auth-sql-fallback.db"), `
 (define app-auth ())
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (authorize
-      ((read (starts-with "Admin" title))))))
+      ((read (starts-with "Admin" title)))))
 
 (define-app todo-read-filter
   (auth app-auth)
@@ -98,8 +96,7 @@ func TestListReadAuthorizationWhereOmitsWhereForAlwaysTrueAdminRule(t *testing.T
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "read-auth-sql-admin.db"), `
 (define app-auth ())
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (belongs-to
@@ -107,7 +104,7 @@ func TestListReadAuthorizationWhereOmitsWhereForAlwaysTrueAdminRule(t *testing.T
     (authorize
       ((read
          (or (same-user? current-user user)
-             (has-role? current-user "admin")))))))
+             (has-role? current-user "admin"))))))
 
 (define-app todo-read-filter
   (auth app-auth)
@@ -134,12 +131,11 @@ func TestListReadAuthorizationWhereOmitsWhereForAnonymousOrAuthenticatedRule(t *
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "read-auth-sql-public.db"), `
 (define app-auth ())
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (authorize
-      ((read true)))))
+      ((read true))))
 
 (define-app todo-read-filter
   (auth app-auth)

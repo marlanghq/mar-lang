@@ -7,7 +7,7 @@ import (
 
 func TestFormatIsIdempotent(t *testing.T) {
 	src := `
-(define todo (entity (fields ((title string) (done bool)))))
+(define-entity todo (fields ((title string) (done bool))))
 (define-app todos (entities todo))
 `
 
@@ -25,7 +25,7 @@ func TestFormatIsIdempotent(t *testing.T) {
 }
 
 func TestFormatCanonicalOutput(t *testing.T) {
-	src := `(define todo (entity (fields ((title string) (done bool)))))(define-app todos (entities todo))`
+	src := `(define-entity todo (fields ((title string) (done bool))))(define-app todos (entities todo))`
 
 	formatted, err := Format(src)
 	if err != nil {
@@ -33,9 +33,8 @@ func TestFormatCanonicalOutput(t *testing.T) {
 	}
 
 	expected := "" +
-		"(define todo\n" +
-		"  (entity\n" +
-		"    (fields ((title string) (done bool)))))\n\n" +
+		"(define-entity todo\n" +
+		"  (fields ((title string) (done bool))))\n\n" +
 		"(define-app todos\n" +
 		"  (entities todo))\n"
 
@@ -84,12 +83,12 @@ func TestFormatKeepsStructuralHeadersReadable(t *testing.T) {
 
 func TestFormatKeepsDefappReferenceListsConsistent(t *testing.T) {
 	src := `
-(define todo (entity (fields ((title string)))))
-(define post (entity (fields ((body string)))))
-(define (open-todos) (query todo))
-(define (open-posts) (query post))
-(define rename-todo (action (input ((todo-id int))) (update todo todo-id ((title "done")))))
-(define rename-post (action (input ((post-id int))) (update post post-id ((body "done")))))
+(define-entity todo (fields ((title string))))
+(define-entity post (fields ((body string))))
+(define-query open-todos (from todo))
+(define-query open-posts (from post))
+(define-action rename-todo (input ((todo-id int))) (update todo todo-id ((title "done"))))
+(define-action rename-post (input ((post-id int))) (update post post-id ((body "done"))))
 
 (define-app demo
   (backend

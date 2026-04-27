@@ -179,18 +179,17 @@ func createInitProject(baseDir, projectName string) (*initProjectResult, error) 
 
 func renderInitMar(appName string) string {
 	return strings.TrimSpace(fmt.Sprintf(`
-(define todo
-  (entity
-    (fields
-      ((title string)
-       (done bool)))
-    (validate
-      (if (>= (length title) 3)
-          true
-          (error "title must have at least 3 chars")))
-    (authorize
-      (((read create update delete)
-         (authenticated? current-user))))))
+(define-entity todo
+  (fields
+    ((title string)
+     (done bool)))
+  (validate
+    (if (>= (length title) 3)
+        true
+        (error "title must have at least 3 chars")))
+  (authorize
+    (((read create update delete)
+       (authenticated? current-user)))))
 
 (define-record home-model
   (message string))

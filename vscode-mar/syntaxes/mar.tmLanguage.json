@@ -80,7 +80,7 @@
         },
         {
           "name": "meta.definition.mar",
-          "match": "(\\()\\s*(define-app|define-screen|define|define-record|define-type)\\s+([a-z][a-z0-9-]*(?:-[a-z0-9]+)*)",
+          "match": "(\\()\\s*(define-app|define-screen|define-query|define-entity|define-action|define-record|define-type|define)\\s+([a-z][a-z0-9-]*(?:-[a-z0-9]+)*)",
           "captures": {
             "1": {
               "name": "punctuation.section.parens.begin.mar"
@@ -115,11 +115,11 @@
       "patterns": [
         {
           "name": "keyword.control.mar",
-          "match": "(?<=\\()\\s*(backend|frontend|entity|screen|action|input|fields|belongs-to|unique|defaults|default|primary|auto|validate|authorize|query|where|order-by|limit|config|auth|entities|queries|actions|screens|public|system|database|server|port|ios|bundle-identifier|display-name|server-url|dir|mount|spa-fallback|request-logs-buffer|http-max-request-body-mb|sqlite-journal-mode|sqlite-synchronous|sqlite-foreign-keys|sqlite-busy-timeout-ms|sqlite-wal-autocheckpoint|sqlite-journal-size-limit-mb|sqlite-mmap-size-mb|sqlite-cache-size-kb|from|subject|smtp-host|smtp-port|smtp-username|smtp-password-env|smtp-starttls|code-ttl-minutes|session-ttl-hours|auth-request-code-rate-limit-per-minute|auth-login-rate-limit-per-minute|admin-ui-session-ttl-hours|security-frame-policy|security-referrer-policy|security-content-type-nosniff|msg|init|update|view|section|empty|button|link|list|create|edit|delete|load|read|go|back|command|row|title|subtitle|text|field|value|open|destination|disabled|text-input|textarea|toggle|select)(?![-_.a-z0-9])"
+          "match": "(?<=\\()\\s*(backend|frontend|input|fields|belongs-to|unique|defaults|default|primary|auto|validate|authorize|where|order-by|limit|config|auth|entities|queries|actions|screens|public|system|database|server|port|ios|bundle-identifier|display-name|server-url|dir|mount|spa-fallback|request-logs-buffer|http-max-request-body-mb|sqlite-journal-mode|sqlite-synchronous|sqlite-foreign-keys|sqlite-busy-timeout-ms|sqlite-wal-autocheckpoint|sqlite-journal-size-limit-mb|sqlite-mmap-size-mb|sqlite-cache-size-kb|from|subject|smtp-host|smtp-port|smtp-username|smtp-password-env|smtp-starttls|code-ttl-minutes|session-ttl-hours|auth-request-code-rate-limit-per-minute|auth-login-rate-limit-per-minute|admin-ui-session-ttl-hours|security-frame-policy|security-referrer-policy|security-content-type-nosniff|msg|init|update|view|section|empty|button|link|list|create|edit|delete|load|read|go|back|command|row|title|subtitle|text|field|value|open|destination|disabled|text-input|textarea|toggle|select)(?![-_.a-z0-9])"
         },
         {
           "name": "support.function.mar",
-          "match": "(?<=\\()\\s*(if|cond|match|let|let\\*|lambda|begin|error|and|or|not|get|assoc|authenticated\\?|anonymous\\?|same-user\\?|has-role\\?|just|nothing|ok|err|unit|cons|first|rest|empty\\?|map|filter|fold-left|fold-right|length|contains|starts-with|ends-with|matches)(?![-_.a-z0-9])"
+          "match": "(?<=\\()\\s*(if|cond|match|let|let\\*|lambda|begin|error|and|or|not|get|assoc|authenticated\\?|anonymous\\?|same-user\\?|has-role\\?|just|nothing|ok|err|unit|cons|first|rest|empty\\?|map|filter|fold-left|fold-right|length|contains|starts-with|ends-with|matches|string-append|number->string|date->string|datetime->string)(?![-_.a-z0-9])"
         },
         {
           "name": "support.function.mar",

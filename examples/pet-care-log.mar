@@ -1,14 +1,12 @@
-(define pet
-  (entity
+(define-entity pet
     (fields ((name string) (species string)))
     (belongs-to ((owner user)))
-    (defaults ((owner current-user)))))
+    (defaults ((owner current-user))))
 
-(define vet-visit
-  (entity
+(define-entity vet-visit
     (fields ((visit-date date) (reason string)))
     (belongs-to ((pet) (user)))
-    (defaults ((user current-user)))))
+    (defaults ((user current-user))))
 
 (define-screen pets
   (view

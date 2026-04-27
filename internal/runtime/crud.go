@@ -377,6 +377,10 @@ func (r *Runtime) evaluationContext(entity *model.Entity, entityContext map[stri
 		ctx[name] = value
 	}
 	ctx["__functions"] = r.functions
+	// Cap each evaluation at a finite operation budget. Exceeding it triggers
+	// a structured RaisedError instead of letting unbounded recursion stack-
+	// overflow the Go process.
+	expr.SetFuel(ctx, expr.DefaultExecutionFuel)
 	return ctx
 }
 

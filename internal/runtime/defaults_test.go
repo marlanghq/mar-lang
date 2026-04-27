@@ -11,8 +11,7 @@ func TestEntityCRUDAppliesFieldDefaultsWhenPayloadOmitsValues(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "defaults-crud.db"), `
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)
        (done bool)
@@ -27,7 +26,7 @@ func TestEntityCRUDAppliesFieldDefaultsWhenPayloadOmitsValues(t *testing.T) {
        (due-at 1742203200000)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
 (define-app todo-api
   (entities todo))
@@ -63,13 +62,12 @@ func TestEntityCRUDPreservesDecimalAsExactString(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "decimal-crud.db"), `
-(define product
-  (entity
+(define-entity product
     (fields
       ((price decimal)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
 (define-app product-api
   (entities product))

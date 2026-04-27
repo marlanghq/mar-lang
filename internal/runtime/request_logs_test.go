@@ -181,8 +181,7 @@ func TestRequestLogsShowReadAuthorizationFilterPushedIntoListQuery(t *testing.T)
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "request-logs-read-pushdown.db"), `
 (define app-auth ())
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (belongs-to
@@ -192,7 +191,7 @@ func TestRequestLogsShowReadAuthorizationFilterPushedIntoListQuery(t *testing.T)
          (or (same-user? current-user user)
              (has-role? current-user "admin")))
        (create
-         (same-user? current-user user))))))
+         (same-user? current-user user)))))
 
 (define-app todo-read-filter
   (auth app-auth)
@@ -276,8 +275,7 @@ func TestRequestLogsOmitWhereForAdminListWhenReadRuleIsAlwaysTrue(t *testing.T) 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "request-logs-read-pushdown-admin.db"), `
 (define app-auth ())
 
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)))
     (belongs-to
@@ -285,7 +283,7 @@ func TestRequestLogsOmitWhereForAdminListWhenReadRuleIsAlwaysTrue(t *testing.T) 
     (authorize
       ((read
          (or (same-user? current-user user)
-             (has-role? current-user "admin")))))))
+             (has-role? current-user "admin"))))))
 
 (define-app todo-read-filter
   (auth app-auth)

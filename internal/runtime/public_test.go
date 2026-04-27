@@ -30,10 +30,9 @@ func TestPublicServesEmbeddedFiles(t *testing.T) {
       (mount "/")
       (spa-fallback "index.html")))))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app front-api
   (config app-config)
@@ -84,10 +83,9 @@ func TestPublicSPAFallbackForRoutesWithoutFileExtension(t *testing.T) {
       (mount "/")
       (spa-fallback "index.html")))))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app front-api
   (config app-config)
@@ -128,10 +126,9 @@ func TestPublicSPAFallbackDoesNotMaskMissingAssets(t *testing.T) {
       (mount "/")
       (spa-fallback "index.html")))))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app front-api
   (config app-config)
@@ -163,10 +160,9 @@ func TestRootRedirectsToAppUIWhenNoPublicAppIsConfigured(t *testing.T) {
 (define app-config
   ((database "./todo.db")))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app todo-api
   (config app-config)
@@ -204,10 +200,9 @@ func TestAppUIServedUnderMarPrefix(t *testing.T) {
       (mount "/")
       (spa-fallback "index.html")))))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app front-api
   (config app-config)
@@ -266,10 +261,9 @@ func TestSchemaEndpointStillWorksUnderMarPrefix(t *testing.T) {
 (define app-config
   ((database "./front.db")))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app front-api
   (config app-config)
@@ -306,10 +300,9 @@ func TestAppUIIndexEmbedsBootstrapSchemaAndVersion(t *testing.T) {
 (define app-config
   ((database "./front.db")))
 
-(define todo
-  (entity
+(define-entity todo
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-app front-api
   (config app-config)
@@ -352,10 +345,9 @@ func TestSchemaEndpointIncludesFrontend(t *testing.T) {
 (define app-config
   ((database "./blog.db")))
 
-(define post
-  (entity
+(define-entity post
     (fields
-      ((title string)))))
+      ((title string))))
 
 (define-screen home
   (view

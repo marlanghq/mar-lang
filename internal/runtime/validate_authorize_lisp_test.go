@@ -156,8 +156,7 @@ func TestOptionalFieldsAreMaybeValuesInValidation(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "optional-validation.db"), `
-(define profile
-  (entity
+(define-entity profile
     (fields
       ((handle string optional)))
     (validate
@@ -170,7 +169,7 @@ func TestOptionalFieldsAreMaybeValuesInValidation(t *testing.T) {
            (error "handle must have at least 3 characters")))))
     (authorize
       (((read create update delete)
-        true)))))
+        true))))
 
 (define-app demo
   (backend

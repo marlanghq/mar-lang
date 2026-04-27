@@ -10,20 +10,18 @@ func TestLispyActionEndpointRunsAgainstRuntime(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "action-lisp.db"), `
-(define todo
-  (entity
+(define-entity todo
     (fields
       ((title string)
        (done bool)))
     (authorize
-      (((read create update delete) true)))))
+      (((read create update delete) true))))
 
-(define complete-todo
-  (action
+(define-action complete-todo
     (input
       ((todo-id int)))
     (update todo todo-id
-      ((done true)))))
+      ((done true))))
 
 (define-app demo
   (backend

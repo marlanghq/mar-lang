@@ -12,14 +12,13 @@ func TestEntityCRUDSupportsDateTimeFields(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "datetime-crud.db"), `
-(define event
-  (entity
+(define-entity event
     (fields
       ((title string)
        (starts-at datetime)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
 (define-app todo-api
   (entities event))
@@ -59,14 +58,13 @@ func TestEntityCRUDNormalizesDateFieldsToUtcMidnight(t *testing.T) {
 	requireSQLite3(t)
 
 	r := mustNewRuntimeFromSource(t, filepath.Join(t.TempDir(), "date-crud.db"), `
-(define student
-  (entity
+(define-entity student
     (fields
       ((name string)
        (birthday date)))
     (authorize
       (((read create update delete)
-         true)))))
+         true))))
 
 (define-app todo-api
   (entities student))
