@@ -227,33 +227,35 @@ func makeCtorValueLocal(tag string, arity int) runtime.Value {
 
 // --- helpers ---
 
+// findMarFiles returns the .mar files belonging to a project at root.
+//
+// If root is a single .mar file, returns just that file.
+// If root is a directory, returns the .mar files directly inside it
+// (no recursion into subdirectories — those are separate projects).
 func findMarFiles(root string) ([]string, error) {
 	info, err := os.Stat(root)
 	if err != nil {
 		return nil, err
 	}
 	if !info.IsDir() {
-		// Single file: just return it
 		if strings.HasSuffix(root, ".mar") {
 			return []string{root}, nil
 		}
 		return nil, fmt.Errorf("%s: not a .mar file or directory", root)
 	}
-	var out []string
-	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return nil
-		}
-		if strings.HasSuffix(path, ".mar") {
-			out = append(out, path)
-		}
-		return nil
-	})
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(name, ".mar") {
+			out = append(out, filepath.Join(root, name))
+		}
 	}
 	sort.Strings(out)
 	return out, nil
