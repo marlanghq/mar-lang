@@ -216,6 +216,39 @@ func stdlibBindings() map[string]Type {
 				To:   TArrow{From: TMaybe(a), To: TMaybe(b)},
 			},
 		},
+		"maybeAndThen": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: a, To: TMaybe(b)},
+				To:   TArrow{From: TMaybe(a), To: TMaybe(b)},
+			},
+		},
+		// Result helpers
+		"resultMap": TForall{
+			Vars: []int{a.ID, b.ID, -7},
+			Body: TArrow{
+				From: TArrow{From: b, To: TVar{ID: -7}},
+				To:   TArrow{From: TResult(a, b), To: TResult(a, TVar{ID: -7})},
+			},
+		},
+		"resultAndThen": TForall{
+			Vars: []int{a.ID, b.ID, -7},
+			Body: TArrow{
+				From: TArrow{From: b, To: TResult(a, TVar{ID: -7})},
+				To:   TArrow{From: TResult(a, b), To: TResult(a, TVar{ID: -7})},
+			},
+		},
+		"resultMapError": TForall{
+			Vars: []int{a.ID, b.ID, -7},
+			Body: TArrow{
+				From: TArrow{From: a, To: TVar{ID: -7}},
+				To:   TArrow{From: TResult(a, b), To: TResult(TVar{ID: -7}, b)},
+			},
+		},
+		// String extras
+		"stringSplit": TArrow{From: TString, To: TArrow{From: TString, To: TList(TString)}},
+		"stringJoin":  TArrow{From: TString, To: TArrow{From: TList(TString), To: TString}},
+		"stringTrim":  TArrow{From: TString, To: TString},
 
 		// Effect
 		"effectSucceed": TForall{
@@ -325,6 +358,23 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{
 				From: TDb(),
 				To:   TArrow{From: TString, To: TEffect(TString, TMaybe(a))},
+			},
+		},
+		"dbExecParams": TArrow{
+			From: TDb(),
+			To: TArrow{
+				From: TString,
+				To:   TArrow{From: TList(TString), To: TEffect(TString, TUnit{})},
+			},
+		},
+		"dbQueryParams": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TDb(),
+				To: TArrow{
+					From: TString,
+					To:   TArrow{From: TList(TString), To: TEffect(TString, TList(a))},
+				},
 			},
 		},
 
@@ -466,6 +516,13 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"String.toLower":    "stringToLower",
 		"Maybe.withDefault": "maybeWithDefault",
 		"Maybe.map":         "maybeMap",
+		"Maybe.andThen":     "maybeAndThen",
+		"Result.map":        "resultMap",
+		"Result.andThen":    "resultAndThen",
+		"Result.mapError":   "resultMapError",
+		"String.split":      "stringSplit",
+		"String.join":       "stringJoin",
+		"String.trim":       "stringTrim",
 		"Effect.succeed":    "effectSucceed",
 		"Effect.fail":       "effectFail",
 		"Effect.map":        "effectMap",
@@ -485,10 +542,12 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Response.ok":       "responseOk",
 		"Response.notFound": "responseNotFound",
 		"Response.status":   "responseStatus",
-		"Db.open":     "dbOpen",
-		"Db.exec":     "dbExec",
-		"Db.query":    "dbQuery",
-		"Db.queryOne": "dbQueryOne",
+		"Db.open":        "dbOpen",
+		"Db.exec":        "dbExec",
+		"Db.query":       "dbQuery",
+		"Db.queryOne":    "dbQueryOne",
+		"Db.execParams":  "dbExecParams",
+		"Db.queryParams": "dbQueryParams",
 		"Entity.create":     "entityCreate",
 		"Entity.field":      "entityField",
 		"Entity.primaryKey": "entityPrimaryKey",

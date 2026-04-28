@@ -150,6 +150,86 @@ func dbBuiltins() map[string]Value {
 				},
 			}, nil
 		}),
+
+		// Db.execParams : Db -> String -> List String -> Effect String ()
+		// Parameterized exec (use ? for placeholders). Safer than string concat.
+		"dbExecParams": nativeFn(3, func(args []Value) (Value, error) {
+			conn, ok1 := args[0].(VDb)
+			query, ok2 := args[1].(VString)
+			params, ok3 := args[2].(VList)
+			if !ok1 || !ok2 || !ok3 {
+				return nil, fmt.Errorf("Db.execParams: expected Db, String, List String")
+			}
+			pVals := make([]any, len(params.Elements))
+			for i, p := range params.Elements {
+				if s, ok := p.(VString); ok {
+					pVals[i] = s.V
+				} else if n, ok := p.(VInt); ok {
+					pVals[i] = n.V
+				} else {
+					return nil, fmt.Errorf("Db.execParams: unsupported param type %T", p)
+				}
+			}
+			return VEffect{
+				Tag: "dbExecParams",
+				Run: func() (Value, error) {
+					if _, err := conn.Conn.DB.Exec(query.V, pVals...); err != nil {
+						return nil, err
+					}
+					return VUnit{}, nil
+				},
+			}, nil
+		}),
+
+		// Db.queryParams : Db -> String -> List String -> Effect String (List Record)
+		"dbQueryParams": nativeFn(3, func(args []Value) (Value, error) {
+			conn, ok1 := args[0].(VDb)
+			query, ok2 := args[1].(VString)
+			params, ok3 := args[2].(VList)
+			if !ok1 || !ok2 || !ok3 {
+				return nil, fmt.Errorf("Db.queryParams: expected Db, String, List")
+			}
+			pVals := make([]any, len(params.Elements))
+			for i, p := range params.Elements {
+				if s, ok := p.(VString); ok {
+					pVals[i] = s.V
+				} else if n, ok := p.(VInt); ok {
+					pVals[i] = n.V
+				} else {
+					return nil, fmt.Errorf("Db.queryParams: unsupported param type %T", p)
+				}
+			}
+			return VEffect{
+				Tag: "dbQueryParams",
+				Run: func() (Value, error) {
+					rows, err := conn.Conn.DB.Query(query.V, pVals...)
+					if err != nil {
+						return nil, err
+					}
+					defer rows.Close()
+					cols, err := rows.Columns()
+					if err != nil {
+						return nil, err
+					}
+					var results []Value
+					for rows.Next() {
+						vals := make([]any, len(cols))
+						ptrs := make([]any, len(cols))
+						for i := range vals {
+							ptrs[i] = &vals[i]
+						}
+						if err := rows.Scan(ptrs...); err != nil {
+							return nil, err
+						}
+						results = append(results, scannedRowToRecord(cols, vals))
+					}
+					if err := rows.Err(); err != nil {
+						return nil, err
+					}
+					return VList{Elements: results}, nil
+				},
+			}, nil
+		}),
 	}
 }
 

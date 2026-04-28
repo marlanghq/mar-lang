@@ -247,5 +247,109 @@ func stdlib() map[string]Value {
 			}
 			return c, nil
 		}),
+		"maybeAndThen": nativeFn(2, func(args []Value) (Value, error) {
+			fn := args[0]
+			c, ok := args[1].(VCtor)
+			if !ok {
+				return nil, fmt.Errorf("maybeAndThen: not a Maybe")
+			}
+			switch c.Tag {
+			case "Just":
+				return apply(fn, c.Args[0])
+			case "Nothing":
+				return c, nil
+			}
+			return c, nil
+		}),
+
+		// Result helpers
+		"resultMap": nativeFn(2, func(args []Value) (Value, error) {
+			fn := args[0]
+			c, ok := args[1].(VCtor)
+			if !ok {
+				return nil, fmt.Errorf("resultMap: not a Result")
+			}
+			switch c.Tag {
+			case "Ok":
+				v, err := apply(fn, c.Args[0])
+				if err != nil {
+					return nil, err
+				}
+				return VCtor{Tag: "Ok", Args: []Value{v}}, nil
+			case "Err":
+				return c, nil
+			}
+			return c, nil
+		}),
+		"resultAndThen": nativeFn(2, func(args []Value) (Value, error) {
+			fn := args[0]
+			c, ok := args[1].(VCtor)
+			if !ok {
+				return nil, fmt.Errorf("resultAndThen: not a Result")
+			}
+			switch c.Tag {
+			case "Ok":
+				return apply(fn, c.Args[0])
+			case "Err":
+				return c, nil
+			}
+			return c, nil
+		}),
+		"resultMapError": nativeFn(2, func(args []Value) (Value, error) {
+			fn := args[0]
+			c, ok := args[1].(VCtor)
+			if !ok {
+				return nil, fmt.Errorf("resultMapError: not a Result")
+			}
+			switch c.Tag {
+			case "Err":
+				v, err := apply(fn, c.Args[0])
+				if err != nil {
+					return nil, err
+				}
+				return VCtor{Tag: "Err", Args: []Value{v}}, nil
+			case "Ok":
+				return c, nil
+			}
+			return c, nil
+		}),
+
+		// String extras
+		"stringSplit": nativeFn(2, func(args []Value) (Value, error) {
+			sep, ok1 := args[0].(VString)
+			s, ok2 := args[1].(VString)
+			if !ok1 || !ok2 {
+				return nil, fmt.Errorf("stringSplit: expected String, String")
+			}
+			parts := strings.Split(s.V, sep.V)
+			out := make([]Value, len(parts))
+			for i, p := range parts {
+				out[i] = VString{V: p}
+			}
+			return VList{Elements: out}, nil
+		}),
+		"stringJoin": nativeFn(2, func(args []Value) (Value, error) {
+			sep, ok1 := args[0].(VString)
+			list, ok2 := args[1].(VList)
+			if !ok1 || !ok2 {
+				return nil, fmt.Errorf("stringJoin: expected String, List String")
+			}
+			parts := make([]string, len(list.Elements))
+			for i, e := range list.Elements {
+				s, ok := e.(VString)
+				if !ok {
+					return nil, fmt.Errorf("stringJoin: list element not String")
+				}
+				parts[i] = s.V
+			}
+			return VString{V: strings.Join(parts, sep.V)}, nil
+		}),
+		"stringTrim": nativeFn(1, func(args []Value) (Value, error) {
+			s, ok := args[0].(VString)
+			if !ok {
+				return nil, fmt.Errorf("stringTrim: expected String")
+			}
+			return VString{V: strings.TrimSpace(s.V)}, nil
+		}),
 	}
 }
