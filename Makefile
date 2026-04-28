@@ -1,12 +1,12 @@
 # Mar build / test commands.
 #
 # Usage:
-#   make            # build the binary (./mar)
-#   make test       # run the Go test suite
-#   make check-examples
-#                   # type-check every example under examples/
-#   make install    # install ./mar into $GOBIN (defaults to ~/go/bin)
-#   make clean      # remove the local binary
+#   make                 # build the binary (./mar)
+#   make test            # run the Go test suite
+#   make check-examples  # type-check every example under examples/
+#   make install         # install ./mar into $GOBIN (defaults to ~/go/bin)
+#   make vscode          # build the VSCode extension (.vsix)
+#   make clean           # remove the local binary
 #
 # Versioning info is embedded via -ldflags. To override the version string
 # at build time, run e.g. `make build VERSION=0.2.0`.
@@ -18,7 +18,7 @@ LDFLAGS := -s -w \
 	-X 'main.version=$(VERSION)' \
 	-X 'main.commit=$(COMMIT)'
 
-.PHONY: all build test check-examples install clean
+.PHONY: all build test check-examples install vscode clean
 
 all: build
 
@@ -56,6 +56,21 @@ install:
 	@go install -ldflags "$(LDFLAGS)" ./cmd/mar
 	@echo "Installed mar"
 
+# Builds the VSCode extension into a .vsix package and prints the
+# command to install it locally. Mirrors the shape of the lispy-era
+# Makefile target.
+vscode:
+	@cd vscode-mar && \
+		(test -d node_modules || npm install --silent) && \
+		npm run compile --silent && \
+		npx --yes @vscode/vsce package --out vscode-mar.vsix --no-dependencies > /dev/null
+	@echo ""
+	@echo "Built vscode-mar/vscode-mar.vsix"
+	@echo ""
+	@echo "Install with:"
+	@echo "  code --install-extension vscode-mar/vscode-mar.vsix --force"
+
 clean:
 	@rm -f mar
+	@rm -rf vscode-mar/out vscode-mar/*.vsix
 	@echo "Cleaned"

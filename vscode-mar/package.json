@@ -4,6 +4,10 @@
   "description": "Language support for the mar programming language",
   "version": "0.1.0",
   "publisher": "mar-lang",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/marlanghq/mar-lang"
+  },
   "engines": { "vscode": "^1.75.0" },
   "categories": ["Programming Languages"],
   "activationEvents": ["onLanguage:mar"],
