@@ -397,12 +397,12 @@ func renderScreenInteractiveHTML(w io.Writer, v VView, screenPath string) {
 	switch v.Tag {
 	case "button":
 		fmt.Fprintf(w, `<form method="post" action="%s" style="display:inline">`, escapeAttr(msgURL))
-		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(v.Text))
+		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(msgName(v.Msg)))
 		fmt.Fprintf(w, `<button type="submit">%s</button>`, escapeHTML(v.Text))
 		fmt.Fprintf(w, `</form>`)
 	case "form":
 		fmt.Fprintf(w, `<form method="post" action="%s">`, escapeAttr(msgURL))
-		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(v.Text))
+		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(msgName(v.Msg)))
 		for _, c := range v.Children {
 			if cv, ok := c.(VView); ok {
 				renderScreenInteractiveHTML(w, cv, screenPath)
@@ -451,16 +451,28 @@ func renderScreenInteractiveHTML(w io.Writer, v VView, screenPath string) {
 	}
 }
 
+// msgName extracts the constructor tag from a Msg value. Buttons store the
+// msg as a VCtor (its tag is the name). Forms store the constructor function
+// as a VFn whose CtorTag is the name. Returns "" if neither pattern matches.
+func msgName(v Value) string {
+	switch x := v.(type) {
+	case VCtor:
+		return x.Tag
+	case VFn:
+		return x.CtorTag
+	}
+	return ""
+}
+
 // renderInteractiveHTML walks a view, rendering buttons as forms that POST
-// the bound msg back to /__msg.
-//
-// MVP convention: a button's onClick msg is encoded as the button's text.
-// (Once we add proper msg attributes, this becomes typed.)
+// the bound msg back to /__msg. The msg's constructor tag is sent in a
+// hidden field; for forms, additional input/textarea fields ride along and
+// the runtime wraps them into a record before applying the constructor.
 func renderInteractiveHTML(w io.Writer, v VView) {
 	switch v.Tag {
 	case "button":
 		fmt.Fprintf(w, `<form method="post" action="/__msg" style="display:inline">`)
-		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(v.Text))
+		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(msgName(v.Msg)))
 		fmt.Fprintf(w, `<button type="submit">%s</button>`, escapeHTML(v.Text))
 		fmt.Fprintf(w, `</form>`)
 	case "text":
@@ -516,7 +528,7 @@ func renderInteractiveHTML(w io.Writer, v VView) {
 	case "form":
 		// View.form makes the inputs inside post a msg with the named fields.
 		fmt.Fprintf(w, `<form method="post" action="/__msg">`)
-		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(v.Text))
+		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(msgName(v.Msg)))
 		for _, c := range v.Children {
 			if cv, ok := c.(VView); ok {
 				renderInteractiveHTML(w, cv)

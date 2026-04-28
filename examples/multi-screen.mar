@@ -23,12 +23,12 @@ counterUpdate msg model =
         Dec -> (model - 1, Effect.none)
 
 
-counterView : Int -> View
+counterView : Int -> View CounterMsg
 counterView n =
     View.section
         [ View.title "Counter"
         , View.text ("Value: " ++ String.fromInt n)
-        , View.row [ View.button "Inc", View.button "Dec" ]
+        , View.row [ View.button Inc "Inc", View.button Dec "Dec" ]
         , View.row [ View.link "/todos" "Go to todos" ]
         ]
 
@@ -55,13 +55,13 @@ todoUpdate msg model =
         Clear -> ({ items = [] }, Effect.none)
 
 
-todoView : TodoModel -> View
+todoView : TodoModel -> View TodoMsg
 todoView model =
     View.section
         [ View.title "Todos"
         , View.subtitle (String.fromInt (List.length model.items) ++ " items")
-        , View.form "AddItem" [ View.input "body" "" ]
-        , View.button "Clear"
+        , View.form AddItem [ View.input "body" "" ]
+        , View.button Clear "Clear"
         , View.list (List.map View.text model.items)
         , View.row [ View.link "/home" "Back to counter" ]
         ]

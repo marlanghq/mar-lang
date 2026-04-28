@@ -86,13 +86,16 @@ func joinModuleName(parts []string) string {
 
 // makeCtorValue builds the runtime value for a constructor.
 // Nullary constructors are direct VCtor values; n-ary constructors are
-// functions that, when fully applied, produce a VCtor.
+// functions that, when fully applied, produce a VCtor. The CtorTag field
+// preserves the constructor name on the function so callers (notably
+// View.form) can recognize a constructor without having to apply it.
 func makeCtorValue(tag string, arity int) Value {
 	if arity == 0 {
 		return VCtor{Tag: tag}
 	}
 	return VFn{
-		Arity: arity,
+		Arity:   arity,
+		CtorTag: tag,
 		Native: func(args []Value) (Value, error) {
 			return VCtor{Tag: tag, Args: append([]Value{}, args...)}, nil
 		},

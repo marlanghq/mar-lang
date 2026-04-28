@@ -49,23 +49,23 @@ update msg model =
             ( { nextId = model.nextId, items = [] }, Effect.none )
 
 
-renderTodo : Todo -> View
+renderTodo : Todo -> View Msg
 renderTodo t =
     View.row
         [ View.text (String.fromInt t.id ++ ": " ++ t.body)
         ]
 
 
-view : Model -> View
+view : Model -> View Msg
 view model =
     View.section
         [ View.title "Todo"
         , View.subtitle (String.fromInt (List.length model.items) ++ " items")
-        , View.form "AddTodo"
+        , View.form AddTodo
             [ View.input "body" "" ]
         , View.row
-            [ View.button "ToggleAll"
-            , View.button "ClearAll"
+            [ View.button ToggleAll "ToggleAll"
+            , View.button ClearAll "ClearAll"
             ]
         , View.list (List.map renderTodo model.items)
         ]

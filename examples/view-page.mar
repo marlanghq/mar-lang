@@ -4,7 +4,9 @@ module ViewPage exposing (main)
 -- A simple HTTP server that renders a View as HTML.
 
 
-page : View
+-- Polymorphic in msg — this view never dispatches anything, so any msg
+-- type works. The HTTP handler just renders it via View.render.
+page : View a
 page =
     View.section
         [ View.title "mar"
@@ -19,7 +21,6 @@ page =
             [ View.link "https://example.com" "Example"
             , View.link "/about" "About"
             ]
-        , View.button "Click me"
         ]
 
 

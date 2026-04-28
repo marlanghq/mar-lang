@@ -224,7 +224,8 @@ func makeCtorValueLocal(tag string, arity int) runtime.Value {
 		return runtime.VCtor{Tag: tag}
 	}
 	return runtime.VFn{
-		Arity: arity,
+		Arity:   arity,
+		CtorTag: tag,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
 			out := make([]runtime.Value, len(args))
 			copy(out, args)

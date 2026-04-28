@@ -67,6 +67,11 @@ type VFn struct {
 	Applied []Value
 	// Total arity (params for closure, fixed for native).
 	Arity   int
+	// CtorTag is set when this VFn was produced by makeCtorValue for a
+	// custom-type constructor with arity ≥ 1. Empty string for plain
+	// functions. Used by View.form rendering to extract the constructor
+	// name without applying the function.
+	CtorTag string
 }
 
 func (VFn) isValue() {}

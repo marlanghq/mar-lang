@@ -10,11 +10,21 @@ import (
 //
 // Views are pure descriptions; the renderer (web or iOS) reads them and
 // produces native UI.
+//
+// `Msg` is the bound message for interactive nodes:
+//   - For "button" nodes: the Msg value to dispatch on click (typically a
+//     VCtor like Increment, or VCtor with args).
+//   - For "form" nodes: the constructor function (VFn with CtorTag, or
+//     a VCtor for nullary) that wraps the form's collected fields.
+//   - For other nodes: nil.
+//
+// Text holds the visible label or input value (purely presentational).
 type VView struct {
 	Tag      string  // "section", "row", "column", "button", "text", "title", ...
 	Attrs    []VAttr // attributes (onClick, value, intent, ...)
 	Children []Value // can be VView or VString (for text content)
-	Text     string  // for leaf text nodes
+	Text     string  // visible label / input value
+	Msg      Value   // bound message for interactive nodes (button click, form submit)
 }
 
 // VAttr is a key/value attribute on a view node.
@@ -84,12 +94,16 @@ func viewBuiltins() map[string]Value {
 			}
 			return VView{Tag: "subtitle", Text: s.V}, nil
 		}),
-		"viewButton": nativeFn(1, func(args []Value) (Value, error) {
-			s, ok := args[0].(VString)
+		// View.button : msg -> String -> View msg
+		// First arg is the Msg to dispatch on click; second is the visible
+		// label.
+		"viewButton": nativeFn(2, func(args []Value) (Value, error) {
+			msg := args[0]
+			label, ok := args[1].(VString)
 			if !ok {
-				return nil, fmt.Errorf("View.button: expected String")
+				return nil, fmt.Errorf("View.button: expected msg and String label")
 			}
-			return VView{Tag: "button", Text: s.V}, nil
+			return VView{Tag: "button", Text: label.V, Msg: msg}, nil
 		}),
 		"viewLink": nativeFn(2, func(args []Value) (Value, error) {
 			url, ok1 := args[0].(VString)
@@ -140,20 +154,22 @@ func viewBuiltins() map[string]Value {
 				},
 			}, nil
 		}),
-		// View.form : String -> List View -> View   (msgName, children)
-		// The form posts to /__msg with msg=msgName and any inputs/textareas
-		// inside as additional fields.
+		// View.form : (rec -> msg) -> List (View msg) -> View msg
+		//
+		// The first arg is a constructor like SubmitNew that takes the
+		// form's collected fields as a record and returns a Msg. On submit,
+		// the runtime collects inputs/textareas into a record and applies
+		// the constructor; that Msg is then dispatched.
 		"viewForm": nativeFn(2, func(args []Value) (Value, error) {
-			msg, ok1 := args[0].(VString)
+			ctor := args[0]
 			children, err := unwrapViewList(args[1])
 			if err != nil {
 				return nil, fmt.Errorf("View.form: %v", err)
 			}
-			_ = ok1
 			return VView{
 				Tag:      "form",
-				Text:     msg.V,
 				Children: children,
+				Msg:      ctor,
 			}, nil
 		}),
 		// View.empty : View

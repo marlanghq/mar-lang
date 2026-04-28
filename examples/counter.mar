@@ -34,16 +34,16 @@ update msg model =
             ({ count = model.count, label = input.label }, Effect.none)
 
 
-view : Model -> View
+view : Model -> View Msg
 view model =
     View.section
         [ View.title model.label
         , View.text ("Current value: " ++ String.fromInt model.count)
         , View.row
-            [ View.button "Decrement"
-            , View.button "Increment"
+            [ View.button Decrement "Decrement"
+            , View.button Increment "Increment"
             ]
-        , View.form "LabelChanged"
+        , View.form LabelChanged
             [ View.input "label" model.label ]
         ]
 

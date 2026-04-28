@@ -241,9 +241,12 @@ func TColType() TCon {
 	return TCon{Name: "ColType"}
 }
 
-// TView returns the opaque "View" type. (For now, we don't parameterize by Msg.)
-func TView() TCon {
-	return TCon{Name: "View"}
+// TView returns "View msg" — the type of MVU views parameterized by the
+// type of messages they can produce when interacted with. Plain leaves
+// like View.text "..." inhabit `forall msg. View msg`; buttons and forms
+// pin msg to the user's Msg type.
+func TView(msg Type) TCon {
+	return TCon{Name: "View", Args: []Type{msg}}
 }
 
 // TApp returns the opaque "App" type.

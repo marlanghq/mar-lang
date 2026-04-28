@@ -20,8 +20,8 @@
   const VCtor   = (tag, args)=> ({ k: 'C', tag, args: args || [] });
   const VFn     = (params, body, env, native, arity, applied) =>
     ({ k: 'Fn', params, body, env, native, arity, applied: applied || [] });
-  const VView   = (tag, attrs, children, text) =>
-    ({ k: 'V', tag, attrs: attrs || [], children: children || [], text: text || '' });
+  const VView   = (tag, attrs, children, text, msg) =>
+    ({ k: 'V', tag, attrs: attrs || [], children: children || [], text: text || '', msg: msg });
   const VEffect = (run, tag) => ({ k: 'E', run, tag: tag || '' });
 
   // ---------- Environment ----------
@@ -328,8 +328,10 @@
     def('View.title',   native(1, ([s]) => VView('title', [], [], s.s)));
     def('viewSubtitle',native(1, ([s]) => VView('subtitle', [], [], s.s)));
     def('View.subtitle',native(1, ([s]) => VView('subtitle', [], [], s.s)));
-    def('viewButton',  native(1, ([s]) => VView('button', [], [], s.s)));
-    def('View.button',  native(1, ([s]) => VView('button', [], [], s.s)));
+    // View.button : msg -> String -> View msg
+    // (msg, label) — click dispatches msg (typed value, no string lookup).
+    def('viewButton',  native(2, ([msg, label]) => VView('button', [], [], label.s, msg)));
+    def('View.button',  native(2, ([msg, label]) => VView('button', [], [], label.s, msg)));
     def('viewLink',    native(2, ([href, label]) => VView('link', [{name:'href', value: href}], [], label.s)));
     def('View.link',    native(2, ([href, label]) => VView('link', [{name:'href', value: href}], [], label.s)));
     def('viewList',    native(1, ([l]) => VView('list', [], l.xs, '')));
@@ -340,8 +342,11 @@
     def('View.input', native(2, ([n, v]) => VView('input', [{name:'name', value: n}], [], v.s)));
     def('viewTextarea', native(2, ([n, v]) => VView('textarea', [{name:'name', value: n}], [], v.s)));
     def('View.textarea', native(2, ([n, v]) => VView('textarea', [{name:'name', value: n}], [], v.s)));
-    def('viewForm', native(2, ([msgName, children]) => VView('form', [], children.xs, msgName.s)));
-    def('View.form', native(2, ([msgName, children]) => VView('form', [], children.xs, msgName.s)));
+    // View.form : (rec -> msg) -> List (View msg) -> View msg
+    // First arg is the constructor that wraps the form's collected fields
+    // (a record) into a Msg. On submit, the runtime applies it.
+    def('viewForm', native(2, ([ctor, children]) => VView('form', [], children.xs, '', ctor)));
+    def('View.form', native(2, ([ctor, children]) => VView('form', [], children.xs, '', ctor)));
 
     // App.create / App.serve — App.serve mounts the MVU loop.
     def('appCreate', native(3, ([init, update, view]) => VCtor('__App', [init, update, view])));
@@ -549,30 +554,20 @@
         return e;
       }
       case 'button': {
+        // view.msg is the typed Msg value bound by View.button — dispatch
+        // it as-is on click. No string lookup, no constructor name magic.
         const e = document.createElement('button');
         e.textContent = view.text;
         e.addEventListener('click', (ev) => {
           ev.preventDefault();
-          if (currentDispatch) currentDispatch(VCtor(view.text, []));
+          if (currentDispatch) currentDispatch(view.msg);
         });
         return e;
       }
       case 'form': {
-        // A View.form msgName children -> wraps inputs; on submit, builds
-        // a record of name -> input-value and dispatches VCtor(msgName, [record]).
+        // view.msg is the constructor function (record -> Msg). On submit
+        // we collect inputs/textareas into a record and apply the ctor.
         const e = document.createElement('form');
-        // Walk children, build DOM nodes, and remember inputs by name.
-        const inputs = [];
-        const collectInputs = (node) => {
-          if (!node) return;
-          if (node.k !== 'V') return;
-          if (node.tag === 'input' || node.tag === 'textarea') {
-            const name = (node.attrs.find(a => a.name === 'name') || {value: VString('')}).value.s;
-            inputs.push({ name, view: node });
-          }
-          for (const c of node.children) collectInputs(c);
-        };
-        for (const c of view.children) collectInputs(c);
         for (const c of view.children) e.appendChild(buildDOM(c));
         const submit = document.createElement('button');
         submit.type = 'submit';
@@ -581,7 +576,6 @@
         e.addEventListener('submit', (ev) => {
           ev.preventDefault();
           if (!currentDispatch) return;
-          // Read current values from the rendered DOM by name.
           const fields = {};
           const order = [];
           const list = e.querySelectorAll('input, textarea');
@@ -592,7 +586,7 @@
             }
           }
           const recordArg = VRecord(fields, order);
-          currentDispatch(VCtor(view.text, [recordArg]));
+          currentDispatch(apply(view.msg, recordArg));
         });
         return e;
       }

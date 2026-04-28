@@ -45,12 +45,12 @@ update msg model =
             ({ time = "?", error = Just e }, Effect.none)
 
 
-view : Model -> View
+view : Model -> View Msg
 view model =
     View.section
         [ View.title "Clock"
         , View.text ("Server time: " ++ model.time)
-        , View.button "Refresh"
+        , View.button Refresh "Refresh"
         , case model.error of
             Just e -> View.text ("Error: " ++ e)
             Nothing -> View.empty

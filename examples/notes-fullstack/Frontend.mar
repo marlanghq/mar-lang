@@ -62,12 +62,12 @@ update msg model =
             ({ notes = model.notes, status = "save failed: " ++ e }, Effect.none)
 
 
-renderNote : Note -> View
+renderNote : Note -> View Msg
 renderNote note =
     View.text (String.fromInt note.id ++ ". " ++ note.body)
 
 
-view : Model -> View
+view : Model -> View Msg
 view model =
     View.section
         [ View.title "Notes"
@@ -75,7 +75,7 @@ view model =
         , View.subtitle (String.fromInt (List.length model.notes) ++ " notes")
         , View.list (List.map renderNote model.notes)
         , View.subtitle "Add a note"
-        , View.form "SubmitNew"
+        , View.form SubmitNew
             [ View.input "body" "" ]
         ]
 

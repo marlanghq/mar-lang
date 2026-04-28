@@ -454,21 +454,30 @@ func stdlibBindings() map[string]Type {
 		"entityForeignKey": TArrow{From: TString, To: TArrow{From: TString, To: TArrow{From: TString, To: TArrow{From: TEntity(), To: TEntity()}}}},
 		"entityMigrate":    TArrow{From: TDb(), To: TArrow{From: TList(TEntity()), To: TEffect(TString, TUnit{})}},
 
-		// View
-		"viewSection":  TArrow{From: TList(TView()), To: TView()},
-		"viewRow":      TArrow{From: TList(TView()), To: TView()},
-		"viewColumn":   TArrow{From: TList(TView()), To: TView()},
-		"viewText":     TArrow{From: TString, To: TView()},
-		"viewTitle":    TArrow{From: TString, To: TView()},
-		"viewSubtitle": TArrow{From: TString, To: TView()},
-		"viewButton":   TArrow{From: TString, To: TView()},
-		"viewLink":     TArrow{From: TString, To: TArrow{From: TString, To: TView()}},
-		"viewList":     TArrow{From: TList(TView()), To: TView()},
-		"viewRender":   TArrow{From: TView(), To: TString},
-		"viewInput":    TArrow{From: TString, To: TArrow{From: TString, To: TView()}},
-		"viewTextarea": TArrow{From: TString, To: TArrow{From: TString, To: TView()}},
-		"viewForm":     TArrow{From: TString, To: TArrow{From: TList(TView()), To: TView()}},
-		"viewEmpty":    TView(),
+		// View — every builder is parametric in msg. Containers (section /
+		// row / column / list) are forall over msg; the children must share
+		// the same msg type so the whole tree dispatches into one app.
+		// Leaves (text / title / link / input / etc.) are also forall:
+		// they don't dispatch anything, so they fit any msg context.
+		// Buttons and forms pin msg to the value/constructor the user passes.
+		"viewSection":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TView(a)), To: TView(a)}},
+		"viewRow":      TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TView(a)), To: TView(a)}},
+		"viewColumn":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TView(a)), To: TView(a)}},
+		"viewText":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TView(a)}},
+		"viewTitle":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TView(a)}},
+		"viewSubtitle": TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TView(a)}},
+		// View.button : msg -> String -> View msg   (clickMsg, then label)
+		"viewButton":   TForall{Vars: []int{a.ID}, Body: TArrow{From: a, To: TArrow{From: TString, To: TView(a)}}},
+		"viewLink":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TString, To: TView(a)}}},
+		"viewList":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TView(a)), To: TView(a)}},
+		"viewRender":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TString}},
+		"viewInput":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TString, To: TView(a)}}},
+		"viewTextarea": TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TString, To: TView(a)}}},
+		// View.form : (rec -> msg) -> List (View msg) -> View msg
+		// The first arg is a constructor like SubmitNew that takes the
+		// form's collected fields as a record and returns a Msg.
+		"viewForm":     TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: TArrow{From: b, To: a}, To: TArrow{From: TList(TView(a)), To: TView(a)}}},
+		"viewEmpty":    TForall{Vars: []int{a.ID}, Body: TView(a)},
 
 		// App
 		// App.create
@@ -487,7 +496,7 @@ func stdlibBindings() map[string]Type {
 				To: TArrow{
 					From: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -8}, b)}}}},
 					To: TArrow{
-						From: TArrow{From: a, To: TView()},
+						From: TArrow{From: a, To: TView(b)},
 						To:   TApp(),
 					},
 				},
@@ -521,7 +530,7 @@ func stdlibBindings() map[string]Type {
 					To: TArrow{
 						From: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -9}, b)}}}},
 						To: TArrow{
-							From: TArrow{From: a, To: TView()},
+							From: TArrow{From: a, To: TView(b)},
 							To:   TScreen(),
 						},
 					},
