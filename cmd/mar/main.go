@@ -121,6 +121,24 @@ func runFormat(args []string) int {
 	return 0
 }
 
+// isStdlibImport reports whether a module is provided by the runtime
+// (List, View, Effect, etc.) and therefore doesn't need a sibling file.
+// Mirrors internal/project.isStdlib — duplicated here to avoid an
+// import cycle and because cmd/mar's import-detection only needs this
+// short check.
+func isStdlibImport(name []string) bool {
+	if len(name) != 1 {
+		return false
+	}
+	switch name[0] {
+	case "List", "String", "Maybe", "Result", "Effect", "IO",
+		"JSON", "Server", "Response", "Db", "Entity", "View",
+		"App", "Page", "Endpoint", "Http":
+		return true
+	}
+	return false
+}
+
 // noopEffect returns an Effect that does nothing on Run. Used by the
 // `mar dev` overrides for App.fullstack / App.serve / App.serveScreens —
 // the side effect they care about (capturing args into the LiveProgram)
@@ -412,7 +430,7 @@ func runDev(path string) int {
 		}
 		eff, ok := mainVal.(runtime.VEffect)
 		if !ok {
-			return fmt.Errorf("main is not an Effect (got %T)", mainVal)
+			return fmt.Errorf("main is not an Effect (got %T) — `mar dev` runs servers and UIs (App.frontend / App.backend / App.fullstack). To evaluate a plain expression, use `mar run`", mainVal)
 		}
 		// Running the Effect calls one of the overridden builtins, which
 		// captures (api, page) and updates lp. The builtin's Effect is a
@@ -740,23 +758,33 @@ func runRun(path, valueName string) int {
 			return 1
 		}
 	} else {
-		// Single-file run. If the file lives in a directory with other .mar
-		// files (it's part of a project), load the project. Otherwise just
-		// the single file.
+		// Single-file run. Only treat as multi-module project mode when
+		// the file actually imports user-defined siblings — otherwise
+		// `examples/` (a flat dir of independent files) gets loaded as
+		// one big project and any sibling that uses App.frontend etc.
+		// blows up the run.
+		src, _ := os.ReadFile(path)
+		mod, _ := parser.Parse(string(src))
 		dir := filepath.Dir(path)
-		siblings, _ := filepath.Glob(filepath.Join(dir, "*.mar"))
-		if len(siblings) > 1 {
-			// Project mode. Infer the value name from the file's module.
-			src, _ := os.ReadFile(path)
-			mod, perr := parser.Parse(string(src))
-			if perr == nil && len(mod.Name) > 0 {
-				modName := mod.Name[0]
-				for _, p := range mod.Name[1:] {
-					modName += "." + p
+		hasUserImport := false
+		if mod != nil {
+			for _, imp := range mod.Imports {
+				if isStdlibImport(imp.Module) {
+					continue
 				}
-				if valueName == "main" {
-					valueName = modName + ".main"
+				// Resolve as Sibling.mar in the same dir; if found, this
+				// is a multi-module project.
+				candidate := filepath.Join(dir, imp.Module[len(imp.Module)-1]+".mar")
+				if _, err := os.Stat(candidate); err == nil {
+					hasUserImport = true
+					break
 				}
+			}
+		}
+		if hasUserImport {
+			modName := joinModuleName(mod.Name)
+			if valueName == "main" {
+				valueName = modName + ".main"
 			}
 			v, err = project.Run(dir, valueName)
 			if err != nil {
