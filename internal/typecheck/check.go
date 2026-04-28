@@ -73,6 +73,9 @@ func CheckModuleWith(
 	}
 	for k, v := range importedCustoms {
 		tEnv.customs[k] = v
+		// Imported customs also need to be visible at the value-env
+		// level for exhaustiveness checking to find them.
+		valueEnv.RegisterCustom(k, v)
 	}
 
 	// --- Pass 1: type declarations ---
@@ -135,6 +138,9 @@ func CheckModuleWith(
 			tEnv.paramScopes = tEnv.paramScopes[:len(tEnv.paramScopes)-1]
 			tEnv.customs[n.Name] = ct
 			res.CustomTypes[n.Name] = ct
+			// Make the custom-type registration visible at the value-env
+			// level too — exhaustiveness checking in inferCase reads it.
+			valueEnv.RegisterCustom(n.Name, ct)
 		}
 	}
 

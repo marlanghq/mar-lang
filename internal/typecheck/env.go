@@ -2,14 +2,47 @@ package typecheck
 
 // TypeEnv maps names to types (or schemes). Implemented as an immutable
 // linked list of frames so that scoping works naturally.
+//
+// The root frame also carries a customs map — the registered custom-type
+// declarations indexed by name. Used by exhaustiveness checking on case
+// expressions to know "what are all the constructors of Msg?" without
+// reverse-engineering it from the constructor schemes.
 type TypeEnv struct {
 	bindings map[string]Type
 	parent   *TypeEnv
+	customs  map[string]CustomType // populated only on the root frame
 }
 
 // NewEnv returns an empty top-level environment.
 func NewEnv() *TypeEnv {
-	return &TypeEnv{bindings: map[string]Type{}}
+	return &TypeEnv{bindings: map[string]Type{}, customs: map[string]CustomType{}}
+}
+
+// RegisterCustom adds (or overwrites) a custom-type entry on the root
+// environment. Walks up the parent chain to find the root frame and
+// registers there so all child scopes see the same entry.
+func (e *TypeEnv) RegisterCustom(name string, ct CustomType) {
+	root := e
+	for root.parent != nil {
+		root = root.parent
+	}
+	if root.customs == nil {
+		root.customs = map[string]CustomType{}
+	}
+	root.customs[name] = ct
+}
+
+// LookupCustom finds a custom-type registration by name. Walks parents
+// to the root.
+func (e *TypeEnv) LookupCustom(name string) (CustomType, bool) {
+	for cur := e; cur != nil; cur = cur.parent {
+		if cur.customs != nil {
+			if ct, ok := cur.customs[name]; ok {
+				return ct, true
+			}
+		}
+	}
+	return CustomType{}, false
 }
 
 // Lookup searches this env and all parents for `name`. Returns the bound type

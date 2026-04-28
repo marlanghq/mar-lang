@@ -402,7 +402,53 @@ func inferCase(n *ast.ECase, env *TypeEnv, s *Subst) (Type, error) {
 			}
 		}
 	}
+
+	// Exhaustiveness: when the subject is a known custom type, every
+	// constructor must either be matched explicitly or covered by a
+	// catch-all (PVar / PWildcard).
+	if err := checkExhaustive(s.Apply(tSubject), n.Branches, env, n.Pos); err != nil {
+		return nil, err
+	}
 	return s.Apply(tResult), nil
+}
+
+// checkExhaustive walks the patterns of a case expression and verifies
+// that every variant of the subject's type is matched. Today only
+// custom-type subjects are checked; List / Bool / Int / String are
+// skipped (handled as a follow-up).
+func checkExhaustive(subjectType Type, branches []ast.CaseBranch, env *TypeEnv, pos ast.Pos) error {
+	tc, ok := subjectType.(TCon)
+	if !ok {
+		return nil
+	}
+	ct, ok := env.LookupCustom(tc.Name)
+	if !ok {
+		return nil
+	}
+
+	matched := map[string]bool{}
+	for _, b := range branches {
+		switch p := b.Pattern.(type) {
+		case *ast.PVar, *ast.PWildcard:
+			// Catch-all: all remaining variants are covered.
+			return nil
+		case *ast.PCtor:
+			matched[p.Name] = true
+		}
+	}
+	var missing []string
+	for _, name := range ct.CtorOrder {
+		if !matched[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if len(missing) == 1 {
+		return errorf(pos, "non-exhaustive case: missing pattern for %s", missing[0])
+	}
+	return errorf(pos, "non-exhaustive case: missing patterns for %s", strings.Join(missing, ", "))
 }
 
 // inferPattern returns the type the pattern matches and an extended env
