@@ -347,11 +347,24 @@
     def('appCreate', native(3, ([init, update, view]) => VCtor('__App', [init, update, view])));
     def('App.create', native(3, ([init, update, view]) => VCtor('__App', [init, update, view])));
     def('appServe', native(2, ([port, app]) => {
-      // Returns an effect that, when run, mounts the MVU loop.
       return VEffect(() => mountApp(app), 'mountApp');
     }));
     def('App.serve', native(2, ([port, app]) => {
       return VEffect(() => mountApp(app), 'mountApp');
+    }));
+
+    // Screen.create + App.serveScreens — multi-screen apps with browser routing.
+    def('screenCreate', native(4, ([path, init, update, view]) =>
+      VCtor('__Screen', [path, init, update, view])
+    ));
+    def('Screen.create', native(4, ([path, init, update, view]) =>
+      VCtor('__Screen', [path, init, update, view])
+    ));
+    def('appServeScreens', native(2, ([port, list]) => {
+      return VEffect(() => mountScreens(list.xs), 'mountScreens');
+    }));
+    def('App.serveScreens', native(2, ([port, list]) => {
+      return VEffect(() => mountScreens(list.xs), 'mountScreens');
     }));
 
     // Effect — sync versions (effects are run-on-demand thunks).
@@ -564,6 +577,71 @@
     if (eff && eff.k === 'E' && typeof eff.run === 'function') {
       try { eff.run(); } catch (e) { console.error('effect failed:', e); }
     }
+  }
+
+  // mountScreens implements multi-screen client-side routing using
+  // window.location.pathname + popstate to switch between screens. Each
+  // screen has its own model.
+  function mountScreens(screenList) {
+    const screens = {};
+    for (const s of screenList) {
+      if (s.k !== 'C' || s.tag !== '__Screen') continue;
+      const [pathV, initFn, updateFn, viewFn] = s.args;
+      const path = pathV.s;
+      const initial = unwrapModelTuple(apply(initFn, VUnit()));
+      screens[path] = {
+        path,
+        model: initial.model,
+        initEffect: initial.effect,
+        update: updateFn,
+        view: viewFn,
+      };
+    }
+
+    let initEffectsRun = {};
+
+    function currentScreen() {
+      const p = window.location.pathname;
+      return screens[p] || screens[Object.keys(screens)[0]];
+    }
+
+    function render() {
+      const sc = currentScreen();
+      if (!sc) return;
+      if (!initEffectsRun[sc.path]) {
+        initEffectsRun[sc.path] = true;
+        runEffect(sc.initEffect);
+      }
+      const viewVal = apply(sc.view, sc.model);
+      const root = document.getElementById('mar-root');
+      while (root.firstChild) root.removeChild(root.firstChild);
+      root.appendChild(buildDOM(viewVal));
+
+      // Intercept link clicks for client-side navigation.
+      root.querySelectorAll('a[href^="/"]').forEach((a) => {
+        a.addEventListener('click', (ev) => {
+          const href = a.getAttribute('href');
+          if (screens[href]) {
+            ev.preventDefault();
+            history.pushState({}, '', href);
+            render();
+          }
+        });
+      });
+    }
+
+    currentDispatch = (msg) => {
+      const sc = currentScreen();
+      if (!sc) return;
+      const out = unwrapModelTuple(apply(apply(sc.update, msg), sc.model));
+      sc.model = out.model;
+      render();
+      runEffect(out.effect);
+    };
+
+    window.addEventListener('popstate', render);
+    render();
+    return VUnit();
   }
 
   function mountApp(app) {
