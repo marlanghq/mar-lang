@@ -247,6 +247,14 @@
     return 0;
   }
 
+  // preservedModel / preservedScreenModels survive across marReload (the
+  // IIFE wrapping this file runs once per page load, not per marRun call).
+  // mountApp / mountScreens read them on entry to restore the user's last
+  // state instead of always starting from init. Discarded if the new view
+  // function rejects the old shape.
+  let preservedModel = null;
+  let preservedScreenModels = {};
+
   // currentDispatch is set by App.serve before render. Click handlers use it
   // to dispatch a Msg into the running update loop.
   let currentDispatch = null;
@@ -819,11 +827,35 @@
       if (s.k !== 'C' || s.tag !== '__Screen') continue;
       const [pathV, initFn, updateFn, viewFn] = s.args;
       const path = pathV.s;
-      const initial = unwrapModelTuple(apply(initFn, VUnit()));
+
+      // Per-screen hot-reload model preservation. preservedScreenModels
+      // is keyed by screen path and survives marReload via the IIFE's
+      // lexical scope. If the new view function rejects the old model
+      // (shape mismatch), fall back to fresh init for that screen.
+      let model = null;
+      let initEffect = null;
+      const prior = preservedScreenModels[path];
+      if (prior !== undefined) {
+        try {
+          apply(viewFn, prior);
+          model = prior;
+        } catch (_) {
+          if (typeof console !== 'undefined') {
+            console.info('[mar reload] screen ' + path + ' model shape changed, fresh init');
+          }
+        }
+      }
+      if (model === null) {
+        const initial = unwrapModelTuple(apply(initFn, VUnit()));
+        model = initial.model;
+        initEffect = initial.effect;
+      }
+      preservedScreenModels[path] = model;
+
       screens[path] = {
         path,
-        model: initial.model,
-        initEffect: initial.effect,
+        model,
+        initEffect, // null when we restored — already-run effects don't need re-firing
         update: updateFn,
         view: viewFn,
       };
@@ -842,7 +874,7 @@
     function render() {
       const sc = currentScreen();
       if (!sc) return;
-      if (!initEffectsRun[sc.path]) {
+      if (!initEffectsRun[sc.path] && sc.initEffect !== null) {
         initEffectsRun[sc.path] = true;
         runEffect(sc.initEffect);
       }
@@ -882,6 +914,7 @@
       if (!sc) return;
       const out = unwrapModelTuple(apply(apply(sc.update, msg), sc.model));
       sc.model = out.model;
+      preservedScreenModels[sc.path] = out.model;
       render();
       runEffect(out.effect);
     };
@@ -896,9 +929,34 @@
       throw new Error('App.serve: expected an App value');
     }
     const [initFn, updateFn, viewFn] = app.args;
-    const initial = unwrapModelTuple(apply(initFn, VUnit()));
-    let model = initial.model;
-    let mounted = null; // the root DOM child currently rendering the view
+
+    // Hot-reload model preservation: if a previous run of this app left a
+    // model behind on the module-level `preservedModel`, try to keep
+    // using it. Smoke-test by calling viewFn against it; if the new view
+    // function blows up (e.g. user added a field to Model), discard it
+    // and start fresh from init. The IIFE wrapping this whole file
+    // persists across marRun re-invocations, so `preservedModel` survives
+    // a marReload.
+    let model = null;
+    let initialEffect = null;
+    if (preservedModel !== null) {
+      try {
+        apply(viewFn, preservedModel); // smoke test
+        model = preservedModel;
+      } catch (_) {
+        // Shape changed — fall through to fresh init.
+        if (typeof console !== 'undefined') {
+          console.info('[mar reload] model shape changed, falling back to fresh init');
+        }
+      }
+    }
+    if (model === null) {
+      const initial = unwrapModelTuple(apply(initFn, VUnit()));
+      model = initial.model;
+      initialEffect = initial.effect;
+    }
+    preservedModel = model;
+    let mounted = null;
 
     function render() {
       const viewVal = apply(viewFn, model);
@@ -917,11 +975,12 @@
     currentDispatch = (msg) => {
       const out = unwrapModelTuple(apply(apply(updateFn, msg), model));
       model = out.model;
+      preservedModel = model;
       render();
       runEffect(out.effect);
     };
     render();
-    runEffect(initial.effect);
+    if (initialEffect !== null) runEffect(initialEffect);
     return VUnit();
   }
 

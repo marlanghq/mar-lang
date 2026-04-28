@@ -1,25 +1,22 @@
 module Counter exposing (main)
 
 
--- Real interactive MVU counter. Open with `mar dev examples/counter.mar`.
+-- The classic Elm counter. Open with `mar dev examples/counter.mar`.
 
 
 type alias Model =
     { count : Int
-    , label : String
     }
 
 
--- Each input has its own change msg; the model holds form state explicitly.
 type Msg
     = Increment
     | Decrement
-    | LabelChanged String
 
 
 init : () -> (Model, Effect String Msg)
 init _ =
-    ({ count = 0, label = "counter" }, Effect.none)
+    ({ count = 0 }, Effect.none)
 
 
 update : Msg -> Model -> (Model, Effect String Msg)
@@ -31,20 +28,13 @@ update msg model =
         Decrement ->
             ({ model | count = model.count - 1 }, Effect.none)
 
-        LabelChanged newLabel ->
-            ({ model | label = newLabel }, Effect.none)
-
 
 view : Model -> View Msg
 view model =
-    View.section
-        [ View.title model.label
-        , View.text ("Current value: " ++ String.fromInt model.count)
-        , View.row
-            [ View.button Decrement "Decrement"
-            , View.button Increment "Increment"
-            ]
-        , View.input model.label LabelChanged
+    View.row
+        [ View.button Decrement "-"
+        , View.text (String.fromInt model.count)
+        , View.button Increment "+"
         ]
 
 
