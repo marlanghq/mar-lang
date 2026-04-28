@@ -1,0 +1,52 @@
+{
+  "name": "vscode-mar",
+  "displayName": "mar",
+  "description": "Language support for the mar programming language",
+  "version": "0.1.0",
+  "publisher": "mar-lang",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:mar"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "mar",
+        "aliases": ["mar", "Mar"],
+        "extensions": [".mar"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "mar",
+        "scopeName": "source.mar",
+        "path": "./syntaxes/mar.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "mar",
+      "properties": {
+        "mar.serverPath": {
+          "type": "string",
+          "default": "mar",
+          "description": "Path to the mar binary used to launch the language server. Override if `mar` isn't on your $PATH."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.75.0",
+    "@vscode/vsce": "^2.24.0",
+    "typescript": "^5.3.3"
+  }
+}

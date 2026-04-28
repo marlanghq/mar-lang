@@ -1,0 +1,101 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "mar",
+  "scopeName": "source.mar",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#operators" },
+    { "include": "#numbers" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-dash.mar",
+          "match": "--.*$"
+        },
+        {
+          "name": "comment.block.mar",
+          "begin": "\\{-",
+          "end": "-\\}"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.mar",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.mar",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.mar",
+          "match": "\\b(case|of|if|then|else|let|in)\\b"
+        },
+        {
+          "name": "keyword.declaration.mar",
+          "match": "\\b(module|exposing|import|as|type|alias|where|port)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.mar",
+          "match": "\\b(Int|Float|String|Bool|Char|List|Maybe|Result|Effect|View|Page|Attr)\\b"
+        },
+        {
+          "name": "constant.language.mar",
+          "match": "\\b(True|False|Nothing|Ok|Err|Just)\\b"
+        },
+        {
+          "comment": "Capitalized identifier — type or constructor",
+          "name": "entity.name.type.mar",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "name": "keyword.operator.mar",
+      "match": "(\\+\\+|->|\\|>|<\\||==|/=|<=|>=|<|>|::|&&|\\|\\||\\+|-|\\*|/|=|\\\\)"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.mar",
+          "match": "\\b\\d+\\.\\d+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.mar",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "comment": "Module-qualified identifier",
+          "match": "\\b([A-Z][A-Za-z0-9_]*)\\.([a-z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": { "name": "entity.name.namespace.mar" },
+            "2": { "name": "variable.other.mar" }
+          }
+        },
+        {
+          "name": "variable.other.mar",
+          "match": "\\b[a-z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

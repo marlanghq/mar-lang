@@ -22,6 +22,7 @@ import (
 	"mar/internal/ast"
 	"mar/internal/diag"
 	"mar/internal/jsserve"
+	"mar/internal/lsp"
 	"mar/internal/parser"
 	"mar/internal/project"
 	"mar/internal/runtime"
@@ -126,6 +127,13 @@ func main() {
 			path = os.Args[2]
 		}
 		os.Exit(runDev(path))
+	case "lsp":
+		// Language server over stdio. Editors (VSCode, etc.) launch
+		// `mar lsp` and pipe LSP JSON-RPC over stdin/stdout.
+		if err := lsp.RunStdio(); err != nil {
+			fmt.Fprintf(os.Stderr, "mar lsp: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "--version", "-v":
 		fmt.Printf("%s (%s)\n", version, commit)
 	case "help", "--help", "-h":
@@ -162,6 +170,8 @@ Commands:
                                 Shared.mar    — helpers used by both
                               Names other than Main.mar / main are convention.
   config <dir>                Load and print mar.json from the given project.
+  lsp                         Run the Language Server over stdio
+                              (used by editor extensions).
   version                     Print the version.
 
 Use "mar help" for this help.`)

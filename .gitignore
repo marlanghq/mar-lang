@@ -19,6 +19,9 @@ firebase.json
 **/node_modules/
 /mar
 /mar.exe
+vscode-mar/node_modules/
+vscode-mar/out/
+vscode-mar/*.vsix
 release-local.sh
 internal/cli/compiler_assets/
 internal/cli/runtime_stubs/

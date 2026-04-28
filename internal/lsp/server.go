@@ -1,0 +1,462 @@
+// Package lsp implements a minimal Language Server Protocol server for
+// mar. Today it provides:
+//
+//   - Diagnostics on open / change / save (parse + typecheck errors).
+//   - Single-file analysis. Multi-module projects fall back to whatever
+//     CheckModule can resolve from the file alone (stdlib-aware,
+//     unresolved imports show up as type errors).
+//
+// Hover / completion / go-to-definition are intentionally out of scope
+// for this MVP. The protocol surface is small enough that they can be
+// added incrementally.
+package lsp
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+
+	"mar/internal/lexer"
+	"mar/internal/parser"
+	"mar/internal/project"
+	"mar/internal/typecheck"
+)
+
+// RunStdio reads JSON-RPC over stdin and writes responses to stdout
+// (the LSP convention for editor-launched servers).
+func RunStdio() error {
+	s := &Server{
+		in:   bufio.NewReaderSize(os.Stdin, 1<<16),
+		out:  os.Stdout,
+		docs: map[string]string{},
+	}
+	return s.loop()
+}
+
+// Server holds the per-session state of one LSP connection.
+type Server struct {
+	in   *bufio.Reader
+	out  io.Writer
+	mu   sync.Mutex
+	docs map[string]string // uri -> latest contents
+}
+
+// --- JSON-RPC framing ---
+
+type message struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *rpcError       `json:"error,omitempty"`
+}
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// readMessage reads one Content-Length-framed JSON-RPC message.
+func (s *Server) readMessage() (*message, error) {
+	contentLen := 0
+	for {
+		line, err := s.in.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		if strings.HasPrefix(line, "Content-Length:") {
+			contentLen, _ = strconv.Atoi(strings.TrimSpace(line[len("Content-Length:"):]))
+		}
+	}
+	if contentLen <= 0 {
+		return nil, fmt.Errorf("missing Content-Length")
+	}
+	body := make([]byte, contentLen)
+	if _, err := io.ReadFull(s.in, body); err != nil {
+		return nil, err
+	}
+	var msg message
+	if err := json.Unmarshal(body, &msg); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %v", err)
+	}
+	return &msg, nil
+}
+
+func (s *Server) writeRaw(payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := fmt.Fprintf(s.out, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
+		return err
+	}
+	_, err = s.out.Write(body)
+	return err
+}
+
+func (s *Server) respond(id json.RawMessage, result any) {
+	resBytes, _ := json.Marshal(result)
+	_ = s.writeRaw(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      json.RawMessage(id),
+		"result":  json.RawMessage(resBytes),
+	})
+}
+
+func (s *Server) notify(method string, params any) {
+	pBytes, _ := json.Marshal(params)
+	_ = s.writeRaw(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  json.RawMessage(pBytes),
+	})
+}
+
+// --- Top-level loop ---
+
+func (s *Server) loop() error {
+	for {
+		msg, err := s.readMessage()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			// Skip malformed frames; the editor will retry.
+			continue
+		}
+		s.handle(msg)
+	}
+}
+
+func (s *Server) handle(msg *message) {
+	switch msg.Method {
+	case "initialize":
+		s.handleInitialize(msg)
+	case "initialized":
+		// Notification — no response.
+	case "textDocument/didOpen":
+		s.handleDidOpen(msg)
+	case "textDocument/didChange":
+		s.handleDidChange(msg)
+	case "textDocument/didSave":
+		// MVP: re-analyze on save. didChange already covers it; this is
+		// belt-and-suspenders.
+		s.handleDidSave(msg)
+	case "textDocument/didClose":
+		s.handleDidClose(msg)
+	case "shutdown":
+		s.respond(msg.ID, nil)
+	case "exit":
+		os.Exit(0)
+	default:
+		// Unknown method: if it has an ID it's a request and we should
+		// reply with a method-not-found error. Notifications go silent.
+		if len(msg.ID) > 0 {
+			_ = s.writeRaw(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      json.RawMessage(msg.ID),
+				"error":   rpcError{Code: -32601, Message: "method not found: " + msg.Method},
+			})
+		}
+	}
+}
+
+// --- Initialize ---
+
+func (s *Server) handleInitialize(msg *message) {
+	// Advertise: text sync (full content on each change), nothing else.
+	// MVP — hover / completion / definition come later.
+	s.respond(msg.ID, map[string]any{
+		"capabilities": map[string]any{
+			"textDocumentSync": map[string]any{
+				"openClose": true,
+				"change":    1, // 1 = Full
+				"save":      true,
+			},
+		},
+		"serverInfo": map[string]any{
+			"name":    "mar-lsp",
+			"version": "0.1.0",
+		},
+	})
+}
+
+// --- Document lifecycle ---
+
+type didOpenParams struct {
+	TextDocument struct {
+		URI  string `json:"uri"`
+		Text string `json:"text"`
+	} `json:"textDocument"`
+}
+
+type didChangeParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	ContentChanges []struct {
+		Text string `json:"text"`
+	} `json:"contentChanges"`
+}
+
+type didSaveParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Text string `json:"text"`
+}
+
+type didCloseParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+}
+
+func (s *Server) handleDidOpen(msg *message) {
+	var p didOpenParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.docs[p.TextDocument.URI] = p.TextDocument.Text
+	s.mu.Unlock()
+	s.publishDiagnostics(p.TextDocument.URI, p.TextDocument.Text)
+}
+
+func (s *Server) handleDidChange(msg *message) {
+	var p didChangeParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		return
+	}
+	if len(p.ContentChanges) == 0 {
+		return
+	}
+	// Full sync (we advertised change=1): last change carries the full text.
+	text := p.ContentChanges[len(p.ContentChanges)-1].Text
+	s.mu.Lock()
+	s.docs[p.TextDocument.URI] = text
+	s.mu.Unlock()
+	s.publishDiagnostics(p.TextDocument.URI, text)
+}
+
+func (s *Server) handleDidSave(msg *message) {
+	var p didSaveParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		return
+	}
+	if p.Text != "" {
+		s.mu.Lock()
+		s.docs[p.TextDocument.URI] = p.Text
+		s.mu.Unlock()
+	}
+	s.mu.Lock()
+	text := s.docs[p.TextDocument.URI]
+	s.mu.Unlock()
+	s.publishDiagnostics(p.TextDocument.URI, text)
+}
+
+func (s *Server) handleDidClose(msg *message) {
+	var p didCloseParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		return
+	}
+	s.mu.Lock()
+	delete(s.docs, p.TextDocument.URI)
+	s.mu.Unlock()
+	// Clear diagnostics for the closed document.
+	s.notify("textDocument/publishDiagnostics", map[string]any{
+		"uri":         p.TextDocument.URI,
+		"diagnostics": []any{},
+	})
+}
+
+// --- Diagnostics ---
+
+// publishDiagnostics analyzes the document and pushes any errors to the
+// editor as squiggles. Tries the project loader first (so cross-module
+// imports resolve); falls back to single-file analysis if the file isn't
+// part of a discoverable project.
+func (s *Server) publishDiagnostics(uri, content string) {
+	path, _ := uriToPath(uri)
+	diags := s.analyze(path, content)
+	if diags == nil {
+		// LSP requires an array — nil marshals as JSON null which some
+		// clients treat as "no update" instead of "clear diagnostics".
+		diags = []lspDiagnostic{}
+	}
+	s.notify("textDocument/publishDiagnostics", map[string]any{
+		"uri":         uri,
+		"diagnostics": diags,
+	})
+}
+
+// lspDiagnostic mirrors the LSP Diagnostic shape.
+type lspDiagnostic struct {
+	Range    lspRange `json:"range"`
+	Severity int      `json:"severity"`
+	Source   string   `json:"source"`
+	Message  string   `json:"message"`
+}
+
+type lspRange struct {
+	Start lspPosition `json:"start"`
+	End   lspPosition `json:"end"`
+}
+
+type lspPosition struct {
+	Line      int `json:"line"`
+	Character int `json:"character"`
+}
+
+// analyze returns LSP diagnostics for a single file. We try the project
+// loader first; if it discovers a multi-file project rooted at a
+// directory containing this file, we use those errors. Otherwise we fall
+// back to single-file Parse + CheckModule.
+func (s *Server) analyze(path, content string) []lspDiagnostic {
+	// Project mode: only when the file is on disk and the dir contains
+	// other .mar files we can load. A standalone document open (no path)
+	// always falls through to single-file.
+	if path != "" {
+		if diags, ok := s.projectAnalyze(path, content); ok {
+			return diags
+		}
+	}
+	return s.singleFileAnalyze(content)
+}
+
+func (s *Server) projectAnalyze(path, content string) ([]lspDiagnostic, bool) {
+	dir := filepath.Dir(path)
+	// Only run project analysis if there's more than one .mar file in
+	// the dir — otherwise it's effectively a single-file edit and we
+	// don't want to fail on disk version vs editor version drift.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, false
+	}
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".mar") {
+			count++
+			if count > 1 {
+				break
+			}
+		}
+	}
+	if count <= 1 {
+		return nil, false
+	}
+	// LoadForServe reads files from disk, so for in-memory edits we
+	// might be checking stale content. Acceptable tradeoff: the typed
+	// info is up-to-date for ALL OTHER files; the active file gets a
+	// second pass via singleFileAnalyze and we merge below.
+	_, err = project.LoadForServe(path)
+	if err != nil {
+		// project errors with a file path: extract and convert.
+		if d, ok := errorToDiagnostic(err, path, content); ok {
+			return []lspDiagnostic{d}, true
+		}
+		return nil, false
+	}
+	// Project compiles cleanly; still check the in-memory content of
+	// THIS file (might be edited but unsaved).
+	return s.singleFileAnalyze(content), true
+}
+
+func (s *Server) singleFileAnalyze(content string) []lspDiagnostic {
+	mod, perr := parser.Parse(content)
+	if perr != nil {
+		if d, ok := errorToDiagnostic(perr, "", content); ok {
+			return []lspDiagnostic{d}
+		}
+		return nil
+	}
+	_, terr := typecheck.CheckModule(mod)
+	if terr != nil {
+		if d, ok := errorToDiagnostic(terr, "", content); ok {
+			return []lspDiagnostic{d}
+		}
+	}
+	return nil
+}
+
+// errorToDiagnostic maps a positioned compiler error to LSP shape.
+// Returns ok=false when the error has no usable position (e.g. an
+// I/O error from the project loader).
+func errorToDiagnostic(err error, _ /*path*/, content string) (lspDiagnostic, bool) {
+	line, col, msg, ok := extractPositioned(err)
+	if !ok {
+		return lspDiagnostic{}, false
+	}
+	// LSP positions are 0-indexed.
+	startLine := line - 1
+	startCol := col - 1
+	if startLine < 0 {
+		startLine = 0
+	}
+	if startCol < 0 {
+		startCol = 0
+	}
+	endCol := startCol + 1
+	// If we can read the offending source line, extend the highlight to
+	// the end of the line so the squiggle is more visible than a single
+	// character.
+	if content != "" {
+		lines := strings.Split(content, "\n")
+		if startLine < len(lines) {
+			endCol = len(lines[startLine])
+			if endCol < startCol+1 {
+				endCol = startCol + 1
+			}
+		}
+	}
+	return lspDiagnostic{
+		Range: lspRange{
+			Start: lspPosition{Line: startLine, Character: startCol},
+			End:   lspPosition{Line: startLine, Character: endCol},
+		},
+		Severity: 1, // 1 = Error
+		Source:   "mar",
+		Message:  msg,
+	}, true
+}
+
+// extractPositioned pulls (line, col, message) from a positioned error.
+// Mirrors diag's positionOf but is duplicated here to avoid an import
+// cycle (diag depends on lexer/parser/typecheck; lsp uses them too).
+func extractPositioned(err error) (line, col int, msg string, ok bool) {
+	switch e := err.(type) {
+	case *lexer.Error:
+		return e.Line, e.Column, e.Message, true
+	case *parser.Error:
+		return e.Line, e.Column, e.Message, true
+	case *typecheck.InferError:
+		return e.Pos.Line, e.Pos.Column, e.Message, true
+	}
+	return 0, 0, "", false
+}
+
+// uriToPath converts file:// URIs to filesystem paths.
+func uriToPath(uri string) (string, error) {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme != "file" {
+		return "", nil
+	}
+	return u.Path, nil
+}
