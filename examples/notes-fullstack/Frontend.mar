@@ -67,9 +67,14 @@ update msg model =
             ({ model | status = "save failed: " ++ e }, Effect.none)
 
 
-renderNote : Note -> View Msg
-renderNote note =
-    View.text (String.fromInt note.id ++ ". " ++ note.body)
+-- Each note carries a stable key (its id) so the diff tracks item
+-- identity across renders. Survives reorder / insert-in-middle / delete
+-- without scrambling DOM nodes or losing focus on inputs inside items.
+renderNoteWithKey : Note -> (String, View Msg)
+renderNoteWithKey note =
+    ( String.fromInt note.id
+    , View.text (String.fromInt note.id ++ ". " ++ note.body)
+    )
 
 
 view : Model -> View Msg
@@ -78,7 +83,7 @@ view model =
         [ View.title "Notes"
         , View.text ("Status: " ++ model.status)
         , View.subtitle (String.fromInt (List.length model.notes) ++ " notes")
-        , View.list (List.map renderNote model.notes)
+        , View.keyedList (List.map renderNoteWithKey model.notes)
         , View.subtitle "Add a note"
         , View.row
             [ View.input model.draft DraftChanged

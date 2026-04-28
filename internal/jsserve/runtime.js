@@ -336,6 +336,22 @@
     def('View.link',    native(2, ([href, label]) => VView('link', [{name:'href', value: href}], [], label.s)));
     def('viewList',    native(1, ([l]) => VView('list', [], l.xs, '')));
     def('View.list',    native(1, ([l]) => VView('list', [], l.xs, '')));
+    // View.keyedList : List (String, View msg) -> View msg
+    // Each item is a (key, view) tuple. The diff uses keys to track
+    // identity across renders — items can be reordered, inserted in the
+    // middle, or removed without scrambling the DOM (or breaking focus
+    // on inputs inside items).
+    function makeKeyedList(items) {
+      const children = items.xs.map((t) => {
+        const key = t.xs[0].s;
+        const view = t.xs[1];
+        // Tag the child view with its key (shallow copy — never mutate).
+        return Object.assign({}, view, { key: key });
+      });
+      return VView('keyedList', [], children, '');
+    }
+    def('viewKeyedList', native(1, ([items]) => makeKeyedList(items)));
+    def('View.keyedList', native(1, ([items]) => makeKeyedList(items)));
     def('viewEmpty', VView('empty', [], [], ''));
     def('View.empty', VView('empty', [], [], ''));
     // View.input : String -> (String -> msg) -> View msg
@@ -528,106 +544,254 @@
   }
 
   // ---------- DOM rendering ----------
+  //
+  // Two-phase: createDOM builds a fresh element from a VView; patchDOM
+  // diffs an existing DOM node against a new VView and applies the
+  // minimal mutations.
+  //
+  // Listeners use the indirect-view trick: each interactive element gets
+  // its current VView stashed at `node.__marView`. The listener reads the
+  // latest msg from there, so on patch we can update the view reference
+  // without removing/re-adding listeners.
 
-  function buildDOM(view) {
+  function setMarView(node, view) {
+    node.__marView = view;
+  }
+
+  // Attach a listener once. Uses node.__marView so the closure reads the
+  // latest view after subsequent patches.
+  function attachClickDispatcher(node) {
+    node.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      const v = node.__marView;
+      if (!currentDispatch || !v || v.msg == null) return;
+      currentDispatch(v.msg);
+    });
+  }
+
+  function attachInputDispatcher(node) {
+    node.addEventListener('input', (ev) => {
+      const v = node.__marView;
+      if (!currentDispatch || !v || v.msg == null) return;
+      currentDispatch(apply(v.msg, VString(node.value)));
+    });
+  }
+
+  function getAttr(view, name) {
+    const a = view.attrs && view.attrs.find(a => a.name === name);
+    return a ? a.value.s : '';
+  }
+
+  // domTagFor returns the HTML element name for a VView tag, or null when
+  // the view has no single corresponding element (empty / unknown).
+  function domTagFor(viewTag) {
+    switch (viewTag) {
+      case 'text':       return 'span';
+      case 'title':      return 'h1';
+      case 'subtitle':   return 'h2';
+      case 'button':     return 'button';
+      case 'link':       return 'a';
+      case 'section':    return 'section';
+      case 'row':        return 'div';
+      case 'column':     return 'div';
+      case 'list':       return 'ul';
+      case 'keyedList':  return 'ul';
+      case 'input':      return 'input';
+      case 'textarea':   return 'textarea';
+      default:           return 'div';
+    }
+  }
+
+  function createDOM(view) {
     if (!view || view.k !== 'V') {
-      // Not a view (could be unit if user returned ()) — return empty span.
+      return document.createElement('span');
+    }
+    if (view.tag === 'empty') {
+      // Use a no-op span as a stable placeholder so diff has a 1:1 mapping.
       const e = document.createElement('span');
+      e.style.display = 'none';
+      setMarView(e, view);
       return e;
     }
+    const tag = domTagFor(view.tag);
+    const e = document.createElement(tag);
+    setMarView(e, view);
     switch (view.tag) {
-      case 'text': {
-        const e = document.createElement('span');
+      case 'text':
+      case 'title':
+      case 'subtitle':
         e.textContent = view.text;
         return e;
-      }
-      case 'title': {
-        const e = document.createElement('h1');
+      case 'button':
+        e.textContent = view.text;
+        attachClickDispatcher(e);
+        return e;
+      case 'link':
+        e.setAttribute('href', getAttr(view, 'href'));
         e.textContent = view.text;
         return e;
-      }
-      case 'subtitle': {
-        const e = document.createElement('h2');
-        e.textContent = view.text;
+      case 'section':
+        for (const c of view.children) e.appendChild(createDOM(c));
         return e;
-      }
-      case 'button': {
-        // view.msg is the typed Msg value bound by View.button — dispatch
-        // it as-is on click. No string lookup, no constructor name magic.
-        const e = document.createElement('button');
-        e.textContent = view.text;
-        e.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          if (currentDispatch) currentDispatch(view.msg);
-        });
-        return e;
-      }
-      case 'link': {
-        const e = document.createElement('a');
-        const href = (view.attrs.find(a => a.name === 'href') || {value: VString('')}).value.s;
-        e.setAttribute('href', href);
-        e.textContent = view.text;
-        return e;
-      }
-      case 'section': {
-        const e = document.createElement('section');
-        for (const c of view.children) e.appendChild(buildDOM(c));
-        return e;
-      }
-      case 'row': {
-        const e = document.createElement('div');
+      case 'row':
         e.className = 'row';
         e.style.display = 'flex';
         e.style.gap = '0.5rem';
-        for (const c of view.children) e.appendChild(buildDOM(c));
+        for (const c of view.children) e.appendChild(createDOM(c));
         return e;
-      }
-      case 'column': {
-        const e = document.createElement('div');
+      case 'column':
         e.className = 'column';
         e.style.display = 'flex';
         e.style.flexDirection = 'column';
         e.style.gap = '0.5rem';
-        for (const c of view.children) e.appendChild(buildDOM(c));
+        for (const c of view.children) e.appendChild(createDOM(c));
         return e;
-      }
-      case 'list': {
-        const e = document.createElement('ul');
+      case 'list':
+      case 'keyedList':
         for (const c of view.children) {
           const li = document.createElement('li');
-          li.appendChild(buildDOM(c));
+          li.appendChild(createDOM(c));
           e.appendChild(li);
         }
         return e;
-      }
-      case 'input': {
-        // view.msg is the onChange function (String -> Msg). Every keystroke
-        // applies it to the new value and dispatches the resulting Msg.
-        const e = document.createElement('input');
+      case 'input':
         e.type = 'text';
         e.value = view.text;
-        e.addEventListener('input', (ev) => {
-          if (!currentDispatch || !view.msg) return;
-          currentDispatch(apply(view.msg, VString(e.value)));
-        });
+        attachInputDispatcher(e);
         return e;
-      }
-      case 'textarea': {
-        const e = document.createElement('textarea');
+      case 'textarea':
         e.value = view.text;
-        e.addEventListener('input', (ev) => {
-          if (!currentDispatch || !view.msg) return;
-          currentDispatch(apply(view.msg, VString(e.value)));
-        });
+        attachInputDispatcher(e);
         return e;
+      default:
+        for (const c of view.children) e.appendChild(createDOM(c));
+        return e;
+    }
+  }
+
+  // patchDOM updates `node` (currently rendering oldView, available as
+  // node.__marView) so it matches newView, mutating in place where possible
+  // and replacing only when the tag changes. Listeners stay attached
+  // because they read view.msg from node.__marView.
+  function patchDOM(node, newView) {
+    const oldView = node.__marView;
+    if (!oldView || oldView.tag !== newView.tag) {
+      const replacement = createDOM(newView);
+      node.parentNode.replaceChild(replacement, node);
+      return replacement;
+    }
+    setMarView(node, newView);
+
+    switch (newView.tag) {
+      case 'text':
+      case 'title':
+      case 'subtitle':
+      case 'button':
+        if (node.textContent !== newView.text) node.textContent = newView.text;
+        return node;
+      case 'link': {
+        const newHref = getAttr(newView, 'href');
+        if (node.getAttribute('href') !== newHref) node.setAttribute('href', newHref);
+        if (node.textContent !== newView.text) node.textContent = newView.text;
+        return node;
       }
+      case 'input':
+      case 'textarea':
+        // Only write if the value diverges — avoids resetting the cursor
+        // mid-keystroke when the model just echoes what the user typed.
+        if (node.value !== newView.text) node.value = newView.text;
+        return node;
       case 'empty':
-        return document.createDocumentFragment();
-      default: {
-        const e = document.createElement('div');
-        for (const c of view.children) e.appendChild(buildDOM(c));
-        return e;
+        return node;
+      case 'list':
+      case 'section':
+      case 'row':
+      case 'column':
+      case 'column':
+      default:
+        patchChildrenPositional(node, oldView.children, newView.children, newView.tag);
+        return node;
+      case 'keyedList':
+        patchChildrenKeyed(node, oldView.children, newView.children);
+        return node;
+    }
+  }
+
+  // patchChildrenPositional walks DOM children and VView children in
+  // lockstep. Same-tag pairs are patched in place; new entries are
+  // appended; removed entries are detached. Wrapping for `list` is the
+  // <li> layer: each child sits inside its own <li>.
+  function patchChildrenPositional(parentNode, oldChildren, newChildren, parentTag) {
+    const wrapInLi = parentTag === 'list';
+    const domChildren = parentNode.childNodes;
+    const max = Math.max(oldChildren.length, newChildren.length);
+    for (let i = 0; i < max; i++) {
+      const newChild = newChildren[i];
+      const domChild = domChildren[i];
+      if (!newChild) {
+        // Excess DOM nodes — remove the rest.
+        while (parentNode.childNodes.length > newChildren.length) {
+          parentNode.removeChild(parentNode.lastChild);
+        }
+        break;
       }
+      if (!domChild) {
+        // New child — append.
+        if (wrapInLi) {
+          const li = document.createElement('li');
+          li.appendChild(createDOM(newChild));
+          parentNode.appendChild(li);
+        } else {
+          parentNode.appendChild(createDOM(newChild));
+        }
+        continue;
+      }
+      // Existing — patch in place.
+      const targetNode = wrapInLi ? domChild.firstChild : domChild;
+      patchDOM(targetNode, newChild);
+    }
+  }
+
+  // patchChildrenKeyed implements a two-pass keyed diff: build a key->oldDOM
+  // map from existing children, then produce new children from the map
+  // (patching) or fresh nodes for unseen keys, in the new order. Removed
+  // keys are detached at the end.
+  function patchChildrenKeyed(parentNode, oldChildren, newChildren) {
+    // oldChildren is parallel to parentNode.childNodes (each wrapped in <li>).
+    const oldByKey = new Map();
+    for (let i = 0; i < oldChildren.length; i++) {
+      const li = parentNode.childNodes[i];
+      const oc = oldChildren[i];
+      // Each keyed child stores its key on the inner view (set by
+      // viewKeyedList builtin); fall back to position string if missing.
+      const key = oc && oc.key != null ? oc.key : ('@' + i);
+      oldByKey.set(key, li);
+    }
+    const usedLis = new Set();
+    let prevSibling = null;
+    for (let i = 0; i < newChildren.length; i++) {
+      const nc = newChildren[i];
+      const key = nc && nc.key != null ? nc.key : ('@' + i);
+      let li = oldByKey.get(key);
+      if (li) {
+        // Patch the existing <li>'s child against the new view.
+        patchDOM(li.firstChild, nc);
+        usedLis.add(li);
+        // Move into position (insertBefore is a no-op when already there).
+        const desiredNext = prevSibling ? prevSibling.nextSibling : parentNode.firstChild;
+        if (desiredNext !== li) parentNode.insertBefore(li, desiredNext);
+      } else {
+        // New key — fresh <li>.
+        li = document.createElement('li');
+        li.appendChild(createDOM(nc));
+        const desiredNext = prevSibling ? prevSibling.nextSibling : parentNode.firstChild;
+        parentNode.insertBefore(li, desiredNext);
+      }
+      prevSibling = li;
+    }
+    // Remove any old <li> not adopted by a new key.
+    for (const [, li] of oldByKey) {
+      if (!usedLis.has(li) && li.parentNode === parentNode) parentNode.removeChild(li);
     }
   }
 
@@ -672,6 +836,9 @@
       return screens[p] || screens[Object.keys(screens)[0]];
     }
 
+    let mounted = null;
+    let mountedScreenPath = null;
+
     function render() {
       const sc = currentScreen();
       if (!sc) return;
@@ -681,11 +848,24 @@
       }
       const viewVal = apply(sc.view, sc.model);
       const root = document.getElementById('mar-root');
-      while (root.firstChild) root.removeChild(root.firstChild);
-      root.appendChild(buildDOM(viewVal));
+      // On screen change, throw away the old tree so patch starts fresh —
+      // diffing across a navigation gives no useful work.
+      if (mounted == null || mountedScreenPath !== sc.path) {
+        while (root.firstChild) root.removeChild(root.firstChild);
+        mounted = createDOM(viewVal);
+        root.appendChild(mounted);
+        mountedScreenPath = sc.path;
+      } else {
+        mounted = patchDOM(mounted, viewVal);
+      }
 
-      // Intercept link clicks for client-side navigation.
+      // Intercept link clicks for client-side navigation. Re-binding on
+      // every render is OK — addEventListener with a fresh fn is cheap and
+      // querySelectorAll only finds anchors that were just created or
+      // patched.
       root.querySelectorAll('a[href^="/"]').forEach((a) => {
+        if (a.__marRouted) return;
+        a.__marRouted = true;
         a.addEventListener('click', (ev) => {
           const href = a.getAttribute('href');
           if (screens[href]) {
@@ -718,12 +898,20 @@
     const [initFn, updateFn, viewFn] = app.args;
     const initial = unwrapModelTuple(apply(initFn, VUnit()));
     let model = initial.model;
+    let mounted = null; // the root DOM child currently rendering the view
 
     function render() {
       const viewVal = apply(viewFn, model);
       const root = document.getElementById('mar-root');
-      while (root.firstChild) root.removeChild(root.firstChild);
-      root.appendChild(buildDOM(viewVal));
+      if (mounted == null) {
+        while (root.firstChild) root.removeChild(root.firstChild);
+        mounted = createDOM(viewVal);
+        root.appendChild(mounted);
+      } else {
+        // Patch in place. patchDOM may swap out the node if the root tag
+        // changes, so update our reference.
+        mounted = patchDOM(mounted, viewVal);
+      }
     }
 
     currentDispatch = (msg) => {

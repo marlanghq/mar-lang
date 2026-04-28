@@ -470,6 +470,12 @@ func stdlibBindings() map[string]Type {
 		"viewButton":   TForall{Vars: []int{a.ID}, Body: TArrow{From: a, To: TArrow{From: TString, To: TView(a)}}},
 		"viewLink":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TString, To: TView(a)}}},
 		"viewList":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TView(a)), To: TView(a)}},
+		// View.keyedList : List (String, View msg) -> View msg
+		// Each item is paired with a stable string key. The browser diff
+		// uses keys to track item identity across renders — survives
+		// reordering, insertion in the middle, and removal without
+		// scrambling DOM nodes (or losing focus on inputs inside items).
+		"viewKeyedList": TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TTuple{Members: []Type{TString, TView(a)}}), To: TView(a)}},
 		"viewRender":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TString}},
 		// View.input : String -> (String -> msg) -> View msg
 		// (currentValue, onChange) — every keystroke fires onChange with the
@@ -678,6 +684,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"View.button":   "viewButton",
 		"View.link":     "viewLink",
 		"View.list":     "viewList",
+		"View.keyedList": "viewKeyedList",
 		"View.render":   "viewRender",
 		"View.input":    "viewInput",
 		"View.textarea": "viewTextarea",

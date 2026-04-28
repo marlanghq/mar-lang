@@ -124,6 +124,38 @@ func viewBuiltins() map[string]Value {
 			}
 			return VView{Tag: "list", Children: children}, nil
 		}),
+		// View.keyedList : List (String, View msg) -> View msg
+		// Each item carries a stable key the diff uses to track identity.
+		// Internally we tag every child view with its key (key field on
+		// VView via the JS runtime; on the Go side we just stash it as an
+		// attr "key" so the serializer round-trips it).
+		"viewKeyedList": nativeFn(1, func(args []Value) (Value, error) {
+			list, ok := args[0].(VList)
+			if !ok {
+				return nil, fmt.Errorf("View.keyedList: expected List of (key, view)")
+			}
+			children := make([]Value, len(list.Elements))
+			for i, el := range list.Elements {
+				t, ok := el.(VTuple)
+				if !ok || len(t.Members) != 2 {
+					return nil, fmt.Errorf("View.keyedList: element %d is not a (key, view) tuple", i)
+				}
+				keyV, kok := t.Members[0].(VString)
+				viewV, vok := t.Members[1].(VView)
+				if !kok || !vok {
+					return nil, fmt.Errorf("View.keyedList: element %d expected (String, View)", i)
+				}
+				// Tag the inner view with its key. We don't add a Key
+				// field to VView (would touch every server-side renderer);
+				// instead we stash it as an attribute the JS serializer
+				// emits and the JS runtime reads.
+				tagged := viewV
+				tagged.Attrs = append([]VAttr(nil), viewV.Attrs...)
+				tagged.Attrs = append(tagged.Attrs, VAttr{Name: "__key", Value: keyV})
+				children[i] = tagged
+			}
+			return VView{Tag: "keyedList", Children: children}, nil
+		}),
 		// View.input : String -> (String -> msg) -> View msg
 		// (currentValue, onChange). Browser dispatches onChange(value) on
 		// every keystroke, so the model holds the form state explicitly.
