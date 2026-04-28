@@ -21,6 +21,7 @@ import (
 
 	"mar/internal/ast"
 	"mar/internal/diag"
+	"mar/internal/formatter"
 	"mar/internal/jsserve"
 	"mar/internal/lsp"
 	"mar/internal/parser"
@@ -65,6 +66,59 @@ func openURL(url string) {
 		cmd = exec.Command("xdg-open", url)
 	}
 	_ = cmd.Start()
+}
+
+// runFormat handles `mar format [--check] <files...>`. With files,
+// each is rewritten in place. With --check, the command exits 1 if
+// any file would change — useful in CI to enforce formatting.
+func runFormat(args []string) int {
+	check := false
+	files := []string{}
+	for _, a := range args {
+		switch a {
+		case "--check":
+			check = true
+		case "-h", "--help":
+			fmt.Println("usage: mar format [--check] <file.mar> [file.mar...]")
+			return 0
+		default:
+			if strings.HasPrefix(a, "-") {
+				fmt.Fprintf(os.Stderr, "mar format: unknown flag %q\n", a)
+				return 2
+			}
+			files = append(files, a)
+		}
+	}
+	if len(files) == 0 {
+		fmt.Fprintln(os.Stderr, "mar format: no files given\n\nusage: mar format [--check] <file.mar> [file.mar...]")
+		return 2
+	}
+	dirty := 0
+	for _, file := range files {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mar format: %v\n", err)
+			return 1
+		}
+		formatted := formatter.Format(string(src))
+		if formatted == string(src) {
+			continue
+		}
+		dirty++
+		if check {
+			fmt.Fprintf(os.Stderr, "%s: needs formatting\n", file)
+			continue
+		}
+		if err := os.WriteFile(file, []byte(formatted), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "mar format: %v\n", err)
+			return 1
+		}
+		fmt.Printf("formatted %s\n", file)
+	}
+	if check && dirty > 0 {
+		return 1
+	}
+	return 0
 }
 
 // noopEffect returns an Effect that does nothing on Run. Used by the
@@ -128,6 +182,10 @@ func main() {
 			path = os.Args[2]
 		}
 		os.Exit(runDev(path))
+	case "format":
+		// `mar format <file>` — rewrite in place. `mar format --check`
+		// exits 1 if any file needs reformatting (CI-friendly).
+		os.Exit(runFormat(os.Args[2:]))
 	case "lsp":
 		// Language server over stdio. Editors (VSCode, etc.) launch
 		// `mar lsp` and pipe LSP JSON-RPC over stdin/stdout.
@@ -195,6 +253,8 @@ Commands:
                                 Shared.mar    — helpers used by both
                               Names other than Main.mar / main are convention.
   config <dir>                Load and print mar.json from the given project.
+  format [--check] <file>...  Reformat .mar files in place. With
+                              --check, exits 1 if any file would change.
   init <name>                 Scaffold a new mar project at <name>/.
   build [dir] [distDir]       Compile a frontend project to a static
                               dist/ directory (HTML + runtime + AST).
