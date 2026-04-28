@@ -1,83 +1,20 @@
 package jsserve
 
 import (
-	_ "embed"
-	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
-	"mar/internal/ast"
 	"mar/internal/runtime"
 )
 
-// ServeUnified runs a single HTTP server that serves both the backend's
-// routes (under /api) and the frontend's MVU bundle (at / and /_mar/*).
+// dispatchBackend mirrors the routing logic in runtime/server.go: matches
+// by method + path (with :name params), invokes the handler, runs the
+// resulting Effect, writes the Response.
 //
-// backendRoutes:  the runtime list of routes (records with method/path/handler)
-//                 already evaluated from the backend module(s).
-// frontendMods:   the frontend modules whose AST will be sent to the browser.
-//                 The JS runtime evaluates these and looks up the entry value.
-// frontendEntry:  name of the value the JS runtime should run after loading.
-//                 Conventionally "main" but for an app we look up the screens
-//                 list and start App.serveScreens client-side.
-func ServeUnified(port int, backendRoutes []runtime.Value, frontendMods []*ast.Module, frontendEntry string) error {
-	merged := mergeModules(frontendMods)
-	progJSON, err := json.Marshal(map[string]any{
-		"module": SerializeModule(merged),
-		"entry":  frontendEntry,
-	})
-	if err != nil {
-		return err
-	}
-	title := "mar app"
-	if len(merged.Name) > 0 {
-		title = merged.Name[len(merged.Name)-1]
-	}
-	indexHTML := fmt.Sprintf(pageHTML, title)
-
-	mux := http.NewServeMux()
-
-	// /_mar/ — runtime.js and program.json
-	mux.HandleFunc("/_mar/runtime.js", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		_, _ = io.WriteString(w, runtimeJS)
-	})
-	mux.HandleFunc("/_mar/program.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(progJSON)
-	})
-
-	// /api/ — backend routes (delegate to the same dispatcher Server.serve uses)
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
-		// strip /api prefix for matching against route paths
-		stripped := strings.TrimPrefix(r.URL.Path, "/api")
-		if stripped == "" {
-			stripped = "/"
-		}
-		dispatchBackend(backendRoutes, stripped, w, r)
-	})
-
-	// /  — fall back to the SPA shell so the browser router can take over.
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(w, indexHTML)
-	})
-
-	// Patch the embedded HTML page to load assets from /_mar/ instead of /.
-	indexHTML = strings.Replace(indexHTML, `src="/__runtime.js"`, `src="/_mar/runtime.js"`, 1)
-	indexHTML = strings.Replace(indexHTML, `'/__program.json'`, `'/_mar/program.json'`, 1)
-
-	addr := fmt.Sprintf(":%d", port)
-	fmt.Printf("[mar] App on http://localhost%s\n", addr)
-	fmt.Printf("       backend: /api/*    frontend: /    runtime: /_mar/*\n")
-	return http.ListenAndServe(addr, mux)
-}
-
-// dispatchBackend mirrors the routing logic in runtime/server.go:
-// matches by method + path (with :name params), invokes the handler, runs
-// the resulting Effect, writes the Response.
+// Used by ServeLive's /api/* handler. The routes slice is read from the
+// LiveProgram on every request, so a hot-reload swap takes effect on the
+// next call.
 func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWriter, req *http.Request) {
 	reqSegs := splitPath(urlPath)
 	for _, rv := range routes {
@@ -128,7 +65,6 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 
 // splitPath / matchPath / buildRequestValue duplicate small bits from
 // runtime/server.go because that package's helpers are unexported.
-// (Future cleanup: move them to a shared package.)
 
 func splitPath(p string) []string {
 	p = strings.Trim(p, "/")

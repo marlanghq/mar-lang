@@ -95,16 +95,23 @@ mar check <file|dir>        type check (file or project)
 mar run <file|dir> [val]    type-check + run; defaults to value `main`.
                             For projects, use `Module.name`.
 mar repl                    interactive
-mar dev [path]              Run main in dev mode. <path> can be a .mar file
-                            (single-file app) or a project directory (looks
-                            for Main.mar inside). Defaults to current dir.
-                            What main does decides the runtime:
+mar dev [path]              Run main in dev mode with hot reload. <path>
+                            can be a .mar file (single-file app) or a
+                            project directory (looks for Main.mar inside).
+                            Defaults to current dir. What main does decides
+                            the runtime:
                               App.fullstack { api, page } — unified server,
                                 port from mar.json (default 3000).
                               App.serve port app          — browser-only,
                                 port from code.
                               App.serveScreens port list  — multi-screen
                                 browser app, port from code.
+                            Watches *.mar / *.json under the project dir;
+                            on change recompiles, swaps the served program
+                            atomically, and pushes a reload event to all
+                            connected browsers via SSE on /_mar/reload.
+                            Compile errors stay visible in the terminal —
+                            the previous good version keeps serving.
 mar config <dir>            load and print mar.json
 mar version                 print version
 ```

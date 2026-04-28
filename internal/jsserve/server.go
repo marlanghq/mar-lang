@@ -2,10 +2,10 @@ package jsserve
 
 import (
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"mar/internal/ast"
 )
@@ -14,6 +14,8 @@ import (
 var runtimeJS string
 
 // HTML page template. Loads the runtime, then the AST, then runs `main`.
+// Asset paths are stable (`/_mar/...`) so hot-reload's SSE channel sits
+// alongside them without colliding with user routes.
 const pageHTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -27,68 +29,61 @@ const pageHTML = `<!doctype html>
 </head>
 <body>
 <div id="mar-root"></div>
-<script src="/__runtime.js"></script>
+<script src="/_mar/runtime.js"></script>
 <script>
 window.addEventListener('DOMContentLoaded', function () {
-  fetch('/__program.json').then(function (r) { return r.json(); }).then(function (p) {
-    try { marRun(p); }
-    catch (e) {
-      var root = document.getElementById('mar-root');
-      root.innerHTML = '<pre style="color:#b00">' + (e.message || e) + '</pre>';
-      console.error(e);
-    }
-  });
+  marBootstrap();
 });
 </script>
 </body>
 </html>`
 
-// Serve serves the embedded runtime, the program AST, and the host page on
-// the given port. Blocks until the server stops.
+// ServeLive runs the dev server backed by a LiveProgram (whose contents
+// can change at runtime via hot-reload) and a ReloadHub (broadcasts
+// "reload" events to connected browsers via SSE).
 //
-// The single-module variant.
-func Serve(port int, mod *ast.Module, entry string) error {
-	return ServeModules(port, []*ast.Module{mod}, entry)
-}
-
-// ServeModules serves a multi-module project (all modules concatenated into
-// a single AST blob with their decls flattened).
-func ServeModules(port int, mods []*ast.Module, entry string) error {
-	merged := mergeModules(mods)
-	progJSON, err := json.Marshal(map[string]any{
-		"module": SerializeModule(merged),
-		"entry":  entry,
-	})
-	if err != nil {
-		return err
-	}
-
-	title := "mar app"
-	if len(merged.Name) > 0 {
-		title = merged.Name[len(merged.Name)-1]
-	}
-	indexHTML := fmt.Sprintf(pageHTML, title)
-
+// hasAPI controls whether /api/* requests get dispatched to the backend
+// routes inside lp. Browser-only mode (App.serve) sets it to false; the
+// full-stack mode (App.fullstack) sets it to true. lp.hasAPI is also
+// updated on every reload but the mux registration is fixed at startup,
+// so this flag pins the routing topology.
+func ServeLive(port int, lp *LiveProgram, hub *ReloadHub) error {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/__runtime.js", func(w http.ResponseWriter, r *http.Request) {
+
+	mux.HandleFunc("/_mar/runtime.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		_, _ = io.WriteString(w, runtimeJS)
 	})
-	mux.HandleFunc("/__program.json", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/_mar/program.json", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(progJSON)
+		w.Header().Set("Cache-Control", "no-store") // dev mode — never cache
+		_, _ = w.Write(lp.ProgramJSON())
 	})
+	mux.HandleFunc("/_mar/reload", hub.ServeReload)
+
+	if lp.HasAPI() {
+		mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+			stripped := strings.TrimPrefix(r.URL.Path, "/api")
+			if stripped == "" {
+				stripped = "/"
+			}
+			dispatchBackend(lp.Routes(), stripped, w, r)
+		})
+	}
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(w, indexHTML)
+		_, _ = fmt.Fprintf(w, pageHTML, lp.Title())
 	})
 
 	addr := fmt.Sprintf(":%d", port)
-	fmt.Printf("[mar] Browser app on http://localhost%s\n", addr)
+	if lp.HasAPI() {
+		fmt.Printf("[mar] App on http://localhost%s\n", addr)
+		fmt.Printf("       backend: /api/*    frontend: /    runtime: /_mar/*\n")
+	} else {
+		fmt.Printf("[mar] Browser app on http://localhost%s\n", addr)
+	}
+	fmt.Printf("       hot reload: /_mar/reload (SSE)\n")
 	return http.ListenAndServe(addr, mux)
 }
 

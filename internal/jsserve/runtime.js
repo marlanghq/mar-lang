@@ -975,4 +975,60 @@
       throw new Error('entry value is not an Effect or App (got ' + main.k + ')');
     }
   };
+
+  // marReload tears down the currently running app and re-mounts a fresh
+  // one from the latest program.json. Called by the SSE reload listener.
+  // Tearing down means: stop dispatching (so any listeners still attached
+  // to old DOM nodes become no-ops) and clear the mount root. The old
+  // mountApp / mountScreens closures become unreachable garbage.
+  global.marReload = function () {
+    currentDispatch = null;
+    const root = document.getElementById('mar-root');
+    if (root) while (root.firstChild) root.removeChild(root.firstChild);
+    return fetch('/_mar/program.json', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (p) { global.marRun(p); })
+      .catch(function (err) {
+        console.error('marReload failed:', err);
+        if (root) {
+          const pre = document.createElement('pre');
+          pre.style.color = '#b00';
+          pre.textContent = String(err && err.message || err);
+          root.appendChild(pre);
+        }
+      });
+  };
+
+  // marBootstrap is the entry point invoked from the host HTML page. It
+  // fetches the initial program, runs it, and opens the SSE connection
+  // that the dev server uses to push reload events.
+  global.marBootstrap = function () {
+    fetch('/_mar/program.json', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (p) {
+        try { global.marRun(p); }
+        catch (e) {
+          console.error(e);
+          const root = document.getElementById('mar-root');
+          if (root) {
+            const pre = document.createElement('pre');
+            pre.style.color = '#b00';
+            pre.textContent = String(e && e.message || e);
+            root.appendChild(pre);
+          }
+        }
+        // Open the reload channel after the first successful boot. If
+        // EventSource isn't available (e.g. running under a test mock),
+        // skip silently — the app still works, just no hot reload.
+        if (typeof EventSource === 'undefined') return;
+        const es = new EventSource('/_mar/reload');
+        es.onmessage = function (ev) {
+          if (ev.data === 'reload') global.marReload();
+        };
+        es.onerror = function () {
+          // Server may have stopped — ignore. EventSource auto-reconnects
+          // when the server comes back, and the next 'reload' will fire.
+        };
+      });
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

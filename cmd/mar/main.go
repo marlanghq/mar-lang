@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"mar/internal/ast"
 	"mar/internal/jsserve"
@@ -21,6 +23,18 @@ import (
 	"mar/internal/runtime"
 	"mar/internal/typecheck"
 )
+
+// noopEffect returns an Effect that does nothing on Run. Used by the
+// `mar dev` overrides for App.fullstack / App.serve / App.serveScreens —
+// the side effect they care about (capturing args into the LiveProgram)
+// happens during the function call, not when the Effect runs. The CLI
+// drives the actual server lifecycle.
+func noopEffect(tag string) runtime.VEffect {
+	return runtime.VEffect{
+		Tag: tag,
+		Run: func() (runtime.Value, error) { return runtime.VUnit{}, nil },
+	}
+}
 
 // version and commit are populated at build time via -ldflags.
 // See Makefile.
@@ -200,9 +214,11 @@ func runCheck(path string) int {
 //	App.serveScreens port screens -> browser-only multi-screen app
 //	any other Effect              -> just runs the effect
 //
-// All three of those builtins are overridden by the CLI before any module
-// is evaluated, so they capture the project's module ASTs (needed to ship
-// the right subset to the browser).
+// `mar dev` keeps the HTTP server up, watches the project files, and on
+// every change re-runs the project to swap in the freshly compiled output
+// (via a LiveProgram shared between the watcher and the server). Browsers
+// stay connected via SSE on /_mar/reload and rebuild their DOM when a
+// reload event fires.
 func runDev(path string) int {
 	entryFile, projectDir, err := resolveDevEntry(path)
 	if err != nil {
@@ -223,50 +239,131 @@ func runDev(path string) int {
 		fullstackPort = manifest.Server.Port
 	}
 
-	// Load the full project (parse + type-check + evaluate all modules into
-	// a shared runtime env). The hook installs project-aware versions of
-	// App.fullstack / App.serve / App.serveScreens BEFORE any module is
-	// evaluated — main calls one of them during evaluation, so the
-	// overrides have to be in place by then.
-	rEnv, _, err := project.LoadIntoEnvWithModulesAndHook(entryFile,
-		func(env *runtime.Env, mods []*ast.Module) {
-			fs := makeFullstackBuiltin(mods, fullstackPort)
-			env.Define("appFullstack", fs)
-			env.Define("App.fullstack", fs)
+	lp := &jsserve.LiveProgram{}
+	hub := jsserve.NewReloadHub()
 
-			srv := makeServeBuiltin(mods)
-			env.Define("appServe", srv)
-			env.Define("App.serve", srv)
+	// compile loads + evaluates the project, capturing the served state
+	// into lp. Returns a friendly error message instead of panicking so
+	// the watcher can recover from compile errors during development.
+	compile := func() error {
+		rEnv, _, err := project.LoadIntoEnvWithModulesAndHook(entryFile,
+			func(env *runtime.Env, mods []*ast.Module) {
+				fs := makeFullstackBuiltin(mods, fullstackPort, lp)
+				env.Define("appFullstack", fs)
+				env.Define("App.fullstack", fs)
 
-			scr := makeServeScreensBuiltin(mods)
-			env.Define("appServeScreens", scr)
-			env.Define("App.serveScreens", scr)
-		})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", entryFile, err)
+				srv := makeServeBuiltin(mods, lp)
+				env.Define("appServe", srv)
+				env.Define("App.serve", srv)
+
+				scr := makeServeScreensBuiltin(mods, lp)
+				env.Define("appServeScreens", scr)
+				env.Define("App.serveScreens", scr)
+			})
+		if err != nil {
+			return err
+		}
+		mainVal, ok := rEnv.Lookup("Main.main")
+		if !ok {
+			mainVal, ok = rEnv.Lookup("main")
+		}
+		if !ok {
+			return fmt.Errorf("%s must export `main : Effect String ()`", entryFile)
+		}
+		eff, ok := mainVal.(runtime.VEffect)
+		if !ok {
+			return fmt.Errorf("main is not an Effect (got %T)", mainVal)
+		}
+		// Running the Effect calls one of the overridden builtins, which
+		// captures (api, page) and updates lp. The builtin's Effect is a
+		// no-op — we drive the server lifecycle from the CLI, not the
+		// user's main.
+		if _, err := eff.Run(); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// First compile must succeed — otherwise there's nothing to serve.
+	if err := compile(); err != nil {
+		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
 		return 1
 	}
+	port := lp.Port()
+	if port == 0 {
+		// `main` didn't call any of the App.* overrides — nothing to host.
+		// Just exit; this isn't a server.
+		fmt.Fprintln(os.Stderr, "mar dev: main returned without invoking App.serve / App.fullstack / App.serveScreens — nothing to host")
+		return 0
+	}
 
-	// Find main: prefer Main.main (project mode), fall back to bare main
-	// (single-file mode).
-	mainVal, ok := rEnv.Lookup("Main.main")
-	if !ok {
-		mainVal, ok = rEnv.Lookup("main")
-	}
-	if !ok {
-		fmt.Fprintf(os.Stderr, "mar dev: %s must export `main : Effect String ()`\n", entryFile)
-		return 1
-	}
-	eff, ok := mainVal.(runtime.VEffect)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "mar dev: main is not an Effect (got %T)\n", mainVal)
-		return 1
-	}
-	if _, err := eff.Run(); err != nil {
+	// Start the watcher in the background. Compile errors stay visible
+	// in the terminal but don't tear the server down: the previous good
+	// version stays in lp.
+	go watchAndReload(projectDir, compile, hub)
+
+	// Block on the HTTP server.
+	if err := jsserve.ServeLive(port, lp, hub); err != nil {
 		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// fileState is a per-file fingerprint used by the watcher.
+type fileState struct {
+	mtime time.Time
+	size  int64
+}
+
+// watchAndReload polls .mar / .json files under root every ~250ms. On any
+// change (mtime / size / file added / removed), it runs compile and
+// broadcasts a reload event on success. Errors are printed but don't stop
+// the loop — the next save can fix them.
+func watchAndReload(root string, compile func() error, hub *jsserve.ReloadHub) {
+	snapshot := func() map[string]fileState {
+		out := map[string]fileState{}
+		_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+			if err != nil || info == nil || info.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(p, ".mar") && !strings.HasSuffix(p, ".json") {
+				return nil
+			}
+			out[p] = fileState{mtime: info.ModTime(), size: info.Size()}
+			return nil
+		})
+		return out
+	}
+	sameSnapshot := func(a, b map[string]fileState) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for k, av := range a {
+			bv, ok := b[k]
+			if !ok || !av.mtime.Equal(bv.mtime) || av.size != bv.size {
+				return false
+			}
+		}
+		return true
+	}
+	prev := snapshot()
+	tick := time.NewTicker(250 * time.Millisecond)
+	defer tick.Stop()
+	for range tick.C {
+		cur := snapshot()
+		if sameSnapshot(prev, cur) {
+			continue
+		}
+		prev = cur
+		fmt.Println("[mar dev] file change detected, recompiling…")
+		if err := compile(); err != nil {
+			fmt.Fprintf(os.Stderr, "[mar dev] compile error: %v\n", err)
+			continue
+		}
+		fmt.Println("[mar dev] reloaded")
+		hub.Broadcast()
+	}
 }
 
 // resolveDevEntry decides which file to load and which dir to read mar.json
@@ -323,8 +420,9 @@ func reachableFrom(startModule string, mods []*ast.Module) []*ast.Module {
 //
 // It captures the project's module ASTs (so the browser bundle entry can
 // be resolved from the page's provenance) and the HTTP port resolved by
-// the CLI from mar.json.
-func makeFullstackBuiltin(mods []*ast.Module, port int) runtime.Value {
+// the CLI from mar.json. Updates lp atomically — the Effect returned is a
+// no-op because the CLI drives the server lifecycle.
+func makeFullstackBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
 	return runtime.VFn{
 		Arity: 1,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
@@ -353,34 +451,26 @@ func makeFullstackBuiltin(mods []*ast.Module, port int) runtime.Value {
 			}
 			// Ship only the modules reachable from the frontend page —
 			// otherwise Backend.mar / Main.mar would land in the browser
-			// bundle, where Db / Entity / App.fullstack don't exist and
-			// pre-eval of top-level decls would crash.
+			// bundle, where Db / Entity / App.fullstack don't exist.
 			frontMods := reachableFrom(page.OriginModule, mods)
-			return runtime.VEffect{
-				Tag: "appFullstack",
-				Run: func() (runtime.Value, error) {
-					if err := jsserve.ServeUnified(port, apiList.Elements, frontMods, page.OriginName); err != nil {
-						return nil, err
-					}
-					return runtime.VUnit{}, nil
-				},
-			}, nil
+			lp.SetPort(port)
+			if err := lp.Update(apiList.Elements, frontMods, page.OriginName); err != nil {
+				return nil, fmt.Errorf("App.fullstack: %v", err)
+			}
+			return noopEffect("appFullstack"), nil
 		},
 	}
 }
 
-
-// makeServeBuiltin overrides App.serve in `mar dev`. The default Go-side
-// App.serve renders views as HTML forms (server-side MVU). For dev mode we
-// want browser-side MVU: ship the AST, let runtime.js mount the app.
+// makeServeBuiltin overrides App.serve in `mar dev` to ship the AST to
+// the browser instead of doing server-side HTML rendering.
 //
 //	App.serve : Int -> App -> Effect String ()
 //
-// The user's `main = App.serve port (App.create ...)` becomes, after this
-// override, an Effect that starts the JS bundle server on the given port.
-// The browser then evaluates `main` itself (the same expression, via the
-// JS-side App.serve which mounts).
-func makeServeBuiltin(mods []*ast.Module) runtime.Value {
+// Updates lp atomically; the Effect itself is a no-op (CLI runs the
+// server). Browser entry is "main" — the JS runtime evaluates the same
+// expression and the JS-side App.serve mounts the app.
+func makeServeBuiltin(mods []*ast.Module, lp *jsserve.LiveProgram) runtime.Value {
 	return runtime.VFn{
 		Arity: 2,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
@@ -391,16 +481,11 @@ func makeServeBuiltin(mods []*ast.Module) runtime.Value {
 			if _, ok := args[1].(runtime.VApp); !ok {
 				return nil, fmt.Errorf("App.serve: expected App value (got %T)", args[1])
 			}
-			port := int(portV.V)
-			return runtime.VEffect{
-				Tag: "appServeBrowser",
-				Run: func() (runtime.Value, error) {
-					if err := jsserve.ServeModules(port, mods, "main"); err != nil {
-						return nil, err
-					}
-					return runtime.VUnit{}, nil
-				},
-			}, nil
+			lp.SetPort(int(portV.V))
+			if err := lp.Update(nil, mods, "main"); err != nil {
+				return nil, fmt.Errorf("App.serve: %v", err)
+			}
+			return noopEffect("appServeBrowser"), nil
 		},
 	}
 }
@@ -408,7 +493,7 @@ func makeServeBuiltin(mods []*ast.Module) runtime.Value {
 // makeServeScreensBuiltin is the multi-screen variant of makeServeBuiltin.
 //
 //	App.serveScreens : Int -> List Screen -> Effect String ()
-func makeServeScreensBuiltin(mods []*ast.Module) runtime.Value {
+func makeServeScreensBuiltin(mods []*ast.Module, lp *jsserve.LiveProgram) runtime.Value {
 	return runtime.VFn{
 		Arity: 2,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
@@ -419,16 +504,11 @@ func makeServeScreensBuiltin(mods []*ast.Module) runtime.Value {
 			if _, ok := args[1].(runtime.VList); !ok {
 				return nil, fmt.Errorf("App.serveScreens: expected List Screen (got %T)", args[1])
 			}
-			port := int(portV.V)
-			return runtime.VEffect{
-				Tag: "appServeScreensBrowser",
-				Run: func() (runtime.Value, error) {
-					if err := jsserve.ServeModules(port, mods, "main"); err != nil {
-						return nil, err
-					}
-					return runtime.VUnit{}, nil
-				},
-			}, nil
+			lp.SetPort(int(portV.V))
+			if err := lp.Update(nil, mods, "main"); err != nil {
+				return nil, fmt.Errorf("App.serveScreens: %v", err)
+			}
+			return noopEffect("appServeScreensBrowser"), nil
 		},
 	}
 }
