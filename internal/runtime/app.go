@@ -83,10 +83,11 @@ func appBuiltins() map[string]Value {
 
 		// App.fullstack is the unified-server entry point. The default builtin
 		// here errors out because it has no access to the project's module
-		// ASTs (needed to ship the frontend bundle to the browser). The CLI
-		// installs a project-aware override before evaluating Main.main —
-		// see cmd/mar/main.go runApp.
-		"appFullstack": nativeFn(2, func(args []Value) (Value, error) {
+		// ASTs (needed to ship the frontend bundle to the browser) or the
+		// project's mar.json (where the port comes from). The CLI installs a
+		// project-aware override before evaluating Main.main — see
+		// cmd/mar/main.go runApp.
+		"appFullstack": nativeFn(1, func(args []Value) (Value, error) {
 			return nil, fmt.Errorf("App.fullstack: only available via `mar app <projectDir>` (the CLI installs the project-aware version)")
 		}),
 

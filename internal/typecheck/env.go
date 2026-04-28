@@ -495,21 +495,20 @@ func stdlibBindings() map[string]Type {
 		},
 		"appServe": TArrow{From: TInt, To: TArrow{From: TApp(), To: TEffect(TString, TUnit{})}},
 
-		// App.fullstack : Int -> { api : List Route, page : App } -> Effect String ()
+		// App.fullstack : { api : List Route, page : App } -> Effect String ()
 		// Unified server: api routes mounted under /api, page (a frontend MVU
-		// app) shipped to the browser as JS.
+		// app) shipped to the browser as JS. Port comes from <projectDir>/mar.json
+		// (server.port, default 3000) — not from code, so deployment can
+		// reconfigure it without recompiling.
 		"appFullstack": TArrow{
-			From: TInt,
-			To: TArrow{
-				From: TRecord{
-					Fields: map[string]Type{
-						"api":  TList(serverRouteType()),
-						"page": TApp(),
-					},
-					Order: []string{"api", "page"},
+			From: TRecord{
+				Fields: map[string]Type{
+					"api":  TList(serverRouteType()),
+					"page": TApp(),
 				},
-				To: TEffect(TString, TUnit{}),
+				Order: []string{"api", "page"},
 			},
+			To: TEffect(TString, TUnit{}),
 		},
 
 		// Screen.create — same shape as App.create but with a path string.

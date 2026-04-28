@@ -12,7 +12,7 @@ import Frontend
 
 main : Effect String ()
 main =
-    App.fullstack 3000
+    App.fullstack
         { api = Backend.routes
         , page = Frontend.page
         }

@@ -192,16 +192,32 @@ func runCheck(path string) int {
 
 // runApp runs a full-stack mar project. Convention: the project directory
 // contains a Main.mar module exporting `main : Effect String ()` — typically
-// `App.fullstack port { api = Backend.routes, page = Frontend.page }`.
+// `App.fullstack { api = Backend.routes, page = Frontend.page }`.
 //
 // Backend.mar / Frontend.mar / Shared.mar are conventional names but not
 // required: Main.mar can import whatever it likes. The CLI itself doesn't
 // look up Backend or Frontend by name — only Main.main matters.
+//
+// The HTTP port comes from <dir>/mar.json (server.port). Default 3000 if
+// the manifest is absent or doesn't specify a port.
 func runApp(dir string) int {
 	mainFile := filepath.Join(dir, "Main.mar")
 	if _, err := os.Stat(mainFile); err != nil {
 		fmt.Fprintf(os.Stderr, "mar app: %s not found\n", mainFile)
 		return 1
+	}
+
+	// Resolve port from mar.json (default 3000). Validation errors in the
+	// manifest are fatal — better to surface them now than silently fall
+	// back to defaults.
+	port := 3000
+	manifest, err := project.LoadManifest(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mar app: %v\n", err)
+		return 1
+	}
+	if manifest != nil && manifest.Server != nil && manifest.Server.Port != 0 {
+		port = manifest.Server.Port
 	}
 
 	// Load the full project (parse + type-check + evaluate all modules into
@@ -210,7 +226,7 @@ func runApp(dir string) int {
 	// during evaluation, so the override has to be in place by then.
 	rEnv, _, err := project.LoadIntoEnvWithModulesAndHook(mainFile,
 		func(env *runtime.Env, mods []*ast.Module) {
-			impl := makeFullstackBuiltin(mods)
+			impl := makeFullstackBuiltin(mods, port)
 			env.Define("appFullstack", impl)
 			env.Define("App.fullstack", impl) // qualified alias is a separate binding
 		})
@@ -270,24 +286,21 @@ func reachableFrom(startModule string, mods []*ast.Module) []*ast.Module {
 	return order
 }
 
-// makeFullstackBuiltin returns a 2-arg native function that mirrors the
+// makeFullstackBuiltin returns a 1-arg native function that mirrors the
 // signature of App.fullstack:
 //
-//	Int -> { api : List Route, page : App } -> Effect String ()
+//	{ api : List Route, page : App } -> Effect String ()
 //
-// It captures the project's module ASTs so the browser bundle entry can be
-// resolved from the page's provenance.
-func makeFullstackBuiltin(mods []*ast.Module) runtime.Value {
+// It captures the project's module ASTs (so the browser bundle entry can
+// be resolved from the page's provenance) and the HTTP port resolved by
+// the CLI from mar.json.
+func makeFullstackBuiltin(mods []*ast.Module, port int) runtime.Value {
 	return runtime.VFn{
-		Arity: 2,
+		Arity: 1,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
-			portV, ok := args[0].(runtime.VInt)
+			rec, ok := args[0].(runtime.VRecord)
 			if !ok {
-				return nil, fmt.Errorf("App.fullstack: expected Int port (got %T)", args[0])
-			}
-			rec, ok := args[1].(runtime.VRecord)
-			if !ok {
-				return nil, fmt.Errorf("App.fullstack: expected { api, page } record (got %T)", args[1])
+				return nil, fmt.Errorf("App.fullstack: expected { api, page } record (got %T)", args[0])
 			}
 			apiV, ok := rec.Fields["api"]
 			if !ok {
@@ -313,7 +326,6 @@ func makeFullstackBuiltin(mods []*ast.Module) runtime.Value {
 			// bundle, where Db / Entity / App.fullstack don't exist and
 			// pre-eval of top-level decls would crash.
 			frontMods := reachableFrom(page.OriginModule, mods)
-			port := int(portV.V)
 			return runtime.VEffect{
 				Tag: "appFullstack",
 				Run: func() (runtime.Value, error) {

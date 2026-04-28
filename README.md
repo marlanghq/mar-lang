@@ -97,10 +97,11 @@ mar run <file|dir> [val]    type-check + run; defaults to value `main`.
 mar repl                    interactive
 mar serve <file.mar>        serve a browser app on :4000 with client-side MVU
 mar app <projectDir>        run a full-stack project. Looks for Main.mar
-                            with `main = App.fullstack port { api, page }`.
-                            Convention: Backend.mar / Frontend.mar /
-                            Shared.mar — but only Main.mar / main are
-                            required by the CLI.
+                            with `main = App.fullstack { api, page }`.
+                            Port comes from <projectDir>/mar.json
+                            (server.port, default 3000). Convention:
+                            Backend.mar / Frontend.mar / Shared.mar — but
+                            only Main.mar / main are required by the CLI.
 mar config <dir>            load and print mar.json
 mar version                 print version
 ```
