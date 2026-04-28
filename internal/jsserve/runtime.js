@@ -642,15 +642,26 @@
         for (const c of view.children) e.appendChild(createDOM(c));
         return e;
       case 'row':
+        // elm-ui-like default: children are content-sized (shrink), not
+        // stretched. align-items: flex-start prevents the flex default
+        // 'stretch' from forcing children to match the row's cross-axis
+        // height. Visually invisible for rows of single-line widgets, but
+        // keeps the rule symmetric with column.
         e.className = 'row';
         e.style.display = 'flex';
+        e.style.alignItems = 'flex-start';
         e.style.gap = '0.5rem';
         for (const c of view.children) e.appendChild(createDOM(c));
         return e;
       case 'column':
+        // Default: children are content-sized. Without flex-start, the
+        // flex default 'stretch' makes every child fill the column's
+        // width — buttons end up edge-to-edge. Opt-in stretching will
+        // come later as a per-child View.fill wrapper.
         e.className = 'column';
         e.style.display = 'flex';
         e.style.flexDirection = 'column';
+        e.style.alignItems = 'flex-start';
         e.style.gap = '0.5rem';
         for (const c of view.children) e.appendChild(createDOM(c));
         return e;

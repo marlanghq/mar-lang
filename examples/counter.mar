@@ -31,7 +31,7 @@ update msg model =
 
 view : Model -> View Msg
 view model =
-    View.row
+    View.column
         [ View.button Decrement "-"
         , View.text (String.fromInt model.count)
         , View.button Increment "+"
