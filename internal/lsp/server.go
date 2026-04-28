@@ -19,11 +19,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
 	"mar/internal/ast"
+	"mar/internal/formatter"
 	"mar/internal/lexer"
 	"mar/internal/parser"
 	"mar/internal/project"
@@ -177,6 +179,10 @@ func (s *Server) handle(msg *message) {
 		s.handleCompletion(msg)
 	case "textDocument/inlayHint":
 		s.handleInlayHint(msg)
+	case "textDocument/codeAction":
+		s.handleCodeAction(msg)
+	case "textDocument/formatting":
+		s.handleFormatting(msg)
 	case "shutdown":
 		s.respond(msg.ID, nil)
 	case "exit":
@@ -229,7 +235,9 @@ func (s *Server) handleInitialize(msg *message) {
 			"completionProvider": map[string]any{
 				"triggerCharacters": []string{"."},
 			},
-			"inlayHintProvider": true,
+			"inlayHintProvider":         true,
+			"codeActionProvider":        true,
+			"documentFormattingProvider": true,
 		},
 		"serverInfo": map[string]any{
 			"name":    "mar-lsp",
@@ -833,6 +841,330 @@ func (s *Server) handleInlayHint(msg *message) {
 		})
 	}
 	s.respond(msg.ID, out)
+}
+
+// --- Code actions (quick fixes + refactors) ---
+
+type codeActionParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Range   lspRange `json:"range"`
+	Context struct {
+		Diagnostics []map[string]any `json:"diagnostics"`
+	} `json:"context"`
+}
+
+func (s *Server) handleCodeAction(msg *message) {
+	var p codeActionParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	s.mu.Lock()
+	idx := s.idx[p.TextDocument.URI]
+	s.mu.Unlock()
+	if idx == nil {
+		s.respond(msg.ID, []any{})
+		return
+	}
+
+	out := []any{}
+
+	// Quick fixes for the diagnostics the editor passes in. Match on
+	// the message text (no error codes today, so this is fragile but
+	// works for the cases we generate).
+	for _, d := range p.Context.Diagnostics {
+		msgText, _ := d["message"].(string)
+		if act := didYouMeanFix(msgText, p.TextDocument.URI, p.Range, d, idx); act != nil {
+			out = append(out, act)
+		}
+		if act := badFieldFix(msgText, p.TextDocument.URI, p.Range, d, idx); act != nil {
+			out = append(out, act)
+		}
+	}
+
+	// Refactor: add a type annotation for the top-level value at the
+	// cursor when it doesn't have one.
+	if act := addAnnotationRefactor(p.TextDocument.URI, p.Range, idx); act != nil {
+		out = append(out, act)
+	}
+
+	s.respond(msg.ID, out)
+}
+
+// didYouMeanFix produces a quickfix for "unknown identifier: X" /
+// "unknown qualified name: X" diagnostics — when there's a known
+// symbol whose name is close (edit distance ≤ 2), suggest renaming X
+// to it.
+func didYouMeanFix(msgText, uri string, _ lspRange, diag map[string]any, idx *DocIndex) any {
+	bad := extractQuotedName(msgText, "unknown identifier: ", "unknown qualified name: ")
+	if bad == "" {
+		return nil
+	}
+	if dot := strings.LastIndex(bad, "."); dot >= 0 {
+		bad = bad[dot+1:]
+	}
+	candidates := []string{}
+	for name := range idx.Symbols {
+		if levenshtein(strings.ToLower(name), strings.ToLower(bad)) <= 2 && name != bad {
+			candidates = append(candidates, name)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	// Pick the closest candidate (shortest edit distance, then alpha).
+	sort.Slice(candidates, func(i, j int) bool {
+		di := levenshtein(strings.ToLower(candidates[i]), strings.ToLower(bad))
+		dj := levenshtein(strings.ToLower(candidates[j]), strings.ToLower(bad))
+		if di != dj {
+			return di < dj
+		}
+		return candidates[i] < candidates[j]
+	})
+	suggestion := candidates[0]
+
+	// The diagnostic's range pinpoints the offending identifier. Reuse
+	// it for the edit so we replace exactly what the user typed.
+	rng, _ := diag["range"].(map[string]any)
+	if rng == nil {
+		return nil
+	}
+	return map[string]any{
+		"title": fmt.Sprintf("Did you mean `%s`?", suggestion),
+		"kind":  "quickfix",
+		"diagnostics": []any{diag},
+		"edit": map[string]any{
+			"changes": map[string]any{
+				uri: []map[string]any{{
+					"range":   rng,
+					"newText": suggestion,
+				}},
+			},
+		},
+		"isPreferred": true,
+	}
+}
+
+// badFieldFix turns "record has no field 'X' (available: a, b, c)"
+// into a quickfix that replaces X with the closest available field.
+func badFieldFix(msgText, uri string, _ lspRange, diag map[string]any, idx *DocIndex) any {
+	const prefix = "record has no field '"
+	idxQuote := strings.Index(msgText, prefix)
+	if idxQuote < 0 {
+		return nil
+	}
+	rest := msgText[idxQuote+len(prefix):]
+	end := strings.IndexByte(rest, '\'')
+	if end < 0 {
+		return nil
+	}
+	bad := rest[:end]
+	availStart := strings.Index(rest, "(available: ")
+	if availStart < 0 {
+		return nil
+	}
+	availEnd := strings.LastIndex(rest, ")")
+	if availEnd < 0 || availEnd < availStart {
+		return nil
+	}
+	avail := rest[availStart+len("(available: ") : availEnd]
+	candidates := []string{}
+	for _, name := range strings.Split(avail, ", ") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if levenshtein(strings.ToLower(name), strings.ToLower(bad)) <= 3 {
+			candidates = append(candidates, name)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		di := levenshtein(strings.ToLower(candidates[i]), strings.ToLower(bad))
+		dj := levenshtein(strings.ToLower(candidates[j]), strings.ToLower(bad))
+		if di != dj {
+			return di < dj
+		}
+		return candidates[i] < candidates[j]
+	})
+	suggestion := candidates[0]
+	rng, _ := diag["range"].(map[string]any)
+	if rng == nil {
+		return nil
+	}
+	return map[string]any{
+		"title": fmt.Sprintf("Replace with `%s`", suggestion),
+		"kind":  "quickfix",
+		"diagnostics": []any{diag},
+		"edit": map[string]any{
+			"changes": map[string]any{
+				uri: []map[string]any{{
+					"range":   rng,
+					"newText": suggestion,
+				}},
+			},
+		},
+		"isPreferred": true,
+	}
+}
+
+// addAnnotationRefactor offers a refactor when the cursor is on a
+// top-level value declaration that doesn't already have an annotation.
+// Inserts `name : <inferred type>` on the line before the decl.
+func addAnnotationRefactor(uri string, rng lspRange, idx *DocIndex) any {
+	if idx.Mod == nil {
+		return nil
+	}
+	annotated := map[string]bool{}
+	for _, d := range idx.Mod.Decls {
+		if a, ok := d.(*ast.AnnotationDecl); ok {
+			annotated[a.Name] = true
+		}
+	}
+	cursorLine := rng.Start.Line + 1 // back to 1-indexed for comparison
+	for _, d := range idx.Mod.Decls {
+		v, ok := d.(*ast.ValueDecl)
+		if !ok {
+			continue
+		}
+		if v.Pos.Line != cursorLine {
+			continue
+		}
+		if annotated[v.Name] {
+			return nil
+		}
+		sym, ok := idx.Symbols[v.Name]
+		if !ok || sym.Type == "" {
+			return nil
+		}
+		// Insert the annotation on the line above the decl. LSP
+		// positions are 0-indexed.
+		insertLine := v.Pos.Line - 1
+		col := v.Pos.Column - 1
+		if col < 0 {
+			col = 0
+		}
+		indent := strings.Repeat(" ", col)
+		return map[string]any{
+			"title": fmt.Sprintf("Add type annotation `%s : %s`", v.Name, sym.Type),
+			"kind":  "refactor",
+			"edit": map[string]any{
+				"changes": map[string]any{
+					uri: []map[string]any{{
+						"range": lspRange{
+							Start: lspPosition{Line: insertLine, Character: col},
+							End:   lspPosition{Line: insertLine, Character: col},
+						},
+						"newText": fmt.Sprintf("%s : %s\n%s", v.Name, sym.Type, indent),
+					}},
+				},
+			},
+		}
+	}
+	return nil
+}
+
+// extractQuotedName returns the suffix of msgText after the first
+// matching prefix, trimming common surrounding punctuation. Returns
+// "" if no prefix matches.
+func extractQuotedName(msgText string, prefixes ...string) string {
+	for _, p := range prefixes {
+		if i := strings.Index(msgText, p); i >= 0 {
+			rest := msgText[i+len(p):]
+			// Stop at first whitespace or punctuation.
+			end := len(rest)
+			for j := 0; j < len(rest); j++ {
+				b := rest[j]
+				if b == ' ' || b == '\t' || b == '\n' || b == '"' || b == '\'' {
+					end = j
+					break
+				}
+			}
+			return rest[:end]
+		}
+	}
+	return ""
+}
+
+// levenshtein computes the edit distance between two strings.
+// Standard DP, fine for the tiny strings we feed it.
+func levenshtein(a, b string) int {
+	la, lb := len(a), len(b)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	prev := make([]int, lb+1)
+	curr := make([]int, lb+1)
+	for j := 0; j <= lb; j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			min := prev[j] + 1
+			if curr[j-1]+1 < min {
+				min = curr[j-1] + 1
+			}
+			if prev[j-1]+cost < min {
+				min = prev[j-1] + cost
+			}
+			curr[j] = min
+		}
+		prev, curr = curr, prev
+	}
+	return prev[lb]
+}
+
+// --- Document formatting ---
+
+type formattingParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+}
+
+func (s *Server) handleFormatting(msg *message) {
+	var p formattingParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	s.mu.Lock()
+	source := s.docs[p.TextDocument.URI]
+	s.mu.Unlock()
+	formatted := formatter.Format(source)
+	if formatted == source {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	// LSP wants TextEdit[] — return a single edit replacing the whole
+	// document. End range covers a generous max-line/col so any valid
+	// document is fully replaced.
+	lines := strings.Split(source, "\n")
+	endLine := len(lines)
+	endCol := 0
+	if endLine > 0 {
+		endLine--
+		endCol = len(lines[endLine])
+	}
+	s.respond(msg.ID, []any{map[string]any{
+		"range": lspRange{
+			Start: lspPosition{Line: 0, Character: 0},
+			End:   lspPosition{Line: endLine, Character: endCol},
+		},
+		"newText": formatted,
+	}})
 }
 
 // findIdentifierOccurrences returns all 0-indexed (line, col) positions

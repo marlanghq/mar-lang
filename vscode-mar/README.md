@@ -4,9 +4,23 @@ Language support for the [mar](../) programming language.
 
 ## Features
 
-- Syntax highlighting for `.mar` files (keywords, types, strings, comments).
-- Diagnostics: parse + type errors appear as squiggles in real time
-  (powered by `mar lsp` over stdio).
+- Syntax highlighting for `.mar` files.
+- Diagnostics (parse + type errors as squiggles).
+- Hover (type signatures).
+- Go-to-definition.
+- Find references.
+- Rename.
+- Workspace + document symbols (outline, breadcrumbs, file picker).
+- Completion (autocomplete top-level names with type info).
+- Inlay hints (inferred types shown inline next to definitions
+  without explicit signatures).
+- Code actions:
+  - Quick fix "Did you mean `X`?" for typos that are close to a known
+    symbol.
+  - Quick fix "Replace with `field`" for missing-field errors.
+  - Refactor "Add type annotation" inserts the inferred signature
+    above a value declaration.
+- Format on save (calls `mar format` over the open document).
 
 ## Requirements
 
