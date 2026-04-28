@@ -485,6 +485,28 @@ func stdlibBindings() map[string]Type {
 		"viewTextarea": TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TArrow{From: TString, To: a}, To: TView(a)}}},
 		"viewEmpty":    TForall{Vars: []int{a.ID}, Body: TView(a)},
 
+		// Layout modifiers — elm-ui-inspired. Each one takes a View and
+		// returns a View, so they pipe naturally:
+		//
+		//   View.button Increment "+"
+		//       |> View.padding 12
+		//       |> View.center
+		//
+		// The wire format is platform-agnostic: each modifier appends a
+		// semantic attribute on the VView. Web runtime translates to CSS
+		// (padding, gap, margin auto, etc.); future iOS / Android / desktop
+		// runtimes translate to .padding(), Modifier.padding(...), etc.
+		"viewPadding":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TInt, To: TArrow{From: TView(a), To: TView(a)}}},
+		"viewSpacing":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TInt, To: TArrow{From: TView(a), To: TView(a)}}},
+		"viewWidth":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TInt, To: TArrow{From: TView(a), To: TView(a)}}},
+		"viewHeight":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TInt, To: TArrow{From: TView(a), To: TView(a)}}},
+		"viewFillX":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
+		"viewFillY":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
+		"viewFill":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
+		"viewCenterX":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
+		"viewCenterY":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
+		"viewCenter":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
+
 		// App
 		// App.create
 		//   : (() -> (Model, Effect Never Msg))
@@ -689,6 +711,16 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"View.link":     "viewLink",
 		"View.list":     "viewList",
 		"View.keyedList": "viewKeyedList",
+		"View.padding":  "viewPadding",
+		"View.spacing":  "viewSpacing",
+		"View.width":    "viewWidth",
+		"View.height":   "viewHeight",
+		"View.fillX":    "viewFillX",
+		"View.fillY":    "viewFillY",
+		"View.fill":     "viewFill",
+		"View.centerX":  "viewCenterX",
+		"View.centerY":  "viewCenterY",
+		"View.center":   "viewCenter",
 		"View.render":   "viewRender",
 		"View.input":    "viewInput",
 		"View.textarea": "viewTextarea",

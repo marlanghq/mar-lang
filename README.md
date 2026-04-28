@@ -81,6 +81,7 @@ curl http://localhost:3002/notes
 | `examples/view-page.mar` | server-side view rendering to HTML |
 | `examples/counter.mar` | interactive MVU app: init / update / view, session state |
 | `examples/todo-app.mar` | MVU with form input (`AddTodo { body }`), togglable list |
+| `examples/tasks.mar` | larger MVU app exercising the layout modifiers (View.padding / .spacing / .fillX / .center / .width) |
 | `examples/multi-screen.mar` | multiple screens at different paths, each with its own model, links between them |
 | `examples/clock.mar` + `clock-backend.mar` | browser app does Http.get to backend on init / Refresh |
 | `examples/notes-fullstack/` | full-stack mar: Main.mar wires Backend.routes + Frontend.page via App.fullstack; Shared.mar declares Endpoints used by both sides; SQLite-backed backend; browser frontend driven by MVU |

@@ -111,6 +111,16 @@ const pageHTML = `<!doctype html>
      rhythm. Children are content-sized (align-items: flex-start) — that
      lives in the runtime CSS so the DSL semantics stay shrink-by-default. */
   section { padding: 1rem 0; }
+
+  /* Mount point: a flex column that fills the viewport height (minus
+     body padding). This lets View.center / View.centerY actually center
+     a top-level view on the page — without it, the column would have
+     no inherent height to center within. */
+  #mar-root {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 3rem);
+  }
 </style>
 </head>
 <body>

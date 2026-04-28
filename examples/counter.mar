@@ -34,6 +34,8 @@ view model =
         , View.text (String.fromInt model)
         , View.button Increment "+"
         ]
+        |> View.spacing 12
+        |> View.center
 
 
 main : Effect String ()

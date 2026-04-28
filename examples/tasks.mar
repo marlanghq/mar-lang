@@ -1,0 +1,200 @@
+module Tasks exposing (main)
+
+
+-- A more polished task tracker, exercising the layout modifiers added
+-- in the elm-ui-style refresh of the view DSL.
+--
+-- Open with: mar dev examples/tasks.mar
+
+
+type alias Task =
+    { id : Int
+    , title : String
+    , notes : String
+    , done : Bool
+    }
+
+
+type Filter
+    = All
+    | Active
+    | Done
+
+
+type alias Model =
+    { tasks : List Task
+    , draftTitle : String
+    , draftNotes : String
+    , filter : Filter
+    , nextId : Int
+    }
+
+
+type Msg
+    = TitleChanged String
+    | NotesChanged String
+    | AddTask
+    | ToggleTask Int
+    | RemoveTask Int
+    | ClearDone
+    | SetFilter Filter
+
+
+init : () -> (Model, Effect String Msg)
+init _ =
+    ( { tasks =
+          [ { id = 1, title = "Try mar", notes = "", done = True }
+          , { id = 2, title = "Compare layout to elm-ui and SwiftUI", notes = "Both default to shrink", done = False }
+          ]
+      , draftTitle = ""
+      , draftNotes = ""
+      , filter = All
+      , nextId = 3
+      }
+    , Effect.none
+    )
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        TitleChanged value ->
+            ({ model | draftTitle = value }, Effect.none)
+
+        NotesChanged value ->
+            ({ model | draftNotes = value }, Effect.none)
+
+        AddTask ->
+            ( { model
+                | tasks = model.tasks ++
+                    [ { id = model.nextId
+                      , title = model.draftTitle
+                      , notes = model.draftNotes
+                      , done = False
+                      }
+                    ]
+                , nextId = model.nextId + 1
+                , draftTitle = ""
+                , draftNotes = ""
+              }
+            , Effect.none
+            )
+
+        ToggleTask id ->
+            ({ model | tasks = List.map (toggleIfId id) model.tasks }, Effect.none)
+
+        RemoveTask id ->
+            ({ model | tasks = List.filter (notId id) model.tasks }, Effect.none)
+
+        ClearDone ->
+            ({ model | tasks = List.filter pending model.tasks }, Effect.none)
+
+        SetFilter f ->
+            ({ model | filter = f }, Effect.none)
+
+
+toggleIfId : Int -> Task -> Task
+toggleIfId id t =
+    if t.id == id then
+        { t | done = if t.done then False else True }
+    else
+        t
+
+notId : Int -> Task -> Bool
+notId id t = t.id /= id
+
+pending : Task -> Bool
+pending t = t.done == False
+
+isDone : Task -> Bool
+isDone t = t.done == True
+
+
+visibleTasks : Filter -> List Task -> List Task
+visibleTasks f tasks =
+    case f of
+        All    -> tasks
+        Active -> List.filter pending tasks
+        Done   -> List.filter isDone tasks
+
+
+view : Model -> View Msg
+view model =
+    let
+        visible = visibleTasks model.filter model.tasks
+        counts  = String.fromInt (List.length visible)
+                    ++ " of "
+                    ++ String.fromInt (List.length model.tasks)
+    in
+    -- Page-wide centered card layout. width 720 caps the reading width;
+    -- centerX positions it on the viewport; padding gives the card air.
+    View.column
+        [ View.title "Tasks"
+        , View.text counts
+
+        , View.column
+            [ View.subtitle "New task"
+            , View.input model.draftTitle TitleChanged
+                |> View.fillX
+            , View.textarea model.draftNotes NotesChanged
+                |> View.fillX
+            , View.button AddTask "Add task"
+            ]
+            |> View.spacing 8
+            |> View.padding 16
+            |> View.fillX
+
+        , View.row
+            [ View.text "Show:"
+            , View.button (SetFilter All) "All"
+            , View.button (SetFilter Active) "Active"
+            , View.button (SetFilter Done) "Done"
+            ]
+            |> View.spacing 8
+
+        , case visible of
+            [] ->
+                View.text "No tasks. Add one above."
+                    |> View.padding 16
+
+            _ ->
+                View.keyedList (List.map renderTask visible)
+                    |> View.fillX
+
+        , View.row
+            [ View.button ClearDone "Clear done"
+            , View.link "https://guide.elm-lang.org/architecture/" "Elm Architecture"
+            ]
+            |> View.spacing 12
+        ]
+        |> View.spacing 16
+        |> View.padding 24
+        |> View.width 720
+        |> View.centerX
+
+
+renderTask : Task -> (String, View Msg)
+renderTask t =
+    ( String.fromInt t.id
+    , View.row
+        [ View.button (ToggleTask t.id) (if t.done then "[x]" else "[ ]")
+        , View.column
+            [ View.text t.title
+            , if t.notes == "" then
+                View.empty
+              else
+                View.text t.notes
+            ]
+            |> View.spacing 4
+            |> View.fillX
+        , View.button (RemoveTask t.id) "Remove"
+        ]
+        |> View.spacing 12
+        |> View.padding 8
+        |> View.fillX
+    )
+
+
+main : Effect String ()
+main =
+    App.serve (App.create init update view)

@@ -196,6 +196,55 @@ func viewBuiltins() map[string]Value {
 			}
 			return VString{V: renderViewHTML(v)}, nil
 		}),
+
+		// Layout modifiers — each appends a semantic attribute to the
+		// VView. Runtime-side translation: web sets CSS, future native
+		// runtimes set platform equivalents (.padding, Modifier.padding,
+		// .frame(maxWidth: .infinity), etc.).
+		"viewPadding":  nativeFn(2, intModifier("padding", "View.padding")),
+		"viewSpacing":  nativeFn(2, intModifier("spacing", "View.spacing")),
+		"viewWidth":    nativeFn(2, intModifier("width", "View.width")),
+		"viewHeight":   nativeFn(2, intModifier("height", "View.height")),
+		"viewFillX":    nativeFn(1, flagModifier("fillX", "View.fillX")),
+		"viewFillY":    nativeFn(1, flagModifier("fillY", "View.fillY")),
+		"viewFill":     nativeFn(1, flagModifier("fill", "View.fill")),
+		"viewCenterX":  nativeFn(1, flagModifier("centerX", "View.centerX")),
+		"viewCenterY":  nativeFn(1, flagModifier("centerY", "View.centerY")),
+		"viewCenter":   nativeFn(1, flagModifier("center", "View.center")),
+	}
+}
+
+// intModifier builds a 2-arg native function for layout modifiers that
+// take an Int parameter (padding, spacing, width, height). Appends a
+// VAttr named `attrName` carrying the int value.
+func intModifier(attrName, label string) func([]Value) (Value, error) {
+	return func(args []Value) (Value, error) {
+		n, ok := args[0].(VInt)
+		if !ok {
+			return nil, fmt.Errorf("%s: expected Int (got %T)", label, args[0])
+		}
+		v, ok := args[1].(VView)
+		if !ok {
+			return nil, fmt.Errorf("%s: expected View (got %T)", label, args[1])
+		}
+		out := v
+		out.Attrs = append(append([]VAttr(nil), v.Attrs...), VAttr{Name: attrName, Value: n})
+		return out, nil
+	}
+}
+
+// flagModifier builds a 1-arg native function for layout modifiers that
+// are presence-only flags (fillX, fillY, center, ...). Appends a VAttr
+// named `attrName` with VUnit value.
+func flagModifier(attrName, label string) func([]Value) (Value, error) {
+	return func(args []Value) (Value, error) {
+		v, ok := args[0].(VView)
+		if !ok {
+			return nil, fmt.Errorf("%s: expected View (got %T)", label, args[0])
+		}
+		out := v
+		out.Attrs = append(append([]VAttr(nil), v.Attrs...), VAttr{Name: attrName, Value: VUnit{}})
+		return out, nil
 	}
 }
 

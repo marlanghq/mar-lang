@@ -362,6 +362,32 @@
     def('View.keyedList', native(1, ([items]) => makeKeyedList(items)));
     def('viewEmpty', VView('empty', [], [], ''));
     def('View.empty', VView('empty', [], [], ''));
+
+    // Layout modifiers — shallow-copy the input view and append a
+    // semantic attribute. createDOM/patchDOM read these attrs and
+    // translate them to CSS. Same wire format will be read by future
+    // native runtimes (mapped to .padding(), Modifier.padding(), etc.).
+    function withAttr(view, name, value) {
+      const attrs = view.attrs ? view.attrs.slice() : [];
+      attrs.push({ name, value });
+      return Object.assign({}, view, { attrs });
+    }
+    function intMod(name) {
+      return native(2, ([n, view]) => withAttr(view, name, VInt(n.n)));
+    }
+    function flagMod(name) {
+      return native(1, ([view]) => withAttr(view, name, VUnit()));
+    }
+    def('viewPadding', intMod('padding'));   def('View.padding', intMod('padding'));
+    def('viewSpacing', intMod('spacing'));   def('View.spacing', intMod('spacing'));
+    def('viewWidth',   intMod('width'));     def('View.width',   intMod('width'));
+    def('viewHeight',  intMod('height'));    def('View.height',  intMod('height'));
+    def('viewFillX',   flagMod('fillX'));    def('View.fillX',   flagMod('fillX'));
+    def('viewFillY',   flagMod('fillY'));    def('View.fillY',   flagMod('fillY'));
+    def('viewFill',    flagMod('fill'));     def('View.fill',    flagMod('fill'));
+    def('viewCenterX', flagMod('centerX'));  def('View.centerX', flagMod('centerX'));
+    def('viewCenterY', flagMod('centerY'));  def('View.centerY', flagMod('centerY'));
+    def('viewCenter',  flagMod('center'));   def('View.center',  flagMod('center'));
     // View.input : String -> (String -> msg) -> View msg
     // (currentValue, onChange). The onChange function is stored as the
     // node's msg; the DOM 'input' event applies it to the typed value.
@@ -605,6 +631,70 @@
     }
   }
 
+  // applyLayoutAttrs reads the layout modifiers attached to a view
+  // (padding, spacing, fill, center, ...) and translates them to CSS on
+  // the DOM node. Each modifier maps to a small set of style props that
+  // work whether the parent is flex or block. Future native runtimes
+  // read the same attrs and call .padding() / Modifier.padding() etc.
+  function applyLayoutAttrs(node, view) {
+    if (!view.attrs || view.attrs.length === 0) return;
+    for (const a of view.attrs) {
+      const v = a.value;
+      switch (a.name) {
+        case 'padding':
+          node.style.padding = v.n + 'px';
+          break;
+        case 'spacing':
+          node.style.gap = v.n + 'px';
+          break;
+        case 'width':
+          node.style.width = v.n + 'px';
+          break;
+        case 'height':
+          node.style.height = v.n + 'px';
+          break;
+        case 'fillX':
+          // 'flex: 1' covers main-axis fill in a row; 'align-self: stretch'
+          // and 'width: 100%' cover cross-axis fill in a column. Both are
+          // harmless when the other applies.
+          node.style.alignSelf = 'stretch';
+          node.style.flexGrow = '1';
+          node.style.width = '100%';
+          break;
+        case 'fillY':
+          node.style.alignSelf = 'stretch';
+          node.style.flexGrow = '1';
+          node.style.height = '100%';
+          break;
+        case 'fill':
+          node.style.alignSelf = 'stretch';
+          node.style.flexGrow = '1';
+          node.style.width = '100%';
+          node.style.height = '100%';
+          break;
+        case 'centerX':
+          // Margin-auto works in both block AND flex contexts to center
+          // along the main / cross axis. align-self: center also covers
+          // the flex-cross case.
+          node.style.alignSelf = 'center';
+          node.style.marginLeft = 'auto';
+          node.style.marginRight = 'auto';
+          break;
+        case 'centerY':
+          node.style.alignSelf = 'center';
+          node.style.marginTop = 'auto';
+          node.style.marginBottom = 'auto';
+          break;
+        case 'center':
+          node.style.alignSelf = 'center';
+          node.style.margin = 'auto';
+          break;
+        // attrs not in the layout vocabulary (href, name, __key) are
+        // handled elsewhere — skip them here.
+      }
+    }
+  }
+
   function createDOM(view) {
     if (!view || view.k !== 'V') {
       return document.createElement('span');
@@ -624,42 +714,39 @@
       case 'title':
       case 'subtitle':
         e.textContent = view.text;
-        return e;
+        break;
       case 'button':
         e.textContent = view.text;
         attachClickDispatcher(e);
-        return e;
+        break;
       case 'link':
         e.setAttribute('href', getAttr(view, 'href'));
         e.textContent = view.text;
-        return e;
+        break;
       case 'section':
         for (const c of view.children) e.appendChild(createDOM(c));
-        return e;
+        break;
       case 'row':
         // elm-ui-like default: children are content-sized (shrink), not
         // stretched. align-items: flex-start prevents the flex default
         // 'stretch' from forcing children to match the row's cross-axis
-        // height. Visually invisible for rows of single-line widgets, but
-        // keeps the rule symmetric with column.
+        // height.
         e.className = 'row';
         e.style.display = 'flex';
         e.style.alignItems = 'flex-start';
         e.style.gap = '0.5rem';
         for (const c of view.children) e.appendChild(createDOM(c));
-        return e;
+        break;
       case 'column':
-        // Default: children are content-sized. Without flex-start, the
-        // flex default 'stretch' makes every child fill the column's
-        // width — buttons end up edge-to-edge. Opt-in stretching will
-        // come later as a per-child View.fill wrapper.
+        // Default: children are content-sized. Stretching is opt-in via
+        // the layout modifiers (View.fillX / View.fill).
         e.className = 'column';
         e.style.display = 'flex';
         e.style.flexDirection = 'column';
         e.style.alignItems = 'flex-start';
         e.style.gap = '0.5rem';
         for (const c of view.children) e.appendChild(createDOM(c));
-        return e;
+        break;
       case 'list':
       case 'keyedList':
         for (const c of view.children) {
@@ -667,20 +754,24 @@
           li.appendChild(createDOM(c));
           e.appendChild(li);
         }
-        return e;
+        break;
       case 'input':
         e.type = 'text';
         e.value = view.text;
         attachInputDispatcher(e);
-        return e;
+        break;
       case 'textarea':
         e.value = view.text;
         attachInputDispatcher(e);
-        return e;
+        break;
       default:
         for (const c of view.children) e.appendChild(createDOM(c));
-        return e;
     }
+    // Layout modifiers apply on top of the type-specific styling. Done
+    // last so View.fill can override align-items: flex-start on a row,
+    // View.padding can stack with intrinsic button padding, etc.
+    applyLayoutAttrs(e, view);
+    return e;
   }
 
   // patchDOM updates `node` (currently rendering oldView, available as
@@ -702,33 +793,36 @@
       case 'subtitle':
       case 'button':
         if (node.textContent !== newView.text) node.textContent = newView.text;
-        return node;
+        break;
       case 'link': {
         const newHref = getAttr(newView, 'href');
         if (node.getAttribute('href') !== newHref) node.setAttribute('href', newHref);
         if (node.textContent !== newView.text) node.textContent = newView.text;
-        return node;
+        break;
       }
       case 'input':
       case 'textarea':
         // Only write if the value diverges — avoids resetting the cursor
         // mid-keystroke when the model just echoes what the user typed.
         if (node.value !== newView.text) node.value = newView.text;
-        return node;
+        break;
       case 'empty':
-        return node;
+        break;
+      case 'keyedList':
+        patchChildrenKeyed(node, oldView.children, newView.children);
+        break;
       case 'list':
       case 'section':
       case 'row':
       case 'column':
-      case 'column':
       default:
         patchChildrenPositional(node, oldView.children, newView.children, newView.tag);
-        return node;
-      case 'keyedList':
-        patchChildrenKeyed(node, oldView.children, newView.children);
-        return node;
     }
+    // Re-apply layout attrs in case modifiers changed between renders
+    // (e.g. View.fill toggled by state). Cheap — just sets a few CSS
+    // properties.
+    applyLayoutAttrs(node, newView);
+    return node;
   }
 
   // patchChildrenPositional walks DOM children and VView children in
