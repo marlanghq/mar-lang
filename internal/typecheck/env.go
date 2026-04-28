@@ -336,6 +336,35 @@ func stdlibBindings() map[string]Type {
 		"entityUnique":     TArrow{From: TList(TString), To: TArrow{From: TEntity(), To: TEntity()}},
 		"entityForeignKey": TArrow{From: TString, To: TArrow{From: TString, To: TArrow{From: TString, To: TArrow{From: TEntity(), To: TEntity()}}}},
 		"entityMigrate":    TArrow{From: TDb(), To: TArrow{From: TList(TEntity()), To: TEffect(TString, TUnit{})}},
+
+		// View
+		"viewSection":  TArrow{From: TList(TView()), To: TView()},
+		"viewRow":      TArrow{From: TList(TView()), To: TView()},
+		"viewColumn":   TArrow{From: TList(TView()), To: TView()},
+		"viewText":     TArrow{From: TString, To: TView()},
+		"viewTitle":    TArrow{From: TString, To: TView()},
+		"viewSubtitle": TArrow{From: TString, To: TView()},
+		"viewButton":   TArrow{From: TString, To: TView()},
+		"viewLink":     TArrow{From: TString, To: TArrow{From: TString, To: TView()}},
+		"viewList":     TArrow{From: TList(TView()), To: TView()},
+		"viewRender":   TArrow{From: TView(), To: TString},
+
+		// App
+		// App.create : (() -> Model) -> (Msg -> Model -> Model) -> (Model -> View) -> App
+		"appCreate": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: TUnit{}, To: a},
+				To: TArrow{
+					From: TArrow{From: b, To: TArrow{From: a, To: a}},
+					To: TArrow{
+						From: TArrow{From: a, To: TView()},
+						To:   TApp(),
+					},
+				},
+			},
+		},
+		"appServe": TArrow{From: TInt, To: TArrow{From: TApp(), To: TEffect(TString, TUnit{})}},
 	}
 }
 
@@ -441,6 +470,18 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Entity.unique":     "entityUnique",
 		"Entity.foreignKey": "entityForeignKey",
 		"Entity.migrate":    "entityMigrate",
+		"View.section":  "viewSection",
+		"View.row":      "viewRow",
+		"View.column":   "viewColumn",
+		"View.text":     "viewText",
+		"View.title":    "viewTitle",
+		"View.subtitle": "viewSubtitle",
+		"View.button":   "viewButton",
+		"View.link":     "viewLink",
+		"View.list":     "viewList",
+		"View.render":   "viewRender",
+		"App.create": "appCreate",
+		"App.serve":  "appServe",
 	}
 	out := map[string]Type{}
 	for q, f := range mapping {

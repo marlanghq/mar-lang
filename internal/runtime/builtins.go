@@ -26,6 +26,12 @@ func BaseEnv() *Env {
 	for name, v := range entityBuiltins() {
 		env.Define(name, v)
 	}
+	for name, v := range viewBuiltins() {
+		env.Define(name, v)
+	}
+	for name, v := range appBuiltins() {
+		env.Define(name, v)
+	}
 	env = extendBaseEnv(env)
 	// Register qualified aliases (List.map etc.) that point to the same values.
 	for q, f := range qualifiedAliasMapping() {
@@ -88,6 +94,18 @@ func qualifiedAliasMapping() map[string]string {
 		"Entity.unique":     "entityUnique",
 		"Entity.foreignKey": "entityForeignKey",
 		"Entity.migrate":    "entityMigrate",
+		"View.section":  "viewSection",
+		"View.row":      "viewRow",
+		"View.column":   "viewColumn",
+		"View.text":     "viewText",
+		"View.title":    "viewTitle",
+		"View.subtitle": "viewSubtitle",
+		"View.button":   "viewButton",
+		"View.link":     "viewLink",
+		"View.list":     "viewList",
+		"View.render":   "viewRender",
+		"App.create": "appCreate",
+		"App.serve":  "appServe",
 	}
 }
 

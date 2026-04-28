@@ -234,3 +234,13 @@ func TDb() TCon {
 func TEntity() TCon {
 	return TCon{Name: "Entity"}
 }
+
+// TView returns the opaque "View" type. (For now, we don't parameterize by Msg.)
+func TView() TCon {
+	return TCon{Name: "View"}
+}
+
+// TApp returns the opaque "App" type.
+func TApp() TCon {
+	return TCon{Name: "App"}
+}
