@@ -28,6 +28,9 @@ Working today, end to end:
 - Server-side MVU runtime (`App.create` + `App.serve`): full
   init / update / view loop, session state per browser, buttons rendered
   as HTML forms that POST messages back. No JS required.
+- **Browser MVU runtime** (`mar serve <file.mar>`): a JS interpreter that
+  loads the parsed AST and runs init / update / view client-side, with real
+  DOM and event handlers. No page reloads.
 
 ## Try it
 
@@ -90,6 +93,7 @@ mar check <file|dir>        type check (file or project)
 mar run <file|dir> [val]    type-check + run; defaults to value `main`.
                             For projects, use `Module.name`.
 mar repl                    interactive
+mar serve <file.mar>        serve a browser app on :4000 with client-side MVU
 mar config <dir>            load and print mar.json
 mar version                 print version
 ```
