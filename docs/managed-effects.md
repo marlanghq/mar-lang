@@ -1,148 +1,156 @@
 # Managed Effects
 
-This document describes the intended direction for Mar application UI.
+This document describes the architectural model for Mar applications.
 
 The goal is to make it accurate to say:
 
-Mar uses a managed side-effect system.
+> Mar uses a managed side-effect system.
 
 More precisely:
 
-- backend reads and writes are explicit services
+- backend reads and writes are explicit, typed services
 - frontend screens follow a Model-View-Update architecture
 - `view` stays pure
 - side effects are explicit values returned by `init` and `update`
-- only the runtime is allowed to interpret and execute those effects
+- only the runtime is allowed to execute those effects
+
+For full API reference, see [mar.md](./mar.md). This document focuses on the **why**.
 
 ## Core idea
 
-Mar should separate backend and frontend clearly.
+Mar separates backend and frontend cleanly while keeping them in the same language and codebase.
 
-Backend:
+**Backend** defines:
 
-- `entity`
-- `define-query`
-- `action`
+- entities (data shape)
+- queries (read-only descriptions)
+- endpoints (typed contracts for HTTP routes)
+- handlers (effectful functions invoked by the runtime)
 
-Frontend:
+**Frontend** defines:
 
-- `define-screen`
-- `msg`
-- `init`
-- `update`
-- `view`
+- screens (MVU programs)
+- views (pure descriptions)
+- messages (state transitions)
+- effects (descriptions of work for the runtime)
 
-This makes the boundary easier to explain:
+The boundary is clear:
 
-- backend defines REST-facing capabilities
-- frontend emits messages and requests effects
-- runtime executes effects and feeds results back into `update`
+- backend exposes typed capabilities through `Endpoint` values
+- frontend invokes those endpoints through `Endpoint.call`, getting back `Effect` descriptions
+- the runtime executes effects and feeds results back into `update`
 
-## Managed effects
+## Effects as values
 
-Mar should treat effects as data, not as arbitrary code execution.
+Mar treats effects as **data**, not as arbitrary code execution.
 
-That means:
+This means:
 
-- `view` cannot perform effects
-- helper functions should remain pure
-- `init` may return initial effects
+- `view` cannot perform effects — it returns `View Msg`, a pure description
+- helper functions remain pure
+- `init` may return an initial `Effect Never Msg`
 - `update` may return effects for the runtime to execute
 - effects belong to a closed, runtime-managed set
 
-The minimum effect family is:
+The single effect type is:
 
-- `command`
-- `go`
-- `back`
+```elm
+Effect e a
+```
+
+For frontend MVU, the runtime expects `Effect Never Msg` — an effect that produces a `Msg` (and cannot fail in a way that bypasses the message stream; failures are encoded into `Msg` variants).
+
+The minimum effect family in `Navigation`:
+
+```elm
+Navigation.push : NavigateTarget -> Effect Never Msg
+Navigation.back : Effect Never Msg
+```
+
+And for backend calls from the frontend:
+
+```elm
+Endpoint.call    : Endpoint p i o tag -> p -> i -> Effect (ResponseError tag) o
+Effect.toMsg     : (Result e a -> msg) -> Effect e a -> Effect Never msg
+Effect.batch     : List (Effect Never msg) -> Effect Never msg
+Effect.none      : Effect Never msg
+```
 
 Example:
 
-```lisp
-(init
-  (((unit))
-   ((command (load-profile) profile-loaded profile-failed))))
+```elm
+init : (Model, Effect Never Msg)
+init =
+    ( { profile = Nothing, loading = True }
+    , Endpoint.call loadProfile ()
+        |> Effect.toMsg ProfileLoaded
+    )
 ```
 
-```lisp
-(update msg model
-  (match msg
-    ((retry-clicked)
-     (model
-       ((command (load-profile) profile-loaded profile-failed))))
-    ((close-clicked)
-     (model
-       ((back))))))
+```elm
+update : Msg -> Model -> (Model, Effect Never Msg)
+update msg model =
+    case msg of
+        RetryClicked ->
+            ( { model | loading = True }
+            , Endpoint.call loadProfile ()
+                |> Effect.toMsg ProfileLoaded
+            )
+
+        CloseClicked ->
+            ( model, Navigation.back )
 ```
 
-This is the key claim:
+The key claim:
 
-- application code describes effects
-- application code does not execute effects directly
+- application code **describes** effects
+- application code does not **execute** effects directly
 
 ## Backend services
 
-Backend access should be explicit.
+Backend access is explicit and typed.
 
-Queries:
+**Queries** are read-only descriptions:
 
-- read-only
-- no side effects
-- safe to reason about as data access services
-
-Actions:
-
-- may write to the database
-- may fail
-- represent controlled mutations
-
-Frontend code should call backend capabilities through `command`, not by embedding ad hoc database behavior in the view.
-
-Example:
-
-```lisp
-(define-query (timeline-page maybe-cursor)
-  (from post)
-  (where (or (same-user? current-user author)
-             (followed-by-current-user author)))
-  (order-by created-at desc)
-  (limit 20)
-  (after maybe-cursor))
-
-(define-action follow-user
-  (input ((user-id int)))
-  (create follow ((followed user-id))))
+```elm
+timelinePostsQuery : Query Post
+timelinePostsQuery =
+    Db.from posts
+        |> Db.where (Db.eq .published True)
+        |> Db.orderBy .createdAt Desc
+        |> Db.limit 20
 ```
 
-```lisp
-(update msg model
-  (match msg
-    ((follow-clicked user-id)
-     ((assoc model
-        (submitting true))
-      ((command (follow-user user-id) follow-finished follow-failed))))
-    ((follow-finished result)
-     (match result
-       ((ok _)
-        ((assoc model
-           (submitting false))
-         ()))
-       ((err message)
-        ((assoc model
-           (submitting false)
-           (error (just message)))
-         ()))))))
+A query is a value. Constructing one performs no I/O. The runtime executes it via `Db.list`, `Db.first`, etc.
+
+**Endpoints** are typed contracts:
+
+```elm
+followUser : Endpoint.Post FollowInput Follow FollowField
+followUser =
+    Endpoint.post "/follows"
+        |> Endpoint.validateWithUser validateFollow
 ```
+
+The endpoint declares: HTTP method, path, input type, output type, and validation tag. Both backend (`Endpoint.implement`) and frontend (`Endpoint.call`) reference the same value, so contract changes break both sides at compile time.
+
+**Handlers** are effectful functions invoked by the runtime:
+
+```elm
+createFollow : FollowInput -> User -> Effect (ResponseError FollowField) Follow
+createFollow input user =
+    Db.insert follows { follower = user.id, followed = input.followed }
+```
+
+The handler is pure to call (returns a description). The runtime instantiates it on each request and executes the resulting effect.
+
+Frontend code calls backend capabilities through `Endpoint.call`, never by embedding ad hoc database behavior in the view.
 
 ## No UI CRUD sugar
 
-For application UI, Mar should move away from special screen items such as:
+Mar does not provide special screen items like `create`, `edit`, or `delete` shortcuts.
 
-- `create`
-- `edit`
-- `delete`
-
-These forms are convenient, but they hide too much:
+Such forms hide too much:
 
 - the label shown to the user
 - the message emitted by the interaction
@@ -150,183 +158,283 @@ These forms are convenient, but they hide too much:
 - the effect being requested
 - the success and failure paths
 
-That works against a simple MVU story.
+That works against a clean MVU story.
 
-Instead, application UI should be built from explicit nodes such as:
+Instead, application UI is built from explicit elements:
 
 - `button`
-- `field`
+- `field` (with `multiline` for textareas)
 - `list`
-- `row`
-- input nodes like `text-input`, `textarea`, `toggle`, `select`
+- `row`, `column`, `section`
+- typed inputs via `field` attributes (`onChange`, `value`, `disabled`, etc.)
 
-Then the flow becomes uniform:
+The flow is uniform:
 
-- user interacts with the view
-- the view emits a `msg`
-- `update` returns a new model plus effects
-- the runtime executes those effects
-- the runtime sends a new `msg` with the result
+1. user interacts with the view
+2. the view emits a `Msg`
+3. `update` returns a new model plus effects
+4. the runtime executes those effects
+5. the runtime sends a new `Msg` with the result
 
 This makes "create post", "follow", "like", "save profile", and "load more" all the same kind of thing.
 
-## Admin vs app UI
+## Auto CRUD removed
 
-Generated CRUD may still make sense for admin tooling.
+Earlier versions of Mar auto-generated CRUD endpoints from entity declarations. This was convenient for prototypes but coupled the entity (data shape) to the API (HTTP surface) in ways that didn't scale.
 
-That does not need to define the model for end-user applications.
+The current model:
 
-Recommended direction:
+- entity is **only** the data schema
+- endpoints are **explicit** typed contracts
+- handlers are **explicit** effectful functions
+- routes are **explicit** lists, organized by access policy
 
-- keep generated CRUD for admin surfaces
-- make user-facing app screens explicit MVU programs
-- avoid user-facing UI sugar that bypasses the message/effect cycle
-
-This keeps Mar fullstack while preserving a clean language story.
+If patterns repeat enough across applications, opt-in helpers (`Crud.scaffold`) may be introduced later. For now, every endpoint is written by hand. The cost is more code; the benefit is no hidden behavior.
 
 ## Shape of a screen
 
-A screen should be understood as a pure state machine plus a pure view.
+A screen is a pure state machine plus a pure view.
 
-```lisp
-(define-screen timeline
-  (msg
-    refresh-clicked
-    (timeline-loaded result)
-    (composer-opened)
-    (post-clicked post-id))
+```elm
+module Screens.Timeline exposing (..)
 
-  (init
-    ((timeline-model
-       (items ())
-       (loading true)
-       (error (nothing)))
-     ((command (timeline-page (nothing)) timeline-loaded timeline-failed))))
+import Endpoint
+import Effect exposing (Effect)
+import Navigation
+import View exposing (..)
+import Posts exposing (Post, PostInput, PostField, timelinePosts, publishPost)
+import Screen exposing (Screen)
+import Screens.PostDetail
 
-  (update msg model
-    (match msg
-      (refresh-clicked
-       ((assoc model
-          (loading true)
-          (error (nothing)))
-        ((command (timeline-page (nothing)) timeline-loaded timeline-failed))))
 
-      ((timeline-loaded result)
-       (match result
-         ((ok page)
-          ((assoc model
-             (items (get page items))
-             (loading false)
-             (error (nothing)))
-           ()))
-         ((err message)
-          ((assoc model
-             (loading false)
-             (error (just message)))
-           ()))))
+-- MODEL
 
-      (composer-opened
-       (model
-         ((go compose-post))))
+type alias Model =
+    { posts : List Post
+    , body : String
+    , submitting : Bool
+    , error : Maybe String
+    , fieldErrors : List (FieldError PostField)
+    }
 
-      ((post-clicked post-id)
-       (model
-         ((go post-detail post-id))))))
 
-  (view model
-    (section
-      (title "Timeline")
-      (button "New post" composer-opened))))
+-- MSG
+
+type Msg
+    = TimelineLoaded (Result (ResponseError ()) (List Post))
+    | BodyChanged String
+    | SubmitClicked
+    | Published (Result (ResponseError PostField) Post)
+
+
+-- INIT
+
+init : (Model, Effect Never Msg)
+init =
+    ( { posts = [], body = "", submitting = False, error = Nothing, fieldErrors = [] }
+    , Endpoint.call timelinePosts ()
+        |> Effect.toMsg TimelineLoaded
+    )
+
+
+-- UPDATE
+
+update : Msg -> Model -> (Model, Effect Never Msg)
+update msg model =
+    case msg of
+        TimelineLoaded (Ok posts) ->
+            ( { model | posts = posts }, Effect.none )
+
+        TimelineLoaded (Err err) ->
+            ( { model | error = Just (errorToString err) }, Effect.none )
+
+        BodyChanged value ->
+            ( { model | body = value, fieldErrors = [] }, Effect.none )
+
+        SubmitClicked ->
+            ( { model | submitting = True }
+            , Endpoint.call publishPost () { body = model.body }
+                |> Effect.toMsg Published
+            )
+
+        Published (Ok _) ->
+            ( { model | body = "", submitting = False }
+            , Endpoint.call timelinePosts ()
+                |> Effect.toMsg TimelineLoaded
+            )
+
+        Published (Err (Validation errors)) ->
+            ( { model | submitting = False, fieldErrors = errors }, Effect.none )
+
+        Published (Err err) ->
+            ( { model | submitting = False, error = Just (errorToString err) }, Effect.none )
+
+
+-- VIEW
+
+view : Model -> View Msg
+view model =
+    section []
+        [ title "Timeline"
+        , field
+            [ label "What's happening?"
+            , multiline True
+            , value model.body
+            , onChange BodyChanged
+            , disabled model.submitting
+            , errorMessage (FieldError.firstFor Posts.Body model.fieldErrors)
+            ]
+        , button
+            [ onClick SubmitClicked
+            , disabled (model.submitting || String.isEmpty model.body)
+            , intent Primary
+            ]
+            [ text (if model.submitting then "Posting…" else "Post") ]
+        , list (List.map postRow model.posts)
+        ]
+
+
+postRow : Post -> View Msg
+postRow post =
+    row [ Navigation.target (Screens.PostDetail.to post.id) ]
+        [ text post.body ]
+
+
+-- SCREEN
+
+screen : Screen () Model Msg
+screen =
+    Screen.with
+        { path = "/timeline"
+        , init = init
+        , update = update
+        , view = view
+        }
+
+to : NavigateTarget
+to = Screen.to screen
 ```
 
 Important properties:
 
-- `msg` is explicit
-- `model` shape is explicit
-- `update` is exhaustive
-- effects are explicit in the return value
-- `view` is pure and only emits messages
+- `Msg` is explicit and typed
+- `Model` shape is explicit
+- `update` is exhaustive (compiler-enforced)
+- effects are explicit in the return value `(Model, Effect Never Msg)`
+- `view` is pure and only describes elements
 
 ## Creating and editing without sugar
 
-Create and edit flows should be explicit screens.
+Create and edit flows are explicit screens. The "compose post" example below replaces what older versions might have written as a single `create` shortcut:
 
-Instead of:
+```elm
+module Screens.ComposePost exposing (..)
 
-```lisp
-(create post ((field body)))
+-- ... imports
+
+type alias Model =
+    { body : String
+    , submitting : Bool
+    , fieldErrors : List (FieldError PostField)
+    , error : Maybe String
+    }
+
+type Msg
+    = BodyChanged String
+    | SubmitClicked
+    | Submitted (Result (ResponseError PostField) Post)
+    | CancelClicked
+
+init : (Model, Effect Never Msg)
+init =
+    ( { body = "", submitting = False, fieldErrors = [], error = Nothing }
+    , Effect.none
+    )
+
+update : Msg -> Model -> (Model, Effect Never Msg)
+update msg model =
+    case msg of
+        BodyChanged text ->
+            ( { model | body = text, fieldErrors = [] }, Effect.none )
+
+        SubmitClicked ->
+            ( { model | submitting = True }
+            , Endpoint.call publishPost () { body = model.body }
+                |> Effect.toMsg Submitted
+            )
+
+        Submitted (Ok post) ->
+            ( model, Navigation.push (Screens.PostDetail.to post.id) )
+
+        Submitted (Err (Validation errors)) ->
+            ( { model | submitting = False, fieldErrors = errors }, Effect.none )
+
+        Submitted (Err err) ->
+            ( { model | submitting = False, error = Just (errorToString err) }, Effect.none )
+
+        CancelClicked ->
+            ( model, Navigation.back )
+
+view : Model -> View Msg
+view model =
+    section []
+        [ title "New post"
+        , field
+            [ label "What's happening?"
+            , multiline True
+            , value model.body
+            , onChange BodyChanged
+            , errorMessage (FieldError.firstFor Posts.Body model.fieldErrors)
+            ]
+        , button [ onClick SubmitClicked, intent Primary ] [ text "Post" ]
+        , button [ onClick CancelClicked, intent Subtle ] [ text "Cancel" ]
+        ]
 ```
 
-The direction should be:
+The important point is not the exact input widget syntax. The important point is the architecture:
 
-```lisp
-(define-screen compose-post
-  (msg
-    (body-changed text)
-    submit-clicked
-    (submit-finished result)
-    cancel-clicked)
-
-  (init
-    ((compose-post-model
-       (body "")
-       (submitting false)
-       (error (nothing)))
-     ()))
-
-  (update msg model
-    (match msg
-      ((body-changed text)
-       ((assoc model
-          (body text))
-        ()))
-
-      (submit-clicked
-       ((assoc model
-          (submitting true)
-          (error (nothing)))
-        ((command (publish-post (get model body)) submit-finished submit-failed))))
-
-      ((submit-finished result)
-       (match result
-         ((ok _)
-          (model
-            ((back))))
-         ((err message)
-          ((assoc model
-             (submitting false)
-             (error (just message)))
-           ()))))
-
-      (cancel-clicked
-       (model
-         ((back))))))
-
-  (view model
-    (section
-      (title "New post")
-      (textarea "What's happening?" (get model body) body-changed)
-      (button "Post" submit-clicked)
-      (button "Cancel" cancel-clicked))))
-```
-
-The important point is not the exact input widget syntax.
-
-The important point is the architecture:
-
-- no hidden create behavior in the view layer
+- no hidden create behavior in the view
 - no hidden label generation
 - no hidden success/failure handling
 - everything passes through the same MVU pipeline
 
+## Effect contexts
+
+The compiler distinguishes two contexts:
+
+| Context | Can call |
+|---|---|
+| Pure (top-level definitions, helpers, view) | only pure functions, including constructing `Query` and `Endpoint` values |
+| Effectful (handlers, `init`, `update`) | pure + `Db.*`, `Endpoint.call`, `Navigation.*`, etc. |
+
+A `Query` is a description; constructing it is pure. `Db.list query` returns an `Effect` — invoking it is effectful, and only allowed in handler context.
+
+This means top-level reusable queries are safe:
+
+```elm
+-- Top-level, pure:
+recentPostsQuery : Query Post
+recentPostsQuery =
+    Db.from posts
+        |> Db.where (Db.gte .createdAt yesterday)
+        |> Db.orderBy .createdAt Desc
+        |> Db.limit 20
+
+-- Handler, effectful:
+listRecentPosts : Effect (ResponseError ()) (List Post)
+listRecentPosts =
+    Db.list recentPostsQuery
+```
+
 ## Language summary
 
-The target language story becomes:
+The target language story:
 
-- Mar backend defines entities, queries, and actions
-- Mar frontend is an MVU program
+- Mar backend defines entities, queries, endpoints, and handlers
+- Mar frontend is a collection of independent MVU screens
 - all end-user interactions happen through explicit messages
 - all side effects are managed by the runtime
-- purity is the default, effects are explicit
+- purity is the default, effects are explicit values
+- the type system tracks which functions are effectful
 
-That is the model we should optimize for when revising the language.
+This is the model Mar is built around.

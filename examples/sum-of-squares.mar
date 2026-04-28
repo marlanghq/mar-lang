@@ -1,0 +1,16 @@
+module SumOfSquares exposing (..)
+
+
+square : Int -> Int
+square n =
+    n * n
+
+
+sumOfSquares : Int -> Int
+sumOfSquares n =
+    listSum (listMap square (listRange 1 n))
+
+
+main : Int
+main =
+    sumOfSquares 10

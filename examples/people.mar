@@ -1,0 +1,50 @@
+module People exposing (..)
+
+
+type alias Person =
+    { name : String
+    , age : Int
+    , city : String
+    }
+
+
+people : List Person
+people =
+    [ { name = "Alice", age = 30, city = "Sao Paulo" }
+    , { name = "Bob", age = 25, city = "Rio" }
+    , { name = "Carol", age = 42, city = "Sao Paulo" }
+    , { name = "Dave", age = 19, city = "Rio" }
+    ]
+
+
+isAdult : Person -> Bool
+isAdult p =
+    p.age >= 18
+
+
+livesIn : String -> Person -> Bool
+livesIn city p =
+    p.city == city
+
+
+nameOf : Person -> String
+nameOf p =
+    p.name
+
+
+-- Pipeline: filter people in Rio, get names, count.
+peopleInRio : List String
+peopleInRio =
+    people
+        |> listFilter (livesIn "Rio")
+        |> listMap nameOf
+
+
+averageAge : Int
+averageAge =
+    listSum (listMap .age people) / listLength people
+
+
+main : List String
+main =
+    peopleInRio

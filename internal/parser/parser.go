@@ -1,3318 +1,1234 @@
+// Package parser parses Mar (Elm-style) tokens into an AST.
+//
+// This is a recursive descent parser with explicit handling of operator
+// precedence in expressions. It is layout-aware in a limited way: top-level
+// declarations are recognized by being at column 1 (a definition starts a new
+// declaration whenever a name token appears at column 1).
 package parser
 
 import (
 	"fmt"
 	"strconv"
-	"strings"
-	"unicode"
 
-	"mar/internal/expr"
-	"mar/internal/model"
-	"mar/internal/sexp"
+	"mar/internal/ast"
+	"mar/internal/lexer"
 )
 
-type namedValue struct {
-	Name string
-	Body sexp.Node
+// Error carries position and message.
+type Error struct {
+	Line    int
+	Column  int
+	Message string
 }
 
-type queryDef struct {
-	Name         string
-	Parameters   []string
-	EntitySymbol string
-	Where        sexp.Node
-	OrderBy      string
-	OrderDir     string
-	Limit        *int
+func (e *Error) Error() string {
+	return fmt.Sprintf("parse error at %d:%d: %s", e.Line, e.Column, e.Message)
 }
 
-type functionDef struct {
-	Name       string
-	Parameters []string
-	Body       sexp.Node
-	LineNo     int
-}
-
-type recordDef struct {
-	Name   string
-	Fields []model.RecordField
-}
-
-type typeDef struct {
-	Name     string
-	Variants []model.TypeVariant
-}
-
-type screenDef struct {
-	Name       string
-	Parameters []string
-	Body       sexp.Node
-}
-
-type actionDef struct {
-	Name string
-	Body sexp.Node
-}
-
-type appDef struct {
-	Name          string
-	ConfigRef     string
-	AuthRef       string
-	EntitySymbols []string
-	QuerySymbols  []string
-	ActionSymbols []string
-	ScreenSymbols []string
-}
-
-// Parse reads Mar source in the simplified Scheme-like syntax and returns an App model.
-func Parse(source string) (*model.App, error) {
-	nodes, err := sexp.Parse(source)
+// Parse parses a complete module from source.
+func Parse(src string) (*ast.Module, error) {
+	toks, err := lexer.Lex(src)
 	if err != nil {
 		return nil, err
 	}
+	// Default boundary column is 1: top-level declarations start at column 1,
+	// so any token at column 1 ends the current expression.
+	p := &parser{tokens: toks, boundaryCol: 1}
+	return p.parseModule()
+}
 
-	values := map[string]namedValue{}
-	queries := map[string]*queryDef{}
-	functions := map[string]*functionDef{}
-	records := map[string]*recordDef{}
-	types := map[string]*typeDef{}
-	screens := map[string]*screenDef{}
-	actions := map[string]*actionDef{}
-	var appDecl *appDef
+// --- internals ---
 
-	for _, node := range nodes {
-		if node.Kind != sexp.KindList || len(node.Children) == 0 {
-			return nil, parseError(node, "top-level form must be a list")
-		}
-		head, ok := symbolValue(node.Children[0])
-		if !ok {
-			return nil, parseError(node.Children[0], "top-level form name must be a symbol")
-		}
-		switch head {
-		case "define":
-			if len(node.Children) != 3 {
-				return nil, parseError(node, "define expects a name/signature and a body")
-			}
-			if signature := node.Children[1]; signature.Kind == sexp.KindList {
-				// (define (name params) body) — function form.
-				query, fn, screen, err := parseCallableDef(node)
-				if err != nil {
-					return nil, err
-				}
-				if query != nil {
-					return nil, parseError(node.Children[2], "unknown define body %q", "query")
-				}
-				if fn != nil {
-					functions[fn.Name] = fn
-				}
-				if screen != nil {
-					return nil, parseError(node.Children[2], "unknown define body %q", "screen")
-				}
-				continue
-			}
-			name, ok := symbolValue(node.Children[1])
-			if !ok {
-				return nil, parseError(node.Children[1], "define name must be a symbol")
-			}
-			values[name] = namedValue{Name: name, Body: node.Children[2]}
-		case "define-entity":
-			if len(node.Children) < 2 {
-				return nil, parseError(node, "define-entity expects a name and clauses")
-			}
-			name, ok := symbolValue(node.Children[1])
-			if !ok {
-				return nil, parseError(node.Children[1], "define-entity name must be a symbol")
-			}
-			body := sexp.Node{
-				Kind:     sexp.KindList,
-				Children: node.Children[2:],
-				Line:     node.Line,
-				Column:   node.Column,
-			}
-			values[name] = namedValue{Name: name, Body: body}
-		case "define-action":
-			if len(node.Children) < 2 {
-				return nil, parseError(node, "define-action expects a name and clauses")
-			}
-			name, ok := symbolValue(node.Children[1])
-			if !ok {
-				return nil, parseError(node.Children[1], "define-action name must be a symbol")
-			}
-			body := sexp.Node{
-				Kind:     sexp.KindList,
-				Children: node.Children[2:],
-				Line:     node.Line,
-				Column:   node.Column,
-			}
-			actions[name] = &actionDef{Name: name, Body: body}
-		case "define-screen":
-			screen, err := parseScreenDef(node)
-			if err != nil {
-				return nil, err
-			}
-			screens[screen.Name] = screen
-		case "define-query":
-			query, err := parseQueryDef(node)
-			if err != nil {
-				return nil, err
-			}
-			queries[query.Name] = query
-		case "define-record":
-			record, err := parseRecordDef(node)
-			if err != nil {
-				return nil, err
-			}
-			records[record.Name] = record
-		case "define-type":
-			typeDef, err := parseTypeDef(node)
-			if err != nil {
-				return nil, err
-			}
-			types[typeDef.Name] = typeDef
-		case "define-app":
-			if appDecl != nil {
-				return nil, parseError(node, "define-app already declared")
-			}
-			appDecl, err = parseAppDef(node)
-			if err != nil {
-				return nil, err
-			}
-		default:
-			return nil, parseError(node.Children[0], "unknown top-level form %q", head)
-		}
+type parser struct {
+	tokens []lexer.Token
+	pos    int
+
+	// boundaryCol limits how far function application and field-chain parsing
+	// extend on subsequent lines. A token at column <= boundaryCol on a new
+	// line ends the current expression. Default is 1 (top-level decls).
+	// Inside a case branch or let binding body, the boundary is the column
+	// of the enclosing pattern/binding so that the next sibling stops the body.
+	boundaryCol int
+}
+
+func (p *parser) peek() lexer.Token {
+	return p.tokens[p.pos]
+}
+
+func (p *parser) peekAt(offset int) lexer.Token {
+	idx := p.pos + offset
+	if idx >= len(p.tokens) {
+		return p.tokens[len(p.tokens)-1] // EOF
 	}
+	return p.tokens[idx]
+}
 
-	if appDecl == nil {
-		return nil, fmt.Errorf("define-app is required")
+func (p *parser) advance() lexer.Token {
+	t := p.tokens[p.pos]
+	if t.Kind != lexer.KindEOF {
+		p.pos++
 	}
+	return t
+}
 
-	app := &model.App{
-		AppName:  appDecl.Name,
-		Port:     4200,
-		Database: defaultDatabaseName(appDecl.Name),
-		Auth:     defaultAuthConfig(appDecl.Name),
+func (p *parser) expect(kind lexer.Kind) (lexer.Token, error) {
+	t := p.peek()
+	if t.Kind != kind {
+		return t, p.errorf("expected %s, got %s", kind, t.Kind)
 	}
+	return p.advance(), nil
+}
 
-	for _, record := range records {
-		app.Records = append(app.Records, model.Record{
-			Name:   canonicalFieldName(record.Name),
-			Fields: record.Fields,
-		})
+func (p *parser) accept(kind lexer.Kind) (lexer.Token, bool) {
+	t := p.peek()
+	if t.Kind == kind {
+		p.advance()
+		return t, true
 	}
+	return t, false
+}
 
-	for _, typ := range types {
-		app.Types = append(app.Types, model.EnumType{
-			Name:     canonicalFieldName(typ.Name),
-			Variants: typ.Variants,
-		})
+func (p *parser) errorf(format string, args ...any) *Error {
+	t := p.peek()
+	return &Error{
+		Line:    t.Line,
+		Column:  t.Column,
+		Message: fmt.Sprintf(format, args...),
 	}
+}
 
-	for _, fn := range functions {
-		app.Functions = append(app.Functions, model.Function{
-			Name:       canonicalFunctionName(fn.Name),
-			Parameters: canonicalFunctionParameters(fn.Parameters),
-			Expression: sexp.InlineString(fn.Body),
-			LineNo:     fn.LineNo,
-		})
+func posOf(t lexer.Token) ast.Pos {
+	return ast.Pos{Line: t.Line, Column: t.Column}
+}
+
+// --- Module ---
+
+func (p *parser) parseModule() (*ast.Module, error) {
+	mod := &ast.Module{}
+
+	// module Foo[.Bar] exposing (...)
+	header, err := p.expect(lexer.KindModule)
+	if err != nil {
+		return nil, err
 	}
+	mod.Pos = posOf(header)
+	name, err := p.parseModuleName()
+	if err != nil {
+		return nil, err
+	}
+	mod.Name = name
 
-	if appDecl.ConfigRef != "" {
-		cfg, err := parseConfigValue(values[appDecl.ConfigRef])
+	if _, err := p.expect(lexer.KindExposing); err != nil {
+		return nil, err
+	}
+	exp, err := p.parseExposing()
+	if err != nil {
+		return nil, err
+	}
+	mod.Exposing = exp
+
+	// imports
+	for p.peek().Kind == lexer.KindImport {
+		imp, err := p.parseImport()
 		if err != nil {
 			return nil, err
 		}
-		app.Port = cfg.Port
-		if cfg.Database != "" {
-			app.Database = cfg.Database
-		}
-		if cfg.IOS != nil {
-			app.IOS = cfg.IOS
-		}
-		if cfg.Public != nil {
-			app.Public = cfg.Public
-		}
-		if cfg.System != nil {
-			app.System = cfg.System
-		}
-	}
-	if appDecl.AuthRef != "" {
-		auth, err := parseAuthValue(values[appDecl.AuthRef])
-		if err != nil {
-			return nil, err
-		}
-		applyAuthSettings(app.Auth, auth)
+		mod.Imports = append(mod.Imports, imp)
 	}
 
-	var userExtension *model.Entity
-	app.Entities = []model.Entity{}
-	for _, symbol := range appDecl.EntitySymbols {
-		value, ok := values[symbol]
-		if !ok {
-			return nil, fmt.Errorf("define-app references unknown entity %q", symbol)
-		}
-		entity, err := parseEntityValue(value)
+	// declarations
+	for p.peek().Kind != lexer.KindEOF {
+		decl, err := p.parseDecl()
 		if err != nil {
 			return nil, err
 		}
-		if entity.Name == "User" {
-			userExtension = &entity
+		mod.Decls = append(mod.Decls, decl)
+	}
+
+	return mod, nil
+}
+
+func (p *parser) parseModuleName() (ast.ModuleName, error) {
+	t, err := p.expect(lexer.KindUpperName)
+	if err != nil {
+		return nil, err
+	}
+	parts := []string{t.Value}
+	for p.peek().Kind == lexer.KindDot && p.peekAt(1).Kind == lexer.KindUpperName {
+		p.advance() // .
+		t = p.advance()
+		parts = append(parts, t.Value)
+	}
+	return parts, nil
+}
+
+// parseExposing parses "( .. )" or "( name1, name2, Foo(..) )".
+// Caller should have already consumed the `exposing` keyword.
+func (p *parser) parseExposing() (ast.Exposing, error) {
+	openTok, err := p.expect(lexer.KindLParen)
+	if err != nil {
+		return ast.Exposing{}, err
+	}
+	exp := ast.Exposing{Pos: posOf(openTok)}
+
+	// (..)
+	if p.peek().Kind == lexer.KindDot && p.peekAt(1).Kind == lexer.KindDot {
+		p.advance() // .
+		p.advance() // .
+		if _, err := p.expect(lexer.KindRParen); err != nil {
+			return exp, err
+		}
+		exp.All = true
+		return exp, nil
+	}
+
+	// list of names
+	for {
+		item, err := p.parseExposedItem()
+		if err != nil {
+			return exp, err
+		}
+		exp.Items = append(exp.Items, item)
+		if _, ok := p.accept(lexer.KindComma); ok {
 			continue
 		}
-		app.Entities = append(app.Entities, entity)
+		break
 	}
-
-	userEntity := buildBuiltinUser()
-	if userExtension != nil {
-		userEntity = mergeUserEntity(userEntity, *userExtension)
+	if _, err := p.expect(lexer.KindRParen); err != nil {
+		return exp, err
 	}
-	app.Entities = append([]model.Entity{userEntity}, app.Entities...)
-
-	entityByName := map[string]*model.Entity{}
-	for i := range app.Entities {
-		entityByName[app.Entities[i].Name] = &app.Entities[i]
-	}
-
-	functionByName := map[string]*model.Function{}
-	for i := range app.Functions {
-		functionByName[app.Functions[i].Name] = &app.Functions[i]
-	}
-
-	recordByName := map[string]*model.Record{}
-	for i := range app.Records {
-		recordByName[app.Records[i].Name] = &app.Records[i]
-	}
-
-	typeByName := map[string]*model.EnumType{}
-	for i := range app.Types {
-		if _, exists := typeByName[app.Types[i].Name]; exists {
-			return nil, fmt.Errorf("duplicate type %q", app.Types[i].Name)
-		}
-		typeByName[app.Types[i].Name] = &app.Types[i]
-	}
-	variantOwners := map[string]string{}
-	for _, typ := range app.Types {
-		for _, variant := range typ.Variants {
-			if owner, exists := variantOwners[variant.Name]; exists {
-				return nil, fmt.Errorf("type variant %q is declared in both %s and %s", variant.Name, owner, typ.Name)
-			}
-			variantOwners[variant.Name] = typ.Name
-		}
-	}
-
-	for i := range app.Records {
-		if err := validateRecordTypes(&app.Records[i], recordByName, typeByName, entityByName); err != nil {
-			return nil, err
-		}
-	}
-	for i := range app.Types {
-		if err := validateSumType(&app.Types[i], recordByName, typeByName, entityByName); err != nil {
-			return nil, err
-		}
-	}
-	// validateNamedTypeInference removed; HM (internal/types.BuildAppTypes)
-	// catches the same issues during CheckApp.
-
-	// Function bodies, entity validate/authorize, query where, action steps:
-	// all of these are now type-checked by the HM checker in
-	// internal/types.CheckApp, called from cli.parseMarFile after Parse.
-	// Only schema validation (referenced entity/field existence) stays here.
-	for i := range app.Entities {
-		if err := validateEntitySchema(&app.Entities[i], entityByName); err != nil {
-			return nil, err
-		}
-	}
-
-	selectedQueries := queries
-	if len(appDecl.QuerySymbols) > 0 {
-		selectedQueries = map[string]*queryDef{}
-		for _, symbol := range appDecl.QuerySymbols {
-			query := queries[symbol]
-			if query == nil {
-				return nil, fmt.Errorf("define-app references unknown query %q", symbol)
-			}
-			selectedQueries[symbol] = query
-			app.Queries = append(app.Queries, model.Query{
-				Name:           canonicalFunctionName(query.Name),
-				Parameters:     canonicalFunctionParameters(query.Parameters),
-				ParameterTypes: map[string]string{},
-				Entity:         canonicalTypeName(query.EntitySymbol),
-				Where:          inlineNodeString(query.Where),
-				OrderBy:        canonicalFieldName(query.OrderBy),
-				OrderDir:       query.OrderDir,
-				Limit:          query.Limit,
-			})
-		}
-	}
-
-	if len(appDecl.ScreenSymbols) > 0 {
-		frontend := &model.Frontend{Screens: []model.FrontendScreen{}}
-		for _, symbol := range appDecl.ScreenSymbols {
-			if screenDef := screens[symbol]; screenDef != nil {
-				screen, err := parseScreenDefinition(screenDef.Name, screenDef.Parameters, screenDef.Body, selectedQueries)
-				if err != nil {
-					return nil, err
-				}
-				frontend.Screens = append(frontend.Screens, screen)
-				continue
-			}
-			return nil, fmt.Errorf("define-app references unknown screen %q", symbol)
-		}
-		app.Screens = frontend
-	}
-
-	for _, symbol := range appDecl.ActionSymbols {
-		actionValue := actions[symbol]
-		if actionValue == nil {
-			return nil, fmt.Errorf("define-app references unknown action %q", symbol)
-		}
-		inputAlias, action, err := parseActionDefinition(actionValue.Name, actionValue.Body, entityByName)
-		if err != nil {
-			return nil, err
-		}
-		app.InputAliases = append(app.InputAliases, inputAlias)
-		app.Actions = append(app.Actions, action)
-	}
-
-	aliasByName := map[string]*model.TypeAlias{}
-	for i := range app.InputAliases {
-		aliasByName[app.InputAliases[i].Name] = &app.InputAliases[i]
-	}
-
-	for _, query := range queries {
-		entity := entityByName[canonicalTypeName(query.EntitySymbol)]
-		if entity == nil {
-			return nil, fmt.Errorf("query %s references unknown entity %q", query.Name, query.EntitySymbol)
-		}
-		if query.Where.Kind != "" {
-			// Parser-level checks: only validate that the where clause parses
-			// against the entity's fields. Type-checking and parameter type
-			// inference moved to HM (internal/types.CheckApp).
-			allowed := queryAllowedVariables(entity)
-			for _, param := range canonicalFunctionParameters(query.Parameters) {
-				allowed[param] = struct{}{}
-			}
-			if _, err := expr.Parse(sexp.InlineString(query.Where), expr.ParserOptions{
-				AllowedVariables: allowed,
-				AllowedFunctions: allowedFunctionArities(functionByName),
-				AllowedRecords:   allowedRecordFields(recordByName),
-				AllowedVariants:  allowedTypeVariants(typeByName),
-			}); err != nil {
-				return nil, fmt.Errorf("query %s where: %w", query.Name, err)
-			}
-		} else if len(query.Parameters) > 0 {
-			return nil, fmt.Errorf("query %s parameter %s: type could not be inferred", query.Name, canonicalFunctionParameters(query.Parameters)[0])
-		}
-		if query.OrderBy != "" && findEntityField(entity, canonicalFieldName(query.OrderBy)) == nil {
-			return nil, fmt.Errorf("query %s order-by references unknown field %q", query.Name, query.OrderBy)
-		}
-	}
-
-	// Action expression checks now live in HM (internal/types.CheckApp).
-
-	// Frontend screen validation moved to HM (internal/types).
-	// See checkScreens / CheckApp.
-	if err := validateUnusedTopLevelDefinitions(appDecl, queries, actions, screens, values); err != nil {
-		return nil, err
-	}
-	if err := validateUnusedFunctions(app); err != nil {
-		return nil, err
-	}
-
-	// HM type checker — final pass. Catches type errors in entity validate /
-	// authorize, query where, action steps, and user function bodies. Returns
-	// a parse error so callers see typing problems at Parse time.
-	if err := hmCheck(app); err != nil {
-		return nil, err
-	}
-
-	return app, nil
+	return exp, nil
 }
 
-// hmCheck is wired up at init time to avoid the parser → types circular
-// import. types.RegisterHMCheck assigns the actual implementation.
-var hmCheck = func(app *model.App) error { return nil }
-
-// RegisterHMCheck lets the types package register itself as the HM checker
-// invoked at the end of Parse. Called from types.init().
-func RegisterHMCheck(check func(app *model.App) error) {
-	if check != nil {
-		hmCheck = check
-	}
-}
-
-type configValue struct {
-	Database string
-	Port     int
-	IOS      *model.IOSConfig
-	Public   *model.PublicConfig
-	System   *model.SystemConfig
-}
-
-func parseConfigValue(value namedValue) (*configValue, error) {
-	if value.Name == "" {
-		return nil, fmt.Errorf("define-app references unknown config")
-	}
-	body := value.Body
-	if body.Kind != sexp.KindList {
-		return nil, parseError(body, "config %s must be a list of clauses", value.Name)
-	}
-	cfg := &configValue{Port: 4200}
-	for _, clause := range body.Children {
-		items, err := listChildren(clause, "config clause")
-		if err != nil {
-			return nil, err
-		}
-		head, _ := symbolValue(items[0])
-		switch head {
-		case "database":
-			if len(items) != 2 || items[1].Kind != sexp.KindString {
-				return nil, parseError(clause, "(database ...) expects one string")
-			}
-			cfg.Database = items[1].Value
-		case "server":
-			nestedClauses, err := nestedClauseList(items, clause, 1, "server")
-			if err != nil {
-				return nil, err
-			}
-			for _, nested := range nestedClauses {
-				parts, err := listChildren(nested, "server clause")
-				if err != nil {
-					return nil, err
+func (p *parser) parseExposedItem() (ast.ExposedItem, error) {
+	t := p.peek()
+	switch t.Kind {
+	case lexer.KindLowerName:
+		p.advance()
+		return ast.ExposedItem{Pos: posOf(t), Name: t.Value}, nil
+	case lexer.KindUpperName:
+		p.advance()
+		item := ast.ExposedItem{Pos: posOf(t), Name: t.Value}
+		// optional (..) for opening constructors
+		if p.peek().Kind == lexer.KindLParen {
+			p.advance() // (
+			if p.peek().Kind == lexer.KindDot && p.peekAt(1).Kind == lexer.KindDot {
+				p.advance()
+				p.advance()
+				if _, err := p.expect(lexer.KindRParen); err != nil {
+					return item, err
 				}
-				key, _ := symbolValue(parts[0])
-				switch key {
-				case "port":
-					port, err := intLiteral(parts[1])
-					if err != nil {
-						return nil, parseError(parts[1], "port must be an integer")
-					}
-					cfg.Port = port
-				default:
-					return nil, parseError(parts[0], "unknown server clause %q", key)
-				}
-			}
-		case "ios":
-			nestedClauses, err := nestedClauseList(items, clause, 1, "ios")
-			if err != nil {
-				return nil, err
-			}
-			iosCfg := &model.IOSConfig{}
-			for _, nested := range nestedClauses {
-				parts, err := listChildren(nested, "ios clause")
-				if err != nil {
-					return nil, err
-				}
-				key, _ := symbolValue(parts[0])
-				switch key {
-				case "bundle-identifier":
-					iosCfg.BundleIdentifier = stringLiteral(parts[1])
-				case "display-name":
-					iosCfg.DisplayName = stringLiteral(parts[1])
-				case "server-url":
-					iosCfg.ServerURL = stringLiteral(parts[1])
-				default:
-					return nil, parseError(parts[0], "unknown ios clause %q", key)
-				}
-			}
-			cfg.IOS = iosCfg
-		case "public":
-			nestedClauses, err := nestedClauseList(items, clause, 1, "public")
-			if err != nil {
-				return nil, err
-			}
-			publicCfg := &model.PublicConfig{}
-			for _, nested := range nestedClauses {
-				parts, err := listChildren(nested, "public clause")
-				if err != nil {
-					return nil, err
-				}
-				key, _ := symbolValue(parts[0])
-				switch key {
-				case "dir":
-					publicCfg.Dir = stringLiteral(parts[1])
-				case "mount":
-					publicCfg.Mount = stringLiteral(parts[1])
-				case "spa-fallback":
-					publicCfg.SPAFallback = stringLiteral(parts[1])
-				default:
-					return nil, parseError(parts[0], "unknown public clause %q", key)
-				}
-			}
-			cfg.Public = publicCfg
-		case "system":
-			nestedClauses, err := nestedClauseList(items, clause, 1, "system")
-			if err != nil {
-				return nil, err
-			}
-			systemCfg := &model.SystemConfig{}
-			for _, nested := range nestedClauses {
-				parts, err := listChildren(nested, "system clause")
-				if err != nil {
-					return nil, err
-				}
-				key, _ := symbolValue(parts[0])
-				switch key {
-				case "request-logs-buffer":
-					value, err := intLiteral(parts[1])
-					if err != nil {
-						return nil, parseError(parts[1], "request-logs-buffer must be an integer")
-					}
-					systemCfg.RequestLogsBuffer = value
-				case "http-max-request-body-mb":
-					value, err := intLiteral(parts[1])
-					if err != nil {
-						return nil, parseError(parts[1], "http-max-request-body-mb must be an integer")
-					}
-					systemCfg.HTTPMaxRequestBodyMB = &value
-				case "sqlite-journal-mode":
-					value, err := symbolOrStringValue(parts[1])
-					if err != nil {
-						return nil, parseError(parts[1], "sqlite-journal-mode must be a symbol or string")
-					}
-					systemCfg.SQLiteJournalMode = &value
-				case "sqlite-synchronous":
-					value, err := symbolOrStringValue(parts[1])
-					if err != nil {
-						return nil, parseError(parts[1], "sqlite-synchronous must be a symbol or string")
-					}
-					systemCfg.SQLiteSynchronous = &value
-				case "sqlite-foreign-keys":
-					value, err := boolLiteral(parts[1])
-					if err != nil {
-						return nil, parseError(parts[1], "sqlite-foreign-keys must be true or false")
-					}
-					systemCfg.SQLiteForeignKeys = &value
-				case "sqlite-busy-timeout-ms":
-					value, err := intLiteral(parts[1])
-					if err != nil {
-						return nil, parseError(parts[1], "sqlite-busy-timeout-ms must be an integer")
-					}
-					systemCfg.SQLiteBusyTimeoutMs = &value
-				case "sqlite-wal-autocheckpoint":
-					value, err := intLiteral(parts[1])
-					if err != nil {
-						return nil, parseError(parts[1], "sqlite-wal-autocheckpoint must be an integer")
-					}
-					systemCfg.SQLiteWALAutoCheckpoint = &value
-				case "sqlite-journal-size-limit-mb":
-					value, err := intLiteral(parts[1])
-					if err != nil {
-						return nil, parseError(parts[1], "sqlite-journal-size-limit-mb must be an integer")
-					}
-					systemCfg.SQLiteJournalSizeLimitMB = &value
-				case "sqlite-mmap-size-mb":
-					value, err := intLiteral(parts[1])
-					if err != nil {
-						return nil, parseError(parts[1], "sqlite-mmap-size-mb must be an integer")
-					}
-					systemCfg.SQLiteMmapSizeMB = &value
-				case "sqlite-cache-size-kb":
-					value, err := intLiteral(parts[1])
-					if err != nil {
-						return nil, parseError(parts[1], "sqlite-cache-size-kb must be an integer")
-					}
-					systemCfg.SQLiteCacheSizeKB = &value
-				default:
-					return nil, parseError(parts[0], "unknown system clause %q", key)
-				}
-			}
-			cfg.System = systemCfg
-		default:
-			return nil, parseError(items[0], "unknown config clause %q", head)
-		}
-	}
-	return cfg, nil
-}
-
-type authValue struct {
-	CodeTTLMinutes           *int
-	SessionTTLHours          *int
-	AuthRequestCodeRateLimit *int
-	AuthLoginRateLimit       *int
-	AdminUISessionTTLHours   *int
-	SecurityFramePolicy      *string
-	SecurityReferrerPolicy   *string
-	SecurityContentNoSniff   *bool
-	EmailFrom                string
-	EmailSubject             string
-	SMTPHost                 string
-	SMTPPort                 *int
-	SMTPUsername             string
-	SMTPPasswordEnv          string
-	SMTPStartTLS             *bool
-}
-
-func parseAuthValue(value namedValue) (*authValue, error) {
-	if value.Name == "" {
-		return nil, fmt.Errorf("define-app references unknown auth")
-	}
-	body := value.Body
-	if body.Kind != sexp.KindList {
-		return nil, parseError(body, "auth %s must be a list of clauses", value.Name)
-	}
-	out := &authValue{}
-	for _, clause := range body.Children {
-		items, err := listChildren(clause, "auth clause")
-		if err != nil {
-			return nil, err
-		}
-		head, _ := symbolValue(items[0])
-		switch head {
-		case "code-ttl-minutes":
-			v, err := intLiteral(items[1])
-			if err != nil {
-				return nil, parseError(items[1], "code-ttl-minutes must be an integer")
-			}
-			out.CodeTTLMinutes = &v
-		case "session-ttl-hours":
-			v, err := intLiteral(items[1])
-			if err != nil {
-				return nil, parseError(items[1], "session-ttl-hours must be an integer")
-			}
-			out.SessionTTLHours = &v
-		case "auth-request-code-rate-limit-per-minute":
-			v, err := intLiteral(items[1])
-			if err != nil {
-				return nil, parseError(items[1], "auth-request-code-rate-limit-per-minute must be an integer")
-			}
-			out.AuthRequestCodeRateLimit = &v
-		case "auth-login-rate-limit-per-minute":
-			v, err := intLiteral(items[1])
-			if err != nil {
-				return nil, parseError(items[1], "auth-login-rate-limit-per-minute must be an integer")
-			}
-			out.AuthLoginRateLimit = &v
-		case "admin-ui-session-ttl-hours":
-			v, err := intLiteral(items[1])
-			if err != nil {
-				return nil, parseError(items[1], "admin-ui-session-ttl-hours must be an integer")
-			}
-			out.AdminUISessionTTLHours = &v
-		case "security-frame-policy":
-			v, err := symbolOrStringValue(items[1])
-			if err != nil {
-				return nil, parseError(items[1], "security-frame-policy must be a symbol or string")
-			}
-			out.SecurityFramePolicy = &v
-		case "security-referrer-policy":
-			v, err := symbolOrStringValue(items[1])
-			if err != nil {
-				return nil, parseError(items[1], "security-referrer-policy must be a symbol or string")
-			}
-			out.SecurityReferrerPolicy = &v
-		case "security-content-type-nosniff":
-			v, err := boolLiteral(items[1])
-			if err != nil {
-				return nil, parseError(items[1], "security-content-type-nosniff must be true or false")
-			}
-			out.SecurityContentNoSniff = &v
-		case "from":
-			out.EmailFrom = stringLiteral(items[1])
-		case "subject":
-			out.EmailSubject = stringLiteral(items[1])
-		case "smtp-host":
-			out.SMTPHost = stringLiteral(items[1])
-		case "smtp-port":
-			v, err := intLiteral(items[1])
-			if err != nil {
-				return nil, parseError(items[1], "smtp-port must be an integer")
-			}
-			out.SMTPPort = &v
-		case "smtp-username":
-			out.SMTPUsername = stringLiteral(items[1])
-		case "smtp-password-env":
-			out.SMTPPasswordEnv = stringLiteral(items[1])
-		case "smtp-starttls":
-			v, err := boolLiteral(items[1])
-			if err != nil {
-				return nil, parseError(items[1], "smtp-starttls must be true or false")
-			}
-			out.SMTPStartTLS = &v
-		default:
-			return nil, parseError(items[0], "unknown auth clause %q", head)
-		}
-	}
-	return out, nil
-}
-
-func parseEntityValue(value namedValue) (model.Entity, error) {
-	body, err := requireListBody(value.Body, "entity "+value.Name)
-	if err != nil {
-		return model.Entity{}, err
-	}
-	entity := model.Entity{
-		Name:       canonicalTypeName(value.Name),
-		Table:      canonicalFieldName(value.Name),
-		Resource:   "/" + strings.ReplaceAll(pluralizeSnake(value.Name), "_", "-"),
-		PrimaryKey: "id",
-		Fields: []model.Field{
-			{Name: "id", Type: "Int", Primary: true, Auto: true},
-		},
-	}
-
-	defaults := map[string]sexp.Node{}
-	belongsTo := []struct {
-		field  string
-		target string
-	}{}
-	uniqueClauses := [][]string{}
-
-	for _, clause := range body.Children {
-		items, err := listChildren(clause, "entity clause")
-		if err != nil {
-			return model.Entity{}, err
-		}
-		head, _ := symbolValue(items[0])
-		switch head {
-		case "fields":
-			fieldClauses, err := nestedClauseList(items, clause, 1, "fields")
-			if err != nil {
-				return model.Entity{}, err
-			}
-			for _, fieldClause := range fieldClauses {
-				parts, err := listChildren(fieldClause, "field")
-				if err != nil {
-					return model.Entity{}, err
-				}
-				if len(parts) < 2 || len(parts) > 3 {
-					return model.Entity{}, parseError(fieldClause, "field must look like (name type) or (name type optional)")
-				}
-				fieldName, _ := symbolValue(parts[0])
-				typeName, _ := symbolValue(parts[1])
-				fieldType, err := mapPrimitiveType(typeName)
-				if err != nil {
-					return model.Entity{}, fmt.Errorf("entity %s field %s: %w", value.Name, fieldName, err)
-				}
-				field := model.Field{Name: canonicalFieldName(fieldName), Type: fieldType}
-				if len(parts) == 3 {
-					modifier, _ := symbolValue(parts[2])
-					if modifier != "optional" {
-						return model.Entity{}, parseError(parts[2], "unknown field modifier %q", modifier)
-					}
-					field.Optional = true
-				}
-				entity.Fields = append(entity.Fields, field)
-			}
-		case "belongs-to":
-			relClauses, err := nestedClauseList(items, clause, 1, "belongs-to")
-			if err != nil {
-				return model.Entity{}, err
-			}
-			for _, relClause := range relClauses {
-				parts, err := listChildren(relClause, "belongs-to item")
-				if err != nil {
-					return model.Entity{}, err
-				}
-				if len(parts) < 1 || len(parts) > 2 {
-					return model.Entity{}, parseError(relClause, "belongs-to item must look like (user) or (reviewer user)")
-				}
-				fieldName, _ := symbolValue(parts[0])
-				target := fieldName
-				if len(parts) == 2 {
-					target, _ = symbolValue(parts[1])
-				}
-				belongsTo = append(belongsTo, struct {
-					field  string
-					target string
-				}{field: fieldName, target: target})
-			}
-		case "defaults":
-			defaultClauses, err := nestedClauseList(items, clause, 1, "defaults")
-			if err != nil {
-				return model.Entity{}, err
-			}
-			for _, defaultClause := range defaultClauses {
-				parts, err := listChildren(defaultClause, "default")
-				if err != nil {
-					return model.Entity{}, err
-				}
-				if len(parts) != 2 {
-					return model.Entity{}, parseError(defaultClause, "default must look like (field value)")
-				}
-				fieldName, _ := symbolValue(parts[0])
-				defaults[fieldName] = parts[1]
-			}
-		case "unique":
-			constraintClauses, err := nestedClauseList(items, clause, 1, "unique")
-			if err != nil {
-				return model.Entity{}, err
-			}
-			for _, constraintClause := range constraintClauses {
-				parts, err := listChildren(constraintClause, "unique constraint")
-				if err != nil {
-					return model.Entity{}, err
-				}
-				if len(parts) == 0 {
-					return model.Entity{}, parseError(constraintClause, "unique constraint must include at least one field")
-				}
-				fields := make([]string, 0, len(parts))
-				for _, part := range parts {
-					fieldName, ok := symbolValue(part)
-					if !ok {
-						return model.Entity{}, parseError(part, "unique fields must be symbols")
-					}
-					fields = append(fields, canonicalFieldName(fieldName))
-				}
-				uniqueClauses = append(uniqueClauses, fields)
-			}
-		case "validate":
-			if len(items) != 2 {
-				return model.Entity{}, parseError(clause, "validate expects one expression")
-			}
-			entity.Validate = sexp.InlineString(items[1])
-		case "authorize":
-			authClauses, err := nestedClauseList(items, clause, 1, "authorize")
-			if err != nil {
-				return model.Entity{}, err
-			}
-			for _, authClause := range authClauses {
-				parts, err := listChildren(authClause, "authorize item")
-				if err != nil {
-					return model.Entity{}, err
-				}
-				if len(parts) != 2 {
-					return model.Entity{}, parseError(authClause, "authorize item must look like (read expr) or ((read update) expr)")
-				}
-				actions, err := parseAuthorizeActions(parts[0])
-				if err != nil {
-					return model.Entity{}, err
-				}
-				for _, action := range actions {
-					entity.Authorizations = append(entity.Authorizations, model.Authorization{
-						Action:     action,
-						Expression: sexp.InlineString(parts[1]),
-						LineNo:     authClause.Line,
-					})
-				}
-			}
-		default:
-			return model.Entity{}, parseError(items[0], "unknown entity clause %q", head)
-		}
-	}
-
-	for _, relation := range belongsTo {
-		field := model.Field{
-			Name:           canonicalFieldName(relation.field),
-			Type:           "Int",
-			RelationEntity: canonicalTypeName(relation.target),
-		}
-		if defaultNode, ok := defaults[relation.field]; ok {
-			if defaultNode.Kind == sexp.KindSymbol && defaultNode.Value == "current-user" {
-				field.CurrentUser = true
-				field.RelationEntity = "User"
+				item.Open = true
 			} else {
-				return model.Entity{}, fmt.Errorf("entity %s default %s: belongs-to defaults currently only support current-user", value.Name, relation.field)
+				return item, p.errorf("expected (..) after type name in exposing")
 			}
 		}
-		entity.Fields = append(entity.Fields, field)
-	}
-
-	for i := 1; i < len(entity.Fields); i++ {
-		field := &entity.Fields[i]
-		original := strings.ReplaceAll(field.Name, "_", "-")
-		if defaultNode, ok := defaults[original]; ok && field.RelationEntity == "" {
-			literal, err := literalValue(defaultNode)
-			if err != nil {
-				return model.Entity{}, fmt.Errorf("entity %s default %s: %w", value.Name, original, err)
-			}
-			if err := validateFieldDefaultLiteral(value.Name, original, *field, literal); err != nil {
-				return model.Entity{}, err
-			}
-			field.Default = literal
-		}
-	}
-
-	for _, fields := range uniqueClauses {
-		entity.Unique = append(entity.Unique, model.UniqueConstraint{Fields: fields})
-	}
-
-	entity.Fields = append(entity.Fields,
-		model.Field{Name: "created_at", Type: "DateTime", Auto: true},
-		model.Field{Name: "updated_at", Type: "DateTime", Auto: true},
-	)
-
-	return entity, nil
-}
-
-func parseScreenDefinition(name string, parameters []string, bodyNode sexp.Node, queries map[string]*queryDef) (model.FrontendScreen, error) {
-	body, err := requireListBody(bodyNode, "screen "+name)
-	if err != nil {
-		return model.FrontendScreen{}, err
-	}
-	screen := model.FrontendScreen{
-		Name:       canonicalScreenName(name),
-		Parameters: canonicalFunctionParameters(parameters),
-		Sections:   []model.FrontendSection{},
-		LineNo:     1,
-	}
-
-	var hasMsg bool
-	var hasInit bool
-	var hasUpdate bool
-	var hasView bool
-	var initNode sexp.Node
-	var updateNode sexp.Node
-	var viewRawNodes []sexp.Node
-	var sectionNodes []sexp.Node
-	for _, clause := range body.Children {
-		items, err := listChildren(clause, "screen clause")
-		if err != nil {
-			return model.FrontendScreen{}, err
-		}
-		head, _ := symbolValue(items[0])
-		switch head {
-		case "msg":
-			hasMsg = true
-		case "init":
-			hasInit = true
-		case "update":
-			hasUpdate = true
-		case "view":
-			hasView = true
-		}
-	}
-
-	for _, clause := range body.Children {
-		items, err := listChildren(clause, "screen clause")
-		if err != nil {
-			return model.FrontendScreen{}, err
-		}
-		head, _ := symbolValue(items[0])
-		switch head {
-		case "title":
-			if len(items) != 2 {
-				return model.FrontendScreen{}, parseError(clause, "title expects one value")
-			}
-			switch items[1].Kind {
-			case sexp.KindString:
-				screen.Title = items[1].Value
-			case sexp.KindSymbol:
-				screen.TitleExpression = canonicalFieldName(items[1].Value)
-			default:
-				return model.FrontendScreen{}, parseError(items[1], "title must be a string or symbol")
-			}
-		case "msg":
-			for _, item := range items[1:] {
-				switch item.Kind {
-				case sexp.KindSymbol:
-					screen.Messages = append(screen.Messages, model.FrontendMessage{Name: canonicalFieldName(item.Value)})
-				case sexp.KindList:
-					if len(item.Children) == 0 || item.Children[0].Kind != sexp.KindSymbol {
-						return model.FrontendScreen{}, parseError(item, "message pattern must start with a symbol")
-					}
-					message := model.FrontendMessage{Name: canonicalFieldName(item.Children[0].Value)}
-					for _, param := range item.Children[1:] {
-						if param.Kind != sexp.KindSymbol {
-							return model.FrontendScreen{}, parseError(param, "message parameter must be a symbol")
-						}
-						message.Parameters = append(message.Parameters, canonicalFieldName(param.Value))
-					}
-					screen.Messages = append(screen.Messages, message)
-				default:
-					return model.FrontendScreen{}, parseError(item, "invalid msg clause item")
-				}
-			}
-		case "init":
-			if len(items) != 2 {
-				return model.FrontendScreen{}, parseError(clause, "init expects a single expression")
-			}
-			screen.InitExpression = sexp.InlineString(items[1])
-			initNode = items[1]
-		case "update":
-			if len(items) != 4 {
-				return model.FrontendScreen{}, parseError(clause, "update expects (update msg model expr)")
-			}
-			msgName, ok := symbolValue(items[1])
-			if !ok {
-				return model.FrontendScreen{}, parseError(items[1], "update message parameter must be a symbol")
-			}
-			modelName, ok := symbolValue(items[2])
-			if !ok {
-				return model.FrontendScreen{}, parseError(items[2], "update model parameter must be a symbol")
-			}
-			screen.UpdateMessage = canonicalFieldName(msgName)
-			screen.UpdateModel = canonicalFieldName(modelName)
-			screen.UpdateBody = sexp.InlineString(items[3])
-			updateNode = items[3]
-		case "view":
-			if len(items) < 2 {
-				return model.FrontendScreen{}, parseError(clause, "view expects one or more UI nodes")
-			}
-			viewStart := 1
-			if items[1].Kind == sexp.KindSymbol && len(items) >= 3 {
-				modelName, ok := symbolValue(items[1])
-				if !ok {
-					return model.FrontendScreen{}, parseError(items[1], "view model parameter must be a symbol")
-				}
-				screen.ViewModel = canonicalFieldName(modelName)
-				viewStart = 2
-			}
-			viewNodes := items[viewStart:]
-			if len(viewNodes) == 0 {
-				return model.FrontendScreen{}, parseError(clause, "view expects one or more UI nodes")
-			}
-			screen.ViewBody = inlineNodes(viewNodes)
-			for _, viewNode := range viewNodes {
-				if section, ok, err := parseViewSection(viewNode, queries); err != nil {
-					return model.FrontendScreen{}, err
-				} else if ok {
-					screen.Sections = append(screen.Sections, section)
-					sectionNodes = append(sectionNodes, viewNode)
-					continue
-				}
-				parsedView, err := parseViewNode(viewNode)
-				if err != nil {
-					return model.FrontendScreen{}, err
-				}
-				if screen.View != nil {
-					return model.FrontendScreen{}, parseError(viewNode, "view with static nodes expects a single root node")
-				}
-				viewRawNodes = append(viewRawNodes, viewNode)
-				screen.View = parsedView
-			}
-		default:
-			return model.FrontendScreen{}, parseError(items[0], "unknown screen clause %q", head)
-		}
-	}
-
-	if hasUpdate && (!hasMsg || !hasInit) {
-		return model.FrontendScreen{}, fmt.Errorf("screen %s requires msg and init when update is present", screen.Name)
-	}
-	if hasInit {
-		if err := validateFrontendTransitionStructure(initNode); err != nil {
-			return model.FrontendScreen{}, err
-		}
-	}
-	if hasUpdate {
-		if err := validateFrontendTransitionStructure(updateNode); err != nil {
-			return model.FrontendScreen{}, err
-		}
-	}
-	if err := validateFrontendScreenUIContext(screen, hasUpdate, viewRawNodes, sectionNodes); err != nil {
-		return model.FrontendScreen{}, err
-	}
-	if !hasView {
-		return model.FrontendScreen{}, fmt.Errorf("screen %s requires view", screen.Name)
-	}
-	return screen, nil
-}
-
-func parseScreenDef(node sexp.Node) (*screenDef, error) {
-	if len(node.Children) < 3 {
-		return nil, parseError(node, "define-screen expects a name/signature and a body")
-	}
-	signature := node.Children[1]
-	var name string
-	var params []string
-	if signature.Kind == sexp.KindList {
-		items, err := listChildren(signature, "define-screen signature")
-		if err != nil {
-			return nil, err
-		}
-		if len(items) == 0 {
-			return nil, parseError(signature, "define-screen signature cannot be empty")
-		}
-		var ok bool
-		name, ok = symbolValue(items[0])
-		if !ok {
-			return nil, parseError(items[0], "define-screen name must be a symbol")
-		}
-		for _, item := range items[1:] {
-			param, ok := symbolValue(item)
-			if !ok {
-				return nil, parseError(item, "define-screen parameters must be symbols")
-			}
-			params = append(params, param)
-		}
-	} else {
-		var ok bool
-		name, ok = symbolValue(signature)
-		if !ok {
-			return nil, parseError(signature, "define-screen name must be a symbol")
-		}
-	}
-	return &screenDef{Name: name, Parameters: params, Body: sexp.Node{
-		Kind:     sexp.KindList,
-		Children: node.Children[2:],
-		Line:     node.Line,
-		Column:   node.Column,
-	}}, nil
-}
-
-func parseQueryDef(node sexp.Node) (*queryDef, error) {
-	if len(node.Children) < 3 {
-		return nil, parseError(node, "define-query expects a name/signature and a body")
-	}
-	signature := node.Children[1]
-	var name string
-	var params []string
-	if signature.Kind == sexp.KindList {
-		items, err := listChildren(signature, "define-query signature")
-		if err != nil {
-			return nil, err
-		}
-		if len(items) == 0 {
-			return nil, parseError(signature, "define-query signature cannot be empty")
-		}
-		var ok bool
-		name, ok = symbolValue(items[0])
-		if !ok {
-			return nil, parseError(items[0], "define-query name must be a symbol")
-		}
-		for _, item := range items[1:] {
-			param, ok := symbolValue(item)
-			if !ok {
-				return nil, parseError(item, "define-query parameters must be symbols")
-			}
-			params = append(params, param)
-		}
-	} else {
-		var ok bool
-		name, ok = symbolValue(signature)
-		if !ok {
-			return nil, parseError(signature, "define-query name must be a symbol")
-		}
-	}
-	query := &queryDef{Name: name, Parameters: params, OrderDir: "desc"}
-	for _, clause := range node.Children[2:] {
-		parts, err := listChildren(clause, "define-query clause")
-		if err != nil {
-			return nil, err
-		}
-		if len(parts) == 0 {
-			return nil, parseError(clause, "define-query clause cannot be empty")
-		}
-		head, _ := symbolValue(parts[0])
-		switch head {
-		case "from":
-			if len(parts) != 2 {
-				return nil, parseError(clause, "from expects one entity symbol")
-			}
-			entity, ok := symbolValue(parts[1])
-			if !ok {
-				return nil, parseError(parts[1], "from expects an entity symbol")
-			}
-			query.EntitySymbol = entity
-		case "where":
-			if len(parts) != 2 {
-				return nil, parseError(clause, "where expects one expression")
-			}
-			query.Where = parts[1]
-		case "order-by":
-			if len(parts) < 2 || len(parts) > 3 {
-				return nil, parseError(clause, "order-by expects (order-by field [asc|desc])")
-			}
-			field, ok := symbolValue(parts[1])
-			if !ok {
-				return nil, parseError(parts[1], "order-by field must be a symbol")
-			}
-			query.OrderBy = field
-			if len(parts) == 3 {
-				dir, ok := symbolValue(parts[2])
-				if !ok {
-					return nil, parseError(parts[2], "order-by direction must be a symbol")
-				}
-				query.OrderDir = dir
-			}
-		case "limit":
-			if len(parts) != 2 {
-				return nil, parseError(clause, "limit expects one integer")
-			}
-			limit, err := intLiteral(parts[1])
-			if err != nil {
-				return nil, parseError(parts[1], "limit must be an integer")
-			}
-			query.Limit = &limit
-		default:
-			return nil, parseError(parts[0], "unknown define-query clause %q", head)
-		}
-	}
-	if query.EntitySymbol == "" {
-		return nil, parseError(node, "define-query requires a from clause")
-	}
-	return query, nil
-}
-
-func parseViewSection(node sexp.Node, queries map[string]*queryDef) (model.FrontendSection, bool, error) {
-	head, ok := listHead(node)
-	if !ok || head != "section" {
-		return model.FrontendSection{}, false, nil
-	}
-	section, err := parseSection(node, queries)
-	if err == nil {
-		return section, true, nil
-	}
-	if strings.Contains(err.Error(), "section does not support metadata") || strings.Contains(err.Error(), "section expects one nested list of clauses") {
-		return model.FrontendSection{}, false, nil
-	}
-	return model.FrontendSection{}, false, err
-}
-
-func inlineNodes(nodes []sexp.Node) string {
-	if len(nodes) == 1 {
-		return sexp.InlineString(nodes[0])
-	}
-	parts := make([]string, 0, len(nodes))
-	for _, node := range nodes {
-		parts = append(parts, sexp.InlineString(node))
-	}
-	return "(" + strings.Join(parts, " ") + ")"
-}
-
-func parseViewNode(node sexp.Node) (*model.FrontendViewNode, error) {
-	if node.Kind != sexp.KindList || len(node.Children) == 0 {
-		return nil, parseError(node, "view body must be a non-empty list")
-	}
-	head, ok := symbolValue(node.Children[0])
-	if !ok {
-		return nil, parseError(node.Children[0], "view node head must be a symbol")
-	}
-
-	switch head {
-	case "section":
-		view := &model.FrontendViewNode{Kind: "section"}
-		for _, child := range node.Children[1:] {
-			if child.Kind != sexp.KindList || len(child.Children) == 0 {
-				return nil, parseError(child, "section children must be nodes or section metadata")
-			}
-			key, _ := symbolValue(child.Children[0])
-			if key == "title" {
-				if len(child.Children) != 2 || child.Children[1].Kind != sexp.KindString {
-					return nil, parseError(child, "section title expects a string")
-				}
-				view.Title = child.Children[1].Value
-				continue
-			}
-			parsedChild, err := parseViewNode(child)
-			if err != nil {
-				return nil, err
-			}
-			view.Children = append(view.Children, *parsedChild)
-		}
-		return view, nil
-	case "text":
-		if len(node.Children) != 2 {
-			return nil, parseError(node, "text expects one argument")
-		}
-		switch node.Children[1].Kind {
-		case sexp.KindString:
-			return &model.FrontendViewNode{Kind: "text", Text: node.Children[1].Value}, nil
-		case sexp.KindSymbol:
-			return &model.FrontendViewNode{Kind: "text", Text: node.Children[1].Value}, nil
-		default:
-			return nil, parseError(node.Children[1], "text expects a string or symbol")
-		}
-	case "button":
-		if len(node.Children) != 3 {
-			return nil, parseError(node, "button expects a label and a message")
-		}
-		if node.Children[1].Kind != sexp.KindString {
-			return nil, parseError(node.Children[1], "button label expects a string")
-		}
-		return &model.FrontendViewNode{
-			Kind:    "button",
-			Label:   node.Children[1].Value,
-			Message: sexp.InlineString(node.Children[2]),
-		}, nil
+		return item, nil
 	default:
-		return nil, parseError(node.Children[0], "unsupported view node %q", head)
+		return ast.ExposedItem{}, p.errorf("expected exposed name, got %s", t.Kind)
 	}
 }
 
-// requireListBody returns body when it is a list, else a parse error.
-// Used by entity/screen/action definitions to validate the shape before
-// iterating clauses.
-func requireListBody(body sexp.Node, label string) (sexp.Node, error) {
-	if body.Kind != sexp.KindList {
-		return sexp.Node{}, parseError(body, "%s must be a list", label)
+func (p *parser) parseImport() (ast.Import, error) {
+	tok, err := p.expect(lexer.KindImport)
+	if err != nil {
+		return ast.Import{}, err
 	}
-	return body, nil
+	imp := ast.Import{Pos: posOf(tok)}
+	name, err := p.parseModuleName()
+	if err != nil {
+		return imp, err
+	}
+	imp.Module = name
+	if _, ok := p.accept(lexer.KindAs); ok {
+		aliasTok, err := p.expect(lexer.KindUpperName)
+		if err != nil {
+			return imp, err
+		}
+		imp.Alias = aliasTok.Value
+	}
+	if _, ok := p.accept(lexer.KindExposing); ok {
+		exp, err := p.parseExposing()
+		if err != nil {
+			return imp, err
+		}
+		imp.Exposing = exp
+	}
+	return imp, nil
 }
 
-func parseSection(clause sexp.Node, queries map[string]*queryDef) (model.FrontendSection, error) {
-	items, err := listChildren(clause, "section")
-	if err != nil {
-		return model.FrontendSection{}, err
-	}
-	section, index, err := parseSectionMetadata(items, clause)
-	if err != nil {
-		return model.FrontendSection{}, err
-	}
-	section.Items = []model.FrontendItem{}
-	children, err := nestedClauseList(items, clause, index, "section")
-	if err != nil {
-		return model.FrontendSection{}, err
-	}
-	for _, child := range children {
-		item, err := parseScreenItem(child, queries)
-		if err != nil {
-			return model.FrontendSection{}, err
-		}
-		section.Items = append(section.Items, item)
-	}
-	return section, nil
-}
+// --- Declarations ---
 
-func parseSectionMetadata(items []sexp.Node, clause sexp.Node) (model.FrontendSection, int, error) {
-	section := model.FrontendSection{}
-	index := 1
-	if len(items) > 1 && items[1].Kind == sexp.KindString {
-		section.Title = items[1].Value
-		index = 2
-	}
-	for index < len(items)-1 {
-		return model.FrontendSection{}, 0, parseError(items[index], "section does not support metadata; use item expressions such as (if condition item (empty))")
-	}
-	return section, index, nil
-}
-
-func parseScreenItem(node sexp.Node, queries map[string]*queryDef) (model.FrontendItem, error) {
-	items, err := listChildren(node, "screen item")
-	if err != nil {
-		return model.FrontendItem{}, err
-	}
-	head, _ := symbolValue(items[0])
-	switch head {
-	case "if":
-		if len(items) != 4 {
-			return model.FrontendItem{}, parseError(node, "if item expects (if condition item (empty))")
+// parseDecl parses one top-level declaration, recognized by what's at the
+// start of a line (column 1).
+func (p *parser) parseDecl() (ast.Decl, error) {
+	t := p.peek()
+	switch t.Kind {
+	case lexer.KindType:
+		// type alias ... or type ...
+		return p.parseTypeDecl()
+	case lexer.KindPort:
+		return p.parsePortDecl()
+	case lexer.KindLowerName:
+		// either annotation (name : Type) or value definition (name args = body)
+		next := p.peekAt(1)
+		if next.Kind == lexer.KindColon {
+			return p.parseAnnotationDecl()
 		}
-		elseHead, ok := listHead(items[3])
-		if !ok || elseHead != "empty" {
-			return model.FrontendItem{}, parseError(items[3], "if item currently expects (empty) as the else branch")
-		}
-		item, err := parseScreenItem(items[2], queries)
-		if err != nil {
-			return model.FrontendItem{}, err
-		}
-		if item.Kind == "empty" {
-			return model.FrontendItem{}, parseError(items[2], "if item then branch cannot be empty")
-		}
-		item.Condition = combineItemConditions(sexp.InlineString(items[1]), item.Condition)
-		return item, nil
-	case "empty":
-		if len(items) != 1 {
-			return model.FrontendItem{}, parseError(node, "empty does not accept arguments")
-		}
-		return model.FrontendItem{Kind: "empty"}, nil
-	case "text":
-		if len(items) != 2 {
-			return model.FrontendItem{}, parseError(node, "text expects one argument")
-		}
-		return model.FrontendItem{Kind: "text", Text: sexp.InlineString(items[1])}, nil
-	case "link":
-		if len(items) != 3 || items[1].Kind != sexp.KindString {
-			return model.FrontendItem{}, parseError(node, "link expects (link \"Label\" destination)")
-		}
-		destination, ok := symbolValue(items[2])
-		if !ok {
-			return model.FrontendItem{}, parseError(items[2], "link destination must be a symbol")
-		}
-		return model.FrontendItem{Kind: "link", Label: items[1].Value, Target: canonicalScreenName(destination)}, nil
-	case "button":
-		if len(items) < 3 || items[1].Kind != sexp.KindString {
-			return model.FrontendItem{}, parseError(node, "button expects (button \"Label\" message)")
-		}
-		item := model.FrontendItem{
-			Kind:    "button",
-			Label:   items[1].Value,
-			Message: sexp.InlineString(items[2]),
-		}
-		if err := applyFrontendItemOptions(&item, items[3:]); err != nil {
-			return model.FrontendItem{}, err
-		}
-		return item, nil
-	case "text-input", "textarea", "toggle":
-		if len(items) < 4 || items[1].Kind != sexp.KindString {
-			return model.FrontendItem{}, parseError(node, "%s expects (%s \"Label\" model-field changed-message)", head, head)
-		}
-		modelField, ok := symbolValue(items[2])
-		if !ok {
-			return model.FrontendItem{}, parseError(items[2], "%s model field must be a symbol", head)
-		}
-		messageName, ok := symbolValue(items[3])
-		if !ok {
-			return model.FrontendItem{}, parseError(items[3], "%s changed message must be a symbol", head)
-		}
-		item := model.FrontendItem{
-			Kind:       canonicalFrontendInputKind(head),
-			Label:      items[1].Value,
-			ModelField: canonicalFieldName(modelField),
-			Message:    canonicalFieldName(messageName),
-		}
-		if err := applyFrontendItemOptions(&item, items[4:]); err != nil {
-			return model.FrontendItem{}, err
-		}
-		return item, nil
-	case "select":
-		if len(items) < 5 || items[1].Kind != sexp.KindString {
-			return model.FrontendItem{}, parseError(node, "select expects (select \"Label\" model-field changed-message ((value \"Label\") ...))")
-		}
-		modelField, ok := symbolValue(items[2])
-		if !ok {
-			return model.FrontendItem{}, parseError(items[2], "select model field must be a symbol")
-		}
-		messageName, ok := symbolValue(items[3])
-		if !ok {
-			return model.FrontendItem{}, parseError(items[3], "select changed message must be a symbol")
-		}
-		options, err := parseFrontendOptions(items[4])
-		if err != nil {
-			return model.FrontendItem{}, err
-		}
-		item := model.FrontendItem{
-			Kind:       "select",
-			Label:      items[1].Value,
-			ModelField: canonicalFieldName(modelField),
-			Message:    canonicalFieldName(messageName),
-			Options:    options,
-		}
-		if err := applyFrontendItemOptions(&item, items[5:]); err != nil {
-			return model.FrontendItem{}, err
-		}
-		return item, nil
-	case "list":
-		if len(items) < 4 || items[1].Kind != sexp.KindSymbol || items[2].Kind != sexp.KindSymbol {
-			return model.FrontendItem{}, parseError(node, "list expects (list model-field entity ((title field) ...))")
-		}
-		modelField, _ := symbolValue(items[1])
-		entity, _ := symbolValue(items[2])
-		item := model.FrontendItem{
-			Kind:       "list",
-			ModelField: canonicalFieldName(modelField),
-			Entity:     canonicalTypeName(entity),
-		}
-		clausesIndex := 3
-		clauses, err := nestedClauseList(items, node, clausesIndex, "list")
-		if err != nil {
-			return model.FrontendItem{}, err
-		}
-		for _, clause := range clauses {
-			parts, err := listChildren(clause, "list clause")
-			if err != nil {
-				return model.FrontendItem{}, err
-			}
-			if len(parts) != 2 {
-				return model.FrontendItem{}, parseError(clause, "list clause must be a pair")
-			}
-			key, _ := symbolValue(parts[0])
-			value, ok := symbolValue(parts[1])
-			if !ok {
-				return model.FrontendItem{}, parseError(parts[1], "list clause value must be a symbol")
-			}
-			switch key {
-			case "title":
-				item.TitleField = canonicalFieldName(value)
-			case "subtitle":
-				item.SubtitleField = canonicalFieldName(value)
-			case "open", "destination":
-				item.Destination = canonicalScreenName(value)
-			case "action":
-				item.Action = canonicalFunctionName(value)
-			default:
-				return model.FrontendItem{}, parseError(parts[0], "unknown list clause %q", key)
-			}
-		}
-		return item, nil
-	case "create", "edit":
-		if len(items) < 2 {
-			return model.FrontendItem{}, parseError(node, "%s expects an entity", head)
-		}
-		entity, ok := symbolValue(items[1])
-		if !ok {
-			return model.FrontendItem{}, parseError(items[1], "%s entity must be a symbol", head)
-		}
-		item := model.FrontendItem{Kind: head, Entity: canonicalTypeName(entity)}
-		clauses, err := nestedClauseList(items, node, 2, head)
-		if err != nil {
-			return model.FrontendItem{}, err
-		}
-		for _, clause := range clauses {
-			parts, err := listChildren(clause, head+" clause")
-			if err != nil {
-				return model.FrontendItem{}, err
-			}
-			key, _ := symbolValue(parts[0])
-			switch key {
-			case "field":
-				if len(parts) != 2 {
-					return model.FrontendItem{}, parseError(clause, "%s field clause must be (field name)", head)
-				}
-				field, _ := symbolValue(parts[1])
-				item.FormFields = append(item.FormFields, model.FrontendFormField{Field: canonicalFieldName(field)})
-			case "value":
-				if len(parts) != 3 {
-					return model.FrontendItem{}, parseError(clause, "%s value clause must be (value field expr)", head)
-				}
-				field, ok := symbolValue(parts[1])
-				if !ok {
-					return model.FrontendItem{}, parseError(parts[1], "%s value field must be a symbol", head)
-				}
-				item.Values = append(item.Values, model.FrontendActionValue{
-					Field:      canonicalFieldName(field),
-					Expression: sexp.InlineString(parts[2]),
-					LineNo:     clause.Line,
-				})
-			default:
-				return model.FrontendItem{}, parseError(parts[0], "%s clause must be (field name) or (value field expr)", head)
-			}
-		}
-		return item, nil
-	case "delete":
-		if len(items) != 2 {
-			return model.FrontendItem{}, parseError(node, "delete expects an entity")
-		}
-		entity, ok := symbolValue(items[1])
-		if !ok {
-			return model.FrontendItem{}, parseError(items[1], "delete entity must be a symbol")
-		}
-		return model.FrontendItem{Kind: "delete", Entity: canonicalTypeName(entity)}, nil
+		return p.parseValueDecl()
 	default:
-		return model.FrontendItem{}, parseError(items[0], "unknown screen item %q", head)
+		return nil, p.errorf("expected declaration, got %s", t.Kind)
 	}
 }
 
-func listHead(node sexp.Node) (string, bool) {
-	if node.Kind != sexp.KindList || len(node.Children) == 0 {
-		return "", false
-	}
-	return symbolValue(node.Children[0])
-}
-
-func combineItemConditions(left string, right string) string {
-	left = strings.TrimSpace(left)
-	right = strings.TrimSpace(right)
-	if left == "" {
-		return right
-	}
-	if right == "" {
-		return left
-	}
-	return "(and " + left + " " + right + ")"
-}
-
-func canonicalFrontendInputKind(kind string) string {
-	switch strings.TrimSpace(kind) {
-	case "text-input":
-		return "textInput"
-	case "textarea":
-		return "textarea"
-	case "toggle":
-		return "toggle"
-	default:
-		return canonicalFieldName(kind)
-	}
-}
-
-func applyFrontendItemOptions(item *model.FrontendItem, options []sexp.Node) error {
-	for _, option := range options {
-		parts, err := listChildren(option, "screen item option")
-		if err != nil {
-			return err
-		}
-		if len(parts) != 2 {
-			return parseError(option, "screen item option must be a pair")
-		}
-		key, ok := symbolValue(parts[0])
-		if !ok {
-			return parseError(parts[0], "screen item option name must be a symbol")
-		}
-		switch key {
-		case "disabled":
-			name, ok := symbolValue(parts[1])
-			if !ok {
-				return parseError(parts[1], "disabled expects a symbol")
-			}
-			item.Disabled = canonicalFieldName(name)
-		default:
-			return parseError(parts[0], "unknown screen item option %q", key)
-		}
-	}
-	return nil
-}
-
-func parseFrontendOptions(node sexp.Node) ([]model.FrontendOption, error) {
-	optionNodes, err := listChildren(node, "select options")
+func (p *parser) parseTypeDecl() (ast.Decl, error) {
+	typeTok, err := p.expect(lexer.KindType)
 	if err != nil {
 		return nil, err
 	}
-	if len(optionNodes) == 0 {
-		return nil, parseError(node, "select requires at least one option")
+	if _, ok := p.accept(lexer.KindAlias); ok {
+		return p.parseTypeAlias(typeTok)
 	}
-	options := make([]model.FrontendOption, 0, len(optionNodes))
-	for _, optionNode := range optionNodes {
-		parts, err := listChildren(optionNode, "select option")
-		if err != nil {
-			return nil, err
-		}
-		if len(parts) != 2 {
-			return nil, parseError(optionNode, "select option must look like (value \"Label\")")
-		}
-		var value string
-		switch parts[0].Kind {
-		case sexp.KindSymbol:
-			value = canonicalFieldName(parts[0].Value)
-		case sexp.KindString:
-			value = parts[0].Value
-		default:
-			return nil, parseError(parts[0], "select option value must be a symbol or string")
-		}
-		if parts[1].Kind != sexp.KindString {
-			return nil, parseError(parts[1], "select option label must be a string")
-		}
-		options = append(options, model.FrontendOption{
-			Value: value,
-			Label: parts[1].Value,
-		})
-	}
-	return options, nil
+	return p.parseCustomType(typeTok)
 }
 
-func parseCallableDef(node sexp.Node) (*queryDef, *functionDef, *screenDef, error) {
-	if len(node.Children) != 3 {
-		return nil, nil, nil, parseError(node, "define expects a signature and a body")
-	}
-	signature := node.Children[1]
-	items, err := listChildren(signature, "define signature")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if len(items) == 0 {
-		return nil, nil, nil, parseError(signature, "define signature cannot be empty")
-	}
-	name, _ := symbolValue(items[0])
-	for _, item := range items[1:] {
-		if _, ok := symbolValue(item); !ok {
-			return nil, nil, nil, parseError(item, "define parameters must be symbols")
-		}
-	}
-	bodyItems, err := listChildren(node.Children[2], "define body")
-	if err != nil {
-		return nil, &functionDef{
-			Name:       name,
-			Parameters: symbolValues(items[1:]),
-			Body:       node.Children[2],
-			LineNo:     node.Line,
-		}, nil, nil
-	}
-	if len(bodyItems) == 0 {
-		return nil, &functionDef{
-			Name:       name,
-			Parameters: symbolValues(items[1:]),
-			Body:       node.Children[2],
-			LineNo:     node.Line,
-		}, nil, nil
-	}
-	head, _ := symbolValue(bodyItems[0])
-	if head == "screen" {
-		return nil, nil, &screenDef{
-			Name:       name,
-			Parameters: symbolValues(items[1:]),
-			Body:       node.Children[2],
-		}, nil
-	}
-	if head == "query" {
-		return nil, nil, nil, parseError(bodyItems[0], "unknown define body %q", head)
-	}
-	return nil, &functionDef{
-		Name:       name,
-		Parameters: symbolValues(items[1:]),
-		Body:       node.Children[2],
-		LineNo:     node.Line,
-	}, nil, nil
-}
-
-func parseActionDefinition(name string, bodyNode sexp.Node, entities map[string]*model.Entity) (model.TypeAlias, model.Action, error) {
-	body, err := requireListBody(bodyNode, "action "+name)
-	if err != nil {
-		return model.TypeAlias{}, model.Action{}, err
-	}
-
-	inputAlias := model.TypeAlias{Name: canonicalTypeName(name) + "Input"}
-	action := model.Action{Name: canonicalFunctionName(name), InputAlias: inputAlias.Name}
-
-	for _, clause := range body.Children {
-		items, err := listChildren(clause, "action clause")
-		if err != nil {
-			return model.TypeAlias{}, model.Action{}, err
-		}
-		head, _ := symbolValue(items[0])
-		switch head {
-		case "input":
-			if len(items) != 2 {
-				return model.TypeAlias{}, model.Action{}, parseError(clause, "input expects one field list")
-			}
-			fieldClauses, err := listChildren(items[1], "action input fields")
-			if err != nil {
-				return model.TypeAlias{}, model.Action{}, err
-			}
-			for _, fieldClause := range fieldClauses {
-				parts, err := listChildren(fieldClause, "action input field")
-				if err != nil {
-					return model.TypeAlias{}, model.Action{}, err
-				}
-				if len(parts) != 2 {
-					return model.TypeAlias{}, model.Action{}, parseError(fieldClause, "action input field must look like (name type)")
-				}
-				fieldName, ok := symbolValue(parts[0])
-				if !ok {
-					return model.TypeAlias{}, model.Action{}, parseError(parts[0], "action input field name must be a symbol")
-				}
-				typeName, ok := symbolValue(parts[1])
-				if !ok {
-					return model.TypeAlias{}, model.Action{}, parseError(parts[1], "action input field type must be a symbol")
-				}
-				fieldType, err := mapPrimitiveType(typeName)
-				if err != nil {
-					return model.TypeAlias{}, model.Action{}, fmt.Errorf("action %s input %s: %w", name, fieldName, err)
-				}
-				inputAlias.Fields = append(inputAlias.Fields, model.AliasField{
-					Name: canonicalFieldName(fieldName),
-					Type: fieldType,
-				})
-			}
-		case "load":
-			step, err := parseActionLoadStep(name, items, entities)
-			if err != nil {
-				return model.TypeAlias{}, model.Action{}, err
-			}
-			action.Steps = append(action.Steps, step)
-		case "create":
-			step, err := parseActionCreateStep(name, items, entities)
-			if err != nil {
-				return model.TypeAlias{}, model.Action{}, err
-			}
-			action.Steps = append(action.Steps, step)
-		case "update":
-			step, err := parseActionUpdateStep(name, items, entities)
-			if err != nil {
-				return model.TypeAlias{}, model.Action{}, err
-			}
-			action.Steps = append(action.Steps, step)
-		case "delete":
-			step, err := parseActionDeleteStep(name, items, entities)
-			if err != nil {
-				return model.TypeAlias{}, model.Action{}, err
-			}
-			action.Steps = append(action.Steps, step)
-		default:
-			return model.TypeAlias{}, model.Action{}, parseError(items[0], "unknown action clause %q", head)
-		}
-	}
-
-	if len(inputAlias.Fields) == 0 {
-		return model.TypeAlias{}, model.Action{}, fmt.Errorf("action %s requires input", name)
-	}
-	if len(action.Steps) == 0 {
-		return model.TypeAlias{}, model.Action{}, fmt.Errorf("action %s requires at least one step", name)
-	}
-
-	return inputAlias, action, nil
-}
-
-func parseActionLoadStep(actionName string, items []sexp.Node, entities map[string]*model.Entity) (model.ActionStep, error) {
-	if len(items) != 3 {
-		return model.ActionStep{}, parseError(items[0], "load expects (load entity id-expr)")
-	}
-	entityName, entity, err := actionStepEntity(items[1], entities)
-	if err != nil {
-		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
-	}
-	return model.ActionStep{
-		Kind:   "load",
-		Entity: entityName,
-		Values: []model.ActionFieldExpr{{
-			Field:      entity.PrimaryKey,
-			Expression: sexp.InlineString(items[2]),
-		}},
-	}, nil
-}
-
-func parseActionCreateStep(actionName string, items []sexp.Node, entities map[string]*model.Entity) (model.ActionStep, error) {
-	if len(items) != 3 {
-		return model.ActionStep{}, parseError(items[0], "create expects (create entity ((field expr) ...))")
-	}
-	entityName, _, err := actionStepEntity(items[1], entities)
-	if err != nil {
-		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
-	}
-	values, err := parseActionStepValues(items[2])
-	if err != nil {
-		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
-	}
-	return model.ActionStep{Kind: "create", Entity: entityName, Values: values}, nil
-}
-
-func parseActionUpdateStep(actionName string, items []sexp.Node, entities map[string]*model.Entity) (model.ActionStep, error) {
-	if len(items) != 4 {
-		return model.ActionStep{}, parseError(items[0], "update expects (update entity id-expr ((field expr) ...))")
-	}
-	entityName, entity, err := actionStepEntity(items[1], entities)
-	if err != nil {
-		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
-	}
-	values, err := parseActionStepValues(items[3])
-	if err != nil {
-		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
-	}
-	values = append([]model.ActionFieldExpr{{
-		Field:      entity.PrimaryKey,
-		Expression: sexp.InlineString(items[2]),
-	}}, values...)
-	return model.ActionStep{Kind: "update", Entity: entityName, Values: values}, nil
-}
-
-func parseActionDeleteStep(actionName string, items []sexp.Node, entities map[string]*model.Entity) (model.ActionStep, error) {
-	if len(items) != 3 {
-		return model.ActionStep{}, parseError(items[0], "delete expects (delete entity id-expr)")
-	}
-	entityName, entity, err := actionStepEntity(items[1], entities)
-	if err != nil {
-		return model.ActionStep{}, fmt.Errorf("action %s: %w", actionName, err)
-	}
-	return model.ActionStep{
-		Kind:   "delete",
-		Entity: entityName,
-		Values: []model.ActionFieldExpr{{
-			Field:      entity.PrimaryKey,
-			Expression: sexp.InlineString(items[2]),
-		}},
-	}, nil
-}
-
-func parseActionStepValues(node sexp.Node) ([]model.ActionFieldExpr, error) {
-	fieldClauses, err := listChildren(node, "action step values")
+func (p *parser) parseTypeAlias(typeTok lexer.Token) (ast.Decl, error) {
+	nameTok, err := p.expect(lexer.KindUpperName)
 	if err != nil {
 		return nil, err
 	}
-	values := make([]model.ActionFieldExpr, 0, len(fieldClauses))
-	for _, fieldClause := range fieldClauses {
-		parts, err := listChildren(fieldClause, "action step value")
+	decl := &ast.TypeAliasDecl{Pos: posOf(typeTok), Name: nameTok.Value}
+	for p.peek().Kind == lexer.KindLowerName {
+		decl.Params = append(decl.Params, p.advance().Value)
+	}
+	if _, err := p.expect(lexer.KindEquals); err != nil {
+		return nil, err
+	}
+	body, err := p.parseTypeExpr()
+	if err != nil {
+		return nil, err
+	}
+	decl.Body = body
+	return decl, nil
+}
+
+func (p *parser) parseCustomType(typeTok lexer.Token) (ast.Decl, error) {
+	nameTok, err := p.expect(lexer.KindUpperName)
+	if err != nil {
+		return nil, err
+	}
+	decl := &ast.CustomTypeDecl{Pos: posOf(typeTok), Name: nameTok.Value}
+	for p.peek().Kind == lexer.KindLowerName {
+		decl.Params = append(decl.Params, p.advance().Value)
+	}
+	if _, err := p.expect(lexer.KindEquals); err != nil {
+		return nil, err
+	}
+	// Constructors separated by |
+	for {
+		ctor, err := p.parseConstructor()
 		if err != nil {
 			return nil, err
 		}
-		if len(parts) != 2 {
-			return nil, parseError(fieldClause, "action step values must look like (field expr)")
+		decl.Constructors = append(decl.Constructors, ctor)
+		if _, ok := p.accept(lexer.KindPipe); !ok {
+			break
 		}
-		fieldName, ok := symbolValue(parts[0])
-		if !ok {
-			return nil, parseError(parts[0], "action step field name must be a symbol")
+	}
+	return decl, nil
+}
+
+func (p *parser) parseConstructor() (ast.Constructor, error) {
+	nameTok, err := p.expect(lexer.KindUpperName)
+	if err != nil {
+		return ast.Constructor{}, err
+	}
+	ctor := ast.Constructor{Pos: posOf(nameTok), Name: nameTok.Value}
+	// Constructor args: parse atomic type exprs until we hit something that
+	// isn't a type atom OR breaks the boundary column (next decl starting
+	// at col 1, etc.).
+	for isTypeAtomStart(p.peek()) && p.peek().Column > p.boundaryCol {
+		arg, err := p.parseTypeAtom()
+		if err != nil {
+			return ctor, err
 		}
-		values = append(values, model.ActionFieldExpr{
-			Field:      canonicalFieldName(fieldName),
-			Expression: sexp.InlineString(parts[1]),
+		ctor.Args = append(ctor.Args, arg)
+	}
+	return ctor, nil
+}
+
+func (p *parser) parseAnnotationDecl() (ast.Decl, error) {
+	nameTok := p.advance() // lowerName
+	if _, err := p.expect(lexer.KindColon); err != nil {
+		return nil, err
+	}
+	body, err := p.parseTypeExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.AnnotationDecl{Pos: posOf(nameTok), Name: nameTok.Value, Type: body}, nil
+}
+
+func (p *parser) parseValueDecl() (ast.Decl, error) {
+	nameTok := p.advance() // lowerName
+	decl := &ast.ValueDecl{Pos: posOf(nameTok), Name: nameTok.Value}
+	for p.peek().Kind != lexer.KindEquals && p.peek().Column > p.boundaryCol {
+		pat, err := p.parsePatternAtom()
+		if err != nil {
+			return nil, err
+		}
+		decl.Params = append(decl.Params, pat)
+	}
+	if _, err := p.expect(lexer.KindEquals); err != nil {
+		return nil, err
+	}
+	body, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	decl.Body = body
+	return decl, nil
+}
+
+func (p *parser) parsePortDecl() (ast.Decl, error) {
+	tok, err := p.expect(lexer.KindPort)
+	if err != nil {
+		return nil, err
+	}
+	nameTok, err := p.expect(lexer.KindLowerName)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.KindColon); err != nil {
+		return nil, err
+	}
+	body, err := p.parseTypeExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.PortDecl{Pos: posOf(tok), Name: nameTok.Value, Type: body}, nil
+}
+
+// --- Type expressions ---
+
+// parseTypeExpr parses a full type, including arrows. Right-associative.
+//
+//	t  ::=  app  ( "->" t )?
+func (p *parser) parseTypeExpr() (ast.TypeExpr, error) {
+	left, err := p.parseTypeApp()
+	if err != nil {
+		return nil, err
+	}
+	if p.peek().Kind == lexer.KindArrow {
+		arrowTok := p.advance()
+		right, err := p.parseTypeExpr()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.TypeArrow{Pos: posOf(arrowTok), From: left, To: right}, nil
+	}
+	return left, nil
+}
+
+// parseTypeApp parses applications: List a, Result e a.
+//
+//	app ::= atom (atom)*
+func (p *parser) parseTypeApp() (ast.TypeExpr, error) {
+	first, err := p.parseTypeAtom()
+	if err != nil {
+		return nil, err
+	}
+	// Only TypeCons can be applied
+	tc, isCon := first.(*ast.TypeCon)
+	if !isCon {
+		return first, nil
+	}
+	for isTypeAtomStart(p.peek()) && p.peek().Column > p.boundaryCol {
+		arg, err := p.parseTypeAtom()
+		if err != nil {
+			return nil, err
+		}
+		tc.Args = append(tc.Args, arg)
+	}
+	return tc, nil
+}
+
+func (p *parser) parseTypeAtom() (ast.TypeExpr, error) {
+	t := p.peek()
+	switch t.Kind {
+	case lexer.KindLowerName:
+		p.advance()
+		return &ast.TypeVar{Pos: posOf(t), Name: t.Value}, nil
+	case lexer.KindUpperName:
+		// possibly qualified: Module.Type or Module.Submodule.Type
+		mod, name, err := p.parseQualifiedUpper(t)
+		if err != nil {
+			return nil, err
+		}
+		return &ast.TypeCon{Pos: posOf(t), Module: mod, Name: name}, nil
+	case lexer.KindLParen:
+		return p.parseTypeParens()
+	case lexer.KindLBrace:
+		return p.parseTypeRecord()
+	default:
+		return nil, p.errorf("expected type, got %s", t.Kind)
+	}
+}
+
+// parseQualifiedUpper consumes a UpperName and optional .UpperName chain,
+// returning (modulePath, finalName).
+func (p *parser) parseQualifiedUpper(first lexer.Token) (ast.ModuleName, string, error) {
+	p.advance() // consume the first UpperName
+	parts := []string{first.Value}
+	for p.peek().Kind == lexer.KindDot && p.peekAt(1).Kind == lexer.KindUpperName {
+		p.advance() // .
+		parts = append(parts, p.advance().Value)
+	}
+	if len(parts) == 1 {
+		return nil, parts[0], nil
+	}
+	return ast.ModuleName(parts[:len(parts)-1]), parts[len(parts)-1], nil
+}
+
+// parseTypeParens handles (), (T), or (T, U, ...) tuple
+func (p *parser) parseTypeParens() (ast.TypeExpr, error) {
+	openTok, _ := p.expect(lexer.KindLParen)
+	if _, ok := p.accept(lexer.KindRParen); ok {
+		return &ast.TypeUnit{Pos: posOf(openTok)}, nil
+	}
+	first, err := p.parseTypeExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := p.accept(lexer.KindRParen); ok {
+		return first, nil // grouped
+	}
+	// tuple
+	members := []ast.TypeExpr{first}
+	for {
+		if _, ok := p.accept(lexer.KindComma); !ok {
+			break
+		}
+		next, err := p.parseTypeExpr()
+		if err != nil {
+			return nil, err
+		}
+		members = append(members, next)
+	}
+	if _, err := p.expect(lexer.KindRParen); err != nil {
+		return nil, err
+	}
+	return &ast.TypeTuple{Pos: posOf(openTok), Members: members}, nil
+}
+
+// parseTypeRecord handles { f : T, ... } or { r | f : T, ... }
+func (p *parser) parseTypeRecord() (ast.TypeExpr, error) {
+	openTok, _ := p.expect(lexer.KindLBrace)
+	rec := &ast.TypeRecord{Pos: posOf(openTok)}
+	if _, ok := p.accept(lexer.KindRBrace); ok {
+		return rec, nil
+	}
+	// peek for row extension: { lowerName | ... }
+	if p.peek().Kind == lexer.KindLowerName && p.peekAt(1).Kind == lexer.KindPipe {
+		rec.Extends = p.advance().Value
+		p.advance() // |
+	}
+	for {
+		nameTok, err := p.expect(lexer.KindLowerName)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(lexer.KindColon); err != nil {
+			return nil, err
+		}
+		ftype, err := p.parseTypeExpr()
+		if err != nil {
+			return nil, err
+		}
+		rec.Fields = append(rec.Fields, ast.TypeRecField{
+			Pos: posOf(nameTok), Name: nameTok.Value, Type: ftype,
 		})
+		if _, ok := p.accept(lexer.KindComma); !ok {
+			break
+		}
 	}
-	return values, nil
+	if _, err := p.expect(lexer.KindRBrace); err != nil {
+		return nil, err
+	}
+	return rec, nil
 }
 
-func actionStepEntity(node sexp.Node, entities map[string]*model.Entity) (string, *model.Entity, error) {
-	entitySymbol, ok := symbolValue(node)
-	if !ok {
-		return "", nil, parseError(node, "action entity must be a symbol")
+func isTypeAtomStart(t lexer.Token) bool {
+	switch t.Kind {
+	case lexer.KindLowerName, lexer.KindUpperName, lexer.KindLParen, lexer.KindLBrace:
+		return true
 	}
-	entityName := canonicalTypeName(entitySymbol)
-	entity := entities[entityName]
-	if entity == nil {
-		return "", nil, fmt.Errorf("unknown entity %q", entitySymbol)
-	}
-	return entityName, entity, nil
+	return false
 }
 
-func parseRecordDef(node sexp.Node) (*recordDef, error) {
-	if len(node.Children) < 2 {
-		return nil, parseError(node, "define-record expects a name")
-	}
-	name, ok := symbolValue(node.Children[1])
-	if !ok {
-		return nil, parseError(node.Children[1], "define-record name must be a symbol")
-	}
-	record := &recordDef{Name: name}
-	for _, fieldNode := range node.Children[2:] {
-		parts, err := listChildren(fieldNode, "record field")
+// --- Patterns ---
+
+// parsePatternAtom parses a non-applied pattern.
+// Constructor patterns with args (Just x) need parens here.
+func (p *parser) parsePatternAtom() (ast.Pattern, error) {
+	t := p.peek()
+	switch t.Kind {
+	case lexer.KindLowerName:
+		p.advance()
+		return &ast.PVar{Pos: posOf(t), Name: t.Value}, nil
+	case lexer.KindUnderscore:
+		p.advance()
+		return &ast.PWildcard{Pos: posOf(t)}, nil
+	case lexer.KindUpperName:
+		// constructor with no args (atomic)
+		mod, name, err := p.parseQualifiedUpper(t)
 		if err != nil {
 			return nil, err
 		}
-		if len(parts) != 2 {
-			return nil, parseError(fieldNode, "record fields must look like (name type)")
-		}
-		fieldName, ok := symbolValue(parts[0])
-		if !ok {
-			return nil, parseError(parts[0], "record field name must be a symbol")
-		}
-		fieldType, err := parseRecordType(parts[1])
-		if err != nil {
-			return nil, fmt.Errorf("record %s field %s: %w", name, fieldName, err)
-		}
-		record.Fields = append(record.Fields, model.RecordField{
-			Name: canonicalFieldName(fieldName),
-			Type: fieldType,
-		})
+		return &ast.PCtor{Pos: posOf(t), Module: mod, Name: name}, nil
+	case lexer.KindInt:
+		p.advance()
+		v, _ := strconv.ParseInt(t.Value, 10, 64)
+		return &ast.PInt{Pos: posOf(t), Value: v}, nil
+	case lexer.KindString:
+		p.advance()
+		return &ast.PString{Pos: posOf(t), Value: t.Value}, nil
+	case lexer.KindLParen:
+		return p.parsePatternParens()
+	case lexer.KindLBrace:
+		return p.parsePatternRecord()
+	case lexer.KindLBracket:
+		return p.parsePatternList()
+	default:
+		return nil, p.errorf("expected pattern, got %s", t.Kind)
 	}
-	return record, nil
 }
 
-func parseTypeDef(node sexp.Node) (*typeDef, error) {
-	if len(node.Children) < 3 {
-		return nil, parseError(node, "define-type expects a name and at least one variant")
+func (p *parser) parsePatternList() (ast.Pattern, error) {
+	openTok, _ := p.expect(lexer.KindLBracket)
+	if _, ok := p.accept(lexer.KindRBracket); ok {
+		return &ast.PList{Pos: posOf(openTok)}, nil
 	}
-	name, ok := symbolValue(node.Children[1])
-	if !ok {
-		return nil, parseError(node.Children[1], "define-type name must be a symbol")
-	}
-	out := &typeDef{Name: name}
-	seen := map[string]bool{}
-	for _, variantNode := range node.Children[2:] {
-		parts, err := listChildren(variantNode, "type variant")
+	var elems []ast.Pattern
+	for {
+		e, err := p.parsePattern()
 		if err != nil {
 			return nil, err
 		}
-		if len(parts) == 0 {
-			return nil, parseError(variantNode, "type variant cannot be empty")
+		elems = append(elems, e)
+		if _, ok := p.accept(lexer.KindComma); !ok {
+			break
 		}
-		variantName, ok := symbolValue(parts[0])
-		if !ok {
-			return nil, parseError(parts[0], "type variant name must be a symbol")
+	}
+	if _, err := p.expect(lexer.KindRBracket); err != nil {
+		return nil, err
+	}
+	return &ast.PList{Pos: posOf(openTok), Elements: elems}, nil
+}
+
+// parsePatternParens: (), (p), (p, q), or (Ctor a b)
+func (p *parser) parsePatternParens() (ast.Pattern, error) {
+	openTok, _ := p.expect(lexer.KindLParen)
+	if _, ok := p.accept(lexer.KindRParen); ok {
+		return &ast.PUnit{Pos: posOf(openTok)}, nil
+	}
+	first, err := p.parsePattern()
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := p.accept(lexer.KindRParen); ok {
+		return first, nil
+	}
+	members := []ast.Pattern{first}
+	for {
+		if _, ok := p.accept(lexer.KindComma); !ok {
+			break
 		}
-		canonicalVariant := canonicalFieldName(variantName)
-		if seen[canonicalVariant] {
-			return nil, parseError(parts[0], "type variant %q is declared more than once", variantName)
+		next, err := p.parsePattern()
+		if err != nil {
+			return nil, err
 		}
-		seen[canonicalVariant] = true
-		variant := model.TypeVariant{Name: canonicalVariant}
-		for _, fieldNode := range parts[1:] {
-			fieldParts, err := listChildren(fieldNode, "type variant field")
+		members = append(members, next)
+	}
+	if _, err := p.expect(lexer.KindRParen); err != nil {
+		return nil, err
+	}
+	return &ast.PTuple{Pos: posOf(openTok), Members: members}, nil
+}
+
+// parsePattern parses a full pattern, allowing constructor application and
+// the cons operator `head :: tail`.
+//
+//	p     ::= ctor pat* | cons
+//	cons  ::= atom ("::" cons)?
+func (p *parser) parsePattern() (ast.Pattern, error) {
+	t := p.peek()
+	if t.Kind == lexer.KindUpperName {
+		mod, name, err := p.parseQualifiedUpper(t)
+		if err != nil {
+			return nil, err
+		}
+		ctor := &ast.PCtor{Pos: posOf(t), Module: mod, Name: name}
+		for isPatternAtomStart(p.peek()) {
+			arg, err := p.parsePatternAtom()
 			if err != nil {
 				return nil, err
 			}
-			if len(fieldParts) != 2 {
-				return nil, parseError(fieldNode, "type variant fields must look like (name type)")
-			}
-			fieldName, ok := symbolValue(fieldParts[0])
-			if !ok {
-				return nil, parseError(fieldParts[0], "type variant field name must be a symbol")
-			}
-			fieldType, err := parseRecordType(fieldParts[1])
-			if err != nil {
-				return nil, fmt.Errorf("type %s variant %s field %s: %w", name, variantName, fieldName, err)
-			}
-			variant.Fields = append(variant.Fields, model.RecordField{
-				Name: canonicalFieldName(fieldName),
-				Type: fieldType,
-			})
+			ctor.Args = append(ctor.Args, arg)
 		}
-		out.Variants = append(out.Variants, variant)
+		// Allow `Just x :: rest` style — wrap ctor in cons if `::` follows.
+		return p.parsePatternConsTail(ctor)
 	}
-	return out, nil
+	atom, err := p.parsePatternAtom()
+	if err != nil {
+		return nil, err
+	}
+	return p.parsePatternConsTail(atom)
 }
 
-func parseAppDef(node sexp.Node) (*appDef, error) {
-	if len(node.Children) < 2 {
-		return nil, parseError(node, "define-app expects a name")
+// parsePatternConsTail handles optional `:: tail` after a pattern.
+// Right-associative, so `a :: b :: rest` is `a :: (b :: rest)`.
+func (p *parser) parsePatternConsTail(head ast.Pattern) (ast.Pattern, error) {
+	if p.peek().Kind != lexer.KindDoubleCol {
+		return head, nil
 	}
-	name, ok := symbolValue(node.Children[1])
-	if !ok {
-		return nil, parseError(node.Children[1], "define-app name must be a symbol")
+	consTok := p.advance()
+	tail, err := p.parsePattern()
+	if err != nil {
+		return nil, err
 	}
-	app := &appDef{Name: name}
-	for _, clause := range node.Children[2:] {
-		parts, err := listChildren(clause, "define-app clause")
+	return &ast.PCons{Pos: posOf(consTok), Head: head, Tail: tail}, nil
+}
+
+func (p *parser) parsePatternRecord() (ast.Pattern, error) {
+	openTok, _ := p.expect(lexer.KindLBrace)
+	rec := &ast.PRecord{Pos: posOf(openTok)}
+	if _, ok := p.accept(lexer.KindRBrace); ok {
+		return rec, nil
+	}
+	for {
+		nameTok, err := p.expect(lexer.KindLowerName)
 		if err != nil {
 			return nil, err
 		}
-		head, _ := symbolValue(parts[0])
-		switch head {
-		case "config":
-			if len(parts) != 2 {
-				return nil, parseError(clause, "config expects one symbol")
-			}
-			app.ConfigRef, _ = symbolValue(parts[1])
-		case "auth":
-			if len(parts) != 2 {
-				return nil, parseError(clause, "auth expects one symbol")
-			}
-			app.AuthRef, _ = symbolValue(parts[1])
-		case "entities":
-			for _, part := range parts[1:] {
-				symbol, ok := symbolValue(part)
-				if !ok {
-					return nil, parseError(part, "entities expects symbols")
-				}
-				app.EntitySymbols = append(app.EntitySymbols, symbol)
-			}
-		case "queries":
-			for _, part := range parts[1:] {
-				symbol, ok := symbolValue(part)
-				if !ok {
-					return nil, parseError(part, "queries expects symbols")
-				}
-				app.QuerySymbols = append(app.QuerySymbols, symbol)
-			}
-		case "actions":
-			for _, part := range parts[1:] {
-				symbol, ok := symbolValue(part)
-				if !ok {
-					return nil, parseError(part, "actions expects symbols")
-				}
-				app.ActionSymbols = append(app.ActionSymbols, symbol)
-			}
-		case "screens":
-			for _, part := range parts[1:] {
-				symbol, ok := symbolValue(part)
-				if !ok {
-					return nil, parseError(part, "screens expects symbols")
-				}
-				app.ScreenSymbols = append(app.ScreenSymbols, symbol)
-			}
-		case "backend":
-			if err := parseAppSection(parts[1:], "backend", app); err != nil {
+		rec.Fields = append(rec.Fields, nameTok.Value)
+		if _, ok := p.accept(lexer.KindComma); !ok {
+			break
+		}
+	}
+	if _, err := p.expect(lexer.KindRBrace); err != nil {
+		return nil, err
+	}
+	return rec, nil
+}
+
+func isPatternAtomStart(t lexer.Token) bool {
+	switch t.Kind {
+	case lexer.KindLowerName, lexer.KindUpperName, lexer.KindUnderscore,
+		lexer.KindInt, lexer.KindString, lexer.KindLParen, lexer.KindLBrace,
+		lexer.KindLBracket:
+		return true
+	}
+	return false
+}
+
+// --- Expressions ---
+
+// parseExpr parses a full expression. Operator precedence is handled in a
+// separate pass via a Pratt-style loop on binary ops.
+func (p *parser) parseExpr() (ast.Expr, error) {
+	return p.parseBinop(0)
+}
+
+// Binary operator precedence (loosely Elm-aligned, simplified).
+// Higher number binds tighter.
+type opInfo struct {
+	prec   int
+	rAssoc bool
+}
+
+var opTable = map[string]opInfo{
+	"|>": {1, false},
+	"<|": {1, true},
+	"||": {2, true},
+	"&&": {3, true},
+	"==": {4, false},
+	"/=": {4, false},
+	"<":  {4, false},
+	">":  {4, false},
+	"<=": {4, false},
+	">=": {4, false},
+	"++": {5, true},
+	"::": {5, true},
+	"+":  {6, false},
+	"-":  {6, false},
+	"*":  {7, false},
+	"/":  {7, false},
+}
+
+func tokenToOp(t lexer.Token) (string, bool) {
+	switch t.Kind {
+	case lexer.KindPipeRight:
+		return "|>", true
+	case lexer.KindPipeLeft:
+		return "<|", true
+	case lexer.KindOr:
+		return "||", true
+	case lexer.KindAnd:
+		return "&&", true
+	case lexer.KindEqualsEq:
+		return "==", true
+	case lexer.KindNotEq:
+		return "/=", true
+	case lexer.KindLT:
+		return "<", true
+	case lexer.KindGT:
+		return ">", true
+	case lexer.KindLTE:
+		return "<=", true
+	case lexer.KindGTE:
+		return ">=", true
+	case lexer.KindAppend:
+		return "++", true
+	case lexer.KindDoubleCol:
+		return "::", true
+	case lexer.KindPlus:
+		return "+", true
+	case lexer.KindMinus:
+		return "-", true
+	case lexer.KindStar:
+		return "*", true
+	case lexer.KindSlash:
+		return "/", true
+	}
+	return "", false
+}
+
+// parseBinop is a Pratt-like precedence climbing loop.
+func (p *parser) parseBinop(minPrec int) (ast.Expr, error) {
+	left, err := p.parseApp()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		op, ok := tokenToOp(p.peek())
+		if !ok {
+			return left, nil
+		}
+		info, known := opTable[op]
+		if !known || info.prec < minPrec {
+			return left, nil
+		}
+		opTok := p.advance()
+		nextMin := info.prec + 1
+		if info.rAssoc {
+			nextMin = info.prec
+		}
+		right, err := p.parseBinop(nextMin)
+		if err != nil {
+			return nil, err
+		}
+		left = &ast.EBinop{Pos: posOf(opTok), Op: op, Left: left, Right: right}
+	}
+}
+
+// parseApp parses function application via juxtaposition. Field access binds
+// tighter than application: `f x.y` parses as `f (x.y)`, not `(f x).y`.
+//
+//	atom_chain ::= atom ("." lowerName)*
+//	app        ::= atom_chain (atom_chain)*
+func (p *parser) parseApp() (ast.Expr, error) {
+	// unary minus
+	if p.peek().Kind == lexer.KindMinus {
+		minusTok := p.advance()
+		inner, err := p.parseApp()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.ENegate{Pos: posOf(minusTok), Inner: inner}, nil
+	}
+	first, err := p.parseAtomChain()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		t := p.peek()
+		if !isExprAtomStart(t) || t.Column <= p.boundaryCol {
+			break
+		}
+		arg, err := p.parseAtomChain()
+		if err != nil {
+			return nil, err
+		}
+		first = &ast.EApp{Pos: first.Position(), Fn: first, Arg: arg}
+	}
+	return first, nil
+}
+
+// parseAtomChain parses an atom followed by zero or more `.field` accesses.
+// This binds tighter than application.
+func (p *parser) parseAtomChain() (ast.Expr, error) {
+	atom, err := p.parseExprAtom()
+	if err != nil {
+		return nil, err
+	}
+	for p.peek().Kind == lexer.KindDot && p.peekAt(1).Kind == lexer.KindLowerName {
+		p.advance() // .
+		fieldTok := p.advance()
+		atom = &ast.EFieldAccess{Pos: posOf(fieldTok), Record: atom, Field: fieldTok.Value}
+	}
+	return atom, nil
+}
+
+// parseExprAtom: a single non-application expression. Field chains are
+// handled in parseApp, not here.
+func (p *parser) parseExprAtom() (ast.Expr, error) {
+	t := p.peek()
+	switch t.Kind {
+	case lexer.KindInt:
+		p.advance()
+		v, _ := strconv.ParseInt(t.Value, 10, 64)
+		return &ast.EInt{Pos: posOf(t), Value: v}, nil
+	case lexer.KindFloat:
+		p.advance()
+		v, _ := strconv.ParseFloat(t.Value, 64)
+		return &ast.EFloat{Pos: posOf(t), Value: v}, nil
+	case lexer.KindString:
+		p.advance()
+		return &ast.EString{Pos: posOf(t), Value: t.Value}, nil
+	case lexer.KindLowerName:
+		p.advance()
+		return &ast.EVar{Pos: posOf(t), Name: t.Value}, nil
+	case lexer.KindUpperName:
+		mod, name, err := p.parseQualifiedUpperOrValue(t)
+		if err != nil {
+			return nil, err
+		}
+		return p.makeQualifiedExpr(t, mod, name), nil
+	case lexer.KindDot:
+		// Bare `.name` reaches here only when the lexer didn't mark it as
+		// a FieldDot (no preceding whitespace at start of expression).
+		if p.peekAt(1).Kind != lexer.KindLowerName {
+			return nil, p.errorf("expected field name after '.'")
+		}
+		p.advance() // .
+		nameTok := p.advance()
+		return &ast.EFieldAccessor{Pos: posOf(t), Field: nameTok.Value}, nil
+	case lexer.KindFieldDot:
+		p.advance()
+		return &ast.EFieldAccessor{Pos: posOf(t), Field: t.Value}, nil
+	case lexer.KindLParen:
+		return p.parseExprParens()
+	case lexer.KindLBracket:
+		return p.parseExprList()
+	case lexer.KindLBrace:
+		return p.parseExprRecord()
+	case lexer.KindBackslash:
+		return p.parseLambda()
+	case lexer.KindIf:
+		return p.parseIf()
+	case lexer.KindCase:
+		return p.parseCase()
+	case lexer.KindLet:
+		return p.parseLet()
+	default:
+		return nil, p.errorf("expected expression, got %s", t.Kind)
+	}
+}
+
+// makeQualifiedExpr decides between EQualified (Module.lowerName style is
+// tricky — needs lookahead) and ECtor / EVar based on whether the final
+// segment was upper or lower case.
+//
+// For now: UpperName always becomes ECtor (with optional module).
+// Module.lowerName access needs separate handling — we handle field access
+// (lowerName.field) via parseFieldChain; cross-module qualified value access
+// via Module.foo will be added later when needed.
+func (p *parser) makeQualifiedExpr(first lexer.Token, mod ast.ModuleName, name string) ast.Expr {
+	return &ast.ECtor{Pos: posOf(first), Module: mod, Name: name}
+}
+
+// parseQualifiedUpperOrValue: Foo, Foo.Bar, Foo.Bar.value (value is lowerName)
+//
+// This is more permissive than parseQualifiedUpper: it allows the chain to
+// end in a lowerName (a qualified value reference).
+//
+// For now we only support qualified UpperName chains (e.g. Foo.Bar -> ECtor).
+// Module.value (Foo.bar where bar is lowercase) will be added when we wire
+// imports — for now we treat dotted access on values as field access.
+func (p *parser) parseQualifiedUpperOrValue(first lexer.Token) (ast.ModuleName, string, error) {
+	return p.parseQualifiedUpper(first)
+}
+
+func (p *parser) parseExprParens() (ast.Expr, error) {
+	openTok, _ := p.expect(lexer.KindLParen)
+	if _, ok := p.accept(lexer.KindRParen); ok {
+		return &ast.EUnit{Pos: posOf(openTok)}, nil
+	}
+	first, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := p.accept(lexer.KindRParen); ok {
+		return first, nil // grouping
+	}
+	members := []ast.Expr{first}
+	for {
+		if _, ok := p.accept(lexer.KindComma); !ok {
+			break
+		}
+		next, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		members = append(members, next)
+	}
+	if _, err := p.expect(lexer.KindRParen); err != nil {
+		return nil, err
+	}
+	return &ast.ETuple{Pos: posOf(openTok), Members: members}, nil
+}
+
+func (p *parser) parseExprList() (ast.Expr, error) {
+	openTok, _ := p.expect(lexer.KindLBracket)
+	if _, ok := p.accept(lexer.KindRBracket); ok {
+		return &ast.EList{Pos: posOf(openTok)}, nil
+	}
+	var elems []ast.Expr
+	for {
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		elems = append(elems, e)
+		if _, ok := p.accept(lexer.KindComma); !ok {
+			break
+		}
+	}
+	if _, err := p.expect(lexer.KindRBracket); err != nil {
+		return nil, err
+	}
+	return &ast.EList{Pos: posOf(openTok), Elements: elems}, nil
+}
+
+// parseExprRecord: { a = 1, b = 2 } or { r | a = 1, b = 2 }
+func (p *parser) parseExprRecord() (ast.Expr, error) {
+	openTok, _ := p.expect(lexer.KindLBrace)
+	if _, ok := p.accept(lexer.KindRBrace); ok {
+		return &ast.ERecord{Pos: posOf(openTok)}, nil
+	}
+	// Look ahead for record update: lowerName |
+	if p.peek().Kind == lexer.KindLowerName && p.peekAt(1).Kind == lexer.KindPipe {
+		base := p.advance() // record name
+		baseExpr := &ast.EVar{Pos: posOf(base), Name: base.Value}
+		p.advance() // |
+		update := &ast.ERecordUpdate{Pos: posOf(openTok), Record: baseExpr}
+		for {
+			f, err := p.parseRecordField()
+			if err != nil {
 				return nil, err
 			}
-		case "frontend":
-			if err := parseFrontendSection(parts[1:], app); err != nil {
-				return nil, err
-			}
-		default:
-			return nil, parseError(parts[0], "unknown define-app clause %q", head)
-		}
-	}
-	return app, nil
-}
-
-func parseAppSection(clauses []sexp.Node, label string, app *appDef) error {
-	for _, clause := range clauses {
-		parts, err := listChildren(clause, label+" clause")
-		if err != nil {
-			return err
-		}
-		head, _ := symbolValue(parts[0])
-		switch head {
-		case "entities":
-			for _, part := range parts[1:] {
-				symbol, ok := symbolValue(part)
-				if !ok {
-					return parseError(part, "entities expects symbols")
-				}
-				app.EntitySymbols = append(app.EntitySymbols, symbol)
-			}
-		case "queries":
-			for _, part := range parts[1:] {
-				symbol, ok := symbolValue(part)
-				if !ok {
-					return parseError(part, "queries expects symbols")
-				}
-				app.QuerySymbols = append(app.QuerySymbols, symbol)
-			}
-		case "actions":
-			for _, part := range parts[1:] {
-				symbol, ok := symbolValue(part)
-				if !ok {
-					return parseError(part, "actions expects symbols")
-				}
-				app.ActionSymbols = append(app.ActionSymbols, symbol)
-			}
-		default:
-			return parseError(parts[0], "unknown %s clause %q", label, head)
-		}
-	}
-	return nil
-}
-
-func parseFrontendSection(clauses []sexp.Node, app *appDef) error {
-	for _, clause := range clauses {
-		parts, err := listChildren(clause, "frontend clause")
-		if err != nil {
-			return err
-		}
-		head, _ := symbolValue(parts[0])
-		switch head {
-		case "screens":
-			for _, part := range parts[1:] {
-				symbol, ok := symbolValue(part)
-				if !ok {
-					return parseError(part, "screens expects symbols")
-				}
-				app.ScreenSymbols = append(app.ScreenSymbols, symbol)
-			}
-		default:
-			return parseError(parts[0], "unknown frontend clause %q", head)
-		}
-	}
-	return nil
-}
-
-
-func validateEntitySchema(entity *model.Entity, entities map[string]*model.Entity) error {
-	for _, field := range entity.Fields {
-		if field.RelationEntity == "" {
-			continue
-		}
-		if entities[field.RelationEntity] == nil {
-			return fmt.Errorf("entity %s field %s references unknown entity %s", entity.Name, field.Name, field.RelationEntity)
-		}
-	}
-	for _, constraint := range entity.Unique {
-		if len(constraint.Fields) == 0 {
-			return fmt.Errorf("entity %s has an empty unique constraint", entity.Name)
-		}
-		for _, fieldName := range constraint.Fields {
-			if findEntityField(entity, fieldName) == nil {
-				return fmt.Errorf("entity %s unique references unknown field %s", entity.Name, fieldName)
-			}
-		}
-	}
-	return nil
-}
-
-func validateRecordTypes(record *model.Record, records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
-	for _, field := range record.Fields {
-		if err := validateRecordTypeExpr(field.Type, records, types, entities); err != nil {
-			return fmt.Errorf("record %s field %s: %w", record.Name, field.Name, err)
-		}
-	}
-	return nil
-}
-
-func validateSumType(sumType *model.EnumType, records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
-	if len(sumType.Variants) == 0 {
-		return fmt.Errorf("type %s must have at least one variant", sumType.Name)
-	}
-	for _, variant := range sumType.Variants {
-		for _, field := range variant.Fields {
-			if err := validateRecordTypeExpr(field.Type, records, types, entities); err != nil {
-				return fmt.Errorf("type %s variant %s field %s: %w", sumType.Name, variant.Name, field.Name, err)
-			}
-		}
-	}
-	return nil
-}
-
-
-func validateRecordTypeExpr(typeExpr string, records map[string]*model.Record, types map[string]*model.EnumType, entities map[string]*model.Entity) error {
-	switch typeExpr {
-	case "string", "bool", "int", "decimal", "date", "datetime", "cursor", "(unit)":
-		return nil
-	}
-	if strings.HasPrefix(typeExpr, "(maybe ") || strings.HasPrefix(typeExpr, "(list ") || strings.HasPrefix(typeExpr, "(result ") {
-		node, err := sexp.ParseOne(typeExpr)
-		if err != nil {
-			return err
-		}
-		if len(node.Children) == 0 || node.Children[0].Kind != sexp.KindSymbol {
-			return fmt.Errorf("invalid composite type")
-		}
-		switch node.Children[0].Value {
-		case "maybe", "list":
-			if len(node.Children) != 2 {
-				return fmt.Errorf("invalid composite type")
-			}
-			return validateRecordTypeExpr(sexp.InlineString(node.Children[1]), records, types, entities)
-		case "result":
-			if len(node.Children) != 3 {
-				return fmt.Errorf("invalid composite type")
-			}
-			if err := validateRecordTypeExpr(sexp.InlineString(node.Children[1]), records, types, entities); err != nil {
-				return err
-			}
-			return validateRecordTypeExpr(sexp.InlineString(node.Children[2]), records, types, entities)
-		default:
-			return fmt.Errorf("invalid composite type")
-		}
-	}
-	if records[typeExpr] == nil && types[typeExpr] == nil && entities[canonicalTypeName(typeExpr)] == nil {
-		return fmt.Errorf("unknown type %q", typeExpr)
-	}
-	return nil
-}
-
-func queryAllowedVariables(entity *model.Entity) map[string]struct{} {
-	out := map[string]struct{}{}
-	for _, field := range entity.Fields {
-		out[field.Name] = struct{}{}
-	}
-	return out
-}
-
-func findEntityField(entity *model.Entity, name string) *model.Field {
-	for i := range entity.Fields {
-		if entity.Fields[i].Name == name {
-			return &entity.Fields[i]
-		}
-	}
-	return nil
-}
-
-func buildBuiltinUser() model.Entity {
-	return model.Entity{
-		Name:       "User",
-		Table:      "users",
-		Resource:   "/users",
-		PrimaryKey: "id",
-		Fields: []model.Field{
-			{Name: "id", Type: "Int", Primary: true, Auto: true},
-			{Name: "email", Type: "String"},
-			{Name: "role", Type: "String"},
-			{Name: "created_at", Type: "DateTime", Auto: true},
-			{Name: "updated_at", Type: "DateTime", Auto: true},
-		},
-	}
-}
-
-func mergeUserEntity(base, extension model.Entity) model.Entity {
-	for _, field := range extension.Fields {
-		if field.Name == "id" || field.Name == "created_at" || field.Name == "updated_at" {
-			continue
-		}
-		replaced := false
-		for i := range base.Fields {
-			if base.Fields[i].Name == field.Name {
-				base.Fields[i] = field
-				replaced = true
+			update.Fields = append(update.Fields, f)
+			if _, ok := p.accept(lexer.KindComma); !ok {
 				break
 			}
 		}
-		if !replaced {
-			base.Fields = append(base.Fields[:len(base.Fields)-2], append([]model.Field{field}, base.Fields[len(base.Fields)-2:]...)...)
+		if _, err := p.expect(lexer.KindRBrace); err != nil {
+			return nil, err
+		}
+		return update, nil
+	}
+	rec := &ast.ERecord{Pos: posOf(openTok)}
+	for {
+		f, err := p.parseRecordField()
+		if err != nil {
+			return nil, err
+		}
+		rec.Fields = append(rec.Fields, f)
+		if _, ok := p.accept(lexer.KindComma); !ok {
+			break
 		}
 	}
-	base.Unique = extension.Unique
-	base.Validate = extension.Validate
-	base.Authorizations = extension.Authorizations
-	return base
+	if _, err := p.expect(lexer.KindRBrace); err != nil {
+		return nil, err
+	}
+	return rec, nil
 }
 
-func parameterVariables(params []string) map[string]struct{} {
-	out := map[string]struct{}{}
-	for _, param := range params {
-		out[param] = struct{}{}
-	}
-	return out
-}
-
-func frontendMessageArities(messages []model.FrontendMessage) map[string]int {
-	out := map[string]int{}
-	for _, message := range messages {
-		out[message.Name] = len(message.Parameters)
-	}
-	return out
-}
-
-func allowedCommandArities(queries []model.Query, actions []model.Action, aliases map[string]*model.TypeAlias) map[string]int {
-	out := map[string]int{}
-	for _, query := range queries {
-		out[query.Name] = len(query.Parameters)
-	}
-	for _, action := range actions {
-		alias := aliases[action.InputAlias]
-		if alias == nil {
-			continue
-		}
-		out[action.Name] = len(alias.Fields)
-	}
-	return out
-}
-
-func allowedCommandKinds(queries []model.Query, actions []model.Action) map[string]string {
-	out := map[string]string{}
-	for _, query := range queries {
-		out[query.Name] = "query"
-	}
-	for _, action := range actions {
-		out[action.Name] = "action"
-	}
-	return out
-}
-
-
-
-
-
-
-
-
-
-
-func validateFrontendCommandForms(node sexp.Node, allowedCommands map[string]int, commandKinds map[string]string, messageArities map[string]int) error {
-	if node.Kind != sexp.KindList {
-		return nil
-	}
-	if len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol && node.Children[0].Value == "command" {
-		if len(node.Children) != 4 {
-			return fmt.Errorf("command expects a backend call, a success reply, and a failure reply")
-		}
-		call := node.Children[1]
-		if call.Kind != sexp.KindList || len(call.Children) == 0 {
-			return fmt.Errorf("command expects a backend call like (load-orders) or (like-post post-id)")
-		}
-		if call.Children[0].Kind != sexp.KindSymbol {
-			return fmt.Errorf("command backend call must start with a symbol")
-		}
-		commandName := canonicalFunctionName(call.Children[0].Value)
-		arity, ok := allowedCommands[commandName]
-		if !ok {
-			return fmt.Errorf("command can only call a query or action, got %q", call.Children[0].Value)
-		}
-		if len(call.Children)-1 != arity {
-			return fmt.Errorf("%s expects %d arguments", call.Children[0].Value, arity)
-		}
-		for index, messageNode := range node.Children[2:] {
-			if messageNode.Kind != sexp.KindSymbol {
-				return fmt.Errorf("command reply message must be a symbol")
-			}
-			name := canonicalFieldName(messageNode.Value)
-			arity, ok := messageArities[name]
-			if !ok {
-				return fmt.Errorf("command references unknown message %q", messageNode.Value)
-			}
-			if arity > 1 {
-				return fmt.Errorf("command reply %q must accept at most one argument", messageNode.Value)
-			}
-			if index == 0 && commandKinds[commandName] == "action" && arity != 0 {
-				return fmt.Errorf("action success reply %q must not accept a payload", messageNode.Value)
-			}
-		}
-	}
-	for _, child := range node.Children {
-		if err := validateFrontendCommandForms(child, allowedCommands, commandKinds, messageArities); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateFrontendTransitionStructure(node sexp.Node) error {
-	if err := validateFrontendTransitionResult(node); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateFrontendTransitionResult(node sexp.Node) error {
-	if node.Kind == sexp.KindList && len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
-		switch node.Children[0].Value {
-		case "if":
-			if len(node.Children) != 4 {
-				return nil
-			}
-			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
-				return err
-			}
-			if err := validateFrontendTransitionResult(node.Children[2]); err != nil {
-				return err
-			}
-			return validateFrontendTransitionResult(node.Children[3])
-		case "cond":
-			for _, clause := range node.Children[1:] {
-				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
-					return nil
-				}
-				head := clause.Children[0]
-				if !(head.Kind == sexp.KindSymbol && head.Value == "else") {
-					if err := validateNoFrontendEffectForms(head); err != nil {
-						return err
-					}
-				}
-				if err := validateFrontendTransitionResult(clause.Children[1]); err != nil {
-					return err
-				}
-			}
-			return nil
-		case "match":
-			if len(node.Children) < 3 {
-				return nil
-			}
-			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
-				return err
-			}
-			for _, clause := range node.Children[2:] {
-				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
-					return nil
-				}
-				if err := validateFrontendTransitionResult(clause.Children[1]); err != nil {
-					return err
-				}
-			}
-			return nil
-		case "let", "let*":
-			if len(node.Children) != 3 {
-				return nil
-			}
-			bindings := node.Children[1]
-			if bindings.Kind != sexp.KindList {
-				return nil
-			}
-			for _, binding := range bindings.Children {
-				if binding.Kind != sexp.KindList || len(binding.Children) != 2 {
-					return nil
-				}
-				if err := validateNoFrontendEffectForms(binding.Children[1]); err != nil {
-					return err
-				}
-			}
-			return validateFrontendTransitionResult(node.Children[2])
-		case "begin":
-			if len(node.Children) < 2 {
-				return nil
-			}
-			for _, exprNode := range node.Children[1 : len(node.Children)-1] {
-				if err := validateNoFrontendEffectForms(exprNode); err != nil {
-					return err
-				}
-			}
-			return validateFrontendTransitionResult(node.Children[len(node.Children)-1])
-		}
-	}
-
-	if node.Kind != sexp.KindList || len(node.Children) != 2 {
-		return parseError(node, "screen transition must return (model effects)")
-	}
-	if looksLikeExtraModelWrapper(node.Children[0]) {
-		return parseError(node.Children[0], "screen transition model has an extra pair of parentheses; use (record ...) instead of ((record ...))")
-	}
-	if err := validateNoFrontendEffectForms(node.Children[0]); err != nil {
-		return err
-	}
-	return validateFrontendEffectsExpression(node.Children[1])
-}
-
-func looksLikeExtraModelWrapper(node sexp.Node) bool {
-	return node.Kind == sexp.KindList &&
-		len(node.Children) == 1 &&
-		node.Children[0].Kind == sexp.KindList &&
-		len(node.Children[0].Children) > 0 &&
-		node.Children[0].Children[0].Kind == sexp.KindSymbol
-}
-
-func validateFrontendEffectsExpression(node sexp.Node) error {
-	if node.Kind == sexp.KindList && len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
-		switch node.Children[0].Value {
-		case "if":
-			if len(node.Children) != 4 {
-				return nil
-			}
-			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
-				return err
-			}
-			if err := validateFrontendEffectsExpression(node.Children[2]); err != nil {
-				return err
-			}
-			return validateFrontendEffectsExpression(node.Children[3])
-		case "cond":
-			for _, clause := range node.Children[1:] {
-				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
-					return nil
-				}
-				head := clause.Children[0]
-				if !(head.Kind == sexp.KindSymbol && head.Value == "else") {
-					if err := validateNoFrontendEffectForms(head); err != nil {
-						return err
-					}
-				}
-				if err := validateFrontendEffectsExpression(clause.Children[1]); err != nil {
-					return err
-				}
-			}
-			return nil
-		case "match":
-			if len(node.Children) < 3 {
-				return nil
-			}
-			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
-				return err
-			}
-			for _, clause := range node.Children[2:] {
-				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
-					return nil
-				}
-				if err := validateFrontendEffectsExpression(clause.Children[1]); err != nil {
-					return err
-				}
-			}
-			return nil
-		case "let", "let*":
-			if len(node.Children) != 3 {
-				return nil
-			}
-			bindings := node.Children[1]
-			if bindings.Kind != sexp.KindList {
-				return nil
-			}
-			for _, binding := range bindings.Children {
-				if binding.Kind != sexp.KindList || len(binding.Children) != 2 {
-					return nil
-				}
-				if err := validateNoFrontendEffectForms(binding.Children[1]); err != nil {
-					return err
-				}
-			}
-			return validateFrontendEffectsExpression(node.Children[2])
-		case "begin":
-			if len(node.Children) < 2 {
-				return nil
-			}
-			for _, exprNode := range node.Children[1 : len(node.Children)-1] {
-				if err := validateNoFrontendEffectForms(exprNode); err != nil {
-					return err
-				}
-			}
-			return validateFrontendEffectsExpression(node.Children[len(node.Children)-1])
-		case "command", "go", "back":
-			return parseError(node, "screen effects must be a list; wrap %s in an extra pair of parentheses", node.Children[0].Value)
-		}
-	}
-
-	if node.Kind != sexp.KindList {
-		return parseError(node, "screen effects must be a list")
-	}
-	for _, child := range node.Children {
-		if err := validateFrontendEffect(child); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateFrontendEffect(node sexp.Node) error {
-	if node.Kind == sexp.KindList && len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
-		switch node.Children[0].Value {
-		case "if":
-			if len(node.Children) != 4 {
-				return nil
-			}
-			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
-				return err
-			}
-			if err := validateFrontendEffect(node.Children[2]); err != nil {
-				return err
-			}
-			return validateFrontendEffect(node.Children[3])
-		case "cond":
-			for _, clause := range node.Children[1:] {
-				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
-					return nil
-				}
-				head := clause.Children[0]
-				if !(head.Kind == sexp.KindSymbol && head.Value == "else") {
-					if err := validateNoFrontendEffectForms(head); err != nil {
-						return err
-					}
-				}
-				if err := validateFrontendEffect(clause.Children[1]); err != nil {
-					return err
-				}
-			}
-			return nil
-		case "match":
-			if len(node.Children) < 3 {
-				return nil
-			}
-			if err := validateNoFrontendEffectForms(node.Children[1]); err != nil {
-				return err
-			}
-			for _, clause := range node.Children[2:] {
-				if clause.Kind != sexp.KindList || len(clause.Children) != 2 {
-					return nil
-				}
-				if err := validateFrontendEffect(clause.Children[1]); err != nil {
-					return err
-				}
-			}
-			return nil
-		case "let", "let*":
-			if len(node.Children) != 3 {
-				return nil
-			}
-			bindings := node.Children[1]
-			if bindings.Kind != sexp.KindList {
-				return nil
-			}
-			for _, binding := range bindings.Children {
-				if binding.Kind != sexp.KindList || len(binding.Children) != 2 {
-					return nil
-				}
-				if err := validateNoFrontendEffectForms(binding.Children[1]); err != nil {
-					return err
-				}
-			}
-			return validateFrontendEffect(node.Children[2])
-		case "begin":
-			if len(node.Children) < 2 {
-				return nil
-			}
-			for _, exprNode := range node.Children[1 : len(node.Children)-1] {
-				if err := validateNoFrontendEffectForms(exprNode); err != nil {
-					return err
-				}
-			}
-			return validateFrontendEffect(node.Children[len(node.Children)-1])
-		case "command", "go", "back":
-			return validateFrontendEffectShape(node)
-		}
-	}
-
-	return parseError(node, "screen effects can only contain (command ...), (go ...), or (back)")
-}
-
-func validateNoFrontendEffectForms(node sexp.Node) error {
-	if node.Kind != sexp.KindList {
-		return nil
-	}
-	if len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol {
-		switch node.Children[0].Value {
-		case "command", "go", "back":
-			return parseError(node, "%s can only be used inside the effects list returned by screen init/update", node.Children[0].Value)
-		}
-	}
-	for _, child := range node.Children {
-		if err := validateNoFrontendEffectForms(child); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateFrontendEffectShape(node sexp.Node) error {
-	if node.Kind != sexp.KindList || len(node.Children) == 0 || node.Children[0].Kind != sexp.KindSymbol {
-		return parseError(node, "screen effect must be an operation")
-	}
-	switch node.Children[0].Value {
-	case "command":
-		if len(node.Children) != 4 {
-			return parseError(node, "command expects a backend call, a success reply, and a failure reply")
-		}
-		call := node.Children[1]
-		if call.Kind != sexp.KindList || len(call.Children) == 0 {
-			return parseError(node, "command expects a backend call like (load-orders) or (like-post post-id)")
-		}
-		if call.Children[0].Kind != sexp.KindSymbol {
-			return parseError(node, "command backend call must start with a symbol")
-		}
-		if node.Children[2].Kind != sexp.KindSymbol {
-			return parseError(node, "command reply message must be a symbol")
-		}
-		if node.Children[3].Kind != sexp.KindSymbol {
-			return parseError(node, "command failure reply must be a symbol")
-		}
-	case "go":
-		if len(node.Children) < 2 {
-			return parseError(node, "go expects a destination")
-		}
-		if node.Children[1].Kind != sexp.KindSymbol {
-			return parseError(node, "go destination must be a symbol")
-		}
-	case "back":
-		if len(node.Children) != 1 {
-			return parseError(node, "back does not accept arguments")
-		}
-	}
-	return nil
-}
-
-
-
-
-
-
-
-
-
-
-
-func validateFrontendScreenUIContext(screen model.FrontendScreen, hasUpdate bool, viewRawNodes []sexp.Node, sectionNodes []sexp.Node) error {
-	messageArities := frontendMessageArities(screen.Messages)
-	for _, viewRawNode := range viewRawNodes {
-		if err := validateFrontendViewNodeContext(viewRawNode, hasUpdate, messageArities); err != nil {
-			return err
-		}
-	}
-	for _, sectionNode := range sectionNodes {
-		if err := validateFrontendSectionContext(sectionNode, hasUpdate, messageArities); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateFrontendViewNodeContext(node sexp.Node, hasUpdate bool, messageArities map[string]int) error {
-	if node.Kind != sexp.KindList || len(node.Children) == 0 {
-		return nil
-	}
-	head, ok := symbolValue(node.Children[0])
-	if !ok {
-		return nil
-	}
-	switch head {
-	case "section":
-		for _, child := range node.Children[1:] {
-			if child.Kind != sexp.KindList || len(child.Children) == 0 {
-				continue
-			}
-			key, _ := symbolValue(child.Children[0])
-			if key == "title" {
-				continue
-			}
-			if err := validateFrontendViewNodeContext(child, hasUpdate, messageArities); err != nil {
-				return err
-			}
-		}
-	case "button":
-		if !hasUpdate {
-			return parseError(node, "button requires a screen that defines update")
-		}
-		if len(node.Children) >= 3 {
-			if err := validateFrontendMessageNode(node.Children[2], messageArities, "button"); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func validateFrontendSectionContext(sectionNode sexp.Node, hasUpdate bool, messageArities map[string]int) error {
-	items, err := listChildren(sectionNode, "section")
+func (p *parser) parseRecordField() (ast.RecField, error) {
+	nameTok, err := p.expect(lexer.KindLowerName)
 	if err != nil {
-		return err
+		return ast.RecField{}, err
 	}
-	_, index, err := parseSectionMetadata(items, sectionNode)
+	if _, err := p.expect(lexer.KindEquals); err != nil {
+		return ast.RecField{}, err
+	}
+	val, err := p.parseExpr()
 	if err != nil {
-		return err
+		return ast.RecField{}, err
 	}
-	children, err := nestedClauseList(items, sectionNode, index, "section")
+	return ast.RecField{Pos: posOf(nameTok), Name: nameTok.Value, Value: val}, nil
+}
+
+func (p *parser) parseLambda() (ast.Expr, error) {
+	tok, _ := p.expect(lexer.KindBackslash)
+	lam := &ast.ELambda{Pos: posOf(tok)}
+	for p.peek().Kind != lexer.KindArrow {
+		pat, err := p.parsePatternAtom()
+		if err != nil {
+			return nil, err
+		}
+		lam.Params = append(lam.Params, pat)
+	}
+	if _, err := p.expect(lexer.KindArrow); err != nil {
+		return nil, err
+	}
+	body, err := p.parseExpr()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for _, child := range children {
-		if err := validateFrontendSectionItemContext(child, hasUpdate, messageArities); err != nil {
-			return err
-		}
-	}
-	return nil
+	lam.Body = body
+	return lam, nil
 }
 
-func validateFrontendSectionItemContext(node sexp.Node, hasUpdate bool, messageArities map[string]int) error {
-	items, err := listChildren(node, "screen item")
+func (p *parser) parseIf() (ast.Expr, error) {
+	tok, _ := p.expect(lexer.KindIf)
+	cond, err := p.parseExpr()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	head, _ := symbolValue(items[0])
-	switch head {
-	case "if":
-		if len(items) >= 3 {
-			return validateFrontendSectionItemContext(items[2], hasUpdate, messageArities)
-		}
-	case "empty":
-		return nil
-	case "button":
-		if !hasUpdate {
-			return parseError(node, "button requires a screen that defines update")
-		}
-		if len(items) >= 3 {
-			if err := validateFrontendMessageNode(items[2], messageArities, "button"); err != nil {
-				return err
-			}
-		}
-	case "text-input", "textarea", "toggle", "select":
-		if !hasUpdate {
-			return parseError(node, "%s requires a screen that defines update", head)
-		}
+	if _, err := p.expect(lexer.KindThen); err != nil {
+		return nil, err
 	}
-	return nil
-}
-
-func validateFrontendMessageNode(node sexp.Node, messageArities map[string]int, context string) error {
-	switch node.Kind {
-	case sexp.KindSymbol:
-		name := canonicalFieldName(node.Value)
-		arity, ok := messageArities[name]
-		if !ok {
-			return parseError(node, "%s references unknown message %q", context, node.Value)
-		}
-		if arity != 0 {
-			return parseError(node, "%s message %q expects %d arguments", context, node.Value, arity)
-		}
-		return nil
-	case sexp.KindList:
-		if len(node.Children) == 0 || node.Children[0].Kind != sexp.KindSymbol {
-			return parseError(node, "%s message must start with a symbol", context)
-		}
-		head := node.Children[0].Value
-		switch head {
-		case "command", "go", "back":
-			return parseError(node, "%s can only be used inside the effects list returned by screen init/update", head)
-		}
-		name := canonicalFieldName(head)
-		arity, ok := messageArities[name]
-		if !ok {
-			return parseError(node.Children[0], "%s references unknown message %q", context, head)
-		}
-		if len(node.Children)-1 != arity {
-			return parseError(node, "%s message %q expects %d arguments", context, head, arity)
-		}
-		return nil
-	default:
-		return parseError(node, "%s message must be a symbol or list", context)
-	}
-}
-
-func allowedFunctionArities(functions map[string]*model.Function) map[string]int {
-	out := map[string]int{}
-	for name, fn := range functions {
-		out[name] = len(fn.Parameters)
-	}
-	return out
-}
-
-func allowedRecordFields(records map[string]*model.Record) map[string][]string {
-	out := map[string][]string{}
-	for name, record := range records {
-		fields := make([]string, 0, len(record.Fields))
-		for _, field := range record.Fields {
-			fields = append(fields, field.Name)
-		}
-		out[name] = fields
-	}
-	return out
-}
-
-func allowedTypeVariants(types map[string]*model.EnumType) map[string]int {
-	out := map[string]int{}
-	for _, typ := range types {
-		for _, variant := range typ.Variants {
-			out[variant.Name] = len(variant.Fields)
-		}
-	}
-	return out
-}
-
-func frontendCompileTimeVariables(screen model.FrontendScreen, node sexp.Node, includeUpdate bool) map[string]struct{} {
-	out := map[string]struct{}{}
-	for _, param := range screen.Parameters {
-		out[param] = struct{}{}
-	}
-	if includeUpdate {
-		if screen.UpdateMessage != "" {
-			out[screen.UpdateMessage] = struct{}{}
-		}
-		if screen.UpdateModel != "" {
-			out[screen.UpdateModel] = struct{}{}
-		}
-	}
-	collectNonHeadSymbols(node, out)
-	return out
-}
-
-func collectNonHeadSymbols(node sexp.Node, out map[string]struct{}) {
-	switch node.Kind {
-	case sexp.KindSymbol:
-		out[canonicalFieldName(node.Value)] = struct{}{}
-	case sexp.KindList:
-		skipHead := len(node.Children) > 0 && node.Children[0].Kind == sexp.KindSymbol
-		for index, child := range node.Children {
-			if skipHead && index == 0 {
-				continue
-			}
-			collectNonHeadSymbols(child, out)
-		}
-	}
-}
-
-func symbolValues(nodes []sexp.Node) []string {
-	out := make([]string, 0, len(nodes))
-	for _, node := range nodes {
-		symbol, _ := symbolValue(node)
-		out = append(out, symbol)
-	}
-	return out
-}
-
-func canonicalFunctionName(value string) string {
-	return canonicalFieldName(value)
-}
-
-func canonicalFunctionParameters(values []string) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		out = append(out, canonicalFieldName(value))
-	}
-	return out
-}
-
-func applyAuthSettings(target *model.AuthConfig, auth *authValue) {
-	if auth.CodeTTLMinutes != nil {
-		target.CodeTTLMinutes = *auth.CodeTTLMinutes
-	}
-	if auth.SessionTTLHours != nil {
-		target.SessionTTLHours = *auth.SessionTTLHours
-	}
-	if auth.AuthRequestCodeRateLimit != nil {
-		target.AuthRequestCodeRateLimit = auth.AuthRequestCodeRateLimit
-	}
-	if auth.AuthLoginRateLimit != nil {
-		target.AuthLoginRateLimit = auth.AuthLoginRateLimit
-	}
-	if auth.AdminUISessionTTLHours != nil {
-		target.AdminUISessionTTLHours = auth.AdminUISessionTTLHours
-	}
-	if auth.SecurityFramePolicy != nil {
-		target.SecurityFramePolicy = auth.SecurityFramePolicy
-	}
-	if auth.SecurityReferrerPolicy != nil {
-		target.SecurityReferrerPolicy = auth.SecurityReferrerPolicy
-	}
-	if auth.SecurityContentNoSniff != nil {
-		target.SecurityContentNoSniff = auth.SecurityContentNoSniff
-	}
-	if auth.EmailFrom != "" {
-		target.EmailFrom = auth.EmailFrom
-	}
-	if auth.EmailSubject != "" {
-		target.EmailSubject = auth.EmailSubject
-	}
-	if auth.SMTPHost != "" {
-		target.SMTPHost = auth.SMTPHost
-	}
-	if auth.SMTPPort != nil {
-		target.SMTPPort = *auth.SMTPPort
-	}
-	if auth.SMTPUsername != "" {
-		target.SMTPUsername = auth.SMTPUsername
-	}
-	if auth.SMTPPasswordEnv != "" {
-		target.SMTPPasswordEnv = auth.SMTPPasswordEnv
-	}
-	if auth.SMTPStartTLS != nil {
-		target.SMTPStartTLS = *auth.SMTPStartTLS
-	}
-}
-
-func defaultAuthConfig(appName string) *model.AuthConfig {
-	return &model.AuthConfig{
-		UserEntity:      "User",
-		EmailField:      "email",
-		RoleField:       "role",
-		CodeTTLMinutes:  10,
-		SessionTTLHours: 24,
-		EmailFrom:       "no-reply@mar.local",
-		EmailSubject:    "Your " + humanizeKebab(appName) + " login code",
-		SMTPPort:        587,
-		SMTPStartTLS:    true,
-	}
-}
-
-func defaultDatabaseName(appName string) string {
-	return appName + ".db"
-}
-
-func mapPrimitiveType(name string) (string, error) {
-	switch name {
-	case "string":
-		return "String", nil
-	case "int":
-		return "Int", nil
-	case "decimal":
-		return "Decimal", nil
-	case "bool":
-		return "Bool", nil
-	case "date":
-		return "Date", nil
-	case "datetime":
-		return "DateTime", nil
-	default:
-		return "", fmt.Errorf("unknown type %q", name)
-	}
-}
-
-func parseRecordType(node sexp.Node) (string, error) {
-	switch node.Kind {
-	case sexp.KindSymbol:
-		switch node.Value {
-		case "string", "bool", "int", "decimal", "date", "datetime", "cursor":
-			return node.Value, nil
-		default:
-			return canonicalFieldName(node.Value), nil
-		}
-	case sexp.KindList:
-		if len(node.Children) == 0 {
-			return "", fmt.Errorf("type list cannot be empty")
-		}
-		head, ok := symbolValue(node.Children[0])
-		if !ok {
-			return "", fmt.Errorf("type head must be a symbol")
-		}
-		switch head {
-		case "maybe", "list":
-			if len(node.Children) != 2 {
-				return "", fmt.Errorf("%s expects one type argument", head)
-			}
-			arg, err := parseRecordType(node.Children[1])
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("(%s %s)", head, arg), nil
-		case "result":
-			if len(node.Children) != 3 {
-				return "", fmt.Errorf("result expects two type arguments")
-			}
-			left, err := parseRecordType(node.Children[1])
-			if err != nil {
-				return "", err
-			}
-			right, err := parseRecordType(node.Children[2])
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("(result %s %s)", left, right), nil
-		case "unit":
-			if len(node.Children) != 1 {
-				return "", fmt.Errorf("unit does not accept arguments")
-			}
-			return "(unit)", nil
-		default:
-			return "", fmt.Errorf("unknown type form %q", head)
-		}
-	default:
-		return "", fmt.Errorf("unsupported type expression")
-	}
-}
-
-func listChildren(node sexp.Node, context string) ([]sexp.Node, error) {
-	if node.Kind != sexp.KindList || len(node.Children) == 0 {
-		return nil, parseError(node, "%s must be a non-empty list", context)
-	}
-	return node.Children, nil
-}
-
-func nestedClauseList(items []sexp.Node, parent sexp.Node, index int, label string) ([]sexp.Node, error) {
-	if len(items) == index {
-		return []sexp.Node{}, nil
-	}
-	if len(items) != index+1 || items[index].Kind != sexp.KindList {
-		return nil, parseError(parent, "%s expects one nested list of clauses", label)
-	}
-	return items[index].Children, nil
-}
-
-func symbolValue(node sexp.Node) (string, bool) {
-	if node.Kind != sexp.KindSymbol {
-		return "", false
-	}
-	return node.Value, true
-}
-
-func parseAuthorizeActions(node sexp.Node) ([]string, error) {
-	switch node.Kind {
-	case sexp.KindSymbol:
-		return []string{node.Value}, nil
-	case sexp.KindList:
-		if len(node.Children) == 0 {
-			return nil, parseError(node, "authorize action list cannot be empty")
-		}
-		actions := make([]string, 0, len(node.Children))
-		for _, child := range node.Children {
-			action, ok := symbolValue(child)
-			if !ok {
-				return nil, parseError(child, "authorize action names must be symbols")
-			}
-			actions = append(actions, action)
-		}
-		return actions, nil
-	default:
-		return nil, parseError(node, "authorize action name must be a symbol or a list of symbols")
-	}
-}
-
-func stringLiteral(node sexp.Node) string {
-	return node.Value
-}
-
-func symbolOrStringValue(node sexp.Node) (string, error) {
-	switch node.Kind {
-	case sexp.KindString, sexp.KindSymbol:
-		return node.Value, nil
-	default:
-		return "", fmt.Errorf("expected symbol or string")
-	}
-}
-
-func boolLiteral(node sexp.Node) (bool, error) {
-	if node.Kind != sexp.KindSymbol {
-		return false, fmt.Errorf("expected bool")
-	}
-	switch node.Value {
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	default:
-		return false, fmt.Errorf("expected bool")
-	}
-}
-
-func intLiteral(node sexp.Node) (int, error) {
-	if node.Kind != sexp.KindNumber && node.Kind != sexp.KindSymbol {
-		return 0, fmt.Errorf("expected integer")
-	}
-	value, err := strconv.Atoi(node.Value)
+	thenE, err := p.parseExpr()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return value, nil
+	if _, err := p.expect(lexer.KindElse); err != nil {
+		return nil, err
+	}
+	elseE, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.EIf{Pos: posOf(tok), Cond: cond, Then: thenE, Else: elseE}, nil
 }
 
-func literalValue(node sexp.Node) (any, error) {
-	switch node.Kind {
-	case sexp.KindString:
-		return node.Value, nil
-	case sexp.KindNumber:
-		if strings.Contains(node.Value, ".") {
-			return expr.ParseDecimal(node.Value)
+func (p *parser) parseCase() (ast.Expr, error) {
+	tok, _ := p.expect(lexer.KindCase)
+	subj, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.KindOf); err != nil {
+		return nil, err
+	}
+	caseExpr := &ast.ECase{Pos: posOf(tok), Subject: subj}
+
+	if !isPatternAtomStart(p.peek()) {
+		return nil, p.errorf("expected case branch pattern, got %s", p.peek().Kind)
+	}
+	branchCol := p.peek().Column
+
+	// Inside a branch body, parseApp/parseExpr should stop at any token whose
+	// column <= branchCol — that's the next branch (or something outside).
+	saved := p.boundaryCol
+	p.boundaryCol = branchCol
+	defer func() { p.boundaryCol = saved }()
+
+	for isPatternAtomStart(p.peek()) && p.peek().Column == branchCol {
+		branchTok := p.peek()
+		pat, err := p.parsePattern()
+		if err != nil {
+			return nil, err
 		}
-		return strconv.ParseInt(node.Value, 10, 64)
-	case sexp.KindSymbol:
-		switch node.Value {
-		case "true":
-			return true, nil
-		case "false":
-			return false, nil
-		default:
-			return nil, fmt.Errorf("unsupported default literal %q", node.Value)
+		if _, err := p.expect(lexer.KindArrow); err != nil {
+			return nil, err
 		}
+		body, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		caseExpr.Branches = append(caseExpr.Branches, ast.CaseBranch{
+			Pos: posOf(branchTok), Pattern: pat, Body: body,
+		})
+	}
+	return caseExpr, nil
+}
+
+// parseLet: let bindings in body
+//
+// Supports both = and <- bindings:
+//
+//	let
+//	    x = 1
+//	    y <- effect
+//	in
+//	    x + ...
+func (p *parser) parseLet() (ast.Expr, error) {
+	tok, _ := p.expect(lexer.KindLet)
+	let := &ast.ELet{Pos: posOf(tok)}
+
+	if p.peek().Kind == lexer.KindIn {
+		return nil, p.errorf("let needs at least one binding")
+	}
+	bindCol := p.peek().Column
+
+	saved := p.boundaryCol
+	p.boundaryCol = bindCol
+	for p.peek().Kind != lexer.KindIn && p.peek().Column == bindCol {
+		b, err := p.parseLetBinding()
+		if err != nil {
+			p.boundaryCol = saved
+			return nil, err
+		}
+		let.Bindings = append(let.Bindings, b)
+	}
+	p.boundaryCol = saved
+
+	if _, err := p.expect(lexer.KindIn); err != nil {
+		return nil, err
+	}
+	body, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	let.Body = body
+	return let, nil
+}
+
+func (p *parser) parseLetBinding() (ast.LetBinding, error) {
+	startTok := p.peek()
+	pat, err := p.parsePattern()
+	if err != nil {
+		return ast.LetBinding{}, err
+	}
+	binding := ast.LetBinding{Pos: posOf(startTok), Pattern: pat}
+	switch p.peek().Kind {
+	case lexer.KindEquals:
+		p.advance()
+	case lexer.KindBindArrow:
+		p.advance()
+		binding.IsBind = true
 	default:
-		return nil, fmt.Errorf("unsupported default literal")
+		return binding, p.errorf("expected '=' or '<-' in let binding, got %s", p.peek().Kind)
 	}
-}
-
-func validateFieldDefaultLiteral(entityName, fieldName string, field model.Field, literal any) error {
-	if field.RelationEntity != "" {
-		return nil
+	body, err := p.parseExpr()
+	if err != nil {
+		return binding, err
 	}
-	switch field.Type {
-	case "String":
-		if _, ok := literal.(string); !ok {
-			return fmt.Errorf("entity %s default %s: expects string, got %s", entityName, fieldName, literalTypeName(literal))
-		}
-	case "Bool":
-		if _, ok := literal.(bool); !ok {
-			return fmt.Errorf("entity %s default %s: expects bool, got %s", entityName, fieldName, literalTypeName(literal))
-		}
-	case "Int":
-		if _, ok := literal.(int64); !ok {
-			return fmt.Errorf("entity %s default %s: expects int, got %s", entityName, fieldName, literalTypeName(literal))
-		}
-	case "Decimal":
-		switch literal.(type) {
-		case int64, expr.Decimal:
-		default:
-			return fmt.Errorf("entity %s default %s: expects decimal, got %s", entityName, fieldName, literalTypeName(literal))
-		}
-	case "Date":
-		if _, ok := literal.(int64); !ok {
-			return fmt.Errorf("entity %s default %s: expects date, got %s", entityName, fieldName, literalTypeName(literal))
-		}
-	case "DateTime":
-		if _, ok := literal.(int64); !ok {
-			return fmt.Errorf("entity %s default %s: expects datetime, got %s", entityName, fieldName, literalTypeName(literal))
-		}
-	default:
-		if len(field.EnumValues) == 0 {
-			return nil
-		}
-		text, ok := literal.(string)
-		if !ok {
-			return fmt.Errorf("entity %s default %s: expects %s, got %s", entityName, fieldName, field.Type, literalTypeName(literal))
-		}
-		for _, enumValue := range field.EnumValues {
-			if text == enumValue {
-				return nil
-			}
-		}
-		return fmt.Errorf("entity %s default %s: must be one of: %s", entityName, fieldName, strings.Join(field.EnumValues, ", "))
-	}
-	return nil
+	binding.Body = body
+	return binding, nil
 }
 
-func literalTypeName(literal any) string {
-	switch literal.(type) {
-	case string:
-		return "string"
-	case bool:
-		return "bool"
-	case int64:
-		return "int"
-	case expr.Decimal:
-		return "decimal"
-	default:
-		return "unknown"
-	}
-}
-
-func canonicalTypeName(symbol string) string {
-	parts := strings.FieldsFunc(symbol, func(r rune) bool {
-		return r == '-' || r == '_'
-	})
-	var b strings.Builder
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		runes := []rune(part)
-		b.WriteRune(unicode.ToUpper(runes[0]))
-		if len(runes) > 1 {
-			b.WriteString(string(runes[1:]))
-		}
-	}
-	return b.String()
-}
-
-func canonicalFieldName(symbol string) string {
-	return strings.ReplaceAll(symbol, "-", "_")
-}
-
-func canonicalScreenName(symbol string) string {
-	return canonicalTypeName(symbol)
-}
-
-func inlineNodeString(node sexp.Node) string {
-	if node.Kind == "" {
-		return ""
-	}
-	return sexp.InlineString(node)
-}
-
-func pluralizeSnake(symbol string) string {
-	base := canonicalFieldName(symbol)
-	switch {
-	case strings.HasSuffix(base, "s"), strings.HasSuffix(base, "x"), strings.HasSuffix(base, "ch"), strings.HasSuffix(base, "sh"):
-		return base + "es"
-	case strings.HasSuffix(base, "y") && len(base) > 1 && !isVowel(rune(base[len(base)-2])):
-		return base[:len(base)-1] + "ies"
-	default:
-		return base + "s"
-	}
-}
-
-func isVowel(ch rune) bool {
-	switch unicode.ToLower(ch) {
-	case 'a', 'e', 'i', 'o', 'u':
+// isExprAtomStart returns whether the token can begin an expression atom
+// (used to decide if function application should continue).
+func isExprAtomStart(t lexer.Token) bool {
+	switch t.Kind {
+	case lexer.KindInt, lexer.KindFloat, lexer.KindString,
+		lexer.KindLowerName, lexer.KindUpperName, lexer.KindFieldDot,
+		lexer.KindLParen, lexer.KindLBracket, lexer.KindLBrace:
 		return true
-	default:
-		return false
 	}
-}
-
-func humanizeKebab(value string) string {
-	parts := strings.Split(value, "-")
-	for i, part := range parts {
-		if part == "" {
-			continue
-		}
-		runes := []rune(part)
-		runes[0] = unicode.ToUpper(runes[0])
-		parts[i] = string(runes)
-	}
-	return strings.Join(parts, " ")
-}
-
-func parseError(node sexp.Node, format string, args ...any) error {
-	return fmt.Errorf("line %d:%d: %s", node.Line, node.Column, fmt.Sprintf(format, args...))
+	return false
 }

@@ -1,7 +1,0 @@
-(define-entity todo
-    (fields ((title string) (done bool)))
-    (belongs-to ((user)))
-    (defaults ((user current-user))))
-
-(define-app personal-todo
-  (backend (entities todo)))

@@ -1,8 +1,0 @@
-.gitignore
-.vscode/**
-.vscode-test/**
-**/.DS_Store
-*.vsix
-node_modules/**
-extension.js
-package-lock.json
