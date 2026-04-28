@@ -270,6 +270,71 @@ func stdlibBindings() map[string]Type {
 			Vars: []int{a.ID},
 			Body: TArrow{From: TString, To: TResult(TString, a)},
 		},
+
+		// HTTP server (records used directly for Request/Response/Route)
+		// Request  : { url : String, method : String, body : String }
+		// Response : { status : Int, body : String }
+		// Route    : { method : String, path : String, handler : Request -> Effect String Response }
+		"serverServe": TArrow{
+			From: TInt,
+			To: TArrow{
+				From: TList(serverRouteType()),
+				To:   TEffect(TString, TUnit{}),
+			},
+		},
+		"serverGet":    serverRouteBuilderType(),
+		"serverPost":   serverRouteBuilderType(),
+		"serverPatch":  serverRouteBuilderType(),
+		"serverDelete": serverRouteBuilderType(),
+
+		"responseOk": TArrow{From: TString, To: serverResponseType()},
+		"responseNotFound": serverResponseType(),
+		"responseStatus":   TArrow{From: TInt, To: TArrow{From: TString, To: serverResponseType()}},
+	}
+}
+
+func serverRequestType() Type {
+	return TRecord{
+		Fields: map[string]Type{
+			"url":    TString,
+			"method": TString,
+			"body":   TString,
+		},
+		Order: []string{"url", "method", "body"},
+	}
+}
+
+func serverResponseType() Type {
+	return TRecord{
+		Fields: map[string]Type{
+			"status": TInt,
+			"body":   TString,
+		},
+		Order: []string{"status", "body"},
+	}
+}
+
+func serverRouteType() Type {
+	return TRecord{
+		Fields: map[string]Type{
+			"method":  TString,
+			"path":    TString,
+			"handler": TArrow{From: serverRequestType(), To: TEffect(TString, serverResponseType())},
+		},
+		Order: []string{"method", "path", "handler"},
+	}
+}
+
+// serverRouteBuilderType returns the type of Server.get/post/etc:
+//
+//	String -> (Request -> Effect String Response) -> Route
+func serverRouteBuilderType() Type {
+	return TArrow{
+		From: TString,
+		To: TArrow{
+			From: TArrow{From: serverRequestType(), To: TEffect(TString, serverResponseType())},
+			To:   serverRouteType(),
+		},
 	}
 }
 
@@ -305,6 +370,14 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"IO.readLine": "ioReadLine",
 		"JSON.encode": "jsonEncode",
 		"JSON.decode": "jsonDecode",
+		"Server.serve":     "serverServe",
+		"Server.get":       "serverGet",
+		"Server.post":      "serverPost",
+		"Server.patch":     "serverPatch",
+		"Server.delete":    "serverDelete",
+		"Response.ok":       "responseOk",
+		"Response.notFound": "responseNotFound",
+		"Response.status":   "responseStatus",
 	}
 	out := map[string]Type{}
 	for q, f := range mapping {

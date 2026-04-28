@@ -1,0 +1,25 @@
+module Server exposing (main)
+
+
+-- A minimal HTTP server: respond to GET / and GET /hello/:name
+-- (well, the second one matches /hello/* exactly — path patterns are MVP).
+
+
+hello : { url : String, method : String, body : String } -> Effect String { status : Int, body : String }
+hello _ =
+    Response.ok "Hello from mar!"
+        |> Effect.succeed
+
+
+goodbye : { url : String, method : String, body : String } -> Effect String { status : Int, body : String }
+goodbye _ =
+    Response.ok "Goodbye!"
+        |> Effect.succeed
+
+
+main : Effect String ()
+main =
+    Server.serve 3000
+        [ Server.get "/" hello
+        , Server.get "/bye" goodbye
+        ]

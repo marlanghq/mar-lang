@@ -17,6 +17,9 @@ func BaseEnv() *Env {
 	for name, v := range jsonBuiltins() {
 		env.Define(name, v)
 	}
+	for name, v := range serverBuiltins() {
+		env.Define(name, v)
+	}
 	env = extendBaseEnv(env)
 	// Register qualified aliases (List.map etc.) that point to the same values.
 	for q, f := range qualifiedAliasMapping() {
@@ -58,6 +61,14 @@ func qualifiedAliasMapping() map[string]string {
 		"IO.readLine": "ioReadLine",
 		"JSON.encode": "jsonEncode",
 		"JSON.decode": "jsonDecode",
+		"Server.serve":     "serverServe",
+		"Server.get":       "serverGet",
+		"Server.post":      "serverPost",
+		"Server.patch":     "serverPatch",
+		"Server.delete":    "serverDelete",
+		"Response.ok":       "responseOk",
+		"Response.notFound": "responseNotFound",
+		"Response.status":   "responseStatus",
 	}
 }
 
