@@ -1,0 +1,33 @@
+module DbExample exposing (main)
+
+
+-- A small SQLite-backed program.
+
+
+setup : Db -> Effect String ()
+setup db =
+    Db.exec db "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)"
+
+
+seed : Db -> Effect String ()
+seed db =
+    Db.exec db "DELETE FROM notes"
+        |> Effect.andThen (\_ ->
+            Db.exec db "INSERT INTO notes (body) VALUES ('hello'), ('world'), ('from mar')")
+
+
+printRow : { id : Maybe Int, body : Maybe String } -> Effect String ()
+printRow row =
+    case row.body of
+        Just b -> IO.println b
+        Nothing -> IO.println "(no body)"
+
+
+main : Effect String ()
+main =
+    Db.open ":memory:"
+        |> Effect.andThen (\db ->
+            setup db
+                |> Effect.andThen (\_ -> seed db)
+                |> Effect.andThen (\_ -> Db.query db "SELECT id, body FROM notes ORDER BY id")
+                |> Effect.andThen (\rows -> Effect.forEach printRow rows))

@@ -20,6 +20,12 @@ func BaseEnv() *Env {
 	for name, v := range serverBuiltins() {
 		env.Define(name, v)
 	}
+	for name, v := range dbBuiltins() {
+		env.Define(name, v)
+	}
+	for name, v := range entityBuiltins() {
+		env.Define(name, v)
+	}
 	env = extendBaseEnv(env)
 	// Register qualified aliases (List.map etc.) that point to the same values.
 	for q, f := range qualifiedAliasMapping() {
@@ -56,6 +62,8 @@ func qualifiedAliasMapping() map[string]string {
 		"Effect.fail":       "effectFail",
 		"Effect.map":        "effectMap",
 		"Effect.andThen":    "effectAndThen",
+		"Effect.forEach":    "effectForEach",
+		"Effect.sequence":   "effectSequence",
 		"IO.print":    "ioPrint",
 		"IO.println":  "ioPrintln",
 		"IO.readLine": "ioReadLine",
@@ -69,6 +77,17 @@ func qualifiedAliasMapping() map[string]string {
 		"Response.ok":       "responseOk",
 		"Response.notFound": "responseNotFound",
 		"Response.status":   "responseStatus",
+		"Db.open":     "dbOpen",
+		"Db.exec":     "dbExec",
+		"Db.query":    "dbQuery",
+		"Db.queryOne": "dbQueryOne",
+		"Entity.create":     "entityCreate",
+		"Entity.field":      "entityField",
+		"Entity.primaryKey": "entityPrimaryKey",
+		"Entity.notNull":    "entityNotNull",
+		"Entity.unique":     "entityUnique",
+		"Entity.foreignKey": "entityForeignKey",
+		"Entity.migrate":    "entityMigrate",
 	}
 }
 

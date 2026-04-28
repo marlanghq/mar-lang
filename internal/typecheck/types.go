@@ -224,3 +224,13 @@ func TResult(e, a Type) TCon {
 func TEffect(e, a Type) TCon {
 	return TCon{Name: "Effect", Args: []Type{e, a}}
 }
+
+// TDb returns the opaque "Db" type for a database connection.
+func TDb() TCon {
+	return TCon{Name: "Db"}
+}
+
+// TEntity returns the opaque "Entity" type.
+func TEntity() TCon {
+	return TCon{Name: "Entity"}
+}

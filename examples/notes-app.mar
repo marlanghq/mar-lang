@@ -1,0 +1,87 @@
+module NotesApp exposing (main)
+
+
+-- Working CRUD-ish HTTP API for notes, backed by SQLite.
+--
+-- Endpoints:
+--   GET  /              -> "Notes API"
+--   GET  /notes         -> all notes (one per line)
+--   GET  /notes/:id     -> the note's body, or 404
+--   POST /notes         -> insert the request body, return "ok"
+
+
+type alias Request =
+    { url : String
+    , method : String
+    , body : String
+    , params : String -> Maybe String
+    }
+
+
+type alias Response =
+    { status : Int
+    , body : String
+    }
+
+
+-- For now we re-open the DB on every request (MVP).
+withDb : (Db -> Effect String Response) -> Effect String Response
+withDb fn =
+    Db.open "./examples/notes-app.db"
+        |> Effect.andThen (\db ->
+            Db.exec db "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)"
+                |> Effect.andThen (\_ -> fn db))
+
+
+index : Request -> Effect String Response
+index _ =
+    Response.ok "Notes API\n" |> Effect.succeed
+
+
+renderRow : { id : Maybe Int, body : Maybe String } -> String
+renderRow row =
+    case row.id of
+        Just i ->
+            case row.body of
+                Just b -> String.fromInt i ++ ": " ++ b
+                Nothing -> String.fromInt i ++ ": (empty)"
+        Nothing -> "?"
+
+
+listAll : Request -> Effect String Response
+listAll _ =
+    withDb (\db ->
+        Db.query db "SELECT id, body FROM notes ORDER BY id"
+            |> Effect.map (\rows ->
+                Response.ok
+                    (List.foldl (\acc row -> acc ++ renderRow row ++ "\n") "" rows)))
+
+
+showOne : Request -> Effect String Response
+showOne req =
+    case req.params "id" of
+        Nothing -> Effect.succeed Response.notFound
+        Just id ->
+            withDb (\db ->
+                Db.queryOne db ("SELECT id, body FROM notes WHERE id = " ++ id)
+                    |> Effect.map (\maybeRow ->
+                        case maybeRow of
+                            Just row -> Response.ok (renderRow row ++ "\n")
+                            Nothing -> Response.notFound))
+
+
+create : Request -> Effect String Response
+create req =
+    withDb (\db ->
+        Db.exec db ("INSERT INTO notes (body) VALUES ('" ++ req.body ++ "')")
+            |> Effect.map (\_ -> Response.status 201 "created\n"))
+
+
+main : Effect String ()
+main =
+    Server.serve 3001
+        [ Server.get  "/"           index
+        , Server.get  "/notes"      listAll
+        , Server.get  "/notes/:id"  showOne
+        , Server.post "/notes"      create
+        ]

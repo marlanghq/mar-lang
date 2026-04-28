@@ -111,6 +111,60 @@ func effectBuiltins() map[string]Value {
 				return next
 			}), nil
 		}),
+
+		// Effect.forEach : (a -> Effect e ()) -> List a -> Effect e ()
+		"effectForEach": nativeFn(2, func(args []Value) (Value, error) {
+			fn := args[0]
+			list, ok := args[1].(VList)
+			if !ok {
+				return nil, errEffect("effectForEach: not a list")
+			}
+			return VEffect{
+				Tag: "forEach",
+				Run: func() (Value, error) {
+					for _, e := range list.Elements {
+						effVal, err := apply(fn, e)
+						if err != nil {
+							return nil, err
+						}
+						eff, ok := effVal.(VEffect)
+						if !ok {
+							return nil, errEffect("effectForEach: function did not return an Effect")
+						}
+						if _, err := eff.Run(); err != nil {
+							return nil, err
+						}
+					}
+					return VUnit{}, nil
+				},
+			}, nil
+		}),
+
+		// Effect.sequence : List (Effect e a) -> Effect e (List a)
+		"effectSequence": nativeFn(1, func(args []Value) (Value, error) {
+			list, ok := args[0].(VList)
+			if !ok {
+				return nil, errEffect("effectSequence: not a list")
+			}
+			return VEffect{
+				Tag: "sequence",
+				Run: func() (Value, error) {
+					out := make([]Value, len(list.Elements))
+					for i, e := range list.Elements {
+						eff, ok := e.(VEffect)
+						if !ok {
+							return nil, errEffect("effectSequence: list element is not an Effect")
+						}
+						v, err := eff.Run()
+						if err != nil {
+							return nil, err
+						}
+						out[i] = v
+					}
+					return VList{Elements: out}, nil
+				},
+			}, nil
+		}),
 	}
 }
 

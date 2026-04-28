@@ -246,6 +246,20 @@ func stdlibBindings() map[string]Type {
 				},
 			},
 		},
+		"effectForEach": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: b, To: TEffect(a, TUnit{})},
+				To:   TArrow{From: TList(b), To: TEffect(a, TUnit{})},
+			},
+		},
+		"effectSequence": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TList(TEffect(a, b)),
+				To:   TEffect(a, TList(b)),
+			},
+		},
 
 		// IO (effects parameterized in error type for compatibility)
 		"ioPrint": TForall{
@@ -290,17 +304,53 @@ func stdlibBindings() map[string]Type {
 		"responseOk": TArrow{From: TString, To: serverResponseType()},
 		"responseNotFound": serverResponseType(),
 		"responseStatus":   TArrow{From: TInt, To: TArrow{From: TString, To: serverResponseType()}},
+
+		// Database (low-level for MVP)
+		// Each row is returned as a record where every field is Maybe (since
+		// SQL columns can be NULL). Higher-level entity API can refine later.
+		"dbOpen": TArrow{From: TString, To: TEffect(TString, TDb())},
+		"dbExec": TArrow{
+			From: TDb(),
+			To:   TArrow{From: TString, To: TEffect(TString, TUnit{})},
+		},
+		"dbQuery": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TDb(),
+				To:   TArrow{From: TString, To: TEffect(TString, TList(a))},
+			},
+		},
+		"dbQueryOne": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TDb(),
+				To:   TArrow{From: TString, To: TEffect(TString, TMaybe(a))},
+			},
+		},
+
+		// Entity builder
+		"entityCreate":     TArrow{From: TString, To: TEntity()},
+		"entityField":      TArrow{From: TString, To: TArrow{From: TString, To: TArrow{From: TEntity(), To: TEntity()}}},
+		"entityPrimaryKey": TArrow{From: TString, To: TArrow{From: TEntity(), To: TEntity()}},
+		"entityNotNull":    TArrow{From: TString, To: TArrow{From: TEntity(), To: TEntity()}},
+		"entityUnique":     TArrow{From: TList(TString), To: TArrow{From: TEntity(), To: TEntity()}},
+		"entityForeignKey": TArrow{From: TString, To: TArrow{From: TString, To: TArrow{From: TString, To: TArrow{From: TEntity(), To: TEntity()}}}},
+		"entityMigrate":    TArrow{From: TDb(), To: TArrow{From: TList(TEntity()), To: TEffect(TString, TUnit{})}},
 	}
 }
 
 func serverRequestType() Type {
+	// params is `String -> Maybe String`: lookup by name. We use a function
+	// rather than a row record because routes with different param shapes
+	// must coexist in `List Route`, which requires uniform Route type.
 	return TRecord{
 		Fields: map[string]Type{
 			"url":    TString,
 			"method": TString,
 			"body":   TString,
+			"params": TArrow{From: TString, To: TMaybe(TString)},
 		},
-		Order: []string{"url", "method", "body"},
+		Order: []string{"url", "method", "body", "params"},
 	}
 }
 
@@ -365,6 +415,8 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Effect.fail":       "effectFail",
 		"Effect.map":        "effectMap",
 		"Effect.andThen":    "effectAndThen",
+		"Effect.forEach":    "effectForEach",
+		"Effect.sequence":   "effectSequence",
 		"IO.print":    "ioPrint",
 		"IO.println":  "ioPrintln",
 		"IO.readLine": "ioReadLine",
@@ -378,6 +430,17 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Response.ok":       "responseOk",
 		"Response.notFound": "responseNotFound",
 		"Response.status":   "responseStatus",
+		"Db.open":     "dbOpen",
+		"Db.exec":     "dbExec",
+		"Db.query":    "dbQuery",
+		"Db.queryOne": "dbQueryOne",
+		"Entity.create":     "entityCreate",
+		"Entity.field":      "entityField",
+		"Entity.primaryKey": "entityPrimaryKey",
+		"Entity.notNull":    "entityNotNull",
+		"Entity.unique":     "entityUnique",
+		"Entity.foreignKey": "entityForeignKey",
+		"Entity.migrate":    "entityMigrate",
 	}
 	out := map[string]Type{}
 	for q, f := range mapping {

@@ -1,0 +1,78 @@
+module NotesEntity exposing (main)
+
+
+-- Same notes API, but the schema is declared as an Entity value and
+-- migrated automatically on startup.
+
+
+type alias Request =
+    { url : String
+    , method : String
+    , body : String
+    , params : String -> Maybe String
+    }
+
+
+type alias Response =
+    { status : Int
+    , body : String
+    }
+
+
+-- Schema declaration
+notes : Entity
+notes =
+    Entity.create "notes"
+        |> Entity.field "id" "INTEGER"
+        |> Entity.field "body" "TEXT"
+        |> Entity.field "created_at" "DATETIME"
+        |> Entity.primaryKey "id"
+        |> Entity.notNull "body"
+
+
+renderRow : { id : Maybe Int, body : Maybe String, created_at : Maybe String } -> String
+renderRow row =
+    case row.body of
+        Just b -> String.fromInt (Maybe.withDefault 0 row.id) ++ ": " ++ b
+        Nothing -> "?"
+
+
+-- Handlers expect a Db connection passed in.
+listAll : Db -> Request -> Effect String Response
+listAll db _ =
+    Db.query db "SELECT id, body, created_at FROM notes ORDER BY id"
+        |> Effect.map (\rows ->
+            { status = 200
+            , body = List.foldl (\acc r -> acc ++ renderRow r ++ "\n") "" rows
+            })
+
+
+showOne : Db -> Request -> Effect String Response
+showOne db req =
+    case req.params "id" of
+        Nothing -> Effect.succeed Response.notFound
+        Just id ->
+            Db.queryOne db ("SELECT id, body, created_at FROM notes WHERE id = " ++ id)
+                |> Effect.map (\maybeRow ->
+                    case maybeRow of
+                        Just r -> Response.ok (renderRow r ++ "\n")
+                        Nothing -> Response.notFound)
+
+
+create : Db -> Request -> Effect String Response
+create db req =
+    Db.exec db ("INSERT INTO notes (body, created_at) VALUES ('" ++ req.body ++ "', datetime('now'))")
+        |> Effect.map (\_ -> Response.status 201 "created\n")
+
+
+main : Effect String ()
+main =
+    Db.open ":memory:"
+        |> Effect.andThen (\db ->
+            Entity.migrate db [notes]
+                |> Effect.andThen (\_ ->
+                    Server.serve 3002
+                        [ Server.get  "/notes"     (listAll db)
+                        , Server.get  "/notes/:id" (showOne db)
+                        , Server.post "/notes"     (create db)
+                        ]))
