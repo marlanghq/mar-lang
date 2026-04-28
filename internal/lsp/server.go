@@ -36,6 +36,7 @@ func RunStdio() error {
 		in:   bufio.NewReaderSize(os.Stdin, 1<<16),
 		out:  os.Stdout,
 		docs: map[string]string{},
+		idx:  map[string]*DocIndex{},
 	}
 	return s.loop()
 }
@@ -45,7 +46,8 @@ type Server struct {
 	in   *bufio.Reader
 	out  io.Writer
 	mu   sync.Mutex
-	docs map[string]string // uri -> latest contents
+	docs map[string]string    // uri -> latest contents
+	idx  map[string]*DocIndex // uri -> last successful analysis (symbols, types)
 }
 
 // --- JSON-RPC framing ---
@@ -158,6 +160,12 @@ func (s *Server) handle(msg *message) {
 		s.handleDidSave(msg)
 	case "textDocument/didClose":
 		s.handleDidClose(msg)
+	case "textDocument/hover":
+		s.handleHover(msg)
+	case "textDocument/definition":
+		s.handleDefinition(msg)
+	case "textDocument/documentSymbol":
+		s.handleDocumentSymbol(msg)
 	case "shutdown":
 		s.respond(msg.ID, nil)
 	case "exit":
@@ -187,6 +195,9 @@ func (s *Server) handleInitialize(msg *message) {
 				"change":    1, // 1 = Full
 				"save":      true,
 			},
+			"hoverProvider":          true,
+			"definitionProvider":     true,
+			"documentSymbolProvider": true,
 		},
 		"serverInfo": map[string]any{
 			"name":    "mar-lsp",
@@ -231,9 +242,7 @@ func (s *Server) handleDidOpen(msg *message) {
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
 		return
 	}
-	s.mu.Lock()
-	s.docs[p.TextDocument.URI] = p.TextDocument.Text
-	s.mu.Unlock()
+	s.updateDoc(p.TextDocument.URI, p.TextDocument.Text)
 	s.publishDiagnostics(p.TextDocument.URI, p.TextDocument.Text)
 }
 
@@ -245,12 +254,19 @@ func (s *Server) handleDidChange(msg *message) {
 	if len(p.ContentChanges) == 0 {
 		return
 	}
-	// Full sync (we advertised change=1): last change carries the full text.
 	text := p.ContentChanges[len(p.ContentChanges)-1].Text
-	s.mu.Lock()
-	s.docs[p.TextDocument.URI] = text
-	s.mu.Unlock()
+	s.updateDoc(p.TextDocument.URI, text)
 	s.publishDiagnostics(p.TextDocument.URI, text)
+}
+
+// updateDoc replaces the cached source + symbol index for one document.
+// Called on every open / change so hover / definition / etc. see the
+// latest state without re-running a full type-check on demand.
+func (s *Server) updateDoc(uri, text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.docs[uri] = text
+	s.idx[uri] = BuildIndex(uri, text)
 }
 
 func (s *Server) handleDidSave(msg *message) {
@@ -276,12 +292,168 @@ func (s *Server) handleDidClose(msg *message) {
 	}
 	s.mu.Lock()
 	delete(s.docs, p.TextDocument.URI)
+	delete(s.idx, p.TextDocument.URI)
 	s.mu.Unlock()
 	// Clear diagnostics for the closed document.
 	s.notify("textDocument/publishDiagnostics", map[string]any{
 		"uri":         p.TextDocument.URI,
 		"diagnostics": []any{},
 	})
+}
+
+// --- Hover / Definition / DocumentSymbol ---
+
+type textDocPositionParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Position lspPosition `json:"position"`
+}
+
+type textDocOnlyParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+}
+
+func (s *Server) handleHover(msg *message) {
+	var p textDocPositionParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		s.respond(msg.ID, nil)
+		return
+	}
+	s.mu.Lock()
+	idx := s.idx[p.TextDocument.URI]
+	s.mu.Unlock()
+	if idx == nil {
+		s.respond(msg.ID, nil)
+		return
+	}
+	name := IdentifierAt(idx.Source, p.Position.Line, p.Position.Character)
+	if name == "" {
+		s.respond(msg.ID, nil)
+		return
+	}
+	// Try the bare name; for qualified names (Foo.bar), also try the
+	// final segment so hovering "Increment" in `View.button Increment`
+	// works.
+	sym, ok := idx.Symbols[name]
+	if !ok {
+		if dot := strings.LastIndex(name, "."); dot >= 0 {
+			sym, ok = idx.Symbols[name[dot+1:]]
+		}
+	}
+	if !ok {
+		s.respond(msg.ID, nil)
+		return
+	}
+	s.respond(msg.ID, map[string]any{
+		"contents": map[string]any{
+			"kind":  "markdown",
+			"value": HoverMarkdown(sym),
+		},
+	})
+}
+
+func (s *Server) handleDefinition(msg *message) {
+	var p textDocPositionParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		s.respond(msg.ID, nil)
+		return
+	}
+	s.mu.Lock()
+	idx := s.idx[p.TextDocument.URI]
+	s.mu.Unlock()
+	if idx == nil {
+		s.respond(msg.ID, nil)
+		return
+	}
+	name := IdentifierAt(idx.Source, p.Position.Line, p.Position.Character)
+	if name == "" {
+		s.respond(msg.ID, nil)
+		return
+	}
+	sym, ok := idx.Symbols[name]
+	if !ok {
+		if dot := strings.LastIndex(name, "."); dot >= 0 {
+			sym, ok = idx.Symbols[name[dot+1:]]
+		}
+	}
+	if !ok {
+		s.respond(msg.ID, nil)
+		return
+	}
+	// Convert mar's 1-indexed Pos to LSP's 0-indexed range covering the
+	// definition's name.
+	startLine := sym.DefLine - 1
+	startCol := sym.DefCol - 1
+	if startLine < 0 {
+		startLine = 0
+	}
+	if startCol < 0 {
+		startCol = 0
+	}
+	endCol := startCol + len(sym.Name)
+	s.respond(msg.ID, map[string]any{
+		"uri": p.TextDocument.URI,
+		"range": lspRange{
+			Start: lspPosition{Line: startLine, Character: startCol},
+			End:   lspPosition{Line: startLine, Character: endCol},
+		},
+	})
+}
+
+func (s *Server) handleDocumentSymbol(msg *message) {
+	var p textDocOnlyParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		s.respond(msg.ID, nil)
+		return
+	}
+	s.mu.Lock()
+	idx := s.idx[p.TextDocument.URI]
+	s.mu.Unlock()
+	if idx == nil {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	out := []any{}
+	for _, sym := range idx.Symbols {
+		startLine := sym.DefLine - 1
+		startCol := sym.DefCol - 1
+		if startLine < 0 {
+			startLine = 0
+		}
+		if startCol < 0 {
+			startCol = 0
+		}
+		endCol := startCol + len(sym.Name)
+		r := lspRange{
+			Start: lspPosition{Line: startLine, Character: startCol},
+			End:   lspPosition{Line: startLine, Character: endCol},
+		}
+		out = append(out, map[string]any{
+			"name":           sym.Name,
+			"kind":           lspSymbolKind(sym.Kind),
+			"range":          r,
+			"selectionRange": r,
+		})
+	}
+	s.respond(msg.ID, out)
+}
+
+// lspSymbolKind maps our Symbol kinds to LSP's SymbolKind enum.
+func lspSymbolKind(k SymbolKind) int {
+	switch k {
+	case SymValue:
+		return 12 // Function
+	case SymTypeAlias:
+		return 26 // TypeParameter (closest match for an alias)
+	case SymCustomType:
+		return 23 // Enum
+	case SymConstructor:
+		return 22 // EnumMember
+	}
+	return 13 // Variable (fallback)
 }
 
 // --- Diagnostics ---
