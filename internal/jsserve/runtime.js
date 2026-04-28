@@ -377,6 +377,64 @@
     def('effectNone', VEffect(() => VUnit(), 'none'));
     def('Effect.none', VEffect(() => VUnit(), 'none'));
 
+    // JSON.decode : String -> Result String α (type-trusted; the compiler
+    // accepts whatever shape the caller declared). Encodes plain JS values
+    // into mar values: numbers -> VInt, strings -> VString, booleans -> VBool,
+    // arrays -> VList, objects -> VRecord, null -> VCtor 'Nothing'.
+    function jsToMar(v) {
+      if (v === null || v === undefined) return VCtor('Nothing');
+      if (typeof v === 'number') return VInt(v | 0);
+      if (typeof v === 'string') return VString(v);
+      if (typeof v === 'boolean') return VBool(v);
+      if (Array.isArray(v)) return VList(v.map(jsToMar));
+      if (typeof v === 'object') {
+        const fields = {};
+        const order = [];
+        for (const k of Object.keys(v)) {
+          fields[k] = jsToMar(v[k]);
+          order.push(k);
+        }
+        return VRecord(fields, order);
+      }
+      return VString(String(v));
+    }
+    def('jsonDecode', native(1, ([raw]) => {
+      try {
+        const parsed = JSON.parse(raw.s);
+        return VCtor('Ok', [jsToMar(parsed)]);
+      } catch (e) {
+        return VCtor('Err', [VString(String(e && e.message || e))]);
+      }
+    }));
+    def('JSON.decode', envLookup(env, 'jsonDecode'));
+
+    // JSON.encode : α -> String (also type-trusted on the user side).
+    function marToJs(v) {
+      if (!v || typeof v !== 'object') return v;
+      switch (v.k) {
+        case 'I': return v.n;
+        case 'S': return v.s;
+        case 'B': return v.b;
+        case 'U': return null;
+        case 'L': return v.xs.map(marToJs);
+        case 'T': return v.xs.map(marToJs);
+        case 'R': {
+          const out = {};
+          for (const k of (v.order || Object.keys(v.fields))) out[k] = marToJs(v.fields[k]);
+          return out;
+        }
+        case 'C':
+          if (v.tag === 'Just') return marToJs(v.args[0]);
+          if (v.tag === 'Nothing') return null;
+          if (v.tag === 'Ok') return marToJs(v.args[0]);
+          if (v.tag === 'Err') return { error: marToJs(v.args[0]) };
+          return { tag: v.tag, args: v.args.map(marToJs) };
+        default: return null;
+      }
+    }
+    def('jsonEncode', native(1, ([v]) => VString(JSON.stringify(marToJs(v)))));
+    def('JSON.encode', envLookup(env, 'jsonEncode'));
+
     // Http.get / Http.post — async fetch wrapped in an Effect.
     //
     //   Http.get  : String -> (Result String String -> msg) -> Effect Never msg

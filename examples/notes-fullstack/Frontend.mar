@@ -4,8 +4,14 @@ module Frontend exposing (main)
 import Shared
 
 
+type alias Note =
+    { id : Int
+    , body : String
+    }
+
+
 type alias Model =
-    { rawNotes : String
+    { notes : List Note
     , status : String
     }
 
@@ -23,28 +29,42 @@ fetchAll =
 
 init : () -> (Model, Effect String Msg)
 init _ =
-    ({ rawNotes = "[]", status = "loading…" }, fetchAll)
+    ({ notes = [], status = "loading…" }, fetchAll)
+
+
+-- JSON.decode is type-trusted — we tell the compiler this returns
+-- List Note and trust the backend's shape.
+decodeNotes : String -> List Note
+decodeNotes raw =
+    case JSON.decode raw of
+        Ok decoded -> decoded
+        Err _ -> []
 
 
 update : Msg -> Model -> (Model, Effect String Msg)
 update msg model =
     case msg of
         LoadedNotes (Ok raw) ->
-            ({ rawNotes = raw, status = "loaded" }, Effect.none)
+            ({ notes = decodeNotes raw, status = "loaded" }, Effect.none)
 
         LoadedNotes (Err e) ->
-            ({ rawNotes = "[]", status = "error: " ++ e }, Effect.none)
+            ({ notes = [], status = "error: " ++ e }, Effect.none)
 
         SubmitNew input ->
-            ( { rawNotes = model.rawNotes, status = "saving…" }
+            ( { notes = model.notes, status = "saving…" }
             , Endpoint.call Shared.backendBase Shared.createEp input.body NoteCreated
             )
 
         NoteCreated (Ok _) ->
-            ({ rawNotes = model.rawNotes, status = "added" }, fetchAll)
+            ({ notes = model.notes, status = "added" }, fetchAll)
 
         NoteCreated (Err e) ->
-            ({ rawNotes = model.rawNotes, status = "save failed: " ++ e }, Effect.none)
+            ({ notes = model.notes, status = "save failed: " ++ e }, Effect.none)
+
+
+renderNote : Note -> View
+renderNote note =
+    View.text (String.fromInt note.id ++ ". " ++ note.body)
 
 
 view : Model -> View
@@ -52,8 +72,8 @@ view model =
     View.section
         [ View.title "Notes"
         , View.text ("Status: " ++ model.status)
-        , View.subtitle "All notes"
-        , View.text model.rawNotes
+        , View.subtitle (String.fromInt (List.length model.notes) ++ " notes")
+        , View.list (List.map renderNote model.notes)
         , View.subtitle "Add a note"
         , View.form "SubmitNew"
             [ View.input "body" "" ]
