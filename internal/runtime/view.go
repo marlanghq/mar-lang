@@ -139,7 +139,11 @@ func viewBuiltins() map[string]Value {
 
 		// Layout modifiers — produce Attr values (VRecord with name +
 		// value fields) consumed by the constructors above.
-		"viewPadding":  nativeFn(1, intAttr("padding", "View.padding")),
+		"viewPadding":       nativeFn(1, intAttr("padding", "View.padding")),
+		"viewPaddingTop":    nativeFn(1, intAttr("paddingTop", "View.paddingTop")),
+		"viewPaddingRight":  nativeFn(1, intAttr("paddingRight", "View.paddingRight")),
+		"viewPaddingBottom": nativeFn(1, intAttr("paddingBottom", "View.paddingBottom")),
+		"viewPaddingLeft":   nativeFn(1, intAttr("paddingLeft", "View.paddingLeft")),
 		"viewSpacing":  nativeFn(1, intAttr("spacing", "View.spacing")),
 		"viewWidth":    nativeFn(1, intAttr("width", "View.width")),
 		"viewHeight":   nativeFn(1, intAttr("height", "View.height")),

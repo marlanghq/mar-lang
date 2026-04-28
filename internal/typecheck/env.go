@@ -491,7 +491,11 @@ func stdlibBindings() map[string]Type {
 		// constructors above. Wire format is platform-agnostic: web
 		// runtime translates each Attr to CSS, future native runtimes
 		// to .padding() / Modifier.padding() / .frame(...) etc.
-		"viewPadding":  TArrow{From: TInt, To: TAttr()},
+		"viewPadding":       TArrow{From: TInt, To: TAttr()},
+		"viewPaddingTop":    TArrow{From: TInt, To: TAttr()},
+		"viewPaddingRight":  TArrow{From: TInt, To: TAttr()},
+		"viewPaddingBottom": TArrow{From: TInt, To: TAttr()},
+		"viewPaddingLeft":   TArrow{From: TInt, To: TAttr()},
 		"viewSpacing":  TArrow{From: TInt, To: TAttr()},
 		"viewWidth":    TArrow{From: TInt, To: TAttr()},
 		"viewHeight":   TArrow{From: TInt, To: TAttr()},
@@ -706,7 +710,11 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"View.link":     "viewLink",
 		"View.list":     "viewList",
 		"View.keyedList": "viewKeyedList",
-		"View.padding":  "viewPadding",
+		"View.padding":       "viewPadding",
+		"View.paddingTop":    "viewPaddingTop",
+		"View.paddingRight":  "viewPaddingRight",
+		"View.paddingBottom": "viewPaddingBottom",
+		"View.paddingLeft":   "viewPaddingLeft",
 		"View.spacing":  "viewSpacing",
 		"View.width":    "viewWidth",
 		"View.height":   "viewHeight",

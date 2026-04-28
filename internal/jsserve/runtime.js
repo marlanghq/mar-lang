@@ -400,7 +400,11 @@
     function flagAttr(name) {
       return makeAttr(name, VUnit());
     }
-    def('viewPadding', intAttr('padding'));   def('View.padding', intAttr('padding'));
+    def('viewPadding',       intAttr('padding'));       def('View.padding',       intAttr('padding'));
+    def('viewPaddingTop',    intAttr('paddingTop'));    def('View.paddingTop',    intAttr('paddingTop'));
+    def('viewPaddingRight',  intAttr('paddingRight'));  def('View.paddingRight',  intAttr('paddingRight'));
+    def('viewPaddingBottom', intAttr('paddingBottom')); def('View.paddingBottom', intAttr('paddingBottom'));
+    def('viewPaddingLeft',   intAttr('paddingLeft'));   def('View.paddingLeft',   intAttr('paddingLeft'));
     def('viewSpacing', intAttr('spacing'));   def('View.spacing', intAttr('spacing'));
     def('viewWidth',   intAttr('width'));     def('View.width',   intAttr('width'));
     def('viewHeight',  intAttr('height'));    def('View.height',  intAttr('height'));
@@ -658,6 +662,18 @@
       switch (a.name) {
         case 'padding':
           node.style.padding = v.n + 'px';
+          break;
+        case 'paddingTop':
+          node.style.paddingTop = v.n + 'px';
+          break;
+        case 'paddingRight':
+          node.style.paddingRight = v.n + 'px';
+          break;
+        case 'paddingBottom':
+          node.style.paddingBottom = v.n + 'px';
+          break;
+        case 'paddingLeft':
+          node.style.paddingLeft = v.n + 'px';
           break;
         case 'spacing':
           node.style.gap = v.n + 'px';
