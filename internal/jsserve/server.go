@@ -20,11 +20,96 @@ const pageHTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%s</title>
 <style>
-  body { font-family: system-ui, sans-serif; margin: 2rem; }
-  button { padding: 0.4rem 0.9rem; margin-right: 0.3rem; }
-  input, textarea { padding: 0.4rem; }
+  /* Reasonable defaults so the bare view DSL renders looking like a
+     real app, not raw browser stock. The DSL itself stays sparse —
+     these styles target the HTML tags the runtime emits. */
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --fg: #1a1a1a;
+    --fg-muted: #666;
+    --bg: #fafafa;
+    --surface: #fff;
+    --border: #e2e2e2;
+    --accent: #2563eb;
+    --accent-fg: #fff;
+    --radius: 6px;
+    --gap: 0.5rem;
+  }
+
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.4;
+    color: var(--fg);
+    background: var(--bg);
+    padding: 1.5rem;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+
+  /* Typography (View.title / .subtitle / .text) */
+  h1 { font-size: 1.75rem; font-weight: 700; margin: 0 0 0.5rem; }
+  h2 { font-size: 1.1rem; font-weight: 600; margin: 1rem 0 0.4rem; color: var(--fg); }
+  span { display: inline; }
+
+  /* Buttons (View.button) */
+  button {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg);
+    padding: 0.4rem 0.9rem;
+    border-radius: var(--radius);
+    font: inherit;
+    cursor: pointer;
+    transition: background 0.1s ease, border-color 0.1s ease;
+  }
+  button:hover { background: #f0f0f0; }
+  button:active { background: #e7e7e7; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* Inputs (View.input / View.textarea) */
+  input[type="text"], textarea {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg);
+    padding: 0.45rem 0.6rem;
+    border-radius: var(--radius);
+    font: inherit;
+    width: 100%%;
+    max-width: 24rem;
+  }
+  input[type="text"]:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  }
+  textarea { min-height: 4.5rem; resize: vertical; }
+
+  /* Links (View.link) */
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Lists (View.list / View.keyedList) — drop the native bullets and
+     give items breathing room without forcing a particular look. */
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  li { padding: 0.35rem 0; }
+  li + li { border-top: 1px solid var(--border); }
+
+  /* Containers (View.section / .row / .column) get a touch of vertical
+     rhythm. Children are content-sized (align-items: flex-start) — that
+     lives in the runtime CSS so the DSL semantics stay shrink-by-default. */
+  section { padding: 1rem 0; }
 </style>
 </head>
 <body>

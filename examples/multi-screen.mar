@@ -78,4 +78,4 @@ todoScreen =
 
 main : Effect String ()
 main =
-    App.serveScreens 3006 [ counterScreen, todoScreen ]
+    App.serveScreens [ counterScreen, todoScreen ]

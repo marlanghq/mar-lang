@@ -80,4 +80,4 @@ view model =
 
 main : Effect String ()
 main =
-    App.serve 3005 (App.create init update view)
+    App.serve (App.create init update view)

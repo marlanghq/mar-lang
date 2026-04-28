@@ -508,7 +508,11 @@ func stdlibBindings() map[string]Type {
 				},
 			},
 		},
-		"appServe": TArrow{From: TInt, To: TArrow{From: TApp(), To: TEffect(TString, TUnit{})}},
+		// App.serve / App.serveScreens drop the port — same rationale as
+		// App.fullstack: port comes from <projectDir>/mar.json (server.port,
+		// default 3000), not code. Keeps deployment / env config out of the
+		// source.
+		"appServe": TArrow{From: TApp(), To: TEffect(TString, TUnit{})},
 
 		// App.fullstack : { api : List Route, page : App } -> Effect String ()
 		// Unified server: api routes mounted under /api, page (a frontend MVU
@@ -544,8 +548,8 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 		"appServeScreens": TArrow{
-			From: TInt,
-			To:   TArrow{From: TList(TScreen()), To: TEffect(TString, TUnit{})},
+			From: TList(TScreen()),
+			To:   TEffect(TString, TUnit{}),
 		},
 	}
 }

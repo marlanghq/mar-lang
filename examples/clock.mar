@@ -59,4 +59,4 @@ view model =
 
 main : Effect String ()
 main =
-    App.serve 4000 (App.create init update view)
+    App.serve (App.create init update view)

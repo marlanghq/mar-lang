@@ -1,12 +1,10 @@
 module Counter exposing (main)
 
 
--- The classic Elm counter. Open with `mar dev examples/counter.mar`.
+-- The classic MVU counter. Open with `mar dev counter.mar`.
 
 
-type alias Model =
-    { count : Int
-    }
+type alias Model = Int
 
 
 type Msg
@@ -16,28 +14,28 @@ type Msg
 
 init : () -> (Model, Effect String Msg)
 init _ =
-    ({ count = 0 }, Effect.none)
+    (0, Effect.none)
 
 
 update : Msg -> Model -> (Model, Effect String Msg)
 update msg model =
     case msg of
         Increment ->
-            ({ model | count = model.count + 1 }, Effect.none)
+            (model + 1, Effect.none)
 
         Decrement ->
-            ({ model | count = model.count - 1 }, Effect.none)
+            (model - 1, Effect.none)
 
 
 view : Model -> View Msg
 view model =
     View.column
         [ View.button Decrement "-"
-        , View.text (String.fromInt model.count)
+        , View.text (String.fromInt model)
         , View.button Increment "+"
         ]
 
 
 main : Effect String ()
 main =
-    App.serve 3004 (App.create init update view)
+    App.serve (App.create init update view)

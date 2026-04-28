@@ -79,7 +79,7 @@ func appBuiltins() map[string]Value {
 		"appCreate": nativeFn(3, func(args []Value) (Value, error) {
 			return VApp{InitFn: args[0], UpdateFn: args[1], ViewFn: args[2]}, nil
 		}),
-		"appServe": nativeFn(2, appServeImpl),
+		"appServe": nativeFn(1, appServeImpl),
 
 		// App.fullstack is the unified-server entry point. The default builtin
 		// here errors out because it has no access to the project's module
@@ -105,7 +105,7 @@ func appBuiltins() map[string]Value {
 			}, nil
 		}),
 		// App.serveScreens : Int -> List Screen -> Effect String ()
-		"appServeScreens": nativeFn(2, appServeScreensImpl),
+		"appServeScreens": nativeFn(1, appServeScreensImpl),
 	}
 }
 
@@ -114,13 +114,17 @@ type session struct {
 	model Value
 }
 
+// defaultServerPort is used when App.serve / App.serveScreens are evaluated
+// outside of `mar dev` (e.g. by `mar run`). In dev mode the CLI installs
+// project-aware overrides that read the real port from mar.json.
+const defaultServerPort = 3000
+
 func appServeImpl(args []Value) (Value, error) {
-	portV, ok1 := args[0].(VInt)
-	app, ok2 := args[1].(VApp)
-	if !ok1 || !ok2 {
-		return nil, fmt.Errorf("App.serve: expected Int port and App")
+	app, ok := args[0].(VApp)
+	if !ok {
+		return nil, fmt.Errorf("App.serve: expected App value (got %T)", args[0])
 	}
-	port := int(portV.V)
+	port := defaultServerPort
 
 	var (
 		mu       sync.Mutex
@@ -241,12 +245,11 @@ func appServeImpl(args []Value) (Value, error) {
 // first visit). Buttons in a screen post msgs to /__msg/<path> so the
 // runtime knows which screen's update to call.
 func appServeScreensImpl(args []Value) (Value, error) {
-	portV, ok1 := args[0].(VInt)
-	listV, ok2 := args[1].(VList)
-	if !ok1 || !ok2 {
-		return nil, fmt.Errorf("App.serveScreens: expected Int port and List Screen")
+	listV, ok := args[0].(VList)
+	if !ok {
+		return nil, fmt.Errorf("App.serveScreens: expected List Screen (got %T)", args[0])
 	}
-	port := int(portV.V)
+	port := defaultServerPort
 
 	screens := map[string]VScreen{} // path -> screen
 	var paths []string

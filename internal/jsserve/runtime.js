@@ -373,12 +373,10 @@
     // App.create / App.serve — App.serve mounts the MVU loop.
     def('appCreate', native(3, ([init, update, view]) => VCtor('__App', [init, update, view])));
     def('App.create', native(3, ([init, update, view]) => VCtor('__App', [init, update, view])));
-    def('appServe', native(2, ([port, app]) => {
-      return VEffect(() => mountApp(app), 'mountApp');
-    }));
-    def('App.serve', native(2, ([port, app]) => {
-      return VEffect(() => mountApp(app), 'mountApp');
-    }));
+    // App.serve : App -> Effect String ()
+    // Port is configured by the host server (mar.json), not by code.
+    def('appServe', native(1, ([app]) => VEffect(() => mountApp(app), 'mountApp')));
+    def('App.serve', native(1, ([app]) => VEffect(() => mountApp(app), 'mountApp')));
 
     // Screen.create + App.serveScreens — multi-screen apps with browser routing.
     def('screenCreate', native(4, ([path, init, update, view]) =>
@@ -387,12 +385,9 @@
     def('Screen.create', native(4, ([path, init, update, view]) =>
       VCtor('__Screen', [path, init, update, view])
     ));
-    def('appServeScreens', native(2, ([port, list]) => {
-      return VEffect(() => mountScreens(list.xs), 'mountScreens');
-    }));
-    def('App.serveScreens', native(2, ([port, list]) => {
-      return VEffect(() => mountScreens(list.xs), 'mountScreens');
-    }));
+    // App.serveScreens : List Screen -> Effect String ()
+    def('appServeScreens', native(1, ([list]) => VEffect(() => mountScreens(list.xs), 'mountScreens')));
+    def('App.serveScreens', native(1, ([list]) => VEffect(() => mountScreens(list.xs), 'mountScreens')));
 
     // Effect — sync versions (effects are run-on-demand thunks).
     def('effectSucceed', native(1, ([v]) => VEffect(() => v, 'pure')));

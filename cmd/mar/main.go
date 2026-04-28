@@ -226,17 +226,18 @@ func runDev(path string) int {
 		return 1
 	}
 
-	// Resolve full-stack port from mar.json (default 3000). Validation
-	// errors in the manifest are fatal — surface them now rather than
-	// silently fall back to defaults.
-	fullstackPort := 3000
+	// Resolve port from mar.json (default 3000). Same value used by
+	// App.fullstack / App.serve / App.serveScreens — the language no
+	// longer takes port as a code argument. Validation errors in the
+	// manifest are fatal: surface them now rather than fall back silently.
+	port := 3000
 	manifest, err := project.LoadManifest(projectDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
 		return 1
 	}
 	if manifest != nil && manifest.Server != nil && manifest.Server.Port != 0 {
-		fullstackPort = manifest.Server.Port
+		port = manifest.Server.Port
 	}
 
 	lp := &jsserve.LiveProgram{}
@@ -248,15 +249,15 @@ func runDev(path string) int {
 	compile := func() error {
 		rEnv, _, err := project.LoadIntoEnvWithModulesAndHook(entryFile,
 			func(env *runtime.Env, mods []*ast.Module) {
-				fs := makeFullstackBuiltin(mods, fullstackPort, lp)
+				fs := makeFullstackBuiltin(mods, port, lp)
 				env.Define("appFullstack", fs)
 				env.Define("App.fullstack", fs)
 
-				srv := makeServeBuiltin(mods, lp)
+				srv := makeServeBuiltin(mods, port, lp)
 				env.Define("appServe", srv)
 				env.Define("App.serve", srv)
 
-				scr := makeServeScreensBuiltin(mods, lp)
+				scr := makeServeScreensBuiltin(mods, port, lp)
 				env.Define("appServeScreens", scr)
 				env.Define("App.serveScreens", scr)
 			})
@@ -289,8 +290,7 @@ func runDev(path string) int {
 		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
 		return 1
 	}
-	port := lp.Port()
-	if port == 0 {
+	if lp.Port() == 0 {
 		// `main` didn't call any of the App.* overrides — nothing to host.
 		// Just exit; this isn't a server.
 		fmt.Fprintln(os.Stderr, "mar dev: main returned without invoking App.serve / App.fullstack / App.serveScreens — nothing to host")
@@ -465,23 +465,20 @@ func makeFullstackBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram)
 // makeServeBuiltin overrides App.serve in `mar dev` to ship the AST to
 // the browser instead of doing server-side HTML rendering.
 //
-//	App.serve : Int -> App -> Effect String ()
+//	App.serve : App -> Effect String ()
 //
-// Updates lp atomically; the Effect itself is a no-op (CLI runs the
-// server). Browser entry is "main" — the JS runtime evaluates the same
-// expression and the JS-side App.serve mounts the app.
-func makeServeBuiltin(mods []*ast.Module, lp *jsserve.LiveProgram) runtime.Value {
+// Port comes from the CLI (mar.json server.port, default 3000) — same
+// convention as App.fullstack. Updates lp atomically; the Effect itself
+// is a no-op (CLI drives the server). Browser entry is "main" — the JS
+// runtime evaluates the same expression and the JS-side App.serve mounts.
+func makeServeBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
 	return runtime.VFn{
-		Arity: 2,
+		Arity: 1,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
-			portV, ok := args[0].(runtime.VInt)
-			if !ok {
-				return nil, fmt.Errorf("App.serve: expected Int port (got %T)", args[0])
+			if _, ok := args[0].(runtime.VApp); !ok {
+				return nil, fmt.Errorf("App.serve: expected App value (got %T)", args[0])
 			}
-			if _, ok := args[1].(runtime.VApp); !ok {
-				return nil, fmt.Errorf("App.serve: expected App value (got %T)", args[1])
-			}
-			lp.SetPort(int(portV.V))
+			lp.SetPort(port)
 			if err := lp.Update(nil, mods, "main"); err != nil {
 				return nil, fmt.Errorf("App.serve: %v", err)
 			}
@@ -492,19 +489,15 @@ func makeServeBuiltin(mods []*ast.Module, lp *jsserve.LiveProgram) runtime.Value
 
 // makeServeScreensBuiltin is the multi-screen variant of makeServeBuiltin.
 //
-//	App.serveScreens : Int -> List Screen -> Effect String ()
-func makeServeScreensBuiltin(mods []*ast.Module, lp *jsserve.LiveProgram) runtime.Value {
+//	App.serveScreens : List Screen -> Effect String ()
+func makeServeScreensBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
 	return runtime.VFn{
-		Arity: 2,
+		Arity: 1,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
-			portV, ok := args[0].(runtime.VInt)
-			if !ok {
-				return nil, fmt.Errorf("App.serveScreens: expected Int port (got %T)", args[0])
+			if _, ok := args[0].(runtime.VList); !ok {
+				return nil, fmt.Errorf("App.serveScreens: expected List Screen (got %T)", args[0])
 			}
-			if _, ok := args[1].(runtime.VList); !ok {
-				return nil, fmt.Errorf("App.serveScreens: expected List Screen (got %T)", args[1])
-			}
-			lp.SetPort(int(portV.V))
+			lp.SetPort(port)
 			if err := lp.Update(nil, mods, "main"); err != nil {
 				return nil, fmt.Errorf("App.serveScreens: %v", err)
 			}
