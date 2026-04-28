@@ -166,6 +166,12 @@ func (s *Server) handle(msg *message) {
 		s.handleDefinition(msg)
 	case "textDocument/documentSymbol":
 		s.handleDocumentSymbol(msg)
+	case "textDocument/references":
+		s.handleReferences(msg)
+	case "textDocument/rename":
+		s.handleRename(msg)
+	case "workspace/symbol":
+		s.handleWorkspaceSymbol(msg)
 	case "shutdown":
 		s.respond(msg.ID, nil)
 	case "exit":
@@ -185,7 +191,21 @@ func (s *Server) handle(msg *message) {
 
 // --- Initialize ---
 
+type initializeParams struct {
+	RootURI          string `json:"rootUri"`
+	WorkspaceFolders []struct {
+		URI  string `json:"uri"`
+		Name string `json:"name"`
+	} `json:"workspaceFolders"`
+}
+
 func (s *Server) handleInitialize(msg *message) {
+	var p initializeParams
+	_ = json.Unmarshal(msg.Params, &p)
+	// Eagerly scan the workspace for .mar files so references / workspace
+	// symbols can find them even before the user opens each file.
+	go s.scanWorkspace(p)
+
 	// Advertise: text sync (full content on each change), nothing else.
 	// MVP — hover / completion / definition come later.
 	s.respond(msg.ID, map[string]any{
@@ -195,15 +215,60 @@ func (s *Server) handleInitialize(msg *message) {
 				"change":    1, // 1 = Full
 				"save":      true,
 			},
-			"hoverProvider":          true,
-			"definitionProvider":     true,
-			"documentSymbolProvider": true,
+			"hoverProvider":           true,
+			"definitionProvider":      true,
+			"documentSymbolProvider":  true,
+			"referencesProvider":      true,
+			"renameProvider":          true,
+			"workspaceSymbolProvider": true,
 		},
 		"serverInfo": map[string]any{
 			"name":    "mar-lsp",
 			"version": "0.1.0",
 		},
 	})
+}
+
+// scanWorkspace walks the workspace root for .mar files and seeds the
+// document index. The user's open documents already get indexed via
+// didOpen — this just covers files that haven't been opened yet so
+// references / rename / workspace symbols can see them.
+func (s *Server) scanWorkspace(p initializeParams) {
+	roots := []string{}
+	if p.RootURI != "" {
+		if path, err := uriToPath(p.RootURI); err == nil && path != "" {
+			roots = append(roots, path)
+		}
+	}
+	for _, wf := range p.WorkspaceFolders {
+		if path, err := uriToPath(wf.URI); err == nil && path != "" {
+			roots = append(roots, path)
+		}
+	}
+	for _, root := range roots {
+		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info == nil || info.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(path, ".mar") {
+				return nil
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			uri := "file://" + path
+			s.mu.Lock()
+			// Don't override an already-open (in-editor, possibly
+			// edited) document with disk content.
+			if _, alreadyIndexed := s.idx[uri]; !alreadyIndexed {
+				s.docs[uri] = string(content)
+				s.idx[uri] = BuildIndex(uri, string(content))
+			}
+			s.mu.Unlock()
+			return nil
+		})
+	}
 }
 
 // --- Document lifecycle ---
@@ -439,6 +504,216 @@ func (s *Server) handleDocumentSymbol(msg *message) {
 		})
 	}
 	s.respond(msg.ID, out)
+}
+
+// --- References / Rename / Workspace symbols ---
+
+type referencesParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Position lspPosition `json:"position"`
+	Context  struct {
+		IncludeDeclaration bool `json:"includeDeclaration"`
+	} `json:"context"`
+}
+
+type renameParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Position lspPosition `json:"position"`
+	NewName  string      `json:"newName"`
+}
+
+type workspaceSymbolParams struct {
+	Query string `json:"query"`
+}
+
+func (s *Server) handleReferences(msg *message) {
+	var p referencesParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	s.mu.Lock()
+	idx := s.idx[p.TextDocument.URI]
+	docs := copyDocs(s.docs)
+	s.mu.Unlock()
+	if idx == nil {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	name := IdentifierAt(idx.Source, p.Position.Line, p.Position.Character)
+	if name == "" {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		name = name[dot+1:]
+	}
+	out := []any{}
+	for uri, src := range docs {
+		for _, occ := range findIdentifierOccurrences(src, name) {
+			// Skip the declaration site itself unless requested.
+			if !p.Context.IncludeDeclaration && uri == p.TextDocument.URI {
+				if sym, ok := idx.Symbols[name]; ok && sym.DefLine-1 == occ.line && sym.DefCol-1 == occ.col {
+					continue
+				}
+			}
+			out = append(out, map[string]any{
+				"uri": uri,
+				"range": lspRange{
+					Start: lspPosition{Line: occ.line, Character: occ.col},
+					End:   lspPosition{Line: occ.line, Character: occ.col + len(name)},
+				},
+			})
+		}
+	}
+	s.respond(msg.ID, out)
+}
+
+func (s *Server) handleRename(msg *message) {
+	var p renameParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		s.respond(msg.ID, nil)
+		return
+	}
+	s.mu.Lock()
+	idx := s.idx[p.TextDocument.URI]
+	docs := copyDocs(s.docs)
+	s.mu.Unlock()
+	if idx == nil {
+		s.respond(msg.ID, nil)
+		return
+	}
+	name := IdentifierAt(idx.Source, p.Position.Line, p.Position.Character)
+	if name == "" || name == p.NewName {
+		s.respond(msg.ID, nil)
+		return
+	}
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		name = name[dot+1:]
+	}
+	// Build a WorkspaceEdit: per-document list of TextEdits, one per
+	// occurrence of the identifier as a whole word.
+	changes := map[string][]map[string]any{}
+	for uri, src := range docs {
+		var edits []map[string]any
+		for _, occ := range findIdentifierOccurrences(src, name) {
+			edits = append(edits, map[string]any{
+				"range": lspRange{
+					Start: lspPosition{Line: occ.line, Character: occ.col},
+					End:   lspPosition{Line: occ.line, Character: occ.col + len(name)},
+				},
+				"newText": p.NewName,
+			})
+		}
+		if len(edits) > 0 {
+			changes[uri] = edits
+		}
+	}
+	s.respond(msg.ID, map[string]any{"changes": changes})
+}
+
+func (s *Server) handleWorkspaceSymbol(msg *message) {
+	var p workspaceSymbolParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	q := strings.ToLower(p.Query)
+	s.mu.Lock()
+	indexes := make([]*DocIndex, 0, len(s.idx))
+	for _, idx := range s.idx {
+		indexes = append(indexes, idx)
+	}
+	s.mu.Unlock()
+	out := []any{}
+	for _, idx := range indexes {
+		for _, sym := range idx.Symbols {
+			if q != "" && !strings.Contains(strings.ToLower(sym.Name), q) {
+				continue
+			}
+			startLine := sym.DefLine - 1
+			startCol := sym.DefCol - 1
+			if startLine < 0 {
+				startLine = 0
+			}
+			if startCol < 0 {
+				startCol = 0
+			}
+			endCol := startCol + len(sym.Name)
+			out = append(out, map[string]any{
+				"name": sym.Name,
+				"kind": lspSymbolKind(sym.Kind),
+				"location": map[string]any{
+					"uri": idx.URI,
+					"range": lspRange{
+						Start: lspPosition{Line: startLine, Character: startCol},
+						End:   lspPosition{Line: startLine, Character: endCol},
+					},
+				},
+			})
+		}
+	}
+	s.respond(msg.ID, out)
+}
+
+// findIdentifierOccurrences returns all 0-indexed (line, col) positions
+// where `name` appears as a whole-word identifier. "Whole word" means
+// the surrounding characters can't be identifier-continuation chars
+// (alphanumeric / underscore / dot); strings and comments are scanned
+// crudely — refine if false-positives become a real issue.
+type occurrence struct{ line, col int }
+
+func findIdentifierOccurrences(src, name string) []occurrence {
+	if name == "" {
+		return nil
+	}
+	var out []occurrence
+	isIdent := func(b byte) bool {
+		return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
+			(b >= '0' && b <= '9') || b == '_' || b == '.'
+	}
+	lines := strings.Split(src, "\n")
+	for i, line := range lines {
+		// Strip line comments — anything from "--" to end-of-line.
+		commentIdx := strings.Index(line, "--")
+		scan := line
+		if commentIdx >= 0 {
+			scan = line[:commentIdx]
+		}
+		for col := 0; col+len(name) <= len(scan); {
+			if scan[col:col+len(name)] == name {
+				before := byte(' ')
+				if col > 0 {
+					before = scan[col-1]
+				}
+				after := byte(' ')
+				if col+len(name) < len(scan) {
+					after = scan[col+len(name)]
+				}
+				if !isIdent(before) && !isIdent(after) {
+					out = append(out, occurrence{line: i, col: col})
+					col += len(name)
+					continue
+				}
+			}
+			col++
+		}
+	}
+	return out
+}
+
+// copyDocs takes a snapshot of the docs map under the caller's lock so
+// downstream scans don't fight the read mutex on big workspaces.
+func copyDocs(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // lspSymbolKind maps our Symbol kinds to LSP's SymbolKind enum.
