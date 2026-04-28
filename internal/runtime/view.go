@@ -38,99 +38,67 @@ func (v VView) Display() string {
 	return fmt.Sprintf("<view:%s>", v.Tag)
 }
 
-// viewBuiltins exposes the view DSL.
+// viewBuiltins exposes the view DSL — elm-ui-style. Every constructor
+// takes a `List Attr` as its first argument; layout modifiers
+// (View.padding, View.fillX, ...) produce Attr values that go into
+// that list. Common usage:
 //
-//	View.section : List View -> View
-//	View.row     : List View -> View
-//	View.column  : List View -> View
-//	View.title   : String -> View
-//	View.subtitle: String -> View
-//	View.text    : String -> View
-//	View.button  : String -> View
-//	View.link    : String -> String -> View   -- url, label
+//	View.column [ View.spacing 16, View.padding 24 ]
+//	    [ View.button [] Increment "+"
+//	    , View.text [] "hello"
+//	    ]
 //
-// (No attributes/messages yet; adding interactivity is a later step.)
+// `Attr` is opaque: at runtime it's a VRecord {name, value} produced
+// only by modifier functions. Constructors iterate the list, copy each
+// into VView.Attrs, and the renderer (web today, native runtimes
+// later) translates names like "padding" / "fillX" / "center" to
+// platform-appropriate output.
 func viewBuiltins() map[string]Value {
 	return map[string]Value{
-		"viewSection": nativeFn(1, func(args []Value) (Value, error) {
-			children, err := unwrapViewList(args[0])
+		"viewSection":  nativeFn(2, containerCtor("section")),
+		"viewRow":      nativeFn(2, containerCtor("row")),
+		"viewColumn":   nativeFn(2, containerCtor("column")),
+		"viewList":     nativeFn(2, containerCtor("list")),
+		"viewText":     nativeFn(2, leafTextCtor("text", "View.text")),
+		"viewTitle":    nativeFn(2, leafTextCtor("title", "View.title")),
+		"viewSubtitle": nativeFn(2, leafTextCtor("subtitle", "View.subtitle")),
+
+		// View.button : List Attr -> msg -> String -> View msg
+		"viewButton": nativeFn(3, func(args []Value) (Value, error) {
+			attrs, err := collectAttrs(args[0], "View.button")
 			if err != nil {
 				return nil, err
 			}
-			return VView{Tag: "section", Children: children}, nil
+			msg := args[1]
+			label, ok := args[2].(VString)
+			if !ok {
+				return nil, fmt.Errorf("View.button: expected String label (got %T)", args[2])
+			}
+			return VView{Tag: "button", Text: label.V, Msg: msg, Attrs: attrs}, nil
 		}),
-		"viewRow": nativeFn(1, func(args []Value) (Value, error) {
-			children, err := unwrapViewList(args[0])
+
+		// View.link : List Attr -> String -> String -> View msg   (href, label)
+		"viewLink": nativeFn(3, func(args []Value) (Value, error) {
+			attrs, err := collectAttrs(args[0], "View.link")
 			if err != nil {
 				return nil, err
 			}
-			return VView{Tag: "row", Children: children}, nil
-		}),
-		"viewColumn": nativeFn(1, func(args []Value) (Value, error) {
-			children, err := unwrapViewList(args[0])
-			if err != nil {
-				return nil, err
-			}
-			return VView{Tag: "column", Children: children}, nil
-		}),
-		"viewText": nativeFn(1, func(args []Value) (Value, error) {
-			s, ok := args[0].(VString)
-			if !ok {
-				return nil, fmt.Errorf("View.text: expected String")
-			}
-			return VView{Tag: "text", Text: s.V}, nil
-		}),
-		"viewTitle": nativeFn(1, func(args []Value) (Value, error) {
-			s, ok := args[0].(VString)
-			if !ok {
-				return nil, fmt.Errorf("View.title: expected String")
-			}
-			return VView{Tag: "title", Text: s.V}, nil
-		}),
-		"viewSubtitle": nativeFn(1, func(args []Value) (Value, error) {
-			s, ok := args[0].(VString)
-			if !ok {
-				return nil, fmt.Errorf("View.subtitle: expected String")
-			}
-			return VView{Tag: "subtitle", Text: s.V}, nil
-		}),
-		// View.button : msg -> String -> View msg
-		// First arg is the Msg to dispatch on click; second is the visible
-		// label.
-		"viewButton": nativeFn(2, func(args []Value) (Value, error) {
-			msg := args[0]
-			label, ok := args[1].(VString)
-			if !ok {
-				return nil, fmt.Errorf("View.button: expected msg and String label")
-			}
-			return VView{Tag: "button", Text: label.V, Msg: msg}, nil
-		}),
-		"viewLink": nativeFn(2, func(args []Value) (Value, error) {
-			url, ok1 := args[0].(VString)
-			label, ok2 := args[1].(VString)
+			url, ok1 := args[1].(VString)
+			label, ok2 := args[2].(VString)
 			if !ok1 || !ok2 {
-				return nil, fmt.Errorf("View.link: expected String, String")
+				return nil, fmt.Errorf("View.link: expected (List Attr, String href, String label)")
 			}
-			return VView{
-				Tag:   "link",
-				Text:  label.V,
-				Attrs: []VAttr{{Name: "href", Value: url}},
-			}, nil
+			attrs = append(attrs, VAttr{Name: "href", Value: url})
+			return VView{Tag: "link", Text: label.V, Attrs: attrs}, nil
 		}),
-		"viewList": nativeFn(1, func(args []Value) (Value, error) {
-			children, err := unwrapViewList(args[0])
+
+		// View.keyedList : List Attr -> List (String, View msg) -> View msg
+		"viewKeyedList": nativeFn(2, func(args []Value) (Value, error) {
+			attrs, err := collectAttrs(args[0], "View.keyedList")
 			if err != nil {
 				return nil, err
 			}
-			return VView{Tag: "list", Children: children}, nil
-		}),
-		// View.keyedList : List (String, View msg) -> View msg
-		// Each item carries a stable key the diff uses to track identity.
-		// Internally we tag every child view with its key (key field on
-		// VView via the JS runtime; on the Go side we just stash it as an
-		// attr "key" so the serializer round-trips it).
-		"viewKeyedList": nativeFn(1, func(args []Value) (Value, error) {
-			list, ok := args[0].(VList)
+			list, ok := args[1].(VList)
 			if !ok {
 				return nil, fmt.Errorf("View.keyedList: expected List of (key, view)")
 			}
@@ -145,47 +113,19 @@ func viewBuiltins() map[string]Value {
 				if !kok || !vok {
 					return nil, fmt.Errorf("View.keyedList: element %d expected (String, View)", i)
 				}
-				// Tag the inner view with its key. We don't add a Key
-				// field to VView (would touch every server-side renderer);
-				// instead we stash it as an attribute the JS serializer
-				// emits and the JS runtime reads.
 				tagged := viewV
 				tagged.Attrs = append([]VAttr(nil), viewV.Attrs...)
 				tagged.Attrs = append(tagged.Attrs, VAttr{Name: "__key", Value: keyV})
 				children[i] = tagged
 			}
-			return VView{Tag: "keyedList", Children: children}, nil
+			return VView{Tag: "keyedList", Children: children, Attrs: attrs}, nil
 		}),
-		// View.input : String -> (String -> msg) -> View msg
-		// (currentValue, onChange). Browser dispatches onChange(value) on
-		// every keystroke, so the model holds the form state explicitly.
-		// The Msg field carries the onChange function for runtime to apply.
-		"viewInput": nativeFn(2, func(args []Value) (Value, error) {
-			value, ok := args[0].(VString)
-			if !ok {
-				return nil, fmt.Errorf("View.input: expected String currentValue")
-			}
-			onChange := args[1]
-			return VView{
-				Tag:  "input",
-				Text: value.V,
-				Msg:  onChange,
-			}, nil
-		}),
-		// View.textarea : String -> (String -> msg) -> View msg
-		"viewTextarea": nativeFn(2, func(args []Value) (Value, error) {
-			value, ok := args[0].(VString)
-			if !ok {
-				return nil, fmt.Errorf("View.textarea: expected String currentValue")
-			}
-			onChange := args[1]
-			return VView{
-				Tag:  "textarea",
-				Text: value.V,
-				Msg:  onChange,
-			}, nil
-		}),
-		// View.empty : View
+
+		// View.input : List Attr -> String -> (String -> msg) -> View msg
+		"viewInput":    nativeFn(3, inputCtor("input", "View.input")),
+		"viewTextarea": nativeFn(3, inputCtor("textarea", "View.textarea")),
+
+		// View.empty : View — no attrs, used as a placeholder.
 		"viewEmpty": VView{Tag: "empty"},
 
 		// Render: View -> String  (server-side rendering to HTML)
@@ -197,54 +137,112 @@ func viewBuiltins() map[string]Value {
 			return VString{V: renderViewHTML(v)}, nil
 		}),
 
-		// Layout modifiers — each appends a semantic attribute to the
-		// VView. Runtime-side translation: web sets CSS, future native
-		// runtimes set platform equivalents (.padding, Modifier.padding,
-		// .frame(maxWidth: .infinity), etc.).
-		"viewPadding":  nativeFn(2, intModifier("padding", "View.padding")),
-		"viewSpacing":  nativeFn(2, intModifier("spacing", "View.spacing")),
-		"viewWidth":    nativeFn(2, intModifier("width", "View.width")),
-		"viewHeight":   nativeFn(2, intModifier("height", "View.height")),
-		"viewFillX":    nativeFn(1, flagModifier("fillX", "View.fillX")),
-		"viewFillY":    nativeFn(1, flagModifier("fillY", "View.fillY")),
-		"viewFill":     nativeFn(1, flagModifier("fill", "View.fill")),
-		"viewCenterX":  nativeFn(1, flagModifier("centerX", "View.centerX")),
-		"viewCenterY":  nativeFn(1, flagModifier("centerY", "View.centerY")),
-		"viewCenter":   nativeFn(1, flagModifier("center", "View.center")),
+		// Layout modifiers — produce Attr values (VRecord with name +
+		// value fields) consumed by the constructors above.
+		"viewPadding":  nativeFn(1, intAttr("padding", "View.padding")),
+		"viewSpacing":  nativeFn(1, intAttr("spacing", "View.spacing")),
+		"viewWidth":    nativeFn(1, intAttr("width", "View.width")),
+		"viewHeight":   nativeFn(1, intAttr("height", "View.height")),
+		"viewFillX":    flagAttr("fillX"),
+		"viewFillY":    flagAttr("fillY"),
+		"viewFill":     flagAttr("fill"),
+		"viewCenterX":  flagAttr("centerX"),
+		"viewCenterY":  flagAttr("centerY"),
+		"viewCenter":   flagAttr("center"),
 	}
 }
 
-// intModifier builds a 2-arg native function for layout modifiers that
-// take an Int parameter (padding, spacing, width, height). Appends a
-// VAttr named `attrName` carrying the int value.
-func intModifier(attrName, label string) func([]Value) (Value, error) {
+// containerCtor builds a 2-arg native: (List Attr, List View) -> View.
+func containerCtor(tag string) func([]Value) (Value, error) {
+	return func(args []Value) (Value, error) {
+		attrs, err := collectAttrs(args[0], "View."+tag)
+		if err != nil {
+			return nil, err
+		}
+		children, err := unwrapViewList(args[1])
+		if err != nil {
+			return nil, fmt.Errorf("View.%s: %v", tag, err)
+		}
+		return VView{Tag: tag, Children: children, Attrs: attrs}, nil
+	}
+}
+
+// leafTextCtor builds a 2-arg native: (List Attr, String) -> View.
+func leafTextCtor(tag, label string) func([]Value) (Value, error) {
+	return func(args []Value) (Value, error) {
+		attrs, err := collectAttrs(args[0], label)
+		if err != nil {
+			return nil, err
+		}
+		s, ok := args[1].(VString)
+		if !ok {
+			return nil, fmt.Errorf("%s: expected String (got %T)", label, args[1])
+		}
+		return VView{Tag: tag, Text: s.V, Attrs: attrs}, nil
+	}
+}
+
+// inputCtor builds a 3-arg native:
+//
+//	(List Attr, String currentValue, (String -> msg) onChange) -> View
+func inputCtor(tag, label string) func([]Value) (Value, error) {
+	return func(args []Value) (Value, error) {
+		attrs, err := collectAttrs(args[0], label)
+		if err != nil {
+			return nil, err
+		}
+		value, ok := args[1].(VString)
+		if !ok {
+			return nil, fmt.Errorf("%s: expected String currentValue (got %T)", label, args[1])
+		}
+		onChange := args[2]
+		return VView{Tag: tag, Text: value.V, Msg: onChange, Attrs: attrs}, nil
+	}
+}
+
+// collectAttrs reads a VList of Attr records (each {name, value}) and
+// returns them as []VAttr ready to drop into a VView.
+func collectAttrs(v Value, label string) ([]VAttr, error) {
+	list, ok := v.(VList)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected List Attr (got %T)", label, v)
+	}
+	out := make([]VAttr, 0, len(list.Elements))
+	for i, el := range list.Elements {
+		rec, ok := el.(VRecord)
+		if !ok {
+			return nil, fmt.Errorf("%s: attr %d is not an Attr record (got %T)", label, i, el)
+		}
+		nameV, _ := rec.Fields["name"].(VString)
+		out = append(out, VAttr{Name: nameV.V, Value: rec.Fields["value"]})
+	}
+	return out, nil
+}
+
+// intAttr builds a 1-arg native: Int -> Attr. The Attr is a VRecord
+// {name, value} the constructors collect.
+func intAttr(name, label string) func([]Value) (Value, error) {
 	return func(args []Value) (Value, error) {
 		n, ok := args[0].(VInt)
 		if !ok {
 			return nil, fmt.Errorf("%s: expected Int (got %T)", label, args[0])
 		}
-		v, ok := args[1].(VView)
-		if !ok {
-			return nil, fmt.Errorf("%s: expected View (got %T)", label, args[1])
-		}
-		out := v
-		out.Attrs = append(append([]VAttr(nil), v.Attrs...), VAttr{Name: attrName, Value: n})
-		return out, nil
+		return makeAttr(name, n), nil
 	}
 }
 
-// flagModifier builds a 1-arg native function for layout modifiers that
-// are presence-only flags (fillX, fillY, center, ...). Appends a VAttr
-// named `attrName` with VUnit value.
-func flagModifier(attrName, label string) func([]Value) (Value, error) {
-	return func(args []Value) (Value, error) {
-		v, ok := args[0].(VView)
-		if !ok {
-			return nil, fmt.Errorf("%s: expected View (got %T)", label, args[0])
-		}
-		out := v
-		out.Attrs = append(append([]VAttr(nil), v.Attrs...), VAttr{Name: attrName, Value: VUnit{}})
-		return out, nil
+// flagAttr returns a constant Attr (no payload) — for fillX, center, etc.
+func flagAttr(name string) Value {
+	return makeAttr(name, VUnit{})
+}
+
+func makeAttr(name string, value Value) VRecord {
+	return VRecord{
+		Fields: map[string]Value{
+			"name":  VString{V: name},
+			"value": value,
+		},
+		Order: []string{"name", "value"},
 	}
 }
 

@@ -25,11 +25,11 @@ counterUpdate msg model =
 
 counterView : Int -> View CounterMsg
 counterView n =
-    View.section
-        [ View.title "Counter"
-        , View.text ("Value: " ++ String.fromInt n)
-        , View.row [ View.button Inc "Inc", View.button Dec "Dec" ]
-        , View.row [ View.link "/todos" "Go to todos" ]
+    View.section []
+        [ View.title [] "Counter"
+        , View.text [] ("Value: " ++ String.fromInt n)
+        , View.row [] [ View.button [] Inc "Inc", View.button [] Dec "Dec" ]
+        , View.row [] [ View.link [] "/todos" "Go to todos" ]
         ]
 
 
@@ -58,16 +58,16 @@ todoUpdate msg model =
 
 todoView : TodoModel -> View TodoMsg
 todoView model =
-    View.section
-        [ View.title "Todos"
-        , View.subtitle (String.fromInt (List.length model.items) ++ " items")
-        , View.row
-            [ View.input model.draft DraftChanged
-            , View.button AddItem "Add"
+    View.section []
+        [ View.title [] "Todos"
+        , View.subtitle [] (String.fromInt (List.length model.items) ++ " items")
+        , View.row []
+            [ View.input [] model.draft DraftChanged
+            , View.button [] AddItem "Add"
             ]
-        , View.button Clear "Clear"
-        , View.list (List.map View.text model.items)
-        , View.row [ View.link "/home" "Back to counter" ]
+        , View.button [] Clear "Clear"
+        , View.list [] (List.map (\s -> View.text [] s) model.items)
+        , View.row [] [ View.link [] "/home" "Back to counter" ]
         ]
 
 

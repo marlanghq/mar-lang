@@ -73,21 +73,21 @@ update msg model =
 renderNoteWithKey : Note -> (String, View Msg)
 renderNoteWithKey note =
     ( String.fromInt note.id
-    , View.text (String.fromInt note.id ++ ". " ++ note.body)
+    , View.text [] (String.fromInt note.id ++ ". " ++ note.body)
     )
 
 
 view : Model -> View Msg
 view model =
-    View.section
-        [ View.title "Notes"
-        , View.text ("Status: " ++ model.status)
-        , View.subtitle (String.fromInt (List.length model.notes) ++ " notes")
-        , View.keyedList (List.map renderNoteWithKey model.notes)
-        , View.subtitle "Add a note"
-        , View.row
-            [ View.input model.draft DraftChanged
-            , View.button SubmitClicked "Add"
+    View.section []
+        [ View.title [] "Notes"
+        , View.text [] ("Status: " ++ model.status)
+        , View.subtitle [] (String.fromInt (List.length model.notes) ++ " notes")
+        , View.keyedList [] (List.map renderNoteWithKey model.notes)
+        , View.subtitle [] "Add a note"
+        , View.row []
+            [ View.input [] model.draft DraftChanged
+            , View.button [] SubmitClicked "Add"
             ]
         ]
 

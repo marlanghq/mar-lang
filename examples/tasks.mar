@@ -128,70 +128,52 @@ view model =
     in
     -- Page-wide centered card layout. width 720 caps the reading width;
     -- centerX positions it on the viewport; padding gives the card air.
-    View.column
-        [ View.title "Tasks"
-        , View.text counts
+    View.column [ View.spacing 16, View.padding 24, View.width 720, View.centerX ]
+        [ View.title [] "Tasks"
+        , View.text [] counts
 
-        , View.column
-            [ View.subtitle "New task"
-            , View.input model.draftTitle TitleChanged
-                |> View.fillX
-            , View.textarea model.draftNotes NotesChanged
-                |> View.fillX
-            , View.button AddTask "Add task"
+        , View.column [ View.spacing 8, View.padding 16, View.fillX ]
+            [ View.subtitle [] "New task"
+            , View.input [ View.fillX ] model.draftTitle TitleChanged
+            , View.textarea [ View.fillX ] model.draftNotes NotesChanged
+            , View.button [] AddTask "Add task"
             ]
-            |> View.spacing 8
-            |> View.padding 16
-            |> View.fillX
 
-        , View.row
-            [ View.text "Show:"
-            , View.button (SetFilter All) "All"
-            , View.button (SetFilter Active) "Active"
-            , View.button (SetFilter Done) "Done"
+        , View.row [ View.spacing 8 ]
+            [ View.text [] "Show:"
+            , View.button [] (SetFilter All) "All"
+            , View.button [] (SetFilter Active) "Active"
+            , View.button [] (SetFilter Done) "Done"
             ]
-            |> View.spacing 8
 
         , case visible of
             [] ->
-                View.text "No tasks. Add one above."
-                    |> View.padding 16
+                View.text [ View.padding 16 ] "No tasks. Add one above."
 
             _ ->
-                View.keyedList (List.map renderTask visible)
-                    |> View.fillX
+                View.keyedList [ View.fillX ] (List.map renderTask visible)
 
-        , View.row
-            [ View.button ClearDone "Clear done"
-            , View.link "https://guide.elm-lang.org/architecture/" "Elm Architecture"
+        , View.row [ View.spacing 12 ]
+            [ View.button [] ClearDone "Clear done"
+            , View.link [] "https://guide.elm-lang.org/architecture/" "Elm Architecture"
             ]
-            |> View.spacing 12
         ]
-        |> View.spacing 16
-        |> View.padding 24
-        |> View.width 720
-        |> View.centerX
 
 
 renderTask : Task -> (String, View Msg)
 renderTask t =
     ( String.fromInt t.id
-    , View.row
-        [ View.button (ToggleTask t.id) (if t.done then "[x]" else "[ ]")
-        , View.column
-            [ View.text t.title
+    , View.row [ View.spacing 12, View.padding 8, View.fillX ]
+        [ View.button [] (ToggleTask t.id) (if t.done then "[x]" else "[ ]")
+        , View.column [ View.spacing 4, View.fillX ]
+            [ View.text [] t.title
             , if t.notes == "" then
                 View.empty
               else
-                View.text t.notes
+                View.text [] t.notes
             ]
-            |> View.spacing 4
-            |> View.fillX
-        , View.button (RemoveTask t.id) "Remove"
+        , View.button [] (RemoveTask t.id) "Remove"
         ]
-        |> View.spacing 12
-        |> View.padding 8
-        |> View.fillX
     )
 
 

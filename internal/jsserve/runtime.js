@@ -323,78 +323,93 @@
     def('maybeWithDefault', native(2, ([def_, m]) => m.tag === 'Just' ? m.args[0] : def_));
     def('Maybe.withDefault', native(2, ([def_, m]) => m.tag === 'Just' ? m.args[0] : def_));
 
-    // View constructors
-    def('viewSection', native(1, ([l]) => VView('section', [], l.xs, '')));
-    def('View.section', native(1, ([l]) => VView('section', [], l.xs, '')));
-    def('viewRow',     native(1, ([l]) => VView('row', [], l.xs, '')));
-    def('View.row',     native(1, ([l]) => VView('row', [], l.xs, '')));
-    def('viewColumn',  native(1, ([l]) => VView('column', [], l.xs, '')));
-    def('View.column',  native(1, ([l]) => VView('column', [], l.xs, '')));
-    def('viewText',    native(1, ([s]) => VView('text', [], [], s.s)));
-    def('View.text',    native(1, ([s]) => VView('text', [], [], s.s)));
-    def('viewTitle',   native(1, ([s]) => VView('title', [], [], s.s)));
-    def('View.title',   native(1, ([s]) => VView('title', [], [], s.s)));
-    def('viewSubtitle',native(1, ([s]) => VView('subtitle', [], [], s.s)));
-    def('View.subtitle',native(1, ([s]) => VView('subtitle', [], [], s.s)));
-    // View.button : msg -> String -> View msg
-    // (msg, label) — click dispatches msg (typed value, no string lookup).
-    def('viewButton',  native(2, ([msg, label]) => VView('button', [], [], label.s, msg)));
-    def('View.button',  native(2, ([msg, label]) => VView('button', [], [], label.s, msg)));
-    def('viewLink',    native(2, ([href, label]) => VView('link', [{name:'href', value: href}], [], label.s)));
-    def('View.link',    native(2, ([href, label]) => VView('link', [{name:'href', value: href}], [], label.s)));
-    def('viewList',    native(1, ([l]) => VView('list', [], l.xs, '')));
-    def('View.list',    native(1, ([l]) => VView('list', [], l.xs, '')));
-    // View.keyedList : List (String, View msg) -> View msg
-    // Each item is a (key, view) tuple. The diff uses keys to track
-    // identity across renders — items can be reordered, inserted in the
-    // middle, or removed without scrambling the DOM (or breaking focus
-    // on inputs inside items).
-    function makeKeyedList(items) {
+    // View — elm-ui-style. Every constructor takes a List Attr first;
+    // modifiers below produce Attr values consumed by that list. Each
+    // attr is a VRecord { name, value } the constructors copy into
+    // VView.attrs as { name, value } pairs.
+    function collectAttrs(attrsList) {
+      const out = [];
+      for (const a of attrsList.xs) {
+        out.push({ name: a.fields.name.s, value: a.fields.value });
+      }
+      return out;
+    }
+    function container(tag) {
+      return native(2, ([attrsList, children]) =>
+        VView(tag, collectAttrs(attrsList), children.xs, ''));
+    }
+    function leafText(tag) {
+      return native(2, ([attrsList, s]) =>
+        VView(tag, collectAttrs(attrsList), [], s.s));
+    }
+    def('viewSection',  container('section'));  def('View.section',  container('section'));
+    def('viewRow',      container('row'));      def('View.row',      container('row'));
+    def('viewColumn',   container('column'));   def('View.column',   container('column'));
+    def('viewList',     container('list'));     def('View.list',     container('list'));
+    def('viewText',     leafText('text'));      def('View.text',     leafText('text'));
+    def('viewTitle',    leafText('title'));     def('View.title',    leafText('title'));
+    def('viewSubtitle', leafText('subtitle'));  def('View.subtitle', leafText('subtitle'));
+
+    // View.button : List Attr -> msg -> String -> View msg
+    function makeButton([attrsList, msg, label]) {
+      return VView('button', collectAttrs(attrsList), [], label.s, msg);
+    }
+    def('viewButton', native(3, makeButton));
+    def('View.button', native(3, makeButton));
+
+    // View.link : List Attr -> String -> String -> View msg   (href, label)
+    function makeLink([attrsList, href, label]) {
+      const attrs = collectAttrs(attrsList);
+      attrs.push({ name: 'href', value: href });
+      return VView('link', attrs, [], label.s);
+    }
+    def('viewLink', native(3, makeLink));
+    def('View.link', native(3, makeLink));
+
+    // View.keyedList : List Attr -> List (String, View msg) -> View msg
+    function makeKeyedList([attrsList, items]) {
       const children = items.xs.map((t) => {
         const key = t.xs[0].s;
         const view = t.xs[1];
-        // Tag the child view with its key (shallow copy — never mutate).
-        return Object.assign({}, view, { key: key });
+        return Object.assign({}, view, { key });
       });
-      return VView('keyedList', [], children, '');
+      return VView('keyedList', collectAttrs(attrsList), children, '');
     }
-    def('viewKeyedList', native(1, ([items]) => makeKeyedList(items)));
-    def('View.keyedList', native(1, ([items]) => makeKeyedList(items)));
+    def('viewKeyedList', native(2, makeKeyedList));
+    def('View.keyedList', native(2, makeKeyedList));
+
+    // View.input / textarea : List Attr -> String -> (String -> msg) -> View msg
+    function inputCtor(tag) {
+      return native(3, ([attrsList, value, onChange]) =>
+        VView(tag, collectAttrs(attrsList), [], value.s, onChange));
+    }
+    def('viewInput',    inputCtor('input'));    def('View.input',    inputCtor('input'));
+    def('viewTextarea', inputCtor('textarea')); def('View.textarea', inputCtor('textarea'));
+
     def('viewEmpty', VView('empty', [], [], ''));
     def('View.empty', VView('empty', [], [], ''));
 
-    // Layout modifiers — shallow-copy the input view and append a
-    // semantic attribute. createDOM/patchDOM read these attrs and
-    // translate them to CSS. Same wire format will be read by future
-    // native runtimes (mapped to .padding(), Modifier.padding(), etc.).
-    function withAttr(view, name, value) {
-      const attrs = view.attrs ? view.attrs.slice() : [];
-      attrs.push({ name, value });
-      return Object.assign({}, view, { attrs });
+    // Layout modifiers — produce Attr values (VRecord { name, value })
+    // that the constructors above consume from their attrs list.
+    function makeAttr(name, value) {
+      return VRecord({ name: VString(name), value }, ['name', 'value']);
     }
-    function intMod(name) {
-      return native(2, ([n, view]) => withAttr(view, name, VInt(n.n)));
+    function intAttr(name) {
+      return native(1, ([n]) => makeAttr(name, VInt(n.n)));
     }
-    function flagMod(name) {
-      return native(1, ([view]) => withAttr(view, name, VUnit()));
+    function flagAttr(name) {
+      return makeAttr(name, VUnit());
     }
-    def('viewPadding', intMod('padding'));   def('View.padding', intMod('padding'));
-    def('viewSpacing', intMod('spacing'));   def('View.spacing', intMod('spacing'));
-    def('viewWidth',   intMod('width'));     def('View.width',   intMod('width'));
-    def('viewHeight',  intMod('height'));    def('View.height',  intMod('height'));
-    def('viewFillX',   flagMod('fillX'));    def('View.fillX',   flagMod('fillX'));
-    def('viewFillY',   flagMod('fillY'));    def('View.fillY',   flagMod('fillY'));
-    def('viewFill',    flagMod('fill'));     def('View.fill',    flagMod('fill'));
-    def('viewCenterX', flagMod('centerX'));  def('View.centerX', flagMod('centerX'));
-    def('viewCenterY', flagMod('centerY'));  def('View.centerY', flagMod('centerY'));
-    def('viewCenter',  flagMod('center'));   def('View.center',  flagMod('center'));
-    // View.input : String -> (String -> msg) -> View msg
-    // (currentValue, onChange). The onChange function is stored as the
-    // node's msg; the DOM 'input' event applies it to the typed value.
-    def('viewInput', native(2, ([value, onChange]) => VView('input', [], [], value.s, onChange)));
-    def('View.input', native(2, ([value, onChange]) => VView('input', [], [], value.s, onChange)));
-    def('viewTextarea', native(2, ([value, onChange]) => VView('textarea', [], [], value.s, onChange)));
-    def('View.textarea', native(2, ([value, onChange]) => VView('textarea', [], [], value.s, onChange)));
+    def('viewPadding', intAttr('padding'));   def('View.padding', intAttr('padding'));
+    def('viewSpacing', intAttr('spacing'));   def('View.spacing', intAttr('spacing'));
+    def('viewWidth',   intAttr('width'));     def('View.width',   intAttr('width'));
+    def('viewHeight',  intAttr('height'));    def('View.height',  intAttr('height'));
+    def('viewFillX',   flagAttr('fillX'));    def('View.fillX',   flagAttr('fillX'));
+    def('viewFillY',   flagAttr('fillY'));    def('View.fillY',   flagAttr('fillY'));
+    def('viewFill',    flagAttr('fill'));     def('View.fill',    flagAttr('fill'));
+    def('viewCenterX', flagAttr('centerX'));  def('View.centerX', flagAttr('centerX'));
+    def('viewCenterY', flagAttr('centerY'));  def('View.centerY', flagAttr('centerY'));
+    def('viewCenter',  flagAttr('center'));   def('View.center',  flagAttr('center'));
 
     // App.create / App.serve — App.serve mounts the MVU loop.
     def('appCreate', native(3, ([init, update, view]) => VCtor('__App', [init, update, view])));

@@ -249,6 +249,14 @@ func TView(msg Type) TCon {
 	return TCon{Name: "View", Args: []Type{msg}}
 }
 
+// TAttr returns the opaque "Attr" type — values produced by layout
+// modifiers (View.padding, View.spacing, View.fill, ...) and consumed
+// by view constructors as their first argument list. elm-ui-style
+// attributes; runtime translates each to its platform equivalent.
+func TAttr() TCon {
+	return TCon{Name: "Attr"}
+}
+
 // TApp returns the opaque "App" type.
 func TApp() TCon {
 	return TCon{Name: "App"}

@@ -29,13 +29,11 @@ update msg model =
 
 view : Model -> View Msg
 view model =
-    View.column
-        [ View.button Decrement "-"
-        , View.text (String.fromInt model)
-        , View.button Increment "+"
+    View.column [ View.spacing 12, View.center ]
+        [ View.button [] Decrement "-"
+        , View.text [] (String.fromInt model)
+        , View.button [] Increment "+"
         ]
-        |> View.spacing 12
-        |> View.center
 
 
 main : Effect String ()

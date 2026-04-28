@@ -454,58 +454,53 @@ func stdlibBindings() map[string]Type {
 		"entityForeignKey": TArrow{From: TString, To: TArrow{From: TString, To: TArrow{From: TString, To: TArrow{From: TEntity(), To: TEntity()}}}},
 		"entityMigrate":    TArrow{From: TDb(), To: TArrow{From: TList(TEntity()), To: TEffect(TString, TUnit{})}},
 
-		// View — every builder is parametric in msg. Containers (section /
-		// row / column / list) are forall over msg; the children must share
-		// the same msg type so the whole tree dispatches into one app.
-		// Leaves (text / title / link / input / etc.) are also forall:
-		// they don't dispatch anything, so they fit any msg context.
-		// Buttons and forms pin msg to the value/constructor the user passes.
-		"viewSection":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TView(a)), To: TView(a)}},
-		"viewRow":      TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TView(a)), To: TView(a)}},
-		"viewColumn":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TView(a)), To: TView(a)}},
-		"viewText":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TView(a)}},
-		"viewTitle":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TView(a)}},
-		"viewSubtitle": TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TView(a)}},
-		// View.button : msg -> String -> View msg   (clickMsg, then label)
-		"viewButton":   TForall{Vars: []int{a.ID}, Body: TArrow{From: a, To: TArrow{From: TString, To: TView(a)}}},
-		"viewLink":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TString, To: TView(a)}}},
-		"viewList":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TView(a)), To: TView(a)}},
-		// View.keyedList : List (String, View msg) -> View msg
-		// Each item is paired with a stable string key. The browser diff
-		// uses keys to track item identity across renders — survives
-		// reordering, insertion in the middle, and removal without
-		// scrambling DOM nodes (or losing focus on inputs inside items).
-		"viewKeyedList": TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TTuple{Members: []Type{TString, TView(a)}}), To: TView(a)}},
+		// View — elm-ui-style. Every constructor takes a List Attr as its
+		// first argument; layout modifiers (View.padding, View.fillX, ...)
+		// produce Attr values that go into that list:
+		//
+		//   View.column [ View.spacing 16, View.padding 24, View.centerX ]
+		//       [ View.button [ View.padding 12 ] Increment "+"
+		//       , View.text [] "hello"
+		//       ]
+		//
+		// Containers / inputs / buttons are parametric in msg so the
+		// whole tree dispatches into one app. Pure leaves (text, title,
+		// link) are forall over msg.
+		"viewSection":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: TList(TView(a)), To: TView(a)}}},
+		"viewRow":      TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: TList(TView(a)), To: TView(a)}}},
+		"viewColumn":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: TList(TView(a)), To: TView(a)}}},
+		"viewText":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: TString, To: TView(a)}}},
+		"viewTitle":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: TString, To: TView(a)}}},
+		"viewSubtitle": TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: TString, To: TView(a)}}},
+		// View.button : List Attr -> msg -> String -> View msg
+		"viewButton":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: a, To: TArrow{From: TString, To: TView(a)}}}},
+		// View.link : List Attr -> String -> String -> View msg   (href, label)
+		"viewLink":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: TString, To: TArrow{From: TString, To: TView(a)}}}},
+		"viewList":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: TList(TView(a)), To: TView(a)}}},
+		// View.keyedList : List Attr -> List (String, View msg) -> View msg
+		// Each item paired with a stable key the diff uses to track identity.
+		"viewKeyedList": TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: TList(TTuple{Members: []Type{TString, TView(a)}}), To: TView(a)}}},
 		"viewRender":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TString}},
-		// View.input : String -> (String -> msg) -> View msg
-		// (currentValue, onChange) — every keystroke fires onChange with the
-		// new value, so the model holds the form state explicitly. No string
-		// names, no auto-collected records.
-		"viewInput":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TArrow{From: TString, To: a}, To: TView(a)}}},
-		"viewTextarea": TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TArrow{From: TString, To: a}, To: TView(a)}}},
+		// View.input : List Attr -> String -> (String -> msg) -> View msg
+		"viewInput":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: TString, To: TArrow{From: TArrow{From: TString, To: a}, To: TView(a)}}}},
+		"viewTextarea": TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TAttr()), To: TArrow{From: TString, To: TArrow{From: TArrow{From: TString, To: a}, To: TView(a)}}}},
+		// View.empty : View msg — placeholder, no attrs.
 		"viewEmpty":    TForall{Vars: []int{a.ID}, Body: TView(a)},
 
-		// Layout modifiers — elm-ui-inspired. Each one takes a View and
-		// returns a View, so they pipe naturally:
-		//
-		//   View.button Increment "+"
-		//       |> View.padding 12
-		//       |> View.center
-		//
-		// The wire format is platform-agnostic: each modifier appends a
-		// semantic attribute on the VView. Web runtime translates to CSS
-		// (padding, gap, margin auto, etc.); future iOS / Android / desktop
-		// runtimes translate to .padding(), Modifier.padding(...), etc.
-		"viewPadding":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TInt, To: TArrow{From: TView(a), To: TView(a)}}},
-		"viewSpacing":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TInt, To: TArrow{From: TView(a), To: TView(a)}}},
-		"viewWidth":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TInt, To: TArrow{From: TView(a), To: TView(a)}}},
-		"viewHeight":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TInt, To: TArrow{From: TView(a), To: TView(a)}}},
-		"viewFillX":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
-		"viewFillY":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
-		"viewFill":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
-		"viewCenterX":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
-		"viewCenterY":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
-		"viewCenter":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TView(a)}},
+		// Layout modifiers — produce Attr values consumed by the
+		// constructors above. Wire format is platform-agnostic: web
+		// runtime translates each Attr to CSS, future native runtimes
+		// to .padding() / Modifier.padding() / .frame(...) etc.
+		"viewPadding":  TArrow{From: TInt, To: TAttr()},
+		"viewSpacing":  TArrow{From: TInt, To: TAttr()},
+		"viewWidth":    TArrow{From: TInt, To: TAttr()},
+		"viewHeight":   TArrow{From: TInt, To: TAttr()},
+		"viewFillX":    TAttr(),
+		"viewFillY":    TAttr(),
+		"viewFill":     TAttr(),
+		"viewCenterX":  TAttr(),
+		"viewCenterY":  TAttr(),
+		"viewCenter":   TAttr(),
 
 		// App
 		// App.create

@@ -56,25 +56,25 @@ update msg model =
 
 renderTodo : Todo -> View Msg
 renderTodo t =
-    View.row
-        [ View.text (String.fromInt t.id ++ ": " ++ t.body)
+    View.row []
+        [ View.text [] (String.fromInt t.id ++ ": " ++ t.body)
         ]
 
 
 view : Model -> View Msg
 view model =
-    View.section
-        [ View.title "Todo"
-        , View.subtitle (String.fromInt (List.length model.items) ++ " items")
-        , View.row
-            [ View.input model.draft DraftChanged
-            , View.button AddTodo "Add"
+    View.section []
+        [ View.title [] "Todo"
+        , View.subtitle [] (String.fromInt (List.length model.items) ++ " items")
+        , View.row []
+            [ View.input [] model.draft DraftChanged
+            , View.button [] AddTodo "Add"
             ]
-        , View.row
-            [ View.button ToggleAll "ToggleAll"
-            , View.button ClearAll "ClearAll"
+        , View.row []
+            [ View.button [] ToggleAll "ToggleAll"
+            , View.button [] ClearAll "ClearAll"
             ]
-        , View.list (List.map renderTodo model.items)
+        , View.list [] (List.map renderTodo model.items)
         ]
 
 

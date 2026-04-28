@@ -7,7 +7,7 @@ import (
 
 func TestViewRenderText(t *testing.T) {
 	src := `module M exposing (..)
-result = View.render (View.text "hello")
+result = View.render (View.text [] "hello")
 `
 	if got := runModule(t, src, "result"); !strings.Contains(got, "hello") {
 		t.Fatalf("got %s", got)
@@ -16,7 +16,7 @@ result = View.render (View.text "hello")
 
 func TestViewRenderSection(t *testing.T) {
 	src := `module M exposing (..)
-result = View.render (View.section [View.title "Hi", View.text "world"])
+result = View.render (View.section [] [View.title [] "Hi", View.text [] "world"])
 `
 	got := runModule(t, src, "result")
 	if !strings.Contains(got, "<h1>") || !strings.Contains(got, "Hi") {
@@ -29,7 +29,7 @@ result = View.render (View.section [View.title "Hi", View.text "world"])
 
 func TestViewRenderList(t *testing.T) {
 	src := `module M exposing (..)
-result = View.render (View.list [View.text "a", View.text "b"])
+result = View.render (View.list [] [View.text [] "a", View.text [] "b"])
 `
 	got := runModule(t, src, "result")
 	if !strings.Contains(got, "<ul>") || !strings.Contains(got, "<li>") {
@@ -39,7 +39,7 @@ result = View.render (View.list [View.text "a", View.text "b"])
 
 func TestViewEscapesHTML(t *testing.T) {
 	src := `module M exposing (..)
-result = View.render (View.text "<script>")
+result = View.render (View.text [] "<script>")
 `
 	got := runModule(t, src, "result")
 	if strings.Contains(got, "<script>") {

@@ -8,18 +8,18 @@ module ViewPage exposing (main)
 -- type works. The HTTP handler just renders it via View.render.
 page : View a
 page =
-    View.section
-        [ View.title "mar"
-        , View.subtitle "A small functional language"
-        , View.text "This page was rendered from a View value defined in mar code."
-        , View.list
-            [ View.text "Static type-checked"
-            , View.text "Hindley-Milner inference"
-            , View.text "Effects as values"
+    View.section []
+        [ View.title [] "mar"
+        , View.subtitle [] "A small functional language"
+        , View.text [] "This page was rendered from a View value defined in mar code."
+        , View.list []
+            [ View.text [] "Static type-checked"
+            , View.text [] "Hindley-Milner inference"
+            , View.text [] "Effects as values"
             ]
-        , View.row
-            [ View.link "https://example.com" "Example"
-            , View.link "/about" "About"
+        , View.row []
+            [ View.link [] "https://example.com" "Example"
+            , View.link [] "/about" "About"
             ]
         ]
 
