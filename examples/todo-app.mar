@@ -1,0 +1,75 @@
+module TodoApp exposing (main)
+
+
+-- A small interactive todo list. State per browser session.
+
+
+type alias Todo =
+    { id : Int
+    , body : String
+    , done : Bool
+    }
+
+
+type alias Model =
+    { nextId : Int
+    , draft : String
+    , items : List Todo
+    }
+
+
+type Msg
+    = AddTodo { body : String }
+    | ToggleAll
+    | ClearAll
+
+
+init : () -> Model
+init _ =
+    { nextId = 1, draft = "", items = [] }
+
+
+update : Msg -> Model -> Model
+update msg model =
+    case msg of
+        AddTodo input ->
+            { nextId = model.nextId + 1
+            , draft = ""
+            , items = model.items ++ [ { id = model.nextId, body = input.body, done = False } ]
+            }
+
+        ToggleAll ->
+            { nextId = model.nextId
+            , draft = model.draft
+            , items = List.map (\t -> { id = t.id, body = t.body, done = True }) model.items
+            }
+
+        ClearAll ->
+            { nextId = model.nextId, draft = model.draft, items = [] }
+
+
+renderTodo : Todo -> View
+renderTodo t =
+    View.row
+        [ View.text (String.fromInt t.id ++ ": " ++ t.body)
+        ]
+
+
+view : Model -> View
+view model =
+    View.section
+        [ View.title "Todo"
+        , View.subtitle (String.fromInt (List.length model.items) ++ " items")
+        , View.form "AddTodo"
+            [ View.input "body" model.draft ]
+        , View.row
+            [ View.button "ToggleAll"
+            , View.button "ClearAll"
+            ]
+        , View.list (List.map renderTodo model.items)
+        ]
+
+
+main : Effect String ()
+main =
+    App.serve 3005 (App.create init update view)

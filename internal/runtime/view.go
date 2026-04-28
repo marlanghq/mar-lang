@@ -110,6 +110,54 @@ func viewBuiltins() map[string]Value {
 			}
 			return VView{Tag: "list", Children: children}, nil
 		}),
+		// View.input : String -> String -> View   (name, currentValue)
+		"viewInput": nativeFn(2, func(args []Value) (Value, error) {
+			name, ok1 := args[0].(VString)
+			value, ok2 := args[1].(VString)
+			if !ok1 || !ok2 {
+				return nil, fmt.Errorf("View.input: expected String, String")
+			}
+			return VView{
+				Tag:  "input",
+				Text: value.V,
+				Attrs: []VAttr{
+					{Name: "name", Value: name},
+				},
+			}, nil
+		}),
+		// View.textarea : String -> String -> View  (name, currentValue)
+		"viewTextarea": nativeFn(2, func(args []Value) (Value, error) {
+			name, ok1 := args[0].(VString)
+			value, ok2 := args[1].(VString)
+			if !ok1 || !ok2 {
+				return nil, fmt.Errorf("View.textarea: expected String, String")
+			}
+			return VView{
+				Tag:  "textarea",
+				Text: value.V,
+				Attrs: []VAttr{
+					{Name: "name", Value: name},
+				},
+			}, nil
+		}),
+		// View.form : String -> List View -> View   (msgName, children)
+		// The form posts to /__msg with msg=msgName and any inputs/textareas
+		// inside as additional fields.
+		"viewForm": nativeFn(2, func(args []Value) (Value, error) {
+			msg, ok1 := args[0].(VString)
+			children, err := unwrapViewList(args[1])
+			if err != nil {
+				return nil, fmt.Errorf("View.form: %v", err)
+			}
+			_ = ok1
+			return VView{
+				Tag:      "form",
+				Text:     msg.V,
+				Children: children,
+			}, nil
+		}),
+		// View.empty : View
+		"viewEmpty": VView{Tag: "empty"},
 
 		// Render: View -> String  (server-side rendering to HTML)
 		"viewRender": nativeFn(1, func(args []Value) (Value, error) {
@@ -209,6 +257,48 @@ func writeView(sb *strings.Builder, v VView) {
 			}
 		}
 		sb.WriteString("</ul>")
+	case "empty":
+		// nothing
+	case "input":
+		name := ""
+		for _, a := range v.Attrs {
+			if a.Name == "name" {
+				if s, ok := a.Value.(VString); ok {
+					name = s.V
+				}
+			}
+		}
+		sb.WriteString(`<input type="text" name="`)
+		sb.WriteString(escapeAttr(name))
+		sb.WriteString(`" value="`)
+		sb.WriteString(escapeAttr(v.Text))
+		sb.WriteString(`">`)
+	case "textarea":
+		name := ""
+		for _, a := range v.Attrs {
+			if a.Name == "name" {
+				if s, ok := a.Value.(VString); ok {
+					name = s.V
+				}
+			}
+		}
+		sb.WriteString(`<textarea name="`)
+		sb.WriteString(escapeAttr(name))
+		sb.WriteString(`">`)
+		sb.WriteString(escapeHTML(v.Text))
+		sb.WriteString(`</textarea>`)
+	case "form":
+		sb.WriteString(`<form method="post" action="/__msg">`)
+		sb.WriteString(`<input type="hidden" name="msg" value="`)
+		sb.WriteString(escapeAttr(v.Text))
+		sb.WriteString(`">`)
+		for _, c := range v.Children {
+			if cv, ok := c.(VView); ok {
+				writeView(sb, cv)
+			}
+		}
+		sb.WriteString(`<button type="submit">submit</button>`)
+		sb.WriteString(`</form>`)
 	default:
 		sb.WriteString("<div>")
 		for _, c := range v.Children {

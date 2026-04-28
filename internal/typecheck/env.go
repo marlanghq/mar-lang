@@ -348,6 +348,10 @@ func stdlibBindings() map[string]Type {
 		"viewLink":     TArrow{From: TString, To: TArrow{From: TString, To: TView()}},
 		"viewList":     TArrow{From: TList(TView()), To: TView()},
 		"viewRender":   TArrow{From: TView(), To: TString},
+		"viewInput":    TArrow{From: TString, To: TArrow{From: TString, To: TView()}},
+		"viewTextarea": TArrow{From: TString, To: TArrow{From: TString, To: TView()}},
+		"viewForm":     TArrow{From: TString, To: TArrow{From: TList(TView()), To: TView()}},
+		"viewEmpty":    TView(),
 
 		// App
 		// App.create : (() -> Model) -> (Msg -> Model -> Model) -> (Model -> View) -> App
@@ -480,6 +484,10 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"View.link":     "viewLink",
 		"View.list":     "viewList",
 		"View.render":   "viewRender",
+		"View.input":    "viewInput",
+		"View.textarea": "viewTextarea",
+		"View.form":     "viewForm",
+		"View.empty":    "viewEmpty",
 		"App.create": "appCreate",
 		"App.serve":  "appServe",
 	}

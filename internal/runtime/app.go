@@ -110,9 +110,27 @@ func appServeImpl(args []Value) (Value, error) {
 					http.Error(w, "missing msg", http.StatusBadRequest)
 					return
 				}
+				// Build the Msg value. If the form has additional fields,
+				// pack them into a record and wrap with the constructor.
+				var msgVal Value = VCtor{Tag: msgName}
+				extras := map[string]Value{}
+				var order []string
+				for k, vs := range req.PostForm {
+					if k == "msg" || len(vs) == 0 {
+						continue
+					}
+					extras[k] = VString{V: vs[0]}
+					order = append(order, k)
+				}
+				if len(extras) > 0 {
+					msgVal = VCtor{
+						Tag:  msgName,
+						Args: []Value{VRecord{Fields: extras, Order: order}},
+					}
+				}
 				s := getSession(req, w)
 				mu.Lock()
-				newModel, err := apply(app.UpdateFn, VCtor{Tag: msgName})
+				newModel, err := apply(app.UpdateFn, msgVal)
 				if err != nil {
 					mu.Unlock()
 					http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -218,6 +236,38 @@ func renderInteractiveHTML(w io.Writer, v VView) {
 			}
 		}
 		_, _ = io.WriteString(w, "</ul>")
+	case "form":
+		// View.form makes the inputs inside post a msg with the named fields.
+		fmt.Fprintf(w, `<form method="post" action="/__msg">`)
+		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(v.Text))
+		for _, c := range v.Children {
+			if cv, ok := c.(VView); ok {
+				renderInteractiveHTML(w, cv)
+			}
+		}
+		fmt.Fprintf(w, `<button type="submit">submit</button></form>`)
+	case "input":
+		name := ""
+		for _, a := range v.Attrs {
+			if a.Name == "name" {
+				if s, ok := a.Value.(VString); ok {
+					name = s.V
+				}
+			}
+		}
+		fmt.Fprintf(w, `<input type="text" name="%s" value="%s">`, escapeAttr(name), escapeAttr(v.Text))
+	case "textarea":
+		name := ""
+		for _, a := range v.Attrs {
+			if a.Name == "name" {
+				if s, ok := a.Value.(VString); ok {
+					name = s.V
+				}
+			}
+		}
+		fmt.Fprintf(w, `<textarea name="%s">%s</textarea>`, escapeAttr(name), escapeHTML(v.Text))
+	case "empty":
+		// nothing
 	default:
 		var sb strings.Builder
 		writeView(&sb, v)
