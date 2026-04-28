@@ -168,8 +168,27 @@ func Run(root, entry string) (runtime.Value, error) {
 
 // loadIntoEnv evaluates a module's value declarations into an existing
 // runtime env, registering each value with both its bare name (in the
-// module's frame) and its qualified Module.name.
+// module's frame) and its qualified Module.name. Also processes
+// `import M exposing (...)` clauses so the runtime sees the same
+// bindings the typechecker accepted.
 func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env) error {
+	// Pass 0: import exposing — bare-name aliases for runtime values
+	// already in env. Mirrors what CheckModuleWith does at the type
+	// level; without this, code like `column [...]` after
+	// `import View exposing (column)` typechecks but explodes at
+	// runtime with "unbound name: column".
+	for _, imp := range mod.Imports {
+		if len(imp.Exposing.Items) == 0 && !imp.Exposing.All {
+			continue
+		}
+		impName := joinName(imp.Module)
+		for _, item := range imp.Exposing.Items {
+			if v, ok := rEnv.Lookup(impName + "." + item.Name); ok {
+				rEnv.Define(item.Name, v)
+			}
+		}
+	}
+
 	// Pass 1: register custom-type constructors.
 	for _, d := range mod.Decls {
 		ct, ok := d.(*ast.CustomTypeDecl)

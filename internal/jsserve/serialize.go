@@ -18,9 +18,28 @@ func SerializeModule(m *ast.Module) map[string]any {
 			decls = append(decls, s)
 		}
 	}
+	// Imports' Exposing lists are needed at JS-runtime load time so
+	// `import View exposing (column)` actually binds `column` in the
+	// runtime env (not just at the type level).
+	imports := make([]any, 0, len(m.Imports))
+	for _, imp := range m.Imports {
+		items := make([]any, 0, len(imp.Exposing.Items))
+		for _, it := range imp.Exposing.Items {
+			items = append(items, map[string]any{
+				"name": it.Name,
+				"open": it.Open,
+			})
+		}
+		imports = append(imports, map[string]any{
+			"module":   []string(imp.Module),
+			"exposing": items,
+			"all":      imp.Exposing.All,
+		})
+	}
 	return map[string]any{
-		"name":  m.Name,
-		"decls": decls,
+		"name":    m.Name,
+		"decls":   decls,
+		"imports": imports,
 	}
 }
 

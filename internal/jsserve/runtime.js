@@ -1077,6 +1077,24 @@
   // ---------- Module loader ----------
 
   function loadModule(env, mod) {
+    // Pass 0: process `import M exposing (...)` so bare names bind to
+    // already-known qualified values. Mirrors the typechecker; without
+    // this, code that typechecks (e.g. `column [...]` after
+    // `import View exposing (column)`) explodes at runtime with
+    // "unbound name: column".
+    if (mod.imports) {
+      for (const imp of mod.imports) {
+        if (!imp.exposing || imp.exposing.length === 0) continue;
+        const modName = (imp.module || []).join('.');
+        for (const item of imp.exposing) {
+          const qualified = modName + '.' + item.name;
+          const v = envLookup(env, qualified);
+          if (v !== undefined) {
+            envDefine(env, item.name, v);
+          }
+        }
+      }
+    }
     // Pass 1: register custom-type constructors.
     for (const d of mod.decls) {
       if (d.kind === 'CustomTypeDecl') {
