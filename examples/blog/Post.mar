@@ -1,0 +1,30 @@
+module Post exposing (Post, PostId, mkId, withTitle, defaultPost)
+
+
+type PostId = PostId Int
+
+
+type alias Post =
+    { id : PostId
+    , title : String
+    , body : String
+    , published : Bool
+    }
+
+
+mkId : Int -> PostId
+mkId n = PostId n
+
+
+defaultPost : Post
+defaultPost =
+    { id = PostId 0
+    , title = ""
+    , body = ""
+    , published = False
+    }
+
+
+withTitle : String -> Post -> Post
+withTitle t p =
+    { p | title = t }

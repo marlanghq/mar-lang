@@ -90,6 +90,8 @@ func Infer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 		return inferList(n, env, s)
 	case *ast.ERecord:
 		return inferRecord(n, env, s)
+	case *ast.ERecordUpdate:
+		return inferRecordUpdate(n, env, s)
 	case *ast.EFieldAccess:
 		return inferFieldAccess(n, env, s)
 	case *ast.EFieldAccessor:
@@ -263,6 +265,33 @@ func inferRecord(n *ast.ERecord, env *TypeEnv, s *Subst) (Type, error) {
 		order = append(order, f.Name)
 	}
 	return TRecord{Fields: fields, Order: order}, nil
+}
+
+// inferRecordUpdate: { record | f1 = v1, f2 = v2 } where each fi must already
+// exist on the record. Result has the same record type.
+func inferRecordUpdate(n *ast.ERecordUpdate, env *TypeEnv, s *Subst) (Type, error) {
+	tBase, err := Infer(n.Record, env, s)
+	if err != nil {
+		return nil, err
+	}
+	// Each updated field must exist on the record. Use row polymorphism:
+	// require base to be { row | fi : ti } where ti is the type of vi.
+	updateFields := make(map[string]Type, len(n.Fields))
+	updateOrder := make([]string, 0, len(n.Fields))
+	for _, f := range n.Fields {
+		t, err := Infer(f.Value, env, s)
+		if err != nil {
+			return nil, err
+		}
+		updateFields[f.Name] = t
+		updateOrder = append(updateOrder, f.Name)
+	}
+	rowVar := FreshVar()
+	expected := TRecord{Fields: updateFields, Order: updateOrder, Tail: rowVar}
+	if err := Unify(tBase, expected, s); err != nil {
+		return nil, errorf(n.Pos, "record update: %v", err)
+	}
+	return s.Apply(tBase), nil
 }
 
 // inferFieldAccess: expr.field

@@ -1,0 +1,11 @@
+module Greet exposing (..)
+
+
+hello : String -> String
+hello name =
+    "Hello, " ++ name
+
+
+goodbye : String -> String
+goodbye name =
+    "Goodbye, " ++ name

@@ -37,7 +37,15 @@ type CustomCtor struct {
 	Result Type
 }
 
-// CheckModule runs the full type-check pass over a parsed module.
+// CheckModule runs the full type-check pass over a parsed module using the
+// default (BaseEnv) value environment.
+func CheckModule(mod *ast.Module) (*CheckResult, error) {
+	return CheckModuleWith(mod, BaseEnv(), nil, nil)
+}
+
+// CheckModuleWith runs the full type-check pass over a parsed module using
+// the given starting environment plus pre-known type aliases and custom
+// types (typically imported from other modules).
 //
 // Order:
 //  1. Pre-register type declarations (aliases + custom types) in a type env.
@@ -47,7 +55,12 @@ type CustomCtor struct {
 //  5. Generalize the result and register the final scheme.
 //
 // Returns a CheckResult plus the first error, if any.
-func CheckModule(mod *ast.Module) (*CheckResult, error) {
+func CheckModuleWith(
+	mod *ast.Module,
+	valueEnv *TypeEnv,
+	importedAliases map[string]TypeAlias,
+	importedCustoms map[string]CustomType,
+) (*CheckResult, error) {
 	res := &CheckResult{
 		ValueTypes:  map[string]Type{},
 		TypeAliases: map[string]TypeAlias{},
@@ -55,7 +68,12 @@ func CheckModule(mod *ast.Module) (*CheckResult, error) {
 	}
 
 	tEnv := newTypeNameEnv()
-	valueEnv := BaseEnv()
+	for k, v := range importedAliases {
+		tEnv.aliases[k] = v
+	}
+	for k, v := range importedCustoms {
+		tEnv.customs[k] = v
+	}
 
 	// --- Pass 1: type declarations ---
 	for _, d := range mod.Decls {
@@ -280,9 +298,9 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 		return FreshVar(), nil
 
 	case *ast.TypeCon:
-		if len(t.Module) > 0 {
-			return nil, fmt.Errorf("qualified type names not yet supported: %v.%s", t.Module, t.Name)
-		}
+		// Qualified type names (Post.Post) are looked up by the base name.
+		// MVP: we don't yet share type-alias info across modules, so an
+		// unknown qualified name is treated as an opaque TCon.
 		args := make([]Type, len(t.Args))
 		for i, a := range t.Args {
 			at, err := convertTypeExprWithIDs(a, tEnv, nil)

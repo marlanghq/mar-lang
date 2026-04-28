@@ -1,0 +1,17 @@
+module Format exposing (..)
+
+
+import Post
+
+
+renderPost : Post.Post -> String
+renderPost p =
+    p.title ++ " (" ++ statusLabel p.published ++ ")"
+
+
+statusLabel : Bool -> String
+statusLabel published =
+    if published then
+        "published"
+    else
+        "draft"
