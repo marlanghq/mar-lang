@@ -92,6 +92,6 @@ view model =
         ]
 
 
-page : App
+page : Page
 page =
-    App.create init update view
+    Page.root init update view

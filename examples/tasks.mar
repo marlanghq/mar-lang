@@ -179,4 +179,4 @@ renderTask t =
 
 main : Effect String ()
 main =
-    App.serve (App.create init update view)
+    App.frontend [Page.root init update view]

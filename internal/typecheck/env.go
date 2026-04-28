@@ -539,71 +539,68 @@ func stdlibBindings() map[string]Type {
 		"viewCenterY":  TAttr(),
 		"viewCenter":   TAttr(),
 
-		// App
-		// App.create
-		//   : (() -> (Model, Effect Never Msg))
-		//   -> (Msg -> Model -> (Model, Effect Never Msg))
-		//   -> (Model -> View)
-		//   -> App
+		// Page — a single MVU screen bound to a URL path.
 		//
-		// Effect Never Msg is encoded as TEffect(Never, Msg). For now we use
-		// a fresh var for "Never" so it accepts any Effect; the convention is
-		// the runtime ignores the error track of the returned effect.
-		"appCreate": TForall{
+		// Page.create
+		//   : String                                      -- path
+		//   -> (() -> (Model, Effect Never Msg))          -- init
+		//   -> (Msg -> Model -> (Model, Effect Never Msg))-- update
+		//   -> (Model -> View Msg)                        -- view
+		//   -> Page
+		//
+		// Page.root is the same with path "/" — sugar for the common
+		// single-page case.
+		"pageCreate": TForall{
 			Vars: []int{a.ID, b.ID, -8},
-			Body: TArrow{
-				From: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -8}, b)}}},
-				To: TArrow{
-					From: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -8}, b)}}}},
-					To: TArrow{
-						From: TArrow{From: a, To: TView(b)},
-						To:   TApp(),
-					},
-				},
-			},
-		},
-		// App.serve / App.serveScreens drop the port — same rationale as
-		// App.fullstack: port comes from <projectDir>/mar.json (server.port,
-		// default 3000), not code. Keeps deployment / env config out of the
-		// source.
-		"appServe": TArrow{From: TApp(), To: TEffect(TString, TUnit{})},
-
-		// App.fullstack : { api : List Route, page : App } -> Effect String ()
-		// Unified server: api routes mounted under /api, page (a frontend MVU
-		// app) shipped to the browser as JS. Port comes from <projectDir>/mar.json
-		// (server.port, default 3000) — not from code, so deployment can
-		// reconfigure it without recompiling.
-		"appFullstack": TArrow{
-			From: TRecord{
-				Fields: map[string]Type{
-					"api":  TList(serverRouteType()),
-					"page": TApp(),
-				},
-				Order: []string{"api", "page"},
-			},
-			To: TEffect(TString, TUnit{}),
-		},
-
-		// Screen.create — same shape as App.create but with a path string.
-		"screenCreate": TForall{
-			Vars: []int{a.ID, b.ID, -9},
 			Body: TArrow{
 				From: TString,
 				To: TArrow{
-					From: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -9}, b)}}},
+					From: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -8}, b)}}},
 					To: TArrow{
-						From: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -9}, b)}}}},
+						From: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -8}, b)}}}},
 						To: TArrow{
 							From: TArrow{From: a, To: TView(b)},
-							To:   TScreen(),
+							To:   TPage(),
 						},
 					},
 				},
 			},
 		},
-		"appServeScreens": TArrow{
-			From: TList(TScreen()),
-			To:   TEffect(TString, TUnit{}),
+		"pageRoot": TForall{
+			Vars: []int{a.ID, b.ID, -9},
+			Body: TArrow{
+				From: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -9}, b)}}},
+				To: TArrow{
+					From: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -9}, b)}}}},
+					To: TArrow{
+						From: TArrow{From: a, To: TView(b)},
+						To:   TPage(),
+					},
+				},
+			},
+		},
+
+		// App.frontend : List Page -> Effect String ()
+		// Pure frontend: ships an MVU app (one or many pages) to the browser.
+		// Port comes from <projectDir>/mar.json (server.port, default 3000).
+		"appFrontend": TArrow{From: TList(TPage()), To: TEffect(TString, TUnit{})},
+
+		// App.backend : List Route -> Effect String ()
+		// Pure API server: HTTP endpoints, no frontend bundle. Port from mar.json.
+		"appBackend": TArrow{From: TList(serverRouteType()), To: TEffect(TString, TUnit{})},
+
+		// App.fullstack : { api : List Route, pages : List Page } -> Effect String ()
+		// Unified: api under /api, pages shipped to browser (multi-screen via
+		// path-based routing across the page list). Port from mar.json.
+		"appFullstack": TArrow{
+			From: TRecord{
+				Fields: map[string]Type{
+					"api":   TList(serverRouteType()),
+					"pages": TList(TPage()),
+				},
+				Order: []string{"api", "pages"},
+			},
+			To: TEffect(TString, TUnit{}),
 		},
 	}
 }
@@ -761,11 +758,11 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"View.input":    "viewInput",
 		"View.textarea": "viewTextarea",
 		"View.empty":    "viewEmpty",
-		"App.create":        "appCreate",
-		"App.serve":         "appServe",
+		"App.frontend":      "appFrontend",
+		"App.backend":       "appBackend",
 		"App.fullstack":     "appFullstack",
-		"App.serveScreens":  "appServeScreens",
-		"Screen.create":     "screenCreate",
+		"Page.create":       "pageCreate",
+		"Page.root":         "pageRoot",
 	}
 	out := map[string]Type{}
 	for q, f := range mapping {

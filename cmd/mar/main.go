@@ -294,13 +294,13 @@ func runDev(path string) int {
 				env.Define("appFullstack", fs)
 				env.Define("App.fullstack", fs)
 
-				srv := makeServeBuiltin(mods, port, lp)
-				env.Define("appServe", srv)
-				env.Define("App.serve", srv)
+				fe := makeFrontendBuiltin(mods, port, lp)
+				env.Define("appFrontend", fe)
+				env.Define("App.frontend", fe)
 
-				scr := makeServeScreensBuiltin(mods, port, lp)
-				env.Define("appServeScreens", scr)
-				env.Define("App.serveScreens", scr)
+				be := makeBackendBuiltin(port, lp)
+				env.Define("appBackend", be)
+				env.Define("App.backend", be)
 			})
 		if err != nil {
 			return err
@@ -468,95 +468,131 @@ func reachableFrom(startModule string, mods []*ast.Module) []*ast.Module {
 	return order
 }
 
-// makeFullstackBuiltin returns a 1-arg native function that mirrors the
-// signature of App.fullstack:
+// pickFrontMods extracts the subset of project modules reachable from
+// pages' origin modules. Each page in a frontend / fullstack must come
+// from a top-level binding (so it has provenance); we trace from those
+// modules so the browser bundle excludes Backend / Main code that would
+// fail to evaluate on the JS side.
+func pickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, error) {
+	roots := map[string]bool{}
+	for i, pv := range pages {
+		page, ok := pv.(runtime.VPage)
+		if !ok {
+			return nil, fmt.Errorf("page %d is not a Page value (got %T)", i, pv)
+		}
+		if page.OriginName == "" {
+			return nil, fmt.Errorf("page %d has no provenance — pages must be top-level bindings (e.g. `myPage = Page.root ...`), not inline expressions", i)
+		}
+		roots[page.OriginModule] = true
+	}
+	merged := []*ast.Module{}
+	seen := map[string]bool{}
+	for root := range roots {
+		for _, m := range reachableFrom(root, mods) {
+			name := joinModuleName(m.Name)
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			merged = append(merged, m)
+		}
+	}
+	return merged, nil
+}
+
+// makeFrontendBuiltin overrides App.frontend in `mar dev`.
 //
-//	{ api : List Route, page : App } -> Effect String ()
+//	App.frontend : List Page -> Effect String ()
 //
-// It captures the project's module ASTs (so the browser bundle entry can
-// be resolved from the page's provenance) and the HTTP port resolved by
-// the CLI from mar.json. Updates lp atomically — the Effect returned is a
-// no-op because the CLI drives the server lifecycle.
+// Captures the page list, ships the AST subset reachable from those
+// pages to the browser. The JS runtime evaluates the user's `main`
+// expression itself — it sees the same App.frontend call and uses the
+// JS-side builtin to mount the pages.
+func makeFrontendBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
+	return runtime.VFn{
+		Arity: 1,
+		Native: func(args []runtime.Value) (runtime.Value, error) {
+			pageList, ok := args[0].(runtime.VList)
+			if !ok {
+				return nil, fmt.Errorf("App.frontend: expected List Page (got %T)", args[0])
+			}
+			frontMods, err := pickFrontMods(pageList.Elements, mods)
+			if err != nil {
+				return nil, fmt.Errorf("App.frontend: %v", err)
+			}
+			lp.SetPort(port)
+			if err := lp.Update(nil, frontMods, "main"); err != nil {
+				return nil, fmt.Errorf("App.frontend: %v", err)
+			}
+			return noopEffect("appFrontend"), nil
+		},
+	}
+}
+
+// makeBackendBuiltin overrides App.backend in `mar dev`.
+//
+//	App.backend : List Route -> Effect String ()
+//
+// API server, no frontend bundle. The browser never gets a program.json;
+// HTML page renders an empty "this is an API server" notice.
+func makeBackendBuiltin(port int, lp *jsserve.LiveProgram) runtime.Value {
+	return runtime.VFn{
+		Arity: 1,
+		Native: func(args []runtime.Value) (runtime.Value, error) {
+			routes, ok := args[0].(runtime.VList)
+			if !ok {
+				return nil, fmt.Errorf("App.backend: expected List Route (got %T)", args[0])
+			}
+			lp.SetPort(port)
+			// Empty mods list disables the frontend bundle on this lp.
+			if err := lp.Update(routes.Elements, nil, ""); err != nil {
+				return nil, fmt.Errorf("App.backend: %v", err)
+			}
+			return noopEffect("appBackend"), nil
+		},
+	}
+}
+
+// makeFullstackBuiltin overrides App.fullstack in `mar dev`.
+//
+//	App.fullstack : { api : List Route, pages : List Page } -> Effect String ()
+//
+// The unified mode. Backend routes mounted at /api/*, page list shipped
+// to the browser as JS. Multi-page apps (more than one Page in `pages`)
+// route by URL path.
 func makeFullstackBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
 	return runtime.VFn{
 		Arity: 1,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
 			rec, ok := args[0].(runtime.VRecord)
 			if !ok {
-				return nil, fmt.Errorf("App.fullstack: expected { api, page } record (got %T)", args[0])
+				return nil, fmt.Errorf("App.fullstack: expected { api, pages } record (got %T)", args[0])
 			}
 			apiV, ok := rec.Fields["api"]
 			if !ok {
 				return nil, fmt.Errorf("App.fullstack: missing `api` field")
 			}
-			pageV, ok := rec.Fields["page"]
+			pagesV, ok := rec.Fields["pages"]
 			if !ok {
-				return nil, fmt.Errorf("App.fullstack: missing `page` field")
+				return nil, fmt.Errorf("App.fullstack: missing `pages` field")
 			}
 			apiList, ok := apiV.(runtime.VList)
 			if !ok {
 				return nil, fmt.Errorf("App.fullstack: `api` is not a list (got %T)", apiV)
 			}
-			page, ok := pageV.(runtime.VApp)
+			pageList, ok := pagesV.(runtime.VList)
 			if !ok {
-				return nil, fmt.Errorf("App.fullstack: `page` is not an App value (got %T)", pageV)
+				return nil, fmt.Errorf("App.fullstack: `pages` is not a list (got %T)", pagesV)
 			}
-			if page.OriginName == "" {
-				return nil, fmt.Errorf("App.fullstack: `page` has no provenance — must be a top-level binding (e.g. `page = App.create ...` in some module), not an inline expression")
+			frontMods, err := pickFrontMods(pageList.Elements, mods)
+			if err != nil {
+				return nil, fmt.Errorf("App.fullstack: %v", err)
 			}
-			// Ship only the modules reachable from the frontend page —
-			// otherwise Backend.mar / Main.mar would land in the browser
-			// bundle, where Db / Entity / App.fullstack don't exist.
-			frontMods := reachableFrom(page.OriginModule, mods)
 			lp.SetPort(port)
-			if err := lp.Update(apiList.Elements, frontMods, page.OriginName); err != nil {
+			if err := lp.Update(apiList.Elements, frontMods, "main"); err != nil {
 				return nil, fmt.Errorf("App.fullstack: %v", err)
 			}
 			return noopEffect("appFullstack"), nil
-		},
-	}
-}
-
-// makeServeBuiltin overrides App.serve in `mar dev` to ship the AST to
-// the browser instead of doing server-side HTML rendering.
-//
-//	App.serve : App -> Effect String ()
-//
-// Port comes from the CLI (mar.json server.port, default 3000) — same
-// convention as App.fullstack. Updates lp atomically; the Effect itself
-// is a no-op (CLI drives the server). Browser entry is "main" — the JS
-// runtime evaluates the same expression and the JS-side App.serve mounts.
-func makeServeBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
-	return runtime.VFn{
-		Arity: 1,
-		Native: func(args []runtime.Value) (runtime.Value, error) {
-			if _, ok := args[0].(runtime.VApp); !ok {
-				return nil, fmt.Errorf("App.serve: expected App value (got %T)", args[0])
-			}
-			lp.SetPort(port)
-			if err := lp.Update(nil, mods, "main"); err != nil {
-				return nil, fmt.Errorf("App.serve: %v", err)
-			}
-			return noopEffect("appServeBrowser"), nil
-		},
-	}
-}
-
-// makeServeScreensBuiltin is the multi-screen variant of makeServeBuiltin.
-//
-//	App.serveScreens : List Screen -> Effect String ()
-func makeServeScreensBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
-	return runtime.VFn{
-		Arity: 1,
-		Native: func(args []runtime.Value) (runtime.Value, error) {
-			if _, ok := args[0].(runtime.VList); !ok {
-				return nil, fmt.Errorf("App.serveScreens: expected List Screen (got %T)", args[0])
-			}
-			lp.SetPort(port)
-			if err := lp.Update(nil, mods, "main"); err != nil {
-				return nil, fmt.Errorf("App.serveScreens: %v", err)
-			}
-			return noopEffect("appServeScreensBrowser"), nil
 		},
 	}
 }

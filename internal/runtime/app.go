@@ -1,20 +1,13 @@
 package runtime
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	"sync"
 )
 
 // unwrapModelTuple takes a value returned by init/update — expected to be
 // (Model, Effect _ Msg) — and returns just the Model. The Effect side is
-// ignored on the server side (the Go App.serve doesn't dispatch async msgs
-// today; that's the JS runtime's job). If the value is not a tuple, it's
-// returned as-is for backward compatibility.
+// ignored at this layer (the JS runtime in the browser handles dispatch).
+// If the value is not a tuple, it's returned as-is.
 func unwrapModelTuple(v Value) Value {
 	if t, ok := v.(VTuple); ok && len(t.Members) == 2 {
 		return t.Members[0]
@@ -22,15 +15,21 @@ func unwrapModelTuple(v Value) Value {
 	return v
 }
 
-// VApp packages an MVU program (init + update + view) into a runnable value.
+// VPage packages a single MVU screen (path + init/update/view) into a
+// runnable value. Pages are first-class so users can compose them into
+// frontend / fullstack apps:
 //
-// OriginModule/OriginName are filled in by the project loader when this VApp
-// is the result of a top-level binding (e.g. `page = App.create ...` in
-// module Frontend gives Origin{Frontend, page}). App.fullstack reads them to
-// know which qualified name to use as the browser bundle's entry point.
-// Empty strings mean "no provenance recorded yet" — typical for VApps built
-// inline inside expressions, which can't be served as a fullstack page.
-type VApp struct {
+//	myPage : Page
+//	myPage = Page.root init update view
+//
+//	main = App.frontend [myPage]
+//
+// OriginModule/OriginName are filled in by the project loader when this
+// page is the result of a top-level binding (e.g. `page = Page.root ...`
+// in module Frontend gives Origin{Frontend, page}). App.fullstack reads
+// them to know which qualified name to use as the browser bundle entry.
+type VPage struct {
+	Path         string
 	InitFn       Value
 	UpdateFn     Value
 	ViewFn       Value
@@ -38,499 +37,55 @@ type VApp struct {
 	OriginName   string
 }
 
-func (VApp) isValue() {}
-func (a VApp) Display() string { return "<app>" }
-
-// VScreen packages a single screen (path + MVU functions) for multi-screen apps.
-type VScreen struct {
-	Path     string
-	InitFn   Value
-	UpdateFn Value
-	ViewFn   Value
+func (VPage) isValue() {}
+func (p VPage) Display() string {
+	return fmt.Sprintf("<page:%s>", p.Path)
 }
 
-func (VScreen) isValue() {}
-func (s VScreen) Display() string {
-	return fmt.Sprintf("<screen:%s>", s.Path)
-}
-
-// appBuiltins exposes the App API.
+// appBuiltins exposes the page / app builders.
 //
-//	App.create : init -> update -> view -> App
-//	App.serve  : Int -> App -> Effect String ()
+//	Page.create  : String -> init -> update -> view -> Page
+//	Page.root    : init -> update -> view -> Page          (path = "/")
+//	App.frontend : List Page -> Effect String ()
+//	App.backend  : List Route -> Effect String ()
+//	App.fullstack: { api, pages } -> Effect String ()
 //
-// The MVU program is stateful per browser session (cookie-based). On each
-// HTTP request:
-//   - GET  /            -> render view of current model.
-//   - POST /__msg       -> apply update with the named msg, then 303 to /.
-//
-// MVP shape:
-//   - init   : () -> Model  (no Effect — we don't run init effects yet)
-//   - update : Msg -> Model -> Model
-//   - view   : Model -> View
-//
-// Buttons in the view emit msgs by being rendered as forms posting to /__msg.
-// The view runtime walks the View tree at render time, replacing buttons with
-// HTML forms. Msg encoding: a constructor name plus stringified args.
-//
-// This is server-rendered + form-based interaction; no JS required.
+// The default builtins for the App.* server entry points error out when
+// evaluated outside of `mar dev`, because they need access to the
+// project's module ASTs (to ship as a browser bundle) and mar.json
+// (for the listening port). The CLI installs project-aware overrides
+// before evaluating Main.main — see cmd/mar/main.go runDev.
 func appBuiltins() map[string]Value {
 	return map[string]Value{
-		"appCreate": nativeFn(3, func(args []Value) (Value, error) {
-			return VApp{InitFn: args[0], UpdateFn: args[1], ViewFn: args[2]}, nil
-		}),
-		"appServe": nativeFn(1, appServeImpl),
-
-		// App.fullstack is the unified-server entry point. The default builtin
-		// here errors out because it has no access to the project's module
-		// ASTs (needed to ship the frontend bundle to the browser) or the
-		// project's mar.json (where the port comes from). The CLI installs a
-		// project-aware override before evaluating Main.main — see
-		// cmd/mar/main.go runApp.
-		"appFullstack": nativeFn(1, func(args []Value) (Value, error) {
-			return nil, fmt.Errorf("App.fullstack: only available via `mar app <projectDir>` (the CLI installs the project-aware version)")
-		}),
-
-		// Screen.create : String -> initFn -> updateFn -> viewFn -> Screen
-		"screenCreate": nativeFn(4, func(args []Value) (Value, error) {
+		"pageCreate": nativeFn(4, func(args []Value) (Value, error) {
 			path, ok := args[0].(VString)
 			if !ok {
-				return nil, fmt.Errorf("Screen.create: expected String path")
+				return nil, fmt.Errorf("Page.create: expected String path (got %T)", args[0])
 			}
-			return VScreen{
+			return VPage{
 				Path:     path.V,
 				InitFn:   args[1],
 				UpdateFn: args[2],
 				ViewFn:   args[3],
 			}, nil
 		}),
-		// App.serveScreens : Int -> List Screen -> Effect String ()
-		"appServeScreens": nativeFn(1, appServeScreensImpl),
-	}
-}
+		"pageRoot": nativeFn(3, func(args []Value) (Value, error) {
+			return VPage{
+				Path:     "/",
+				InitFn:   args[0],
+				UpdateFn: args[1],
+				ViewFn:   args[2],
+			}, nil
+		}),
 
-// session stores the current model for a single browser session.
-type session struct {
-	model Value
-}
-
-// defaultServerPort is used when App.serve / App.serveScreens are evaluated
-// outside of `mar dev` (e.g. by `mar run`). In dev mode the CLI installs
-// project-aware overrides that read the real port from mar.json.
-const defaultServerPort = 3000
-
-func appServeImpl(args []Value) (Value, error) {
-	app, ok := args[0].(VApp)
-	if !ok {
-		return nil, fmt.Errorf("App.serve: expected App value (got %T)", args[0])
-	}
-	port := defaultServerPort
-
-	var (
-		mu       sync.Mutex
-		sessions = map[string]*session{}
-	)
-
-	getSession := func(req *http.Request, w http.ResponseWriter) *session {
-		var sid string
-		if c, err := req.Cookie("mar_session"); err == nil {
-			sid = c.Value
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if sid != "" {
-			if s, ok := sessions[sid]; ok {
-				return s
-			}
-		}
-		// New session: generate id, run init.
-		buf := make([]byte, 16)
-		_, _ = rand.Read(buf)
-		sid = hex.EncodeToString(buf)
-		http.SetCookie(w, &http.Cookie{Name: "mar_session", Value: sid, Path: "/"})
-
-		// init() -> (Model, Effect _ Msg)
-		initVal, err := apply(app.InitFn, VUnit{})
-		if err != nil {
-			return &session{model: VUnit{}}
-		}
-		model := unwrapModelTuple(initVal)
-		s := &session{model: model}
-		sessions[sid] = s
-		return s
-	}
-
-	return VEffect{
-		Tag: "appServe",
-		Run: func() (Value, error) {
-			mux := http.NewServeMux()
-			mux.HandleFunc("/__msg", func(w http.ResponseWriter, req *http.Request) {
-				if req.Method != "POST" {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-					return
-				}
-				_ = req.ParseForm()
-				msgName := req.FormValue("msg")
-				if msgName == "" {
-					http.Error(w, "missing msg", http.StatusBadRequest)
-					return
-				}
-				// Build the Msg value. If the form has additional fields,
-				// pack them into a record and wrap with the constructor.
-				var msgVal Value = VCtor{Tag: msgName}
-				extras := map[string]Value{}
-				var order []string
-				for k, vs := range req.PostForm {
-					if k == "msg" || len(vs) == 0 {
-						continue
-					}
-					extras[k] = VString{V: vs[0]}
-					order = append(order, k)
-				}
-				if len(extras) > 0 {
-					msgVal = VCtor{
-						Tag:  msgName,
-						Args: []Value{VRecord{Fields: extras, Order: order}},
-					}
-				}
-				s := getSession(req, w)
-				mu.Lock()
-				updateRes, err := apply(app.UpdateFn, msgVal)
-				if err != nil {
-					mu.Unlock()
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				updateRes, err = apply(updateRes, s.model)
-				if err != nil {
-					mu.Unlock()
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				s.model = unwrapModelTuple(updateRes)
-				mu.Unlock()
-				http.Redirect(w, req, "/", http.StatusSeeOther)
-			})
-
-			mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-				s := getSession(req, w)
-				mu.Lock()
-				vVal, err := apply(app.ViewFn, s.model)
-				mu.Unlock()
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				v, ok := vVal.(VView)
-				if !ok {
-					http.Error(w, "view did not return a View", http.StatusInternalServerError)
-					return
-				}
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				_, _ = io.WriteString(w, "<!doctype html><html><body>")
-				renderInteractiveHTML(w, v)
-				_, _ = io.WriteString(w, "</body></html>")
-			})
-
-			fmt.Printf("[mar] App listening on :%d\n", port)
-			err := http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
-			return VUnit{}, err
-		},
-	}, nil
-}
-
-// appServeScreensImpl serves multiple MVU screens, each at its own path.
-//
-// Per browser session, each screen has its own model (lazy-initialized on
-// first visit). Buttons in a screen post msgs to /__msg/<path> so the
-// runtime knows which screen's update to call.
-func appServeScreensImpl(args []Value) (Value, error) {
-	listV, ok := args[0].(VList)
-	if !ok {
-		return nil, fmt.Errorf("App.serveScreens: expected List Screen (got %T)", args[0])
-	}
-	port := defaultServerPort
-
-	screens := map[string]VScreen{} // path -> screen
-	var paths []string
-	for _, v := range listV.Elements {
-		s, ok := v.(VScreen)
-		if !ok {
-			return nil, fmt.Errorf("App.serveScreens: list element not a Screen")
-		}
-		screens[s.Path] = s
-		paths = append(paths, s.Path)
-	}
-
-	type sessionScreens struct {
-		models map[string]Value // path -> model
-	}
-	var (
-		mu       sync.Mutex
-		sessions = map[string]*sessionScreens{}
-	)
-
-	getOrInitScreenModel := func(s VScreen, sess *sessionScreens) Value {
-		if m, ok := sess.models[s.Path]; ok {
-			return m
-		}
-		m, err := apply(s.InitFn, VUnit{})
-		if err != nil {
-			m = VUnit{}
-		}
-		m = unwrapModelTuple(m)
-		sess.models[s.Path] = m
-		return m
-	}
-
-	getSession := func(req *http.Request, w http.ResponseWriter) *sessionScreens {
-		var sid string
-		if c, err := req.Cookie("mar_session"); err == nil {
-			sid = c.Value
-		}
-		if sid != "" {
-			if s, ok := sessions[sid]; ok {
-				return s
-			}
-		}
-		buf := make([]byte, 16)
-		_, _ = rand.Read(buf)
-		sid = hex.EncodeToString(buf)
-		http.SetCookie(w, &http.Cookie{Name: "mar_session", Value: sid, Path: "/"})
-		s := &sessionScreens{models: map[string]Value{}}
-		sessions[sid] = s
-		return s
-	}
-
-	return VEffect{
-		Tag: "appServeScreens",
-		Run: func() (Value, error) {
-			mux := http.NewServeMux()
-
-			// /__msg/<path>: dispatch msg to the screen at <path>
-			mux.HandleFunc("/__msg/", func(w http.ResponseWriter, req *http.Request) {
-				if req.Method != "POST" {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-					return
-				}
-				screenPath := strings.TrimPrefix(req.URL.Path, "/__msg")
-				screen, ok := screens[screenPath]
-				if !ok {
-					http.NotFound(w, req)
-					return
-				}
-				_ = req.ParseForm()
-				msgName := req.FormValue("msg")
-				if msgName == "" {
-					http.Error(w, "missing msg", http.StatusBadRequest)
-					return
-				}
-				var msgVal Value = VCtor{Tag: msgName}
-				extras := map[string]Value{}
-				var order []string
-				for k, vs := range req.PostForm {
-					if k == "msg" || len(vs) == 0 {
-						continue
-					}
-					extras[k] = VString{V: vs[0]}
-					order = append(order, k)
-				}
-				if len(extras) > 0 {
-					msgVal = VCtor{Tag: msgName, Args: []Value{VRecord{Fields: extras, Order: order}}}
-				}
-
-				mu.Lock()
-				sess := getSession(req, w)
-				model := getOrInitScreenModel(screen, sess)
-				updateRes, err := apply(screen.UpdateFn, msgVal)
-				if err != nil {
-					mu.Unlock()
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				updateRes, err = apply(updateRes, model)
-				if err != nil {
-					mu.Unlock()
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				sess.models[screenPath] = unwrapModelTuple(updateRes)
-				mu.Unlock()
-				http.Redirect(w, req, screenPath, http.StatusSeeOther)
-			})
-
-			// Catch-all GET: find the matching screen and render its view.
-			mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-				screen, ok := screens[req.URL.Path]
-				if !ok {
-					http.NotFound(w, req)
-					return
-				}
-				mu.Lock()
-				sess := getSession(req, w)
-				model := getOrInitScreenModel(screen, sess)
-				vVal, err := apply(screen.ViewFn, model)
-				mu.Unlock()
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				v, ok := vVal.(VView)
-				if !ok {
-					http.Error(w, "view did not return a View", http.StatusInternalServerError)
-					return
-				}
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				_, _ = io.WriteString(w, "<!doctype html><html><body>")
-				renderScreenInteractiveHTML(w, v, screen.Path)
-				_, _ = io.WriteString(w, "</body></html>")
-			})
-
-			fmt.Printf("[mar] App listening on :%d (screens: %s)\n", port, strings.Join(paths, ", "))
-			err := http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
-			return VUnit{}, err
-		},
-	}, nil
-}
-
-// renderScreenInteractiveHTML mirrors renderInteractiveHTML but routes msg
-// posts to /__msg<screenPath> so the right screen handles them.
-func renderScreenInteractiveHTML(w io.Writer, v VView, screenPath string) {
-	msgURL := "/__msg" + screenPath
-	switch v.Tag {
-	case "button":
-		fmt.Fprintf(w, `<form method="post" action="%s" style="display:inline">`, escapeAttr(msgURL))
-		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(msgName(v.Msg)))
-		fmt.Fprintf(w, `<button type="submit">%s</button>`, escapeHTML(v.Text))
-		fmt.Fprintf(w, `</form>`)
-	case "section":
-		_, _ = io.WriteString(w, "<section>")
-		for _, c := range v.Children {
-			if cv, ok := c.(VView); ok {
-				renderScreenInteractiveHTML(w, cv, screenPath)
-			}
-		}
-		_, _ = io.WriteString(w, "</section>")
-	case "row":
-		_, _ = io.WriteString(w, `<div class="row">`)
-		for _, c := range v.Children {
-			if cv, ok := c.(VView); ok {
-				renderScreenInteractiveHTML(w, cv, screenPath)
-			}
-		}
-		_, _ = io.WriteString(w, "</div>")
-	case "column":
-		_, _ = io.WriteString(w, `<div class="column">`)
-		for _, c := range v.Children {
-			if cv, ok := c.(VView); ok {
-				renderScreenInteractiveHTML(w, cv, screenPath)
-			}
-		}
-		_, _ = io.WriteString(w, "</div>")
-	case "list":
-		_, _ = io.WriteString(w, "<ul>")
-		for _, c := range v.Children {
-			if cv, ok := c.(VView); ok {
-				_, _ = io.WriteString(w, "<li>")
-				renderScreenInteractiveHTML(w, cv, screenPath)
-				_, _ = io.WriteString(w, "</li>")
-			}
-		}
-		_, _ = io.WriteString(w, "</ul>")
-	default:
-		// Fall back to the non-interactive renderer for leaf elements.
-		var sb strings.Builder
-		writeView(&sb, v)
-		_, _ = io.WriteString(w, sb.String())
-	}
-}
-
-// msgName extracts the constructor tag from a Msg value. Buttons store the
-// msg as a VCtor (its tag is the name). Forms store the constructor function
-// as a VFn whose CtorTag is the name. Returns "" if neither pattern matches.
-func msgName(v Value) string {
-	switch x := v.(type) {
-	case VCtor:
-		return x.Tag
-	case VFn:
-		return x.CtorTag
-	}
-	return ""
-}
-
-// renderInteractiveHTML walks a view, rendering buttons as forms that POST
-// the bound msg back to /__msg. The msg's constructor tag is sent in a
-// hidden field; for forms, additional input/textarea fields ride along and
-// the runtime wraps them into a record before applying the constructor.
-func renderInteractiveHTML(w io.Writer, v VView) {
-	switch v.Tag {
-	case "button":
-		fmt.Fprintf(w, `<form method="post" action="/__msg" style="display:inline">`)
-		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(msgName(v.Msg)))
-		fmt.Fprintf(w, `<button type="submit">%s</button>`, escapeHTML(v.Text))
-		fmt.Fprintf(w, `</form>`)
-	case "text":
-		fmt.Fprintf(w, "<span>%s</span>", escapeHTML(v.Text))
-	case "title":
-		fmt.Fprintf(w, "<h1>%s</h1>", escapeHTML(v.Text))
-	case "subtitle":
-		fmt.Fprintf(w, "<h2>%s</h2>", escapeHTML(v.Text))
-	case "link":
-		href := ""
-		for _, a := range v.Attrs {
-			if a.Name == "href" {
-				if s, ok := a.Value.(VString); ok {
-					href = s.V
-				}
-			}
-		}
-		fmt.Fprintf(w, `<a href="%s">%s</a>`, escapeAttr(href), escapeHTML(v.Text))
-	case "section":
-		_, _ = io.WriteString(w, "<section>")
-		for _, c := range v.Children {
-			if cv, ok := c.(VView); ok {
-				renderInteractiveHTML(w, cv)
-			}
-		}
-		_, _ = io.WriteString(w, "</section>")
-	case "row":
-		_, _ = io.WriteString(w, `<div class="row">`)
-		for _, c := range v.Children {
-			if cv, ok := c.(VView); ok {
-				renderInteractiveHTML(w, cv)
-			}
-		}
-		_, _ = io.WriteString(w, "</div>")
-	case "column":
-		_, _ = io.WriteString(w, `<div class="column">`)
-		for _, c := range v.Children {
-			if cv, ok := c.(VView); ok {
-				renderInteractiveHTML(w, cv)
-			}
-		}
-		_, _ = io.WriteString(w, "</div>")
-	case "list":
-		_, _ = io.WriteString(w, "<ul>")
-		for _, c := range v.Children {
-			if cv, ok := c.(VView); ok {
-				_, _ = io.WriteString(w, "<li>")
-				renderInteractiveHTML(w, cv)
-				_, _ = io.WriteString(w, "</li>")
-			}
-		}
-		_, _ = io.WriteString(w, "</ul>")
-	case "input":
-		// Server-side HTML rendering renders inputs without onChange wiring.
-		// Per-keystroke updates need JS — use `mar dev` (browser MVU) for
-		// real interactivity. View.input's onChange is ignored here.
-		fmt.Fprintf(w, `<input type="text" value="%s">`, escapeAttr(v.Text))
-	case "textarea":
-		fmt.Fprintf(w, `<textarea>%s</textarea>`, escapeHTML(v.Text))
-	case "empty":
-		// nothing
-	default:
-		var sb strings.Builder
-		writeView(&sb, v)
-		_, _ = io.WriteString(w, sb.String())
+		"appFrontend": nativeFn(1, func(args []Value) (Value, error) {
+			return nil, fmt.Errorf("App.frontend: only available via `mar dev` (the CLI installs the project-aware version)")
+		}),
+		"appBackend": nativeFn(1, func(args []Value) (Value, error) {
+			return nil, fmt.Errorf("App.backend: only available via `mar dev` (the CLI installs the project-aware version)")
+		}),
+		"appFullstack": nativeFn(1, func(args []Value) (Value, error) {
+			return nil, fmt.Errorf("App.fullstack: only available via `mar dev` (the CLI installs the project-aware version)")
+		}),
 	}
 }

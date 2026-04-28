@@ -415,24 +415,41 @@
     def('viewCenterY', flagAttr('centerY'));  def('View.centerY', flagAttr('centerY'));
     def('viewCenter',  flagAttr('center'));   def('View.center',  flagAttr('center'));
 
-    // App.create / App.serve — App.serve mounts the MVU loop.
-    def('appCreate', native(3, ([init, update, view]) => VCtor('__App', [init, update, view])));
-    def('App.create', native(3, ([init, update, view]) => VCtor('__App', [init, update, view])));
-    // App.serve : App -> Effect String ()
-    // Port is configured by the host server (mar.json), not by code.
-    def('appServe', native(1, ([app]) => VEffect(() => mountApp(app), 'mountApp')));
-    def('App.serve', native(1, ([app]) => VEffect(() => mountApp(app), 'mountApp')));
+    // Page.create / Page.root — produce a VCtor "__Page" that the
+    // App.frontend / App.fullstack mounting code consumes.
+    def('pageCreate', native(4, ([path, init, update, view]) =>
+      VCtor('__Page', [path, init, update, view])
+    ));
+    def('Page.create', native(4, ([path, init, update, view]) =>
+      VCtor('__Page', [path, init, update, view])
+    ));
+    def('pageRoot', native(3, ([init, update, view]) =>
+      VCtor('__Page', [VString('/'), init, update, view])
+    ));
+    def('Page.root', native(3, ([init, update, view]) =>
+      VCtor('__Page', [VString('/'), init, update, view])
+    ));
 
-    // Screen.create + App.serveScreens — multi-screen apps with browser routing.
-    def('screenCreate', native(4, ([path, init, update, view]) =>
-      VCtor('__Screen', [path, init, update, view])
+    // App.frontend : List Page -> Effect String ()
+    // Mounts a page list with URL routing. Port comes from the host
+    // server's mar.json, not user code.
+    def('appFrontend', native(1, ([list]) => VEffect(() => mountPages(list.xs), 'mountPages')));
+    def('App.frontend', native(1, ([list]) => VEffect(() => mountPages(list.xs), 'mountPages')));
+
+    // App.backend : List Route -> Effect String ()
+    // Backend is a server-side concept. The browser bundle never sees
+    // backend routes; this builtin returns a no-op Effect on the JS side.
+    def('appBackend', native(1, ([_]) => VEffect(() => VUnit(), 'noop')));
+    def('App.backend', native(1, ([_]) => VEffect(() => VUnit(), 'noop')));
+
+    // App.fullstack : { api, pages } -> Effect String ()
+    // The browser only cares about `pages`; `api` runs server-side.
+    def('appFullstack', native(1, ([rec]) =>
+      VEffect(() => mountPages(rec.fields.pages.xs), 'mountPages')
     ));
-    def('Screen.create', native(4, ([path, init, update, view]) =>
-      VCtor('__Screen', [path, init, update, view])
+    def('App.fullstack', native(1, ([rec]) =>
+      VEffect(() => mountPages(rec.fields.pages.xs), 'mountPages')
     ));
-    // App.serveScreens : List Screen -> Effect String ()
-    def('appServeScreens', native(1, ([list]) => VEffect(() => mountScreens(list.xs), 'mountScreens')));
-    def('App.serveScreens', native(1, ([list]) => VEffect(() => mountScreens(list.xs), 'mountScreens')));
 
     // Effect — sync versions (effects are run-on-demand thunks).
     def('effectSucceed', native(1, ([v]) => VEffect(() => v, 'pure')));
@@ -949,20 +966,23 @@
     }
   }
 
-  // mountScreens implements multi-screen client-side routing using
-  // window.location.pathname + popstate to switch between screens. Each
-  // screen has its own model.
-  function mountScreens(screenList) {
-    const screens = {};
-    for (const s of screenList) {
-      if (s.k !== 'C' || s.tag !== '__Screen') continue;
-      const [pathV, initFn, updateFn, viewFn] = s.args;
+  // mountPages mounts a list of pages with URL-based routing. A
+  // single-page app is just a list of one page (path "/"). Each page
+  // has its own model — selected by window.location.pathname.
+  // Falls back to the first page when the URL doesn't match any path.
+  function mountPages(pageList) {
+    const pages = {};
+    let firstPath = null;
+    for (const p of pageList) {
+      if (p.k !== 'C' || p.tag !== '__Page') continue;
+      const [pathV, initFn, updateFn, viewFn] = p.args;
       const path = pathV.s;
+      if (firstPath === null) firstPath = path;
 
-      // Per-screen hot-reload model preservation. preservedScreenModels
-      // is keyed by screen path and survives marReload via the IIFE's
-      // lexical scope. If the new view function rejects the old model
-      // (shape mismatch), fall back to fresh init for that screen.
+      // Per-page hot-reload model preservation. preservedScreenModels
+      // (keyed by path) survives marReload via the IIFE's lexical
+      // scope. If the new view function rejects the old model (shape
+      // mismatch), fall back to fresh init.
       let model = null;
       let initEffect = null;
       const prior = preservedScreenModels[path];
@@ -972,7 +992,7 @@
           model = prior;
         } catch (_) {
           if (typeof console !== 'undefined') {
-            console.info('[mar reload] screen ' + path + ' model shape changed, fresh init');
+            console.info('[mar reload] page ' + path + ' model shape changed, fresh init');
           }
         }
       }
@@ -983,10 +1003,10 @@
       }
       preservedScreenModels[path] = model;
 
-      screens[path] = {
+      pages[path] = {
         path,
         model,
-        initEffect, // null when we restored — already-run effects don't need re-firing
+        initEffect, // null when restored — already-run effects don't re-fire
         update: updateFn,
         view: viewFn,
       };
@@ -994,44 +1014,43 @@
 
     let initEffectsRun = {};
 
-    function currentScreen() {
+    function currentPage() {
       const p = window.location.pathname;
-      return screens[p] || screens[Object.keys(screens)[0]];
+      return pages[p] || pages[firstPath];
     }
 
     let mounted = null;
-    let mountedScreenPath = null;
+    let mountedPath = null;
 
     function render() {
-      const sc = currentScreen();
-      if (!sc) return;
-      if (!initEffectsRun[sc.path] && sc.initEffect !== null) {
-        initEffectsRun[sc.path] = true;
-        runEffect(sc.initEffect);
+      const pg = currentPage();
+      if (!pg) return;
+      if (!initEffectsRun[pg.path] && pg.initEffect !== null) {
+        initEffectsRun[pg.path] = true;
+        runEffect(pg.initEffect);
       }
-      const viewVal = apply(sc.view, sc.model);
+      const viewVal = apply(pg.view, pg.model);
       const root = document.getElementById('mar-root');
-      // On screen change, throw away the old tree so patch starts fresh —
-      // diffing across a navigation gives no useful work.
-      if (mounted == null || mountedScreenPath !== sc.path) {
+      // On page change, throw away the old DOM — diffing across a
+      // navigation gives no useful work.
+      if (mounted == null || mountedPath !== pg.path) {
         while (root.firstChild) root.removeChild(root.firstChild);
         mounted = createDOM(viewVal);
         root.appendChild(mounted);
-        mountedScreenPath = sc.path;
+        mountedPath = pg.path;
       } else {
         mounted = patchDOM(mounted, viewVal);
       }
 
-      // Intercept link clicks for client-side navigation. Re-binding on
-      // every render is OK — addEventListener with a fresh fn is cheap and
-      // querySelectorAll only finds anchors that were just created or
-      // patched.
+      // Intercept link clicks pointing at known page paths so navigation
+      // stays in-process (no full page reload). __marRouted prevents
+      // double-binding on subsequent renders.
       root.querySelectorAll('a[href^="/"]').forEach((a) => {
         if (a.__marRouted) return;
         a.__marRouted = true;
         a.addEventListener('click', (ev) => {
           const href = a.getAttribute('href');
-          if (screens[href]) {
+          if (pages[href]) {
             ev.preventDefault();
             history.pushState({}, '', href);
             render();
@@ -1041,77 +1060,17 @@
     }
 
     currentDispatch = (msg) => {
-      const sc = currentScreen();
-      if (!sc) return;
-      const out = unwrapModelTuple(apply(apply(sc.update, msg), sc.model));
-      sc.model = out.model;
-      preservedScreenModels[sc.path] = out.model;
+      const pg = currentPage();
+      if (!pg) return;
+      const out = unwrapModelTuple(apply(apply(pg.update, msg), pg.model));
+      pg.model = out.model;
+      preservedScreenModels[pg.path] = out.model;
       render();
       runEffect(out.effect);
     };
 
     window.addEventListener('popstate', render);
     render();
-    return VUnit();
-  }
-
-  function mountApp(app) {
-    if (app.k !== 'C' || app.tag !== '__App') {
-      throw new Error('App.serve: expected an App value');
-    }
-    const [initFn, updateFn, viewFn] = app.args;
-
-    // Hot-reload model preservation: if a previous run of this app left a
-    // model behind on the module-level `preservedModel`, try to keep
-    // using it. Smoke-test by calling viewFn against it; if the new view
-    // function blows up (e.g. user added a field to Model), discard it
-    // and start fresh from init. The IIFE wrapping this whole file
-    // persists across marRun re-invocations, so `preservedModel` survives
-    // a marReload.
-    let model = null;
-    let initialEffect = null;
-    if (preservedModel !== null) {
-      try {
-        apply(viewFn, preservedModel); // smoke test
-        model = preservedModel;
-      } catch (_) {
-        // Shape changed — fall through to fresh init.
-        if (typeof console !== 'undefined') {
-          console.info('[mar reload] model shape changed, falling back to fresh init');
-        }
-      }
-    }
-    if (model === null) {
-      const initial = unwrapModelTuple(apply(initFn, VUnit()));
-      model = initial.model;
-      initialEffect = initial.effect;
-    }
-    preservedModel = model;
-    let mounted = null;
-
-    function render() {
-      const viewVal = apply(viewFn, model);
-      const root = document.getElementById('mar-root');
-      if (mounted == null) {
-        while (root.firstChild) root.removeChild(root.firstChild);
-        mounted = createDOM(viewVal);
-        root.appendChild(mounted);
-      } else {
-        // Patch in place. patchDOM may swap out the node if the root tag
-        // changes, so update our reference.
-        mounted = patchDOM(mounted, viewVal);
-      }
-    }
-
-    currentDispatch = (msg) => {
-      const out = unwrapModelTuple(apply(apply(updateFn, msg), model));
-      model = out.model;
-      preservedModel = model;
-      render();
-      runEffect(out.effect);
-    };
-    render();
-    if (initialEffect !== null) runEffect(initialEffect);
     return VUnit();
   }
 
@@ -1155,15 +1114,10 @@
     if (main === undefined) {
       throw new Error('entry not found: ' + (program.entry || 'main'));
     }
-    if (main.k === 'E') {
-      main.run();
-    } else if (main.k === 'C' && main.tag === '__App') {
-      // Bare App value (e.g. Frontend.page used by App.fullstack on the
-      // backend) — mount it directly without an enclosing Effect.
-      mountApp(main);
-    } else {
-      throw new Error('entry value is not an Effect or App (got ' + main.k + ')');
+    if (main.k !== 'E') {
+      throw new Error('entry value is not an Effect (got ' + main.k + ')');
     }
+    main.run();
   };
 
   // marReload tears down the currently running app and re-mounts a fresh

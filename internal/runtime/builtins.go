@@ -148,11 +148,11 @@ func qualifiedAliasMapping() map[string]string {
 		"View.centerY":  "viewCenterY",
 		"View.center":   "viewCenter",
 		"View.empty":    "viewEmpty",
-		"App.create":        "appCreate",
-		"App.serve":         "appServe",
+		"App.frontend":      "appFrontend",
+		"App.backend":       "appBackend",
 		"App.fullstack":     "appFullstack",
-		"App.serveScreens":  "appServeScreens",
-		"Screen.create":     "screenCreate",
+		"Page.create":       "pageCreate",
+		"Page.root":         "pageRoot",
 	}
 }
 

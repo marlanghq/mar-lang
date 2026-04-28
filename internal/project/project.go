@@ -209,10 +209,10 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env) error {
 		// Record provenance on App values so App.fullstack can name the
 		// browser bundle's entry point. Only stamps the first time, so a
 		// page re-exported from a wrapper module keeps its original origin.
-		if app, ok := val.(runtime.VApp); ok && app.OriginName == "" {
-			app.OriginModule = modName
-			app.OriginName = v.Name
-			val = app
+		if page, ok := val.(runtime.VPage); ok && page.OriginName == "" {
+			page.OriginModule = modName
+			page.OriginName = v.Name
+			val = page
 		}
 		rEnv.Define(v.Name, val)
 		rEnv.Define(modName+"."+v.Name, val)

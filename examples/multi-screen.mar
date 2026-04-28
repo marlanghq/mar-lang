@@ -33,9 +33,9 @@ counterView n =
         ]
 
 
-counterScreen : Screen
-counterScreen =
-    Screen.create "/home" counterInit counterUpdate counterView
+counterPage : Page
+counterPage =
+    Page.create "/home" counterInit counterUpdate counterView
 
 
 -- TODO SCREEN
@@ -71,11 +71,11 @@ todoView model =
         ]
 
 
-todoScreen : Screen
-todoScreen =
-    Screen.create "/todos" todoInit todoUpdate todoView
+todoPage : Page
+todoPage =
+    Page.create "/todos" todoInit todoUpdate todoView
 
 
 main : Effect String ()
 main =
-    App.serveScreens [ counterScreen, todoScreen ]
+    App.frontend [ counterPage, todoPage ]

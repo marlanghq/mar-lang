@@ -14,5 +14,5 @@ main : Effect String ()
 main =
     App.fullstack
         { api = Backend.routes
-        , page = Frontend.page
+        , pages = [Frontend.page]
         }

@@ -257,14 +257,11 @@ func TAttr() TCon {
 	return TCon{Name: "Attr"}
 }
 
-// TApp returns the opaque "App" type.
-func TApp() TCon {
-	return TCon{Name: "App"}
-}
-
-// TScreen returns the opaque "Screen" type.
-func TScreen() TCon {
-	return TCon{Name: "Screen"}
+// TPage returns the opaque "Page" type — a single MVU screen bound to a
+// URL path. Both single-screen and multi-screen apps are expressed as a
+// list of pages; single = list of one with path "/".
+func TPage() TCon {
+	return TCon{Name: "Page"}
 }
 
 // TEndpoint returns the opaque "Endpoint" type.
