@@ -44,10 +44,10 @@ func Unify(a, b Type, s *Subst) error {
 			return &UnifyError{A: a, B: b}
 		}
 		if av.Name != bv.Name {
-			return &UnifyError{A: a, B: b, Reason: "different type constructors"}
+			return &UnifyError{A: a, B: b}
 		}
 		if len(av.Args) != len(bv.Args) {
-			return &UnifyError{A: a, B: b, Reason: "arity mismatch"}
+			return &UnifyError{A: a, B: b}
 		}
 		for i := range av.Args {
 			if err := Unify(av.Args[i], bv.Args[i], s); err != nil {
@@ -78,7 +78,7 @@ func Unify(a, b Type, s *Subst) error {
 			return &UnifyError{A: a, B: b}
 		}
 		if len(av.Members) != len(bv.Members) {
-			return &UnifyError{A: a, B: b, Reason: "tuple arity mismatch"}
+			return &UnifyError{A: a, B: b}
 		}
 		for i := range av.Members {
 			if err := Unify(av.Members[i], bv.Members[i], s); err != nil {
@@ -177,21 +177,21 @@ func unifyRecords(a, b TRecord, s *Subst) error {
 	case a.Tail == nil && b.Tail == nil:
 		// closed vs closed: must match exactly
 		if len(aOnly) > 0 || len(bOnly) > 0 {
-			return &UnifyError{A: a, B: b, Reason: "different field sets"}
+			return &UnifyError{A: a, B: b}
 		}
 		return nil
 
 	case a.Tail == nil && b.Tail != nil:
-		// b open, a closed: b's tail = the fields a has that b lacks (i.e. aOnly)
+		// b open, a closed: b's tail = the fields a has that b lacks (i.e. aOnly).
+		// If the open side wants fields the closed side doesn't have, bail.
 		if len(bOnly) > 0 {
-			return &UnifyError{A: a, B: b, Reason: "open record requires fields the closed one lacks"}
+			return &UnifyError{A: a, B: b}
 		}
 		return Unify(b.Tail, makeRowExtension(aOnly, a, nil), s)
 
 	case a.Tail != nil && b.Tail == nil:
-		// a open, b closed: symmetric
 		if len(aOnly) > 0 {
-			return &UnifyError{A: a, B: b, Reason: "open record requires fields the closed one lacks"}
+			return &UnifyError{A: a, B: b}
 		}
 		return Unify(a.Tail, makeRowExtension(bOnly, b, nil), s)
 

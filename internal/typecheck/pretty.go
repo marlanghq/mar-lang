@@ -98,19 +98,19 @@ func (r *renamer) format(t Type) string {
 		}
 		return "(" + strings.Join(parts, ", ") + ")"
 	case TRecord:
-		if len(v.Fields) == 0 && v.Tail == nil {
+		// Flatten chains like { x | { y | row } } into a single
+		// { x, y | row } before rendering. Row poly's internal
+		// representation creates these chains during unification; users
+		// shouldn't see them.
+		fields, order, tail := flattenRecord(v)
+		if len(fields) == 0 && tail == nil {
 			return "{}"
 		}
 		var sb strings.Builder
 		sb.WriteString("{ ")
-		if v.Tail != nil {
-			sb.WriteString(r.format(v.Tail))
-			sb.WriteString(" | ")
-		}
-		// Use Order if present, else sort
-		names := v.Order
+		names := order
 		if len(names) == 0 {
-			for n := range v.Fields {
+			for n := range fields {
 				names = append(names, n)
 			}
 			sort.Strings(names)
@@ -121,7 +121,21 @@ func (r *renamer) format(t Type) string {
 			}
 			sb.WriteString(n)
 			sb.WriteString(" : ")
-			sb.WriteString(r.format(v.Fields[n]))
+			sb.WriteString(r.format(fields[n]))
+		}
+		// Unbound row vars render as `, …` — internal var name is noise
+		// to the user. Concrete tails (rare after flattening) print inline.
+		if tail != nil {
+			if _, isVar := tail.(TVar); isVar {
+				if len(names) > 0 {
+					sb.WriteString(", …")
+				} else {
+					sb.WriteString("…")
+				}
+			} else {
+				sb.WriteString(" | ")
+				sb.WriteString(r.format(tail))
+			}
 		}
 		sb.WriteString(" }")
 		return sb.String()
@@ -165,6 +179,51 @@ func (r *renamer) formatArrowFrom(t Type) string {
 		return "(" + r.format(t) + ")"
 	}
 	return r.format(t)
+}
+
+// flattenRecord unwraps `{ a | { b | { c | tail } } }` into a single
+// record `{ a, b, c | tail }`. Inner-record tails come from the way
+// row-polymorphic unification represents "a record with at least these
+// fields plus more" — fine internally, confusing in error messages.
+// Inner duplicate field names take precedence (shouldn't happen for
+// well-typed code, but be defensive).
+func flattenRecord(r TRecord) (fields map[string]Type, order []string, tail Type) {
+	fields = map[string]Type{}
+	for _, n := range r.Order {
+		fields[n] = r.Fields[n]
+	}
+	for n, t := range r.Fields {
+		if _, ok := fields[n]; !ok {
+			fields[n] = t
+		}
+	}
+	order = append(order, r.Order...)
+	for n := range r.Fields {
+		if !contains(order, n) {
+			order = append(order, n)
+		}
+	}
+	tail = r.Tail
+	for {
+		nested, ok := tail.(TRecord)
+		if !ok {
+			break
+		}
+		for _, n := range nested.Order {
+			if _, exists := fields[n]; !exists {
+				fields[n] = nested.Fields[n]
+				order = append(order, n)
+			}
+		}
+		for n, t := range nested.Fields {
+			if _, exists := fields[n]; !exists {
+				fields[n] = t
+				order = append(order, n)
+			}
+		}
+		tail = nested.Tail
+	}
+	return fields, order, tail
 }
 
 func letterName(n int) string {

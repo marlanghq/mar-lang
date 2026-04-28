@@ -2,6 +2,8 @@ package typecheck
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"mar/internal/ast"
 )
@@ -133,7 +135,19 @@ func inferApp(n *ast.EApp, env *TypeEnv, s *Subst) (Type, error) {
 	}
 	tRet := FreshVar()
 	if err := Unify(tFn, TArrow{From: tArg, To: tRet}, s); err != nil {
-		return nil, errorf(n.Pos, "%v", err)
+		// Specialize common cases for friendlier wording. By the time we
+		// land here, tFn's type has been resolved enough to inspect.
+		applied := s.Apply(tFn)
+		if _, isArrow := applied.(TArrow); !isArrow {
+			// Tried to call a non-function. Most often: too many arguments
+			// (the prefix `f a b` already returned a non-arrow result, then
+			// the user passed one more), or applying a literal.
+			return nil, errorf(n.Pos, "this expression is not a function — its type is %s, so it cannot be applied to arguments", Pretty(applied))
+		}
+		// It is a function but the argument doesn't match.
+		fnT := applied.(TArrow)
+		return nil, errorf(n.Pos, "argument has the wrong type: expected %s, got %s",
+			Pretty(fnT.From), Pretty(s.Apply(tArg)))
 	}
 	return s.Apply(tRet), nil
 }
@@ -312,9 +326,35 @@ func inferFieldAccess(n *ast.EFieldAccess, env *TypeEnv, s *Subst) (Type, error)
 		Tail:   rowVar,
 	}
 	if err := Unify(tExpr, expected, s); err != nil {
+		// Translate the unification failure into something actionable.
+		applied := s.Apply(tExpr)
+		if rec, ok := applied.(TRecord); ok && rec.Tail == nil {
+			if _, has := rec.Fields[n.Field]; !has {
+				return nil, errorf(n.Pos, "record has no field '%s' (available: %s)",
+					n.Field, joinFieldNames(rec))
+			}
+		}
+		// Not a record at all.
+		if _, ok := applied.(TRecord); !ok {
+			return nil, errorf(n.Pos, "tried to access .%s on a non-record value of type %s",
+				n.Field, Pretty(applied))
+		}
 		return nil, errorf(n.Pos, "field access .%s: %v", n.Field, err)
 	}
 	return s.Apply(tField), nil
+}
+
+// joinFieldNames returns the record's field names in display order, as a
+// comma-separated list. Used in user-facing error messages.
+func joinFieldNames(r TRecord) string {
+	names := append([]string(nil), r.Order...)
+	if len(names) == 0 {
+		for n := range r.Fields {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 // inferFieldAccessor: .field as a function { row | field : a } -> a
