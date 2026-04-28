@@ -2,6 +2,7 @@ package typecheck
 
 import (
 	"fmt"
+	"strings"
 
 	"mar/internal/ast"
 )
@@ -76,6 +77,38 @@ func CheckModuleWith(
 		// Imported customs also need to be visible at the value-env
 		// level for exhaustiveness checking to find them.
 		valueEnv.RegisterCustom(k, v)
+	}
+
+	// Process `import M exposing (foo, bar, ...)` clauses: for each
+	// listed name, bind the bare form so the user can write `foo`
+	// instead of `M.foo`. Items with `Open: true` (e.g. `Type(..)`)
+	// also expose all constructors of the type.
+	for _, imp := range mod.Imports {
+		if len(imp.Exposing.Items) == 0 && !imp.Exposing.All {
+			continue
+		}
+		modName := strings.Join(imp.Module, ".")
+		for _, item := range imp.Exposing.Items {
+			qual := modName + "." + item.Name
+			if t, ok := valueEnv.Lookup(qual); ok {
+				valueEnv = valueEnv.Bind(item.Name, t)
+			}
+			// Type names: pull aliases / customs into the bare namespace too.
+			if alias, ok := importedAliases[item.Name]; ok {
+				tEnv.aliases[item.Name] = alias
+			}
+			if ct, ok := importedCustoms[item.Name]; ok {
+				tEnv.customs[item.Name] = ct
+				if item.Open {
+					// Expose constructors as bare values too.
+					for _, ctorName := range ct.CtorOrder {
+						if t, ok := valueEnv.Lookup(modName + "." + ctorName); ok {
+							valueEnv = valueEnv.Bind(ctorName, t)
+						}
+					}
+				}
+			}
+		}
 	}
 
 	// --- Pass 1: type declarations ---
