@@ -22,7 +22,8 @@ type LiveProgram struct {
 	programJSON []byte
 	title       string
 	entry       string
-	hasAPI      bool // true when serving as full-stack (route /api/* through dispatchBackend)
+	hasAPI      bool   // true when serving as full-stack (route /api/* through dispatchBackend)
+	lastError   string // most recent compile error; "" when last compile succeeded
 }
 
 // SetPort sets the listening port. Called once on first capture; ignored
@@ -87,48 +88,90 @@ func (lp *LiveProgram) HasAPI() bool {
 	return lp.hasAPI
 }
 
-// ReloadHub broadcasts "the program changed, reload" events to all
-// connected browser tabs over Server-Sent Events. One channel per
-// connected client; broadcast is non-blocking (fire-and-forget).
+// SetError records the most recent compile error. The dev banner reads
+// this and shows it to connected browsers via SSE.
+func (lp *LiveProgram) SetError(msg string) {
+	lp.mu.Lock()
+	defer lp.mu.Unlock()
+	lp.lastError = msg
+}
+
+// ClearError marks the project as compiling cleanly again.
+func (lp *LiveProgram) ClearError() {
+	lp.mu.Lock()
+	defer lp.mu.Unlock()
+	lp.lastError = ""
+}
+
+func (lp *LiveProgram) LastError() string {
+	lp.mu.RLock()
+	defer lp.mu.RUnlock()
+	return lp.lastError
+}
+
+// ReloadHub broadcasts dev events (reload / compile error / error
+// cleared) to connected browser tabs via Server-Sent Events. Messages
+// are JSON-encoded so the client can dispatch on type.
+//
+// On subscribe, the hub also resends the current LiveProgram error
+// state (if any) so a tab opened mid-error sees the banner without
+// having to wait for the next change.
 type ReloadHub struct {
 	mu      sync.Mutex
-	clients map[chan struct{}]struct{}
+	clients map[chan string]struct{}
+	lp      *LiveProgram
 }
 
-func NewReloadHub() *ReloadHub {
-	return &ReloadHub{clients: map[chan struct{}]struct{}{}}
+func NewReloadHub(lp *LiveProgram) *ReloadHub {
+	return &ReloadHub{clients: map[chan string]struct{}{}, lp: lp}
 }
 
-func (h *ReloadHub) subscribe() chan struct{} {
+func (h *ReloadHub) subscribe() chan string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	c := make(chan struct{}, 1)
+	c := make(chan string, 4)
 	h.clients[c] = struct{}{}
 	return c
 }
 
-func (h *ReloadHub) unsubscribe(c chan struct{}) {
+func (h *ReloadHub) unsubscribe(c chan string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.clients, c)
 	close(c)
 }
 
-func (h *ReloadHub) Broadcast() {
+// Reload tells every client to refetch and remount. Implies the error
+// banner can be hidden — the new program supersedes any prior error.
+func (h *ReloadHub) Reload() {
+	h.broadcast(`{"type":"reload"}`)
+}
+
+// Error pushes a compile error message. Clients show it as a banner.
+func (h *ReloadHub) Error(msg string) {
+	h.broadcast(jsonError(msg))
+}
+
+// OK clears the error banner. Sent when a previously-failed compile
+// becomes successful (and gets followed by a Reload).
+func (h *ReloadHub) OK() {
+	h.broadcast(`{"type":"ok"}`)
+}
+
+func (h *ReloadHub) broadcast(payload string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for c := range h.clients {
 		select {
-		case c <- struct{}{}:
+		case c <- payload:
 		default:
-			// Client's buffer is full — they'll catch the next event.
+			// Slow client — drop. Next event will catch them up.
 		}
 	}
 }
 
-// ServeReload is an HTTP handler for SSE reload events. Browsers connect
-// once and stay connected; on each Broadcast they get a "data: reload\n\n"
-// line which the runtime.js client interprets as "tear down and remount."
+// ServeReload is an HTTP handler for SSE events. Browsers connect once
+// and stay connected.
 func (h *ReloadHub) ServeReload(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -142,19 +185,30 @@ func (h *ReloadHub) ServeReload(w http.ResponseWriter, r *http.Request) {
 	c := h.subscribe()
 	defer h.unsubscribe(c)
 
-	// Initial comment to flush headers and confirm the connection is open.
+	// Initial comment to flush headers.
 	if _, err := io.WriteString(w, ": connected\n\n"); err != nil {
 		return
 	}
 	flusher.Flush()
 
+	// Send the current error state (if any) so a tab opened during a
+	// broken build sees the banner immediately.
+	if h.lp != nil {
+		if msg := h.lp.LastError(); msg != "" {
+			if _, err := io.WriteString(w, "data: "+jsonError(msg)+"\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+
 	for {
 		select {
-		case _, ok := <-c:
+		case payload, ok := <-c:
 			if !ok {
 				return
 			}
-			if _, err := io.WriteString(w, "data: reload\n\n"); err != nil {
+			if _, err := io.WriteString(w, "data: "+payload+"\n\n"); err != nil {
 				return
 			}
 			flusher.Flush()
@@ -162,6 +216,16 @@ func (h *ReloadHub) ServeReload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// jsonError builds the SSE payload for a compile error. The message is
+// JSON-escaped so newlines and quotes survive the wire.
+func jsonError(msg string) string {
+	b, err := json.Marshal(map[string]string{"type": "error", "message": msg})
+	if err != nil {
+		return `{"type":"error","message":"<encoding failed>"}`
+	}
+	return string(b)
 }
 
 func makeProgramJSON(mods []*ast.Module, entry string) ([]byte, error) {

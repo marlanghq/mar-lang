@@ -281,7 +281,7 @@ func runDev(path string) int {
 	}
 
 	lp := &jsserve.LiveProgram{}
-	hub := jsserve.NewReloadHub()
+	hub := jsserve.NewReloadHub(lp)
 
 	// compile loads + evaluates the project, capturing the served state
 	// into lp. Returns a friendly error message instead of panicking so
@@ -340,7 +340,7 @@ func runDev(path string) int {
 	// Start the watcher in the background. Compile errors stay visible
 	// in the terminal but don't tear the server down: the previous good
 	// version stays in lp.
-	go watchAndReload(projectDir, compile, hub)
+	go watchAndReload(projectDir, compile, hub, lp)
 
 	// Open the browser to the dev URL once the server is ready. Same
 	// convenience the lispy `mar dev` had. Honors $MAR_NO_OPEN for
@@ -363,9 +363,10 @@ type fileState struct {
 
 // watchAndReload polls .mar / .json files under root every ~250ms. On any
 // change (mtime / size / file added / removed), it runs compile and
-// broadcasts a reload event on success. Errors are printed but don't stop
-// the loop — the next save can fix them.
-func watchAndReload(root string, compile func() error, hub *jsserve.ReloadHub) {
+// broadcasts the result on the hub. Compile errors don't stop the loop —
+// the dev banner shows them in the browser; the previous good version
+// keeps running.
+func watchAndReload(root string, compile func() error, hub *jsserve.ReloadHub, lp *jsserve.LiveProgram) {
 	snapshot := func() map[string]fileState {
 		out := map[string]fileState{}
 		_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
@@ -403,11 +404,19 @@ func watchAndReload(root string, compile func() error, hub *jsserve.ReloadHub) {
 		prev = cur
 		fmt.Println("[mar dev] file change detected, recompiling…")
 		if err := compile(); err != nil {
-			fmt.Fprintf(os.Stderr, "[mar dev] compile error: %v\n", err)
+			msg := err.Error()
+			fmt.Fprintf(os.Stderr, "[mar dev] compile error: %s\n", msg)
+			lp.SetError(msg)
+			hub.Error(msg)
 			continue
 		}
+		// Successful compile clears the banner if there was one.
+		if lp.LastError() != "" {
+			lp.ClearError()
+			hub.OK()
+		}
 		fmt.Println("[mar dev] reloaded")
-		hub.Broadcast()
+		hub.Reload()
 	}
 }
 

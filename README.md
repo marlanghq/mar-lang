@@ -111,8 +111,11 @@ mar dev [path]              Run main in dev mode with hot reload. <path>
                             on change recompiles, swaps the served program
                             atomically, and pushes a reload event to all
                             connected browsers via SSE on /_mar/reload.
-                            Compile errors stay visible in the terminal —
-                            the previous good version keeps serving.
+                            Compile errors are pushed to a red banner in
+                            the browser (the previous good version keeps
+                            serving). Server-down detection shows an
+                            amber "Reconnecting…" banner until the
+                            connection comes back.
 mar config <dir>            load and print mar.json
 mar version                 print version
 ```

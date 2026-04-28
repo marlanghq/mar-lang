@@ -1175,7 +1175,7 @@
 
   // marBootstrap is the entry point invoked from the host HTML page. It
   // fetches the initial program, runs it, and opens the SSE connection
-  // that the dev server uses to push reload events.
+  // that the dev server uses to push reload + compile-error events.
   global.marBootstrap = function () {
     fetch('/_mar/program.json', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
@@ -1191,18 +1191,106 @@
             root.appendChild(pre);
           }
         }
-        // Open the reload channel after the first successful boot. If
-        // EventSource isn't available (e.g. running under a test mock),
-        // skip silently — the app still works, just no hot reload.
-        if (typeof EventSource === 'undefined') return;
-        const es = new EventSource('/_mar/reload');
-        es.onmessage = function (ev) {
-          if (ev.data === 'reload') global.marReload();
-        };
-        es.onerror = function () {
-          // Server may have stopped — ignore. EventSource auto-reconnects
-          // when the server comes back, and the next 'reload' will fire.
-        };
+        setupDevChannel();
       });
   };
+
+  // setupDevChannel opens the SSE connection used by `mar dev` for both
+  // hot reload and dev-time UI feedback (compile errors, server-down
+  // detection). Skipped when EventSource isn't available — the app
+  // still runs, just without dev affordances.
+  function setupDevChannel() {
+    if (typeof EventSource === 'undefined') return;
+
+    const banner = createDevBanner();
+    let disconnectTimer = null;
+
+    const showDisconnect = () => {
+      banner.show('disconnected', 'Server offline. Reconnecting…');
+    };
+    const clearDisconnectTimer = () => {
+      if (disconnectTimer) { clearTimeout(disconnectTimer); disconnectTimer = null; }
+    };
+
+    const es = new EventSource('/_mar/reload');
+
+    es.onopen = function () {
+      clearDisconnectTimer();
+      // The server resends current error state on subscribe (if any).
+      // If there's no error to report, nothing arrives here — clear
+      // any leftover "disconnect" banner.
+      if (banner.kind === 'disconnected') banner.hide();
+    };
+
+    es.onmessage = function (ev) {
+      let payload;
+      try { payload = JSON.parse(ev.data); } catch (_) { return; }
+      if (payload.type === 'reload') {
+        banner.hide();
+        global.marReload();
+      } else if (payload.type === 'ok') {
+        banner.hide();
+      } else if (payload.type === 'error') {
+        banner.show('error', payload.message);
+      }
+    };
+
+    es.onerror = function () {
+      // EventSource fires onerror on every drop. We only show the
+      // banner if reconnection takes more than ~2s — short blips
+      // (server restart inside hot-reload, network hiccup) shouldn't
+      // flash a banner.
+      clearDisconnectTimer();
+      disconnectTimer = setTimeout(function () {
+        if (es.readyState !== 1 /* OPEN */) showDisconnect();
+      }, 2000);
+    };
+  }
+
+  // createDevBanner injects a fixed top-of-viewport bar that the dev
+  // channel uses to surface compile errors and server-down state. Pure
+  // DOM, no framework dependencies.
+  function createDevBanner() {
+    let el = document.getElementById('mar-dev-banner');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'mar-dev-banner';
+      el.style.position = 'fixed';
+      el.style.top = '0';
+      el.style.left = '0';
+      el.style.right = '0';
+      el.style.zIndex = '9999';
+      el.style.padding = '0.75rem 1rem';
+      el.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+      el.style.fontSize = '13px';
+      el.style.lineHeight = '1.4';
+      el.style.whiteSpace = 'pre-wrap';
+      el.style.maxHeight = '40vh';
+      el.style.overflow = 'auto';
+      el.style.boxShadow = '0 2px 4px rgba(0,0,0,0.15)';
+      el.style.display = 'none';
+      document.body.appendChild(el);
+    }
+    return {
+      kind: null,
+      show: function (kind, message) {
+        this.kind = kind;
+        if (kind === 'error') {
+          el.style.background = '#7f1d1d';
+          el.style.color = '#fee2e2';
+          el.style.borderBottom = '2px solid #fca5a5';
+        } else if (kind === 'disconnected') {
+          el.style.background = '#78350f';
+          el.style.color = '#fef3c7';
+          el.style.borderBottom = '2px solid #fcd34d';
+        }
+        el.textContent = message;
+        el.style.display = 'block';
+      },
+      hide: function () {
+        this.kind = null;
+        el.style.display = 'none';
+      },
+    };
+  }
 })(typeof window !== 'undefined' ? window : globalThis);
