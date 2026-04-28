@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 
+	"mar/internal/ast"
 	"mar/internal/lexer"
 	"mar/internal/parser"
 	"mar/internal/project"
@@ -172,6 +173,10 @@ func (s *Server) handle(msg *message) {
 		s.handleRename(msg)
 	case "workspace/symbol":
 		s.handleWorkspaceSymbol(msg)
+	case "textDocument/completion":
+		s.handleCompletion(msg)
+	case "textDocument/inlayHint":
+		s.handleInlayHint(msg)
 	case "shutdown":
 		s.respond(msg.ID, nil)
 	case "exit":
@@ -221,6 +226,10 @@ func (s *Server) handleInitialize(msg *message) {
 			"referencesProvider":      true,
 			"renameProvider":          true,
 			"workspaceSymbolProvider": true,
+			"completionProvider": map[string]any{
+				"triggerCharacters": []string{"."},
+			},
+			"inlayHintProvider": true,
 		},
 		"serverInfo": map[string]any{
 			"name":    "mar-lsp",
@@ -656,6 +665,172 @@ func (s *Server) handleWorkspaceSymbol(msg *message) {
 				},
 			})
 		}
+	}
+	s.respond(msg.ID, out)
+}
+
+// --- Completion ---
+
+type completionParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Position lspPosition `json:"position"`
+}
+
+func (s *Server) handleCompletion(msg *message) {
+	var p completionParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	s.mu.Lock()
+	idx := s.idx[p.TextDocument.URI]
+	indexes := make([]*DocIndex, 0, len(s.idx))
+	for _, i := range s.idx {
+		indexes = append(indexes, i)
+	}
+	s.mu.Unlock()
+	if idx == nil {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	prefix := identifierPrefixAt(idx.Source, p.Position.Line, p.Position.Character)
+	// If the prefix is "Module." (or "Module.partial"), filter on the
+	// qualified prefix; otherwise match any symbol starting with the
+	// prefix string.
+	out := []any{}
+	seen := map[string]bool{}
+	addSymbol := func(sym Symbol, fromOtherFile bool) {
+		key := sym.Name
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(sym.Name), strings.ToLower(prefix)) {
+			return
+		}
+		detail := sym.Type
+		if detail == "" {
+			detail = sym.Summary
+		}
+		ci := map[string]any{
+			"label":  sym.Name,
+			"kind":   completionKind(sym.Kind),
+			"detail": detail,
+		}
+		if fromOtherFile {
+			ci["sortText"] = "z" + sym.Name // de-prioritize externals
+		}
+		out = append(out, ci)
+	}
+	for _, sym := range idx.Symbols {
+		addSymbol(sym, false)
+	}
+	for _, i := range indexes {
+		if i == idx {
+			continue
+		}
+		for _, sym := range i.Symbols {
+			addSymbol(sym, true)
+		}
+	}
+	s.respond(msg.ID, out)
+}
+
+// identifierPrefixAt returns the partial identifier the user is typing
+// just before the cursor (left-of-col). Used for completion to filter
+// candidates without requiring the LSP client to send context.
+func identifierPrefixAt(src string, line, col int) string {
+	lines := strings.Split(src, "\n")
+	if line < 0 || line >= len(lines) {
+		return ""
+	}
+	row := lines[line]
+	if col < 0 || col > len(row) {
+		return ""
+	}
+	isIdent := func(b byte) bool {
+		return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
+			(b >= '0' && b <= '9') || b == '_'
+	}
+	start := col
+	for start > 0 && isIdent(row[start-1]) {
+		start--
+	}
+	return row[start:col]
+}
+
+func completionKind(k SymbolKind) int {
+	switch k {
+	case SymValue:
+		return 3 // Function
+	case SymTypeAlias:
+		return 7 // Class
+	case SymCustomType:
+		return 13 // Enum
+	case SymConstructor:
+		return 20 // EnumMember
+	}
+	return 6 // Variable
+}
+
+// --- Inlay hints ---
+
+type inlayHintParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Range lspRange `json:"range"`
+}
+
+func (s *Server) handleInlayHint(msg *message) {
+	var p inlayHintParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	s.mu.Lock()
+	idx := s.idx[p.TextDocument.URI]
+	s.mu.Unlock()
+	if idx == nil || idx.Mod == nil {
+		s.respond(msg.ID, []any{})
+		return
+	}
+	// For each top-level ValueDecl that doesn't have a corresponding
+	// AnnotationDecl right above it, emit an inline ": Type" hint after
+	// the name. Tells the user what type was inferred without forcing
+	// them to write the annotation themselves.
+	annotated := map[string]bool{}
+	for _, d := range idx.Mod.Decls {
+		if a, ok := d.(*ast.AnnotationDecl); ok {
+			annotated[a.Name] = true
+		}
+	}
+	out := []any{}
+	for _, d := range idx.Mod.Decls {
+		v, ok := d.(*ast.ValueDecl)
+		if !ok || annotated[v.Name] {
+			continue
+		}
+		sym, ok := idx.Symbols[v.Name]
+		if !ok || sym.Type == "" {
+			continue
+		}
+		// Position the hint after the name. Mar Pos is 1-indexed; LSP
+		// positions are 0-indexed.
+		line := v.Pos.Line - 1
+		col := v.Pos.Column - 1 + len(v.Name)
+		if line < 0 || col < 0 {
+			continue
+		}
+		out = append(out, map[string]any{
+			"position":     lspPosition{Line: line, Character: col},
+			"label":        " : " + sym.Type,
+			"kind":         1, // Type
+			"paddingLeft":  false,
+			"paddingRight": false,
+		})
 	}
 	s.respond(msg.ID, out)
 }
