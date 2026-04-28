@@ -43,14 +43,15 @@ const pageHTML = `<!doctype html>
 
   html, body { margin: 0; padding: 0; }
   body {
+    /* Defaults are neutral — full viewport, content shrink, top-left.
+       Apps that want a max-width "page" feel will opt in once the
+       layout attributes (View.fill, View.center, etc.) land. */
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     font-size: 15px;
     line-height: 1.4;
     color: var(--fg);
     background: var(--bg);
     padding: 1.5rem;
-    max-width: 720px;
-    margin: 0 auto;
   }
 
   /* Typography (View.title / .subtitle / .text) */

@@ -11,8 +11,11 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -23,6 +26,43 @@ import (
 	"mar/internal/runtime"
 	"mar/internal/typecheck"
 )
+
+// openBrowserWhenReady polls the dev URL until it answers, then asks the
+// OS to open it. Done once per `mar dev` invocation. Set MAR_NO_OPEN=1 in
+// the environment to skip (useful for CI or when running headless).
+func openBrowserWhenReady(url string) {
+	if os.Getenv("MAR_NO_OPEN") != "" {
+		return
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(url, "http://"), 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			openURL(url)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	// Server never came up — silently give up. The user already sees the
+	// startup logs, no need to add noise.
+}
+
+// openURL invokes the OS-native "open this URL" command. Errors are
+// non-fatal — the dev server keeps running even if the browser launch
+// fails (e.g. on a headless box without the helper binary installed).
+func openURL(url string) {
+	var cmd *exec.Cmd
+	switch goruntime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	default: // linux, *bsd
+		cmd = exec.Command("xdg-open", url)
+	}
+	_ = cmd.Start()
+}
 
 // noopEffect returns an Effect that does nothing on Run. Used by the
 // `mar dev` overrides for App.fullstack / App.serve / App.serveScreens —
@@ -301,6 +341,11 @@ func runDev(path string) int {
 	// in the terminal but don't tear the server down: the previous good
 	// version stays in lp.
 	go watchAndReload(projectDir, compile, hub)
+
+	// Open the browser to the dev URL once the server is ready. Same
+	// convenience the lispy `mar dev` had. Honors $MAR_NO_OPEN for
+	// headless / CI runs.
+	go openBrowserWhenReady(fmt.Sprintf("http://localhost:%d", port))
 
 	// Block on the HTTP server.
 	if err := jsserve.ServeLive(port, lp, hub); err != nil {
