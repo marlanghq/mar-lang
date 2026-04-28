@@ -320,11 +320,15 @@ func topoSort(parsed map[string]*ast.Module) ([]string, error) {
 	return order, nil
 }
 
-// isStdlib reports whether a module name refers to a built-in (e.g. List, String).
-// These don't have to exist as files; they're provided by the runtime/typecheck.
+// isStdlib reports whether a module name refers to a built-in (e.g.
+// List, String). These don't have to exist as files; the runtime and
+// typecheck provide them. Keep the list in sync with frontend.go's
+// equivalent (today they're the same set).
 func isStdlib(name string) bool {
 	switch name {
-	case "List", "String", "Maybe", "Result", "Effect":
+	case "List", "String", "Maybe", "Result", "Effect", "IO",
+		"JSON", "Server", "Response", "Db", "Entity", "View",
+		"App", "Page", "Endpoint", "Http":
 		return true
 	}
 	return false

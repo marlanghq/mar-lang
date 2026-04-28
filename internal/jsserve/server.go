@@ -13,6 +13,10 @@ import (
 //go:embed runtime.js
 var runtimeJS string
 
+// RuntimeJS exposes the embedded JS runtime source — used by `mar build`
+// to write runtime.js into a static dist/.
+func RuntimeJS() string { return runtimeJS }
+
 // HTML page template. Loads the runtime, then the AST, then runs `main`.
 // Asset paths are stable (`/_mar/...`) so hot-reload's SSE channel sits
 // alongside them without colliding with user routes.

@@ -26,6 +26,7 @@ import (
 	"mar/internal/parser"
 	"mar/internal/project"
 	"mar/internal/runtime"
+	"mar/internal/scaffold"
 	"mar/internal/typecheck"
 )
 
@@ -134,6 +135,30 @@ func main() {
 			fmt.Fprintf(os.Stderr, "mar lsp: %v\n", err)
 			os.Exit(1)
 		}
+	case "init":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "mar init: missing project name\n\nusage: mar init <name>")
+			os.Exit(2)
+		}
+		name := os.Args[2]
+		if err := scaffold.Init(name); err != nil {
+			fmt.Fprintf(os.Stderr, "mar init: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Created %s/\n  cd %s && mar dev\n", name, name)
+	case "build":
+		dir := "."
+		if len(os.Args) >= 3 {
+			dir = os.Args[2]
+		}
+		distDir := filepath.Join(dir, "dist")
+		if len(os.Args) >= 4 {
+			distDir = os.Args[3]
+		}
+		if err := scaffold.Build(dir, distDir); err != nil {
+			fmt.Fprintln(os.Stderr, diag.Format(err))
+			os.Exit(1)
+		}
 	case "version", "--version", "-v":
 		fmt.Printf("%s (%s)\n", version, commit)
 	case "help", "--help", "-h":
@@ -170,6 +195,9 @@ Commands:
                                 Shared.mar    — helpers used by both
                               Names other than Main.mar / main are convention.
   config <dir>                Load and print mar.json from the given project.
+  init <name>                 Scaffold a new mar project at <name>/.
+  build [dir] [distDir]       Compile a frontend project to a static
+                              dist/ directory (HTML + runtime + AST).
   lsp                         Run the Language Server over stdio
                               (used by editor extensions).
   version                     Print the version.

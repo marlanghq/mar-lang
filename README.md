@@ -117,6 +117,13 @@ mar dev [path]              Run main in dev mode with hot reload. <path>
                             amber "Reconnecting…" banner until the
                             connection comes back.
 mar config <dir>            load and print mar.json
+mar init <name>             scaffold a new project (Main.mar + mar.json)
+mar build [dir] [distDir]   compile a frontend project to a static
+                            dist/ directory (HTML + runtime.js +
+                            program.json) — host anywhere static
+mar lsp                     run the Language Server over stdio
+                            (consumed by the VSCode extension under
+                            vscode-mar/)
 mar version                 print version
 ```
 
