@@ -1,7 +1,7 @@
 module TodoApp exposing (main)
 
 
--- A small interactive todo list. Open with `mar serve examples/todo-app.mar`.
+-- A small interactive todo list. Open with `mar dev examples/todo-app.mar`.
 
 
 type alias Todo =
@@ -14,39 +14,44 @@ type alias Todo =
 type alias Model =
     { nextId : Int
     , items : List Todo
+    , draft : String
     }
 
 
 type Msg
-    = AddTodo { body : String }
+    = DraftChanged String
+    | AddTodo
     | ToggleAll
     | ClearAll
 
 
 init : () -> (Model, Effect String Msg)
 init _ =
-    ({ nextId = 1, items = [] }, Effect.none)
+    ({ nextId = 1, items = [], draft = "" }, Effect.none)
 
 
 update : Msg -> Model -> (Model, Effect String Msg)
 update msg model =
     case msg of
-        AddTodo input ->
-            ( { nextId = model.nextId + 1
-              , items = model.items ++ [ { id = model.nextId, body = input.body, done = False } ]
+        DraftChanged value ->
+            ({ model | draft = value }, Effect.none)
+
+        AddTodo ->
+            ( { model
+                | nextId = model.nextId + 1
+                , items = model.items ++ [ { id = model.nextId, body = model.draft, done = False } ]
+                , draft = ""
               }
             , Effect.none
             )
 
         ToggleAll ->
-            ( { nextId = model.nextId
-              , items = List.map (\t -> { id = t.id, body = t.body, done = True }) model.items
-              }
+            ( { model | items = List.map (\t -> { id = t.id, body = t.body, done = True }) model.items }
             , Effect.none
             )
 
         ClearAll ->
-            ( { nextId = model.nextId, items = [] }, Effect.none )
+            ({ model | items = [] }, Effect.none)
 
 
 renderTodo : Todo -> View Msg
@@ -61,8 +66,10 @@ view model =
     View.section
         [ View.title "Todo"
         , View.subtitle (String.fromInt (List.length model.items) ++ " items")
-        , View.form AddTodo
-            [ View.input "body" "" ]
+        , View.row
+            [ View.input model.draft DraftChanged
+            , View.button AddTodo "Add"
+            ]
         , View.row
             [ View.button ToggleAll "ToggleAll"
             , View.button ClearAll "ClearAll"

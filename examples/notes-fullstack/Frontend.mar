@@ -12,13 +12,15 @@ type alias Note =
 
 type alias Model =
     { notes : List Note
+    , draft : String
     , status : String
     }
 
 
 type Msg
     = LoadedNotes (Result String String)
-    | SubmitNew { body : String }
+    | DraftChanged String
+    | SubmitClicked
     | NoteCreated (Result String String)
 
 
@@ -29,7 +31,7 @@ fetchAll =
 
 init : () -> (Model, Effect String Msg)
 init _ =
-    ({ notes = [], status = "loading…" }, fetchAll)
+    ({ notes = [], draft = "", status = "loading…" }, fetchAll)
 
 
 -- JSON.decode is type-trusted — we tell the compiler this returns
@@ -45,21 +47,24 @@ update : Msg -> Model -> (Model, Effect String Msg)
 update msg model =
     case msg of
         LoadedNotes (Ok raw) ->
-            ({ notes = decodeNotes raw, status = "loaded" }, Effect.none)
+            ({ model | notes = decodeNotes raw, status = "loaded" }, Effect.none)
 
         LoadedNotes (Err e) ->
-            ({ notes = [], status = "error: " ++ e }, Effect.none)
+            ({ model | status = "error: " ++ e }, Effect.none)
 
-        SubmitNew input ->
-            ( { notes = model.notes, status = "saving…" }
-            , Endpoint.call Shared.backendBase Shared.createEp input.body NoteCreated
+        DraftChanged value ->
+            ({ model | draft = value }, Effect.none)
+
+        SubmitClicked ->
+            ( { model | status = "saving…", draft = "" }
+            , Endpoint.call Shared.backendBase Shared.createEp model.draft NoteCreated
             )
 
         NoteCreated (Ok _) ->
-            ({ notes = model.notes, status = "added" }, fetchAll)
+            ({ model | status = "added" }, fetchAll)
 
         NoteCreated (Err e) ->
-            ({ notes = model.notes, status = "save failed: " ++ e }, Effect.none)
+            ({ model | status = "save failed: " ++ e }, Effect.none)
 
 
 renderNote : Note -> View Msg
@@ -75,8 +80,10 @@ view model =
         , View.subtitle (String.fromInt (List.length model.notes) ++ " notes")
         , View.list (List.map renderNote model.notes)
         , View.subtitle "Add a note"
-        , View.form SubmitNew
-            [ View.input "body" "" ]
+        , View.row
+            [ View.input model.draft DraftChanged
+            , View.button SubmitClicked "Add"
+            ]
         ]
 
 

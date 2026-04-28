@@ -338,15 +338,13 @@
     def('View.list',    native(1, ([l]) => VView('list', [], l.xs, '')));
     def('viewEmpty', VView('empty', [], [], ''));
     def('View.empty', VView('empty', [], [], ''));
-    def('viewInput', native(2, ([n, v]) => VView('input', [{name:'name', value: n}], [], v.s)));
-    def('View.input', native(2, ([n, v]) => VView('input', [{name:'name', value: n}], [], v.s)));
-    def('viewTextarea', native(2, ([n, v]) => VView('textarea', [{name:'name', value: n}], [], v.s)));
-    def('View.textarea', native(2, ([n, v]) => VView('textarea', [{name:'name', value: n}], [], v.s)));
-    // View.form : (rec -> msg) -> List (View msg) -> View msg
-    // First arg is the constructor that wraps the form's collected fields
-    // (a record) into a Msg. On submit, the runtime applies it.
-    def('viewForm', native(2, ([ctor, children]) => VView('form', [], children.xs, '', ctor)));
-    def('View.form', native(2, ([ctor, children]) => VView('form', [], children.xs, '', ctor)));
+    // View.input : String -> (String -> msg) -> View msg
+    // (currentValue, onChange). The onChange function is stored as the
+    // node's msg; the DOM 'input' event applies it to the typed value.
+    def('viewInput', native(2, ([value, onChange]) => VView('input', [], [], value.s, onChange)));
+    def('View.input', native(2, ([value, onChange]) => VView('input', [], [], value.s, onChange)));
+    def('viewTextarea', native(2, ([value, onChange]) => VView('textarea', [], [], value.s, onChange)));
+    def('View.textarea', native(2, ([value, onChange]) => VView('textarea', [], [], value.s, onChange)));
 
     // App.create / App.serve — App.serve mounts the MVU loop.
     def('appCreate', native(3, ([init, update, view]) => VCtor('__App', [init, update, view])));
@@ -564,32 +562,6 @@
         });
         return e;
       }
-      case 'form': {
-        // view.msg is the constructor function (record -> Msg). On submit
-        // we collect inputs/textareas into a record and apply the ctor.
-        const e = document.createElement('form');
-        for (const c of view.children) e.appendChild(buildDOM(c));
-        const submit = document.createElement('button');
-        submit.type = 'submit';
-        submit.textContent = 'submit';
-        e.appendChild(submit);
-        e.addEventListener('submit', (ev) => {
-          ev.preventDefault();
-          if (!currentDispatch) return;
-          const fields = {};
-          const order = [];
-          const list = e.querySelectorAll('input, textarea');
-          for (const el of list) {
-            if (el.name) {
-              fields[el.name] = VString(el.value || '');
-              order.push(el.name);
-            }
-          }
-          const recordArg = VRecord(fields, order);
-          currentDispatch(apply(view.msg, recordArg));
-        });
-        return e;
-      }
       case 'link': {
         const e = document.createElement('a');
         const href = (view.attrs.find(a => a.name === 'href') || {value: VString('')}).value.s;
@@ -629,18 +601,24 @@
         return e;
       }
       case 'input': {
+        // view.msg is the onChange function (String -> Msg). Every keystroke
+        // applies it to the new value and dispatches the resulting Msg.
         const e = document.createElement('input');
         e.type = 'text';
-        const name = (view.attrs.find(a => a.name === 'name') || {value: VString('')}).value.s;
-        e.name = name;
         e.value = view.text;
+        e.addEventListener('input', (ev) => {
+          if (!currentDispatch || !view.msg) return;
+          currentDispatch(apply(view.msg, VString(e.value)));
+        });
         return e;
       }
       case 'textarea': {
         const e = document.createElement('textarea');
-        const name = (view.attrs.find(a => a.name === 'name') || {value: VString('')}).value.s;
-        e.name = name;
         e.value = view.text;
+        e.addEventListener('input', (ev) => {
+          if (!currentDispatch || !view.msg) return;
+          currentDispatch(apply(view.msg, VString(e.value)));
+        });
         return e;
       }
       case 'empty':

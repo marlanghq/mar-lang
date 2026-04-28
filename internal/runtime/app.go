@@ -400,15 +400,6 @@ func renderScreenInteractiveHTML(w io.Writer, v VView, screenPath string) {
 		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(msgName(v.Msg)))
 		fmt.Fprintf(w, `<button type="submit">%s</button>`, escapeHTML(v.Text))
 		fmt.Fprintf(w, `</form>`)
-	case "form":
-		fmt.Fprintf(w, `<form method="post" action="%s">`, escapeAttr(msgURL))
-		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(msgName(v.Msg)))
-		for _, c := range v.Children {
-			if cv, ok := c.(VView); ok {
-				renderScreenInteractiveHTML(w, cv, screenPath)
-			}
-		}
-		fmt.Fprintf(w, `<button type="submit">submit</button></form>`)
 	case "section":
 		_, _ = io.WriteString(w, "<section>")
 		for _, c := range v.Children {
@@ -525,36 +516,13 @@ func renderInteractiveHTML(w io.Writer, v VView) {
 			}
 		}
 		_, _ = io.WriteString(w, "</ul>")
-	case "form":
-		// View.form makes the inputs inside post a msg with the named fields.
-		fmt.Fprintf(w, `<form method="post" action="/__msg">`)
-		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(msgName(v.Msg)))
-		for _, c := range v.Children {
-			if cv, ok := c.(VView); ok {
-				renderInteractiveHTML(w, cv)
-			}
-		}
-		fmt.Fprintf(w, `<button type="submit">submit</button></form>`)
 	case "input":
-		name := ""
-		for _, a := range v.Attrs {
-			if a.Name == "name" {
-				if s, ok := a.Value.(VString); ok {
-					name = s.V
-				}
-			}
-		}
-		fmt.Fprintf(w, `<input type="text" name="%s" value="%s">`, escapeAttr(name), escapeAttr(v.Text))
+		// Server-side HTML rendering renders inputs without onChange wiring.
+		// Per-keystroke updates need JS — use `mar dev` (browser MVU) for
+		// real interactivity. View.input's onChange is ignored here.
+		fmt.Fprintf(w, `<input type="text" value="%s">`, escapeAttr(v.Text))
 	case "textarea":
-		name := ""
-		for _, a := range v.Attrs {
-			if a.Name == "name" {
-				if s, ok := a.Value.(VString); ok {
-					name = s.V
-				}
-			}
-		}
-		fmt.Fprintf(w, `<textarea name="%s">%s</textarea>`, escapeAttr(name), escapeHTML(v.Text))
+		fmt.Fprintf(w, `<textarea>%s</textarea>`, escapeHTML(v.Text))
 	case "empty":
 		// nothing
 	default:

@@ -132,7 +132,6 @@ func qualifiedAliasMapping() map[string]string {
 		"View.render":   "viewRender",
 		"View.input":    "viewInput",
 		"View.textarea": "viewTextarea",
-		"View.form":     "viewForm",
 		"View.empty":    "viewEmpty",
 		"App.create":        "appCreate",
 		"App.serve":         "appServe",

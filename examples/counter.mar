@@ -1,7 +1,7 @@
 module Counter exposing (main)
 
 
--- Real interactive MVU counter. Open with `mar serve examples/counter.mar`.
+-- Real interactive MVU counter. Open with `mar dev examples/counter.mar`.
 
 
 type alias Model =
@@ -10,10 +10,11 @@ type alias Model =
     }
 
 
+-- Each input has its own change msg; the model holds form state explicitly.
 type Msg
     = Increment
     | Decrement
-    | LabelChanged { label : String }
+    | LabelChanged String
 
 
 init : () -> (Model, Effect String Msg)
@@ -25,13 +26,13 @@ update : Msg -> Model -> (Model, Effect String Msg)
 update msg model =
     case msg of
         Increment ->
-            ({ count = model.count + 1, label = model.label }, Effect.none)
+            ({ model | count = model.count + 1 }, Effect.none)
 
         Decrement ->
-            ({ count = model.count - 1, label = model.label }, Effect.none)
+            ({ model | count = model.count - 1 }, Effect.none)
 
-        LabelChanged input ->
-            ({ count = model.count, label = input.label }, Effect.none)
+        LabelChanged newLabel ->
+            ({ model | label = newLabel }, Effect.none)
 
 
 view : Model -> View Msg
@@ -43,8 +44,7 @@ view model =
             [ View.button Decrement "Decrement"
             , View.button Increment "Increment"
             ]
-        , View.form LabelChanged
-            [ View.input "label" model.label ]
+        , View.input model.label LabelChanged
         ]
 
 

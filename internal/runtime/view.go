@@ -124,52 +124,33 @@ func viewBuiltins() map[string]Value {
 			}
 			return VView{Tag: "list", Children: children}, nil
 		}),
-		// View.input : String -> String -> View   (name, currentValue)
+		// View.input : String -> (String -> msg) -> View msg
+		// (currentValue, onChange). Browser dispatches onChange(value) on
+		// every keystroke, so the model holds the form state explicitly.
+		// The Msg field carries the onChange function for runtime to apply.
 		"viewInput": nativeFn(2, func(args []Value) (Value, error) {
-			name, ok1 := args[0].(VString)
-			value, ok2 := args[1].(VString)
-			if !ok1 || !ok2 {
-				return nil, fmt.Errorf("View.input: expected String, String")
+			value, ok := args[0].(VString)
+			if !ok {
+				return nil, fmt.Errorf("View.input: expected String currentValue")
 			}
+			onChange := args[1]
 			return VView{
 				Tag:  "input",
 				Text: value.V,
-				Attrs: []VAttr{
-					{Name: "name", Value: name},
-				},
+				Msg:  onChange,
 			}, nil
 		}),
-		// View.textarea : String -> String -> View  (name, currentValue)
+		// View.textarea : String -> (String -> msg) -> View msg
 		"viewTextarea": nativeFn(2, func(args []Value) (Value, error) {
-			name, ok1 := args[0].(VString)
-			value, ok2 := args[1].(VString)
-			if !ok1 || !ok2 {
-				return nil, fmt.Errorf("View.textarea: expected String, String")
+			value, ok := args[0].(VString)
+			if !ok {
+				return nil, fmt.Errorf("View.textarea: expected String currentValue")
 			}
+			onChange := args[1]
 			return VView{
 				Tag:  "textarea",
 				Text: value.V,
-				Attrs: []VAttr{
-					{Name: "name", Value: name},
-				},
-			}, nil
-		}),
-		// View.form : (rec -> msg) -> List (View msg) -> View msg
-		//
-		// The first arg is a constructor like SubmitNew that takes the
-		// form's collected fields as a record and returns a Msg. On submit,
-		// the runtime collects inputs/textareas into a record and applies
-		// the constructor; that Msg is then dispatched.
-		"viewForm": nativeFn(2, func(args []Value) (Value, error) {
-			ctor := args[0]
-			children, err := unwrapViewList(args[1])
-			if err != nil {
-				return nil, fmt.Errorf("View.form: %v", err)
-			}
-			return VView{
-				Tag:      "form",
-				Children: children,
-				Msg:      ctor,
+				Msg:  onChange,
 			}, nil
 		}),
 		// View.empty : View
@@ -276,45 +257,14 @@ func writeView(sb *strings.Builder, v VView) {
 	case "empty":
 		// nothing
 	case "input":
-		name := ""
-		for _, a := range v.Attrs {
-			if a.Name == "name" {
-				if s, ok := a.Value.(VString); ok {
-					name = s.V
-				}
-			}
-		}
-		sb.WriteString(`<input type="text" name="`)
-		sb.WriteString(escapeAttr(name))
-		sb.WriteString(`" value="`)
+		// Plain (non-interactive) render — no onChange wiring.
+		sb.WriteString(`<input type="text" value="`)
 		sb.WriteString(escapeAttr(v.Text))
 		sb.WriteString(`">`)
 	case "textarea":
-		name := ""
-		for _, a := range v.Attrs {
-			if a.Name == "name" {
-				if s, ok := a.Value.(VString); ok {
-					name = s.V
-				}
-			}
-		}
-		sb.WriteString(`<textarea name="`)
-		sb.WriteString(escapeAttr(name))
-		sb.WriteString(`">`)
+		sb.WriteString(`<textarea>`)
 		sb.WriteString(escapeHTML(v.Text))
 		sb.WriteString(`</textarea>`)
-	case "form":
-		sb.WriteString(`<form method="post" action="/__msg">`)
-		sb.WriteString(`<input type="hidden" name="msg" value="`)
-		sb.WriteString(escapeAttr(v.Text))
-		sb.WriteString(`">`)
-		for _, c := range v.Children {
-			if cv, ok := c.(VView); ok {
-				writeView(sb, cv)
-			}
-		}
-		sb.WriteString(`<button type="submit">submit</button>`)
-		sb.WriteString(`</form>`)
 	default:
 		sb.WriteString("<div>")
 		for _, c := range v.Children {

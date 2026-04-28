@@ -198,12 +198,12 @@ func unifyRecords(a, b TRecord, s *Subst) error {
 	default:
 		// both open: shared unified above; remaining fields combine into a new row
 		freshRow := FreshVar()
-		// a.Tail = { bOnly fields | freshRow }
-		if err := Unify(a.Tail, makeRowExtension(bOnly, b, freshRow), s); err != nil {
+		// a.Tail = { bOnly fields | freshRow }    (just freshRow if no bOnly)
+		if err := Unify(a.Tail, extendTail(bOnly, b, freshRow), s); err != nil {
 			return err
 		}
-		// b.Tail = { aOnly fields | freshRow }
-		return Unify(b.Tail, makeRowExtension(aOnly, a, freshRow), s)
+		// b.Tail = { aOnly fields | freshRow }    (just freshRow if no aOnly)
+		return Unify(b.Tail, extendTail(aOnly, a, freshRow), s)
 	}
 }
 
@@ -217,4 +217,19 @@ func makeRowExtension(names []string, src TRecord, tail Type) TRecord {
 		order = append(order, n)
 	}
 	return TRecord{Fields: fields, Order: order, Tail: tail}
+}
+
+// extendTail returns a type that represents "extra fields plus tail." When
+// there are no extra fields, it's just the tail itself — wrapping in a
+// `{Fields:{}, Tail: tail}` record creates an indirection that, after
+// substitution, produces non-canonical types like `{| {| {| ...}}}` which
+// makes Apply / Unify / occursIn diverge when two such tails are unified.
+//
+// Used by unifyRecords (open vs open) so that empty-extension tails stay
+// as plain TVars.
+func extendTail(extraNames []string, src TRecord, tail Type) Type {
+	if len(extraNames) == 0 {
+		return tail
+	}
+	return makeRowExtension(extraNames, src, tail)
 }

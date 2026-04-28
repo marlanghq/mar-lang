@@ -40,19 +40,20 @@ counterScreen =
 
 -- TODO SCREEN
 
-type alias TodoModel = { items : List String }
-type TodoMsg = AddItem { body : String } | Clear
+type alias TodoModel = { items : List String, draft : String }
+type TodoMsg = DraftChanged String | AddItem | Clear
 
 
 todoInit : () -> (TodoModel, Effect String TodoMsg)
-todoInit _ = ({ items = [] }, Effect.none)
+todoInit _ = ({ items = [], draft = "" }, Effect.none)
 
 
 todoUpdate : TodoMsg -> TodoModel -> (TodoModel, Effect String TodoMsg)
 todoUpdate msg model =
     case msg of
-        AddItem input -> ({ items = model.items ++ [input.body] }, Effect.none)
-        Clear -> ({ items = [] }, Effect.none)
+        DraftChanged value -> ({ model | draft = value }, Effect.none)
+        AddItem -> ({ model | items = model.items ++ [model.draft], draft = "" }, Effect.none)
+        Clear -> ({ model | items = [] }, Effect.none)
 
 
 todoView : TodoModel -> View TodoMsg
@@ -60,7 +61,10 @@ todoView model =
     View.section
         [ View.title "Todos"
         , View.subtitle (String.fromInt (List.length model.items) ++ " items")
-        , View.form AddItem [ View.input "body" "" ]
+        , View.row
+            [ View.input model.draft DraftChanged
+            , View.button AddItem "Add"
+            ]
         , View.button Clear "Clear"
         , View.list (List.map View.text model.items)
         , View.row [ View.link "/home" "Back to counter" ]

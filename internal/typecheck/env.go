@@ -471,12 +471,12 @@ func stdlibBindings() map[string]Type {
 		"viewLink":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TString, To: TView(a)}}},
 		"viewList":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TView(a)), To: TView(a)}},
 		"viewRender":   TForall{Vars: []int{a.ID}, Body: TArrow{From: TView(a), To: TString}},
-		"viewInput":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TString, To: TView(a)}}},
-		"viewTextarea": TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TString, To: TView(a)}}},
-		// View.form : (rec -> msg) -> List (View msg) -> View msg
-		// The first arg is a constructor like SubmitNew that takes the
-		// form's collected fields as a record and returns a Msg.
-		"viewForm":     TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: TArrow{From: b, To: a}, To: TArrow{From: TList(TView(a)), To: TView(a)}}},
+		// View.input : String -> (String -> msg) -> View msg
+		// (currentValue, onChange) — every keystroke fires onChange with the
+		// new value, so the model holds the form state explicitly. No string
+		// names, no auto-collected records.
+		"viewInput":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TArrow{From: TString, To: a}, To: TView(a)}}},
+		"viewTextarea": TForall{Vars: []int{a.ID}, Body: TArrow{From: TString, To: TArrow{From: TArrow{From: TString, To: a}, To: TView(a)}}},
 		"viewEmpty":    TForall{Vars: []int{a.ID}, Body: TView(a)},
 
 		// App
@@ -681,7 +681,6 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"View.render":   "viewRender",
 		"View.input":    "viewInput",
 		"View.textarea": "viewTextarea",
-		"View.form":     "viewForm",
 		"View.empty":    "viewEmpty",
 		"App.create":        "appCreate",
 		"App.serve":         "appServe",
