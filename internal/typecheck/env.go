@@ -495,6 +495,23 @@ func stdlibBindings() map[string]Type {
 		},
 		"appServe": TArrow{From: TInt, To: TArrow{From: TApp(), To: TEffect(TString, TUnit{})}},
 
+		// App.fullstack : Int -> { api : List Route, page : App } -> Effect String ()
+		// Unified server: api routes mounted under /api, page (a frontend MVU
+		// app) shipped to the browser as JS.
+		"appFullstack": TArrow{
+			From: TInt,
+			To: TArrow{
+				From: TRecord{
+					Fields: map[string]Type{
+						"api":  TList(serverRouteType()),
+						"page": TApp(),
+					},
+					Order: []string{"api", "page"},
+				},
+				To: TEffect(TString, TUnit{}),
+			},
+		},
+
 		// Screen.create — same shape as App.create but with a path string.
 		"screenCreate": TForall{
 			Vars: []int{a.ID, b.ID, -9},
@@ -660,6 +677,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"View.empty":    "viewEmpty",
 		"App.create":        "appCreate",
 		"App.serve":         "appServe",
+		"App.fullstack":     "appFullstack",
 		"App.serveScreens":  "appServeScreens",
 		"Screen.create":     "screenCreate",
 	}

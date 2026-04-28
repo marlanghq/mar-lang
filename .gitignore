@@ -17,8 +17,8 @@ firebase.json
 .firebaserc
 .firebase*
 **/node_modules/
-mar
-mar.exe
+/mar
+/mar.exe
 release-local.sh
 internal/cli/compiler_assets/
 internal/cli/runtime_stubs/

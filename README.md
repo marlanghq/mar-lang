@@ -83,7 +83,7 @@ curl http://localhost:3002/notes
 | `examples/todo-app.mar` | MVU with form input (`AddTodo { body }`), togglable list |
 | `examples/multi-screen.mar` | multiple screens at different paths, each with its own model, links between them |
 | `examples/clock.mar` + `clock-backend.mar` | browser app does Http.get to backend on init / Refresh |
-| `examples/notes-fullstack/` | full-stack mar: Shared.mar declares Endpoints used by both Backend (Endpoint.implement) and Frontend (Endpoint.call); SQLite-backed backend; browser frontend driven by MVU |
+| `examples/notes-fullstack/` | full-stack mar: Main.mar wires Backend.routes + Frontend.page via App.fullstack; Shared.mar declares Endpoints used by both sides; SQLite-backed backend; browser frontend driven by MVU |
 | `examples/multi/` | multi-file project, simplest |
 | `examples/blog/` | 3-file project + `mar.json` |
 
@@ -96,8 +96,11 @@ mar run <file|dir> [val]    type-check + run; defaults to value `main`.
                             For projects, use `Module.name`.
 mar repl                    interactive
 mar serve <file.mar>        serve a browser app on :4000 with client-side MVU
-mar app <projectDir>        unified app: backend at /api, frontend at /,
-                            runtime at /_mar, single process on :3000
+mar app <projectDir>        run a full-stack project. Looks for Main.mar
+                            with `main = App.fullstack port { api, page }`.
+                            Convention: Backend.mar / Frontend.mar /
+                            Shared.mar — but only Main.mar / main are
+                            required by the CLI.
 mar config <dir>            load and print mar.json
 mar version                 print version
 ```

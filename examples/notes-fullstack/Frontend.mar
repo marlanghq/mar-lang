@@ -1,4 +1,4 @@
-module Frontend exposing (main)
+module Frontend exposing (page)
 
 
 import Shared
@@ -80,6 +80,6 @@ view model =
         ]
 
 
-main : Effect String ()
-main =
-    App.serve 4000 (App.create init update view)
+page : App
+page =
+    App.create init update view

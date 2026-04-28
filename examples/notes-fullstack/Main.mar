@@ -1,0 +1,18 @@
+module Main exposing (main)
+
+
+-- Entry point for the full-stack notes app. `mar app <projectDir>` looks
+-- here for `main` and runs it. Backend.mar / Frontend.mar / Shared.mar are
+-- imported by name — no CLI magic, just regular module composition.
+
+
+import Backend
+import Frontend
+
+
+main : Effect String ()
+main =
+    App.fullstack 3000
+        { api = Backend.routes
+        , page = Frontend.page
+        }

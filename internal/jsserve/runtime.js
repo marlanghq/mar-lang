@@ -807,8 +807,12 @@
     }
     if (main.k === 'E') {
       main.run();
+    } else if (main.k === 'C' && main.tag === '__App') {
+      // Bare App value (e.g. Frontend.page used by App.fullstack on the
+      // backend) — mount it directly without an enclosing Effect.
+      mountApp(main);
     } else {
-      throw new Error('entry value is not an Effect (got ' + main.k + ')');
+      throw new Error('entry value is not an Effect or App (got ' + main.k + ')');
     }
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -136,6 +136,7 @@ func qualifiedAliasMapping() map[string]string {
 		"View.empty":    "viewEmpty",
 		"App.create":        "appCreate",
 		"App.serve":         "appServe",
+		"App.fullstack":     "appFullstack",
 		"App.serveScreens":  "appServeScreens",
 		"Screen.create":     "screenCreate",
 	}

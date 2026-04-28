@@ -138,17 +138,40 @@ func resolveImport(dir string, moduleName ast.ModuleName) (string, error) {
 // into a shared runtime env, and returns the env. Used by `mar app` to look
 // up backend `routes`.
 func LoadIntoEnv(entry string) (*runtime.Env, error) {
+	rEnv, _, err := LoadIntoEnvWithModules(entry)
+	return rEnv, err
+}
+
+// LoadIntoEnvWithModules is like LoadIntoEnv but also returns the parsed
+// module ASTs. `mar app` needs both: the env (to evaluate Main.main and
+// extract backend routes) and the ASTs (to ship to the browser as JS).
+func LoadIntoEnvWithModules(entry string) (*runtime.Env, []*ast.Module, error) {
+	return LoadIntoEnvWithModulesAndHook(entry, nil)
+}
+
+// LoadIntoEnvWithModulesAndHook is the same as LoadIntoEnvWithModules but
+// runs `installBuiltins` after BaseEnv is created and before any module is
+// evaluated. Used by `mar app` to override App.fullstack with a version
+// that captures the project's module ASTs (the default builtin can't see
+// them and errors out).
+func LoadIntoEnvWithModulesAndHook(
+	entry string,
+	installBuiltins func(*runtime.Env, []*ast.Module),
+) (*runtime.Env, []*ast.Module, error) {
 	mods, err := LoadForServe(entry)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rEnv := runtime.BaseEnv()
+	if installBuiltins != nil {
+		installBuiltins(rEnv, mods)
+	}
 	for _, m := range mods {
 		if err := loadIntoEnv(m, joinName(m.Name), rEnv); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return rEnv, nil
+	return rEnv, mods, nil
 }
 
 // (joinName, isStdlib, topoSort live in project.go.)

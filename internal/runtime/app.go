@@ -23,10 +23,19 @@ func unwrapModelTuple(v Value) Value {
 }
 
 // VApp packages an MVU program (init + update + view) into a runnable value.
+//
+// OriginModule/OriginName are filled in by the project loader when this VApp
+// is the result of a top-level binding (e.g. `page = App.create ...` in
+// module Frontend gives Origin{Frontend, page}). App.fullstack reads them to
+// know which qualified name to use as the browser bundle's entry point.
+// Empty strings mean "no provenance recorded yet" — typical for VApps built
+// inline inside expressions, which can't be served as a fullstack page.
 type VApp struct {
-	InitFn   Value
-	UpdateFn Value
-	ViewFn   Value
+	InitFn       Value
+	UpdateFn     Value
+	ViewFn       Value
+	OriginModule string
+	OriginName   string
 }
 
 func (VApp) isValue() {}
@@ -71,6 +80,15 @@ func appBuiltins() map[string]Value {
 			return VApp{InitFn: args[0], UpdateFn: args[1], ViewFn: args[2]}, nil
 		}),
 		"appServe": nativeFn(2, appServeImpl),
+
+		// App.fullstack is the unified-server entry point. The default builtin
+		// here errors out because it has no access to the project's module
+		// ASTs (needed to ship the frontend bundle to the browser). The CLI
+		// installs a project-aware override before evaluating Main.main —
+		// see cmd/mar/main.go runApp.
+		"appFullstack": nativeFn(2, func(args []Value) (Value, error) {
+			return nil, fmt.Errorf("App.fullstack: only available via `mar app <projectDir>` (the CLI installs the project-aware version)")
+		}),
 
 		// Screen.create : String -> initFn -> updateFn -> viewFn -> Screen
 		"screenCreate": nativeFn(4, func(args []Value) (Value, error) {
