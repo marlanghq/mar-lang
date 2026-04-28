@@ -12,15 +12,15 @@ module MultiScreen exposing (main)
 type CounterMsg = Inc | Dec
 
 
-counterInit : () -> Int
-counterInit _ = 0
+counterInit : () -> (Int, Effect String CounterMsg)
+counterInit _ = (0, Effect.none)
 
 
-counterUpdate : CounterMsg -> Int -> Int
+counterUpdate : CounterMsg -> Int -> (Int, Effect String CounterMsg)
 counterUpdate msg model =
     case msg of
-        Inc -> model + 1
-        Dec -> model - 1
+        Inc -> (model + 1, Effect.none)
+        Dec -> (model - 1, Effect.none)
 
 
 counterView : Int -> View
@@ -44,15 +44,15 @@ type alias TodoModel = { items : List String }
 type TodoMsg = AddItem { body : String } | Clear
 
 
-todoInit : () -> TodoModel
-todoInit _ = { items = [] }
+todoInit : () -> (TodoModel, Effect String TodoMsg)
+todoInit _ = ({ items = [] }, Effect.none)
 
 
-todoUpdate : TodoMsg -> TodoModel -> TodoModel
+todoUpdate : TodoMsg -> TodoModel -> (TodoModel, Effect String TodoMsg)
 todoUpdate msg model =
     case msg of
-        AddItem input -> { items = model.items ++ [input.body] }
-        Clear -> { items = [] }
+        AddItem input -> ({ items = model.items ++ [input.body] }, Effect.none)
+        Clear -> ({ items = [] }, Effect.none)
 
 
 todoView : TodoModel -> View

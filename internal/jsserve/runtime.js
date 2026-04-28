@@ -340,6 +340,8 @@
     def('View.input', native(2, ([n, v]) => VView('input', [{name:'name', value: n}], [], v.s)));
     def('viewTextarea', native(2, ([n, v]) => VView('textarea', [{name:'name', value: n}], [], v.s)));
     def('View.textarea', native(2, ([n, v]) => VView('textarea', [{name:'name', value: n}], [], v.s)));
+    def('viewForm', native(2, ([msgName, children]) => VView('form', [], children.xs, msgName.s)));
+    def('View.form', native(2, ([msgName, children]) => VView('form', [], children.xs, msgName.s)));
 
     // App.create / App.serve — App.serve mounts the MVU loop.
     def('appCreate', native(3, ([init, update, view]) => VCtor('__App', [init, update, view])));
@@ -352,7 +354,7 @@
       return VEffect(() => mountApp(app), 'mountApp');
     }));
 
-    // Effect
+    // Effect — sync versions (effects are run-on-demand thunks).
     def('effectSucceed', native(1, ([v]) => VEffect(() => v, 'pure')));
     def('Effect.succeed', native(1, ([v]) => VEffect(() => v, 'pure')));
     def('effectMap', native(2, ([fn, eff]) => VEffect(() => apply(fn, eff.run()), 'map')));
@@ -361,6 +363,55 @@
     def('Effect.andThen', native(2, ([fn, eff]) => VEffect(() => apply(fn, eff.run()).run(), 'andThen')));
     def('effectNone', VEffect(() => VUnit(), 'none'));
     def('Effect.none', VEffect(() => VUnit(), 'none'));
+
+    // Http.get / Http.post — async fetch wrapped in an Effect.
+    //
+    //   Http.get  : String -> (Result String String -> msg) -> Effect Never msg
+    //   Http.post : String -> String -> (Result String String -> msg) -> Effect Never msg
+    //
+    // The third (toMsg) argument lets the call result be turned into a Msg
+    // that gets dispatched into the running app. The Effect itself does not
+    // produce a value synchronously — the response arrives asynchronously
+    // and is delivered as a Msg.
+    def('httpGet', native(2, ([url, toMsg]) => {
+      return VEffect(() => {
+        fetch(url.s)
+          .then(r => r.text().then(t => ({ ok: r.ok, body: t })))
+          .then(r => {
+            const result = r.ok
+              ? VCtor('Ok', [VString(r.body)])
+              : VCtor('Err', [VString(r.body || ('HTTP ' + (r.status || 0)))]);
+            const msg = apply(toMsg, result);
+            if (currentDispatch) currentDispatch(msg);
+          })
+          .catch(err => {
+            const msg = apply(toMsg, VCtor('Err', [VString(String(err))]));
+            if (currentDispatch) currentDispatch(msg);
+          });
+        return VUnit();
+      }, 'httpGet');
+    }));
+    def('Http.get', envLookup(env, 'httpGet'));
+
+    def('httpPost', native(3, ([url, body, toMsg]) => {
+      return VEffect(() => {
+        fetch(url.s, { method: 'POST', body: body.s })
+          .then(r => r.text().then(t => ({ ok: r.ok, body: t })))
+          .then(r => {
+            const result = r.ok
+              ? VCtor('Ok', [VString(r.body)])
+              : VCtor('Err', [VString(r.body || ('HTTP ' + (r.status || 0)))]);
+            const msg = apply(toMsg, result);
+            if (currentDispatch) currentDispatch(msg);
+          })
+          .catch(err => {
+            const msg = apply(toMsg, VCtor('Err', [VString(String(err))]));
+            if (currentDispatch) currentDispatch(msg);
+          });
+        return VUnit();
+      }, 'httpPost');
+    }));
+    def('Http.post', envLookup(env, 'httpPost'));
 
     return env;
   }
@@ -395,6 +446,45 @@
         e.addEventListener('click', (ev) => {
           ev.preventDefault();
           if (currentDispatch) currentDispatch(VCtor(view.text, []));
+        });
+        return e;
+      }
+      case 'form': {
+        // A View.form msgName children -> wraps inputs; on submit, builds
+        // a record of name -> input-value and dispatches VCtor(msgName, [record]).
+        const e = document.createElement('form');
+        // Walk children, build DOM nodes, and remember inputs by name.
+        const inputs = [];
+        const collectInputs = (node) => {
+          if (!node) return;
+          if (node.k !== 'V') return;
+          if (node.tag === 'input' || node.tag === 'textarea') {
+            const name = (node.attrs.find(a => a.name === 'name') || {value: VString('')}).value.s;
+            inputs.push({ name, view: node });
+          }
+          for (const c of node.children) collectInputs(c);
+        };
+        for (const c of view.children) collectInputs(c);
+        for (const c of view.children) e.appendChild(buildDOM(c));
+        const submit = document.createElement('button');
+        submit.type = 'submit';
+        submit.textContent = 'submit';
+        e.appendChild(submit);
+        e.addEventListener('submit', (ev) => {
+          ev.preventDefault();
+          if (!currentDispatch) return;
+          // Read current values from the rendered DOM by name.
+          const fields = {};
+          const order = [];
+          const list = e.querySelectorAll('input, textarea');
+          for (const el of list) {
+            if (el.name) {
+              fields[el.name] = VString(el.value || '');
+              order.push(el.name);
+            }
+          }
+          const recordArg = VRecord(fields, order);
+          currentDispatch(VCtor(view.text, [recordArg]));
         });
         return e;
       }
@@ -463,12 +553,26 @@
 
   // ---------- MVU loop ----------
 
+  function unwrapModelTuple(v) {
+    if (v && v.k === 'T' && v.xs.length === 2) {
+      return { model: v.xs[0], effect: v.xs[1] };
+    }
+    return { model: v, effect: VEffect(() => VUnit(), 'none') };
+  }
+
+  function runEffect(eff) {
+    if (eff && eff.k === 'E' && typeof eff.run === 'function') {
+      try { eff.run(); } catch (e) { console.error('effect failed:', e); }
+    }
+  }
+
   function mountApp(app) {
     if (app.k !== 'C' || app.tag !== '__App') {
       throw new Error('App.serve: expected an App value');
     }
     const [initFn, updateFn, viewFn] = app.args;
-    let model = apply(initFn, VUnit());
+    const initial = unwrapModelTuple(apply(initFn, VUnit()));
+    let model = initial.model;
 
     function render() {
       const viewVal = apply(viewFn, model);
@@ -478,10 +582,13 @@
     }
 
     currentDispatch = (msg) => {
-      model = apply(apply(updateFn, msg), model);
+      const out = unwrapModelTuple(apply(apply(updateFn, msg), model));
+      model = out.model;
       render();
+      runEffect(out.effect);
     };
     render();
+    runEffect(initial.effect);
     return VUnit();
   }
 

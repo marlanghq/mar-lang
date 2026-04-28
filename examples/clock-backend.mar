@@ -1,0 +1,31 @@
+module ClockBackend exposing (main)
+
+
+-- Tiny backend that returns the current server time on GET /time.
+-- Adds CORS so the browser app on :4000 can call us.
+
+
+type alias Request =
+    { url : String
+    , method : String
+    , body : String
+    , params : String -> Maybe String
+    }
+
+
+type alias Response =
+    { status : Int
+    , body : String
+    }
+
+
+-- Just returns a hard-coded "now" for the demo. A real implementation would
+-- use a clock effect; we don't have one yet.
+handler : Request -> Effect String Response
+handler _ =
+    Effect.succeed (Response.ok "2026-04-28 12:00:00\n")
+
+
+main : Effect String ()
+main =
+    Server.serve 3010 [ Server.get "/time" handler ]

@@ -1,7 +1,7 @@
 module TodoApp exposing (main)
 
 
--- A small interactive todo list. State per browser session.
+-- A small interactive todo list. Open with `mar serve examples/todo-app.mar`.
 
 
 type alias Todo =
@@ -13,7 +13,6 @@ type alias Todo =
 
 type alias Model =
     { nextId : Int
-    , draft : String
     , items : List Todo
     }
 
@@ -24,28 +23,30 @@ type Msg
     | ClearAll
 
 
-init : () -> Model
+init : () -> (Model, Effect String Msg)
 init _ =
-    { nextId = 1, draft = "", items = [] }
+    ({ nextId = 1, items = [] }, Effect.none)
 
 
-update : Msg -> Model -> Model
+update : Msg -> Model -> (Model, Effect String Msg)
 update msg model =
     case msg of
         AddTodo input ->
-            { nextId = model.nextId + 1
-            , draft = ""
-            , items = model.items ++ [ { id = model.nextId, body = input.body, done = False } ]
-            }
+            ( { nextId = model.nextId + 1
+              , items = model.items ++ [ { id = model.nextId, body = input.body, done = False } ]
+              }
+            , Effect.none
+            )
 
         ToggleAll ->
-            { nextId = model.nextId
-            , draft = model.draft
-            , items = List.map (\t -> { id = t.id, body = t.body, done = True }) model.items
-            }
+            ( { nextId = model.nextId
+              , items = List.map (\t -> { id = t.id, body = t.body, done = True }) model.items
+              }
+            , Effect.none
+            )
 
         ClearAll ->
-            { nextId = model.nextId, draft = model.draft, items = [] }
+            ( { nextId = model.nextId, items = [] }, Effect.none )
 
 
 renderTodo : Todo -> View
@@ -61,7 +62,7 @@ view model =
         [ View.title "Todo"
         , View.subtitle (String.fromInt (List.length model.items) ++ " items")
         , View.form "AddTodo"
-            [ View.input "body" model.draft ]
+            [ View.input "body" "" ]
         , View.row
             [ View.button "ToggleAll"
             , View.button "ClearAll"

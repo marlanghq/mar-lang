@@ -293,6 +293,10 @@ func stdlibBindings() map[string]Type {
 				To:   TEffect(a, TList(b)),
 			},
 		},
+		"effectNone": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TEffect(a, b),
+		},
 
 		// IO (effects parameterized in error type for compatibility)
 		"ioPrint": TForall{
@@ -316,6 +320,33 @@ func stdlibBindings() map[string]Type {
 		"jsonDecode": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{From: TString, To: TResult(TString, a)},
+		},
+
+		// HTTP client (browser-side). On the server these are stubs that just
+		// fail; only the JS runtime actually performs the fetch and feeds the
+		// response back as a Msg.
+		"httpGet": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TString,
+				To: TArrow{
+					From: TArrow{From: TResult(TString, TString), To: b},
+					To:   TEffect(a, b),
+				},
+			},
+		},
+		"httpPost": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TString,
+				To: TArrow{
+					From: TString,
+					To: TArrow{
+						From: TArrow{From: TResult(TString, TString), To: b},
+						To:   TEffect(a, b),
+					},
+				},
+			},
 		},
 
 		// HTTP server (records used directly for Request/Response/Route)
@@ -404,13 +435,21 @@ func stdlibBindings() map[string]Type {
 		"viewEmpty":    TView(),
 
 		// App
-		// App.create : (() -> Model) -> (Msg -> Model -> Model) -> (Model -> View) -> App
+		// App.create
+		//   : (() -> (Model, Effect Never Msg))
+		//   -> (Msg -> Model -> (Model, Effect Never Msg))
+		//   -> (Model -> View)
+		//   -> App
+		//
+		// Effect Never Msg is encoded as TEffect(Never, Msg). For now we use
+		// a fresh var for "Never" so it accepts any Effect; the convention is
+		// the runtime ignores the error track of the returned effect.
 		"appCreate": TForall{
-			Vars: []int{a.ID, b.ID},
+			Vars: []int{a.ID, b.ID, -8},
 			Body: TArrow{
-				From: TArrow{From: TUnit{}, To: a},
+				From: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -8}, b)}}},
 				To: TArrow{
-					From: TArrow{From: b, To: TArrow{From: a, To: a}},
+					From: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -8}, b)}}}},
 					To: TArrow{
 						From: TArrow{From: a, To: TView()},
 						To:   TApp(),
@@ -420,15 +459,15 @@ func stdlibBindings() map[string]Type {
 		},
 		"appServe": TArrow{From: TInt, To: TArrow{From: TApp(), To: TEffect(TString, TUnit{})}},
 
-		// Screen.create : String -> (() -> model) -> (msg -> model -> model) -> (model -> View) -> Screen
+		// Screen.create — same shape as App.create but with a path string.
 		"screenCreate": TForall{
-			Vars: []int{a.ID, b.ID},
+			Vars: []int{a.ID, b.ID, -9},
 			Body: TArrow{
 				From: TString,
 				To: TArrow{
-					From: TArrow{From: TUnit{}, To: a},
+					From: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -9}, b)}}},
 					To: TArrow{
-						From: TArrow{From: b, To: TArrow{From: a, To: a}},
+						From: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -9}, b)}}}},
 						To: TArrow{
 							From: TArrow{From: a, To: TView()},
 							To:   TScreen(),
@@ -529,9 +568,12 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Effect.andThen":    "effectAndThen",
 		"Effect.forEach":    "effectForEach",
 		"Effect.sequence":   "effectSequence",
+		"Effect.none":       "effectNone",
 		"IO.print":    "ioPrint",
 		"IO.println":  "ioPrintln",
 		"IO.readLine": "ioReadLine",
+		"Http.get":    "httpGet",
+		"Http.post":   "httpPost",
 		"JSON.encode": "jsonEncode",
 		"JSON.decode": "jsonDecode",
 		"Server.serve":     "serverServe",

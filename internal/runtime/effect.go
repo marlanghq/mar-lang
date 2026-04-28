@@ -140,6 +140,12 @@ func effectBuiltins() map[string]Value {
 			}, nil
 		}),
 
+		// Effect.none : Effect e a — succeeds with unit (or rather, unit value).
+		"effectNone": VEffect{
+			Tag: "none",
+			Run: func() (Value, error) { return VUnit{}, nil },
+		},
+
 		// Effect.sequence : List (Effect e a) -> Effect e (List a)
 		"effectSequence": nativeFn(1, func(args []Value) (Value, error) {
 			list, ok := args[0].(VList)

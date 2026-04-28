@@ -48,5 +48,25 @@ func ioBuiltins() map[string]Value {
 				return VString{V: scanner.Text()}, nil
 			},
 		},
+
+		// Http.get / Http.post : implemented client-side by the JS runtime.
+		// On the Go side they're stubs — code that depends on Http on the
+		// server isn't supported in this MVP.
+		"httpGet": nativeFn(2, func(args []Value) (Value, error) {
+			return VEffect{
+				Tag: "httpGet",
+				Run: func() (Value, error) {
+					return nil, fmt.Errorf("Http.get is only available in the browser runtime")
+				},
+			}, nil
+		}),
+		"httpPost": nativeFn(3, func(args []Value) (Value, error) {
+			return VEffect{
+				Tag: "httpPost",
+				Run: func() (Value, error) {
+					return nil, fmt.Errorf("Http.post is only available in the browser runtime")
+				},
+			}, nil
+		}),
 	}
 }

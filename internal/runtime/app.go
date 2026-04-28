@@ -10,6 +10,18 @@ import (
 	"sync"
 )
 
+// unwrapModelTuple takes a value returned by init/update — expected to be
+// (Model, Effect _ Msg) — and returns just the Model. The Effect side is
+// ignored on the server side (the Go App.serve doesn't dispatch async msgs
+// today; that's the JS runtime's job). If the value is not a tuple, it's
+// returned as-is for backward compatibility.
+func unwrapModelTuple(v Value) Value {
+	if t, ok := v.(VTuple); ok && len(t.Members) == 2 {
+		return t.Members[0]
+	}
+	return v
+}
+
 // VApp packages an MVU program (init + update + view) into a runnable value.
 type VApp struct {
 	InitFn   Value
@@ -114,12 +126,13 @@ func appServeImpl(args []Value) (Value, error) {
 		sid = hex.EncodeToString(buf)
 		http.SetCookie(w, &http.Cookie{Name: "mar_session", Value: sid, Path: "/"})
 
-		// init() -> Model
+		// init() -> (Model, Effect _ Msg)
 		initVal, err := apply(app.InitFn, VUnit{})
 		if err != nil {
 			return &session{model: VUnit{}}
 		}
-		s := &session{model: initVal}
+		model := unwrapModelTuple(initVal)
+		s := &session{model: model}
 		sessions[sid] = s
 		return s
 	}
@@ -159,19 +172,19 @@ func appServeImpl(args []Value) (Value, error) {
 				}
 				s := getSession(req, w)
 				mu.Lock()
-				newModel, err := apply(app.UpdateFn, msgVal)
+				updateRes, err := apply(app.UpdateFn, msgVal)
 				if err != nil {
 					mu.Unlock()
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
-				newModel, err = apply(newModel, s.model)
+				updateRes, err = apply(updateRes, s.model)
 				if err != nil {
 					mu.Unlock()
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
-				s.model = newModel
+				s.model = unwrapModelTuple(updateRes)
 				mu.Unlock()
 				http.Redirect(w, req, "/", http.StatusSeeOther)
 			})
@@ -243,6 +256,7 @@ func appServeScreensImpl(args []Value) (Value, error) {
 		if err != nil {
 			m = VUnit{}
 		}
+		m = unwrapModelTuple(m)
 		sess.models[s.Path] = m
 		return m
 	}
@@ -306,19 +320,19 @@ func appServeScreensImpl(args []Value) (Value, error) {
 				mu.Lock()
 				sess := getSession(req, w)
 				model := getOrInitScreenModel(screen, sess)
-				newModel, err := apply(screen.UpdateFn, msgVal)
+				updateRes, err := apply(screen.UpdateFn, msgVal)
 				if err != nil {
 					mu.Unlock()
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
-				newModel, err = apply(newModel, model)
+				updateRes, err = apply(updateRes, model)
 				if err != nil {
 					mu.Unlock()
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
-				sess.models[screenPath] = newModel
+				sess.models[screenPath] = unwrapModelTuple(updateRes)
 				mu.Unlock()
 				http.Redirect(w, req, screenPath, http.StatusSeeOther)
 			})

@@ -1,0 +1,62 @@
+module Clock exposing (main)
+
+
+-- Browser app that fetches the current time from a backend.
+--
+-- Run two terminals:
+--
+--   terminal 1: ./mar run examples/clock-backend.mar
+--               (backend serves /time on :3010)
+--
+--   terminal 2: ./mar serve examples/clock.mar
+--               (browser app on :4000)
+--
+-- The browser app does Http.get "/time" on init and on every "Refresh" click.
+
+
+type alias Model =
+    { time : String
+    , error : Maybe String
+    }
+
+
+type Msg
+    = Refresh
+    | TimeArrived (Result String String)
+
+
+init : () -> (Model, Effect String Msg)
+init _ =
+    ({ time = "(loading)", error = Nothing }, Http.get "http://localhost:3010/time" TimeArrived)
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        Refresh ->
+            ( { time = "(loading)", error = Nothing }
+            , Http.get "http://localhost:3010/time" TimeArrived
+            )
+
+        TimeArrived (Ok t) ->
+            ({ time = t, error = Nothing }, Effect.none)
+
+        TimeArrived (Err e) ->
+            ({ time = "?", error = Just e }, Effect.none)
+
+
+view : Model -> View
+view model =
+    View.section
+        [ View.title "Clock"
+        , View.text ("Server time: " ++ model.time)
+        , View.button "Refresh"
+        , case model.error of
+            Just e -> View.text ("Error: " ++ e)
+            Nothing -> View.empty
+        ]
+
+
+main : Effect String ()
+main =
+    App.serve 4000 (App.create init update view)

@@ -118,6 +118,14 @@ func serverServeImpl(args []Value) (Value, error) {
 		Run: func() (Value, error) {
 			mux := http.NewServeMux()
 			mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+				// CORS: allow browser apps on other ports to call this server.
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+				if req.Method == "OPTIONS" {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
 				reqSegs := splitPath(req.URL.Path)
 				for _, r := range routes {
 					if r.method != req.Method {

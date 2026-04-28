@@ -1,8 +1,7 @@
 module Counter exposing (main)
 
 
--- A real interactive MVU app: counter with + and - buttons.
--- Run it with `mar run examples/counter.mar` and open http://localhost:3004.
+-- Real interactive MVU counter. Open with `mar serve examples/counter.mar`.
 
 
 type alias Model = Int
@@ -11,20 +10,18 @@ type alias Model = Int
 type Msg
     = Increment
     | Decrement
-    | Reset
 
 
-init : () -> Model
+init : () -> (Model, Effect String Msg)
 init _ =
-    0
+    (0, Effect.none)
 
 
-update : Msg -> Model -> Model
+update : Msg -> Model -> (Model, Effect String Msg)
 update msg model =
     case msg of
-        Increment -> model + 1
-        Decrement -> model - 1
-        Reset -> 0
+        Increment -> (model + 1, Effect.none)
+        Decrement -> (model - 1, Effect.none)
 
 
 view : Model -> View
@@ -35,7 +32,6 @@ view model =
         , View.row
             [ View.button "Decrement"
             , View.button "Increment"
-            , View.button "Reset"
             ]
         ]
 
