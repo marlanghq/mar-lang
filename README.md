@@ -83,7 +83,7 @@ curl http://localhost:3002/notes
 | `examples/todo-app.mar` | MVU with form input (`AddTodo { body }`), togglable list |
 | `examples/multi-screen.mar` | multiple screens at different paths, each with its own model, links between them |
 | `examples/clock.mar` + `clock-backend.mar` | browser app does Http.get to backend on init / Refresh |
-| `examples/notes-fullstack/` | full-stack mar: SQLite-backed backend + browser frontend that fetches and posts |
+| `examples/notes-fullstack/` | full-stack mar: Shared.mar declares Endpoints used by both Backend (Endpoint.implement) and Frontend (Endpoint.call); SQLite-backed backend; browser frontend driven by MVU |
 | `examples/multi/` | multi-file project, simplest |
 | `examples/blog/` | 3-file project + `mar.json` |
 

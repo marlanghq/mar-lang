@@ -26,6 +26,9 @@ func BaseEnv() *Env {
 	for name, v := range entityBuiltins() {
 		env.Define(name, v)
 	}
+	for name, v := range endpointBuiltins() {
+		env.Define(name, v)
+	}
 	for name, v := range viewBuiltins() {
 		env.Define(name, v)
 	}
@@ -90,6 +93,12 @@ func qualifiedAliasMapping() map[string]string {
 		"Server.post":      "serverPost",
 		"Server.patch":     "serverPatch",
 		"Server.delete":    "serverDelete",
+		"Endpoint.get":       "endpointGet",
+		"Endpoint.post":      "endpointPost",
+		"Endpoint.patch":     "endpointPatch",
+		"Endpoint.delete":    "endpointDelete",
+		"Endpoint.implement": "endpointImplement",
+		"Endpoint.call":      "endpointCall",
 		"Response.ok":       "responseOk",
 		"Response.notFound": "responseNotFound",
 		"Response.status":   "responseStatus",

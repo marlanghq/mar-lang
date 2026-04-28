@@ -369,6 +369,37 @@ func stdlibBindings() map[string]Type {
 		"responseNotFound": serverResponseType(),
 		"responseStatus":   TArrow{From: TInt, To: TArrow{From: TString, To: serverResponseType()}},
 
+		// Endpoint: typed contract shared between backend and frontend.
+		"endpointGet":    TArrow{From: TString, To: TEndpoint()},
+		"endpointPost":   TArrow{From: TString, To: TEndpoint()},
+		"endpointPatch":  TArrow{From: TString, To: TEndpoint()},
+		"endpointDelete": TArrow{From: TString, To: TEndpoint()},
+		"endpointImplement": TArrow{
+			From: TArrow{From: serverRequestType(), To: TEffect(TString, serverResponseType())},
+			To: TArrow{
+				From: TEndpoint(),
+				To:   serverRouteType(),
+			},
+		},
+		// Endpoint.call : String -> Endpoint -> String -> (Result String String -> msg) -> Effect e msg
+		//                 base    endpoint   body     toMsg
+		"endpointCall": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TString,
+				To: TArrow{
+					From: TEndpoint(),
+					To: TArrow{
+						From: TString,
+						To: TArrow{
+							From: TArrow{From: TResult(TString, TString), To: b},
+							To:   TEffect(a, b),
+						},
+					},
+				},
+			},
+		},
+
 		// Database (low-level for MVP)
 		// Each row is returned as a record where every field is Maybe (since
 		// SQL columns can be NULL). Higher-level entity API can refine later.
@@ -581,6 +612,12 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Server.post":      "serverPost",
 		"Server.patch":     "serverPatch",
 		"Server.delete":    "serverDelete",
+		"Endpoint.get":       "endpointGet",
+		"Endpoint.post":      "endpointPost",
+		"Endpoint.patch":     "endpointPatch",
+		"Endpoint.delete":    "endpointDelete",
+		"Endpoint.implement": "endpointImplement",
+		"Endpoint.call":      "endpointCall",
 		"Response.ok":       "responseOk",
 		"Response.notFound": "responseNotFound",
 		"Response.status":   "responseStatus",

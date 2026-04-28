@@ -249,3 +249,8 @@ func TApp() TCon {
 func TScreen() TCon {
 	return TCon{Name: "Screen"}
 }
+
+// TEndpoint returns the opaque "Endpoint" type.
+func TEndpoint() TCon {
+	return TCon{Name: "Endpoint"}
+}

@@ -1,0 +1,19 @@
+module Shared exposing (..)
+
+
+-- Endpoint contracts shared between Backend and Frontend.
+
+
+backendBase : String
+backendBase =
+    "http://localhost:3020"
+
+
+listEp : Endpoint
+listEp =
+    Endpoint.get "/notes"
+
+
+createEp : Endpoint
+createEp =
+    Endpoint.post "/notes"

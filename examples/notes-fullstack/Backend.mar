@@ -1,8 +1,7 @@
 module Backend exposing (main)
 
 
--- HTTP backend for the notes app.
--- Run it: ./mar run examples/notes-fullstack/Backend.mar
+import Shared
 
 
 type alias Request =
@@ -19,7 +18,6 @@ type alias Response =
     }
 
 
--- Schema: just a single notes table.
 notes : Entity
 notes =
     Entity.create "notes"
@@ -29,7 +27,6 @@ notes =
         |> Entity.notNull "body"
 
 
--- For each request, open the DB; create the table if missing; run the handler.
 withDb : (Db -> Effect String Response) -> Effect String Response
 withDb fn =
     Db.open "./examples/notes-fullstack/notes.db"
@@ -38,40 +35,23 @@ withDb fn =
                 |> Effect.andThen (\_ -> fn db))
 
 
--- GET /notes -> JSON list of {id, body} pairs.
 listAll : Request -> Effect String Response
 listAll _ =
     withDb (\db ->
         Db.query db "SELECT id, body FROM notes ORDER BY id"
-            |> Effect.map (\rows ->
-                Response.ok (JSON.encode rows)))
+            |> Effect.map (\rows -> Response.ok (JSON.encode rows)))
 
 
--- POST /notes  body=<text>  -> 201
 create : Request -> Effect String Response
 create req =
     withDb (\db ->
-        Db.execParams db
-            "INSERT INTO notes (body) VALUES (?)"
-            [req.body]
+        Db.execParams db "INSERT INTO notes (body) VALUES (?)" [req.body]
             |> Effect.map (\_ -> Response.status 201 "ok"))
-
-
--- DELETE /notes/:id
-deleteOne : Request -> Effect String Response
-deleteOne req =
-    case req.params "id" of
-        Nothing -> Effect.succeed Response.notFound
-        Just id ->
-            withDb (\db ->
-                Db.execParams db "DELETE FROM notes WHERE id = ?" [id]
-                    |> Effect.map (\_ -> Response.ok "ok"))
 
 
 main : Effect String ()
 main =
     Server.serve 3020
-        [ Server.get    "/notes"      listAll
-        , Server.post   "/notes"      create
-        , Server.delete "/notes/:id"  deleteOne
+        [ Shared.listEp   |> Endpoint.implement listAll
+        , Shared.createEp |> Endpoint.implement create
         ]

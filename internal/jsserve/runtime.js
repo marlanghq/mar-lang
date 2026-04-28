@@ -406,6 +406,43 @@
     }));
     def('Http.get', envLookup(env, 'httpGet'));
 
+    // Endpoint.* — typed contract shared between backend and frontend.
+    // The runtime stores method+path; Endpoint.call uses fetch under the hood.
+    def('endpointGet',    native(1, ([p]) => VCtor('__Ep', [VString('GET'), p])));
+    def('Endpoint.get',    native(1, ([p]) => VCtor('__Ep', [VString('GET'), p])));
+    def('endpointPost',   native(1, ([p]) => VCtor('__Ep', [VString('POST'), p])));
+    def('Endpoint.post',   native(1, ([p]) => VCtor('__Ep', [VString('POST'), p])));
+    def('endpointPatch',  native(1, ([p]) => VCtor('__Ep', [VString('PATCH'), p])));
+    def('Endpoint.patch',  native(1, ([p]) => VCtor('__Ep', [VString('PATCH'), p])));
+    def('endpointDelete', native(1, ([p]) => VCtor('__Ep', [VString('DELETE'), p])));
+    def('Endpoint.delete', native(1, ([p]) => VCtor('__Ep', [VString('DELETE'), p])));
+    // Endpoint.call : String -> Endpoint -> String -> (Result String String -> msg) -> Effect e msg
+    //   base, endpoint, body, toMsg
+    def('endpointCall', native(4, ([base, ep, body, toMsg]) => {
+      const method = ep.args[0].s;
+      const path = ep.args[1].s;
+      const url = base.s + path;
+      return VEffect(() => {
+        const opts = { method };
+        if (method !== 'GET' && method !== 'DELETE') opts.body = body.s;
+        fetch(url, opts)
+          .then(r => r.text().then(t => ({ ok: r.ok, body: t })))
+          .then(r => {
+            const result = r.ok
+              ? VCtor('Ok', [VString(r.body)])
+              : VCtor('Err', [VString(r.body || ('HTTP ' + r.status))]);
+            const msg = apply(toMsg, result);
+            if (currentDispatch) currentDispatch(msg);
+          })
+          .catch(err => {
+            const msg = apply(toMsg, VCtor('Err', [VString(String(err))]));
+            if (currentDispatch) currentDispatch(msg);
+          });
+        return VUnit();
+      }, 'endpointCall');
+    }));
+    def('Endpoint.call', envLookup(env, 'endpointCall'));
+
     def('httpPost', native(3, ([url, body, toMsg]) => {
       return VEffect(() => {
         fetch(url.s, { method: 'POST', body: body.s })

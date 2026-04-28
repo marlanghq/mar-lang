@@ -1,10 +1,7 @@
 module Frontend exposing (main)
 
 
--- Browser frontend for the notes app. Run with:
---   terminal 1: ./mar run examples/notes-fullstack/Backend.mar
---   terminal 2: ./mar serve examples/notes-fullstack/Frontend.mar
--- Then open http://localhost:4000.
+import Shared
 
 
 type alias Model =
@@ -19,14 +16,9 @@ type Msg
     | NoteCreated (Result String String)
 
 
-backendUrl : String
-backendUrl =
-    "http://localhost:3020"
-
-
 fetchAll : Effect String Msg
 fetchAll =
-    Http.get (backendUrl ++ "/notes") LoadedNotes
+    Endpoint.call Shared.backendBase Shared.listEp "" LoadedNotes
 
 
 init : () -> (Model, Effect String Msg)
@@ -45,7 +37,7 @@ update msg model =
 
         SubmitNew input ->
             ( { rawNotes = model.rawNotes, status = "saving…" }
-            , Http.post (backendUrl ++ "/notes") input.body NoteCreated
+            , Endpoint.call Shared.backendBase Shared.createEp input.body NoteCreated
             )
 
         NoteCreated (Ok _) ->
@@ -60,7 +52,7 @@ view model =
     View.section
         [ View.title "Notes"
         , View.text ("Status: " ++ model.status)
-        , View.subtitle "All notes (raw)"
+        , View.subtitle "All notes"
         , View.text model.rawNotes
         , View.subtitle "Add a note"
         , View.form "SubmitNew"
