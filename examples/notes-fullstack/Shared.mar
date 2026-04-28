@@ -1,12 +1,15 @@
 module Shared exposing (..)
 
 
--- Endpoint contracts shared between Backend and Frontend.
+-- Shared between Backend.mar and Frontend.mar.
+--
+-- backendBase is a relative URL because in `mar app` mode the backend is
+-- served at /api on the same origin as the frontend.
 
 
 backendBase : String
 backendBase =
-    "http://localhost:3020"
+    "/api"
 
 
 listEp : Endpoint

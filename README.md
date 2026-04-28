@@ -96,6 +96,8 @@ mar run <file|dir> [val]    type-check + run; defaults to value `main`.
                             For projects, use `Module.name`.
 mar repl                    interactive
 mar serve <file.mar>        serve a browser app on :4000 with client-side MVU
+mar app <projectDir>        unified app: backend at /api, frontend at /,
+                            runtime at /_mar, single process on :3000
 mar config <dir>            load and print mar.json
 mar version                 print version
 ```

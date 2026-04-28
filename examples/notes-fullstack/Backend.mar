@@ -1,4 +1,4 @@
-module Backend exposing (main)
+module Backend exposing (routes)
 
 
 import Shared
@@ -27,6 +27,8 @@ notes =
         |> Entity.notNull "body"
 
 
+-- Note: Entity.migrate runs lazily inside withDb. mar app does not migrate
+-- on startup automatically; the first request creates the table.
 withDb : (Db -> Effect String Response) -> Effect String Response
 withDb fn =
     Db.open "./examples/notes-fullstack/notes.db"
@@ -49,9 +51,8 @@ create req =
             |> Effect.map (\_ -> Response.status 201 "ok"))
 
 
-main : Effect String ()
-main =
-    Server.serve 3020
-        [ Shared.listEp   |> Endpoint.implement listAll
-        , Shared.createEp |> Endpoint.implement create
-        ]
+-- Exported for `mar app` to mount under /api/*.
+routes =
+    [ Shared.listEp   |> Endpoint.implement listAll
+    , Shared.createEp |> Endpoint.implement create
+    ]

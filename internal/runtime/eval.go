@@ -255,6 +255,12 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 }
 
 // apply applies a function value to one argument, handling currying.
+// Apply is the exported entry point for applying a function value to one
+// argument, handling currying. Used by the unified server to invoke handlers.
+func Apply(fn Value, arg Value) (Value, error) {
+	return apply(fn, arg)
+}
+
 func apply(fn Value, arg Value) (Value, error) {
 	f, ok := fn.(VFn)
 	if !ok {

@@ -9,6 +9,7 @@ import (
 
 	"mar/internal/ast"
 	"mar/internal/parser"
+	"mar/internal/runtime"
 	"mar/internal/typecheck"
 )
 
@@ -131,6 +132,23 @@ func resolveImport(dir string, moduleName ast.ModuleName) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("import %s not found in %s", joinName(moduleName), dir)
+}
+
+// LoadIntoEnv loads the entry file and its imports, evaluates all modules
+// into a shared runtime env, and returns the env. Used by `mar app` to look
+// up backend `routes`.
+func LoadIntoEnv(entry string) (*runtime.Env, error) {
+	mods, err := LoadForServe(entry)
+	if err != nil {
+		return nil, err
+	}
+	rEnv := runtime.BaseEnv()
+	for _, m := range mods {
+		if err := loadIntoEnv(m, joinName(m.Name), rEnv); err != nil {
+			return nil, err
+		}
+	}
+	return rEnv, nil
 }
 
 // (joinName, isStdlib, topoSort live in project.go.)
