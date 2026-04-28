@@ -244,3 +244,8 @@ func TView() TCon {
 func TApp() TCon {
 	return TCon{Name: "App"}
 }
+
+// TScreen returns the opaque "Screen" type.
+func TScreen() TCon {
+	return TCon{Name: "Screen"}
+}

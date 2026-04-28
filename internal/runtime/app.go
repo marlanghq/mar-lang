@@ -20,6 +20,19 @@ type VApp struct {
 func (VApp) isValue() {}
 func (a VApp) Display() string { return "<app>" }
 
+// VScreen packages a single screen (path + MVU functions) for multi-screen apps.
+type VScreen struct {
+	Path     string
+	InitFn   Value
+	UpdateFn Value
+	ViewFn   Value
+}
+
+func (VScreen) isValue() {}
+func (s VScreen) Display() string {
+	return fmt.Sprintf("<screen:%s>", s.Path)
+}
+
 // appBuiltins exposes the App API.
 //
 //	App.create : init -> update -> view -> App
@@ -46,6 +59,22 @@ func appBuiltins() map[string]Value {
 			return VApp{InitFn: args[0], UpdateFn: args[1], ViewFn: args[2]}, nil
 		}),
 		"appServe": nativeFn(2, appServeImpl),
+
+		// Screen.create : String -> initFn -> updateFn -> viewFn -> Screen
+		"screenCreate": nativeFn(4, func(args []Value) (Value, error) {
+			path, ok := args[0].(VString)
+			if !ok {
+				return nil, fmt.Errorf("Screen.create: expected String path")
+			}
+			return VScreen{
+				Path:     path.V,
+				InitFn:   args[1],
+				UpdateFn: args[2],
+				ViewFn:   args[3],
+			}, nil
+		}),
+		// App.serveScreens : Int -> List Screen -> Effect String ()
+		"appServeScreens": nativeFn(2, appServeScreensImpl),
 	}
 }
 
@@ -172,6 +201,221 @@ func appServeImpl(args []Value) (Value, error) {
 			return VUnit{}, err
 		},
 	}, nil
+}
+
+// appServeScreensImpl serves multiple MVU screens, each at its own path.
+//
+// Per browser session, each screen has its own model (lazy-initialized on
+// first visit). Buttons in a screen post msgs to /__msg/<path> so the
+// runtime knows which screen's update to call.
+func appServeScreensImpl(args []Value) (Value, error) {
+	portV, ok1 := args[0].(VInt)
+	listV, ok2 := args[1].(VList)
+	if !ok1 || !ok2 {
+		return nil, fmt.Errorf("App.serveScreens: expected Int port and List Screen")
+	}
+	port := int(portV.V)
+
+	screens := map[string]VScreen{} // path -> screen
+	var paths []string
+	for _, v := range listV.Elements {
+		s, ok := v.(VScreen)
+		if !ok {
+			return nil, fmt.Errorf("App.serveScreens: list element not a Screen")
+		}
+		screens[s.Path] = s
+		paths = append(paths, s.Path)
+	}
+
+	type sessionScreens struct {
+		models map[string]Value // path -> model
+	}
+	var (
+		mu       sync.Mutex
+		sessions = map[string]*sessionScreens{}
+	)
+
+	getOrInitScreenModel := func(s VScreen, sess *sessionScreens) Value {
+		if m, ok := sess.models[s.Path]; ok {
+			return m
+		}
+		m, err := apply(s.InitFn, VUnit{})
+		if err != nil {
+			m = VUnit{}
+		}
+		sess.models[s.Path] = m
+		return m
+	}
+
+	getSession := func(req *http.Request, w http.ResponseWriter) *sessionScreens {
+		var sid string
+		if c, err := req.Cookie("mar_session"); err == nil {
+			sid = c.Value
+		}
+		if sid != "" {
+			if s, ok := sessions[sid]; ok {
+				return s
+			}
+		}
+		buf := make([]byte, 16)
+		_, _ = rand.Read(buf)
+		sid = hex.EncodeToString(buf)
+		http.SetCookie(w, &http.Cookie{Name: "mar_session", Value: sid, Path: "/"})
+		s := &sessionScreens{models: map[string]Value{}}
+		sessions[sid] = s
+		return s
+	}
+
+	return VEffect{
+		Tag: "appServeScreens",
+		Run: func() (Value, error) {
+			mux := http.NewServeMux()
+
+			// /__msg/<path>: dispatch msg to the screen at <path>
+			mux.HandleFunc("/__msg/", func(w http.ResponseWriter, req *http.Request) {
+				if req.Method != "POST" {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+					return
+				}
+				screenPath := strings.TrimPrefix(req.URL.Path, "/__msg")
+				screen, ok := screens[screenPath]
+				if !ok {
+					http.NotFound(w, req)
+					return
+				}
+				_ = req.ParseForm()
+				msgName := req.FormValue("msg")
+				if msgName == "" {
+					http.Error(w, "missing msg", http.StatusBadRequest)
+					return
+				}
+				var msgVal Value = VCtor{Tag: msgName}
+				extras := map[string]Value{}
+				var order []string
+				for k, vs := range req.PostForm {
+					if k == "msg" || len(vs) == 0 {
+						continue
+					}
+					extras[k] = VString{V: vs[0]}
+					order = append(order, k)
+				}
+				if len(extras) > 0 {
+					msgVal = VCtor{Tag: msgName, Args: []Value{VRecord{Fields: extras, Order: order}}}
+				}
+
+				mu.Lock()
+				sess := getSession(req, w)
+				model := getOrInitScreenModel(screen, sess)
+				newModel, err := apply(screen.UpdateFn, msgVal)
+				if err != nil {
+					mu.Unlock()
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				newModel, err = apply(newModel, model)
+				if err != nil {
+					mu.Unlock()
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				sess.models[screenPath] = newModel
+				mu.Unlock()
+				http.Redirect(w, req, screenPath, http.StatusSeeOther)
+			})
+
+			// Catch-all GET: find the matching screen and render its view.
+			mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+				screen, ok := screens[req.URL.Path]
+				if !ok {
+					http.NotFound(w, req)
+					return
+				}
+				mu.Lock()
+				sess := getSession(req, w)
+				model := getOrInitScreenModel(screen, sess)
+				vVal, err := apply(screen.ViewFn, model)
+				mu.Unlock()
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				v, ok := vVal.(VView)
+				if !ok {
+					http.Error(w, "view did not return a View", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_, _ = io.WriteString(w, "<!doctype html><html><body>")
+				renderScreenInteractiveHTML(w, v, screen.Path)
+				_, _ = io.WriteString(w, "</body></html>")
+			})
+
+			fmt.Printf("[mar] App listening on :%d (screens: %s)\n", port, strings.Join(paths, ", "))
+			err := http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
+			return VUnit{}, err
+		},
+	}, nil
+}
+
+// renderScreenInteractiveHTML mirrors renderInteractiveHTML but routes msg
+// posts to /__msg<screenPath> so the right screen handles them.
+func renderScreenInteractiveHTML(w io.Writer, v VView, screenPath string) {
+	msgURL := "/__msg" + screenPath
+	switch v.Tag {
+	case "button":
+		fmt.Fprintf(w, `<form method="post" action="%s" style="display:inline">`, escapeAttr(msgURL))
+		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(v.Text))
+		fmt.Fprintf(w, `<button type="submit">%s</button>`, escapeHTML(v.Text))
+		fmt.Fprintf(w, `</form>`)
+	case "form":
+		fmt.Fprintf(w, `<form method="post" action="%s">`, escapeAttr(msgURL))
+		fmt.Fprintf(w, `<input type="hidden" name="msg" value="%s">`, escapeAttr(v.Text))
+		for _, c := range v.Children {
+			if cv, ok := c.(VView); ok {
+				renderScreenInteractiveHTML(w, cv, screenPath)
+			}
+		}
+		fmt.Fprintf(w, `<button type="submit">submit</button></form>`)
+	case "section":
+		_, _ = io.WriteString(w, "<section>")
+		for _, c := range v.Children {
+			if cv, ok := c.(VView); ok {
+				renderScreenInteractiveHTML(w, cv, screenPath)
+			}
+		}
+		_, _ = io.WriteString(w, "</section>")
+	case "row":
+		_, _ = io.WriteString(w, `<div class="row">`)
+		for _, c := range v.Children {
+			if cv, ok := c.(VView); ok {
+				renderScreenInteractiveHTML(w, cv, screenPath)
+			}
+		}
+		_, _ = io.WriteString(w, "</div>")
+	case "column":
+		_, _ = io.WriteString(w, `<div class="column">`)
+		for _, c := range v.Children {
+			if cv, ok := c.(VView); ok {
+				renderScreenInteractiveHTML(w, cv, screenPath)
+			}
+		}
+		_, _ = io.WriteString(w, "</div>")
+	case "list":
+		_, _ = io.WriteString(w, "<ul>")
+		for _, c := range v.Children {
+			if cv, ok := c.(VView); ok {
+				_, _ = io.WriteString(w, "<li>")
+				renderScreenInteractiveHTML(w, cv, screenPath)
+				_, _ = io.WriteString(w, "</li>")
+			}
+		}
+		_, _ = io.WriteString(w, "</ul>")
+	default:
+		// Fall back to the non-interactive renderer for leaf elements.
+		var sb strings.Builder
+		writeView(&sb, v)
+		_, _ = io.WriteString(w, sb.String())
+	}
 }
 
 // renderInteractiveHTML walks a view, rendering buttons as forms that POST

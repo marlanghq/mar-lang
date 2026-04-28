@@ -369,6 +369,28 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 		"appServe": TArrow{From: TInt, To: TArrow{From: TApp(), To: TEffect(TString, TUnit{})}},
+
+		// Screen.create : String -> (() -> model) -> (msg -> model -> model) -> (model -> View) -> Screen
+		"screenCreate": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TString,
+				To: TArrow{
+					From: TArrow{From: TUnit{}, To: a},
+					To: TArrow{
+						From: TArrow{From: b, To: TArrow{From: a, To: a}},
+						To: TArrow{
+							From: TArrow{From: a, To: TView()},
+							To:   TScreen(),
+						},
+					},
+				},
+			},
+		},
+		"appServeScreens": TArrow{
+			From: TInt,
+			To:   TArrow{From: TList(TScreen()), To: TEffect(TString, TUnit{})},
+		},
 	}
 }
 
@@ -488,8 +510,10 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"View.textarea": "viewTextarea",
 		"View.form":     "viewForm",
 		"View.empty":    "viewEmpty",
-		"App.create": "appCreate",
-		"App.serve":  "appServe",
+		"App.create":        "appCreate",
+		"App.serve":         "appServe",
+		"App.serveScreens":  "appServeScreens",
+		"Screen.create":     "screenCreate",
 	}
 	out := map[string]Type{}
 	for q, f := range mapping {

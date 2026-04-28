@@ -1,0 +1,77 @@
+module MultiScreen exposing (main)
+
+
+-- Two MVU screens served by the same app.
+--   /home    : a counter
+--   /todos   : a small todo list
+-- Each has its own model, persisted per browser session.
+
+
+-- COUNTER SCREEN
+
+type CounterMsg = Inc | Dec
+
+
+counterInit : () -> Int
+counterInit _ = 0
+
+
+counterUpdate : CounterMsg -> Int -> Int
+counterUpdate msg model =
+    case msg of
+        Inc -> model + 1
+        Dec -> model - 1
+
+
+counterView : Int -> View
+counterView n =
+    View.section
+        [ View.title "Counter"
+        , View.text ("Value: " ++ String.fromInt n)
+        , View.row [ View.button "Inc", View.button "Dec" ]
+        , View.row [ View.link "/todos" "Go to todos" ]
+        ]
+
+
+counterScreen : Screen
+counterScreen =
+    Screen.create "/home" counterInit counterUpdate counterView
+
+
+-- TODO SCREEN
+
+type alias TodoModel = { items : List String }
+type TodoMsg = AddItem { body : String } | Clear
+
+
+todoInit : () -> TodoModel
+todoInit _ = { items = [] }
+
+
+todoUpdate : TodoMsg -> TodoModel -> TodoModel
+todoUpdate msg model =
+    case msg of
+        AddItem input -> { items = model.items ++ [input.body] }
+        Clear -> { items = [] }
+
+
+todoView : TodoModel -> View
+todoView model =
+    View.section
+        [ View.title "Todos"
+        , View.subtitle (String.fromInt (List.length model.items) ++ " items")
+        , View.form "AddItem" [ View.input "body" "" ]
+        , View.button "Clear"
+        , View.list (List.map View.text model.items)
+        , View.row [ View.link "/home" "Back to counter" ]
+        ]
+
+
+todoScreen : Screen
+todoScreen =
+    Screen.create "/todos" todoInit todoUpdate todoView
+
+
+main : Effect String ()
+main =
+    App.serveScreens 3006 [ counterScreen, todoScreen ]

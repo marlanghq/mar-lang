@@ -77,6 +77,8 @@ curl http://localhost:3002/notes
 | `examples/db.mar` | direct SQLite access |
 | `examples/view-page.mar` | server-side view rendering to HTML |
 | `examples/counter.mar` | interactive MVU app: init / update / view, session state |
+| `examples/todo-app.mar` | MVU with form input (`AddTodo { body }`), togglable list |
+| `examples/multi-screen.mar` | multiple screens at different paths, each with its own model, links between them |
 | `examples/multi/` | multi-file project, simplest |
 | `examples/blog/` | 3-file project + `mar.json` |
 
