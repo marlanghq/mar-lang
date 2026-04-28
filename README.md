@@ -28,7 +28,7 @@ Working today, end to end:
 - Server-side MVU runtime (`App.create` + `App.serve`): full
   init / update / view loop, session state per browser, buttons rendered
   as HTML forms that POST messages back. No JS required.
-- **Browser MVU runtime** (`mar serve <file.mar>`): a JS interpreter that
+- **Browser MVU runtime** (`mar dev <file.mar>`): a JS interpreter that
   loads the parsed AST and runs init / update / view client-side, with real
   DOM and event handlers. No page reloads.
 
@@ -95,13 +95,16 @@ mar check <file|dir>        type check (file or project)
 mar run <file|dir> [val]    type-check + run; defaults to value `main`.
                             For projects, use `Module.name`.
 mar repl                    interactive
-mar serve <file.mar>        serve a browser app on :4000 with client-side MVU
-mar app <projectDir>        run a full-stack project. Looks for Main.mar
-                            with `main = App.fullstack { api, page }`.
-                            Port comes from <projectDir>/mar.json
-                            (server.port, default 3000). Convention:
-                            Backend.mar / Frontend.mar / Shared.mar — but
-                            only Main.mar / main are required by the CLI.
+mar dev [path]              Run main in dev mode. <path> can be a .mar file
+                            (single-file app) or a project directory (looks
+                            for Main.mar inside). Defaults to current dir.
+                            What main does decides the runtime:
+                              App.fullstack { api, page } — unified server,
+                                port from mar.json (default 3000).
+                              App.serve port app          — browser-only,
+                                port from code.
+                              App.serveScreens port list  — multi-screen
+                                browser app, port from code.
 mar config <dir>            load and print mar.json
 mar version                 print version
 ```

@@ -65,20 +65,12 @@ func main() {
 			os.Exit(2)
 		}
 		os.Exit(runConfig(os.Args[2]))
-	case "serve":
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "mar serve: missing file argument")
-			os.Exit(2)
+	case "dev":
+		path := "."
+		if len(os.Args) >= 3 {
+			path = os.Args[2]
 		}
-		port := 4000
-		entry := "main"
-		os.Exit(runServe(os.Args[2], port, entry))
-	case "app":
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "mar app: missing project directory")
-			os.Exit(2)
-		}
-		os.Exit(runApp(os.Args[2]))
+		os.Exit(runDev(path))
 	case "version", "--version", "-v":
 		fmt.Printf("%s (%s)\n", version, commit)
 	case "help", "--help", "-h":
@@ -99,15 +91,21 @@ Commands:
   run <file.mar> [valueName]  Type-check, evaluate, and print the named value.
                               Defaults to "main".
   repl                        Start an interactive read-eval-print loop.
-  app <projectDir>            Run a full-stack project. Looks for Main.mar,
-                              evaluates Main.main (typically built with
-                              App.fullstack). Conventional layout:
+  dev [path]                  Run main in dev mode. <path> can be:
+                                a .mar file              — single-file app
+                                a project directory      — looks for Main.mar
+                                (default = current dir)  — same as above
+                              What main does decides the runtime:
+                                App.fullstack { api, page }   — unified server
+                                                                (port from mar.json)
+                                App.serve port app            — browser-only app
+                                App.serveScreens port screens — multi-screen app
+                              Conventional project layout:
                                 Main.mar      — entry; main = App.fullstack ...
                                 Backend.mar   — routes : List Route
                                 Frontend.mar  — page : App
                                 Shared.mar    — helpers used by both
                               Names other than Main.mar / main are convention.
-  serve <file.mar>            Serve the file as a browser app on :4000.
   config <dir>                Load and print mar.json from the given project.
   version                     Print the version.
 
@@ -190,70 +188,102 @@ func runCheck(path string) int {
 	return 0
 }
 
-// runApp runs a full-stack mar project. Convention: the project directory
-// contains a Main.mar module exporting `main : Effect String ()` — typically
-// `App.fullstack { api = Backend.routes, page = Frontend.page }`.
+// runDev evaluates `main` in dev mode. Path can be a .mar file (single-file
+// app) or a directory containing Main.mar. Defaults to "." when called with
+// no arguments.
 //
-// Backend.mar / Frontend.mar / Shared.mar are conventional names but not
-// required: Main.mar can import whatever it likes. The CLI itself doesn't
-// look up Backend or Frontend by name — only Main.main matters.
+// Whether the runtime serves a unified server, a browser-only app, or
+// something else is decided by what `main` returns:
 //
-// The HTTP port comes from <dir>/mar.json (server.port). Default 3000 if
-// the manifest is absent or doesn't specify a port.
-func runApp(dir string) int {
-	mainFile := filepath.Join(dir, "Main.mar")
-	if _, err := os.Stat(mainFile); err != nil {
-		fmt.Fprintf(os.Stderr, "mar app: %s not found\n", mainFile)
+//	App.fullstack { api, page }   -> unified server (port from mar.json)
+//	App.serve port app            -> browser-only single-screen app
+//	App.serveScreens port screens -> browser-only multi-screen app
+//	any other Effect              -> just runs the effect
+//
+// All three of those builtins are overridden by the CLI before any module
+// is evaluated, so they capture the project's module ASTs (needed to ship
+// the right subset to the browser).
+func runDev(path string) int {
+	entryFile, projectDir, err := resolveDevEntry(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
 		return 1
 	}
 
-	// Resolve port from mar.json (default 3000). Validation errors in the
-	// manifest are fatal — better to surface them now than silently fall
-	// back to defaults.
-	port := 3000
-	manifest, err := project.LoadManifest(dir)
+	// Resolve full-stack port from mar.json (default 3000). Validation
+	// errors in the manifest are fatal — surface them now rather than
+	// silently fall back to defaults.
+	fullstackPort := 3000
+	manifest, err := project.LoadManifest(projectDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "mar app: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
 		return 1
 	}
 	if manifest != nil && manifest.Server != nil && manifest.Server.Port != 0 {
-		port = manifest.Server.Port
+		fullstackPort = manifest.Server.Port
 	}
 
 	// Load the full project (parse + type-check + evaluate all modules into
-	// a shared runtime env). The hook installs a project-aware version of
-	// App.fullstack BEFORE any module is evaluated — Main.main calls it
-	// during evaluation, so the override has to be in place by then.
-	rEnv, _, err := project.LoadIntoEnvWithModulesAndHook(mainFile,
+	// a shared runtime env). The hook installs project-aware versions of
+	// App.fullstack / App.serve / App.serveScreens BEFORE any module is
+	// evaluated — main calls one of them during evaluation, so the
+	// overrides have to be in place by then.
+	rEnv, _, err := project.LoadIntoEnvWithModulesAndHook(entryFile,
 		func(env *runtime.Env, mods []*ast.Module) {
-			impl := makeFullstackBuiltin(mods, port)
-			env.Define("appFullstack", impl)
-			env.Define("App.fullstack", impl) // qualified alias is a separate binding
+			fs := makeFullstackBuiltin(mods, fullstackPort)
+			env.Define("appFullstack", fs)
+			env.Define("App.fullstack", fs)
+
+			srv := makeServeBuiltin(mods)
+			env.Define("appServe", srv)
+			env.Define("App.serve", srv)
+
+			scr := makeServeScreensBuiltin(mods)
+			env.Define("appServeScreens", scr)
+			env.Define("App.serveScreens", scr)
 		})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", mainFile, err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", entryFile, err)
 		return 1
 	}
 
-	// Look up Main.main and run it as an Effect.
+	// Find main: prefer Main.main (project mode), fall back to bare main
+	// (single-file mode).
 	mainVal, ok := rEnv.Lookup("Main.main")
 	if !ok {
 		mainVal, ok = rEnv.Lookup("main")
 	}
 	if !ok {
-		fmt.Fprintf(os.Stderr, "mar app: Main.mar must export `main : Effect String ()`\n")
+		fmt.Fprintf(os.Stderr, "mar dev: %s must export `main : Effect String ()`\n", entryFile)
 		return 1
 	}
 	eff, ok := mainVal.(runtime.VEffect)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "mar app: Main.main is not an Effect (got %T)\n", mainVal)
+		fmt.Fprintf(os.Stderr, "mar dev: main is not an Effect (got %T)\n", mainVal)
 		return 1
 	}
 	if _, err := eff.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "mar app: %v\n", err)
+		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// resolveDevEntry decides which file to load and which dir to read mar.json
+// from, given a path that can be either a file or directory.
+func resolveDevEntry(path string) (entryFile string, projectDir string, err error) {
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		return "", "", statErr
+	}
+	if info.IsDir() {
+		entry := filepath.Join(path, "Main.mar")
+		if _, err := os.Stat(entry); err != nil {
+			return "", "", fmt.Errorf("%s: no Main.mar found in directory", path)
+		}
+		return entry, path, nil
+	}
+	return path, filepath.Dir(path), nil
 }
 
 // reachableFrom walks the import graph starting at startModule and returns
@@ -340,20 +370,67 @@ func makeFullstackBuiltin(mods []*ast.Module, port int) runtime.Value {
 }
 
 
-func runServe(path string, port int, entry string) int {
-	// `mar serve` follows imports from the entry file (within its directory).
-	// Backend-only modules (those NOT reached via the entry's import graph)
-	// are excluded; only what the frontend uses is shipped to the browser.
-	mods, err := project.LoadForServe(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
-		return 1
+// makeServeBuiltin overrides App.serve in `mar dev`. The default Go-side
+// App.serve renders views as HTML forms (server-side MVU). For dev mode we
+// want browser-side MVU: ship the AST, let runtime.js mount the app.
+//
+//	App.serve : Int -> App -> Effect String ()
+//
+// The user's `main = App.serve port (App.create ...)` becomes, after this
+// override, an Effect that starts the JS bundle server on the given port.
+// The browser then evaluates `main` itself (the same expression, via the
+// JS-side App.serve which mounts).
+func makeServeBuiltin(mods []*ast.Module) runtime.Value {
+	return runtime.VFn{
+		Arity: 2,
+		Native: func(args []runtime.Value) (runtime.Value, error) {
+			portV, ok := args[0].(runtime.VInt)
+			if !ok {
+				return nil, fmt.Errorf("App.serve: expected Int port (got %T)", args[0])
+			}
+			if _, ok := args[1].(runtime.VApp); !ok {
+				return nil, fmt.Errorf("App.serve: expected App value (got %T)", args[1])
+			}
+			port := int(portV.V)
+			return runtime.VEffect{
+				Tag: "appServeBrowser",
+				Run: func() (runtime.Value, error) {
+					if err := jsserve.ServeModules(port, mods, "main"); err != nil {
+						return nil, err
+					}
+					return runtime.VUnit{}, nil
+				},
+			}, nil
+		},
 	}
-	if err := jsserve.ServeModules(port, mods, entry); err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		return 1
+}
+
+// makeServeScreensBuiltin is the multi-screen variant of makeServeBuiltin.
+//
+//	App.serveScreens : Int -> List Screen -> Effect String ()
+func makeServeScreensBuiltin(mods []*ast.Module) runtime.Value {
+	return runtime.VFn{
+		Arity: 2,
+		Native: func(args []runtime.Value) (runtime.Value, error) {
+			portV, ok := args[0].(runtime.VInt)
+			if !ok {
+				return nil, fmt.Errorf("App.serveScreens: expected Int port (got %T)", args[0])
+			}
+			if _, ok := args[1].(runtime.VList); !ok {
+				return nil, fmt.Errorf("App.serveScreens: expected List Screen (got %T)", args[1])
+			}
+			port := int(portV.V)
+			return runtime.VEffect{
+				Tag: "appServeScreensBrowser",
+				Run: func() (runtime.Value, error) {
+					if err := jsserve.ServeModules(port, mods, "main"); err != nil {
+						return nil, err
+					}
+					return runtime.VUnit{}, nil
+				},
+			}, nil
+		},
 	}
-	return 0
 }
 
 func runConfig(dir string) int {
