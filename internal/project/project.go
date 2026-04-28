@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"mar/internal/ast"
+	"mar/internal/diag"
 	"mar/internal/parser"
 	"mar/internal/runtime"
 	"mar/internal/typecheck"
@@ -56,6 +57,7 @@ func Load(root string) (*Project, error) {
 	// Parse each file
 	parsed := make(map[string]*ast.Module)
 	paths := make(map[string]string)
+	sources := make(map[string]string)
 	for _, path := range files {
 		src, err := os.ReadFile(path)
 		if err != nil {
@@ -63,7 +65,7 @@ func Load(root string) (*Project, error) {
 		}
 		mod, err := parser.Parse(string(src))
 		if err != nil {
-			return nil, fmt.Errorf("%s: %v", path, err)
+			return nil, diag.Wrap(path, string(src), err)
 		}
 		name := joinName(mod.Name)
 		if _, dup := parsed[name]; dup {
@@ -71,6 +73,7 @@ func Load(root string) (*Project, error) {
 		}
 		parsed[name] = mod
 		paths[name] = path
+		sources[name] = string(src)
 	}
 
 	// Topologically sort by imports
@@ -96,7 +99,7 @@ func Load(root string) (*Project, error) {
 
 		res, err := typecheck.CheckModuleWith(mod, tEnv, allAliases, allCustoms)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %v", name, err)
+			return nil, diag.Wrap(paths[name], sources[name], err)
 		}
 		// Register this module's values into shared tEnv with qualified names.
 		for vname, t := range res.ValueTypes {

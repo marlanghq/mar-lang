@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"mar/internal/ast"
+	"mar/internal/diag"
 	"mar/internal/jsserve"
 	"mar/internal/parser"
 	"mar/internal/project"
@@ -174,7 +175,7 @@ func runParse(path string) int {
 	}
 	mod, err := parser.Parse(string(src))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
+		fmt.Fprintln(os.Stderr, diag.Format(diag.Wrap(path, string(src), err)))
 		return 1
 	}
 	fmt.Printf("module %s\n", joinModuleName(mod.Name))
@@ -192,7 +193,7 @@ func runCheck(path string) int {
 	if info.IsDir() {
 		proj, err := project.Load(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
+			fmt.Fprintln(os.Stderr, diag.Format(err))
 			return 1
 		}
 		fmt.Printf("project %s — OK (%d modules)\n", path, len(proj.Modules))
@@ -212,12 +213,12 @@ func runCheck(path string) int {
 	}
 	mod, err := parser.Parse(string(src))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
+		fmt.Fprintln(os.Stderr, diag.Format(diag.Wrap(path, string(src), err)))
 		return 1
 	}
 	res, err := typecheck.CheckModule(mod)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
+		fmt.Fprintln(os.Stderr, diag.Format(diag.Wrap(path, string(src), err)))
 		return 1
 	}
 	fmt.Printf("module %s — OK\n", joinModuleName(mod.Name))
@@ -327,7 +328,7 @@ func runDev(path string) int {
 
 	// First compile must succeed — otherwise there's nothing to serve.
 	if err := compile(); err != nil {
-		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
+		fmt.Fprintln(os.Stderr, diag.Format(err))
 		return 1
 	}
 	if lp.Port() == 0 {
@@ -404,10 +405,10 @@ func watchAndReload(root string, compile func() error, hub *jsserve.ReloadHub, l
 		prev = cur
 		fmt.Println("[mar dev] file change detected, recompiling…")
 		if err := compile(); err != nil {
-			msg := err.Error()
-			fmt.Fprintf(os.Stderr, "[mar dev] compile error: %s\n", msg)
-			lp.SetError(msg)
-			hub.Error(msg)
+			pretty := diag.Format(err)
+			fmt.Fprintf(os.Stderr, "[mar dev] compile error:\n%s\n", pretty)
+			lp.SetError(pretty)
+			hub.Error(pretty)
 			continue
 		}
 		// Successful compile clears the banner if there was one.

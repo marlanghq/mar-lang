@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"mar/internal/ast"
+	"mar/internal/diag"
 	"mar/internal/parser"
 	"mar/internal/runtime"
 	"mar/internal/typecheck"
@@ -29,7 +30,8 @@ func LoadForServe(entry string) ([]*ast.Module, error) {
 
 	// BFS over imports.
 	loaded := map[string]*ast.Module{} // module name -> AST
-	paths := map[string]string{}
+	paths := map[string]string{}       // module name -> file path
+	sources := map[string]string{}     // module name -> file source (for error context)
 	queue := []string{entryAbs}
 	visited := map[string]bool{entryAbs: true}
 
@@ -43,7 +45,7 @@ func LoadForServe(entry string) ([]*ast.Module, error) {
 		}
 		mod, err := parser.Parse(string(src))
 		if err != nil {
-			return nil, fmt.Errorf("%s: %v", path, err)
+			return nil, diag.Wrap(path, string(src), err)
 		}
 		modName := joinName(mod.Name)
 		if _, dup := loaded[modName]; dup {
@@ -51,6 +53,7 @@ func LoadForServe(entry string) ([]*ast.Module, error) {
 		}
 		loaded[modName] = mod
 		paths[modName] = path
+		sources[modName] = string(src)
 
 		// Resolve imports against the same directory.
 		for _, imp := range mod.Imports {
@@ -83,7 +86,7 @@ func LoadForServe(entry string) ([]*ast.Module, error) {
 		mod := loaded[name]
 		res, err := typecheck.CheckModuleWith(mod, tEnv, allAliases, allCustoms)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %v", name, err)
+			return nil, diag.Wrap(paths[name], sources[name], err)
 		}
 		for vname, t := range res.ValueTypes {
 			tEnv.Define(name+"."+vname, t)

@@ -1253,13 +1253,13 @@
 
     es.onerror = function () {
       // EventSource fires onerror on every drop. We only show the
-      // banner if reconnection takes more than ~2s — short blips
+      // banner if reconnection takes more than ~1s — short blips
       // (server restart inside hot-reload, network hiccup) shouldn't
       // flash a banner.
       clearDisconnectTimer();
       disconnectTimer = setTimeout(function () {
         if (es.readyState !== 1 /* OPEN */) showDisconnect();
-      }, 2000);
+      }, 1000);
     };
   }
 
