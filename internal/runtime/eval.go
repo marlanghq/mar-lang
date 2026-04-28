@@ -39,6 +39,16 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 		}
 		return v, nil
 
+	case *ast.EQualified:
+		key := joinName(n.Module, n.Name)
+		if v, ok := env.Lookup(key); ok {
+			return v, nil
+		}
+		if v, ok := env.Lookup(n.Name); ok {
+			return v, nil
+		}
+		return nil, errorf(n.Pos, "unbound qualified name: %s", key)
+
 	case *ast.ECtor:
 		// Constructors are looked up like values (registered at module load).
 		v, ok := env.Lookup(n.Name)
@@ -273,6 +283,17 @@ func apply(fn Value, arg Value) (Value, error) {
 		return nil, fmt.Errorf("apply: closure body is not an Expr")
 	}
 	return Eval(body, env)
+}
+
+func joinName(mod ast.ModuleName, name string) string {
+	if len(mod) == 0 {
+		return name
+	}
+	out := mod[0]
+	for _, p := range mod[1:] {
+		out += "." + p
+	}
+	return out + "." + name
 }
 
 // matchPattern attempts to match v against pat. Returns the bindings if

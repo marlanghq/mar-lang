@@ -8,7 +8,46 @@ func BaseEnv() *Env {
 	for name, v := range builtins() {
 		env.Define(name, v)
 	}
-	return extendBaseEnv(env)
+	for name, v := range effectBuiltins() {
+		env.Define(name, v)
+	}
+	env = extendBaseEnv(env)
+	// Register qualified aliases (List.map etc.) that point to the same values.
+	for q, f := range qualifiedAliasMapping() {
+		if v, ok := env.Lookup(f); ok {
+			env.Define(q, v)
+		}
+	}
+	return env
+}
+
+// qualifiedAliasMapping returns Module.name -> flat name for stdlib aliases.
+func qualifiedAliasMapping() map[string]string {
+	return map[string]string{
+		"List.length":   "listLength",
+		"List.map":      "listMap",
+		"List.filter":   "listFilter",
+		"List.foldl":    "listFoldl",
+		"List.sum":      "listSum",
+		"List.range":    "listRange",
+		"List.reverse":  "listReverse",
+		"List.head":     "listHead",
+		"List.tail":     "listTail",
+		"List.isEmpty":  "listIsEmpty",
+		"List.concat":   "listConcat",
+		"String.length":     "stringLength",
+		"String.contains":   "stringContains",
+		"String.startsWith": "stringStartsWith",
+		"String.fromInt":    "stringFromInt",
+		"String.toUpper":    "stringToUpper",
+		"String.toLower":    "stringToLower",
+		"Maybe.withDefault": "maybeWithDefault",
+		"Maybe.map":         "maybeMap",
+		"Effect.succeed":    "effectSucceed",
+		"Effect.fail":       "effectFail",
+		"Effect.map":        "effectMap",
+		"Effect.andThen":    "effectAndThen",
+	}
 }
 
 func builtins() map[string]Value {

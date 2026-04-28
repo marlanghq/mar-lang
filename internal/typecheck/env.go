@@ -54,7 +54,11 @@ func (e *TypeEnv) Define(name string, t Type) {
 // Built-ins are encoded as TForall when polymorphic (e.g. == : forall a. a -> a -> Bool).
 func BaseEnv() *TypeEnv {
 	env := NewEnv()
-	for name, t := range baseBindings() {
+	flat := baseBindings()
+	for name, t := range flat {
+		env = env.Bind(name, t)
+	}
+	for name, t := range qualifiedAliases(flat) {
 		env = env.Bind(name, t)
 	}
 	return env
@@ -212,5 +216,72 @@ func stdlibBindings() map[string]Type {
 				To:   TArrow{From: TMaybe(a), To: TMaybe(b)},
 			},
 		},
+
+		// Effect
+		"effectSucceed": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{From: b, To: TEffect(a, b)},
+		},
+		"effectFail": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{From: a, To: TEffect(a, b)},
+		},
+		"effectMap": TForall{
+			Vars: []int{a.ID, b.ID, -5},
+			Body: TArrow{
+				From: TArrow{From: b, To: TVar{ID: -5}},
+				To: TArrow{
+					From: TEffect(a, b),
+					To:   TEffect(a, TVar{ID: -5}),
+				},
+			},
+		},
+		"effectAndThen": TForall{
+			Vars: []int{a.ID, b.ID, -5},
+			Body: TArrow{
+				From: TArrow{From: b, To: TEffect(a, TVar{ID: -5})},
+				To: TArrow{
+					From: TEffect(a, b),
+					To:   TEffect(a, TVar{ID: -5}),
+				},
+			},
+		},
 	}
+}
+
+// qualifiedAliases returns Module.name aliases for stdlib (so `List.map`
+// works just like `listMap`).
+func qualifiedAliases(flat map[string]Type) map[string]Type {
+	mapping := map[string]string{
+		"List.length":   "listLength",
+		"List.map":      "listMap",
+		"List.filter":   "listFilter",
+		"List.foldl":    "listFoldl",
+		"List.sum":      "listSum",
+		"List.range":    "listRange",
+		"List.reverse":  "listReverse",
+		"List.head":     "listHead",
+		"List.tail":     "listTail",
+		"List.isEmpty":  "listIsEmpty",
+		"List.concat":   "listConcat",
+		"String.length":     "stringLength",
+		"String.contains":   "stringContains",
+		"String.startsWith": "stringStartsWith",
+		"String.fromInt":    "stringFromInt",
+		"String.toUpper":    "stringToUpper",
+		"String.toLower":    "stringToLower",
+		"Maybe.withDefault": "maybeWithDefault",
+		"Maybe.map":         "maybeMap",
+		"Effect.succeed":    "effectSucceed",
+		"Effect.fail":       "effectFail",
+		"Effect.map":        "effectMap",
+		"Effect.andThen":    "effectAndThen",
+	}
+	out := map[string]Type{}
+	for q, f := range mapping {
+		if t, ok := flat[f]; ok {
+			out[q] = t
+		}
+	}
+	return out
 }

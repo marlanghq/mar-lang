@@ -68,9 +68,20 @@ func LoadModule(mod *ast.Module) (*Module, error) {
 
 	name := "(unnamed)"
 	if len(mod.Name) > 0 {
-		name = joinName(mod.Name)
+		name = joinModuleName(mod.Name)
 	}
 	return &Module{Name: name, Env: env}, nil
+}
+
+func joinModuleName(parts []string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	out := parts[0]
+	for _, p := range parts[1:] {
+		out += "." + p
+	}
+	return out
 }
 
 // makeCtorValue builds the runtime value for a constructor.
@@ -86,17 +97,6 @@ func makeCtorValue(tag string, arity int) Value {
 			return VCtor{Tag: tag, Args: append([]Value{}, args...)}, nil
 		},
 	}
-}
-
-func joinName(parts []string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	out := parts[0]
-	for _, p := range parts[1:] {
-		out += "." + p
-	}
-	return out
 }
 
 // Get retrieves a top-level value by name from a loaded module.

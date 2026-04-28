@@ -1,0 +1,79 @@
+module MiniEval exposing (..)
+
+
+-- A tiny expression language: literals, variables, addition, multiplication,
+-- and let-bindings. Built and evaluated entirely in mar.
+
+
+type Expr
+    = ENum Int
+    | EVar String
+    | EAdd Expr Expr
+    | EMul Expr Expr
+    | ELet String Expr Expr   -- let name = bound in body
+
+
+type alias Binding =
+    { name : String
+    , value : Int
+    }
+
+
+-- Lookup in an environment (list of bindings).
+lookup : String -> List Binding -> Maybe Int
+lookup name env =
+    case env of
+        [] -> Nothing
+        b :: rest ->
+            if b.name == name then
+                Just b.value
+            else
+                lookup name rest
+
+
+-- Evaluate an expression in an environment.
+eval : List Binding -> Expr -> Result String Int
+eval env expr =
+    case expr of
+        ENum n -> Ok n
+
+        EVar name ->
+            case lookup name env of
+                Just v -> Ok v
+                Nothing -> Err ("unbound variable: " ++ name)
+
+        EAdd l r ->
+            case eval env l of
+                Err e -> Err e
+                Ok lv ->
+                    case eval env r of
+                        Err e -> Err e
+                        Ok rv -> Ok (lv + rv)
+
+        EMul l r ->
+            case eval env l of
+                Err e -> Err e
+                Ok lv ->
+                    case eval env r of
+                        Err e -> Err e
+                        Ok rv -> Ok (lv * rv)
+
+        ELet name bound body ->
+            case eval env bound of
+                Err e -> Err e
+                Ok v ->
+                    eval ({ name = name, value = v } :: env) body
+
+
+-- A small program: let x = 10 in let y = 20 in (x + y) * 2
+program : Expr
+program =
+    ELet "x" (ENum 10)
+        (ELet "y" (ENum 20)
+            (EMul (EAdd (EVar "x") (EVar "y")) (ENum 2)))
+
+
+-- Run it.
+main : Result String Int
+main =
+    eval [] program

@@ -219,3 +219,8 @@ func TMaybe(a Type) TCon {
 func TResult(e, a Type) TCon {
 	return TCon{Name: "Result", Args: []Type{e, a}}
 }
+
+// TEffect returns "Effect e a".
+func TEffect(e, a Type) TCon {
+	return TCon{Name: "Effect", Args: []Type{e, a}}
+}

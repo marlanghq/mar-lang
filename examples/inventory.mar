@@ -25,7 +25,7 @@ itemStatus item =
 statusLabel : Status -> String
 statusLabel s =
     case s of
-        InStock n -> "in stock (" ++ stringFromInt n ++ ")"
+        InStock n -> "in stock (" ++ String.fromInt n ++ ")"
         OutOfStock -> "out of stock"
         Discontinued -> "discontinued"
 
@@ -39,27 +39,27 @@ inventory =
     ]
 
 
-totalValue : List Item -> Int
-totalValue items =
-    listSum (listMap (\i -> i.price * i.stock) items)
+totalValue : Int
+totalValue =
+    inventory
+        |> List.map (\i -> i.price * i.stock)
+        |> List.sum
 
 
-inStock : List Item -> List Item
-inStock items =
-    listFilter (\i -> i.stock > 0) items
+inStockOnly : List Item
+inStockOnly =
+    inventory |> List.filter (\i -> i.stock > 0)
 
 
 report : List String
 report =
-    listMap
-        (\i ->
+    inventory
+        |> List.map (\i ->
             i.name
                 ++ ": "
-                ++ stringFromInt i.price
+                ++ String.fromInt i.price
                 ++ " each, "
-                ++ statusLabel (itemStatus i)
-        )
-        inventory
+                ++ statusLabel (itemStatus i))
 
 
 main : List String

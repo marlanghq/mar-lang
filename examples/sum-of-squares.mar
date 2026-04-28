@@ -8,7 +8,9 @@ square n =
 
 sumOfSquares : Int -> Int
 sumOfSquares n =
-    listSum (listMap square (listRange 1 n))
+    List.range 1 n
+        |> List.map square
+        |> List.sum
 
 
 main : Int

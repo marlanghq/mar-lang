@@ -47,6 +47,17 @@ func Infer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 		return TUnit{}, nil
 	case *ast.EVar:
 		return inferVar(n.Name, n.Pos, env)
+	case *ast.EQualified:
+		// Look up "Module.name" — for now, flatten to a single key.
+		key := joinName(n.Module, n.Name)
+		if t, ok := env.Lookup(key); ok {
+			return Instantiate(t), nil
+		}
+		// Fall back to bare name
+		if t, ok := env.Lookup(n.Name); ok {
+			return Instantiate(t), nil
+		}
+		return nil, errorf(n.Pos, "unknown qualified name: %s", key)
 	case *ast.ECtor:
 		// For now, treat constructors like variables (looked up in env).
 		// Qualified constructors (Module.Foo) are not yet resolved.
@@ -96,6 +107,17 @@ func inferVar(name string, pos ast.Pos, env *TypeEnv) (Type, error) {
 		return nil, errorf(pos, "unknown identifier: %s", name)
 	}
 	return Instantiate(t), nil
+}
+
+func joinName(mod ast.ModuleName, name string) string {
+	if len(mod) == 0 {
+		return name
+	}
+	out := mod[0]
+	for _, p := range mod[1:] {
+		out += "." + p
+	}
+	return out + "." + name
 }
 
 func inferApp(n *ast.EApp, env *TypeEnv, s *Subst) (Type, error) {

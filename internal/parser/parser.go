@@ -936,28 +936,57 @@ func (p *parser) parseExprAtom() (ast.Expr, error) {
 	}
 }
 
-// makeQualifiedExpr decides between EQualified (Module.lowerName style is
-// tricky — needs lookahead) and ECtor / EVar based on whether the final
-// segment was upper or lower case.
-//
-// For now: UpperName always becomes ECtor (with optional module).
-// Module.lowerName access needs separate handling — we handle field access
-// (lowerName.field) via parseFieldChain; cross-module qualified value access
-// via Module.foo will be added later when needed.
+// makeQualifiedExpr returns ECtor (uppercase final segment) or EQualified
+// (lowercase final segment, treated as a qualified value reference).
 func (p *parser) makeQualifiedExpr(first lexer.Token, mod ast.ModuleName, name string) ast.Expr {
-	return &ast.ECtor{Pos: posOf(first), Module: mod, Name: name}
+	if isUpperFirst(name) {
+		return &ast.ECtor{Pos: posOf(first), Module: mod, Name: name}
+	}
+	return &ast.EQualified{Pos: posOf(first), Module: mod, Name: name}
 }
 
-// parseQualifiedUpperOrValue: Foo, Foo.Bar, Foo.Bar.value (value is lowerName)
+func isUpperFirst(name string) bool {
+	if name == "" {
+		return false
+	}
+	c := name[0]
+	return c >= 'A' && c <= 'Z'
+}
+
+// parseQualifiedUpperOrValue: parses a Module-prefixed name. The final
+// segment may be UpperName (constructor or type) or LowerName (value).
 //
-// This is more permissive than parseQualifiedUpper: it allows the chain to
-// end in a lowerName (a qualified value reference).
-//
-// For now we only support qualified UpperName chains (e.g. Foo.Bar -> ECtor).
-// Module.value (Foo.bar where bar is lowercase) will be added when we wire
-// imports — for now we treat dotted access on values as field access.
+//	Foo            -> mod=nil, name="Foo"
+//	Foo.Bar        -> mod=[Foo], name="Bar"
+//	Foo.Bar.value  -> mod=[Foo, Bar], name="value"
+//	Foo.value      -> mod=[Foo], name="value"
 func (p *parser) parseQualifiedUpperOrValue(first lexer.Token) (ast.ModuleName, string, error) {
-	return p.parseQualifiedUpper(first)
+	p.advance() // consume the first UpperName
+	parts := []string{first.Value}
+	for p.peek().Kind == lexer.KindDot {
+		next := p.peekAt(1)
+		switch next.Kind {
+		case lexer.KindUpperName:
+			p.advance() // .
+			parts = append(parts, p.advance().Value)
+		case lexer.KindLowerName:
+			p.advance() // .
+			finalName := p.advance().Value
+			// All previous parts are the module path
+			return ast.ModuleName(parts), finalName, nil
+		default:
+			// Not a qualified-value continuation; stop chain.
+			break
+		}
+		// Avoid infinite loop if we didn't break above (should be unreachable)
+		if p.peek().Kind == lexer.KindDot && p.peekAt(1).Kind != lexer.KindUpperName && p.peekAt(1).Kind != lexer.KindLowerName {
+			break
+		}
+	}
+	if len(parts) == 1 {
+		return nil, parts[0], nil
+	}
+	return ast.ModuleName(parts[:len(parts)-1]), parts[len(parts)-1], nil
 }
 
 func (p *parser) parseExprParens() (ast.Expr, error) {
