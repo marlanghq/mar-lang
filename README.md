@@ -82,6 +82,8 @@ curl http://localhost:3002/notes
 | `examples/counter.mar` | interactive MVU app: init / update / view, session state |
 | `examples/todo-app.mar` | MVU with form input (`AddTodo { body }`), togglable list |
 | `examples/multi-screen.mar` | multiple screens at different paths, each with its own model, links between them |
+| `examples/clock.mar` + `clock-backend.mar` | browser app does Http.get to backend on init / Refresh |
+| `examples/notes-fullstack/` | full-stack mar: SQLite-backed backend + browser frontend that fetches and posts |
 | `examples/multi/` | multi-file project, simplest |
 | `examples/blog/` | 3-file project + `mar.json` |
 

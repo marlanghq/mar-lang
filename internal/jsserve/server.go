@@ -45,9 +45,18 @@ window.addEventListener('DOMContentLoaded', function () {
 
 // Serve serves the embedded runtime, the program AST, and the host page on
 // the given port. Blocks until the server stops.
+//
+// The single-module variant.
 func Serve(port int, mod *ast.Module, entry string) error {
+	return ServeModules(port, []*ast.Module{mod}, entry)
+}
+
+// ServeModules serves a multi-module project (all modules concatenated into
+// a single AST blob with their decls flattened).
+func ServeModules(port int, mods []*ast.Module, entry string) error {
+	merged := mergeModules(mods)
 	progJSON, err := json.Marshal(map[string]any{
-		"module": SerializeModule(mod),
+		"module": SerializeModule(merged),
 		"entry":  entry,
 	})
 	if err != nil {
@@ -55,8 +64,8 @@ func Serve(port int, mod *ast.Module, entry string) error {
 	}
 
 	title := "mar app"
-	if len(mod.Name) > 0 {
-		title = mod.Name[len(mod.Name)-1]
+	if len(merged.Name) > 0 {
+		title = merged.Name[len(merged.Name)-1]
 	}
 	indexHTML := fmt.Sprintf(pageHTML, title)
 
@@ -81,4 +90,21 @@ func Serve(port int, mod *ast.Module, entry string) error {
 	addr := fmt.Sprintf(":%d", port)
 	fmt.Printf("[mar] Browser app on http://localhost%s\n", addr)
 	return http.ListenAndServe(addr, mux)
+}
+
+// mergeModules concatenates the decls of multiple modules into a single
+// virtual module. Names across modules are exposed as both "name" (bare) and
+// "Module.name" (qualified) by the runtime's loader.
+func mergeModules(mods []*ast.Module) *ast.Module {
+	if len(mods) == 1 {
+		return mods[0]
+	}
+	out := &ast.Module{}
+	for _, m := range mods {
+		out.Decls = append(out.Decls, m.Decls...)
+		if len(out.Name) == 0 {
+			out.Name = m.Name
+		}
+	}
+	return out
 }

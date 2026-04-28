@@ -1,0 +1,73 @@
+module Frontend exposing (main)
+
+
+-- Browser frontend for the notes app. Run with:
+--   terminal 1: ./mar run examples/notes-fullstack/Backend.mar
+--   terminal 2: ./mar serve examples/notes-fullstack/Frontend.mar
+-- Then open http://localhost:4000.
+
+
+type alias Model =
+    { rawNotes : String
+    , status : String
+    }
+
+
+type Msg
+    = LoadedNotes (Result String String)
+    | SubmitNew { body : String }
+    | NoteCreated (Result String String)
+
+
+backendUrl : String
+backendUrl =
+    "http://localhost:3020"
+
+
+fetchAll : Effect String Msg
+fetchAll =
+    Http.get (backendUrl ++ "/notes") LoadedNotes
+
+
+init : () -> (Model, Effect String Msg)
+init _ =
+    ({ rawNotes = "[]", status = "loading…" }, fetchAll)
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        LoadedNotes (Ok raw) ->
+            ({ rawNotes = raw, status = "loaded" }, Effect.none)
+
+        LoadedNotes (Err e) ->
+            ({ rawNotes = "[]", status = "error: " ++ e }, Effect.none)
+
+        SubmitNew input ->
+            ( { rawNotes = model.rawNotes, status = "saving…" }
+            , Http.post (backendUrl ++ "/notes") input.body NoteCreated
+            )
+
+        NoteCreated (Ok _) ->
+            ({ rawNotes = model.rawNotes, status = "added" }, fetchAll)
+
+        NoteCreated (Err e) ->
+            ({ rawNotes = model.rawNotes, status = "save failed: " ++ e }, Effect.none)
+
+
+view : Model -> View
+view model =
+    View.section
+        [ View.title "Notes"
+        , View.text ("Status: " ++ model.status)
+        , View.subtitle "All notes (raw)"
+        , View.text model.rawNotes
+        , View.subtitle "Add a note"
+        , View.form "SubmitNew"
+            [ View.input "body" "" ]
+        ]
+
+
+main : Effect String ()
+main =
+    App.serve 4000 (App.create init update view)
