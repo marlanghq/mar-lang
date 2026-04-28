@@ -1,0 +1,11 @@
+module Echo exposing (main)
+
+
+-- Read a line from stdin and echo it back, uppercased.
+main : Effect String ()
+main =
+    IO.println "Type something:"
+        |> Effect.andThen (\_ -> IO.readLine)
+        |> Effect.andThen (\line ->
+            IO.println ("You said: " ++ String.toUpper line)
+        )

@@ -11,6 +11,12 @@ func BaseEnv() *Env {
 	for name, v := range effectBuiltins() {
 		env.Define(name, v)
 	}
+	for name, v := range ioBuiltins() {
+		env.Define(name, v)
+	}
+	for name, v := range jsonBuiltins() {
+		env.Define(name, v)
+	}
 	env = extendBaseEnv(env)
 	// Register qualified aliases (List.map etc.) that point to the same values.
 	for q, f := range qualifiedAliasMapping() {
@@ -47,6 +53,11 @@ func qualifiedAliasMapping() map[string]string {
 		"Effect.fail":       "effectFail",
 		"Effect.map":        "effectMap",
 		"Effect.andThen":    "effectAndThen",
+		"IO.print":    "ioPrint",
+		"IO.println":  "ioPrintln",
+		"IO.readLine": "ioReadLine",
+		"JSON.encode": "jsonEncode",
+		"JSON.decode": "jsonDecode",
 	}
 }
 

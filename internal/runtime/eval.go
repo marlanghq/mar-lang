@@ -103,12 +103,15 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 	case *ast.ELambda:
 		paramNames := make([]string, len(n.Params))
 		for i, p := range n.Params {
-			pv, ok := p.(*ast.PVar)
-			if !ok {
-				// MVP: only PVar params supported; could destructure later.
-				return nil, errorf(n.Pos, "lambda params must be simple names (got %T)", p)
+			switch pv := p.(type) {
+			case *ast.PVar:
+				paramNames[i] = pv.Name
+			case *ast.PWildcard:
+				// Use a unique name that the body won't reference.
+				paramNames[i] = fmt.Sprintf("__wild%d", i)
+			default:
+				return nil, errorf(n.Pos, "lambda params must be names or _ (got %T)", p)
 			}
-			paramNames[i] = pv.Name
 		}
 		return VFn{
 			Params: paramNames,

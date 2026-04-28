@@ -246,6 +246,30 @@ func stdlibBindings() map[string]Type {
 				},
 			},
 		},
+
+		// IO (effects parameterized in error type for compatibility)
+		"ioPrint": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TString, To: TEffect(a, TUnit{})},
+		},
+		"ioPrintln": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TString, To: TEffect(a, TUnit{})},
+		},
+		"ioReadLine": TForall{
+			Vars: []int{a.ID},
+			Body: TEffect(a, TString),
+		},
+
+		// JSON (untyped — encode any value, decode produces "any" record/list/etc)
+		"jsonEncode": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: a, To: TString},
+		},
+		"jsonDecode": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TString, To: TResult(TString, a)},
+		},
 	}
 }
 
@@ -276,6 +300,11 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Effect.fail":       "effectFail",
 		"Effect.map":        "effectMap",
 		"Effect.andThen":    "effectAndThen",
+		"IO.print":    "ioPrint",
+		"IO.println":  "ioPrintln",
+		"IO.readLine": "ioReadLine",
+		"JSON.encode": "jsonEncode",
+		"JSON.decode": "jsonDecode",
 	}
 	out := map[string]Type{}
 	for q, f := range mapping {
