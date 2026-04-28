@@ -21,8 +21,8 @@ type alias Response =
 notes : Entity
 notes =
     Entity.create "notes"
-        |> Entity.field "id" "INTEGER"
-        |> Entity.field "body" "TEXT"
+        |> Entity.field "id" Entity.int
+        |> Entity.field "body" Entity.text
         |> Entity.primaryKey "id"
         |> Entity.notNull "body"
 

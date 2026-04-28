@@ -53,8 +53,8 @@ result = View.render (View.text "<script>")
 func TestEntityCreate(t *testing.T) {
 	src := `module M exposing (..)
 ent = Entity.create "users"
-        |> Entity.field "id" "INTEGER"
-        |> Entity.field "email" "TEXT"
+        |> Entity.field "id" Entity.int
+        |> Entity.field "email" Entity.text
         |> Entity.primaryKey "id"
         |> Entity.notNull "email"
         |> Entity.unique ["email"]

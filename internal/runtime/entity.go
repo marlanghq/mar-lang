@@ -37,11 +37,29 @@ func (e VEntity) Display() string {
 	return fmt.Sprintf("<entity:%s>", e.Table)
 }
 
+// VColType is a typed column kind used by Entity.field. Values are produced
+// by Entity.int / Entity.text / Entity.real / Entity.blob / Entity.dateTime
+// rather than written as raw SQL strings — typo'd type names are caught at
+// compile time instead of leaking into a CREATE TABLE.
+type VColType struct {
+	SQL string
+}
+
+func (VColType) isValue() {}
+func (c VColType) Display() string {
+	return "<coltype:" + c.SQL + ">"
+}
+
 // entityBuiltins exposes a builder API in mar:
 //
-//	Entity.create     : String -> Entity              -- new empty entity, just a table name
-//	Entity.field      : String -> String -> Entity -> Entity  -- name, sqlType
-//	Entity.primaryKey : String -> Entity -> Entity    -- mark a field as primary key (autoinc)
+//	Entity.create     : String -> Entity                       -- new empty entity, just a table name
+//	Entity.field      : String -> ColType -> Entity -> Entity  -- name, column kind
+//	Entity.int        : ColType                                -- INTEGER
+//	Entity.text       : ColType                                -- TEXT
+//	Entity.real       : ColType                                -- REAL
+//	Entity.blob       : ColType                                -- BLOB
+//	Entity.dateTime   : ColType                                -- DATETIME
+//	Entity.primaryKey : String -> Entity -> Entity             -- mark a field as primary key (autoinc)
 //	Entity.unique     : List String -> Entity -> Entity
 //	Entity.notNull    : String -> Entity -> Entity
 //
@@ -57,14 +75,21 @@ func entityBuiltins() map[string]Value {
 		}),
 		"entityField": nativeFn(3, func(args []Value) (Value, error) {
 			name, ok1 := args[0].(VString)
-			sqlType, ok2 := args[1].(VString)
+			ct, ok2 := args[1].(VColType)
 			ent, ok3 := args[2].(VEntity)
 			if !ok1 || !ok2 || !ok3 {
-				return nil, fmt.Errorf("Entity.field: expected String, String, Entity")
+				return nil, fmt.Errorf("Entity.field: expected String, ColType, Entity")
 			}
-			ent.Fields = append(ent.Fields, EntityField{Name: name.V, SQLType: sqlType.V})
+			ent.Fields = append(ent.Fields, EntityField{Name: name.V, SQLType: ct.SQL})
 			return ent, nil
 		}),
+
+		// ColType constants — typed alternative to raw SQL strings.
+		"entityInt":      VColType{SQL: "INTEGER"},
+		"entityText":     VColType{SQL: "TEXT"},
+		"entityReal":     VColType{SQL: "REAL"},
+		"entityBlob":     VColType{SQL: "BLOB"},
+		"entityDateTime": VColType{SQL: "DATETIME"},
 		"entityPrimaryKey": nativeFn(2, func(args []Value) (Value, error) {
 			name, ok1 := args[0].(VString)
 			ent, ok2 := args[1].(VEntity)

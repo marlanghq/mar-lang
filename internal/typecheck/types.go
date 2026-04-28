@@ -235,6 +235,12 @@ func TEntity() TCon {
 	return TCon{Name: "Entity"}
 }
 
+// TColType returns the opaque "ColType" type — values like Entity.int /
+// Entity.text used to declare a column's storage type.
+func TColType() TCon {
+	return TCon{Name: "ColType"}
+}
+
 // TView returns the opaque "View" type. (For now, we don't parameterize by Msg.)
 func TView() TCon {
 	return TCon{Name: "View"}
