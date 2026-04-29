@@ -15,19 +15,26 @@ import (
 // runRepl starts an interactive REPL.
 //
 // Each line is treated as either:
-//   - A `let name = expr` style binding (registered into the session)
+//   - A `name = expr` style binding (registered into the session)
 //   - An expression to evaluate and print
 //
-// Lines ending with backslash continue on the next line. ":quit" exits.
+// Bindings are immutable: trying to redefine a name fails with "X is
+// already defined; use :reset to start a fresh session". This mirrors
+// how the language itself rejects mutation.
+//
+// Commands: :quit / :q, :type EXPR / :t EXPR, :reset.
 func runRepl() int {
-	fmt.Println("mar repl — type :quit to exit, :type EXPR to inspect type")
+	fmt.Println("mar repl — :quit, :type EXPR, :reset")
 	scanner := bufio.NewScanner(os.Stdin)
 
-	// Persistent envs that grow across lines.
+	// Persistent envs that grow across lines. Track user-defined names
+	// separately from the env so `:reset` can wipe the session without
+	// touching builtins, and so we know what came from the user vs the
+	// stdlib (used by the rebind-prevention check).
 	tEnv := typecheck.BaseEnv()
 	rEnv := runtime.BaseEnv()
 	subst := typecheck.NewSubst()
-	bindingCount := 0
+	userBindings := map[string]bool{}
 
 	prompt := "> "
 	for {
@@ -42,6 +49,14 @@ func runRepl() int {
 		}
 		if line == ":quit" || line == ":q" {
 			return 0
+		}
+		if line == ":reset" {
+			tEnv = typecheck.BaseEnv()
+			rEnv = runtime.BaseEnv()
+			subst = typecheck.NewSubst()
+			userBindings = map[string]bool{}
+			fmt.Println("(session cleared)")
+			continue
 		}
 		if strings.HasPrefix(line, ":type ") || strings.HasPrefix(line, ":t ") {
 			expr := strings.TrimSpace(line[strings.IndexByte(line, ' ')+1:])
@@ -59,18 +74,27 @@ func runRepl() int {
 			name := strings.TrimSpace(line[:eq])
 			body := strings.TrimSpace(line[eq+1:])
 			if isLowerIdent(name) {
+				// Reject rebinding — mar values are immutable, including
+				// in the REPL. The session would otherwise silently
+				// behave as mutation (closures would see new value).
+				if userBindings[name] {
+					fmt.Fprintf(os.Stderr, "'%s' is already defined; use :reset to start a fresh session\n", name)
+					continue
+				}
+				if _, builtin := rEnv.Lookup(name); builtin {
+					fmt.Fprintf(os.Stderr, "'%s' is a builtin; can't be redefined\n", name)
+					continue
+				}
 				if err := replBind(name, body, tEnv, rEnv, subst); err != nil {
 					fmt.Fprintf(os.Stderr, "%v\n", err)
 					continue
 				}
-				// Update env shadows: replBind mutates rEnv via Define and
-				// returns updated tEnv. We need to pick that up... refactor.
+				userBindings[name] = true
 				continue
 			}
 		}
 
 		// Otherwise: evaluate expression
-		bindingCount++
 		v, t, err := replEvalExpr(line, tEnv, rEnv, subst)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
