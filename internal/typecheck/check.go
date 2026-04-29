@@ -279,6 +279,14 @@ func CheckModuleWith(
 		}
 	}
 
+	// Reject illegal dependency cycles (non-function values that
+	// reference themselves directly or transitively). The runtime would
+	// otherwise eagerly evaluate them and hit a placeholder, producing
+	// a confusing error like "+: unsupported types".
+	if err := checkValueCycles(mod); err != nil {
+		return nil, err
+	}
+
 	return res, nil
 }
 
