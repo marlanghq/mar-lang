@@ -60,8 +60,9 @@
   // -- Boot --
 
   async function boot() {
-    // /whoami: authenticated → returns {email}; otherwise 401.
-    const r = await getJSON('/_mar/admin/api/whoami');
+    // /me always 200s — body is the session record when signed in,
+    // null otherwise. Same shape as /_auth/me on the user-auth side.
+    const r = await getJSON('/_mar/admin/api/me');
     if (r.ok && r.body && r.body.email) {
       setState({ view: 'overview', session: r.body });
       loadOverview();

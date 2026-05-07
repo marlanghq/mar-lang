@@ -214,24 +214,25 @@ func TestAdminStatic_ServesEmbeddedAssets(t *testing.T) {
 	}
 }
 
-// TestAdminWhoami_Unauthenticated — no cookie → 401, with the
-// generic "no_session" body. Used by the SPA to decide whether to
-// render login vs panel.
-func TestAdminWhoami_Unauthenticated(t *testing.T) {
+// TestAdminMe_Unauthenticated — matches /_auth/me's shape: 200 OK
+// + body null. SPA-friendly, lets the client read the body without
+// branching on the status code.
+func TestAdminMe_Unauthenticated(t *testing.T) {
 	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
 	defer cleanup()
-	resp, body := getJSON(t, server.Client(), server.URL+"/_mar/admin/api/whoami")
-	if resp.StatusCode != http.StatusUnauthorized {
+	resp, body := getJSON(t, server.Client(), server.URL+"/_mar/admin/api/me")
+	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, body = %s", resp.StatusCode, body)
 	}
-	if !strings.Contains(string(body), "no_session") {
-		t.Errorf("expected no_session error; got %s", body)
+	// `null` body — same convention /_auth/me uses for "no session".
+	if strings.TrimSpace(string(body)) != "null" {
+		t.Errorf("expected body 'null'; got %q", body)
 	}
 }
 
-// TestAdminWhoami_Authenticated — after a successful sign-in,
-// whoami returns {email}.
-func TestAdminWhoami_Authenticated(t *testing.T) {
+// TestAdminMe_Authenticated — after a successful sign-in, /me
+// returns the {email} record.
+func TestAdminMe_Authenticated(t *testing.T) {
 	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
 	defer cleanup()
 	client := server.Client()
@@ -254,12 +255,12 @@ func TestAdminWhoami_Authenticated(t *testing.T) {
 		t.Fatal("no session cookie set; aborting")
 	}
 
-	// Now hit /whoami with the cookie.
-	req, _ := http.NewRequest(http.MethodGet, server.URL+"/_mar/admin/api/whoami", nil)
+	// Now hit /me with the cookie.
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/_mar/admin/api/me", nil)
 	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("whoami: %v", err)
+		t.Fatalf("me: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {

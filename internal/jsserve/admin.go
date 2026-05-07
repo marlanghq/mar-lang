@@ -57,7 +57,7 @@ var adminIPLimiter = auth.NewLimiter(20, time.Hour)
 //   /_mar/admin/static/{admin.css, admin.js}
 //      — embedded UI assets
 //
-//   /_mar/admin/api/whoami
+//   /_mar/admin/api/me
 //      — session probe; 200 with email, or 401
 //
 //   /_mar/admin/api/{server-info, db-stats, recent-requests, entity-rows}
@@ -65,7 +65,7 @@ var adminIPLimiter = auth.NewLimiter(20, time.Hour)
 //
 //   /_mar/admin/   (catch-all)
 //      — serves index.html (the SPA shell). Login state is detected
-//        client-side via /api/whoami so the same shell handles both
+//        client-side via /api/me so the same shell handles both
 //        unauthenticated and authenticated views.
 func mountAdminHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/_mar/admin/auth/request-code", handleAdminRequestCode)
@@ -77,7 +77,14 @@ func mountAdminHandlers(mux *http.ServeMux) {
 		http.FileServer(staticFS)))
 
 	// /api/* — services consumed by the embedded SPA.
-	mux.HandleFunc("/_mar/admin/api/whoami", handleAdminWhoami)
+	//
+	// /api/me follows the same shape as /_auth/me: 200 OK with the
+	// session record when authenticated, 200 OK + null otherwise.
+	// SPA-friendly (no try/catch on 401), and matches the user-auth
+	// convention so future frontend code looks identical for both.
+	// Other /api/* endpoints (which expose data, not session probes)
+	// keep the 401-on-no-session pattern.
+	mux.HandleFunc("/_mar/admin/api/me", handleAdminMe)
 	mux.HandleFunc("/_mar/admin/api/server-info", handleAdminServerInfo)
 	mux.HandleFunc("/_mar/admin/api/db-stats", handleAdminDBStats)
 	mux.HandleFunc("/_mar/admin/api/recent-requests", handleAdminRecentRequests)
@@ -92,7 +99,7 @@ func mountAdminHandlers(mux *http.ServeMux) {
 
 // handleAdminPage serves the SPA shell (index.html). The page itself
 // has no auth gate at the HTTP level — login state is determined by
-// the client calling /_mar/admin/api/whoami after load. This keeps
+// the client calling /_mar/admin/api/me after load. This keeps
 // the page simple and ensures unauthenticated visitors see the
 // login screen rather than a 401 in DevTools.
 func handleAdminPage(w http.ResponseWriter, r *http.Request) {
@@ -113,17 +120,19 @@ func handleAdminPage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(indexHTML)
 }
 
-// handleAdminWhoami returns {email} for the active admin session,
-// or 401 if no session. Called by the SPA on load to pick between
-// the login view and the panel view.
-func handleAdminWhoami(w http.ResponseWriter, r *http.Request) {
+// handleAdminMe returns the active admin's session record, or null
+// if there's no valid session. Mirrors /_auth/me's shape (always
+// 200, body is null vs. record) so SPA code reads the same on both
+// auth tracks. Called by the embedded panel on load to pick
+// between the login screen and the dashboard.
+func handleAdminMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	email, err := requireAdminSession(r)
 	if err != nil {
-		writeAuthError(w, http.StatusUnauthorized, "no_session")
+		writeJSON(w, http.StatusOK, nil)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"email": email})
