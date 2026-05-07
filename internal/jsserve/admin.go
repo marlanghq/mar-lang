@@ -20,6 +20,7 @@ package jsserve
 import (
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strings"
 	"time"
@@ -47,13 +48,117 @@ const (
 // 50000 hours).
 var adminIPLimiter = auth.NewLimiter(20, time.Hour)
 
-// mountAdminHandlers registers /_mar/admin/auth/* on mux. Called
-// from ServeLive once the admin schema is ready. The page-serving
-// and API endpoints land in Phase 3+.
+// mountAdminHandlers registers all /_mar/admin/* routes on mux.
+// Called from ServeLive once the admin schema is ready. Routes:
+//
+//   /_mar/admin/auth/{request-code, verify-code, logout}
+//      — passwordless email-code flow (Phase 2)
+//
+//   /_mar/admin/static/{admin.css, admin.js}
+//      — embedded UI assets
+//
+//   /_mar/admin/api/whoami
+//      — session probe; 200 with email, or 401
+//
+//   /_mar/admin/api/{server-info, db-stats, recent-requests, entity-rows}
+//      — JSON services consumed by the UI (Phase 4 fills these in)
+//
+//   /_mar/admin/   (catch-all)
+//      — serves index.html (the SPA shell). Login state is detected
+//        client-side via /api/whoami so the same shell handles both
+//        unauthenticated and authenticated views.
 func mountAdminHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/_mar/admin/auth/request-code", handleAdminRequestCode)
 	mux.HandleFunc("/_mar/admin/auth/verify-code", handleAdminVerifyCode)
 	mux.HandleFunc("/_mar/admin/auth/logout", handleAdminLogout)
+
+	staticFS := http.FS(admin.WebFS())
+	mux.Handle("/_mar/admin/static/", http.StripPrefix("/_mar/admin/static/",
+		http.FileServer(staticFS)))
+
+	// /api/whoami — session probe. Mounted as the only API endpoint
+	// in Phase 3; the others land in Phase 4 with real implementations.
+	mux.HandleFunc("/_mar/admin/api/whoami", handleAdminWhoami)
+
+	// Catch-all — serve the SPA shell. Path "/" matches "/_mar/admin"
+	// and any sub-route the JS router renders client-side. Must be
+	// registered last so the more-specific /api and /auth routes win.
+	mux.HandleFunc("/_mar/admin", handleAdminPage)
+	mux.HandleFunc("/_mar/admin/", handleAdminPage)
+}
+
+// handleAdminPage serves the SPA shell (index.html). The page itself
+// has no auth gate at the HTTP level — login state is determined by
+// the client calling /_mar/admin/api/whoami after load. This keeps
+// the page simple and ensures unauthenticated visitors see the
+// login screen rather than a 401 in DevTools.
+func handleAdminPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	indexHTML, err := fs.ReadFile(admin.WebFS(), "index.html")
+	if err != nil {
+		http.Error(w, "admin: index missing", http.StatusInternalServerError)
+		return
+	}
+	// no-store so the embedded SPA refreshes on every framework
+	// upgrade — the admin panel updates with `mar`, not on a separate
+	// cache lifetime.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(indexHTML)
+}
+
+// handleAdminWhoami returns {email} for the active admin session,
+// or 401 if no session. Called by the SPA on load to pick between
+// the login view and the panel view.
+func handleAdminWhoami(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	email, err := requireAdminSession(r)
+	if err != nil {
+		writeAuthError(w, http.StatusUnauthorized, "no_session")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"email": email})
+}
+
+// requireAdminSession is the per-request auth check used by every
+// /_mar/admin/api/* handler that needs to know who's logged in.
+//
+// Reads the mar_admin_session cookie, looks up the row in
+// _mar_admin_sessions (DB-per-request — no in-memory cache), returns
+// the admin's email on hit. ErrNoSession when the cookie is missing,
+// invalid, or expired; the caller renders 401 in that case.
+//
+// Belt-and-suspenders: even if the cookie is valid, also check that
+// the email is still in _mar_admins. Closes the gap between an
+// admin removal triggering session DELETE and a still-in-flight
+// request that loaded the session row before the DELETE landed.
+func requireAdminSession(r *http.Request) (string, error) {
+	c, err := r.Cookie(adminCookieName)
+	if err != nil || c.Value == "" {
+		return "", admin.ErrNoSession
+	}
+	secret := AuthSecret()
+	if secret == "" {
+		return "", admin.ErrNoSession
+	}
+	db, err := adminDB()
+	if err != nil {
+		return "", admin.ErrNoSession
+	}
+	email, err := admin.LookupSession(db, secret, c.Value, time.Now())
+	if err != nil {
+		return "", err
+	}
+	if !admin.IsAdmin(db, email) {
+		return "", admin.ErrNoSession
+	}
+	return email, nil
 }
 
 // handleAdminRequestCode: POST /_mar/admin/auth/request-code  { email }

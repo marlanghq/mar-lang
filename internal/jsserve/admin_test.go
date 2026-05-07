@@ -173,6 +173,100 @@ func TestAdminLogout_ClearsCookie(t *testing.T) {
 	}
 }
 
+// TestAdminPage_ServesSPAShell — GET /_mar/admin returns the
+// embedded HTML, content-type text/html, no-store. Both the bare
+// path and the trailing-slash variant work.
+func TestAdminPage_ServesSPAShell(t *testing.T) {
+	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
+	defer cleanup()
+	for _, url := range []string{server.URL + "/_mar/admin", server.URL + "/_mar/admin/"} {
+		resp, err := server.Client().Get(url)
+		if err != nil {
+			t.Fatalf("%s: %v", url, err)
+		}
+		if resp.StatusCode != 200 {
+			t.Errorf("%s: status = %d", url, resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("%s: Content-Type = %q", url, ct)
+		}
+		if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("%s: Cache-Control = %q", url, cc)
+		}
+		resp.Body.Close()
+	}
+}
+
+// TestAdminStatic_ServesEmbeddedAssets — admin.js and admin.css are
+// reachable under /_mar/admin/static/.
+func TestAdminStatic_ServesEmbeddedAssets(t *testing.T) {
+	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
+	defer cleanup()
+	for _, name := range []string{"admin.js", "admin.css"} {
+		resp, err := server.Client().Get(server.URL + "/_mar/admin/static/" + name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if resp.StatusCode != 200 {
+			t.Errorf("%s: status = %d", name, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+}
+
+// TestAdminWhoami_Unauthenticated — no cookie → 401, with the
+// generic "no_session" body. Used by the SPA to decide whether to
+// render login vs panel.
+func TestAdminWhoami_Unauthenticated(t *testing.T) {
+	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
+	defer cleanup()
+	resp, body := getJSON(t, server.Client(), server.URL+"/_mar/admin/api/whoami")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "no_session") {
+		t.Errorf("expected no_session error; got %s", body)
+	}
+}
+
+// TestAdminWhoami_Authenticated — after a successful sign-in,
+// whoami returns {email}.
+func TestAdminWhoami_Authenticated(t *testing.T) {
+	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
+	defer cleanup()
+	client := server.Client()
+
+	// Sign in.
+	out := captureStdout(t, func() {
+		_, _ = postJSON(t, client, server.URL+"/_mar/admin/auth/request-code",
+			map[string]string{"email": "admin@x.com"})
+	})
+	code := extractSinkCode(t, out)
+	verifyResp, _ := postJSON(t, client, server.URL+"/_mar/admin/auth/verify-code",
+		map[string]string{"email": "admin@x.com", "code": code})
+	var token string
+	for _, c := range verifyResp.Cookies() {
+		if c.Name == "mar_admin_session" {
+			token = c.Value
+		}
+	}
+	if token == "" {
+		t.Fatal("no session cookie set; aborting")
+	}
+
+	// Now hit /whoami with the cookie.
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/_mar/admin/api/whoami", nil)
+	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("whoami: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d", resp.StatusCode)
+	}
+}
+
 // TestAdminLogout_RevokesSession — log in, log out, the session
 // must be deleted from the DB so a stale cookie can't be used.
 func TestAdminLogout_RevokesSession(t *testing.T) {
