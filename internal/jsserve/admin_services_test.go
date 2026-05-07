@@ -1,0 +1,262 @@
+package jsserve
+
+import (
+	"encoding/json"
+	"net/http"
+	"testing"
+	"time"
+
+	"mar/internal/admin"
+	"mar/internal/runtime"
+)
+
+// TestAdminServerInfo_BasicShape confirms the endpoint returns the
+// expected fields with sensible defaults. We don't pin specific
+// values because many fields are environment-dependent.
+func TestAdminServerInfo_BasicShape(t *testing.T) {
+	// Use the simpler non-helper path because the authedClient
+	// abstraction needs an httptest.Server cast we'd rather skip.
+	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
+	defer cleanup()
+	noteServerBooted()
+	client := server.Client()
+	out := captureStdout(t, func() {
+		_, _ = postJSON(t, client, server.URL+"/_mar/admin/auth/request-code",
+			map[string]string{"email": "admin@x.com"})
+	})
+	code := extractSinkCode(t, out)
+	verifyResp, _ := postJSON(t, client, server.URL+"/_mar/admin/auth/verify-code",
+		map[string]string{"email": "admin@x.com", "code": code})
+	var token string
+	for _, c := range verifyResp.Cookies() {
+		if c.Name == "mar_admin_session" {
+			token = c.Value
+		}
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/_mar/admin/api/server-info", nil)
+	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("status: %d", resp.StatusCode)
+	}
+	var got map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, key := range []string{"marVersion", "goVersion", "buildTarget", "bootedAtMs", "requestsTotal", "requestsInFlight"} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("missing field: %s", key)
+		}
+	}
+}
+
+// TestAdminServerInfo_RequiresAuth — without a session cookie, 401.
+func TestAdminServerInfo_RequiresAuth(t *testing.T) {
+	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
+	defer cleanup()
+	resp, _ := server.Client().Get(server.URL + "/_mar/admin/api/server-info")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401; got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+// TestAdminDBStats_IncludesAdmins — the framework's own _mar_admins
+// table shows up in the stats with the expected row count.
+func TestAdminDBStats_IncludesAdmins(t *testing.T) {
+	server, cleanup := adminTestServer(t, []string{"a@x.com", "b@x.com"})
+	defer cleanup()
+	client := server.Client()
+
+	// Sign in.
+	out := captureStdout(t, func() {
+		_, _ = postJSON(t, client, server.URL+"/_mar/admin/auth/request-code",
+			map[string]string{"email": "a@x.com"})
+	})
+	code := extractSinkCode(t, out)
+	verifyResp, _ := postJSON(t, client, server.URL+"/_mar/admin/auth/verify-code",
+		map[string]string{"email": "a@x.com", "code": code})
+	var token string
+	for _, c := range verifyResp.Cookies() {
+		if c.Name == "mar_admin_session" {
+			token = c.Value
+		}
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/_mar/admin/api/db-stats", nil)
+	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
+	resp, _ := client.Do(req)
+	defer resp.Body.Close()
+	var got map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	entities, ok := got["entities"].([]any)
+	if !ok {
+		t.Fatalf("entities is not a list: %T", got["entities"])
+	}
+	var found bool
+	for _, e := range entities {
+		ent, _ := e.(map[string]any)
+		if ent["name"] == "_mar_admins" {
+			found = true
+			rc, _ := ent["rowCount"].(float64)
+			if int(rc) != 2 {
+				t.Errorf("_mar_admins rowCount: got %v, want 2", rc)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected _mar_admins in entities; got %v", entities)
+	}
+}
+
+// TestAdminRecentRequests_CaptureAndOrder — the request log
+// middleware captures requests in the buffer; recent-requests
+// returns them newest-first.
+func TestAdminRecentRequests_CaptureAndOrder(t *testing.T) {
+	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
+	defer cleanup()
+	SetAdminRequestBufferSize(50)
+	t.Cleanup(func() { SetAdminRequestBufferSize(0) })
+
+	client := server.Client()
+	// Manually fire a few request log entries (the test server
+	// doesn't run through adminInstrument because mountAdminHandlers
+	// is called on a bare mux — to test the endpoint we just
+	// inject directly into the buffer).
+	now := time.Now().UnixMilli()
+	for i := 1; i <= 3; i++ {
+		adminRecord(admin.RequestLog{
+			AtMs:       now + int64(i),
+			Method:     "GET",
+			Path:       "/p" + string(rune('0'+i)),
+			Status:     200,
+			DurationMs: int64(i),
+		})
+	}
+
+	// Sign in.
+	out := captureStdout(t, func() {
+		_, _ = postJSON(t, client, server.URL+"/_mar/admin/auth/request-code",
+			map[string]string{"email": "admin@x.com"})
+	})
+	code := extractSinkCode(t, out)
+	verifyResp, _ := postJSON(t, client, server.URL+"/_mar/admin/auth/verify-code",
+		map[string]string{"email": "admin@x.com", "code": code})
+	var token string
+	for _, c := range verifyResp.Cookies() {
+		if c.Name == "mar_admin_session" {
+			token = c.Value
+		}
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/_mar/admin/api/recent-requests", nil)
+	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
+	resp, _ := client.Do(req)
+	defer resp.Body.Close()
+	var got map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	items, ok := got["items"].([]any)
+	if !ok {
+		t.Fatalf("items not a list: %T", got["items"])
+	}
+	if len(items) != 3 {
+		t.Errorf("expected 3 items; got %d", len(items))
+	}
+	first, _ := items[0].(map[string]any)
+	if first["path"] != "/p3" {
+		t.Errorf("expected newest first (/p3); got %v", first["path"])
+	}
+}
+
+// TestAdminEntityRows_BrowsesUserTable — create a synthetic table,
+// insert some rows, ask the endpoint for them.
+func TestAdminEntityRows_BrowsesUserTable(t *testing.T) {
+	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
+	defer cleanup()
+
+	db, _ := runtime.OpenDB()
+	_, _ = db.Exec(`CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)`)
+	for i := 1; i <= 5; i++ {
+		_, _ = db.Exec(`INSERT INTO notes (id, body) VALUES (?, ?)`, i, "note "+string(rune('0'+i)))
+	}
+
+	client := server.Client()
+	out := captureStdout(t, func() {
+		_, _ = postJSON(t, client, server.URL+"/_mar/admin/auth/request-code",
+			map[string]string{"email": "admin@x.com"})
+	})
+	code := extractSinkCode(t, out)
+	verifyResp, _ := postJSON(t, client, server.URL+"/_mar/admin/auth/verify-code",
+		map[string]string{"email": "admin@x.com", "code": code})
+	var token string
+	for _, c := range verifyResp.Cookies() {
+		if c.Name == "mar_admin_session" {
+			token = c.Value
+		}
+	}
+
+	req, _ := http.NewRequest(http.MethodGet,
+		server.URL+"/_mar/admin/api/entity-rows?entity=notes&limit=3", nil)
+	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
+	resp, _ := client.Do(req)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	var got map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := got["items"].([]any)
+	if len(items) != 3 {
+		t.Errorf("expected 3 items (limit=3); got %d", len(items))
+	}
+	if got["nextCursor"] == nil {
+		t.Errorf("expected nextCursor to be set (more rows available)")
+	}
+	cols, _ := got["columns"].([]any)
+	if len(cols) != 2 || cols[0] != "id" || cols[1] != "body" {
+		t.Errorf("columns: got %v", cols)
+	}
+}
+
+// TestAdminEntityRows_RejectsUnknownEntity — the entity param is
+// whitelisted against the live schema, so an attacker can't pivot
+// arbitrary SQL through it.
+func TestAdminEntityRows_RejectsUnknownEntity(t *testing.T) {
+	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
+	defer cleanup()
+	client := server.Client()
+
+	out := captureStdout(t, func() {
+		_, _ = postJSON(t, client, server.URL+"/_mar/admin/auth/request-code",
+			map[string]string{"email": "admin@x.com"})
+	})
+	code := extractSinkCode(t, out)
+	verifyResp, _ := postJSON(t, client, server.URL+"/_mar/admin/auth/verify-code",
+		map[string]string{"email": "admin@x.com", "code": code})
+	var token string
+	for _, c := range verifyResp.Cookies() {
+		if c.Name == "mar_admin_session" {
+			token = c.Value
+		}
+	}
+
+	req, _ := http.NewRequest(http.MethodGet,
+		server.URL+"/_mar/admin/api/entity-rows?entity=does_not_exist", nil)
+	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
+	resp, _ := client.Do(req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404; got %d", resp.StatusCode)
+	}
+}

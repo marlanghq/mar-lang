@@ -343,6 +343,12 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub) error {
 		defer stop()
 	}
 	printBanner(addr, hub, lp.AppName())
-	return http.ListenAndServe(addr, mux)
+	noteServerBooted()
+	// Wrap mux with the admin's request-log instrumentation.
+	// Captures every request (method, path, status, duration, user
+	// email) into the in-memory ring buffer powering the admin
+	// panel's "recent requests" section. No-op when the buffer is
+	// not configured.
+	return http.ListenAndServe(addr, adminInstrument(mux))
 }
 

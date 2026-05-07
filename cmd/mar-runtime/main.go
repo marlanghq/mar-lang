@@ -163,6 +163,8 @@ func runFromPath(path string) error {
 			jsserve.SetAdminMailFrom(manifest.Mail.From)
 		}
 	}
+	jsserve.SetAdminBuildInfo("dev", "") // production fills this via ldflags later
+	jsserve.SetAdminRequestBufferSize(project.ResolvedRecentRequestsSize(manifest))
 
 	// Admin panel boot — schema + sync from mar.json["admins"]. Same
 	// DB the user-auth uses; the _mar_admin_* tables coexist with

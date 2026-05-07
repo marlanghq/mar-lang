@@ -532,6 +532,8 @@ func runDev(path string) int {
 			jsserve.SetAdminMailFrom(manifest.Mail.From)
 		}
 	}
+	jsserve.SetAdminBuildInfo(version, "")
+	jsserve.SetAdminRequestBufferSize(project.ResolvedRecentRequestsSize(manifest))
 
 	lp := &jsserve.LiveProgram{}
 	lp.SetDevMode(true)

@@ -76,9 +76,12 @@ func mountAdminHandlers(mux *http.ServeMux) {
 	mux.Handle("/_mar/admin/static/", http.StripPrefix("/_mar/admin/static/",
 		http.FileServer(staticFS)))
 
-	// /api/whoami — session probe. Mounted as the only API endpoint
-	// in Phase 3; the others land in Phase 4 with real implementations.
+	// /api/* — services consumed by the embedded SPA.
 	mux.HandleFunc("/_mar/admin/api/whoami", handleAdminWhoami)
+	mux.HandleFunc("/_mar/admin/api/server-info", handleAdminServerInfo)
+	mux.HandleFunc("/_mar/admin/api/db-stats", handleAdminDBStats)
+	mux.HandleFunc("/_mar/admin/api/recent-requests", handleAdminRecentRequests)
+	mux.HandleFunc("/_mar/admin/api/entity-rows", handleAdminEntityRows)
 
 	// Catch-all — serve the SPA shell. Path "/" matches "/_mar/admin"
 	// and any sub-route the JS router renders client-side. Must be
