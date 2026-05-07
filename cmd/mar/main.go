@@ -222,7 +222,7 @@ func runFormat(args []string) int {
 	for _, file := range files {
 		src, err := os.ReadFile(file)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "mar format: %v\n", err)
+			fprintError("mar format: %v", err)
 			return 1
 		}
 		formatted := formatter.Format(string(src))
@@ -235,7 +235,7 @@ func runFormat(args []string) int {
 			continue
 		}
 		if err := os.WriteFile(file, []byte(formatted), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "mar format: %v\n", err)
+			fprintError("mar format: %v", err)
 			return 1
 		}
 		fmt.Printf("formatted %s\n", file)
@@ -325,7 +325,7 @@ func main() {
 		// Language server over stdio. Editors (VSCode, etc.) launch
 		// `mar lsp` and pipe LSP JSON-RPC over stdin/stdout.
 		if err := lsp.RunStdio(); err != nil {
-			fmt.Fprintf(os.Stderr, "mar lsp: %v\n", err)
+			fprintError("mar lsp: %v", err)
 			os.Exit(1)
 		}
 	case "init":
@@ -335,7 +335,7 @@ func main() {
 		}
 		name := os.Args[2]
 		if err := scaffold.Init(name); err != nil {
-			fmt.Fprintf(os.Stderr, "mar init: %v\n", err)
+			fprintError("mar init: %v", err)
 			os.Exit(1)
 		}
 		fmt.Printf("Created %s/\n  cd %s && mar dev\n", name, name)
@@ -490,7 +490,7 @@ func runCheck(path string) int {
 func runDev(path string) int {
 	entryFile, projectDir, err := resolveDevEntry(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
+		fprintError("mar dev: %v", err)
 		return 1
 	}
 
@@ -501,7 +501,7 @@ func runDev(path string) int {
 	port := 3000
 	manifest, err := project.LoadManifest(projectDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
+		fprintError("mar dev: %v", err)
 		return 1
 	}
 	if manifest != nil && manifest.Server != nil && manifest.Server.Port != 0 {
@@ -522,7 +522,7 @@ func runDev(path string) int {
 	// point ServeLive sees a registered VAuth and mounts /_auth/*.
 	secret, secretSrc, err := project.ResolveSessionSecret(manifest, projectDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
+		fprintError("mar dev: %v", err)
 		return 1
 	}
 	if secret != "" {
@@ -631,10 +631,38 @@ func runDev(path string) int {
 
 	// Block on the HTTP server.
 	if err := jsserve.ServeLive(port, lp, hub); err != nil {
-		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
+		// "address already in use" is the most common mar dev failure
+		// (forgot to stop a prior instance; another process holds the
+		// port) and the raw Go error is opaque. Special-case it with
+		// an actionable hint.
+		if isAddrInUseErr(err) {
+			fprintError("port %d is already in use.", port)
+			fmt.Fprintln(os.Stderr)
+			fprintHint("another process (perhaps another %s?) is bound to this port.",
+				colorGreen("mar dev"))
+			fmt.Fprintf(os.Stderr, "      free it with %s,\n",
+				colorGreen(fmt.Sprintf("lsof -ti:%d | xargs kill", port)))
+			fmt.Fprintf(os.Stderr, "      or change %s to something else.\n",
+				colorMagenta(`mar.json["server"]["port"]`))
+			fmt.Fprintln(os.Stderr)
+			return 1
+		}
+		fprintError("mar dev: %v", err)
 		return 1
 	}
 	return 0
+}
+
+// isAddrInUseErr matches the various shapes Go's net package uses
+// for "port already in use". Robust to errno wrapping; we just
+// look for the recognizable substring.
+func isAddrInUseErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "address already in use") ||
+		strings.Contains(msg, "Only one usage of each socket address")
 }
 
 // fileState is a per-file fingerprint used by the watcher.

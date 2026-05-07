@@ -177,6 +177,35 @@ Coloring:
 - `Error:` → **red**
 - `"notanemail"` → **cyan** (user input being rejected)
 
+### 4.5 `mar dev` — port already in use (multi-line error with hint)
+
+Runtime errors that block the process from starting deserve an
+actionable hint, not just the raw Go error string. The structure
+mirrors `Error: <one line>` followed by `Hint: <how to fix>` with
+the relevant fix-it command and config path inline.
+
+```
+Error: port 3000 is already in use.
+
+Hint: another process (perhaps another mar dev?) is bound to this port.
+      free it with lsof -ti:3000 | xargs kill,
+      or change mar.json["server"]["port"] to something else.
+
+```
+
+Coloring:
+- `Error:` → **red**
+- `Hint:` → **yellow**
+- `mar dev` (the second occurrence, identifying the likely culprit) → **green**
+- `lsof -ti:3000 | xargs kill` → **green** (command the user should run)
+- `mar.json["server"]["port"]` → **magenta** (config path)
+
+Apply the same shape to any runtime error that has a known fix:
+turn it into `Error: <plain-language summary>` + `Hint: <fix>`. Raw
+Go error strings are acceptable for genuinely unexpected failures
+(via `fprintError("mar dev: %v", err)`), but anything we can predict
+should be friendlier.
+
 ### 4.5 `mar admin remove EMAIL` — happy path
 
 ```

@@ -89,13 +89,14 @@ func runAdminAdd(email string) int {
 	// Validate the existing manifest before mutating it. If mar.json
 	// is already broken, no point in editing it further — the user
 	// needs to fix the underlying error first.
-	if _, err := project.LoadManifestStructure("."); err != nil {
+	manifest, err := project.LoadManifestStructure(".")
+	if err != nil {
 		fprintError("mar admin add: %v", err)
 		return 1
 	}
-	path, raw, err := readMarJSON()
-	if err != nil {
-		fprintError("mar admin add: %v", err)
+	path, raw, readErr := readMarJSON()
+	if readErr != nil {
+		fprintError("mar admin add: %v", readErr)
 		return 1
 	}
 
@@ -132,14 +133,27 @@ func runAdminAdd(email string) int {
 	fmt.Printf("  → %s updated\n", colorMagenta("mar.json"))
 	fmt.Printf("  → next deploy will sync this to %s on production\n", colorMagenta("_mar_admins"))
 	fmt.Println()
-	fmt.Printf("In development, the admin panel auth code prints to the terminal (no SMTP needed).\n")
+	fmt.Printf("In development, the sign-in code prints to the terminal (no SMTP needed).\n")
 	fmt.Printf("In production, codes are sent via the SMTP configured in %s.\n",
 		colorMagenta(`mar.json["mail"]`))
 	fmt.Println()
-	fmt.Printf("The dev panel URL is %s.\n",
-		colorGreen("http://localhost:3000/_mar/admin"))
+	fmt.Printf("During development, the admin URL is %s.\n",
+		colorGreen(devAdminURL(manifest)))
 	fmt.Println()
 	return 0
+}
+
+// devAdminURL builds the admin URL for `mar dev` from the manifest's
+// configured server.port (default 3000). Exists so the post-add
+// confirmation always points at the right port — projects that
+// changed it via mar.json["server"]["port"] would otherwise see an
+// incorrect 3000 and have to figure out the override themselves.
+func devAdminURL(m *project.Manifest) string {
+	port := 3000
+	if m != nil && m.Server != nil && m.Server.Port != 0 {
+		port = m.Server.Port
+	}
+	return fmt.Sprintf("http://localhost:%d/_mar/admin", port)
 }
 
 func runAdminRemove(email string) int {
