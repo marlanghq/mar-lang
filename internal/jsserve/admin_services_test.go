@@ -229,6 +229,34 @@ func TestAdminEntityRows_BrowsesUserTable(t *testing.T) {
 	}
 }
 
+// TestRequestLog_SkipsFrameworkInternalPaths — the panel polling
+// itself shouldn't crowd out the user's actual app traffic in the
+// recent requests view. /_mar/admin/* and /_mar/reload don't get
+// recorded; everything else does.
+func TestRequestLog_SkipsFrameworkInternalPaths(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/", false},
+		{"/api/users", false},
+		{"/_auth/whoami", false},
+		{"/_mar/admin", true},
+		{"/_mar/admin/", true},
+		{"/_mar/admin/api/whoami", true},
+		{"/_mar/admin/api/server-info", true},
+		{"/_mar/admin/auth/request-code", true},
+		{"/_mar/admin/static/admin.js", true},
+		{"/_mar/reload", true},
+	}
+	for _, tc := range cases {
+		got := isFrameworkInternalPath(tc.path)
+		if got != tc.want {
+			t.Errorf("path=%q: got %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
 // TestAdminEntityRows_RejectsUnknownEntity — the entity param is
 // whitelisted against the live schema, so an attacker can't pivot
 // arbitrary SQL through it.

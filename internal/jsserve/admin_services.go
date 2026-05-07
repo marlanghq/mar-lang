@@ -85,12 +85,22 @@ func adminRecord(entry admin.RequestLog) {
 // email field is best-effort — we sniff the user-auth cookie's
 // email when present, but skip the heavier admin-cookie lookup.
 //
-// Expensive paths it deliberately skips: the SSE reload channel
-// (/_mar/reload) — long-lived connections would dominate the buffer
-// and noise out the panel.
+// Skipped paths (no recording, no counter bump):
+//
+//   - /_mar/reload    — SSE channel; long-lived connections would
+//                       dominate the buffer and noise out the panel.
+//   - /_mar/admin/*   — the admin panel polling itself (whoami every
+//                       boot, server-info / db-stats / recent-requests
+//                       on each refresh, static assets). Including
+//                       these makes the "recent requests" view show
+//                       the panel watching itself, drowning out the
+//                       actual app traffic the operator wants to see.
+//
+// Skipping from BOTH the ring buffer AND the counters keeps "requests
+// total" honest about real application traffic.
 func adminInstrument(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/_mar/reload" {
+		if isFrameworkInternalPath(r.URL.Path) {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -111,6 +121,24 @@ func adminInstrument(h http.Handler) http.Handler {
 			UserEmail:  bestEffortUserEmail(r),
 		})
 	})
+}
+
+// isFrameworkInternalPath reports whether `path` belongs to the
+// framework's own surface (admin panel + SSE reload channel) rather
+// than the user's application. These paths are excluded from the
+// request log so the panel's "recent requests" section reflects
+// what the app is doing, not what the panel itself is doing.
+//
+// Note: /_auth/* is intentionally NOT excluded — sign-ins are
+// real application traffic the operator does want to see.
+func isFrameworkInternalPath(path string) bool {
+	if path == "/_mar/reload" {
+		return true
+	}
+	if path == "/_mar/admin" || strings.HasPrefix(path, "/_mar/admin/") {
+		return true
+	}
+	return false
 }
 
 // statusRecorder is a tiny http.ResponseWriter that captures the
