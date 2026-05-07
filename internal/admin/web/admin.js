@@ -141,15 +141,25 @@
     const e = document.createElement(tag);
     if (props) {
       for (const k in props) {
-        if (k === 'class') { e.className = props[k]; }
-        else if (k === 'onclick') { e.addEventListener('click', props[k]); }
-        else if (k === 'onsubmit') { e.addEventListener('submit', (ev) => { ev.preventDefault(); props[k](ev); }); }
-        else if (k.startsWith('on') && typeof props[k] === 'function') { e.addEventListener(k.slice(2), props[k]); }
-        else if (k === 'value') { e.value = props[k]; }
-        else if (k === 'disabled' && props[k]) { e.disabled = true; }
-        else if (k === 'autofocus' && props[k]) { e.autofocus = true; }
-        else if (k === 'type') { e.type = props[k]; }
-        else { e.setAttribute(k, props[k]); }
+        const v = props[k];
+        if (k === 'class') { e.className = v; }
+        else if (k === 'onclick') { e.addEventListener('click', v); }
+        else if (k === 'onsubmit') { e.addEventListener('submit', (ev) => { ev.preventDefault(); v(ev); }); }
+        else if (k.startsWith('on') && typeof v === 'function') { e.addEventListener(k.slice(2), v); }
+        else if (k === 'value') { e.value = v; }
+        // Boolean attributes — assign as IDL property, NOT
+        // setAttribute. setAttribute('disabled', false) still
+        // disables the element because HTML treats presence-of-
+        // attribute as truthy regardless of the value string.
+        else if (k === 'disabled' || k === 'autofocus' || k === 'required') {
+          e[k] = !!v;
+        }
+        else if (k === 'type') { e.type = v; }
+        // For everything else: skip when v is false/null/undefined
+        // (so explicitly passed `something: false` doesn't end up
+        // as setAttribute('something', 'false')), otherwise stringify.
+        else if (v === false || v == null) { /* skip */ }
+        else { e.setAttribute(k, v); }
       }
     }
     for (const c of children) {
