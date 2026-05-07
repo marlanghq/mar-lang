@@ -528,6 +528,9 @@ func runDev(path string) int {
 	if secret != "" {
 		jsserve.SetAuthRuntime(secret, project.ToSMTPConfig(manifest))
 		_ = secretSrc // available for diagnostics if we want to log it later
+		if manifest != nil && manifest.Mail != nil {
+			jsserve.SetAdminMailFrom(manifest.Mail.From)
+		}
 	}
 
 	lp := &jsserve.LiveProgram{}

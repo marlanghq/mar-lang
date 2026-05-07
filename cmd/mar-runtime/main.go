@@ -159,6 +159,9 @@ func runFromPath(path string) error {
 	}
 	if secret != "" {
 		jsserve.SetAuthRuntime(secret, project.ToSMTPConfig(manifest))
+		if manifest != nil && manifest.Mail != nil {
+			jsserve.SetAdminMailFrom(manifest.Mail.From)
+		}
 	}
 
 	// Admin panel boot — schema + sync from mar.json["admins"]. Same

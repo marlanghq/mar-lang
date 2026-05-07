@@ -97,7 +97,7 @@ func TestSyncAdmins_RemoveAlsoRevokesCodesAndSessions(t *testing.T) {
 		_, err := db.Exec(`
 			INSERT INTO _mar_admin_codes (codeHash, email, expiresAt, createdAt)
 			VALUES (?, ?, ?, ?)`,
-			[]byte("hash-"+email), email, 9999999, 1000,
+			"hash-"+email, email, 9999999, 1000,
 		)
 		if err != nil {
 			t.Fatalf("seed code: %v", err)
@@ -105,7 +105,7 @@ func TestSyncAdmins_RemoveAlsoRevokesCodesAndSessions(t *testing.T) {
 		_, err = db.Exec(`
 			INSERT INTO _mar_admin_sessions (tokenHash, email, expiresAt, createdAt)
 			VALUES (?, ?, ?, ?)`,
-			[]byte("token-"+email), email, 9999999, 1000,
+			"token-"+email, email, 9999999, 1000,
 		)
 		if err != nil {
 			t.Fatalf("seed session: %v", err)

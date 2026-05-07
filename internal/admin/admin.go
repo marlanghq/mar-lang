@@ -32,8 +32,10 @@ import (
 //     can be done in one DELETE per email when an admin is removed.
 //   - timestamps are stored as Unix epoch ms (INTEGER). Same convention
 //     the user-auth tables use; lets us compare without timezone fuss.
-//   - The codes/sessions hash columns are BLOB (32 bytes from
-//     SHA-256) per the existing user-auth pattern.
+//   - The codes/sessions hash columns are TEXT (base64 of HMAC-SHA256)
+//     per the existing user-auth convention — auth.Hash returns
+//     base64-encoded strings, and storing them as TEXT lets `mar
+//     admin list` debug queries use plain SELECT without hex juggling.
 func EnsureSchema(db *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS _mar_admins (
@@ -42,7 +44,7 @@ func EnsureSchema(db *sql.DB) error {
 			lastLoginAt  INTEGER
 		)`,
 		`CREATE TABLE IF NOT EXISTS _mar_admin_codes (
-			codeHash     BLOB PRIMARY KEY NOT NULL,
+			codeHash     TEXT PRIMARY KEY NOT NULL,
 			email        TEXT NOT NULL,
 			expiresAt    INTEGER NOT NULL,
 			attempts     INTEGER NOT NULL DEFAULT 0,
@@ -51,7 +53,7 @@ func EnsureSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS _mar_admin_codes_email
 			ON _mar_admin_codes(email)`,
 		`CREATE TABLE IF NOT EXISTS _mar_admin_sessions (
-			tokenHash    BLOB PRIMARY KEY NOT NULL,
+			tokenHash    TEXT PRIMARY KEY NOT NULL,
 			email        TEXT NOT NULL,
 			expiresAt    INTEGER NOT NULL,
 			createdAt    INTEGER NOT NULL
