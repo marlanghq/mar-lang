@@ -86,6 +86,13 @@ func runAdminAdd(email string) int {
 		fprintError("mar admin add: %q is not a valid email", email)
 		return 1
 	}
+	// Validate the existing manifest before mutating it. If mar.json
+	// is already broken, no point in editing it further — the user
+	// needs to fix the underlying error first.
+	if _, err := project.LoadManifestStructure("."); err != nil {
+		fprintError("mar admin add: %v", err)
+		return 1
+	}
 	path, raw, err := readMarJSON()
 	if err != nil {
 		fprintError("mar admin add: %v", err)
@@ -133,6 +140,10 @@ func runAdminAdd(email string) int {
 
 func runAdminRemove(email string) int {
 	email = strings.TrimSpace(email)
+	if _, err := project.LoadManifestStructure("."); err != nil {
+		fprintError("mar admin remove: %v", err)
+		return 1
+	}
 	path, raw, err := readMarJSON()
 	if err != nil {
 		fprintError("mar admin remove: %v", err)
@@ -173,6 +184,13 @@ func runAdminRemove(email string) int {
 }
 
 func runAdminList() int {
+	// Validate the manifest before printing — surfaces typos and
+	// range violations at the CLI rather than letting them slide
+	// until the next mar dev / mar build.
+	if _, err := project.LoadManifestStructure("."); err != nil {
+		fprintError("mar admin list: %v", err)
+		return 1
+	}
 	_, raw, err := readMarJSON()
 	if err != nil {
 		fprintError("mar admin list: %v", err)

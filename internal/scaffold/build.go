@@ -105,6 +105,12 @@ func Build(entry, distDir, target string) error {
 		if err := validateProductionConfig(projectDir); err != nil {
 			return err
 		}
+		// Discovery warning — admin panel is opt-in and many projects
+		// won't bother. But silent absence means devs who don't know
+		// about the panel never benefit. Print once per build, not an
+		// error. Suppressed via --no-admin-warning in case CI noise
+		// gets annoying (deferred wiring; for now just print).
+		warnIfNoAdmins(projectDir)
 	}
 
 	switch bc.kind {
@@ -129,6 +135,26 @@ func isProductionTarget(target string) bool {
 		return false
 	}
 	return true
+}
+
+// warnIfNoAdmins prints a one-line stderr hint when a production
+// build has no admins configured. Doesn't fail the build — admin
+// is opt-in. The warning ensures devs encountering the framework
+// for the first time learn the panel exists.
+func warnIfNoAdmins(projectDir string) {
+	manifest, err := project.LoadManifestStructure(projectDir)
+	if err != nil {
+		return // structural error already surfaces upstream
+	}
+	if manifest != nil && len(manifest.Admins) > 0 {
+		return
+	}
+	fmt.Fprintln(os.Stderr,
+		"warn: building for production with no admins configured.")
+	fmt.Fprintln(os.Stderr,
+		"      the admin panel at /_mar/admin will be inaccessible.")
+	fmt.Fprintln(os.Stderr,
+		"      run `mar admin add YOUR_EMAIL` if you want admin access in production.")
 }
 
 // validateProductionConfig asserts the project's mar.json carries

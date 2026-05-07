@@ -63,10 +63,161 @@ func canonicalAdmins(emails []string) []string {
 }
 
 func main() {
+	// Subcommand dispatch happens BEFORE the embedded-bundle path,
+	// so `mar-runtime admin list` (invoked over SSH from `mar fly
+	// admin list`) doesn't try to extract + run the user's app.
+	// Subcommands operate against the project's mar.db on the
+	// running machine's filesystem; they exit when done rather than
+	// transitioning into ServeLive.
+	if len(os.Args) >= 2 && os.Args[1] == "admin" {
+		os.Exit(runRuntimeAdmin(os.Args[2:]))
+	}
 	if err := runEmbeddedOrArg(); err != nil {
 		fmt.Fprintln(os.Stderr, diag.Format(err))
 		os.Exit(1)
 	}
+}
+
+// runRuntimeAdmin handles `mar-runtime admin <sub>`. The user-
+// facing entry point on the host is `mar fly admin list`, which
+// invokes this over SSH. Operates on the local mar.db without
+// going through HTTP.
+//
+// v1 implements `list` only — the spec deliberately excludes
+// runtime add/remove (see admin-panel.md §6.2). Adding admins
+// happens via mar.json + redeploy.
+func runRuntimeAdmin(args []string) int {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprintln(os.Stderr, "usage: mar-runtime admin list")
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		return runRuntimeAdminList()
+	default:
+		fmt.Fprintf(os.Stderr, "mar-runtime admin: unknown subcommand %q\n", args[0])
+		fmt.Fprintln(os.Stderr, "usage: mar-runtime admin list")
+		return 2
+	}
+}
+
+// runRuntimeAdminList opens the project's DB (extracting the bundle
+// to a temp dir if necessary), reports both the desired list (from
+// the bundled mar.json) and the post-sync runtime state.
+func runRuntimeAdminList() int {
+	manifest, projectDir, err := loadRuntimeManifest()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mar-runtime admin list: %v\n", err)
+		return 1
+	}
+	dbPath, _ := project.ResolveDatabasePath(manifest, projectDir)
+	if dbPath == "" {
+		fmt.Fprintln(os.Stderr, "mar-runtime admin list: no database configured for this project")
+		return 1
+	}
+	runtime.SetDBPath(dbPath)
+	db, err := runtime.OpenDB()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mar-runtime admin list: open db: %v\n", err)
+		return 1
+	}
+
+	desired := canonicalAdmins(manifestAdmins(manifest))
+	fmt.Println("admins (from mar.json on disk in prod):")
+	if len(desired) == 0 {
+		fmt.Println("  (none)")
+	} else {
+		for _, e := range desired {
+			fmt.Printf("  %s\n", e)
+		}
+	}
+
+	live, err := admin.ListAdmins(db)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mar-runtime admin list: read DB: %v\n", err)
+		return 1
+	}
+	fmt.Println()
+	fmt.Println("admins (from runtime _mar_admins, post-sync):")
+	if len(live) == 0 {
+		fmt.Println("  (none)")
+	} else {
+		for _, a := range live {
+			fmt.Printf("  %s\n", a.Email)
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("last login:")
+	anyLogin := false
+	for _, a := range live {
+		anyLogin = true
+		if a.LastLoginAtMs == 0 {
+			fmt.Printf("  %s  never\n", a.Email)
+		} else {
+			ago := time.Since(time.UnixMilli(a.LastLoginAtMs))
+			fmt.Printf("  %s  %s ago\n", a.Email, formatDurationApprox(ago))
+		}
+	}
+	if !anyLogin {
+		fmt.Println("  (no admins configured)")
+	}
+	return 0
+}
+
+// formatDurationApprox renders durations like "2 hours" or
+// "3 days" for human-readable last-login output.
+func formatDurationApprox(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// loadRuntimeManifest mirrors the path discovery runEmbedded uses:
+// if this binary is stamped, extract the bundle to a temp dir and
+// load mar.json from there; otherwise treat os.Args[2] (the path
+// after `admin list`) as the project dir.
+//
+// Tests run against bare-stub builds, so the os.Args path is the
+// development scenario. Production always goes through the
+// extract-bundle branch.
+func loadRuntimeManifest() (*project.Manifest, string, error) {
+	exePath, err := os.Executable()
+	if err == nil {
+		bundle, loadErr := appbundle.LoadExecutable(exePath)
+		if loadErr == nil {
+			tmp, err := os.MkdirTemp("", "mar-runtime-admin-*")
+			if err != nil {
+				return nil, "", err
+			}
+			if err := appbundle.ExtractToDir(bundle, tmp); err != nil {
+				return nil, "", err
+			}
+			m, err := project.LoadManifest(tmp)
+			if err != nil {
+				return nil, "", err
+			}
+			return m, tmp, nil
+		}
+	}
+	// Bare mode: take the project dir from the next arg (or ".").
+	dir := "."
+	if len(os.Args) >= 4 {
+		// args layout: mar-runtime admin list [dir]
+		dir = os.Args[3]
+	}
+	m, err := project.LoadManifest(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	return m, dir, nil
 }
 
 // runEmbeddedOrArg first checks whether this binary was stamped with an
