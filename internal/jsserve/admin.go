@@ -19,6 +19,7 @@ package jsserve
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -130,6 +131,10 @@ func handleAdminWhoami(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Whoami is the friendly probe — both ErrNoSession and DB errors
+	// resolve to "200 OK + null". The SPA boot path treats null as
+	// "not signed in" and routes to login; data endpoints distinguish
+	// 401 vs 503 separately.
 	email, err := requireAdminSession(r)
 	if err != nil {
 		writeJSON(w, http.StatusOK, nil)
@@ -143,13 +148,21 @@ func handleAdminWhoami(w http.ResponseWriter, r *http.Request) {
 //
 // Reads the mar_admin_session cookie, looks up the row in
 // _mar_admin_sessions (DB-per-request — no in-memory cache), returns
-// the admin's email on hit. ErrNoSession when the cookie is missing,
-// invalid, or expired; the caller renders 401 in that case.
+// the admin's email on hit.
 //
-// Belt-and-suspenders: even if the cookie is valid, also check that
-// the email is still in _mar_admins. Closes the gap between an
-// admin removal triggering session DELETE and a still-in-flight
-// request that loaded the session row before the DELETE landed.
+// Errors are distinguished by the caller:
+//   - admin.ErrNoSession → missing/invalid/expired cookie or
+//     non-admin email. Caller renders 401 ("you're not signed in").
+//   - any other error → DB / infrastructure failure. Caller should
+//     render 503 ("session check unavailable") rather than 401, so
+//     a transient contention doesn't masquerade as a logged-out user
+//     and trigger the SPA to render "unavailable" panels.
+//
+// Belt-and-suspenders: even when the cookie resolves to a session,
+// re-check that the email is still in _mar_admins. Closes the gap
+// between an admin removal triggering session DELETE and a still-
+// in-flight request that loaded the session row before the DELETE
+// landed.
 func requireAdminSession(r *http.Request) (string, error) {
 	c, err := r.Cookie(adminCookieName)
 	if err != nil || c.Value == "" {
@@ -161,16 +174,39 @@ func requireAdminSession(r *http.Request) (string, error) {
 	}
 	db, err := adminDB()
 	if err != nil {
-		return "", admin.ErrNoSession
+		// Real DB error — caller should 503, not 401.
+		return "", fmt.Errorf("admin session: %w", err)
 	}
 	email, err := admin.LookupSession(db, secret, c.Value, time.Now())
 	if err != nil {
+		// LookupSession already returns ErrNoSession for missing /
+		// expired rows; any other error is a real DB error. Pass
+		// both up unchanged — caller decides 401 vs 503 by checking
+		// errors.Is(err, admin.ErrNoSession).
 		return "", err
 	}
 	if !admin.IsAdmin(db, email) {
 		return "", admin.ErrNoSession
 	}
 	return email, nil
+}
+
+// gateAdminSession is the typical handler-level entry point. Returns
+// the admin email when authenticated, or writes the right HTTP error
+// (401 for no-session, 503 for DB failure) and returns ("", false).
+// Centralizes the response shape so each /api/* handler stays a
+// one-liner.
+func gateAdminSession(w http.ResponseWriter, r *http.Request) (email string, ok bool) {
+	email, err := requireAdminSession(r)
+	if err == nil {
+		return email, true
+	}
+	if errors.Is(err, admin.ErrNoSession) {
+		writeAuthError(w, http.StatusUnauthorized, "no_session")
+		return "", false
+	}
+	writeAuthError(w, http.StatusServiceUnavailable, "session_check_failed")
+	return "", false
 }
 
 // handleAdminRequestCode: POST /_mar/admin/auth/request-code  { email }

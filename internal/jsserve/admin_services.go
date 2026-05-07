@@ -168,8 +168,7 @@ func handleAdminServerInfo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if _, err := requireAdminSession(r); err != nil {
-		writeAuthError(w, http.StatusUnauthorized, "no_session")
+	if _, ok := gateAdminSession(w, r); !ok {
 		return
 	}
 	bootedMs := atomic.LoadInt64(&bootStartedAtMs)
@@ -189,8 +188,7 @@ func handleAdminDBStats(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if _, err := requireAdminSession(r); err != nil {
-		writeAuthError(w, http.StatusUnauthorized, "no_session")
+	if _, ok := gateAdminSession(w, r); !ok {
 		return
 	}
 	db, err := adminDB()
@@ -242,8 +240,7 @@ func handleAdminRecentRequests(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if _, err := requireAdminSession(r); err != nil {
-		writeAuthError(w, http.StatusUnauthorized, "no_session")
+	if _, ok := gateAdminSession(w, r); !ok {
 		return
 	}
 	if requestLogger == nil {
@@ -260,8 +257,7 @@ func handleAdminEntityRows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if _, err := requireAdminSession(r); err != nil {
-		writeAuthError(w, http.StatusUnauthorized, "no_session")
+	if _, ok := gateAdminSession(w, r); !ok {
 		return
 	}
 	entityName := r.URL.Query().Get("entity")
