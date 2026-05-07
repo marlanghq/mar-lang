@@ -8,37 +8,58 @@ import (
 	"path/filepath"
 	"strings"
 
+	"mar/internal/appbundle"
+	"mar/internal/appbundle/stubs"
 	"mar/internal/ast"
 	"mar/internal/jsserve"
 	"mar/internal/project"
 	"mar/internal/runtime"
 )
 
-// Build compiles a mar project to a static dist/ that can be served
-// by any HTTP server (CDN, S3, Cloudflare, GitHub Pages, etc.).
+// Build compiles a mar project to a deployable artifact.
 //
-// Output layout:
+// `entry` is either a directory (looks for Main.mar inside) or the path
+// to a .mar file to use as the entry point. `distDir` is where the
+// output is written. `target` selects the OS/arch for the embedded
+// runtime stub when the project needs a server (backend / fullstack);
+// pass "" to default to the host target.
 //
-//	dist/
-//	  index.html            -- host page with no dev affordances
-//	  runtime.js            -- the embedded JS interpreter
-//	  program.json          -- serialized AST + entry name
+// Output depends on the topology the project's `main` picks:
 //
-// Backend / fullstack deployment isn't covered here yet — that needs
-// a Go binary embedding mar runtime + manifest, which is a separate
-// piece of work. For now `mar build` targets frontend-only apps that
-// produce static output servable as files. If the project's main is
-// App.fullstack, build emits a clear error.
-func Build(projectDir, distDir string) error {
-	mainFile := filepath.Join(projectDir, "Main.mar")
-	if _, err := os.Stat(mainFile); err != nil {
-		return fmt.Errorf("Main.mar not found in %s", projectDir)
+//   - App.frontend → static dist/:
+//       index.html, runtime.js, program.json
+//     Servable as plain files from any HTTP host (CDN, S3, etc.).
+//
+//   - App.backend or App.fullstack → self-contained executable:
+//       <distDir>/<projectName>      (or .exe on windows)
+//     The mar-runtime stub for `target` is concatenated with a ZIP
+//     payload containing mar.json + every .mar source file. On startup
+//     the binary reads its own bytes, extracts the payload, and serves
+//     HTTP — no external mar toolchain required on the deploy host.
+func Build(entry, distDir, target string) error {
+	info, err := os.Stat(entry)
+	if err != nil {
+		return fmt.Errorf("%s: %v", entry, err)
+	}
+	mainFile := entry
+	projectDir := entry
+	if info.IsDir() {
+		mainFile = filepath.Join(entry, "Main.mar")
+		if _, err := os.Stat(mainFile); err != nil {
+			return fmt.Errorf("Main.mar not found in %s", entry)
+		}
+	} else {
+		projectDir = filepath.Dir(entry)
+	}
+
+	if target == "" {
+		target = stubs.HostTarget()
 	}
 
 	// Same load + override pattern as `mar dev`, but the overrides
 	// capture into a build context instead of a live server.
 	bc := &buildCtx{}
-	rEnv, _, err := project.LoadIntoEnvWithModulesAndHook(mainFile,
+	rEnv, _, _, err := project.LoadIntoEnvWithModulesAndHook(mainFile,
 		func(env *runtime.Env, mods []*ast.Module) {
 			fe := makeFrontendCapture(mods, bc)
 			env.Define("appFrontend", fe)
@@ -70,32 +91,148 @@ func Build(projectDir, distDir string) error {
 		return err
 	}
 
-	// Refuse to build apps that need a backend — for those, `mar dev`
-	// is currently the only deployable target. (Production backend
-	// bundling is a separate work item.)
-	if bc.kind == kindBackend {
-		return fmt.Errorf("App.backend cannot be built to a static directory — backend apps need a live server. Run with `mar dev` for now.")
-	}
-	if bc.kind == kindFullstack {
-		return fmt.Errorf("App.fullstack cannot be built to a static directory — the API needs a live server. Run with `mar dev`, or split the frontend into a separate App.frontend project that targets a static host.")
-	}
-	if bc.kind != kindFrontend {
-		return fmt.Errorf("main didn't call any of App.frontend / App.backend / App.fullstack — nothing to build")
+	// Production validation. When the build target is a deploy
+	// binary (linux-*, windows-*, darwin-*) and the user invoked
+	// Auth.config, mar.json must declare every secret the runtime
+	// will need at boot. Catches the misconfiguration class where
+	// `mar dev` works (auto-generated session secret + stdout sink)
+	// but a production deploy would 503 on every sign-in.
+	//
+	// Skipped for the host (dev) target, since `mar build` against
+	// the host is sometimes used as a quick smoke test where the
+	// missing fields are intentional.
+	if isProductionTarget(target) {
+		if err := validateProductionConfig(projectDir); err != nil {
+			return err
+		}
 	}
 
-	// Emit dist/.
-	if err := os.MkdirAll(distDir, 0o755); err != nil {
-		return err
+	switch bc.kind {
+	case kindFrontend:
+		return buildFrontendDist(distDir, bc)
+	case kindBackend, kindFullstack:
+		return buildServerExecutable(projectDir, distDir, target, bc)
+	default:
+		return fmt.Errorf("main didn't call any of App.frontend / App.backend / App.fullstack — nothing to build")
 	}
-	progJSON, err := makeProgramJSON(bc.frontMods, "main")
+}
+
+// isProductionTarget reports whether `target` will be deployed to a
+// real host (vs. used as a local debugging artifact). All non-host
+// targets are deploys; host target is treated as dev unless
+// MAR_BUILD_PROD is set explicitly.
+func isProductionTarget(target string) bool {
+	if target == "" {
+		return false
+	}
+	if target == stubs.HostTarget() && os.Getenv("MAR_BUILD_PROD") == "" {
+		return false
+	}
+	return true
+}
+
+// validateProductionConfig asserts the project's mar.json carries
+// the configuration the chosen runtime features need. Today
+// validates auth, mail, and the framework admin panel; other
+// features (Stripe, Twilio, etc.) would register their own
+// validators here.
+//
+// Errors are formatted as deployment-ready hints — the operator
+// shouldn't have to run extra commands to figure out what to add
+// to mar.json.
+func validateProductionConfig(projectDir string) error {
+	// LoadManifestStructure reads without env-resolving — fly
+	// secrets aren't visible at build time, but we don't need
+	// their values, only that the env:VAR placeholder is wired.
+	manifest, err := project.LoadManifestStructure(projectDir)
 	if err != nil {
 		return err
 	}
-	html := buildIndexHTML(distDir, bc.title)
+
+	// Two triggers for sessionSecret + mail config:
+	//   - User auth (Auth.config registered) — needs both.
+	//   - Admin panel (mar.json admins non-empty) — needs sessionSecret
+	//     (shared HMAC) but mail is best-effort (admin login degrades
+	//     to "doesn't work" rather than blocking the whole app).
+	authInUse := runtime.CurrentAuth() != nil
+	adminInUse := manifest != nil && len(manifest.Admins) > 0
+	if !authInUse && !adminInUse {
+		return nil
+	}
+
+	var missing []string
+	if manifest == nil || manifest.Auth == nil || manifest.Auth.SessionSecret == "" {
+		missing = append(missing, `"auth": { "sessionSecret": "env:SESSION_SECRET" }`)
+	}
+	// Mail required only when user-auth is in use. Admin-only projects
+	// can still ship — the panel just won't be able to send codes
+	// until SMTP is configured (logged at boot).
+	if authInUse {
+		if manifest == nil || manifest.Mail == nil {
+			missing = append(missing, `"mail": { "from": "...", "smtpHost": "...", "smtpUsername": "...", "smtpPassword": "env:SMTP_PASSWORD" }`)
+		} else {
+			var partial []string
+			if manifest.Mail.From == "" {
+				partial = append(partial, `"from"`)
+			}
+			if manifest.Mail.SMTPHost == "" {
+				partial = append(partial, `"smtpHost"`)
+			}
+			if manifest.Mail.SMTPUsername == "" {
+				partial = append(partial, `"smtpUsername"`)
+			}
+			if manifest.Mail.SMTPPassword == "" {
+				partial = append(partial, `"smtpPassword"`)
+			}
+			if len(partial) > 0 {
+				missing = append(missing, fmt.Sprintf(`"mail" needs: %s`, strings.Join(partial, ", ")))
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf(`production build requires auth and mail config in mar.json.
+
+Your project uses Auth.config which sends sign-in emails. The runtime
+needs persistent secrets and a real SMTP provider in production —
+without them, every sign-in attempt would 503.
+
+Add to mar.json:
+
+  %s
+
+Notes:
+  - smtpPort is optional, defaults to 587 (works with Resend, SendGrid,
+    Mailgun, AWS SES, Postmark, Brevo, Mailjet, …).
+  - sessionSecret and smtpPassword MUST be env:VAR_NAME — set the
+    actual values via 'mar fly provision' (or 'fly secrets set' for
+    bare fly deploys).`, strings.Join(missing, "\n  "))
+}
+
+// buildFrontendDist writes the static asset bundle for App.frontend
+// projects. Output is plain files servable by any HTTP host.
+//
+// program.json is embedded directly into the index.html so the browser
+// boots in a single round-trip — no waterfall fetch for the AST after
+// the runtime loads. runtime.js stays separate so it can be cached
+// independently across deploys (its content rarely changes).
+func buildFrontendDist(distDir string, bc *buildCtx) error {
+	if err := os.MkdirAll(distDir, 0o755); err != nil {
+		return err
+	}
+	progJSON, err := makeProgramJSON(bc.frontMods, "main", false)
+	if err != nil {
+		return err
+	}
+	html := buildIndexHTML(bc.title, progJSON)
+	runtimeJS, err := jsserve.RuntimeJSProduction()
+	if err != nil {
+		return err
+	}
 	files := map[string][]byte{
-		"index.html":   []byte(html),
-		"runtime.js":   []byte(jsserve.RuntimeJS()),
-		"program.json": progJSON,
+		"index.html": []byte(html),
+		"runtime.js": []byte(runtimeJS),
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(distDir, name), content, 0o644); err != nil {
@@ -104,6 +241,85 @@ func Build(projectDir, distDir string) error {
 	}
 	fmt.Printf("[mar build] wrote %d files to %s\n", len(files), distDir)
 	return nil
+}
+
+// buildServerExecutable produces a self-contained executable: a
+// pre-built mar-runtime stub for `target` concatenated with a ZIP
+// payload of the project sources + mar.json. The resulting binary
+// extracts its own payload at startup, so no mar toolchain is needed
+// on the deploy host.
+func buildServerExecutable(projectDir, distDir, target string, bc *buildCtx) error {
+	stubBytes, err := stubs.Get(target)
+	if err != nil {
+		return err
+	}
+
+	manifestPath := filepath.Join(projectDir, "mar.json")
+	manifestJSON, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", manifestPath, err)
+	}
+
+	sources, err := appbundle.CollectSources(projectDir)
+	if err != nil {
+		return err
+	}
+
+	payload, err := appbundle.BuildPayload(appbundle.BuildInput{
+		ManifestJSON: manifestJSON,
+		Sources:      sources,
+	})
+	if err != nil {
+		return err
+	}
+
+	name := outputName(projectDir, target)
+	outputPath := filepath.Join(distDir, name)
+	if err := appbundle.WriteExecutable(stubBytes, payload, outputPath); err != nil {
+		return err
+	}
+
+	totalSize := len(stubBytes) + len(payload)
+	fmt.Printf("[mar build] %s\n", outputPath)
+	fmt.Printf("            target: %s   size: %s   sources: %d files\n",
+		target, humanSize(totalSize), len(sources))
+	return nil
+}
+
+// outputName picks a filename for the produced executable. Uses the
+// `name` field from mar.json if present, otherwise the project
+// directory name. Adds `.exe` for Windows targets so the file is
+// runnable as-is on Windows hosts.
+func outputName(projectDir, target string) string {
+	base := ""
+	if data, err := os.ReadFile(filepath.Join(projectDir, "mar.json")); err == nil {
+		var m struct{ Name string }
+		if json.Unmarshal(data, &m) == nil {
+			base = m.Name
+		}
+	}
+	if base == "" {
+		base = filepath.Base(filepath.Clean(projectDir))
+		if base == "." || base == "/" {
+			base = "app"
+		}
+	}
+	if strings.HasPrefix(target, "windows-") {
+		base += ".exe"
+	}
+	return base
+}
+
+func humanSize(n int) string {
+	const KB, MB = 1024, 1024 * 1024
+	switch {
+	case n >= MB:
+		return fmt.Sprintf("%.1f MB", float64(n)/MB)
+	case n >= KB:
+		return fmt.Sprintf("%.1f KB", float64(n)/KB)
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 
 // --- internals: capture overrides ---
@@ -228,37 +444,41 @@ func joinName(parts []string) string {
 }
 
 // makeProgramJSON serializes the merged frontend modules as the
-// browser bundle.
-func makeProgramJSON(mods []*ast.Module, entry string) ([]byte, error) {
-	merged := mergeModules(mods)
+// browser bundle. devMode controls whether the JS runtime sets up
+// dev affordances (banner, SSE, time-travel) — false for built dists.
+func makeProgramJSON(mods []*ast.Module, entry string, devMode bool) ([]byte, error) {
+	// Send modules separately so the browser/iOS runtime can register
+	// each decl under both its bare name (for intra-module references
+	// during evaluation) and a qualified `Module.name` form (so
+	// EQualified lookups from other modules resolve correctly). A
+	// previous version merged everything into one module here, which
+	// silently overwrote same-named decls across modules — two
+	// `Frontend.SignIn.page` and `Frontend.Home.page` collapsed into
+	// whichever was evaluated last, breaking multi-page apps.
+	serializedModules := make([]any, 0, len(mods))
+	for _, m := range mods {
+		serializedModules = append(serializedModules, jsserve.SerializeModule(m))
+	}
 	return json.Marshal(map[string]any{
-		"module": jsserve.SerializeModule(merged),
-		"entry":  entry,
+		"modules": serializedModules,
+		"entry":   entry,
+		"devMode": devMode,
 	})
 }
 
-func mergeModules(mods []*ast.Module) *ast.Module {
-	if len(mods) == 1 {
-		return mods[0]
-	}
-	out := &ast.Module{}
-	for _, m := range mods {
-		out.Decls = append(out.Decls, m.Decls...)
-		if len(out.Name) == 0 {
-			out.Name = m.Name
-		}
-	}
-	return out
-}
-
-// buildIndexHTML produces the production HTML page. Differences from
-// the dev version: no SSE reload connection, no dev banner — just a
-// clean page that boots marRun on DOMContentLoaded.
-func buildIndexHTML(distDir, title string) string {
+// buildIndexHTML produces the production HTML page with `program.json`
+// embedded inline as a JSON script element. Differences from the dev
+// version: no SSE reload connection, no dev banner, no waterfall fetch
+// of the AST — boot is one round-trip total (HTML + runtime.js).
+func buildIndexHTML(title string, programJSON []byte) string {
 	if title == "" {
 		title = "mar app"
 	}
-	return fmt.Sprintf(productionPageHTML, title)
+	// </script> inside JSON would prematurely close the script tag.
+	// Escape the < as < — JSON.parse ignores it, no other char
+	// classes need escaping in <script type="application/json">.
+	safeProgram := strings.ReplaceAll(string(programJSON), "</", `</`)
+	return fmt.Sprintf(productionPageHTML, title, safeProgram)
 }
 
 const productionPageHTML = `<!doctype html>
@@ -289,7 +509,8 @@ const productionPageHTML = `<!doctype html>
     font: inherit; cursor: pointer;
   }
   button:hover { background: #f0f0f0; }
-  input[type="text"], textarea {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]),
+  textarea {
     border: 1px solid var(--border); background: var(--surface);
     padding: 0.45rem 0.6rem; border-radius: var(--radius);
     font: inherit; width: 100%%; max-width: 24rem;
@@ -309,19 +530,20 @@ const productionPageHTML = `<!doctype html>
 </head>
 <body>
 <div id="mar-root"></div>
+<script type="application/json" id="mar-program">%s</script>
 <script src="./runtime.js"></script>
 <script>
 window.addEventListener('DOMContentLoaded', function () {
-  fetch('./program.json').then(function (r) { return r.json(); }).then(function (p) {
-    try { marRun(p); }
-    catch (e) {
-      var root = document.getElementById('mar-root');
-      var pre = document.createElement('pre');
-      pre.style.color = '#b00';
-      pre.textContent = String(e && e.message || e);
-      root.appendChild(pre);
-    }
-  });
+  try {
+    var raw = document.getElementById('mar-program').textContent;
+    marRun(JSON.parse(raw));
+  } catch (e) {
+    var root = document.getElementById('mar-root');
+    var pre = document.createElement('pre');
+    pre.style.color = '#b00';
+    pre.textContent = String(e && e.message || e);
+    root.appendChild(pre);
+  }
 });
 </script>
 </body>

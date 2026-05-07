@@ -1,12 +1,17 @@
 // Command mar is the entry point for the Mar compiler and tooling.
 //
-// Subcommands:
+// mar is a full-stack web language. The driver reflects that focus:
 //
-//	mar parse <file.mar>   Parse the file and report syntax errors.
-//	mar check <file.mar>   Parse and type-check the file, reporting types.
+//	mar dev [path]         Run a fullstack/frontend/backend app in dev mode
+//	                       (hot reload, dev banner, browser-open).
+//	mar build [dir]        Compile a project to a static dist/.
+//	mar init <name>        Scaffold a new project.
+//	mar check <file>       Type-check (without running).
+//	mar repl               Interactive REPL.
+//	mar format <file>...   Reformat in place.
+//	mar lsp                Language server (used by editor extensions).
+//	mar config <dir>       Print mar.json from a project.
 //	mar version            Print the version.
-//
-// Future: serve, build, repl, fmt, lsp, etc.
 package main
 
 import (
@@ -19,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"mar/internal/apphost"
 	"mar/internal/ast"
 	"mar/internal/diag"
 	"mar/internal/formatter"
@@ -67,6 +73,125 @@ func openURL(url string) {
 	}
 	_ = cmd.Start()
 }
+
+// runBuild handles `mar build [--target T] [--out DIR] [path]`.
+//
+// Behavior depends on the topology the project's main picks:
+//   - App.frontend → static dist/ (HTML + JS + program.json).
+//   - App.backend / App.fullstack → self-contained executable embedding
+//     the cross-compiled mar-runtime stub for `target` plus a ZIP of
+//     the project sources. Default target is the host OS/arch.
+func runBuild(args []string) int {
+	entry := "."
+	target := ""
+	outDir := ""
+	baseURL := ""
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "--target" || a == "-t":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "mar build: --target needs a value (e.g. linux-amd64)")
+				return 2
+			}
+			target = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--target="):
+			target = strings.TrimPrefix(a, "--target=")
+			i++
+		case a == "--out" || a == "-o":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "mar build: --out needs a value")
+				return 2
+			}
+			outDir = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--out="):
+			outDir = strings.TrimPrefix(a, "--out=")
+			i++
+		case a == "--base-url":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "mar build: --base-url needs a value")
+				return 2
+			}
+			baseURL = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--base-url="):
+			baseURL = strings.TrimPrefix(a, "--base-url=")
+			i++
+		case a == "-h" || a == "--help":
+			fmt.Println(buildUsage)
+			return 0
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(os.Stderr, "mar build: unknown flag %q\n", a)
+			return 2
+		default:
+			entry = a
+			i++
+		}
+	}
+
+	// distDir defaults to "dist" alongside the entry (whether entry is
+	// a file or a directory).
+	if outDir == "" {
+		baseDir := entry
+		if info, err := os.Stat(entry); err == nil && !info.IsDir() {
+			baseDir = filepath.Dir(entry)
+		}
+		outDir = filepath.Join(baseDir, "dist")
+	}
+
+	// iOS is its own pipeline: schema-driven scaffold, doesn't run
+	// mar code at build time. Everything else (frontend / backend /
+	// fullstack) goes through scaffold.Build.
+	if target == "ios" {
+		if err := scaffold.BuildIOS(entry, outDir, baseURL, version); err != nil {
+			fmt.Fprintln(os.Stderr, diag.Format(err))
+			return 1
+		}
+		return 0
+	}
+	if baseURL != "" {
+		fmt.Fprintln(os.Stderr, "mar build: --base-url only applies to --target ios")
+		return 2
+	}
+	if err := scaffold.Build(entry, outDir, target); err != nil {
+		fmt.Fprintln(os.Stderr, diag.Format(err))
+		return 1
+	}
+	return 0
+}
+
+const buildUsage = `Usage: mar build [--target <T>] [--out <dir>] [--base-url <url>] [path]
+
+Compile a mar project to a deployable artifact.
+
+For App.frontend projects:
+  Writes a static dist/ (index.html + runtime.js + program.json) to <dir>.
+
+For App.backend / App.fullstack projects:
+  Writes a self-contained executable to <dir>/<projectName> by
+  concatenating the cross-compiled mar-runtime stub for <target> with
+  a ZIP payload of the project sources + mar.json. The resulting
+  binary needs no mar toolchain on the deploy host — just run it.
+
+For --target ios:
+  Generates a disposable Xcode project under <dir>/<AppName>/. The
+  Swift app discovers your backend via /_mar/schema on cold start, so
+  changing your mar code updates the app over the air without
+  re-submitting to the App Store. Run xcodegen + open in Xcode.
+
+Flags:
+  --target, -t   Build target. Native: darwin-amd64, darwin-arm64,
+                 linux-amd64, linux-arm64, windows-amd64. Mobile: ios.
+                 Defaults to the host OS/arch.
+  --out, -o      Output directory (default: <project>/dist).
+  --base-url     iOS only: default backend URL baked into the
+                 generated app (overridable at runtime in Settings).
+                 Default: http://localhost:3000.
+
+Path defaults to "." (Main.mar in the current directory).`
 
 // runFormat handles `mar format [--check] <files...>`. With files,
 // each is rewritten in place. With --check, the command exits 1 if
@@ -121,34 +246,42 @@ func runFormat(args []string) int {
 	return 0
 }
 
-// isStdlibImport reports whether a module is provided by the runtime
-// (List, View, Effect, etc.) and therefore doesn't need a sibling file.
-// Mirrors internal/project.isStdlib — duplicated here to avoid an
-// import cycle and because cmd/mar's import-detection only needs this
-// short check.
-func isStdlibImport(name []string) bool {
-	if len(name) != 1 {
-		return false
+// lookupMainType finds the type of the entry module's `main`. Module
+// names vary (`Main`, `Calculator`, etc.) — keys in valueTypes are
+// "Module.value" — so just pick the first ".main" entry. There's only
+// ever one `main` in a project (the entry's), so this is unambiguous.
+func lookupMainType(valueTypes map[string]typecheck.Type) typecheck.Type {
+	if t, ok := valueTypes["Main.main"]; ok {
+		return t
 	}
-	switch name[0] {
-	case "List", "String", "Maybe", "Result", "Effect", "IO",
-		"JSON", "Server", "Response", "Db", "Entity", "View",
-		"App", "Page", "Endpoint", "Http":
-		return true
+	for k, t := range valueTypes {
+		if strings.HasSuffix(k, ".main") {
+			return t
+		}
 	}
-	return false
+	return nil
 }
 
-// noopEffect returns an Effect that does nothing on Run. Used by the
-// `mar dev` overrides for App.fullstack / App.serve / App.serveScreens —
-// the side effect they care about (capturing args into the LiveProgram)
-// happens during the function call, not when the Effect runs. The CLI
-// drives the actual server lifecycle.
-func noopEffect(tag string) runtime.VEffect {
-	return runtime.VEffect{
-		Tag: tag,
-		Run: func() (runtime.Value, error) { return runtime.VUnit{}, nil },
+// checkMainSignature reports whether t is `Effect String ()`. Returns
+// an empty string when the signature is acceptable, else a short
+// human-readable message describing the mismatch. Wrapping in a
+// `forall` is fine — main can be polymorphic in unused variables.
+func checkMainSignature(t typecheck.Type) string {
+	if f, ok := t.(typecheck.TForall); ok {
+		t = f.Body
 	}
+	con, ok := t.(typecheck.TCon)
+	if !ok || con.Name != "Effect" || len(con.Args) != 2 {
+		return fmt.Sprintf("main has type `%s`, expected `Effect String ()`", typecheck.Pretty(t))
+	}
+	errCon, eOk := con.Args[0].(typecheck.TCon)
+	if !eOk || errCon.Name != "String" || len(errCon.Args) != 0 {
+		return fmt.Sprintf("main has type `%s`, expected `Effect String ()` (error channel must be String)", typecheck.Pretty(t))
+	}
+	if _, uOk := con.Args[1].(typecheck.TUnit); !uOk {
+		return fmt.Sprintf("main has type `%s`, expected `Effect String ()` (success value must be unit `()`)", typecheck.Pretty(t))
+	}
+	return ""
 }
 
 // version and commit are populated at build time via -ldflags.
@@ -164,28 +297,12 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
-	case "parse":
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "mar parse: missing file argument")
-			os.Exit(2)
-		}
-		os.Exit(runParse(os.Args[2]))
 	case "check":
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "mar check: missing file argument")
 			os.Exit(2)
 		}
 		os.Exit(runCheck(os.Args[2]))
-	case "run":
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "mar run: missing file argument")
-			os.Exit(2)
-		}
-		valueName := "main"
-		if len(os.Args) >= 4 {
-			valueName = os.Args[3]
-		}
-		os.Exit(runRun(os.Args[2], valueName))
 	case "repl":
 		os.Exit(runRepl())
 	case "config":
@@ -223,81 +340,75 @@ func main() {
 		}
 		fmt.Printf("Created %s/\n  cd %s && mar dev\n", name, name)
 	case "build":
-		dir := "."
-		if len(os.Args) >= 3 {
-			dir = os.Args[2]
-		}
-		distDir := filepath.Join(dir, "dist")
-		if len(os.Args) >= 4 {
-			distDir = os.Args[3]
-		}
-		if err := scaffold.Build(dir, distDir); err != nil {
-			fmt.Fprintln(os.Stderr, diag.Format(err))
-			os.Exit(1)
-		}
+		os.Exit(runBuild(os.Args[2:]))
+	case "migrate":
+		os.Exit(runMigrate(os.Args[2:]))
+	case "fly":
+		os.Exit(runFly(os.Args[2:]))
+	case "admin":
+		os.Exit(runAdmin(os.Args[2:]))
+	case "completion":
+		os.Exit(runCompletion(os.Args[2:]))
 	case "version", "--version", "-v":
 		fmt.Printf("%s (%s)\n", version, commit)
 	case "help", "--help", "-h":
 		usage()
 	default:
-		fmt.Fprintf(os.Stderr, "mar: unknown subcommand %q\n\n", os.Args[1])
-		usage()
+		// `mar foo.mar` or `mar examples/notes-auth` look like the
+		// user wanted to run a project but forgot the subcommand.
+		// Don't infer — make the intent explicit. Suggest the right
+		// command and exit non-zero so scripts notice.
+		arg := os.Args[1]
+		if looksLikePath(arg) {
+			fprintError("mar: %q is not a command.", arg)
+			fprintHint("to run a project, type %s.", colorGreen(fmt.Sprintf("mar dev %s", arg)))
+			os.Exit(2)
+		}
+		fprintError("mar: unknown command %q.", arg)
+		fprintHint("run %s for the command list.", colorGreen("mar help"))
 		os.Exit(2)
 	}
 }
 
-func usage() {
-	fmt.Fprintln(os.Stderr, `Usage: mar <command> [arguments]
-
-Commands:
-  parse <file.mar>            Parse the file and report syntax errors.
-  check <file.mar>            Parse and type-check the file, reporting types.
-  run <file.mar> [valueName]  Type-check, evaluate, and print the named value.
-                              Defaults to "main".
-  repl                        Start an interactive read-eval-print loop.
-  dev [path]                  Run main in dev mode. <path> can be:
-                                a .mar file              — single-file app
-                                a project directory      — looks for Main.mar
-                                (default = current dir)  — same as above
-                              What main does decides the runtime:
-                                App.fullstack { api, page }   — unified server
-                                                                (port from mar.json)
-                                App.serve port app            — browser-only app
-                                App.serveScreens port screens — multi-screen app
-                              Conventional project layout:
-                                Main.mar      — entry; main = App.fullstack ...
-                                Backend.mar   — routes : List Route
-                                Frontend.mar  — page : App
-                                Shared.mar    — helpers used by both
-                              Names other than Main.mar / main are convention.
-  config <dir>                Load and print mar.json from the given project.
-  format [--check] <file>...  Reformat .mar files in place. With
-                              --check, exits 1 if any file would change.
-  init <name>                 Scaffold a new mar project at <name>/.
-  build [dir] [distDir]       Compile a frontend project to a static
-                              dist/ directory (HTML + runtime + AST).
-  lsp                         Run the Language Server over stdio
-                              (used by editor extensions).
-  version                     Print the version.
-
-Use "mar help" for this help.`)
+// looksLikePath reports whether `s` looks like a path attempt —
+// contains a separator, ends in .mar, or actually exists on disk.
+// Used to give a more specific "did you mean" hint when the user
+// almost-but-not-quite typed a real command.
+func looksLikePath(s string) bool {
+	if strings.HasSuffix(s, ".mar") {
+		return true
+	}
+	if strings.ContainsAny(s, "/\\") {
+		return true
+	}
+	if _, err := os.Stat(s); err == nil {
+		return true
+	}
+	return false
 }
 
-func runParse(path string) int {
-	src, err := os.ReadFile(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "mar: %v\n", err)
-		return 1
-	}
-	mod, err := parser.Parse(string(src))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, diag.Format(diag.Wrap(path, string(src), err)))
-		return 1
-	}
-	fmt.Printf("module %s\n", joinModuleName(mod.Name))
-	fmt.Printf("  imports: %d\n", len(mod.Imports))
-	fmt.Printf("  decls: %d\n", len(mod.Decls))
-	return 0
+func usage() {
+	fmt.Fprintln(os.Stderr, `Usage: mar <command> [args]
+
+Commands:
+  dev    [path]              Run with hot reload (path defaults to ".")
+  build  [path] [--target T] Compile to dist/ (frontend) or binary (backend)
+                             [--out DIR] [--base-url URL]
+  init   <name>              Scaffold a new project at <name>/
+  check  <path>              Parse + type-check (no run)
+  format [--check] <file>... Reformat .mar files in place
+  config <dir>               Print mar.json
+  migrate <plan|status> [path] Show pending / applied schema migrations (read-only)
+  fly <init|provision|deploy|destroy|logs|status> [path]
+                             Full Fly.io deployment workflow
+  admin <add|remove|list> [args]
+                             Manage admin panel access (mar.json admins list)
+  repl                       Interactive REPL
+  lsp                        Language server over stdio
+  completion <shell>         Generate shell completion (zsh, bash, fish)
+  version                    Print version
+
+Run 'mar <command> --help' for command-specific help.`)
 }
 
 func runCheck(path string) int {
@@ -397,30 +508,61 @@ func runDev(path string) int {
 		port = manifest.Server.Port
 	}
 
+	// Wire the SQLite path into the runtime — Repo.* lazy-opens this on
+	// first use. ResolveDatabasePath honors MAR_DATABASE_PATH (override
+	// for production deploys) and resolves relative paths against the
+	// project directory so `./notes.db` lands next to Main.mar.
+	if dbPath, _ := project.ResolveDatabasePath(manifest, projectDir); dbPath != "" {
+		runtime.SetDBPath(dbPath)
+	}
+
+	// Auth: derive (or auto-generate, in dev) the session secret and
+	// pass the SMTP credentials to the auth runtime. The handlers stay
+	// dormant until the user's program calls `Auth.config` — at that
+	// point ServeLive sees a registered VAuth and mounts /_auth/*.
+	secret, secretSrc, err := project.ResolveSessionSecret(manifest, projectDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mar dev: %v\n", err)
+		return 1
+	}
+	if secret != "" {
+		jsserve.SetAuthRuntime(secret, project.ToSMTPConfig(manifest))
+		_ = secretSrc // available for diagnostics if we want to log it later
+	}
+
 	lp := &jsserve.LiveProgram{}
+	lp.SetDevMode(true)
+	if manifest != nil && manifest.Name != "" {
+		lp.SetAppName(manifest.Name)
+	}
 	hub := jsserve.NewReloadHub(lp)
 
 	// compile loads + evaluates the project, capturing the served state
 	// into lp. Returns a friendly error message instead of panicking so
 	// the watcher can recover from compile errors during development.
 	compile := func() error {
-		rEnv, _, err := project.LoadIntoEnvWithModulesAndHook(entryFile,
+		// Hot-reload re-runs compile; clear the entity registry +
+		// migration cache so stale declarations from the previous
+		// version don't participate in the new migration plan, and
+		// the per-entity ensureMigrated cache re-validates against
+		// the (possibly updated) live schema.
+		runtime.ResetRegisteredEntities()
+		runtime.ResetMigrationCache()
+
+		rEnv, _, valueTypes, err := project.LoadIntoEnvWithModulesAndHook(entryFile,
 			func(env *runtime.Env, mods []*ast.Module) {
-				fs := makeFullstackBuiltin(mods, port, lp)
-				env.Define("appFullstack", fs)
-				env.Define("App.fullstack", fs)
-
-				fe := makeFrontendBuiltin(mods, port, lp)
-				env.Define("appFrontend", fe)
-				env.Define("App.frontend", fe)
-
-				be := makeBackendBuiltin(port, lp)
-				env.Define("appBackend", be)
-				env.Define("App.backend", be)
+				apphost.Install(env, mods, port, lp)
 			})
 		if err != nil {
 			return err
 		}
+
+		// Find main and validate its type signature. mar is a web language
+		// — every entry point ships through `main : Effect String ()`,
+		// where the Effect chooses the topology by calling App.frontend /
+		// App.backend / App.fullstack. Reject anything else here so users
+		// get a clear up-front error instead of confusing runtime
+		// behavior.
 		mainVal, ok := rEnv.Lookup("Main.main")
 		if !ok {
 			mainVal, ok = rEnv.Lookup("main")
@@ -428,15 +570,34 @@ func runDev(path string) int {
 		if !ok {
 			return fmt.Errorf("%s must export `main : Effect String ()`", entryFile)
 		}
+		if mainType := lookupMainType(valueTypes); mainType != nil {
+			if msg := checkMainSignature(mainType); msg != "" {
+				return fmt.Errorf("%s: %s\n\nmar entry points must be `main : Effect String ()` and pick a topology with App.frontend / App.backend / App.fullstack", entryFile, msg)
+			}
+		}
 		eff, ok := mainVal.(runtime.VEffect)
 		if !ok {
-			return fmt.Errorf("main is not an Effect (got %T) — `mar dev` runs servers and UIs (App.frontend / App.backend / App.fullstack). To evaluate a plain expression, use `mar run`", mainVal)
+			return fmt.Errorf("main is not an Effect (got %T) — `mar dev` runs servers and UIs via App.frontend / App.backend / App.fullstack", mainVal)
 		}
 		// Running the Effect calls one of the overridden builtins, which
-		// captures (api, page) and updates lp. The builtin's Effect is a
+		// captures (api, pages) and updates lp. The builtin's Effect is a
 		// no-op — we drive the server lifecycle from the CLI, not the
 		// user's main.
 		if _, err := eff.Run(); err != nil {
+			return err
+		}
+		// Apply any pending schema migrations before the listener
+		// accepts traffic. Hot-reloads also pass through here, so
+		// editing an entity declaration triggers an immediate diff
+		// + apply (no restart needed). Migrator silences the
+		// no-change case to keep the dev loop quiet.
+		if err := runtime.RunBootMigrations(); err != nil {
+			return err
+		}
+		// Admin panel boot: ensure framework tables + sync from
+		// mar.json["admins"]. Reloads pass through here too so
+		// editing the admins list triggers an immediate re-sync.
+		if err := bootAdminPanel(manifest); err != nil {
 			return err
 		}
 		return nil
@@ -459,9 +620,8 @@ func runDev(path string) int {
 	// version stays in lp.
 	go watchAndReload(projectDir, compile, hub, lp)
 
-	// Open the browser to the dev URL once the server is ready. Same
-	// convenience the lispy `mar dev` had. Honors $MAR_NO_OPEN for
-	// headless / CI runs.
+	// Open the browser to the dev URL once the server is ready. Honors
+	// $MAR_NO_OPEN for headless / CI runs.
 	go openBrowserWhenReady(fmt.Sprintf("http://localhost:%d", port))
 
 	// Block on the HTTP server.
@@ -539,179 +699,46 @@ func watchAndReload(root string, compile func() error, hub *jsserve.ReloadHub, l
 
 // resolveDevEntry decides which file to load and which dir to read mar.json
 // from, given a path that can be either a file or directory.
+//
+// Convention: when `path` is a directory, the entry file is `Main.mar`
+// unless mar.json specifies a different `entry`. Most projects don't
+// need to set it — the default is enough.
 func resolveDevEntry(path string) (entryFile string, projectDir string, err error) {
 	info, statErr := os.Stat(path)
 	if statErr != nil {
 		return "", "", statErr
 	}
 	if info.IsDir() {
-		entry := filepath.Join(path, "Main.mar")
+		// Honor an explicit `entry` field in mar.json; fall back to
+		// the conventional Main.mar otherwise. Errors loading
+		// mar.json are non-fatal here — runDev will surface them
+		// when it loads the manifest for real (port, db, secrets).
+		entryName := "Main.mar"
+		entryFromManifest := false
+		if m, mErr := project.LoadManifest(path); mErr == nil && m != nil && m.Entry != "" {
+			entryName = m.Entry
+			entryFromManifest = true
+		}
+		entry := filepath.Join(path, entryName)
 		if _, err := os.Stat(entry); err != nil {
-			return "", "", fmt.Errorf("%s: no Main.mar found in directory", path)
+			if entryFromManifest {
+				return "", "", fmt.Errorf("%s not found\n\n"+
+					"Hint: mar.json has \"entry\": %q but that file doesn't exist.\n"+
+					"      Create it, fix the typo, or remove \"entry\" to use the default (Main.mar).",
+					entry, entryName)
+			}
+			return "", "", fmt.Errorf("%s not found\n\n"+
+				"Hint: by convention the entry file is Main.mar at the project root.\n"+
+				"      Create it, or set \"entry\": \"<file>\" in mar.json to point elsewhere.",
+				entry)
 		}
 		return entry, path, nil
 	}
 	return path, filepath.Dir(path), nil
 }
 
-// reachableFrom walks the import graph starting at startModule and returns
-// the subset of `mods` reachable through imports — preserving topological
-// order so dependencies come before dependents in the browser bundle.
-func reachableFrom(startModule string, mods []*ast.Module) []*ast.Module {
-	byName := map[string]*ast.Module{}
-	for _, m := range mods {
-		byName[joinModuleName(m.Name)] = m
-	}
-	visited := map[string]bool{}
-	var order []*ast.Module
-	var visit func(name string)
-	visit = func(name string) {
-		if visited[name] {
-			return
-		}
-		visited[name] = true
-		mod, ok := byName[name]
-		if !ok {
-			return // stdlib or unknown
-		}
-		for _, imp := range mod.Imports {
-			impName := joinModuleName(imp.Module)
-			visit(impName)
-		}
-		order = append(order, mod)
-	}
-	visit(startModule)
-	return order
-}
-
-// pickFrontMods extracts the subset of project modules reachable from
-// pages' origin modules. Each page in a frontend / fullstack must come
-// from a top-level binding (so it has provenance); we trace from those
-// modules so the browser bundle excludes Backend / Main code that would
-// fail to evaluate on the JS side.
-func pickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, error) {
-	roots := map[string]bool{}
-	for i, pv := range pages {
-		page, ok := pv.(runtime.VPage)
-		if !ok {
-			return nil, fmt.Errorf("page %d is not a Page value (got %T)", i, pv)
-		}
-		if page.OriginName == "" {
-			return nil, fmt.Errorf("page %d has no provenance — pages must be top-level bindings (e.g. `myPage = Page.root ...`), not inline expressions", i)
-		}
-		roots[page.OriginModule] = true
-	}
-	merged := []*ast.Module{}
-	seen := map[string]bool{}
-	for root := range roots {
-		for _, m := range reachableFrom(root, mods) {
-			name := joinModuleName(m.Name)
-			if seen[name] {
-				continue
-			}
-			seen[name] = true
-			merged = append(merged, m)
-		}
-	}
-	return merged, nil
-}
-
-// makeFrontendBuiltin overrides App.frontend in `mar dev`.
-//
-//	App.frontend : List Page -> Effect String ()
-//
-// Captures the page list, ships the AST subset reachable from those
-// pages to the browser. The JS runtime evaluates the user's `main`
-// expression itself — it sees the same App.frontend call and uses the
-// JS-side builtin to mount the pages.
-func makeFrontendBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
-	return runtime.VFn{
-		Arity: 1,
-		Native: func(args []runtime.Value) (runtime.Value, error) {
-			pageList, ok := args[0].(runtime.VList)
-			if !ok {
-				return nil, fmt.Errorf("App.frontend: expected List Page (got %T)", args[0])
-			}
-			frontMods, err := pickFrontMods(pageList.Elements, mods)
-			if err != nil {
-				return nil, fmt.Errorf("App.frontend: %v", err)
-			}
-			lp.SetPort(port)
-			if err := lp.Update(nil, frontMods, "main"); err != nil {
-				return nil, fmt.Errorf("App.frontend: %v", err)
-			}
-			return noopEffect("appFrontend"), nil
-		},
-	}
-}
-
-// makeBackendBuiltin overrides App.backend in `mar dev`.
-//
-//	App.backend : List Route -> Effect String ()
-//
-// API server, no frontend bundle. The browser never gets a program.json;
-// HTML page renders an empty "this is an API server" notice.
-func makeBackendBuiltin(port int, lp *jsserve.LiveProgram) runtime.Value {
-	return runtime.VFn{
-		Arity: 1,
-		Native: func(args []runtime.Value) (runtime.Value, error) {
-			routes, ok := args[0].(runtime.VList)
-			if !ok {
-				return nil, fmt.Errorf("App.backend: expected List Route (got %T)", args[0])
-			}
-			lp.SetPort(port)
-			// Empty mods list disables the frontend bundle on this lp.
-			if err := lp.Update(routes.Elements, nil, ""); err != nil {
-				return nil, fmt.Errorf("App.backend: %v", err)
-			}
-			return noopEffect("appBackend"), nil
-		},
-	}
-}
-
-// makeFullstackBuiltin overrides App.fullstack in `mar dev`.
-//
-//	App.fullstack : { api : List Route, pages : List Page } -> Effect String ()
-//
-// The unified mode. Backend routes mounted at /api/*, page list shipped
-// to the browser as JS. Multi-page apps (more than one Page in `pages`)
-// route by URL path.
-func makeFullstackBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
-	return runtime.VFn{
-		Arity: 1,
-		Native: func(args []runtime.Value) (runtime.Value, error) {
-			rec, ok := args[0].(runtime.VRecord)
-			if !ok {
-				return nil, fmt.Errorf("App.fullstack: expected { api, pages } record (got %T)", args[0])
-			}
-			apiV, ok := rec.Fields["api"]
-			if !ok {
-				return nil, fmt.Errorf("App.fullstack: missing `api` field")
-			}
-			pagesV, ok := rec.Fields["pages"]
-			if !ok {
-				return nil, fmt.Errorf("App.fullstack: missing `pages` field")
-			}
-			apiList, ok := apiV.(runtime.VList)
-			if !ok {
-				return nil, fmt.Errorf("App.fullstack: `api` is not a list (got %T)", apiV)
-			}
-			pageList, ok := pagesV.(runtime.VList)
-			if !ok {
-				return nil, fmt.Errorf("App.fullstack: `pages` is not a list (got %T)", pagesV)
-			}
-			frontMods, err := pickFrontMods(pageList.Elements, mods)
-			if err != nil {
-				return nil, fmt.Errorf("App.fullstack: %v", err)
-			}
-			lp.SetPort(port)
-			if err := lp.Update(apiList.Elements, frontMods, "main"); err != nil {
-				return nil, fmt.Errorf("App.fullstack: %v", err)
-			}
-			return noopEffect("appFullstack"), nil
-		},
-	}
-}
+// (App.* override builtins, page-bundle slicing, and route assembly all
+// moved to internal/apphost — shared between `mar dev` and `mar-runtime`.)
 
 func runConfig(dir string) int {
 	m, err := project.LoadManifest(dir)
@@ -724,7 +751,11 @@ func runConfig(dir string) int {
 		return 0
 	}
 	fmt.Printf("name:  %s\n", m.Name)
-	fmt.Printf("entry: %s\n", m.Entry)
+	if m.Entry != "" {
+		fmt.Printf("entry: %s\n", m.Entry)
+	} else {
+		fmt.Printf("entry: Main.mar (default)\n")
+	}
 	if m.Server != nil {
 		fmt.Printf("server.port:      %d\n", m.Server.Port)
 		fmt.Printf("server.host:      %s\n", m.Server.Host)
@@ -735,135 +766,22 @@ func runConfig(dir string) int {
 	}
 	if m.Mail != nil {
 		fmt.Printf("mail.from:         %s\n", m.Mail.From)
-		fmt.Printf("mail.smtpHost:     %s\n", m.Mail.SmtpHost)
-		fmt.Printf("mail.smtpPort:     %d\n", m.Mail.SmtpPort)
-		fmt.Printf("mail.smtpUsername: %s\n", m.Mail.SmtpUsername)
+		fmt.Printf("mail.smtpHost:     %s\n", m.Mail.SMTPHost)
+		fmt.Printf("mail.smtpPort:     %d\n", m.Mail.SMTPPort)
+		fmt.Printf("mail.smtpUsername: %s\n", m.Mail.SMTPUsername)
 		// don't print password
-		fmt.Printf("mail.smtpPassword: <set: %v>\n", m.Mail.SmtpPassword != "")
+		fmt.Printf("mail.smtpPassword: <set: %v>\n", m.Mail.SMTPPassword != "")
 	}
 	return 0
-}
-
-func runRun(path, valueName string) int {
-	info, err := os.Stat(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "mar: %v\n", err)
-		return 1
-	}
-	var v runtime.Value
-	if info.IsDir() {
-		v, err = project.Run(path, valueName)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
-			return 1
-		}
-	} else {
-		// Single-file run. Only treat as multi-module project mode when
-		// the file actually imports user-defined siblings — otherwise
-		// `examples/` (a flat dir of independent files) gets loaded as
-		// one big project and any sibling that uses App.frontend etc.
-		// blows up the run.
-		src, _ := os.ReadFile(path)
-		mod, _ := parser.Parse(string(src))
-		dir := filepath.Dir(path)
-		hasUserImport := false
-		if mod != nil {
-			for _, imp := range mod.Imports {
-				if isStdlibImport(imp.Module) {
-					continue
-				}
-				// Resolve as Sibling.mar in the same dir; if found, this
-				// is a multi-module project.
-				candidate := filepath.Join(dir, imp.Module[len(imp.Module)-1]+".mar")
-				if _, err := os.Stat(candidate); err == nil {
-					hasUserImport = true
-					break
-				}
-			}
-		}
-		if hasUserImport {
-			modName := joinModuleName(mod.Name)
-			if valueName == "main" {
-				valueName = modName + ".main"
-			}
-			v, err = project.Run(dir, valueName)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
-				return 1
-			}
-		} else {
-			src, err := os.ReadFile(path)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "mar: %v\n", err)
-				return 1
-			}
-			mod, err := parser.Parse(string(src))
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
-				return 1
-			}
-			if _, err := typecheck.CheckModule(mod); err != nil {
-				fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
-				return 1
-			}
-			loaded, err := runtime.LoadModule(mod)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
-				return 1
-			}
-			v, err = loaded.Get(valueName)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
-				return 1
-			}
-		}
-	}
-	// If the value is an Effect, execute it.
-	if _, ok := v.(runtime.VEffect); ok {
-		result, err := runtime.RunEffect(v)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
-			return 1
-		}
-		v = result
-	}
-	// Pretty-print top-level lists with one element per line.
-	if list, ok := v.(runtime.VList); ok {
-		for _, e := range list.Elements {
-			fmt.Println(displayUser(e))
-		}
-		return 0
-	}
-	fmt.Println(displayUser(v))
-	return 0
-}
-
-// displayUser is like Value.Display but unwraps top-level strings (no quotes).
-func displayUser(v runtime.Value) string {
-	if s, ok := v.(runtime.VString); ok {
-		return s.V
-	}
-	return v.Display()
 }
 
 func joinModuleName(parts []string) string {
 	if len(parts) == 0 {
 		return "(unnamed)"
 	}
-	out := parts[0]
-	for _, p := range parts[1:] {
-		out += "." + p
-	}
-	return out
+	return strings.Join(parts, ".")
 }
 
 func joinCtors(names []string) string {
-	if len(names) == 0 {
-		return ""
-	}
-	out := names[0]
-	for _, n := range names[1:] {
-		out += " | " + n
-	}
-	return out
+	return strings.Join(names, " | ")
 }
