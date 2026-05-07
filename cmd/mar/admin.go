@@ -115,26 +115,30 @@ func runAdminAdd(email string) int {
 	}
 
 	if !changed {
+		// Single-line confirmation — no surrounding blank lines per
+		// the CLI style guide (docs/cli-style.md §1).
 		fmt.Printf("mar admin add: %s is already in admins\n", colorCyan(email))
 		return 0
 	}
 
 	if err := os.WriteFile(path, patched, 0o644); err != nil {
-		fprintError("mar admin add: write %s: %v", path, err)
+		fprintError("mar admin add: write %s: %v", colorMagenta(path), err)
 		return 1
 	}
 
 	fmt.Println()
 	fmt.Printf("mar admin add: %s added to admins\n", colorCyan(email))
 	fmt.Println()
-	fmt.Println("  → mar.json updated")
-	fmt.Println("  → next deploy will sync this to _mar_admins on production")
+	fmt.Printf("  → %s updated\n", colorMagenta("mar.json"))
+	fmt.Printf("  → next deploy will sync this to %s on production\n", colorMagenta("_mar_admins"))
 	fmt.Println()
-	fmt.Println("In development, the admin panel auth code prints to the terminal (no SMTP needed).")
-	fmt.Println("In production, codes are sent via the SMTP configured in mar.json[\"mail\"].")
+	fmt.Printf("In development, the admin panel auth code prints to the terminal (no SMTP needed).\n")
+	fmt.Printf("In production, codes are sent via the SMTP configured in %s.\n",
+		colorMagenta(`mar.json["mail"]`))
 	fmt.Println()
-	fmt.Printf("The dev panel URL is %s (or whatever port mar dev printed).\n",
+	fmt.Printf("The dev panel URL is %s.\n",
 		colorGreen("http://localhost:3000/_mar/admin"))
+	fmt.Println()
 	return 0
 }
 
@@ -165,21 +169,23 @@ func runAdminRemove(email string) int {
 	}
 
 	if !changed {
+		// Single-line confirmation — no surrounding blank lines.
 		fmt.Printf("mar admin remove: %s is not in admins (nothing to do)\n", colorCyan(email))
 		return 0
 	}
 
 	if err := os.WriteFile(path, patched, 0o644); err != nil {
-		fprintError("mar admin remove: write %s: %v", path, err)
+		fprintError("mar admin remove: write %s: %v", colorMagenta(path), err)
 		return 1
 	}
 
 	fmt.Println()
 	fmt.Printf("mar admin remove: %s removed from admins\n", colorCyan(email))
 	fmt.Println()
-	fmt.Println("  → mar.json updated")
-	fmt.Println("  → next deploy will sync this to _mar_admins on production")
-	fmt.Printf("  → existing admin sessions for %s will be revoked at next boot\n", email)
+	fmt.Printf("  → %s updated\n", colorMagenta("mar.json"))
+	fmt.Printf("  → next deploy will sync this to %s on production\n", colorMagenta("_mar_admins"))
+	fmt.Printf("  → existing admin sessions for %s will be revoked at next boot\n", colorCyan(email))
+	fmt.Println()
 	return 0
 }
 
@@ -202,16 +208,21 @@ func runAdminList() int {
 		return 1
 	}
 	if len(admins) == 0 {
-		fmt.Println("admins (from mar.json):")
-		fmt.Println("  (none)")
 		fmt.Println()
-		fmt.Println("Run `mar admin add YOUR_EMAIL` to enable the admin panel.")
+		fmt.Printf("admins (from %s):\n", colorMagenta("mar.json"))
+		fmt.Printf("  %s\n", colorYellow("(none)"))
+		fmt.Println()
+		fmt.Printf("Run %s to enable the admin panel.\n",
+			colorGreen("mar admin add YOUR_EMAIL"))
+		fmt.Println()
 		return 0
 	}
-	fmt.Println("admins (from mar.json):")
+	fmt.Println()
+	fmt.Printf("admins (from %s):\n", colorMagenta("mar.json"))
 	for _, e := range admins {
-		fmt.Printf("  %s\n", e)
+		fmt.Printf("  %s\n", colorCyan(e))
 	}
+	fmt.Println()
 	return 0
 }
 
