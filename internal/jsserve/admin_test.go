@@ -214,25 +214,25 @@ func TestAdminStatic_ServesEmbeddedAssets(t *testing.T) {
 	}
 }
 
-// TestAdminMe_Unauthenticated — matches /_auth/me's shape: 200 OK
-// + body null. SPA-friendly, lets the client read the body without
-// branching on the status code.
-func TestAdminMe_Unauthenticated(t *testing.T) {
+// TestAdminWhoami_Unauthenticated — matches /_auth/whoami's shape:
+// 200 OK + body null. SPA-friendly, lets the client read the body
+// without branching on the status code.
+func TestAdminWhoami_Unauthenticated(t *testing.T) {
 	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
 	defer cleanup()
-	resp, body := getJSON(t, server.Client(), server.URL+"/_mar/admin/api/me")
+	resp, body := getJSON(t, server.Client(), server.URL+"/_mar/admin/api/whoami")
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, body = %s", resp.StatusCode, body)
 	}
-	// `null` body — same convention /_auth/me uses for "no session".
+	// `null` body — same convention /_auth/whoami uses for "no session".
 	if strings.TrimSpace(string(body)) != "null" {
 		t.Errorf("expected body 'null'; got %q", body)
 	}
 }
 
-// TestAdminMe_Authenticated — after a successful sign-in, /me
-// returns the {email} record.
-func TestAdminMe_Authenticated(t *testing.T) {
+// TestAdminWhoami_Authenticated — after a successful sign-in,
+// /whoami returns the {email} record.
+func TestAdminWhoami_Authenticated(t *testing.T) {
 	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
 	defer cleanup()
 	client := server.Client()
@@ -255,12 +255,12 @@ func TestAdminMe_Authenticated(t *testing.T) {
 		t.Fatal("no session cookie set; aborting")
 	}
 
-	// Now hit /me with the cookie.
-	req, _ := http.NewRequest(http.MethodGet, server.URL+"/_mar/admin/api/me", nil)
+	// Now hit /whoami with the cookie.
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/_mar/admin/api/whoami", nil)
 	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("me: %v", err)
+		t.Fatalf("whoami: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
