@@ -305,33 +305,49 @@
     }
     const d = state.db;
 
-    // Top section: file sizes + business entities.
-    const sizeRows = [
-      kvRow('mar.db', formatBytes(d.dbSizeBytes)),
-      kvRow('WAL', formatBytes(d.walSizeBytes)),
-    ];
+    // Three groupings, top to bottom:
+    //   - Database         file sizes only (the on-disk footprint)
+    //   - Tables           user-defined entities (the business model)
+    //   - Framework tables _mar_-prefixed (auth + admin + migrations)
+    //
+    // Splitting "stats vs tables" lets the eye land on the file size
+    // immediately without scanning past it to count rows; splitting
+    // "user tables vs framework tables" keeps framework noise out of
+    // the operator's own model.
+
+    const sections = [];
+
+    sections.push(
+      el('div', { class: 'section' },
+        el('div', { class: 'section-header' }, 'Database'),
+        el('div', { class: 'section-body' },
+          kvRow('mar.db', formatBytes(d.dbSizeBytes)),
+          kvRow('WAL', formatBytes(d.walSizeBytes)),
+        ),
+      )
+    );
+
     const businessRows = (d.entities || []).map((e) =>
       clickableRow(e.name, e.rowCount + ' rows', () => browseEntity(e.name))
     );
-    const businessBody = businessRows.length > 0
-      ? [...sizeRows, ...businessRows]
-      : [...sizeRows, el('div', { class: 'empty' }, 'no entities')];
+    sections.push(
+      el('div', { class: 'section' },
+        el('div', { class: 'section-header' }, 'Tables'),
+        el('div', { class: 'section-body' },
+          ...(businessRows.length > 0
+            ? businessRows
+            : [el('div', { class: 'empty' }, 'no tables')]),
+        ),
+      )
+    );
 
-    // Lower section: framework-managed tables (_mar_*). Same shape,
-    // separate header so framework noise doesn't crowd the user's
-    // own model. Row browser still works on them via the same
-    // listEntityRows endpoint — useful for poking at admin sessions
-    // / migration history during debugging.
+    // Framework section only renders when there's something to show.
+    // Row browser still works on these via the same listEntityRows
+    // endpoint — useful for poking at admin sessions / migration
+    // history during debugging.
     const frameworkRows = (d.frameworkTables || []).map((e) =>
       clickableRow(e.name, e.rowCount + ' rows', () => browseEntity(e.name))
     );
-
-    const sections = [
-      el('div', { class: 'section' },
-        el('div', { class: 'section-header' }, 'Database'),
-        el('div', { class: 'section-body' }, ...businessBody),
-      ),
-    ];
     if (frameworkRows.length > 0) {
       sections.push(
         el('div', { class: 'section' },
