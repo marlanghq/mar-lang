@@ -72,6 +72,9 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "admin" {
 		os.Exit(runRuntimeAdmin(os.Args[2:]))
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "backup" {
+		os.Exit(runRuntimeBackup(os.Args[2:]))
+	}
 	if err := runEmbeddedOrArg(); err != nil {
 		fmt.Fprintln(os.Stderr, diag.Format(err))
 		os.Exit(1)
@@ -189,6 +192,19 @@ func formatDurationApprox(d time.Duration) string {
 // development scenario. Production always goes through the
 // extract-bundle branch.
 func loadRuntimeManifest() (*project.Manifest, string, error) {
+	return loadRuntimeManifestWith(true /*resolveEnv*/)
+}
+
+// loadRuntimeManifestWith mirrors loadRuntimeManifest but lets the
+// caller skip env:VAR resolution. Used by `mar-runtime backup` —
+// backup just snapshots the DB + copies mar.json verbatim, so the
+// env vars don't need to be in scope. Admin list keeps the default
+// resolve=true (production runtime where vars are set anyway).
+func loadRuntimeManifestWith(resolveEnv bool) (*project.Manifest, string, error) {
+	load := project.LoadManifest
+	if !resolveEnv {
+		load = project.LoadManifestStructure
+	}
 	exePath, err := os.Executable()
 	if err == nil {
 		bundle, loadErr := appbundle.LoadExecutable(exePath)
@@ -200,7 +216,7 @@ func loadRuntimeManifest() (*project.Manifest, string, error) {
 			if err := appbundle.ExtractToDir(bundle, tmp); err != nil {
 				return nil, "", err
 			}
-			m, err := project.LoadManifest(tmp)
+			m, err := load(tmp)
 			if err != nil {
 				return nil, "", err
 			}
@@ -213,7 +229,7 @@ func loadRuntimeManifest() (*project.Manifest, string, error) {
 		// args layout: mar-runtime admin list [dir]
 		dir = os.Args[3]
 	}
-	m, err := project.LoadManifest(dir)
+	m, err := load(dir)
 	if err != nil {
 		return nil, "", err
 	}

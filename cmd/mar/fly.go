@@ -144,6 +144,11 @@ func runFly(args []string) int {
 		// "admin" are the admin subcommand + its args; we re-parse
 		// here rather than in runFly so the help text stays scoped.
 		return runFlyAdmin(args[1:])
+	case "backup":
+		// `mar fly backup` — pull a Level-2 restorable bundle
+		// (metadata.json + mar.json + mar.db) from the running Fly
+		// machine. Bundle is timestamped and lands in ./backups/.
+		return runFlyBackup(path)
 	default:
 		fprintError("mar fly: unknown subcommand %q", sub)
 		fmt.Fprintln(os.Stderr)
@@ -165,6 +170,8 @@ Commands:
   status     Show app + machine status.
   admin      Inspect production admin state (read-only); see
              "mar fly admin --help".
+  backup     Pull a restorable bundle (mar.db + mar.json + metadata)
+             from the running machine into ./backups/.
   destroy    Destroy the fly app and its volume. Asks for confirmation
              twice — destructive.
 
