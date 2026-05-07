@@ -304,20 +304,43 @@
           el('div', { class: 'empty' }, 'unavailable')));
     }
     const d = state.db;
-    const rows = [];
-    rows.push(kvRow('mar.db', formatBytes(d.dbSizeBytes)));
-    rows.push(kvRow('WAL', formatBytes(d.walSizeBytes)));
-    if (d.entities && d.entities.length) {
-      for (const e of d.entities) {
-        rows.push(clickableRow(e.name, e.rowCount + ' rows', () => browseEntity(e.name)));
-      }
-    } else {
-      rows.push(el('div', { class: 'empty' }, 'no entities'));
-    }
-    return el('div', { class: 'section' },
-      el('div', { class: 'section-header' }, 'Database'),
-      el('div', { class: 'section-body' }, ...rows),
+
+    // Top section: file sizes + business entities.
+    const sizeRows = [
+      kvRow('mar.db', formatBytes(d.dbSizeBytes)),
+      kvRow('WAL', formatBytes(d.walSizeBytes)),
+    ];
+    const businessRows = (d.entities || []).map((e) =>
+      clickableRow(e.name, e.rowCount + ' rows', () => browseEntity(e.name))
     );
+    const businessBody = businessRows.length > 0
+      ? [...sizeRows, ...businessRows]
+      : [...sizeRows, el('div', { class: 'empty' }, 'no entities')];
+
+    // Lower section: framework-managed tables (_mar_*). Same shape,
+    // separate header so framework noise doesn't crowd the user's
+    // own model. Row browser still works on them via the same
+    // listEntityRows endpoint — useful for poking at admin sessions
+    // / migration history during debugging.
+    const frameworkRows = (d.frameworkTables || []).map((e) =>
+      clickableRow(e.name, e.rowCount + ' rows', () => browseEntity(e.name))
+    );
+
+    const sections = [
+      el('div', { class: 'section' },
+        el('div', { class: 'section-header' }, 'Database'),
+        el('div', { class: 'section-body' }, ...businessBody),
+      ),
+    ];
+    if (frameworkRows.length > 0) {
+      sections.push(
+        el('div', { class: 'section' },
+          el('div', { class: 'section-header' }, 'Framework tables'),
+          el('div', { class: 'section-body' }, ...frameworkRows),
+        )
+      );
+    }
+    return el('div', null, ...sections);
   }
 
   function renderRequestsSection() {

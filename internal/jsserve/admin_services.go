@@ -231,19 +231,21 @@ func handleAdminDBStats(w http.ResponseWriter, r *http.Request) {
 
 	dbSize, walSize := dbFileSizes()
 
-	// All entities the runtime knows about (user-defined plus the
-	// framework's _mar_admin_* tables which are visible because we
-	// list them via PRAGMA table_list rather than VEntity.Registry).
+	// Two buckets: user-defined entities (the business model) and
+	// framework-managed tables (auth, admin, schema migrations —
+	// everything under the reserved _mar_ prefix). The panel
+	// renders them as separate sub-groups so framework noise doesn't
+	// drown out the operator's own tables.
 	type stat struct {
 		Name     string `json:"name"`
 		RowCount int    `json:"rowCount"`
 	}
 	tables := listTables(db)
-	stats := make([]stat, 0, len(tables))
+	business := make([]stat, 0, len(tables))
+	framework := make([]stat, 0)
 	for _, t := range tables {
-		// Skip SQLite's internal tables (sqlite_*) — never useful in
-		// the admin browser and noisy. Keep _mar_* (framework tables)
-		// since the panel can browse them read-only.
+		// Skip SQLite's internal tables (sqlite_*) entirely —
+		// never useful in the admin browser, just noise.
 		if strings.HasPrefix(t, "sqlite_") {
 			continue
 		}
@@ -254,12 +256,18 @@ func handleAdminDBStats(w http.ResponseWriter, r *http.Request) {
 		if err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, t)).Scan(&n); err != nil {
 			continue
 		}
-		stats = append(stats, stat{Name: t, RowCount: n})
+		row := stat{Name: t, RowCount: n}
+		if strings.HasPrefix(t, "_mar_") {
+			framework = append(framework, row)
+		} else {
+			business = append(business, row)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"dbSizeBytes":  dbSize,
-		"walSizeBytes": walSize,
-		"entities":     stats,
+		"dbSizeBytes":     dbSize,
+		"walSizeBytes":    walSize,
+		"entities":        business,
+		"frameworkTables": framework,
 	})
 }
 

@@ -3,6 +3,7 @@ package jsserve
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,12 +67,21 @@ func TestAdminServerInfo_RequiresAuth(t *testing.T) {
 	resp.Body.Close()
 }
 
-// TestAdminDBStats_IncludesAdmins — the framework's own _mar_admins
-// table shows up in the stats with the expected row count.
-func TestAdminDBStats_IncludesAdmins(t *testing.T) {
+// TestAdminDBStats_SeparatesFrameworkFromBusiness — _mar_* tables
+// land in `frameworkTables`, user tables in `entities`. Lets the
+// SPA render two distinct sub-sections so framework noise doesn't
+// crowd out the operator's own model.
+func TestAdminDBStats_SeparatesFrameworkFromBusiness(t *testing.T) {
 	server, cleanup := adminTestServer(t, []string{"a@x.com", "b@x.com"})
 	defer cleanup()
 	client := server.Client()
+
+	// Add a non-framework table to confirm the split — admin test
+	// server only seeds _mar_admin_* tables; without something
+	// user-flavored, `entities` would always be empty.
+	db, _ := runtime.OpenDB()
+	_, _ = db.Exec(`CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)`)
+	_, _ = db.Exec(`INSERT INTO notes (id, body) VALUES (1, 'hello')`)
 
 	// Sign in.
 	out := captureStdout(t, func() {
@@ -96,23 +106,49 @@ func TestAdminDBStats_IncludesAdmins(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
+
+	// Business: should contain `notes` (user-defined), no _mar_*.
 	entities, ok := got["entities"].([]any)
 	if !ok {
-		t.Fatalf("entities is not a list: %T", got["entities"])
+		t.Fatalf("entities not a list: %T", got["entities"])
 	}
-	var found bool
+	var notesFound bool
 	for _, e := range entities {
+		name, _ := e.(map[string]any)["name"].(string)
+		if strings.HasPrefix(name, "_mar_") {
+			t.Errorf("entities should NOT contain framework tables; found %q", name)
+		}
+		if name == "notes" {
+			notesFound = true
+		}
+	}
+	if !notesFound {
+		t.Errorf("expected `notes` in entities; got %v", entities)
+	}
+
+	// Framework: should contain _mar_admins (with rowCount 2 from
+	// the seeded admins), no business tables.
+	frameworkTables, ok := got["frameworkTables"].([]any)
+	if !ok {
+		t.Fatalf("frameworkTables not a list: %T", got["frameworkTables"])
+	}
+	var adminsFound bool
+	for _, e := range frameworkTables {
 		ent, _ := e.(map[string]any)
-		if ent["name"] == "_mar_admins" {
-			found = true
+		name, _ := ent["name"].(string)
+		if !strings.HasPrefix(name, "_mar_") {
+			t.Errorf("frameworkTables should only contain _mar_* tables; found %q", name)
+		}
+		if name == "_mar_admins" {
+			adminsFound = true
 			rc, _ := ent["rowCount"].(float64)
 			if int(rc) != 2 {
 				t.Errorf("_mar_admins rowCount: got %v, want 2", rc)
 			}
 		}
 	}
-	if !found {
-		t.Errorf("expected _mar_admins in entities; got %v", entities)
+	if !adminsFound {
+		t.Errorf("expected _mar_admins in frameworkTables; got %v", frameworkTables)
 	}
 }
 
