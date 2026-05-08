@@ -64,7 +64,7 @@ func BuildIOS(entry, distDir, baseURLOverride, marVersion string) error {
 	}
 	if baseURL == "" {
 		fmt.Fprintln(os.Stderr,
-			"warn: ios.serverUrl is not set in mar.json. The generated app will")
+			"Warn: ios.serverUrl is not set in mar.json. The generated app will")
 		fmt.Fprintln(os.Stderr,
 			"      default to http://localhost:3000 in DEBUG (with Bonjour discovery)")
 		fmt.Fprintln(os.Stderr,

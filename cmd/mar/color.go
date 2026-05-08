@@ -135,6 +135,15 @@ func hintPrefix() string {
 	return colorYellow("Hint:")
 }
 
+// warnPrefix is the standard "this looks off, but we're proceeding"
+// prefix for non-fatal warnings. Bold yellow — same color family as
+// Hint: (both yellow per cli-style.md §3) since both are recoverable
+// signals; the difference is that Warn: surfaces something the
+// runtime detected, while Hint: nudges the user toward a next step.
+func warnPrefix() string {
+	return colorYellow("Warn:")
+}
+
 // fprintError writes a formatted error to stderr with the standard
 // red `Error:` prefix. Format args are printed plain — color the
 // caller-provided strings explicitly via colorMagenta / colorCyan
@@ -147,4 +156,11 @@ func fprintError(format string, args ...any) {
 // any inline coloring of the hint body (path, command, etc.).
 func fprintHint(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "%s %s\n", hintPrefix(), fmt.Sprintf(format, args...))
+}
+
+// fprintWarn writes a warning line to stderr with the standard
+// yellow `Warn:` prefix. For "this is probably wrong but we're
+// going to keep running" signals.
+func fprintWarn(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "%s %s\n", warnPrefix(), fmt.Sprintf(format, args...))
 }

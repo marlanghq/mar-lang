@@ -154,7 +154,7 @@ func warnIfNoAdmins(projectDir string) {
 	// blank.
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr,
-		"warn: building for production with no admins configured.")
+		"Warn: building for production with no admins configured.")
 	fmt.Fprintln(os.Stderr,
 		"      the admin panel at /_mar/admin will be inaccessible.")
 	fmt.Fprintln(os.Stderr,

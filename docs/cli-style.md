@@ -107,7 +107,7 @@ its role" dilutes the signal — readers stop trusting the cue.
 |-------------|-------------------------------------------------------------------------------|----------------------------------------------------------------|
 | **red**     | Errors, dangerous actions, destructive confirmations                          | `Error:`, `mar fly destroy` warnings, failed validation        |
 | **green**   | **Executables** — commands the user should run                                | `mar admin add YOUR_EMAIL`, `mar fly deploy`, `lsof -ti:3000`  |
-| **yellow**  | Hints, recoverable warnings, "did you mean" suggestions                       | `Hint:`, `warn:`, missing-config nudges                        |
+| **yellow**  | Hints, recoverable warnings, "did you mean" suggestions                       | `Hint:`, `Warn:`, missing-config nudges                        |
 | **cyan**    | **Links and addressable identifiers** — URLs, paths in URLs, emails, names    | `http://localhost:3000`, `/_mar/admin`, emails, app names, region codes |
 | **magenta** | **Paths and config keys** — file paths, env vars, db tables, config slots    | `mar.json`, `_mar_admins`, `env:SESSION_SECRET`, `mar.json["server"]["port"]` |
 | **bold**    | Section headers, key labels                                                   | `Fly app name`, `Next steps:`, `Press Enter to use:`           |
