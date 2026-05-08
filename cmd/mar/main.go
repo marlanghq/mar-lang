@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"mar/internal/admin"
 	"mar/internal/apphost"
 	"mar/internal/ast"
 	"mar/internal/diag"
@@ -512,7 +514,8 @@ func runDev(path string) int {
 	// first use. ResolveDatabasePath honors MAR_DATABASE_PATH (override
 	// for production deploys) and resolves relative paths against the
 	// project directory so `./notes.db` lands next to Main.mar.
-	if dbPath, _ := project.ResolveDatabasePath(manifest, projectDir); dbPath != "" {
+	dbPath, _ := project.ResolveDatabasePath(manifest, projectDir)
+	if dbPath != "" {
 		runtime.SetDBPath(dbPath)
 	}
 
@@ -534,6 +537,22 @@ func runDev(path string) int {
 	}
 	jsserve.SetAdminBuildInfo(version)
 	jsserve.SetAdminRequestBufferSize(project.ResolvedRecentRequestsSize(manifest))
+
+	// Auto-backup scheduler — periodic VACUUM INTO into a catalog
+	// directory alongside mar.db. No-op when the manifest disables
+	// it (`database.autoBackup.enabled: false`) or when there's no
+	// database configured. Runs in dev too so the developer sees
+	// the catalog grow alongside their app — same code path as
+	// production, no surprises at deploy time.
+	if dbPath != "" {
+		db, openErr := runtime.OpenDB()
+		if openErr == nil {
+			admin.MaybeStartAutoBackup(
+				context.Background(),
+				db, manifest, projectDir, dbPath, version,
+			)
+		}
+	}
 
 	lp := &jsserve.LiveProgram{}
 	lp.SetDevMode(true)

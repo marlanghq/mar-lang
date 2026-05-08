@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -352,6 +353,14 @@ func runFromPath(path string) error {
 		if len(desired) == 0 {
 			fmt.Fprintln(os.Stderr, "mar: admin panel locked (no admins in mar.json) — /_mar/admin will reject all logins.")
 		}
+
+		// Auto-backup scheduler — runs in the background for the
+		// process lifetime. No-op when disabled or no DB. The
+		// goroutine inherits this binary's stderr for status logs.
+		admin.MaybeStartAutoBackup(
+			context.Background(),
+			db, manifest, projectDir, dbPath, "dev",
+		)
 	}
 
 	lp := &jsserve.LiveProgram{}
