@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -159,10 +160,63 @@ func runBuild(args []string) int {
 		return 2
 	}
 	if err := scaffold.Build(entry, outDir, target); err != nil {
-		fmt.Fprintln(os.Stderr, diag.Format(err))
+		// Production-config errors get a hand-formatted block (blanks
+		// + colors). Any other error goes through the regular diag
+		// path.
+		var pcErr *scaffold.ProductionConfigError
+		if errors.As(err, &pcErr) {
+			printProductionConfigError(pcErr)
+		} else {
+			fmt.Fprintln(os.Stderr, diag.Format(err))
+		}
 		return 1
 	}
 	return 0
+}
+
+// printProductionConfigError pretty-prints the missing-config error
+// from `mar build --target=<production>` with the cli-style.md §3
+// palette. Multi-line block, blanks before/after (one-shot exit).
+//
+// Color choices (matching cli-style.md):
+//   bold     section headers ("Add to mar.json:", "Notes:")
+//   green    sample commands (mar fly provision, fly secrets set)
+//   magenta  filesystem paths and config keys (mar.json, env:VAR)
+//   cyan     file refs / addressable identifiers
+//   yellow   the headline "warning" verb (production build requires)
+func printProductionConfigError(e *scaffold.ProductionConfigError) {
+	fmt.Fprintln(os.Stderr)
+	fprintError("production build requires auth and mail config in %s.",
+		colorMagenta("mar.json"))
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr,
+		"Your project uses "+colorGreen("Auth.config")+
+			" which sends sign-in emails. The runtime")
+	fmt.Fprintln(os.Stderr,
+		"needs persistent secrets and a real SMTP provider in production —")
+	fmt.Fprintln(os.Stderr,
+		"without them, every sign-in attempt would fail.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, colorBold("Add to "+colorMagenta("mar.json")+":"))
+	fmt.Fprintln(os.Stderr)
+	for _, line := range e.Missing {
+		fmt.Fprintln(os.Stderr, "  "+colorMagenta(line))
+	}
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, colorBold("Notes:"))
+	fmt.Fprintln(os.Stderr,
+		"  - "+colorMagenta("smtpPort")+" is optional, defaults to "+colorCyan("587")+
+			" (works with Resend, SendGrid,")
+	fmt.Fprintln(os.Stderr,
+		"    Mailgun, AWS SES, Postmark, Brevo, Mailjet, …).")
+	fmt.Fprintln(os.Stderr,
+		"  - "+colorMagenta("sessionSecret")+" and "+colorMagenta("smtpPassword")+
+			" MUST be "+colorMagenta("env:VAR_NAME")+" — set the")
+	fmt.Fprintln(os.Stderr,
+		"    actual values via "+colorGreen("mar fly provision")+
+			" (or "+colorGreen("fly secrets set")+" for")
+	fmt.Fprintln(os.Stderr, "    bare fly deploys).")
+	fmt.Fprintln(os.Stderr)
 }
 
 const buildUsage = `Usage: mar build [--target <T>] [--out <dir>] [--base-url <url>] [path]

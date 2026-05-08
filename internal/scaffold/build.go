@@ -161,15 +161,45 @@ func warnIfNoAdmins(projectDir string) {
 		"      run `mar admin add YOUR_EMAIL` if you want admin access in production.")
 }
 
+// ProductionConfigError is the structured error returned by
+// validateProductionConfig when mar.json is missing required
+// production fields. The CLI catches this specifically so it can
+// format the message with colors + blank lines per cli-style.md;
+// other callers (tests, library use) can call .Error() to get a
+// plain-text rendering without ANSI escapes.
+type ProductionConfigError struct {
+	// Missing is the list of mar.json fragments the user needs to
+	// add. Each entry is a JSON-shaped suggestion ready to paste.
+	Missing []string
+}
+
+func (e *ProductionConfigError) Error() string {
+	return fmt.Sprintf(`production build requires auth and mail config in mar.json.
+
+Your project uses Auth.config which sends sign-in emails. The runtime
+needs persistent secrets and a real SMTP provider in production —
+without them, every sign-in attempt would fail.
+
+Add to mar.json:
+
+  %s
+
+Notes:
+  - smtpPort is optional, defaults to 587 (works with Resend, SendGrid,
+    Mailgun, AWS SES, Postmark, Brevo, Mailjet, …).
+  - sessionSecret and smtpPassword MUST be env:VAR_NAME — set the
+    actual values via 'mar fly provision' (or 'fly secrets set' for
+    bare fly deploys).`, strings.Join(e.Missing, "\n  "))
+}
+
 // validateProductionConfig asserts the project's mar.json carries
 // the configuration the chosen runtime features need. Today
 // validates auth, mail, and the framework admin panel; other
 // features (Stripe, Twilio, etc.) would register their own
 // validators here.
 //
-// Errors are formatted as deployment-ready hints — the operator
-// shouldn't have to run extra commands to figure out what to add
-// to mar.json.
+// Returns *ProductionConfigError when mar.json needs additions.
+// Returns a plain error for unrelated I/O / parse problems.
 func validateProductionConfig(projectDir string) error {
 	// LoadManifestStructure reads without env-resolving — fly
 	// secrets aren't visible at build time, but we don't need
@@ -222,22 +252,7 @@ func validateProductionConfig(projectDir string) error {
 	if len(missing) == 0 {
 		return nil
 	}
-	return fmt.Errorf(`production build requires auth and mail config in mar.json.
-
-Your project uses Auth.config which sends sign-in emails. The runtime
-needs persistent secrets and a real SMTP provider in production —
-without them, every sign-in attempt would 503.
-
-Add to mar.json:
-
-  %s
-
-Notes:
-  - smtpPort is optional, defaults to 587 (works with Resend, SendGrid,
-    Mailgun, AWS SES, Postmark, Brevo, Mailjet, …).
-  - sessionSecret and smtpPassword MUST be env:VAR_NAME — set the
-    actual values via 'mar fly provision' (or 'fly secrets set' for
-    bare fly deploys).`, strings.Join(missing, "\n  "))
+	return &ProductionConfigError{Missing: missing}
 }
 
 // buildFrontendDist writes the static asset bundle for App.frontend
