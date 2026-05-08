@@ -3290,6 +3290,11 @@
         console.error(e);
         const root = document.getElementById('mar-root');
         if (root) {
+          // Wipe the boot placeholder (and anything else) so the
+          // error message stands alone — otherwise "Loading…" stays
+          // stacked above the red error which reads like a fresh
+          // load is still in progress.
+          while (root.firstChild) root.removeChild(root.firstChild);
           const pre = document.createElement('pre');
           pre.style.color = '#b00';
           pre.textContent = String(e && e.message || e);

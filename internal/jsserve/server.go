@@ -232,7 +232,43 @@ const pageHTML = `<!doctype html>
 </style>
 </head>
 <body>
-<div id="mar-root"></div>
+<div id="mar-root">
+  <!-- Boot placeholder. The runtime's first render replaces #mar-root's
+       children, so this disappears naturally once marRun mounts the
+       user's page. Animated in after a 200ms delay so fast cold starts
+       (sub-200ms total) never show it — the placeholder only appears
+       when the user would otherwise be staring at a blank page. -->
+  <div class="mar-boot-loading" aria-label="Loading">
+    <div class="mar-boot-spinner" aria-hidden="true"></div>
+    <div class="mar-boot-label">Loading…</div>
+  </div>
+</div>
+<style>
+  .mar-boot-loading {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 0.75rem;
+    color: var(--fg-muted, #666);
+    font-size: 14px;
+    opacity: 0;
+    animation: mar-boot-fade-in 0.3s ease-out 0.2s forwards;
+    pointer-events: none;
+  }
+  .mar-boot-spinner {
+    width: 28px; height: 28px;
+    border: 2px solid var(--border, #e2e2e2);
+    border-top-color: var(--accent, #2563eb);
+    border-radius: 50%%;
+    animation: mar-boot-spin 0.8s linear infinite;
+  }
+  @keyframes mar-boot-fade-in { to { opacity: 1; } }
+  @keyframes mar-boot-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .mar-boot-spinner { animation: none; }
+    .mar-boot-loading { animation-delay: 0s; }
+  }
+</style>
 <script type="application/json" id="mar-program">%s</script>
 <script src="/_mar/runtime.js"></script>
 <script>
