@@ -184,12 +184,12 @@ Add to mar.json:
 
   %s
 
-Notes:
-  - smtpPort is optional, defaults to 587 (works with Resend, SendGrid,
-    Mailgun, AWS SES, Postmark, Brevo, Mailjet, …).
-  - sessionSecret and smtpPassword MUST be env:VAR_NAME — set the
-    actual values via 'mar fly provision' (or 'fly secrets set' for
-    bare fly deploys).`, strings.Join(e.Missing, "\n  "))
+Hint: smtpPort is optional and defaults to 587 (Resend, SendGrid,
+      Mailgun, AWS SES, Postmark, Brevo, Mailjet all use it).
+
+Hint: sessionSecret and smtpPassword MUST be env:VAR_NAME — set
+      the values via 'mar fly provision' (or 'fly secrets set'
+      for bare fly deploys).`, strings.Join(e.Missing, "\n  "))
 }
 
 // validateProductionConfig asserts the project's mar.json carries
@@ -229,7 +229,18 @@ func validateProductionConfig(projectDir string) error {
 	// until SMTP is configured (logged at boot).
 	if authInUse {
 		if manifest == nil || manifest.Mail == nil {
-			missing = append(missing, `"mail": { "from": "...", "smtpHost": "...", "smtpUsername": "...", "smtpPassword": "env:SMTP_PASSWORD" }`)
+			// Multi-line JSON snippet so the operator can paste
+			// directly into mar.json. The cmd/mar formatter adds
+			// 2 spaces of left padding on each line, so the JSON
+			// here uses 2-space inner indent (printed: 4) and
+			// no indent for the closing brace (printed: 2) —
+			// matches typical mar.json formatting.
+			missing = append(missing, `"mail": {
+  "from": "...",
+  "smtpHost": "...",
+  "smtpUsername": "...",
+  "smtpPassword": "env:SMTP_PASSWORD"
+}`)
 		} else {
 			var partial []string
 			if manifest.Mail.From == "" {

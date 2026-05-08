@@ -179,11 +179,14 @@ func runBuild(args []string) int {
 // palette. Multi-line block, blanks before/after (one-shot exit).
 //
 // Color choices (matching cli-style.md):
-//   bold     section headers ("Add to mar.json:", "Notes:")
+//   bold     section headers ("Add to mar.json:")
 //   green    sample commands (mar fly provision, fly secrets set)
 //   magenta  filesystem paths and config keys (mar.json, env:VAR)
-//   cyan     file refs / addressable identifiers
-//   yellow   the headline "warning" verb (production build requires)
+//   cyan     literal numbers (587)
+//   yellow   "Hint:" prefix (via fprintHint)
+//
+// JSON suggestions are emitted multi-line so the operator can paste
+// straight into mar.json without having to reformat.
 func printProductionConfigError(e *scaffold.ProductionConfigError) {
 	fmt.Fprintln(os.Stderr)
 	fprintError("production build requires auth and mail config in %s.",
@@ -200,22 +203,31 @@ func printProductionConfigError(e *scaffold.ProductionConfigError) {
 	fmt.Fprintln(os.Stderr, colorBold("Add to "+colorMagenta("mar.json")+":"))
 	fmt.Fprintln(os.Stderr)
 	for _, line := range e.Missing {
-		fmt.Fprintln(os.Stderr, "  "+colorMagenta(line))
+		// e.Missing entries may themselves be multi-line (the mail
+		// JSON block). Indent the first line by 2; subsequent lines
+		// already carry their own formatting from the source.
+		for i, sub := range strings.Split(line, "\n") {
+			if i == 0 {
+				fmt.Fprintln(os.Stderr, "  "+colorMagenta(sub))
+			} else {
+				fmt.Fprintln(os.Stderr, "  "+colorMagenta(sub))
+			}
+		}
 	}
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, colorBold("Notes:"))
-	fmt.Fprintln(os.Stderr,
-		"  - "+colorMagenta("smtpPort")+" is optional, defaults to "+colorCyan("587")+
-			" (works with Resend, SendGrid,")
-	fmt.Fprintln(os.Stderr,
-		"    Mailgun, AWS SES, Postmark, Brevo, Mailjet, …).")
-	fmt.Fprintln(os.Stderr,
-		"  - "+colorMagenta("sessionSecret")+" and "+colorMagenta("smtpPassword")+
-			" MUST be "+colorMagenta("env:VAR_NAME")+" — set the")
-	fmt.Fprintln(os.Stderr,
-		"    actual values via "+colorGreen("mar fly provision")+
-			" (or "+colorGreen("fly secrets set")+" for")
-	fmt.Fprintln(os.Stderr, "    bare fly deploys).")
+	// Hints follow the cli-style.md pattern: "Hint:" yellow, body plain
+	// with continuation indented to align under the colon. Two separate
+	// hints — separate concerns, easier to skim.
+	fprintHint("%s is optional and defaults to %s (Resend, SendGrid,",
+		colorMagenta("smtpPort"), colorCyan("587"))
+	fmt.Fprintln(os.Stderr, "      Mailgun, AWS SES, Postmark, Brevo, Mailjet all use it).")
+	fmt.Fprintln(os.Stderr)
+	fprintHint("%s and %s MUST be %s — set",
+		colorMagenta("sessionSecret"), colorMagenta("smtpPassword"),
+		colorMagenta("env:VAR_NAME"))
+	fmt.Fprintf(os.Stderr, "      the values via %s (or %s\n",
+		colorGreen("mar fly provision"), colorGreen("fly secrets set"))
+	fmt.Fprintln(os.Stderr, "      for bare fly deploys).")
 	fmt.Fprintln(os.Stderr)
 }
 
