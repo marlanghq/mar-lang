@@ -49,6 +49,12 @@ const (
 	ansiCyan    = "\x1b[36m"
 	ansiMagenta = "\x1b[35m"
 
+	// Dim — 256-color medium-dark gray (~40% from black). Replaces
+	// the standard `\x1b[2m` (faint) attribute which renders too
+	// lightly on many terminal themes. Matches the banner's choice
+	// in internal/jsserve/banner.go.
+	ansiDim = "\x1b[38;5;240m"
+
 	// Bright variants — used when we want emphasis stronger than
 	// the dim default red on a dark terminal. The lispy version
 	// favored these; we follow.
@@ -111,6 +117,10 @@ func colorMagenta(s string) string { return wrap(ansiBoldMagenta, s) }
 
 // Emphasis.
 func colorBold(s string) string { return wrap(ansiBold, s) }
+
+// Auxiliary / status text that isn't itself a value (per cli-style
+// §3 "dim" row): labels, descriptive prose, status descriptors.
+func colorDim(s string) string { return wrap(ansiDim, s) }
 
 // errorPrefix is the standard "command-failed" prefix used at the
 // start of stderr error messages. Bold red when colors are on,

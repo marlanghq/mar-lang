@@ -198,7 +198,9 @@ func flyUsage() string {
 		"             twice — destructive.\n" +
 		"\n" +
 		hdr("Typical first-deploy flow:") + "\n" +
-		"  " + cmd("mar fly init && mar fly provision && mar fly deploy") + "\n" +
+		"  1. " + cmd("mar fly init") + "       Generate the Dockerfile + fly.toml\n" +
+		"  2. " + cmd("mar fly provision") + "  Create the app + volume on Fly\n" +
+		"  3. " + cmd("mar fly deploy") + "     Build + ship\n" +
 		"\n" +
 		hdr("Subsequent deploys:") + "\n" +
 		"  " + cmd("mar fly deploy")
@@ -223,6 +225,18 @@ func runFlyInit(path string) int {
 		fprintError("mar fly init: mar.json is missing the %s field — required to derive the Fly app name",
 			colorMagenta("name"))
 		return 1
+	}
+	// Init itself only writes templates locally — doesn't need the
+	// fly CLI. But every SUBSEQUENT step (provision, deploy, logs,
+	// etc.) does. Warn at init time so the user knows to install
+	// fly before they get blocked at step 2.
+	if _, err := exec.LookPath("fly"); err != nil {
+		fmt.Println()
+		fprintHint("the %s CLI is not installed. %s only writes local files,",
+			colorGreen("fly"), colorGreen("mar fly init"))
+		fmt.Fprintf(os.Stderr, "      but %s and %s need it. Install before step 2:\n",
+			colorGreen("provision"), colorGreen("deploy"))
+		fmt.Fprintf(os.Stderr, "      %s\n", colorCyan("https://fly.io/docs/flyctl/install/"))
 	}
 
 	flyDir := filepath.Join(projectDir, "deploy", "fly")
@@ -627,10 +641,10 @@ func promptFlyAppName(defaultName string) (string, error) {
 	}
 
 	fmt.Println()
-	fmt.Println("Fly app name")
-	fmt.Println("  This is the name your app will have on fly.io.")
-	fmt.Printf("  Press Enter to use: %s\n", colorCyan(defaultName))
-	fmt.Print("  Fly app name? ")
+	fmt.Println(colorBold("Fly app name"))
+	fmt.Printf("  %s\n", colorDim("This is the name your app will have on fly.io."))
+	fmt.Printf("  %s %s\n", colorDim("Press Enter to use:"), colorCyan(defaultName))
+	fmt.Print("  " + colorBold("Fly app name?") + " ")
 
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
@@ -667,7 +681,7 @@ func promptFlyRegion() (flyRegion, error) {
 
 	fmt.Println()
 	fmt.Println(colorBold("Fly region"))
-	fmt.Println("  Pick the region closest to your users, then enter its code.")
+	fmt.Printf("  %s\n", colorDim("Pick the region closest to your users, then enter its code."))
 	fmt.Println()
 	// Headers in bold so they stand out from the data rows; pad
 	// BEFORE coloring so ANSI escape bytes don't count toward the
@@ -691,7 +705,7 @@ func promptFlyRegion() (flyRegion, error) {
 
 	reader := bufio.NewReader(os.Stdin)
 	for {
-		fmt.Print("\n  Region code? ")
+		fmt.Print("\n  " + colorBold("Region code?") + " ")
 		line, err := reader.ReadString('\n')
 		if err != nil && strings.TrimSpace(line) == "" {
 			return flyRegion{}, err
@@ -701,8 +715,10 @@ func promptFlyRegion() (flyRegion, error) {
 		if ok {
 			return region, nil
 		}
-		fmt.Printf("\n  Invalid Fly region %q\n", code)
-		fmt.Println("  Hint: enter one of the codes listed above (e.g. gru, iad, fra).")
+		fmt.Println()
+		fprintError("Invalid Fly region %q", code)
+		fprintHint("enter one of the codes listed above (e.g. %s, %s, %s).",
+			colorCyan("gru"), colorCyan("iad"), colorCyan("fra"))
 	}
 }
 
@@ -739,18 +755,17 @@ func promptFlyAppMemory() (string, error) {
 
 	fmt.Println()
 	fmt.Println(colorBold("App memory"))
-	fmt.Println("  Smaller values cost less, but give the app less headroom.")
-	fmt.Println("  Choose app memory:")
+	fmt.Printf("  %s\n", colorDim("Smaller values cost less, but give the app less headroom."))
 	for i, option := range flyAppMemoryOptions {
-		label := option
 		if option == defaultFlyAppMemory {
-			label += " (default)"
+			fmt.Printf("    %d. %s %s\n", i+1, colorCyan(option), colorDim("(default)"))
+		} else {
+			fmt.Printf("    %d. %s\n", i+1, colorCyan(option))
 		}
-		fmt.Printf("    %d. %s\n", i+1, label)
 	}
 	reader := bufio.NewReader(os.Stdin)
 	for {
-		fmt.Print("\n  App memory? ")
+		fmt.Print("\n  " + colorBold("App memory?") + " ")
 		line, err := reader.ReadString('\n')
 		if err != nil && strings.TrimSpace(line) == "" {
 			return "", err
@@ -768,7 +783,8 @@ func promptFlyAppMemory() (string, error) {
 			idx >= 1 && idx <= len(flyAppMemoryOptions) {
 			return flyAppMemoryOptions[idx-1], nil
 		}
-		fmt.Println("  Choose one of the listed options (e.g. 1, 2, 512mb, 1gb).")
+		fprintHint("choose one of the listed options (e.g. %s, %s, %s).",
+			colorCyan("1"), colorCyan("512mb"), colorCyan("1gb"))
 	}
 }
 
@@ -941,7 +957,14 @@ func flySuggestion(sub, path string) string {
 func requireFlyCLI() (string, error) {
 	exe, err := exec.LookPath("fly")
 	if err != nil {
-		return "", fmt.Errorf("'fly' CLI not found in $PATH.\n\n  Install: https://fly.io/docs/flyctl/install/")
+		// Use plain text (no inline ANSI) — caller wraps this in
+		// fprintError which adds the bold-red Error: prefix; mixing
+		// ANSI inside the message body looks tacky.
+		return "", fmt.Errorf(
+			"%s CLI not found in $PATH.\n\n      Install: %s",
+			colorGreen("fly"),
+			colorCyan("https://fly.io/docs/flyctl/install/"),
+		)
 	}
 	return exe, nil
 }
