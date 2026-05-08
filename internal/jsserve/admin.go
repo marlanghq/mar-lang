@@ -85,6 +85,7 @@ func mountAdminHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/_mar/admin/api/db-stats", handleAdminDBStats)
 	mux.HandleFunc("/_mar/admin/api/recent-requests", handleAdminRecentRequests)
 	mux.HandleFunc("/_mar/admin/api/entity-rows", handleAdminEntityRows)
+	mountAdminBackupHandlers(mux)
 
 	// Catch-all — serve the SPA shell. Path "/" matches "/_mar/admin"
 	// and any sub-route the JS router renders client-side. Must be

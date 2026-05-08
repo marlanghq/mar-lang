@@ -24,7 +24,10 @@
     server: null,
     db: null,
     requests: null,
+    backups: null,            // { items: [{id, sizeBytes, createdAtMs}, ...] } | { error }
     browsing: null,           // { entity, rows, cursor, error }
+    restoreState: null,       // null | 'pending' | 'staged' | 'failed'
+    restoreMessage: '',
     error: '',
   };
 
@@ -110,16 +113,87 @@
   // -- Overview load --
 
   async function loadOverview() {
-    const [s, d, r] = await Promise.all([
+    const [s, d, r, b] = await Promise.all([
       getJSON('/_mar/admin/api/server-info'),
       getJSON('/_mar/admin/api/db-stats'),
       getJSON('/_mar/admin/api/recent-requests'),
+      getJSON('/_mar/admin/api/database-backups'),
     ]);
     setState({
       server:   s.ok ? s.body : { error: 'unavailable' },
       db:       d.ok ? d.body : { error: 'unavailable' },
       requests: r.ok ? r.body : { error: 'unavailable' },
+      backups:  b.ok ? b.body : { error: 'unavailable' },
     });
+  }
+
+  async function restoreBackup(id) {
+    const confirmed = window.confirm(
+      'Restore this backup? The current database will be moved to a ' +
+      '.bak file and the server will restart automatically.\n\n' +
+      'Any data written between now and the restart will be lost.'
+    );
+    if (!confirmed) return;
+
+    setState({ restoreState: 'pending', restoreMessage: 'Applying restore…' });
+    const r = await fetch('/_mar/admin/api/database-backup/' + encodeURIComponent(id) + '/restore', {
+      method: 'POST',
+      credentials: 'include',
+    });
+    let body = null;
+    try { body = await r.json(); } catch { /* */ }
+
+    if (r.status === 409 && body && body.error === 'schema_mismatch') {
+      setState({
+        restoreState: 'failed',
+        restoreMessage:
+          'Schema mismatch — this backup was taken against a different schema ' +
+          '(likely a migration ran since). Restore manually by deploying the ' +
+          'matching binary first.',
+      });
+      return;
+    }
+    if (!r.ok) {
+      setState({
+        restoreState: 'failed',
+        restoreMessage: 'Restore failed (' + r.status + '). See server logs.',
+      });
+      return;
+    }
+
+    setState({
+      restoreState: 'staged',
+      restoreMessage:
+        'Restore staged. The server is restarting — this page will reload when it is back.',
+    });
+    pollUntilUp();
+  }
+
+  // pollUntilUp pings /whoami every 1.5s for up to 60s after a
+  // restore. Once it gets a 200 (server is back), reloads the page
+  // so the operator sees the restored state.
+  async function pollUntilUp() {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1500));
+      try {
+        const r = await fetch('/_mar/admin/api/whoami', { credentials: 'include' });
+        if (r.ok) {
+          window.location.reload();
+          return;
+        }
+      } catch (_) { /* still down */ }
+    }
+    setState({
+      restoreState: 'failed',
+      restoreMessage: 'Server did not come back within 60s. Check fly machine status.',
+    });
+  }
+
+  async function downloadBackup(id) {
+    // Direct browser download — let the browser handle the file save
+    // dialog via Content-Disposition: attachment.
+    window.location.href = '/_mar/admin/api/database-backup/' + encodeURIComponent(id);
   }
 
   async function browseEntity(name, cursor) {
@@ -252,8 +326,59 @@
 
     sections.push(renderServerSection());
     sections.push(renderDbSection());
+    sections.push(renderBackupsSection());
     sections.push(renderRequestsSection());
     return el('div', null, ...sections);
+  }
+
+  function renderBackupsSection() {
+    if (!state.backups) return el('div', { class: 'section' });
+    if (state.backups.error) {
+      return el('div', { class: 'section' },
+        el('div', { class: 'section-header' }, 'Database backups'),
+        el('div', { class: 'section-body' },
+          el('div', { class: 'empty' }, 'unavailable')));
+    }
+    const items = state.backups.items || [];
+    const banner = state.restoreState ? renderRestoreBanner() : null;
+    if (items.length === 0) {
+      return el('div', { class: 'section' },
+        el('div', { class: 'section-header' }, 'Database backups'),
+        banner,
+        el('div', { class: 'section-body' },
+          el('div', { class: 'empty' },
+            'No backups yet. The first auto-backup runs after the configured interval.')));
+    }
+    const rows = items.map((b) => el('div', { class: 'row' },
+      el('div', null,
+        el('div', { class: 'label' }, b.id),
+        el('div', { class: 'value', style: 'font-size: 11px;' },
+          formatBytes(b.sizeBytes) + ' • ' + formatRelativeTime(b.createdAtMs)),
+      ),
+      el('div', null,
+        el('button', {
+          class: 'secondary',
+          onclick: () => restoreBackup(b.id),
+          disabled: state.restoreState === 'pending' || state.restoreState === 'staged',
+        }, 'Restore'),
+        el('button', {
+          class: 'secondary',
+          onclick: () => downloadBackup(b.id),
+        }, 'Download'),
+      ),
+    ));
+    return el('div', { class: 'section' },
+      el('div', { class: 'section-header' }, 'Database backups (' + items.length + ')'),
+      banner,
+      el('div', { class: 'section-body' }, ...rows),
+    );
+  }
+
+  function renderRestoreBanner() {
+    if (!state.restoreState) return null;
+    const cls = state.restoreState === 'failed' ? 'banner' : 'banner banner-info';
+    return el('div', { class: cls, style: 'margin: 8px 12px;' },
+      state.restoreMessage);
   }
 
   function renderTopbar() {

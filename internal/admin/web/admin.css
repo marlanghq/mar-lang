@@ -206,6 +206,10 @@ td.cell-overflow {
   margin-bottom: 12px;
   font-size: 13px;
 }
+.banner-info {
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--accent);
+}
 .hint { color: var(--muted); font-size: 13px; margin-top: 12px; text-align: center; }
 
 /* Loading state */
