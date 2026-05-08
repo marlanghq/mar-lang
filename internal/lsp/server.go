@@ -1,14 +1,15 @@
-// Package lsp implements a minimal Language Server Protocol server for
-// mar. Today it provides:
+// Package lsp implements a Language Server Protocol server for mar.
+// Capabilities:
 //
 //   - Diagnostics on open / change / save (parse + typecheck errors).
-//   - Single-file analysis. Multi-module projects fall back to whatever
-//     CheckModule can resolve from the file alone (stdlib-aware,
-//     unresolved imports show up as type errors).
+//   - Hover, go-to-definition, document symbols, find references,
+//     rename, workspace symbols.
+//   - Completion + inlay hints.
+//   - Code actions (quick fixes, refactors) and document formatting.
 //
-// Hover / completion / go-to-definition are intentionally out of scope
-// for this MVP. The protocol surface is small enough that they can be
-// added incrementally.
+// Single-file and multi-module projects are both supported; the
+// workspace is scanned eagerly so cross-file features work even before
+// every file has been opened.
 package lsp
 
 import (
@@ -158,8 +159,8 @@ func (s *Server) handle(msg *message) {
 	case "textDocument/didChange":
 		s.handleDidChange(msg)
 	case "textDocument/didSave":
-		// MVP: re-analyze on save. didChange already covers it; this is
-		// belt-and-suspenders.
+		// Re-analyze on save. didChange already covers it; this is
+		// belt-and-suspenders for editors that batch changes.
 		s.handleDidSave(msg)
 	case "textDocument/didClose":
 		s.handleDidClose(msg)
@@ -217,8 +218,7 @@ func (s *Server) handleInitialize(msg *message) {
 	// symbols can find them even before the user opens each file.
 	go s.scanWorkspace(p)
 
-	// Advertise: text sync (full content on each change), nothing else.
-	// MVP — hover / completion / definition come later.
+	// Advertise the supported capabilities.
 	s.respond(msg.ID, map[string]any{
 		"capabilities": map[string]any{
 			"textDocumentSync": map[string]any{
@@ -417,13 +417,18 @@ func (s *Server) handleHover(msg *message) {
 		return
 	}
 	// Try the bare name; for qualified names (Foo.bar), also try the
-	// final segment so hovering "Increment" in `View.button Increment`
+	// final segment so hovering "Increment" in `button [] Increment "+"`
 	// works.
 	sym, ok := idx.Symbols[name]
 	if !ok {
 		if dot := strings.LastIndex(name, "."); dot >= 0 {
 			sym, ok = idx.Symbols[name[dot+1:]]
 		}
+	}
+	// Fall back to the stdlib so framework symbols (UI.button,
+	// Auth.config, Just/Nothing/Ok/Err, etc.) get a hover too.
+	if !ok {
+		sym, ok = LookupStdlib(name)
 	}
 	if !ok {
 		s.respond(msg.ID, nil)
@@ -674,6 +679,27 @@ func (s *Server) handleWorkspaceSymbol(msg *message) {
 			})
 		}
 	}
+	// Include stdlib symbols so users can fuzzy-search built-ins like
+	// "Auth.config" or "UI.button" from the workspace symbol picker.
+	// They have no source location — point them at a sentinel URI the
+	// client treats as unnavigable.
+	for _, sym := range StdlibSymbols() {
+		if q != "" && !strings.Contains(strings.ToLower(sym.Name), q) {
+			continue
+		}
+		out = append(out, map[string]any{
+			"name":          sym.Name,
+			"kind":          lspSymbolKind(sym.Kind),
+			"containerName": "mar (built-in)",
+			"location": map[string]any{
+				"uri": "mar:builtin",
+				"range": lspRange{
+					Start: lspPosition{Line: 0, Character: 0},
+					End:   lspPosition{Line: 0, Character: 0},
+				},
+			},
+		})
+	}
 	s.respond(msg.ID, out)
 }
 
@@ -709,7 +735,9 @@ func (s *Server) handleCompletion(msg *message) {
 	// prefix string.
 	out := []any{}
 	seen := map[string]bool{}
-	addSymbol := func(sym Symbol, fromOtherFile bool) {
+	// origin orders proposals: "" current file, "y" stdlib built-in,
+	// "z" symbols from other open files.
+	addSymbol := func(sym Symbol, origin string) {
 		key := sym.Name
 		if seen[key] {
 			return
@@ -719,7 +747,7 @@ func (s *Server) handleCompletion(msg *message) {
 			return
 		}
 		detail := sym.Type
-		if detail == "" {
+		if detail == "" && sym.Summary != stdlibBuiltinTag {
 			detail = sym.Summary
 		}
 		ci := map[string]any{
@@ -727,20 +755,23 @@ func (s *Server) handleCompletion(msg *message) {
 			"kind":   completionKind(sym.Kind),
 			"detail": detail,
 		}
-		if fromOtherFile {
-			ci["sortText"] = "z" + sym.Name // de-prioritize externals
+		if origin != "" {
+			ci["sortText"] = origin + sym.Name
 		}
 		out = append(out, ci)
 	}
 	for _, sym := range idx.Symbols {
-		addSymbol(sym, false)
+		addSymbol(sym, "")
+	}
+	for _, sym := range StdlibSymbols() {
+		addSymbol(sym, "y")
 	}
 	for _, i := range indexes {
 		if i == idx {
 			continue
 		}
 		for _, sym := range i.Symbols {
-			addSymbol(sym, true)
+			addSymbol(sym, "z")
 		}
 	}
 	s.respond(msg.ID, out)
@@ -1293,41 +1324,65 @@ func (s *Server) analyze(path, content string) []lspDiagnostic {
 }
 
 func (s *Server) projectAnalyze(path, content string) ([]lspDiagnostic, bool) {
-	dir := filepath.Dir(path)
-	// Only run project analysis if there's more than one .mar file in
-	// the dir — otherwise it's effectively a single-file edit and we
-	// don't want to fail on disk version vs editor version drift.
-	entries, err := os.ReadDir(dir)
+	// Find the project root by walking up looking for mar.json or
+	// Main.mar. The active file might be deep inside a subdirectory
+	// (e.g. Backend/Notes.mar) and resolving imports from THAT dir
+	// won't find sibling modules at the root (Shared.mar, Main.mar,
+	// etc.). Without walking up we'd silently skip cross-module
+	// imports and surface every qualified type as opaque ("cannot
+	// unify { id : a, … } with User" because User comes from Shared
+	// which we never loaded).
+	root, ok := findProjectRoot(filepath.Dir(path))
+	if !ok {
+		return nil, false
+	}
+	mainFile := filepath.Join(root, "Main.mar")
+	if _, err := os.Stat(mainFile); err != nil {
+		return nil, false
+	}
+
+	// Pass the active file's in-memory content as an override so cross-
+	// module references (e.g. `Shared.foo` in Frontend.mar) resolve against
+	// the same project graph that's actually being edited. Without this,
+	// the active file would be re-checked in isolation and every cross-
+	// module reference would surface as a false-positive "unknown
+	// qualified name" diagnostic until save.
+	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, false
 	}
-	count := 0
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".mar") {
-			count++
-			if count > 1 {
-				break
-			}
-		}
-	}
-	if count <= 1 {
-		return nil, false
-	}
-	// LoadForServe reads files from disk, so for in-memory edits we
-	// might be checking stale content. Acceptable tradeoff: the typed
-	// info is up-to-date for ALL OTHER files; the active file gets a
-	// second pass via singleFileAnalyze and we merge below.
-	_, err = project.LoadForServe(path)
+	_, _, err = project.LoadForServeTypedWithOverrides(mainFile, map[string]string{abs: content})
 	if err != nil {
-		// project errors with a file path: extract and convert.
 		if d, ok := errorToDiagnostic(err, path, content); ok {
 			return []lspDiagnostic{d}, true
 		}
 		return nil, false
 	}
-	// Project compiles cleanly; still check the in-memory content of
-	// THIS file (might be edited but unsaved).
-	return s.singleFileAnalyze(content), true
+	// Project (with override) compiles cleanly: no diagnostics.
+	return nil, true
+}
+
+// findProjectRoot walks up from `start` looking for a directory
+// containing mar.json (preferred) or Main.mar. Bounded to 20 levels
+// so a runaway path doesn't iterate to the filesystem root forever.
+//
+// Returns ("", false) if no project marker is found within bounds.
+func findProjectRoot(start string) (string, bool) {
+	dir := start
+	for i := 0; i < 20; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "mar.json")); err == nil {
+			return dir, true
+		}
+		if _, err := os.Stat(filepath.Join(dir, "Main.mar")); err == nil {
+			return dir, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false // hit filesystem root
+		}
+		dir = parent
+	}
+	return "", false
 }
 
 func (s *Server) singleFileAnalyze(content string) []lspDiagnostic {
