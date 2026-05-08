@@ -6,8 +6,10 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"mar/internal/ast"
 	"mar/internal/iosbundle"
 	"mar/internal/project"
+	"mar/internal/runtime"
 )
 
 // BuildIOS materializes a generic Swift/SwiftUI iOS scaffold under
@@ -75,10 +77,21 @@ func BuildIOS(entry, distDir, baseURLOverride, marVersion string) error {
 		fmt.Fprintln(os.Stderr)
 	}
 
+	// Compile the user's mar code into program.json so the iOS app
+	// can render its first screen instantly from the embedded bundle
+	// (Approach C — instant cold start). Failure here means the
+	// user's mar source has an error; surface it the same way other
+	// build paths do.
+	programJSON, err := compileIOSProgram(entry)
+	if err != nil {
+		return fmt.Errorf("mar build: %w", err)
+	}
+
 	out, err := iosbundle.Generate(iosbundle.Spec{
-		AppName:        appName,
-		DefaultBaseURL: baseURL,
-		MarVersion:     marVersion,
+		AppName:           appName,
+		DefaultBaseURL:    baseURL,
+		MarVersion:        marVersion,
+		EmbeddedProgram:   programJSON,
 	}, distDir)
 	if err != nil {
 		return err
@@ -118,6 +131,144 @@ func resolveProjectDir(entry string) (string, error) {
 		return entry, nil
 	}
 	return filepath.Dir(entry), nil
+}
+
+// compileIOSProgram evaluates the user's main, captures the pages
+// list (works with both App.frontend and App.fullstack), and
+// returns the program.json bytes. The returned bundle is what the
+// iOS shell loads at boot (Resources/program.json) for instant
+// cold-start; the same bytes are also fetched fresh from the
+// server when the network is available so the embedded copy is a
+// fallback, not the source of truth.
+func compileIOSProgram(entry string) ([]byte, error) {
+	// Resolve entry → Main.mar path. Caller passes either a directory
+	// (look for Main.mar inside) or a file path (use directly). Same
+	// shape as scaffold.Build.
+	info, err := os.Stat(entry)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", entry, err)
+	}
+	mainFile := entry
+	if info.IsDir() {
+		mainFile = filepath.Join(entry, "Main.mar")
+		if _, err := os.Stat(mainFile); err != nil {
+			return nil, fmt.Errorf("Main.mar not found in %s", entry)
+		}
+	}
+
+	bc := &buildCtx{}
+	rEnv, _, _, err := project.LoadIntoEnvWithModulesAndHook(mainFile,
+		func(env *runtime.Env, mods []*ast.Module) {
+			fe := makeIOSPagesCapture(mods, bc, false /*fromRecord*/)
+			env.Define("appFrontend", fe)
+			env.Define("App.frontend", fe)
+
+			fs := makeIOSPagesCapture(mods, bc, true /*fromRecord*/)
+			env.Define("appFullstack", fs)
+			env.Define("App.fullstack", fs)
+
+			be := makeBackendCapture(bc)
+			env.Define("appBackend", be)
+			env.Define("App.backend", be)
+		})
+	if err != nil {
+		return nil, err
+	}
+	mainVal, ok := rEnv.Lookup("Main.main")
+	if !ok {
+		mainVal, ok = rEnv.Lookup("main")
+	}
+	if !ok {
+		return nil, fmt.Errorf("Main.mar must export `main`")
+	}
+	eff, ok := mainVal.(runtime.VEffect)
+	if !ok {
+		return nil, fmt.Errorf("main is not an Effect (got %T)", mainVal)
+	}
+	if _, err := eff.Run(); err != nil {
+		return nil, err
+	}
+	if len(bc.frontMods) == 0 {
+		// App.backend project (no pages). iOS still needs a stub
+		// program; we ship an empty pages list so the shell can
+		// render a sensible placeholder ("No pages defined") and
+		// the operator can navigate to the Settings tab regardless.
+		return makeProgramJSON(nil, "main", false)
+	}
+	return makeProgramJSON(bc.frontMods, "main", false)
+}
+
+// makeIOSPagesCapture mirrors makeFrontendCapture but is shared
+// between App.frontend (`fromRecord=false`, args[0] is the page
+// list) and App.fullstack (`fromRecord=true`, args[0] is a record
+// with a "pages" field). Both flow into the same buildCtx fields
+// so downstream extraction is identical.
+func makeIOSPagesCapture(mods []*ast.Module, bc *buildCtx, fromRecord bool) runtime.Value {
+	tag := "appFrontend"
+	if fromRecord {
+		tag = "appFullstack"
+	}
+	return runtime.VFn{
+		Arity: 1,
+		Native: func(args []runtime.Value) (runtime.Value, error) {
+			var pageList runtime.VList
+			if fromRecord {
+				rec, ok := args[0].(runtime.VRecord)
+				if !ok {
+					return nil, fmt.Errorf("App.fullstack: expected record argument (got %T)", args[0])
+				}
+				pagesV, ok := rec.Fields["pages"]
+				if !ok {
+					return nil, fmt.Errorf("App.fullstack: missing `pages` field")
+				}
+				pageList, ok = pagesV.(runtime.VList)
+				if !ok {
+					return nil, fmt.Errorf("App.fullstack: `pages` is not a list (got %T)", pagesV)
+				}
+			} else {
+				var ok bool
+				pageList, ok = args[0].(runtime.VList)
+				if !ok {
+					return nil, fmt.Errorf("App.frontend: expected List Page (got %T)", args[0])
+				}
+			}
+
+			roots := map[string]bool{}
+			for i, pv := range pageList.Elements {
+				page, ok := pv.(runtime.VPage)
+				if !ok {
+					return nil, fmt.Errorf("page %d is not a Page (got %T)", i, pv)
+				}
+				if page.OriginName == "" {
+					return nil, fmt.Errorf("page %d has no provenance — pages must be top-level bindings", i)
+				}
+				roots[page.OriginModule] = true
+			}
+			merged := []*ast.Module{}
+			seen := map[string]bool{}
+			for root := range roots {
+				for _, m := range reachableFrom(root, mods) {
+					name := joinName(m.Name)
+					if seen[name] {
+						continue
+					}
+					seen[name] = true
+					merged = append(merged, m)
+				}
+			}
+			bc.kind = kindFrontend
+			bc.frontMods = merged
+			if len(merged) > 0 {
+				nm := merged[len(merged)-1].Name
+				if len(nm) > 0 {
+					bc.title = nm[len(nm)-1]
+				}
+			}
+			return runtime.VEffect{Tag: tag, Run: func() (runtime.Value, error) {
+				return runtime.VUnit{}, nil
+			}}, nil
+		},
+	}
 }
 
 func defaultIOSAppName(projectDir string) string {

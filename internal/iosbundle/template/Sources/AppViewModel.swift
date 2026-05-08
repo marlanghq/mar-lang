@@ -67,6 +67,27 @@ final class AppViewModel {
         self.api = APIClient(baseURL: url)
         MarDispatcher.shared.baseURL = url
 
+        // Approach C — instant cold-start. If `mar build --target ios`
+        // embedded a program.json snapshot in the app bundle, decode
+        // and execute it synchronously here so the first frame paints
+        // immediately. The network fetch in loadAll() then refreshes
+        // the in-memory program with whatever the server is serving
+        // right now.
+        //
+        // Failure to decode the embedded snapshot is logged and
+        // swallowed: state stays .idle so the regular fetch path
+        // takes over and surfaces any real error to the user.
+        if let embedded = AppViewModel.loadEmbeddedProgram() {
+            do {
+                try self.runProgramSync(embedded)
+                self.state = .loaded
+            } catch {
+                #if DEBUG
+                print("[mar] embedded program.json decode failed: \(error)")
+                #endif
+            }
+        }
+
         #if DEBUG
         // Bonjour discovery is debug-only. App Store / TestFlight
         // builds never browse the local network — that would be
@@ -78,6 +99,17 @@ final class AppViewModel {
         }
         discovery.start()
         #endif
+    }
+
+    /// Reads the embedded program.json from Bundle.main if present.
+    /// Returns nil when scaffolds without Resources/program.json are
+    /// running (older builds or corrupt installs) — callers must
+    /// gracefully fall through to the network path.
+    private static func loadEmbeddedProgram() -> Data? {
+        guard let url = Bundle.main.url(forResource: "program", withExtension: "json") else {
+            return nil
+        }
+        return try? Data(contentsOf: url)
     }
 
     private static func resolveInitialBaseURL() -> (url: String, fromUser: Bool) {
@@ -109,12 +141,26 @@ final class AppViewModel {
     #endif
 
     func loadAll() async {
-        state = .loading
+        // If we already have a program loaded (typically from the
+        // embedded snapshot, but also from a previous successful
+        // fetch), this fetch is a *refresh* — don't flash the
+        // loading screen. Failure stays silent: keep showing what we
+        // already have rather than wiping it for an offline user.
+        let hadProgram = !pages.isEmpty
+        if !hadProgram {
+            state = .loading
+        }
         do {
             let programData = try await api.fetchProgram()
-            try await runProgram(programData)
+            try runProgramSync(programData)
             state = .loaded
         } catch {
+            if hadProgram {
+                #if DEBUG
+                print("[mar] background refresh failed; keeping current program: \(error)")
+                #endif
+                return
+            }
             let msg = (error as? APIError)?.errorDescription
                 ?? (error as? MarRuntimeError)?.errorDescription
                 ?? error.localizedDescription
@@ -124,8 +170,10 @@ final class AppViewModel {
 
     /// Decode + execute the user's mar program. Side-effect: fills
     /// `pages` with whatever `main` captured via App.frontend /
-    /// App.fullstack.
-    private func runProgram(_ data: Data) async throws {
+    /// App.fullstack. Synchronous because the body is all CPU work
+    /// (decode + interpreter eval) — the async wrapper is kept on
+    /// the public loadAll caller for the network fetch.
+    private func runProgramSync(_ data: Data) throws {
         let program = try MarJSONCodec.decodeProgram(data)
         AppContext.shared.reset()
         // Auth metadata from the server-resolved Auth.config — the
