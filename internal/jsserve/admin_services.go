@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	goruntime "runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -27,18 +26,22 @@ import (
 var (
 	bootStartedAtMs int64
 	marVersion      string
-	buildTarget     string
 )
 
-// SetAdminBuildInfo plumbs build-time stamps into the framework so
-// /_mar/admin/api/server-info can show them. Called once from the
+// SetAdminBuildInfo plumbs the mar version stamp into the framework
+// so /_mar/admin/api/server-info can show it. Called once from the
 // CLI before ServeLive. Empty values are tolerated and rendered as
-// "—" by the SPA.
-func SetAdminBuildInfo(version, target string) {
+// "dev" by the handler.
+//
+// Build target is intentionally NOT taken as a parameter — it's
+// always derived from runtime.GOOS/GOARCH at request time (see
+// hostTarget). If we ever want to differentiate the target the
+// binary was BUILT for vs the host it's running on (cross-compiled
+// edge cases), add a parameter here.
+func SetAdminBuildInfo(version string) {
 	authMu.Lock()
 	defer authMu.Unlock()
 	marVersion = version
-	buildTarget = target
 }
 
 // noteServerBooted is called from ServeLive at the moment the
@@ -203,7 +206,7 @@ func handleAdminServerInfo(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"marVersion":       defaultStr(marVersion, "dev"),
 		"goVersion":        goruntime.Version(),
-		"buildTarget":      defaultStr(buildTarget, hostTarget()),
+		"buildTarget":      hostTarget(),
 		"bootedAtMs":       bootedMs,
 		"requestsTotal":    atomic.LoadInt64(&requestsTotal),
 		"requestsInFlight": atomic.LoadInt64(&requestsInFlight),
@@ -499,12 +502,3 @@ func jsonable(v any) any {
 	}
 }
 
-// hostBuildInfo is invoked from main package init to surface mar
-// version + commit if available via debug.ReadBuildInfo (works for
-// `go install`-style builds without ldflags).
-func hostBuildInfo() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
-		return info.Main.Version
-	}
-	return "dev"
-}

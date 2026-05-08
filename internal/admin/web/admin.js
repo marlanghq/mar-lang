@@ -7,9 +7,6 @@
 // State is held in a single object; the render function rebuilds
 // the DOM from it. Same MVU pattern Mar pages use; we just hand-
 // rolled it in JS so the framework binary stays a single file.
-//
-// Phase 4 fills in the real /api/* endpoints. For now the UI works
-// against placeholders so the login flow + skeleton are testable.
 
 (function () {
   'use strict';

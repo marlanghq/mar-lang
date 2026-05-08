@@ -43,20 +43,32 @@ func TestRequestLogger_RingOverwritesOldest(t *testing.T) {
 }
 
 // TestRequestLogger_ClampsOutOfRangeSize — defensive clamp so a
-// programming error elsewhere can't OOM the runtime.
+// programming error elsewhere can't OOM the runtime. Validated by
+// recording cap+1 entries and observing that the buffer wraps at
+// the clamped value, not the requested value.
 func TestRequestLogger_ClampsOutOfRangeSize(t *testing.T) {
+	// Asked for 99999 → should clamp to 5000. Filling 5001 entries
+	// proves the cap is 5000 (oldest gets dropped).
 	r := NewRequestLogger(99999)
-	if r.Cap() != 5000 {
-		t.Errorf("over-cap: got %d, want 5000", r.Cap())
+	for i := 1; i <= 5001; i++ {
+		r.Record(RequestLog{AtMs: int64(i)})
 	}
+	if got := len(r.Snapshot()); got != 5000 {
+		t.Errorf("over-cap clamp: snapshot len got %d, want 5000", got)
+	}
+
+	// Asked for 2 → should clamp to 10. Same trick with 11 entries.
 	r2 := NewRequestLogger(2)
-	if r2.Cap() != 10 {
-		t.Errorf("under-cap: got %d, want 10", r2.Cap())
+	for i := 1; i <= 11; i++ {
+		r2.Record(RequestLog{AtMs: int64(i)})
+	}
+	if got := len(r2.Snapshot()); got != 10 {
+		t.Errorf("under-cap clamp: snapshot len got %d, want 10", got)
 	}
 }
 
-// TestRequestLogger_NilSafe — Record/Snapshot/Len/Cap all tolerate
-// a nil receiver, since the boot-time wiring may legitimately not
+// TestRequestLogger_NilSafe — Record/Snapshot/Len all tolerate a
+// nil receiver, since the boot-time wiring may legitimately not
 // install a logger (mar dev with no ServeLive yet).
 func TestRequestLogger_NilSafe(t *testing.T) {
 	var r *RequestLogger
@@ -66,9 +78,6 @@ func TestRequestLogger_NilSafe(t *testing.T) {
 	}
 	if r.Len() != 0 {
 		t.Errorf("nil Len: got %d, want 0", r.Len())
-	}
-	if r.Cap() != 0 {
-		t.Errorf("nil Cap: got %d, want 0", r.Cap())
 	}
 }
 

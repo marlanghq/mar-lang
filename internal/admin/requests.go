@@ -116,11 +116,3 @@ func (r *RequestLogger) Len() int {
 	}
 	return len(r.items)
 }
-
-// Cap returns the configured maximum entries.
-func (r *RequestLogger) Cap() int {
-	if r == nil {
-		return 0
-	}
-	return r.cap
-}

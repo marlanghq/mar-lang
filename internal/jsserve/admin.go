@@ -1,14 +1,8 @@
 // Admin HTTP handlers — the parallel of auth.go's /_auth/* endpoints,
 // for the framework's built-in admin panel served at /_mar/admin.
 //
-// Routes mounted by mountAdminHandlers:
-//
-//   POST /_mar/admin/auth/request-code   — issue+send (or print) a code
-//   POST /_mar/admin/auth/verify-code    — verify, mint session, set cookie
-//   POST /_mar/admin/auth/logout         — revoke session, clear cookie
-//
-// Phase 3 will add the page-serving routes (/_mar/admin/*) and the
-// service routes (/_mar/admin/api/*).
+// Routes mounted by mountAdminHandlers (full list documented inline
+// at that function — auth, static assets, services, page shell).
 //
 // All endpoints are rate-limited per-IP (separate buckets from
 // /_auth/* so an attacker pounding user-auth doesn't block admin
@@ -59,14 +53,15 @@ var adminIPLimiter = auth.NewLimiter(20, time.Hour)
 //      — embedded UI assets
 //
 //   /_mar/admin/api/whoami
-//      — session probe; 200 with email, or 401
+//      — session probe; 200 OK with the session record OR null
+//        (mirrors /_auth/whoami's shape).
 //
 //   /_mar/admin/api/{server-info, db-stats, recent-requests, entity-rows}
-//      — JSON services consumed by the UI (Phase 4 fills these in)
+//      — JSON services consumed by the UI.
 //
 //   /_mar/admin/   (catch-all)
 //      — serves index.html (the SPA shell). Login state is detected
-//        client-side via /api/me so the same shell handles both
+//        client-side via /api/whoami so the same shell handles both
 //        unauthenticated and authenticated views.
 func mountAdminHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/_mar/admin/auth/request-code", handleAdminRequestCode)

@@ -967,26 +967,11 @@ func promptAndSetFlySecrets(appName string, envRefs []string) error {
 	return runFlyCmd(args...)
 }
 
-// discoverManifestEnvRefs reads raw mar.json and returns the env:VAR
-// names it references. Used by provision to know which secrets to
-// prompt for.
+// discoverManifestEnvRefs is a thin wrapper over project.EnvRefsFromFile
+// so callers in this file don't have to import internal/project just
+// for one helper. Renames may consolidate this further later.
 func discoverManifestEnvRefs(manifestPath string) ([]string, error) {
-	raw, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return nil, err
-	}
-	re := regexp.MustCompile(`"env:([A-Z_][A-Z0-9_]*)"`)
-	seen := map[string]bool{}
-	var out []string
-	for _, m := range re.FindAllStringSubmatch(string(raw), -1) {
-		name := m[1]
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		out = append(out, name)
-	}
-	return out, nil
+	return project.EnvRefsFromFile(manifestPath)
 }
 
 // runFlyCmd runs `fly <args...>` with stdout/stderr/stdin forwarded

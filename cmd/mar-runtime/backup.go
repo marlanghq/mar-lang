@@ -24,8 +24,6 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
-	"sort"
-	"strings"
 	"time"
 
 	"mar/internal/project"
@@ -100,7 +98,7 @@ func runRuntimeBackup(args []string) int {
 		MarVersion:       hostBuildInfoOrDev(),
 		BuildTarget:      goruntime.GOOS + "-" + goruntime.GOARCH,
 		AppName:          manifestName(manifest),
-		EnvRefs:          discoverEnvRefs(manifestRaw),
+		EnvRefs:          project.EnvRefsFromBytes(manifestRaw),
 	}
 	metaBytes, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -141,14 +139,12 @@ type backupMetadata struct {
 	EnvRefs          []string `json:"envRefs"`
 }
 
-// hostBuildInfoOrDev returns the mar version stamped at build time
-// (via -ldflags) or "dev" if unavailable. Centralized so changes
-// to the version-stamping convention only need updating here.
+// hostBuildInfoOrDev returns the mar version stamped at build time.
+// Today mar-runtime doesn't carry a version variable populated via
+// -ldflags (cmd/mar does, but we don't replicate the wiring here
+// since prod backups don't depend on it for correctness — just for
+// metadata.json display). Returns "dev" until that's wired.
 func hostBuildInfoOrDev() string {
-	// mar-runtime is built with the same -ldflags pipeline as the
-	// main mar CLI — the variable name is intentional. For now the
-	// stub doesn't expose its own version constant, so we emit
-	// "dev" until that wiring lands.
 	return "dev"
 }
 
@@ -162,43 +158,6 @@ func manifestName(m *project.Manifest) string {
 	return m.Name
 }
 
-// discoverEnvRefs walks the raw mar.json text and returns the names
-// of every env:VAR_NAME reference, sorted + deduped. The restore
-// flow shows this list so the operator knows which Fly secrets they
-// need to re-set before the restored DB can be served.
-//
-// Text-based scan rather than reflection over the parsed manifest:
-// future fields might gain env:VAR support without us needing to
-// extend a code list. The trade-off is that an env:VAR appearing
-// inside string content (very unlikely in mar.json) would be
-// flagged spuriously — acceptable.
-func discoverEnvRefs(raw []byte) []string {
-	seen := make(map[string]bool)
-	const marker = `"env:`
-	s := string(raw)
-	for {
-		i := strings.Index(s, marker)
-		if i < 0 {
-			break
-		}
-		s = s[i+len(marker):]
-		end := strings.IndexByte(s, '"')
-		if end < 0 {
-			break
-		}
-		name := s[:end]
-		if name != "" {
-			seen[name] = true
-		}
-		s = s[end+1:]
-	}
-	out := make([]string, 0, len(seen))
-	for k := range seen {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
 
 // writeTarGz creates a gzipped tarball at outPath containing every
 // file under stageDir. File names inside the archive are
