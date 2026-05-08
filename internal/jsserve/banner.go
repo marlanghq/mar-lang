@@ -27,6 +27,13 @@ func printBanner(addr string, hub *ReloadHub, appName string) {
 	url := "http://localhost" + addr
 	adminURL := url + "/_mar/admin"
 
+	// Leading blank line — separates the banner from any preceding
+	// stderr output (boot logs, hints, etc.). Print to stderr so it
+	// lands in the same stream as those preceding lines, avoiding
+	// stdout/stderr interleaving where the blank disappears between
+	// streams in some terminal buffers.
+	fmt.Fprintln(os.Stderr)
+
 	if !tty {
 		hint := ""
 		if hub != nil {
@@ -37,7 +44,6 @@ func printBanner(addr string, hub *ReloadHub, appName string) {
 		return
 	}
 
-	fmt.Println()
 	fmt.Printf("%s  %s\n", bold(mode), appName)
 	fmt.Printf("  %s %s\n", dim("Local:"), cyan(url))
 	fmt.Printf("  %s %s\n", dim("Admin:"), cyan(adminURL))
