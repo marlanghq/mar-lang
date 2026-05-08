@@ -58,6 +58,18 @@ const (
 // time, not validate that the address actually exists.
 var emailRegex = regexp.MustCompile(`^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$`)
 
+// httpsURLRegex matches https://host[:port][/path]. Used to validate
+// ios.serverUrl. The check is shape-only — DNS resolution and
+// reachability are not our concern here.
+var httpsURLRegex = regexp.MustCompile(`^https://[A-Za-z0-9.\-]+(:[0-9]+)?(/.*)?$`)
+
+// localhostURLRegex matches http://localhost[:port][/path] or http://
+// 127.0.0.1[:port]... — accepted as ios.serverUrl ONLY when the
+// caller-context allows it (e.g. local QA build). The validator
+// rejects plain http for production targets per ATS / App Store
+// review reality.
+var localhostURLRegex = regexp.MustCompile(`^http://(localhost|127\.0\.0\.1)(:[0-9]+)?(/.*)?$`)
+
 // Validate checks the manifest against the rules defined in
 // docs/admin-panel.md §11. Returns the first violation as a
 // human-readable error with the field path included.
@@ -77,7 +89,35 @@ func Validate(m *Manifest, phase ValidationPhase) error {
 	if err := validateDatabaseAutoBackup(m, phase); err != nil {
 		return err
 	}
+	if err := validateIOS(m, phase); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validateIOS enforces shape rules on the `ios` block. Required-ness
+// of serverUrl depends on the build target — that gate lives in the
+// build path (scaffold.BuildIOS), not here. This validator only
+// catches malformed values when the field IS present.
+func validateIOS(m *Manifest, phase ValidationPhase) error {
+	if m.IOS == nil || m.IOS.ServerURL == "" {
+		return nil
+	}
+	url := m.IOS.ServerURL
+	// Accept https:// always. Accept http://localhost only — never
+	// http://example.com. App Store ATS rejects plain HTTP except
+	// for localhost (debug-only).
+	if httpsURLRegex.MatchString(url) {
+		return nil
+	}
+	if localhostURLRegex.MatchString(url) {
+		return nil
+	}
+	_ = phase // shape check applies to both phases
+	return fmt.Errorf(
+		"mar.json: ios.serverUrl must be https:// (or http://localhost for local testing); got %q",
+		url,
+	)
 }
 
 // validateDatabaseAutoBackup enforces the bounds on the auto-backup

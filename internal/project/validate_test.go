@@ -207,6 +207,38 @@ func TestAutoBackup_ResolvedDefaults(t *testing.T) {
 	}
 }
 
+// TestValidate_IOSServerURL covers the shape rules for ios.serverUrl.
+// Required-ness is enforced at build time (separate); validation only
+// kicks in when the field is present.
+func TestValidate_IOSServerURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{"https valid", "https://my-app.fly.dev", false},
+		{"https with path", "https://my-app.fly.dev/api/v1", false},
+		{"https with port", "https://my-app.fly.dev:8080", false},
+		{"localhost http allowed", "http://localhost:3000", false},
+		{"127.0.0.1 http allowed", "http://127.0.0.1:3000", false},
+		{"plain http rejected", "http://example.com", true},
+		{"missing scheme", "my-app.fly.dev", true},
+		{"empty is OK (not configured)", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Manifest{IOS: &IOSConfig{ServerURL: tc.url}}
+			err := Validate(m, CompileTime)
+			if tc.wantErr && err == nil {
+				t.Errorf("expected error for %q; got nil", tc.url)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error for %q: %v", tc.url, err)
+			}
+		})
+	}
+}
+
 // TestResolvedRecentRequestsSize pins the default-fallback behavior.
 // 0 / nil receiver / nil AdminPanel all yield the documented default;
 // explicit values pass through verbatim.

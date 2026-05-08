@@ -26,6 +26,23 @@ func readSecure(buf []byte) (int, error) {
 // `entry` is optional — when omitted, mar dev / mar build look for
 // `Main.mar` at the project root (the convention). Only set it for
 // the unusual case of a non-conventional entry filename.
+// IOSConfig holds settings that apply when building the iOS scaffold
+// (`mar build --target ios`). Required fields trip compile-time
+// validation.
+type IOSConfig struct {
+	// ServerURL is the production backend URL the iOS app talks to
+	// in RELEASE builds. Required for `mar build --target ios`.
+	// Must be HTTPS — App Store transport security rejects plain
+	// HTTP without ATS exceptions, which we don't grant. Goes into
+	// Info.plist as MarBaseURL.
+	//
+	// In DEBUG (Xcode debug-build), Bonjour discovery on the local
+	// network supersedes this when a `_mar._tcp` service is found.
+	// In RELEASE (TestFlight / App Store), Bonjour is compiled out;
+	// the app always talks to ServerURL.
+	ServerURL string `json:"serverUrl,omitempty"`
+}
+
 type Manifest struct {
 	Name       string            `json:"name"`
 	Entry      string            `json:"entry,omitempty"`
@@ -33,6 +50,7 @@ type Manifest struct {
 	Database   *DatabaseConfig   `json:"database,omitempty"`
 	Mail       *MailConfig       `json:"mail,omitempty"`
 	Auth       *AuthConfig       `json:"auth,omitempty"`
+	IOS        *IOSConfig        `json:"ios,omitempty"`
 	Admins     []string          `json:"admins,omitempty"`
 	AdminPanel *AdminPanelConfig `json:"adminPanel,omitempty"`
 }
@@ -247,6 +265,7 @@ func checkUnknownTopFields(m map[string]json.RawMessage) error {
 		"database":   true,
 		"mail":       true,
 		"auth":       true,
+		"ios":        true,
 		"admins":     true,
 		"adminPanel": true,
 	}

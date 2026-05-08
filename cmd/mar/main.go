@@ -184,14 +184,19 @@ For --target ios:
   changing your mar code updates the app over the air without
   re-submitting to the App Store. Run xcodegen + open in Xcode.
 
+  In DEBUG (Xcode debug-build) the app uses Bonjour to find your
+  "mar dev" server on the local network. In RELEASE (TestFlight /
+  App Store) it talks only to mar.json's "ios.serverUrl".
+
 Flags:
   --target, -t   Build target. Native: darwin-amd64, darwin-arm64,
                  linux-amd64, linux-arm64, windows-amd64. Mobile: ios.
                  Defaults to the host OS/arch.
   --out, -o      Output directory (default: <project>/dist).
-  --base-url     iOS only: default backend URL baked into the
-                 generated app (overridable at runtime in Settings).
-                 Default: http://localhost:3000.
+  --base-url     iOS only: ad-hoc override for the backend URL,
+                 takes precedence over mar.json's "ios.serverUrl"
+                 for this build. For staging / QA without editing
+                 the manifest.
 
 Path defaults to "." (Main.mar in the current directory).`
 
