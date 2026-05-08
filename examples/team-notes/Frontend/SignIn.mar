@@ -1,0 +1,198 @@
+module Frontend.SignIn exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section
+    , title, text, textField, button, centered, empty
+    , email, numericCode, submit
+    )
+
+
+-- Sign-in flow with visible error feedback.
+--
+-- The model splits into a `step` (what the user is doing right now —
+-- entering email, waiting on the network, entering code) and a
+-- separate `error` field. Errors stay visible until the user tries
+-- again, instead of the form silently flashing back to the previous
+-- state when a request fails (which is what happens if you keep the
+-- error inside the step itself).
+--
+-- The input fields use `email` (autofill + email keyboard on mobile)
+-- and `numeric` (numeric keypad + iOS one-time-code suggestion from
+-- SMS/Mail). Without these, Safari treats the first input as a
+-- password field and password managers offer the wrong autofill.
+
+
+type Step
+    = AskEmail String
+    | Submitting String
+    | AskCode String String
+
+
+type alias Model =
+    { step  : Step
+    , error : Maybe String
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeRequested (Result String ())
+    | CodeVerified (Result String Shared.User)
+
+
+init : () -> (Model, Effect String Msg)
+init _ =
+    ( { step = AskEmail "", error = Nothing }, Effect.none )
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        DraftChanged value ->
+            ( { model | step = updateDraft value model.step }, Effect.none )
+
+        Submitted ->
+            -- Clear any previous error before kicking off a fresh
+            -- attempt; the next CodeRequested / CodeVerified will
+            -- repopulate it on failure.
+            case model.step of
+                AskEmail email ->
+                    ( { model | step = Submitting email, error = Nothing }
+                    , Auth.requestCode { email = email } CodeRequested
+                    )
+
+                AskCode email code ->
+                    ( { model | step = Submitting email, error = Nothing }
+                    , Auth.verifyCode { email = email, code = code } CodeVerified
+                    )
+
+                Submitting _ ->
+                    ( model, Effect.none )
+
+        CodeRequested (Ok ()) ->
+            case model.step of
+                Submitting email ->
+                    ( { model | step = AskCode email "", error = Nothing }, Effect.none )
+
+                _ ->
+                    ( model, Effect.none )
+
+        CodeRequested (Err why) ->
+            case model.step of
+                Submitting email ->
+                    ( { step = AskEmail email
+                      , error = Just ("Couldn't send the code: " ++ humanize why)
+                      }
+                    , Effect.none
+                    )
+
+                _ ->
+                    ( model, Effect.none )
+
+        CodeVerified (Ok _) ->
+            -- Nav.afterSignIn returns the user to where a 401 sent them
+            -- from (or the home page by default).
+            ( model, Nav.afterSignIn )
+
+        CodeVerified (Err why) ->
+            case model.step of
+                Submitting email ->
+                    ( { step = AskCode email ""
+                      , error = Just ("Couldn't verify the code: " ++ humanize why)
+                      }
+                    , Effect.none
+                    )
+
+                _ ->
+                    ( model, Effect.none )
+
+
+-- Step-local edit: the input field belongs to whatever step is
+-- showing it. Submitting is intentionally a no-op; the input is
+-- disabled (or absent) while a request is in flight.
+updateDraft : String -> Step -> Step
+updateDraft value step =
+    case step of
+        AskEmail _      -> AskEmail value
+        AskCode email _ -> AskCode email value
+        Submitting _    -> step
+
+
+-- Map common error messages from the framework / network layer to
+-- something a user can act on. Anything we don't recognize falls
+-- through unchanged so the original message is at least visible.
+humanize : String -> String
+humanize raw =
+    if raw == "" then
+        "the server didn't respond. Check your connection and try again."
+    else if String.startsWith "TypeError" raw then
+        "the server didn't respond. Check your connection and try again."
+    else if String.startsWith "Failed to fetch" raw then
+        "the server didn't respond. Check your connection and try again."
+    else if raw == "invalid_code" then
+        "that code didn't match. Try again or request a new one."
+    else if raw == "rate_limited" then
+        "too many attempts. Wait a minute and try again."
+    else
+        raw
+
+
+view : Model -> View Msg
+view model =
+    case model.step of
+        AskEmail draft ->
+            navigationStack [ navigationTitle "Sign in to Team Notes" ]
+                [ form
+                    [ section []
+                        [ text "Enter your email to receive a one-time code."
+                        , textField [ email, submit Submitted ]
+                            "Email" draft DraftChanged
+                        ]
+                    , section []
+                        [ button [] Submitted "Send me a code" ]
+                    , errorBanner model.error
+                    ]
+                ]
+
+        AskCode emailAddr draft ->
+            navigationStack [ navigationTitle "Enter your code" ]
+                [ form
+                    [ section []
+                        [ text ("We sent a 6-digit code to " ++ emailAddr ++ ".")
+                        , textField [ numericCode, submit Submitted ]
+                            "Code" draft DraftChanged
+                        ]
+                    , section []
+                        [ button [] Submitted "Verify" ]
+                    , errorBanner model.error
+                    ]
+                ]
+
+        Submitting _ ->
+            centered (text "Working…")
+
+
+-- Renders nothing (`empty`) when there's no error so the layout
+-- doesn't reserve space for the banner. Otherwise wraps the message
+-- as its own section card.
+errorBanner : Maybe String -> View Msg
+errorBanner maybeMsg =
+    case maybeMsg of
+        Just msg -> section [] [ text ("⚠ " ++ msg) ]
+        Nothing  -> empty
+
+
+page : Page
+page =
+    Page.create
+        { path = "/sign-in"
+        , title = "Sign in"
+        , init = init
+        , update = update
+        , view = view
+        }

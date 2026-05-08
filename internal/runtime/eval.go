@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"strings"
 
 	"mar/internal/ast"
 )
@@ -254,9 +255,8 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 	}
 }
 
-// apply applies a function value to one argument, handling currying.
-// Apply is the exported entry point for applying a function value to one
-// argument, handling currying. Used by the unified server to invoke handlers.
+// Apply applies a function value to one argument, handling currying.
+// Exported entry point used by the unified server to invoke handlers.
 func Apply(fn Value, arg Value) (Value, error) {
 	return apply(fn, arg)
 }
@@ -298,11 +298,7 @@ func joinName(mod ast.ModuleName, name string) string {
 	if len(mod) == 0 {
 		return name
 	}
-	out := mod[0]
-	for _, p := range mod[1:] {
-		out += "." + p
-	}
-	return out + "." + name
+	return strings.Join(mod, ".") + "." + name
 }
 
 // matchPattern attempts to match v against pat. Returns the bindings if
@@ -384,7 +380,10 @@ func matchInto(pat ast.Pattern, v Value, bindings map[string]Value) bool {
 func bindPattern(pat ast.Pattern, v Value, env *Env) *Env {
 	bindings, ok := matchPattern(pat, v)
 	if !ok {
-		// Should not happen for irrefutable patterns; for MVP, ignore.
+		// Shouldn't happen for irrefutable patterns. The type checker
+		// rejects refutable patterns in `let`, so reaching here means
+		// the bound value has the wrong shape — leave env unchanged
+		// rather than crash.
 		return env
 	}
 	return env.BindMany(bindings)

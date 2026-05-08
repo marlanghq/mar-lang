@@ -1,10 +1,4 @@
-// Package typecheck implements Hindley-Milner type inference for the Mar
-// (Elm-style) AST.
-//
-// This is a minimal self-contained implementation. It does not reuse the
-// older `internal/types` package because that one is tightly coupled to the
-// Lisp AST (`internal/expr`). When the Lisp version is retired, the two can
-// be unified.
+// Package typecheck implements Hindley-Milner type inference for the Mar AST.
 //
 // Public surface:
 //
@@ -20,7 +14,6 @@ package typecheck
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"sync/atomic"
 )
@@ -169,17 +162,6 @@ func parenIfArrow(t Type) string {
 	return t.String()
 }
 
-// SortedFields returns a record's fields sorted by name (for deterministic
-// equality checks where order doesn't matter).
-func SortedFields(r TRecord) []string {
-	names := make([]string, 0, len(r.Fields))
-	for n := range r.Fields {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // --- Type variable supply ---
 
 var nextVarID int64
@@ -198,11 +180,13 @@ func resetVarIDsForTesting() {
 // --- Built-in nullary types ---
 
 var (
-	TInt    = TCon{Name: "Int"}
-	TFloat  = TCon{Name: "Float"}
-	TString = TCon{Name: "String"}
-	TBool   = TCon{Name: "Bool"}
-	TChar   = TCon{Name: "Char"}
+	TInt      = TCon{Name: "Int"}
+	TFloat    = TCon{Name: "Float"}
+	TString   = TCon{Name: "String"}
+	TBool     = TCon{Name: "Bool"}
+	TChar     = TCon{Name: "Char"}
+	TDuration = TCon{Name: "Duration"}
+	TTime     = TCon{Name: "Time"}
 )
 
 // TList returns the type "List elem".
@@ -225,20 +209,48 @@ func TEffect(e, a Type) TCon {
 	return TCon{Name: "Effect", Args: []Type{e, a}}
 }
 
-// TDb returns the opaque "Db" type for a database connection.
-func TDb() TCon {
-	return TCon{Name: "Db"}
+// TEntity returns the parameterized "Entity a" type — an entity describing
+// a SQL table whose row shape is `a`. The row type drives Repo decode and
+// the type of values returned by query operations.
+func TEntity(row Type) TCon {
+	return TCon{Name: "Entity", Args: []Type{row}}
 }
 
-// TEntity returns the opaque "Entity" type.
-func TEntity() TCon {
-	return TCon{Name: "Entity"}
+// TService returns the parameterized "Service req resp" type — a typed RPC
+// contract that the frontend can call (Service.call) and the backend
+// implements (the function inside the constructor). Req/Resp drive
+// JSON encode/decode at the wire boundary and type-check the call site.
+func TService(req, resp Type) TCon {
+	return TCon{Name: "Service", Args: []Type{req, resp}}
 }
 
-// TColType returns the opaque "ColType" type — values like Entity.int /
-// Entity.text used to declare a column's storage type.
-func TColType() TCon {
-	return TCon{Name: "ColType"}
+// TExposedService is the type-erased form of a Service — opaque, no
+// parameters, so a List of services with different Req/Resp can be
+// homogeneous in mar's HM. Produced by Service.expose, consumed by
+// App.fullstack / App.backend's `services` field.
+func TExposedService() TCon {
+	return TCon{Name: "ExposedService"}
+}
+
+// TAuth returns the parameterized "Auth user" type — the opaque value
+// returned by Auth.config that captures the framework's auth wiring.
+// Carrying the user row type lets Auth.protected handlers receive a
+// typed User without the user code restating it.
+func TAuth(user Type) TCon {
+	return TCon{Name: "Auth", Args: []Type{user}}
+}
+
+// TColumn returns the "Column t" type — a single column declaration
+// produced by Entity.serial / .int / .text / .bool / .dateTime. The
+// parameter is the value type stored in the column.
+func TColumn(t Type) TCon {
+	return TCon{Name: "Column", Args: []Type{t}}
+}
+
+// TConstraint returns the opaque "Constraint" type — values like
+// Entity.notNull / Entity.optional that modify a Column declaration.
+func TConstraint() TCon {
+	return TCon{Name: "Constraint"}
 }
 
 // TView returns "View msg" — the type of MVU views parameterized by the
@@ -267,4 +279,21 @@ func TPage() TCon {
 // TEndpoint returns the opaque "Endpoint" type.
 func TEndpoint() TCon {
 	return TCon{Name: "Endpoint"}
+}
+
+// TPath returns the parameterized "Path r" type — a URL pattern with
+// typed `:param` segments. Each Path value carries the row of params
+// it captures from the URL: `Path { id : Int }` corresponds to the
+// pattern `"/notes/{id:Int}"`. Constructed by coercion from a String
+// literal (the typechecker parses the pattern at elaboration time
+// and synthesizes the row); destructured at runtime by the matcher
+// (URL → params record) and at call sites by `linkTo` / `Nav.pushTo`
+// (params record → URL).
+//
+// Empty params (`Path {}`) means a static path like "/" or "/about" —
+// not common in practice (usually you'd use Page.create for those),
+// but the type stays uniform so utility functions can be polymorphic
+// over `Path r`.
+func TPath(row Type) TCon {
+	return TCon{Name: "Path", Args: []Type{row}}
 }

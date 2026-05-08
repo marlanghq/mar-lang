@@ -5,8 +5,9 @@
 // without going through typecheck, behavior is undefined for ill-typed
 // programs.
 //
-// This is the MVP: enough to run pure functional programs end-to-end. No
-// effects, no I/O, no concurrency. Those layers come on top.
+// Pure functional evaluation lives here; effects, I/O, and concurrency
+// are layered on top via VEffect (effect.go) and the per-domain
+// builtins (io.go, repo.go, server.go, …).
 package runtime
 
 import (
@@ -55,6 +56,28 @@ type VUnit struct{}
 func (VUnit) isValue()         {}
 func (VUnit) Display() string  { return "()" }
 
+// VDuration is a time interval, normalized to seconds. Built only via
+// Time.seconds / Time.minutes / Time.hours / Time.days / Time.weeks
+// — there's no public Int → Duration coercion, so unit confusion is
+// impossible at the call site.
+type VDuration struct{ Seconds int64 }
+
+func (VDuration) isValue() {}
+func (v VDuration) Display() string {
+	return fmt.Sprintf("%ds", v.Seconds)
+}
+
+// VTime is an absolute moment in time, as Unix milliseconds. Built
+// via Time.now (an effect that reads the wall clock) or
+// Time.fromIso. Use Time.add / Time.sub to shift by a Duration;
+// Time.diff for the difference between two moments.
+type VTime struct{ Millis int64 }
+
+func (VTime) isValue() {}
+func (v VTime) Display() string {
+	return fmt.Sprintf("<time:%dms>", v.Millis)
+}
+
 // VFn is a function value: either a closure (user lambda) or a built-in.
 type VFn struct {
 	// For closures:
@@ -69,8 +92,9 @@ type VFn struct {
 	Arity   int
 	// CtorTag is set when this VFn was produced by makeCtorValue for a
 	// custom-type constructor with arity ≥ 1. Empty string for plain
-	// functions. Used by View.form rendering to extract the constructor
-	// name without applying the function.
+	// functions. Renderers read this to recognize a constructor
+	// without having to apply the function (e.g. capturing it as a
+	// form's submit msg constructor).
 	CtorTag string
 }
 

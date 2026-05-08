@@ -1,10 +1,31 @@
 module MultiScreen exposing (main)
 
 
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, list, section, header
+    , hstack
+    , text, textField, button, link, centered
+    , submit
+    )
+
+
 -- Two MVU screens served by the same app.
 --   /home    : a counter
 --   /todos   : a small todo list
 -- Each has its own model, persisted per browser session.
+--
+-- Routes are declared as typed `Path {}` values so the in-app links
+-- (`link counterPath ...`) are refactor-safe — change the URL pattern
+-- and every link site flags in compile time.
+
+
+counterPath : Path {}
+counterPath = "/home"
+
+
+todosPath : Path {}
+todosPath = "/todos"
 
 
 -- COUNTER SCREEN
@@ -25,17 +46,27 @@ counterUpdate msg model =
 
 counterView : Int -> View CounterMsg
 counterView n =
-    View.section []
-        [ View.title [] "Counter"
-        , View.text [] ("Value: " ++ String.fromInt n)
-        , View.row [] [ View.button [] Inc "Inc", View.button [] Dec "Dec" ]
-        , View.row [] [ View.link [] "/todos" "Go to todos" ]
+    navigationStack [ navigationTitle "Counter" ]
+        [ form
+            [ section []
+                [ text ("Value: " ++ String.fromInt n)
+                , hstack [] [ button [] Inc "Inc", button [] Dec "Dec" ]
+                ]
+            , section []
+                [ link todosPath {} "Go to todos →" ]
+            ]
         ]
 
 
 counterPage : Page
 counterPage =
-    Page.create "/home" counterInit counterUpdate counterView
+    Page.create
+        { path = "/home"
+        , title = "Counter"
+        , init = counterInit
+        , update = counterUpdate
+        , view = counterView
+        }
 
 
 -- TODO SCREEN
@@ -58,22 +89,34 @@ todoUpdate msg model =
 
 todoView : TodoModel -> View TodoMsg
 todoView model =
-    View.section []
-        [ View.title [] "Todos"
-        , View.subtitle [] (String.fromInt (List.length model.items) ++ " items")
-        , View.row []
-            [ View.input [] model.draft DraftChanged
-            , View.button [] AddItem "Add"
+    navigationStack [ navigationTitle "Todos" ]
+        [ list
+            [ section []
+                [ hstack []
+                    [ textField [ submit AddItem ]
+                        "What needs doing?" model.draft DraftChanged
+                    , button [] AddItem "Add"
+                    ]
+                ]
+            , section []
+                [ button [] Clear "Clear all" ]
+            , section [ header (String.fromInt (List.length model.items) ++ " items") ]
+                (List.map text model.items)
+            , section []
+                [ link counterPath {} "← Back to counter" ]
             ]
-        , View.button [] Clear "Clear"
-        , View.list [] (List.map (\s -> View.text [] s) model.items)
-        , View.row [] [ View.link [] "/home" "Back to counter" ]
         ]
 
 
 todoPage : Page
 todoPage =
-    Page.create "/todos" todoInit todoUpdate todoView
+    Page.create
+        { path = "/todos"
+        , title = "Todos"
+        , init = todoInit
+        , update = todoUpdate
+        , view = todoView
+        }
 
 
 main : Effect String ()

@@ -1,0 +1,50 @@
+module Backend.Notes exposing (services)
+
+
+import Shared
+
+
+-- Notes domain, server-side. Owns the SQLite entity, the per-user
+-- business rules, and exports its slice of the services list.
+notes : Entity Shared.Note
+notes =
+    Entity.define "notes"
+        { id       = Entity.serial
+        , body     = Entity.text Entity.notNull
+        , authorId = Entity.int Entity.notNull
+        }
+
+
+-- Business rules. Each takes the User as proof of authorization and
+-- is fully decoupled from the auth/transport layer — easy to test
+-- in isolation, and trivial to re-wire (e.g. swap Auth.protect for
+-- Service.implement on an internal-only variant).
+--
+-- Impl names match the wire contract names from Shared on purpose:
+-- `Shared.listMine` is implemented by `listMine` (this module).
+listMine : () -> Shared.User -> Effect String (List Shared.Note)
+listMine _ user =
+    Repo.findBy notes { authorId = user.id }
+
+
+createMine : { body : String } -> Shared.User -> Effect String Shared.Note
+createMine input user =
+    -- Server-side gate: clients can disable the button or guard the
+    -- update, but the backend is the only layer we control end-to-end.
+    -- Reject empty / whitespace-only bodies regardless of how the call
+    -- arrived (curl, tampered client, replayed request).
+    if String.trim input.body == "" then
+        Effect.fail "body_empty"
+    else
+        Repo.create notes
+            { body     = input.body
+            , authorId = user.id
+            }
+
+
+-- Domain-local services list. Main.mar concatenates every domain's
+-- list into the App.fullstack record.
+services =
+    [ Auth.protect Shared.listMine   listMine
+    , Auth.protect Shared.createMine createMine
+    ]

@@ -1,57 +1,26 @@
 package runtime
 
-import (
-	"bufio"
-	"fmt"
-	"os"
-)
+import "fmt"
 
-// ioBuiltins returns runtime functions for basic I/O. All return Effects.
+// ioBuiltins returns runtime functions for stdlib effects available in
+// server programs.
+//
+// IO.print / IO.println / IO.readLine were removed when mar narrowed
+// to full-stack web — they don't fit the topologies (frontend / backend
+// / fullstack) and the previous CLI sub-commands that exercised them
+// (`mar run`) are gone too. If a future use-case needs them back,
+// reintroduce as `Process.print` etc. with explicit semantics.
+//
+// What remains here is the stub for Http.get / Http.post on the Go
+// side. Real HTTP requests run in the browser through the JS runtime;
+// the Go effect just errors if invoked, so accidentally calling
+// Http.* in server-evaluated code fails fast instead of silently
+// doing nothing.
 func ioBuiltins() map[string]Value {
 	return map[string]Value{
-		// IO.print : String -> Effect e ()
-		"ioPrint": nativeFn(1, func(args []Value) (Value, error) {
-			s, ok := args[0].(VString)
-			if !ok {
-				return nil, fmt.Errorf("IO.print: expected String")
-			}
-			return VEffect{
-				Tag: "print",
-				Run: func() (Value, error) {
-					fmt.Print(s.V)
-					return VUnit{}, nil
-				},
-			}, nil
-		}),
-		// IO.println : String -> Effect e ()
-		"ioPrintln": nativeFn(1, func(args []Value) (Value, error) {
-			s, ok := args[0].(VString)
-			if !ok {
-				return nil, fmt.Errorf("IO.println: expected String")
-			}
-			return VEffect{
-				Tag: "println",
-				Run: func() (Value, error) {
-					fmt.Println(s.V)
-					return VUnit{}, nil
-				},
-			}, nil
-		}),
-		// IO.readLine : Effect e String
-		"ioReadLine": VEffect{
-			Tag: "readLine",
-			Run: func() (Value, error) {
-				scanner := bufio.NewScanner(os.Stdin)
-				if !scanner.Scan() {
-					return VString{V: ""}, nil
-				}
-				return VString{V: scanner.Text()}, nil
-			},
-		},
-
 		// Http.get / Http.post : implemented client-side by the JS runtime.
-		// On the Go side they're stubs — code that depends on Http on the
-		// server isn't supported in this MVP.
+		// On the Go side they're stubs that error out — server-side code
+		// that depends on Http is not supported.
 		"httpGet": nativeFn(2, func(args []Value) (Value, error) {
 			return VEffect{
 				Tag: "httpGet",

@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// jsonBuiltins returns runtime functions for JSON encode/decode.
-//
-// MVP: encode/decode any Value to/from a JSON string. The mapping mirrors
-// the codec rules in docs/mar.md.
+// jsonBuiltins returns runtime functions for JSON encode/decode of
+// any Value to/from a JSON string. The mapping mirrors the codec rules
+// in docs/mar.md.
 //
 //	JSON.encode  : a -> String
 //	JSON.decode  : String -> Result String a   -- (decoded shape is "any" — uses VRecord/VList/VBool/etc.)
@@ -69,6 +69,17 @@ func encodeValue(v Value) (string, error) {
 		return "false", nil
 	case VUnit:
 		return "null", nil
+	case VDuration:
+		return strconv.FormatInt(x.Seconds, 10), nil
+	case VTime:
+		// Wire format is `{"__time": "ISO 8601"}` — marker keeps the
+		// type round-trippable on the client (jsToMar / iOS decoder
+		// recognize it and produce a VTime, not a plain VString).
+		// The value itself is ISO so the same wire is readable by
+		// non-mar consumers inspecting raw JSON.
+		iso := time.UnixMilli(x.Millis).UTC().Format(time.RFC3339)
+		b, _ := json.Marshal(iso)
+		return `{"__time":` + string(b) + `}`, nil
 	case VList:
 		var sb strings.Builder
 		sb.WriteByte('[')
@@ -103,35 +114,38 @@ func encodeValue(v Value) (string, error) {
 		sb.WriteByte('}')
 		return sb.String(), nil
 	case VCtor:
-		// Maybe — transparent
+		// Maybe — transparent (Just x → x; Nothing → null).
 		if x.Tag == "Just" && len(x.Args) == 1 {
 			return encodeValue(x.Args[0])
 		}
 		if x.Tag == "Nothing" {
 			return "null", nil
 		}
-		// Tag-only constructor → string
-		if len(x.Args) == 0 {
-			b, _ := json.Marshal(strings.ToLower(x.Tag[:1]) + x.Tag[1:])
-			return string(b), nil
-		}
-		// Constructor with payload → tagged object
+		// All other constructors round-trip as `{"__ctor": "Name"}`
+		// (zero-arg) or `{"__ctor": "Name", "__args": [...]}` (with
+		// payload). The marker prefix keeps it distinguishable from
+		// user records that happen to have a `tag` field. The JS
+		// runtime's jsToMar / marToJs and Go's valueToAny / jsToMar
+		// equivalents use the same convention.
 		var sb strings.Builder
-		sb.WriteString(`{"tag":`)
-		b, _ := json.Marshal(strings.ToLower(x.Tag[:1]) + x.Tag[1:])
+		sb.WriteString(`{"__ctor":`)
+		b, _ := json.Marshal(x.Tag)
 		sb.Write(b)
-		sb.WriteString(`,"args":[`)
-		for i, a := range x.Args {
-			if i > 0 {
-				sb.WriteByte(',')
+		if len(x.Args) > 0 {
+			sb.WriteString(`,"__args":[`)
+			for i, a := range x.Args {
+				if i > 0 {
+					sb.WriteByte(',')
+				}
+				s, err := encodeValue(a)
+				if err != nil {
+					return "", err
+				}
+				sb.WriteString(s)
 			}
-			s, err := encodeValue(a)
-			if err != nil {
-				return "", err
-			}
-			sb.WriteString(s)
+			sb.WriteByte(']')
 		}
-		sb.WriteString("]}")
+		sb.WriteByte('}')
 		return sb.String(), nil
 	case VTuple:
 		var sb strings.Builder

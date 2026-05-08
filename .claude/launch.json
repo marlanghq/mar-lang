@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "notes-fullstack",
+      "runtimeExecutable": "mar",
+      "runtimeArgs": ["dev", "examples/notes-fullstack"],
+      "port": 3000
+    }
+  ]
+}

@@ -166,6 +166,12 @@ func CheckModuleWith(
 					ctorType = TForall{Vars: ids, Body: ctorType}
 				}
 				valueEnv = valueEnv.Bind(c.Name, ctorType)
+				// Also expose the ctor in res.ValueTypes so the
+				// project loader can register a qualified
+				// `Module.Ctor` form for downstream imports
+				// (`import M exposing (T(..))` and module-qualified
+				// references both rely on this).
+				res.ValueTypes[c.Name] = ctorType
 			}
 
 			tEnv.paramScopes = tEnv.paramScopes[:len(tEnv.paramScopes)-1]
@@ -233,6 +239,31 @@ func CheckModuleWith(
 		body := v.Body
 		if len(v.Params) > 0 {
 			body = &ast.ELambda{Pos: v.Pos, Params: v.Params, Body: body}
+		}
+		// Bidirectional coercion for typed paths: when the annotation
+		// is `Path r` and the body is a bare String literal, parse the
+		// literal at compile time, derive the params row from the
+		// `{name:Type}` segments, and unify against the annotation's
+		// row. The runtime keeps the value as a String (no AST rewrite
+		// needed) — page builders + linkTo / Nav.pushTo re-parse it
+		// when they need the segments.
+		//
+		// Only applies when an annotation is present. Without one we
+		// can't know the expected type, so a bare String literal stays
+		// String — the user must declare `notesDetail : Path { id : Int }`.
+		if annotBody, has := annotationBodies[v.Name]; has {
+			if str, ok := body.(*ast.EString); ok {
+				if pathRow, isPath := pathRowOfAnnot(s.Apply(annotBody)); isPath {
+					row, err := elaboratePathLiteral(str.Value, tEnv)
+					if err != nil {
+						return nil, errorf(str.Pos, "%s: %v", v.Name, err)
+					}
+					if err := Unify(pathRow, row, s); err != nil {
+						return nil, errorf(str.Pos, "%s: path %q does not match annotation: %v", v.Name, str.Value, err)
+					}
+					continue
+				}
+			}
 		}
 		tInferred, err := Infer(body, valueEnv, s)
 		if err != nil {
@@ -346,8 +377,8 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 
 	case *ast.TypeCon:
 		// Qualified type names (Post.Post) are looked up by the base name.
-		// MVP: we don't yet share type-alias info across modules, so an
-		// unknown qualified name is treated as an opaque TCon.
+		// Type-alias info isn't shared across modules yet, so an unknown
+		// qualified name is treated as an opaque TCon.
 		args := make([]Type, len(t.Args))
 		for i, a := range t.Args {
 			at, err := convertTypeExprWithIDs(a, tEnv, nil)
@@ -443,9 +474,9 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 //
 // TODO: store paramIDs alongside TypeAlias so we don't need this.
 func paramIDForName(body Type, name string) (int, bool) {
-	// Placeholder: this function is currently a stub; real implementation
-	// needs us to record param IDs at alias creation time. For MVP we leave
-	// alias inlining incomplete.
+	// Stub: a complete implementation would record param IDs at alias
+	// creation time so we could substitute them here. Until then,
+	// alias inlining stays incomplete.
 	return 0, false
 }
 

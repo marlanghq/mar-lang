@@ -149,9 +149,9 @@ func (r *renamer) format(t Type) string {
 		for _, id := range v.Vars {
 			names = append(names, r.mapping[id])
 		}
-		// MVP: just print the body with its renamed vars; the caller can
-		// understand it's polymorphic without an explicit "forall" prefix.
-		// (We keep the variable names lowercased letters which signals it.)
+		// We just print the body with its renamed vars; the caller can
+		// tell it's polymorphic from the lowercase variable names
+		// (no explicit `forall` prefix is rendered).
 		_ = names
 		return body
 	}

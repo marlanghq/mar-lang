@@ -1,9 +1,13 @@
 module Main exposing (main)
 
 
--- Entry point for the full-stack notes app. `mar app <projectDir>` looks
--- here for `main` and runs it. Backend.mar / Frontend.mar / Shared.mar are
--- imported by name — no CLI magic, just regular module composition.
+-- Entry point for the full-stack notes app.
+--
+-- The previous version mounted REST endpoints under /api/* and the
+-- frontend made `Endpoint.call` requests with hand-rolled JSON
+-- encoding. This version uses typed `Service` values (declared in
+-- Shared.mar) — the frontend calls them by binding identity, the
+-- runtime resolves the URL.
 
 
 import Backend
@@ -13,6 +17,7 @@ import Frontend
 main : Effect String ()
 main =
     App.fullstack
-        { api = Backend.routes
-        , pages = [Frontend.page]
+        { api      = []
+        , services = Backend.services
+        , pages    = [ Frontend.page ]
         }

@@ -1,6 +1,15 @@
 module Tasks exposing (main)
 
 
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, list, section, header
+    , hstack, vstack
+    , text, textField, button, empty
+    , submit
+    )
+
+
 -- A more polished task tracker, exercising the layout modifiers added
 -- in the elm-ui-style refresh of the view DSL.
 --
@@ -125,58 +134,57 @@ view model =
         counts  = String.fromInt (List.length visible)
                     ++ " of "
                     ++ String.fromInt (List.length model.tasks)
+                    ++ " tasks"
     in
-    -- Page-wide centered card layout. width 720 caps the reading width;
-    -- centerX positions it on the viewport; padding gives the card air.
-    View.column [ View.spacing 16, View.padding 24, View.width 720, View.centerX ]
-        [ View.title [] "Tasks"
-        , View.text [] counts
+    navigationStack [ navigationTitle "Tasks" ]
+        [ list
+            [ section [ header "New task" ]
+                [ textField [] "Title" model.draftTitle TitleChanged
+                , textField [ submit AddTask ] "Notes" model.draftNotes NotesChanged
+                , button [] AddTask "Add task"
+                ]
+            , section [ header "Filter" ]
+                [ hstack []
+                    [ button [] (SetFilter All)    "All"
+                    , button [] (SetFilter Active) "Active"
+                    , button [] (SetFilter Done)   "Done"
+                    ]
+                ]
+            , case visible of
+                [] ->
+                    section [] [ text "No tasks. Add one above." ]
 
-        , View.column [ View.spacing 8, View.padding 16, View.fillX ]
-            [ View.subtitle [] "New task"
-            , View.input [ View.fillX ] model.draftTitle TitleChanged
-            , View.textarea [ View.fillX ] model.draftNotes NotesChanged
-            , View.button [] AddTask "Add task"
-            ]
-
-        , View.row [ View.spacing 8 ]
-            [ View.text [] "Show:"
-            , View.button [] (SetFilter All) "All"
-            , View.button [] (SetFilter Active) "Active"
-            , View.button [] (SetFilter Done) "Done"
-            ]
-
-        , case visible of
-            [] ->
-                View.text [ View.padding 16 ] "No tasks. Add one above."
-
-            _ ->
-                View.keyedList [ View.fillX ] (List.map renderTask visible)
-
-        , View.row [ View.spacing 12 ]
-            [ View.button [] ClearDone "Clear done"
-            , View.link [] "https://guide.elm-lang.org/architecture/" "Elm Architecture"
+                _ ->
+                    section [ header counts ] (List.map renderTask visible)
+            , section []
+                [ button [] ClearDone "Clear done" ]
             ]
         ]
 
 
-renderTask : Task -> (String, View Msg)
+renderTask : Task -> View Msg
 renderTask t =
-    ( String.fromInt t.id
-    , View.row [ View.spacing 12, View.padding 8, View.fillX ]
-        [ View.button [] (ToggleTask t.id) (if t.done then "[x]" else "[ ]")
-        , View.column [ View.spacing 4, View.fillX ]
-            [ View.text [] t.title
-            , if t.notes == "" then
-                View.empty
-              else
-                View.text [] t.notes
+    hstack []
+        [ button [] (ToggleTask t.id) (if t.done then "[x]" else "[ ]")
+        , vstack []
+            [ text t.title
+            , if t.notes == "" then empty else text t.notes
             ]
-        , View.button [] (RemoveTask t.id) "Remove"
+        , button [] (RemoveTask t.id) "Remove"
         ]
-    )
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Tasks"
+        , init = init
+        , update = update
+        , view = view
+        }
 
 
 main : Effect String ()
 main =
-    App.frontend [Page.root init update view]
+    App.frontend [ page ]

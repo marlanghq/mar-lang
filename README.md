@@ -1,136 +1,115 @@
 # mar
 
-mar is a small, statically typed, full-stack functional language. It is
-inspired by Elm: same general syntax, Hindley-Milner type inference with row
-polymorphism, pure functions with effects as values.
+mar is a small, statically typed, **full-stack web** language. Inspired by Elm:
+same general syntax, Hindley-Milner type inference with row polymorphism, pure
+functions, effects as values.
 
-This branch (`ml-experiments`) is a fresh implementation. The previous
-Lisp-based version has been removed.
+## Focus
+
+mar exists to write web apps end to end — frontend, backend, or both. Every
+program exports
+
+```elm
+main : Effect String ()
+```
+
+and chooses one of three topologies:
+
+| `main` calls           | What you get                                                    |
+|------------------------|-----------------------------------------------------------------|
+| `App.frontend pages`   | Browser MVU app (HTML shell + JS interpreter, hot reload).      |
+| `App.backend routes`   | HTTP server (server-rendered HTML, REST endpoints, or both).    |
+| `App.fullstack { api, pages }` | Unified server: API at `/api/*`, browser app at `/`.    |
+
+The CLI enforces the signature: `mar dev` rejects `main` with any other type up
+front. There is no `mar run` for one-off scripts and no low-level `Server.serve`
+to drop down to — the topologies are the public API.
 
 ## Status
 
 Working today, end to end:
 
 - Lexer, parser, type checker (full HM with row polymorphism, custom types,
-  cross-module type aliases).
+  cross-module type aliases). Cycle detection on non-function value
+  declarations.
 - Tree-walking interpreter with closures, currying, pattern matching
   (including cons / list patterns), custom-type constructors, records.
-- Stdlib: `List`, `String`, `Maybe`, `Result`, `Effect`, `IO`, `JSON`,
-  `Server`, `Response`, `Db`, `Entity`, `View`.
+- Stdlib: `List`, `String`, `Maybe`, `Result`, `Effect`, `JSON`,
+  `Entity`, `Repo`, `View`, `App`, `Page`, `Endpoint`, `Response`, `Http`.
 - Multi-file projects with shared types and qualified names.
 - `mar.json` manifest with strict schema, `env:VAR` references, secret
   enforcement.
-- Real I/O via `IO.print/println/readLine`.
-- HTTP server with path params (`/posts/:id`), backed by Go `net/http`.
-- SQLite via `Db.open/exec/query/queryOne`.
-- `Entity` builder with auto-migrations (`Entity.migrate`).
-- Server-side view rendering (`View.render` produces HTML).
-- Server-side MVU runtime (`App.create` + `App.serve`): full
-  init / update / view loop, session state per browser, buttons rendered
-  as HTML forms that POST messages back. No JS required.
-- **Browser MVU runtime** (`mar dev <file.mar>`): a JS interpreter that
-  loads the parsed AST and runs init / update / view client-side, with real
-  DOM and event handlers. No page reloads.
+- SQLite via `Entity` (record-literal schema declaration) and `Repo`
+  (typed CRUD: `all`, `findById`, `findBy`, `create`, `update`,
+  `deleteById`). DB is opened lazily from `mar.json`'s `database.path`;
+  schemas auto-migrate on first use.
+- Server-side view rendering (`View.render` produces HTML) — see
+  `examples/view-page.mar`.
+- Browser MVU runtime: a JS interpreter that loads the parsed AST and runs
+  init / update / view client-side, with real DOM and event handlers. No page
+  reloads.
+- Hot-reload dev server (`mar dev`) with SSE-based reload events and an
+  in-browser banner for compile errors.
+- Strictly immutable REPL (`mar repl`) — rebinding is rejected; `:reset`
+  starts a fresh session.
 
 ## Try it
 
 ```bash
 go build -o mar ./cmd/mar
 
-# REPL
-./mar repl
-> 1 + 2
-3 : Int
+# Browser-only counter (MVU).
+./mar dev examples/counter.mar
 
-# Run a single file
-./mar run examples/factorial.mar
-3628800
+# Server-rendered page (View.render → HTML).
+./mar dev examples/view-page.mar
 
-# Type-check a project
-./mar check examples/blog
-
-# Run a project (entry value Module.name)
-./mar run examples/multi Main.main
-
-# Run a real HTTP server with SQLite
-./mar run examples/notes-entity.mar &
-curl -X POST -d "first note" http://localhost:3002/notes
-curl http://localhost:3002/notes
+# Full-stack app: backend + frontend in one process.
+./mar dev examples/notes-fullstack
 ```
 
 ## Examples
 
-| File | Demonstrates |
-|------|--------------|
-| `examples/hello.mar` | basic types, custom types, generics |
-| `examples/factorial.mar` | recursion + annotations |
-| `examples/calculator.mar` | recursive ADT evaluation |
-| `examples/inventory.mar` | records, custom types, pipelines, stdlib |
-| `examples/wordcount.mar` | cons patterns, recursive list ops |
-| `examples/sum-of-squares.mar` | qualified names (`List.map`) |
-| `examples/people.mar` | filter / map / records |
-| `examples/list-ops.mar` | composition, partial application |
-| `examples/mini-eval.mar` | a tiny expression-language interpreter, in mar |
-| `examples/effects.mar` | `Effect.succeed/fail/map/andThen` |
-| `examples/hello-io.mar` | real I/O via Effects |
-| `examples/echo.mar` | interactive (reads stdin) |
-| `examples/server.mar` | minimal two-route HTTP server |
-| `examples/notes-app.mar` | full CRUD HTTP API + SQLite (raw SQL) |
-| `examples/notes-entity.mar` | as above, with `Entity` schema and auto-migrations |
-| `examples/db.mar` | direct SQLite access |
-| `examples/view-page.mar` | server-side view rendering to HTML |
-| `examples/counter.mar` | interactive MVU app: init / update / view, session state |
-| `examples/todo-app.mar` | MVU with form input (`AddTodo { body }`), togglable list |
-| `examples/tasks.mar` | larger MVU app exercising the layout modifiers (View.padding / .spacing / .fillX / .center / .width) |
-| `examples/multi-screen.mar` | multiple screens at different paths, each with its own model, links between them |
-| `examples/clock.mar` + `clock-backend.mar` | browser app does Http.get to backend on init / Refresh |
-| `examples/notes-fullstack/` | full-stack mar: Main.mar wires Backend.routes + Frontend.page via App.fullstack; Shared.mar declares Endpoints used by both sides; SQLite-backed backend; browser frontend driven by MVU |
-| `examples/multi/` | multi-file project, simplest |
-| `examples/blog/` | 3-file project + `mar.json` |
+| File                          | Demonstrates                                                        |
+|-------------------------------|---------------------------------------------------------------------|
+| `examples/counter.mar`        | Browser MVU: init / update / view, the classic counter.             |
+| `examples/clock.mar`          | Browser MVU + `Http.get` to an external endpoint.                   |
+| `examples/todo-app.mar`       | MVU with form input, togglable list.                                |
+| `examples/tasks.mar`          | Larger MVU app exercising layout modifiers (padding, spacing, …).   |
+| `examples/multi-screen.mar`   | Multiple `Page`s at different paths, each with its own model.       |
+| `examples/view-page.mar`      | `App.backend` doing pure server-side rendering via `View.render`.   |
+| `examples/guestbook/`         | SSR + persistence via `Entity` + `Repo`; HTML form posts back to server, no JS in the browser. |
+| `examples/notes-fullstack/`   | `App.fullstack`: REST CRUD via `Endpoint.list` / `Endpoint.create` + `Repo.*`; SQLite backend; browser frontend. |
 
 ## CLI
 
 ```
-mar parse <file>            syntax check
-mar check <file|dir>        type check (file or project)
-mar run <file|dir> [val]    type-check + run; defaults to value `main`.
-                            For projects, use `Module.name`.
-mar repl                    interactive
-mar dev [path]              Run main in dev mode with hot reload. <path>
-                            can be a .mar file (single-file app) or a
-                            project directory (looks for Main.mar inside).
-                            Defaults to current dir. What main does decides
-                            the runtime:
-                              App.fullstack { api, page } — unified server,
-                                port from mar.json (default 3000).
-                              App.serve port app          — browser-only,
-                                port from code.
-                              App.serveScreens port list  — multi-screen
-                                browser app, port from code.
-                            Watches *.mar / *.json under the project dir;
-                            on change recompiles, swaps the served program
-                            atomically, and pushes a reload event to all
-                            connected browsers via SSE on /_mar/reload.
-                            Compile errors are pushed to a red banner in
-                            the browser (the previous good version keeps
-                            serving). Server-down detection shows an
-                            amber "Reconnecting…" banner until the
-                            connection comes back.
-mar config <dir>            load and print mar.json
-mar init <name>             scaffold a new project (Main.mar + mar.json)
-mar build [dir] [distDir]   compile a frontend project to a static
-                            dist/ directory (HTML + runtime.js +
-                            program.json) — host anywhere static
-mar lsp                     run the Language Server over stdio
-                            (consumed by the VSCode extension under
-                            vscode-mar/)
-mar version                 print version
+mar dev [path]              Run the app in dev mode (hot reload, dev banner,
+                            browser-open). <path> is a .mar file or a project
+                            directory containing Main.mar; defaults to ".".
+                            Watches *.mar / *.json under the project dir; on
+                            change recompiles and swaps in the new program
+                            atomically. Compile errors show in a red banner
+                            in the browser; the previous good version keeps
+                            serving.
+mar build [dir] [distDir]   Compile a frontend project to a static dist/
+                            (HTML + runtime.js + program.json) — host
+                            anywhere static.
+mar init <name>             Scaffold a new project (Main.mar + mar.json).
+mar check <file>            Parse and type-check a file (no run).
+mar repl                    Interactive read-eval-print loop (immutable).
+mar format [--check] <f>... Reformat in place. With --check, exit 1 if any
+                            file would change.
+mar lsp                     Run the Language Server over stdio (consumed by
+                            the VSCode extension under vscode-mar/).
+mar config <dir>            Load and print mar.json from the given project.
+mar version                 Print the version.
 ```
 
 ## Design
 
-See `docs/mar.md` for the full reference and `docs/managed-effects.md` for
-the rationale behind the effect / MVU model.
+See `docs/mar.md` for the language reference and `docs/managed-effects.md`
+for the rationale behind the effect / MVU model.
 
 ## Layout
 
@@ -140,8 +119,10 @@ internal/lexer/      tokenizer
 internal/parser/     parser
 internal/ast/        AST types
 internal/typecheck/  Hindley-Milner inference
-internal/runtime/    tree-walking interpreter, stdlib, server, db, view, ...
+internal/runtime/    tree-walking interpreter, stdlib, db, view, ...
 internal/project/    multi-file loader, mar.json manifest
+internal/jsserve/    dev server, hot reload, browser-side runtime
+internal/lsp/        Language Server (used by editor extensions)
 docs/                language reference
 examples/            working programs
 ```

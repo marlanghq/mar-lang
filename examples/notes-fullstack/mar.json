@@ -1,6 +1,5 @@
 {
   "name": "notes-fullstack",
-  "entry": "Main.mar",
   "server": {
     "port": 3000
   },

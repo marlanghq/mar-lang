@@ -33,6 +33,13 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 		}
 		body, _ := io.ReadAll(req.Body)
 		reqVal := buildRequestValue(req, body, params)
+		// If the route was produced by Auth.protected, attach the loaded
+		// user (or Nothing) under the well-known `__user` field so the
+		// service wrapper can curry it in. The wrapper short-circuits to
+		// 401 if Nothing.
+		if requiresUser(r) {
+			reqVal = withUser(reqVal, loadUserForRequest(req))
+		}
 		handler := r.Fields["handler"]
 		effVal, err := runtime.Apply(handler, reqVal)
 		if err != nil {
@@ -89,6 +96,53 @@ func matchPath(routeSegs, reqSegs []string) (map[string]string, bool) {
 		}
 	}
 	return params, true
+}
+
+// requiresUser checks the route record's `requiresUser` flag (set by
+// Auth.protected via runtime.ExposedServiceToRoute).
+func requiresUser(r runtime.VRecord) bool {
+	b, _ := r.Fields["requiresUser"].(runtime.VBool)
+	return b.V
+}
+
+// loadUserForRequest reads the session cookie, validates the session,
+// loads the user record, returns it as Just/Nothing. Anything missing
+// or invalid → Nothing (the service wrapper turns that into 401).
+func loadUserForRequest(req *http.Request) runtime.Value {
+	cfg := runtime.CurrentAuth()
+	secret := AuthSecret()
+	if cfg == nil || secret == "" {
+		return runtime.VCtor{Tag: "Nothing"}
+	}
+	c, err := req.Cookie(cookieName)
+	if err != nil || c.Value == "" {
+		return runtime.VCtor{Tag: "Nothing"}
+	}
+	db, err := dbHandle()
+	if err != nil {
+		return runtime.VCtor{Tag: "Nothing"}
+	}
+	uid, ok := sessionUserID(db, secret, c.Value)
+	if !ok {
+		return runtime.VCtor{Tag: "Nothing"}
+	}
+	user, err := runtime.LoadUserValue(*cfg, uid)
+	if err != nil {
+		return runtime.VCtor{Tag: "Nothing"}
+	}
+	return runtime.VCtor{Tag: "Just", Args: []runtime.Value{user}}
+}
+
+// withUser returns a copy of reqVal with `__user` added.
+func withUser(reqVal runtime.VRecord, user runtime.Value) runtime.VRecord {
+	fields := make(map[string]runtime.Value, len(reqVal.Fields)+1)
+	for k, v := range reqVal.Fields {
+		fields[k] = v
+	}
+	fields["__user"] = user
+	order := append([]string(nil), reqVal.Order...)
+	order = append(order, "__user")
+	return runtime.VRecord{Fields: fields, Order: order}
 }
 
 func buildRequestValue(req *http.Request, body []byte, params map[string]string) runtime.VRecord {

@@ -1,22 +1,29 @@
 module Shared exposing (..)
 
 
--- Shared between Backend.mar and Frontend.mar.
---
--- backendBase is a relative URL because in `mar app` mode the backend is
--- served at /api on the same origin as the frontend.
+-- Types and Service contracts. The frontend imports from here to call;
+-- the backend imports them too, but only to attach implementations.
+-- No entities, no Repo, no handlers — those live in Backend.mar.
 
 
-backendBase : String
-backendBase =
-    "/api"
+type alias Note =
+    { id : Int
+    , body : String
+    }
 
 
-listEp : Endpoint
-listEp =
-    Endpoint.get "/notes"
+type alias NewNote =
+    { body : String
+    }
 
 
-createEp : Endpoint
-createEp =
-    Endpoint.post "/notes"
+-- RPC contracts. The binding name + module become the URL path
+-- (`/services/Shared.listAllNotes` etc.).
+listAllNotes : Service () (List Note)
+listAllNotes =
+    Service.declare
+
+
+createNote : Service NewNote Note
+createNote =
+    Service.declare

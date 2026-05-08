@@ -4,7 +4,7 @@ module Counter exposing (main)
 -- The classic MVU counter. Open with `mar dev counter.mar`.
 
 
-import View exposing (column, title, text, button, center, paddingTop, spacing)
+import UI exposing (navigationStack, navigationTitle, vstack, title, text, button, centered)
 
 
 type alias Model = Int
@@ -32,14 +32,28 @@ update msg model =
 
 view : Model -> View Msg
 view model =
-    column [ spacing 40 ]
-        [ title [ center, paddingTop 70 ] "Counter"
-        , button [ center ] Increment "+"
-        , text [ center ] (String.fromInt model)
-        , button [ center ] Decrement "-"
+    navigationStack [ navigationTitle "Counter" ]
+        [ centered
+            (vstack []
+                [ button [] Increment "+"
+                , text (String.fromInt model)
+                , button [] Decrement "-"
+                ]
+            )
         ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Counter"
+        , init = init
+        , update = update
+        , view = view
+        }
 
 
 main : Effect String ()
 main =
-    App.frontend [Page.root init update view]
+    App.frontend [ page ]

@@ -107,7 +107,7 @@ func runRepl() int {
 // topLevelEquals returns the index of the first `=` that's a top-level binding
 // (not part of `==` or inside a record/lambda). Returns -1 if not found.
 //
-// MVP: just look for `=` not preceded/followed by another `=`.
+// We just look for `=` not preceded or followed by another `=`.
 func topLevelEquals(s string) int {
 	depth := 0
 	for i := 0; i < len(s); i++ {
@@ -187,10 +187,11 @@ func replEvalExpr(exprSrc string, tEnv *typecheck.TypeEnv, rEnv *runtime.Env, su
 
 // replBind handles `name = expr`: type-check, evaluate, register in both envs.
 //
-// Note: we mutate rEnv via Define, but tEnv is immutable so we have to
-// return... but main holds it as a local. For MVP, we use a workaround:
-// rEnv is mutated; tEnv updates would need refactoring. Skip permanent
-// type-env updates for now (each line gets re-checked against base).
+// Note: rEnv is mutated via Define, but tEnv is immutable and main
+// holds it as a local. We don't persist type-env updates between lines
+// (each line is re-checked against the base env); making tEnv share
+// mutability with rEnv would let bindings carry their inferred type
+// forward across REPL prompts.
 func replBind(name, exprSrc string, tEnv *typecheck.TypeEnv, rEnv *runtime.Env, subst *typecheck.Subst) error {
 	mod, err := parser.Parse("module Repl exposing (..)\n" + name + " = " + exprSrc + "\n")
 	if err != nil {

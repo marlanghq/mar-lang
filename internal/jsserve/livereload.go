@@ -22,8 +22,42 @@ type LiveProgram struct {
 	programJSON []byte
 	title       string
 	entry       string
+	appName     string // mar.json `name` — preferred over title for native clients
 	hasAPI      bool   // true when serving as full-stack (route /api/* through dispatchBackend)
 	lastError   string // most recent compile error; "" when last compile succeeded
+	devMode     bool   // false = production stub: no SSE, no dev banner, no time-travel panel
+}
+
+// SetAppName records the project's canonical name (from mar.json
+// `name`). Preferred over Title() for surfaces a human consumes
+// directly (mDNS instance name, dev banner) — title follows the
+// last loaded module which can be surprising in fullstack projects
+// whose entry chains through Frontend.
+func (lp *LiveProgram) SetAppName(name string) {
+	lp.mu.Lock()
+	defer lp.mu.Unlock()
+	lp.appName = name
+}
+
+// AppName returns the project's canonical name. Falls back to Title
+// (last user module) when the manifest didn't supply one.
+func (lp *LiveProgram) AppName() string {
+	lp.mu.RLock()
+	defer lp.mu.RUnlock()
+	if lp.appName != "" {
+		return lp.appName
+	}
+	return lp.title
+}
+
+// SetDevMode toggles dev affordances on the served program (dev banner,
+// SSE compile-error channel, time-travel panel). Defaults to false; the
+// dev server flips it to true at startup. Production runtime leaves it
+// off so end users don't see a debug dock.
+func (lp *LiveProgram) SetDevMode(on bool) {
+	lp.mu.Lock()
+	defer lp.mu.Unlock()
+	lp.devMode = on
 }
 
 // SetPort sets the listening port. Called once on first capture; ignored
@@ -42,17 +76,32 @@ func (lp *LiveProgram) Port() int {
 	return lp.port
 }
 
-// Update replaces the served AST + routes + entry atomically. Pass nil
-// for routes when not serving an API (browser-only mode).
+// Update replaces the served AST + routes + entry atomically.
+//
+//   - frontend-only:  routes=nil, mods=non-empty, entry=non-empty
+//   - backend-only:   routes=non-empty, mods=nil, entry=""
+//   - fullstack:      routes=non-empty, mods=non-empty, entry="main"
+//
+// makeProgramJSON is skipped when mods is empty (backend-only doesn't
+// ship a browser bundle); programJSON stays nil.
 func (lp *LiveProgram) Update(routes []runtime.Value, mods []*ast.Module, entry string) error {
-	progJSON, err := makeProgramJSON(mods, entry)
-	if err != nil {
-		return err
-	}
+	var progJSON []byte
 	title := "mar app"
-	if len(mods) > 0 && len(mods[len(mods)-1].Name) > 0 {
-		nm := mods[len(mods)-1].Name
-		title = nm[len(nm)-1]
+	if len(mods) > 0 {
+		var err error
+		progJSON, err = makeProgramJSON(mods, entry, lp.devMode)
+		if err != nil {
+			return err
+		}
+		// Pick the last user-named module as the page title (the synthetic
+		// __entry module that the CLI appends has Name == nil, so it's
+		// skipped here).
+		for i := len(mods) - 1; i >= 0; i-- {
+			if nm := mods[i].Name; len(nm) > 0 {
+				title = nm[len(nm)-1]
+				break
+			}
+		}
 	}
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
@@ -62,6 +111,15 @@ func (lp *LiveProgram) Update(routes []runtime.Value, mods []*ast.Module, entry 
 	lp.entry = entry
 	lp.hasAPI = routes != nil
 	return nil
+}
+
+// HasFrontend reports whether a browser bundle has been compiled (so
+// /, /_mar/runtime.js, /_mar/program.json should serve content).
+// Backend-only mode leaves this false.
+func (lp *LiveProgram) HasFrontend() bool {
+	lp.mu.RLock()
+	defer lp.mu.RUnlock()
+	return len(lp.programJSON) > 0
 }
 
 func (lp *LiveProgram) Routes() []runtime.Value {
@@ -228,13 +286,38 @@ func jsonError(msg string) string {
 	return string(b)
 }
 
-func makeProgramJSON(mods []*ast.Module, entry string) ([]byte, error) {
+func makeProgramJSON(mods []*ast.Module, entry string, devMode bool) ([]byte, error) {
 	if len(mods) == 0 {
 		return nil, fmt.Errorf("no modules to serialize")
 	}
-	merged := mergeModules(mods)
-	return json.Marshal(map[string]any{
-		"module": SerializeModule(merged),
-		"entry":  entry,
-	})
+	// Send modules separately so the runtime registers each decl
+	// under both its bare name and a qualified `Module.name` form.
+	// Merging them into one module silently overwrote same-named
+	// decls across modules — `Frontend.SignIn.page` and
+	// `Frontend.Home.page` collapsed into one, breaking multi-page
+	// auth-protected apps.
+	serialized := make([]any, 0, len(mods))
+	for _, m := range mods {
+		serialized = append(serialized, SerializeModule(m))
+	}
+	out := map[string]any{
+		"modules": serialized,
+		"entry":   entry,
+		"devMode": devMode,
+	}
+	// Bake auth metadata that Page.protected needs on the client
+	// (signInPath) directly into the bundle. Main.mar isn't in the
+	// browser bundle (only modules reachable from the page list are),
+	// so the client can't run `auth = Auth.config { ... }` itself —
+	// we hand the resolved values off via this side channel instead.
+	if cfg := runtime.CurrentAuth(); cfg != nil {
+		auth := map[string]any{}
+		if cfg.SignInPath != "" {
+			auth["signInPath"] = cfg.SignInPath
+		}
+		if len(auth) > 0 {
+			out["auth"] = auth
+		}
+	}
+	return json.Marshal(out)
 }

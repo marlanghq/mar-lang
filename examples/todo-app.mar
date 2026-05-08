@@ -1,6 +1,15 @@
 module TodoApp exposing (main)
 
 
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, list, section, header
+    , hstack
+    , text, textField, button
+    , submit
+    )
+
+
 -- A small interactive todo list. Open with `mar dev examples/todo-app.mar`.
 
 
@@ -56,28 +65,43 @@ update msg model =
 
 renderTodo : Todo -> View Msg
 renderTodo t =
-    View.row []
-        [ View.text [] (String.fromInt t.id ++ ": " ++ t.body)
-        ]
+    text (String.fromInt t.id ++ ": " ++ t.body)
 
 
 view : Model -> View Msg
 view model =
-    View.section []
-        [ View.title [] "Todo"
-        , View.subtitle [] (String.fromInt (List.length model.items) ++ " items")
-        , View.row []
-            [ View.input [] model.draft DraftChanged
-            , View.button [] AddTodo "Add"
+    navigationStack [ navigationTitle "Todo" ]
+        [ list
+            [ section []
+                [ hstack []
+                    [ textField [ submit AddTodo ]
+                        "What needs doing?" model.draft DraftChanged
+                    , button [] AddTodo "Add"
+                    ]
+                ]
+            , section []
+                [ hstack []
+                    [ button [] ToggleAll "Toggle all"
+                    , button [] ClearAll "Clear all"
+                    ]
+                ]
+            , section [ header (String.fromInt (List.length model.items) ++ " items") ]
+                (List.map renderTodo model.items)
             ]
-        , View.row []
-            [ View.button [] ToggleAll "ToggleAll"
-            , View.button [] ClearAll "ClearAll"
-            ]
-        , View.list [] (List.map renderTodo model.items)
         ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Todos"
+        , init = init
+        , update = update
+        , view = view
+        }
 
 
 main : Effect String ()
 main =
-    App.frontend [Page.root init update view]
+    App.frontend [ page ]

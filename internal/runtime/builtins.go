@@ -20,19 +20,28 @@ func BaseEnv() *Env {
 	for name, v := range serverBuiltins() {
 		env.Define(name, v)
 	}
-	for name, v := range dbBuiltins() {
-		env.Define(name, v)
-	}
 	for name, v := range entityBuiltins() {
 		env.Define(name, v)
 	}
+	for name, v := range repoBuiltins() {
+		env.Define(name, v)
+	}
 	for name, v := range endpointBuiltins() {
+		env.Define(name, v)
+	}
+	for name, v := range serviceBuiltins() {
+		env.Define(name, v)
+	}
+	for name, v := range authBuiltins() {
 		env.Define(name, v)
 	}
 	for name, v := range viewBuiltins() {
 		env.Define(name, v)
 	}
 	for name, v := range appBuiltins() {
+		env.Define(name, v)
+	}
+	for name, v := range timeBuiltins() {
 		env.Define(name, v)
 	}
 	env = extendBaseEnv(env)
@@ -81,78 +90,88 @@ func qualifiedAliasMapping() map[string]string {
 		"Effect.forEach":    "effectForEach",
 		"Effect.sequence":   "effectSequence",
 		"Effect.none":       "effectNone",
-		"IO.print":    "ioPrint",
-		"IO.println":  "ioPrintln",
-		"IO.readLine": "ioReadLine",
+		"Time.seconds":      "timeSeconds",
+		"Time.minutes":      "timeMinutes",
+		"Time.hours":        "timeHours",
+		"Time.days":         "timeDays",
+		"Time.weeks":        "timeWeeks",
+		"Time.toSeconds":    "timeToSeconds",
+		"Time.now":          "timeNow",
+		"Time.add":          "timeAdd",
+		"Time.sub":          "timeSub",
+		"Time.diff":         "timeDiff",
+		"Time.before":       "timeBefore",
+		"Time.after":        "timeAfter",
+		"Time.toIso":        "timeToIso",
+		"Time.fromIso":      "timeFromIso",
+		"Time.toMillis":     "timeToMillis",
+		"Time.fromYMD":      "timeFromYMD",
+		"Time.addDays":      "timeAddDays",
+		"Time.addMonths":    "timeAddMonths",
+		"Time.addYears":     "timeAddYears",
+		"Time.year":         "timeYear",
+		"Time.month":        "timeMonth",
+		"Time.day":          "timeDay",
+		"Time.hour":         "timeHour",
+		"Time.minute":       "timeMinute",
+		"Time.second":       "timeSecond",
 		"Http.get":    "httpGet",
 		"Http.post":   "httpPost",
 		"JSON.encode": "jsonEncode",
 		"JSON.decode": "jsonDecode",
-		"Server.serve":     "serverServe",
-		"Server.get":       "serverGet",
-		"Server.post":      "serverPost",
-		"Server.patch":     "serverPatch",
-		"Server.delete":    "serverDelete",
+		// Low-level endpoint builders + Endpoint.implement.
 		"Endpoint.get":       "endpointGet",
 		"Endpoint.post":      "endpointPost",
-		"Endpoint.patch":     "endpointPatch",
-		"Endpoint.delete":    "endpointDelete",
 		"Endpoint.implement": "endpointImplement",
 		"Endpoint.call":      "endpointCall",
+		// REST sugar.
+		"Endpoint.list":   "endpointList",
+		"Endpoint.show":   "endpointShow",
+		"Endpoint.create": "endpointCreate",
+		"Endpoint.update": "endpointUpdate",
+		"Endpoint.delete": "endpointDelete",
 		"Response.ok":       "responseOk",
 		"Response.notFound": "responseNotFound",
 		"Response.status":   "responseStatus",
-		"Db.open":        "dbOpen",
-		"Db.exec":        "dbExec",
-		"Db.query":       "dbQuery",
-		"Db.queryOne":    "dbQueryOne",
-		"Db.execParams":  "dbExecParams",
-		"Db.queryParams": "dbQueryParams",
-		"Entity.create":     "entityCreate",
-		"Entity.field":      "entityField",
-		"Entity.int":        "entityInt",
-		"Entity.text":       "entityText",
-		"Entity.real":       "entityReal",
-		"Entity.blob":       "entityBlob",
-		"Entity.dateTime":   "entityDateTime",
-		"Entity.primaryKey": "entityPrimaryKey",
-		"Entity.notNull":    "entityNotNull",
-		"Entity.unique":     "entityUnique",
-		"Entity.foreignKey": "entityForeignKey",
-		"Entity.migrate":    "entityMigrate",
-		"View.section":  "viewSection",
-		"View.row":      "viewRow",
-		"View.column":   "viewColumn",
-		"View.text":     "viewText",
-		"View.title":    "viewTitle",
-		"View.subtitle": "viewSubtitle",
-		"View.button":   "viewButton",
-		"View.link":     "viewLink",
-		"View.list":     "viewList",
-		"View.keyedList": "viewKeyedList",
-		"View.render":   "viewRender",
-		"View.input":    "viewInput",
-		"View.textarea": "viewTextarea",
-		"View.padding":       "viewPadding",
-		"View.paddingTop":    "viewPaddingTop",
-		"View.paddingRight":  "viewPaddingRight",
-		"View.paddingBottom": "viewPaddingBottom",
-		"View.paddingLeft":   "viewPaddingLeft",
-		"View.spacing":  "viewSpacing",
-		"View.width":    "viewWidth",
-		"View.height":   "viewHeight",
-		"View.fillX":    "viewFillX",
-		"View.fillY":    "viewFillY",
-		"View.fill":     "viewFill",
-		"View.centerX":  "viewCenterX",
-		"View.centerY":  "viewCenterY",
-		"View.center":   "viewCenter",
-		"View.empty":    "viewEmpty",
+		// Entity (record-literal form)
+		"Entity.define":  "entityDefine",
+		"Entity.serial":  "entitySerial",
+		"Entity.int":     "entityInt",
+		"Entity.text":    "entityText",
+		"Entity.bool":    "entityBool",
+		"Entity.enum":      "entityEnum",
+		"Entity.timestamp": "entityTimestamp",
+		"Entity.notNull": "entityNotNull",
+		// Repo
+		"Repo.all":        "repoAll",
+		"Repo.findById":   "repoFindByID",
+		"Repo.findBy":     "repoFindBy",
+		"Repo.create":     "repoCreate",
+		"Repo.update":     "repoUpdate",
+		"Repo.deleteById": "repoDeleteByID",
 		"App.frontend":      "appFrontend",
 		"App.backend":       "appBackend",
 		"App.fullstack":     "appFullstack",
 		"Page.create":       "pageCreate",
-		"Page.root":         "pageRoot",
+		"Page.protected":         "pageProtected",
+		"Page.dynamic":           "pageDynamic",
+		"Page.dynamicProtected":  "pageDynamicProtected",
+		"Nav.push":          "navPush",
+		"Nav.replace":       "navReplace",
+		"Nav.afterSignIn":   "navAfterSignIn",
+		"Service.declare":   "serviceDeclare",
+		"Service.implement": "serviceImplement",
+		"Service.call":      "serviceCall",
+		// Auth (passwordless email-code authentication)
+		"Auth.config":       "authConfig",
+		"Auth.protect":      "authProtect",
+		"Auth.requireRole":  "authRequireRole",
+		"Auth.authorize":    "authAuthorize",
+		"Auth.requireOwner": "authRequireOwner",
+		"Auth.requestCode":  "authRequestCode",
+		"Auth.verifyCode":   "authVerifyCode",
+		"Auth.logout":       "authLogout",
+		"Auth.me":           "authMe",
 	}
 }
 

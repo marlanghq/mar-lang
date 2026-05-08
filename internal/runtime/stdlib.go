@@ -48,7 +48,7 @@ func stdlib() map[string]Value {
 			if !ok {
 				return nil, fmt.Errorf("listFilter: second arg not a list")
 			}
-			var out []Value
+			out := make([]Value, 0, len(l.Elements))
 			for _, e := range l.Elements {
 				v, err := apply(fn, e)
 				if err != nil {

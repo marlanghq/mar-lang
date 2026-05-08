@@ -1,0 +1,15 @@
+module Backend.Users exposing (users)
+
+
+import Shared
+
+
+-- The users entity. Auth.config (in Main) reads this to know what
+-- shape to materialize for the logged-in user. Keep it minimal —
+-- just the fields the framework needs.
+users : Entity Shared.User
+users =
+    Entity.define "users"
+        { id    = Entity.serial
+        , email = Entity.text Entity.notNull
+        }

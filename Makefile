@@ -1,12 +1,15 @@
 # Mar build / test commands.
 #
 # Usage:
-#   make                 # build the binary (./mar)
+#   make                 # build the binary (./mar) — includes embedded stubs
+#   make stubs           # cross-compile mar-runtime for every supported target
 #   make test            # run the Go test suite
 #   make check-examples  # type-check every example under examples/
-#   make install         # install ./mar into $GOBIN (defaults to ~/go/bin)
 #   make vscode          # build the VSCode extension (.vsix)
-#   make clean           # remove the local binary
+#   make clean           # remove the local binary + built stubs
+#
+# The ./mar binary lives in this directory. Add it to your PATH once:
+#   export PATH="$(pwd):$PATH"   # or point to the absolute path in your shell rc
 #
 # Versioning info is embedded via -ldflags. To override the version string
 # at build time, run e.g. `make build VERSION=0.2.0`.
@@ -18,14 +21,40 @@ LDFLAGS := -s -w \
 	-X 'main.version=$(VERSION)' \
 	-X 'main.commit=$(COMMIT)'
 
-.PHONY: all build test check-examples install vscode clean
+# Cross-compile targets for the production runtime stub. These get
+# embedded into ./mar via go:embed so `mar build --target <X>` works
+# without a local Go toolchain for X.
+STUB_TARGETS := darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64
+STUB_DIR     := internal/appbundle/stubs/binaries
+
+.PHONY: all build stubs test check-examples vscode clean
 
 all: build
 
-build:
+build: stubs
 	@echo "Building mar $(VERSION) ($(COMMIT))"
 	@go build -ldflags "$(LDFLAGS)" -o mar ./cmd/mar
 	@echo "Built ./mar"
+
+# Cross-compile mar-runtime for every supported target into STUB_DIR.
+# These binaries are then embedded into ./mar by `make build`.
+# Using -trimpath + -ldflags='-s -w' to keep stub size small (~6-8 MB
+# each); five stubs adds ~30-40 MB to the final ./mar binary, which is
+# the trade-off for zero-toolchain cross-compile.
+stubs:
+	@echo "Cross-compiling mar-runtime stubs"
+	@mkdir -p $(STUB_DIR)
+	@for t in $(STUB_TARGETS); do \
+		os=$$(echo $$t | cut -d- -f1); \
+		arch=$$(echo $$t | cut -d- -f2); \
+		out="$(STUB_DIR)/$$t"; \
+		if [ "$$os" = "windows" ]; then out="$$out.exe"; fi; \
+		echo "  $$t -> $$out"; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 \
+			go build -trimpath -ldflags "$(LDFLAGS)" \
+			-o "$$out" ./cmd/mar-runtime || exit 1; \
+	done
+	@echo "Built $$(ls $(STUB_DIR) | grep -v '^README$$' | wc -l | tr -d ' ') stubs"
 
 test:
 	@go test ./...
@@ -40,6 +69,10 @@ check-examples: build
 		fi; \
 	done; \
 	for d in examples/*/; do \
+		if [ -f "$$d.mar-design-only" ]; then \
+			echo "  SKIP $$d (design-only; uses unimplemented API)"; \
+			continue; \
+		fi; \
 		if ls "$$d"*.mar > /dev/null 2>&1; then \
 			if ./mar check "$$d" > /dev/null 2>&1; then \
 				echo "  OK   $$d"; ok=$$((ok+1)); \
@@ -52,13 +85,8 @@ check-examples: build
 	echo "$$ok passed, $$fail failed"; \
 	test "$$fail" = 0
 
-install:
-	@go install -ldflags "$(LDFLAGS)" ./cmd/mar
-	@echo "Installed mar"
-
 # Builds the VSCode extension into a .vsix package and prints the
-# command to install it locally. Mirrors the shape of the lispy-era
-# Makefile target.
+# command to install it locally.
 vscode:
 	@cd vscode-mar && \
 		(test -d node_modules || npm install --silent) && \
@@ -73,4 +101,5 @@ vscode:
 clean:
 	@rm -f mar
 	@rm -rf vscode-mar/out vscode-mar/*.vsix
+	@find $(STUB_DIR) -type f ! -name 'README' -delete 2>/dev/null || true
 	@echo "Cleaned"

@@ -1,0 +1,27 @@
+module Main exposing (main)
+
+
+import Backend
+import Frontend
+
+
+-- Main wires both halves: only this module imports Backend and
+-- Frontend. The frontend never sees Backend.users.
+auth : Auth { id : Int, email : String }
+auth =
+    Auth.config
+        { entity   = Backend.users
+        , identify = \u -> u.email
+        , email    = { from = "noreply@notes.local", subject = "Sign in to Notes" }
+        , signup   = \email -> { email = email }
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Effect String ()
+main =
+    App.fullstack
+        { api      = []
+        , services = Backend.services
+        , pages    = [ Frontend.page ]
+        }

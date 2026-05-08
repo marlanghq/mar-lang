@@ -52,7 +52,7 @@
       "patterns": [
         {
           "name": "support.type.mar",
-          "match": "\\b(Int|Float|String|Bool|Char|List|Maybe|Result|Effect|View|Page|Attr)\\b"
+          "match": "\\b(Int|Float|String|Bool|Char|List|Maybe|Result|Effect|View|Page|Attr|Service|ExposedService|Entity|Endpoint|Route|Auth|Column|Constraint)\\b"
         },
         {
           "name": "constant.language.mar",
@@ -67,7 +67,7 @@
     },
     "operators": {
       "name": "keyword.operator.mar",
-      "match": "(\\+\\+|->|\\|>|<\\||==|/=|<=|>=|<|>|::|&&|\\|\\||\\+|-|\\*|/|=|\\\\)"
+      "match": "(\\+\\+|->|<-|\\|>|<\\||==|/=|<=|>=|<|>|::|&&|\\|\\||\\+|-|\\*|/|=|\\\\)"
     },
     "numbers": {
       "patterns": [

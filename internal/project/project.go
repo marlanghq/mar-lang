@@ -4,7 +4,7 @@
 // parsed; imports across files are resolved; everything is type-checked and
 // optionally evaluated.
 //
-// MVP rules:
+// Rules:
 //   - Module names must match file paths relative to the project root, with
 //     '/' replaced by '.'. So src/Posts/Backend.mar is module Posts.Backend.
 //   - Imports are by module name. Cycles are not allowed.
@@ -14,6 +14,7 @@ package project
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -82,10 +83,12 @@ func Load(root string) (*Project, error) {
 		return nil, err
 	}
 
-	// Type-check each module in order, accumulating shared envs.
+	// Type-check each module in order. Types defined in a module are
+	// only visible to other modules that import it — without this
+	// scoping, two pages could not both define `type Model = ...`.
 	tEnv := typecheck.BaseEnv()
-	allAliases := map[string]typecheck.TypeAlias{}
-	allCustoms := map[string]typecheck.CustomType{}
+	aliasesByModule := map[string]map[string]typecheck.TypeAlias{}
+	customsByModule := map[string]map[string]typecheck.CustomType{}
 	mods := make(map[string]*LoadedModule)
 	for _, name := range order {
 		mod := parsed[name]
@@ -97,7 +100,26 @@ func Load(root string) (*Project, error) {
 			}
 		}
 
-		res, err := typecheck.CheckModuleWith(mod, tEnv, allAliases, allCustoms)
+		// Build the importable type set for this module: the union of
+		// every imported module's exports. (Stdlib types are already
+		// in tEnv via BaseEnv.)
+		importedAliases := map[string]typecheck.TypeAlias{}
+		importedCustoms := map[string]typecheck.CustomType{}
+		for _, imp := range mod.Imports {
+			impName := joinName(imp.Module)
+			if a, ok := aliasesByModule[impName]; ok {
+				for k, v := range a {
+					importedAliases[k] = v
+				}
+			}
+			if c, ok := customsByModule[impName]; ok {
+				for k, v := range c {
+					importedCustoms[k] = v
+				}
+			}
+		}
+
+		res, err := typecheck.CheckModuleWith(mod, tEnv, importedAliases, importedCustoms)
 		if err != nil {
 			return nil, diag.Wrap(paths[name], sources[name], err)
 		}
@@ -105,12 +127,17 @@ func Load(root string) (*Project, error) {
 		for vname, t := range res.ValueTypes {
 			tEnv.Define(name+"."+vname, t)
 		}
-		// Register type aliases and custom types for downstream modules.
+		// Stash this module's types so importing modules pick them up,
+		// while siblings that don't import remain unaffected.
+		modAliases := map[string]typecheck.TypeAlias{}
 		for tname, alias := range res.TypeAliases {
-			allAliases[tname] = alias
+			modAliases[tname] = alias
 		}
+		aliasesByModule[name] = modAliases
+
+		modCustoms := map[string]typecheck.CustomType{}
 		for tname, ct := range res.CustomTypes {
-			allCustoms[tname] = ct
+			modCustoms[tname] = ct
 			// Also register constructors as qualified values
 			for _, cname := range ct.CtorOrder {
 				if cval, ok := tEnv.Lookup(cname); ok {
@@ -118,6 +145,7 @@ func Load(root string) (*Project, error) {
 				}
 			}
 		}
+		customsByModule[name] = modCustoms
 		mods[name] = &LoadedModule{
 			Name:       name,
 			Path:       paths[name],
@@ -131,39 +159,6 @@ func Load(root string) (*Project, error) {
 		Modules: mods,
 		Order:   order,
 	}, nil
-}
-
-// Run loads the project, evaluates the named entry value, and returns it.
-//
-// entry is "Module.name" or just "name" (looked up in any module).
-func Run(root, entry string) (runtime.Value, error) {
-	proj, err := Load(root)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build runtime env, loading every module in order.
-	rEnv := runtime.BaseEnv()
-	for _, name := range proj.Order {
-		mod := proj.Modules[name]
-		// Use LoadModuleInto: evaluates decls and registers them with
-		// qualified names in the shared env.
-		if err := loadIntoEnv(mod.AST, name, rEnv); err != nil {
-			return nil, fmt.Errorf("%s: %v", name, err)
-		}
-	}
-
-	// Look up entry.
-	if v, ok := rEnv.Lookup(entry); ok {
-		return v, nil
-	}
-	// Fall back: try as plain name in any module.
-	for _, m := range proj.Modules {
-		if v, ok := rEnv.Lookup(m.Name + "." + entry); ok {
-			return v, nil
-		}
-	}
-	return nil, fmt.Errorf("entry %q not found", entry)
 }
 
 // loadIntoEnv evaluates a module's value declarations into an existing
@@ -190,16 +185,27 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env) error {
 	}
 
 	// Pass 1: register custom-type constructors.
+	// Also populate the path-pattern enum registry for any zero-arg
+	// ctor type (so `{role:Role}` segments resolve at runtime). We
+	// register under both the bare name and the fully-qualified one
+	// so a path declared in a module that imports `Shared.Role`
+	// resolves the same as one declared in `Shared` itself.
 	for _, d := range mod.Decls {
 		ct, ok := d.(*ast.CustomTypeDecl)
 		if !ok {
 			continue
 		}
+		ctorNames := make([]string, 0, len(ct.Constructors))
+		ctorArities := map[string]int{}
 		for _, c := range ct.Constructors {
 			v := makeCtorValueLocal(c.Name, len(c.Args))
 			rEnv.Define(c.Name, v)
 			rEnv.Define(modName+"."+c.Name, v)
+			ctorNames = append(ctorNames, c.Name)
+			ctorArities[c.Name] = len(c.Args)
 		}
+		runtime.RegisterEnumType(ct.Name, ctorNames, ctorArities)
+		runtime.RegisterEnumType(modName+"."+ct.Name, ctorNames, ctorArities)
 	}
 
 	// Pass 2: pre-bind values to placeholders (for mutual recursion).
@@ -233,6 +239,13 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env) error {
 			page.OriginName = v.Name
 			val = page
 		}
+		// Same for Services: stamping powers URL resolution at runtime
+		// (the URL is `/services/<module>.<name>`).
+		if svc, ok := val.(runtime.VService); ok && svc.OriginName == "" {
+			svc.OriginModule = modName
+			svc.OriginName = v.Name
+			val = svc
+		}
 		rEnv.Define(v.Name, val)
 		rEnv.Define(modName+"."+v.Name, val)
 	}
@@ -261,8 +274,10 @@ func makeCtorValueLocal(tag string, arity int) runtime.Value {
 // findMarFiles returns the .mar files belonging to a project at root.
 //
 // If root is a single .mar file, returns just that file.
-// If root is a directory, returns the .mar files directly inside it
-// (no recursion into subdirectories — those are separate projects).
+// If root is a directory, walks it recursively — subdirectories that
+// match dotted module segments (e.g. `Frontend/Home.mar` for
+// `module Frontend.Home`) are picked up. Hidden directories
+// (".git", ".cache", etc.) and `node_modules` are skipped.
 func findMarFiles(root string) ([]string, error) {
 	info, err := os.Stat(root)
 	if err != nil {
@@ -274,19 +289,30 @@ func findMarFiles(root string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("%s: not a .mar file or directory", root)
 	}
-	entries, err := os.ReadDir(root)
+	var out []string
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if path == root {
+				return nil
+			}
+			// Skip hidden + dependency directories. Also skip `dist`
+			// (compiled output) so re-builds don't loop on themselves.
+			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "dist" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".mar") {
+			out = append(out, path)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	var out []string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if strings.HasSuffix(name, ".mar") {
-			out = append(out, filepath.Join(root, name))
-		}
 	}
 	sort.Strings(out)
 	return out, nil
@@ -345,8 +371,9 @@ func topoSort(parsed map[string]*ast.Module) ([]string, error) {
 // equivalent (today they're the same set).
 func isStdlib(name string) bool {
 	switch name {
-	case "List", "String", "Maybe", "Result", "Effect", "IO",
-		"JSON", "Server", "Response", "Db", "Entity", "View",
+	case "List", "String", "Maybe", "Result", "Effect",
+		"JSON", "Response", "Entity", "Repo", "View",
+		"UI",
 		"App", "Page", "Endpoint", "Http":
 		return true
 	}
@@ -354,12 +381,5 @@ func isStdlib(name string) bool {
 }
 
 func joinName(parts []string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	out := parts[0]
-	for _, p := range parts[1:] {
-		out += "." + p
-	}
-	return out
+	return strings.Join(parts, ".")
 }

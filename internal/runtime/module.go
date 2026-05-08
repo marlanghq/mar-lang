@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"strings"
 
 	"mar/internal/ast"
 )
@@ -27,15 +28,26 @@ type Module struct {
 func LoadModule(mod *ast.Module) (*Module, error) {
 	env := BaseEnv()
 
-	// Pass 1: register custom-type constructors.
+	// Pass 1: register custom-type constructors. Also opportunistically
+	// register zero-arg-ctor types in the path-pattern enum registry —
+	// that's how Page.dynamic's `{role:Role}` syntax learns the URL ↔
+	// ctor mapping. Types with payload ctors are silently skipped
+	// (RegisterEnumType filters internally); the typechecker has
+	// already rejected those for path use, so we only need to populate
+	// the eligible ones.
 	for _, d := range mod.Decls {
 		ct, ok := d.(*ast.CustomTypeDecl)
 		if !ok {
 			continue
 		}
+		ctorNames := make([]string, 0, len(ct.Constructors))
+		ctorArities := map[string]int{}
 		for _, c := range ct.Constructors {
 			env.Define(c.Name, makeCtorValue(c.Name, len(c.Args)))
+			ctorNames = append(ctorNames, c.Name)
+			ctorArities[c.Name] = len(c.Args)
 		}
+		RegisterEnumType(ct.Name, ctorNames, ctorArities)
 	}
 
 	// Pass 2: pre-bind value names to placeholders so lambdas can capture
@@ -74,21 +86,14 @@ func LoadModule(mod *ast.Module) (*Module, error) {
 }
 
 func joinModuleName(parts []string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	out := parts[0]
-	for _, p := range parts[1:] {
-		out += "." + p
-	}
-	return out
+	return strings.Join(parts, ".")
 }
 
 // makeCtorValue builds the runtime value for a constructor.
 // Nullary constructors are direct VCtor values; n-ary constructors are
 // functions that, when fully applied, produce a VCtor. The CtorTag field
-// preserves the constructor name on the function so callers (notably
-// View.form) can recognize a constructor without having to apply it.
+// preserves the constructor name on the function so callers can
+// recognize a constructor without having to apply it.
 func makeCtorValue(tag string, arity int) Value {
 	if arity == 0 {
 		return VCtor{Tag: tag}

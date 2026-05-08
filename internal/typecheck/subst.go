@@ -23,12 +23,6 @@ func (s *Subst) Bind(id int, t Type) {
 	s.bindings[id] = t
 }
 
-// Lookup returns the binding for id, if any.
-func (s *Subst) Lookup(id int) (Type, bool) {
-	t, ok := s.bindings[id]
-	return t, ok
-}
-
 // Apply walks t, replacing every variable that has a binding (transitively)
 // with its resolved type.
 func (s *Subst) Apply(t Type) Type {

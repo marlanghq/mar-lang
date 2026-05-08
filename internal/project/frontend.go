@@ -14,17 +14,32 @@ import (
 	"mar/internal/typecheck"
 )
 
-// LoadForServe loads the entry .mar file plus any modules it (transitively)
-// imports from the same directory. Returns the modules in dependency order,
-// suitable for the JS runtime to execute.
+// LoadForServeTyped does the same load as LoadForServe but also returns
+// the global type environment built during checking, keyed by qualified
+// name ("Module.value"). `mar dev` uses this to enforce that
+// `Main.main : Effect String ()` before kicking off the server.
 //
 // Built-in stdlib modules (List, String, Maybe, Result, Effect, IO, JSON,
 // Server, Response, Db, Entity, View, App, Screen, Endpoint, Http) are
 // considered runtime-provided and are not loaded as files.
-func LoadForServe(entry string) ([]*ast.Module, error) {
+func LoadForServeTyped(entry string) ([]*ast.Module, map[string]typecheck.Type, error) {
+	return LoadForServeTypedWithOverrides(entry, nil)
+}
+
+// LoadForServeTypedWithOverrides loads + type-checks the project, but if
+// the BFS would read a file whose absolute path matches a key in
+// `overrides`, it uses the override's string content instead of touching
+// disk. The LSP uses this for the actively-edited file so cross-module
+// type-checking sees in-memory content (otherwise saved-file lag produces
+// spurious "unknown qualified name" errors on every cross-module
+// reference in the buffer being edited).
+//
+// `overrides` keys must be absolute file paths (use filepath.Abs); empty
+// or nil map means "no overrides", behaviour identical to LoadForServeTyped.
+func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) ([]*ast.Module, map[string]typecheck.Type, error) {
 	entryAbs, err := filepath.Abs(entry)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	dir := filepath.Dir(entryAbs)
 
@@ -39,13 +54,19 @@ func LoadForServe(entry string) ([]*ast.Module, error) {
 		path := queue[0]
 		queue = queue[1:]
 
-		src, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
+		var src string
+		if override, ok := overrides[path]; ok {
+			src = override
+		} else {
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return nil, nil, err
+			}
+			src = string(b)
 		}
-		mod, err := parser.Parse(string(src))
+		mod, err := parser.Parse(src)
 		if err != nil {
-			return nil, diag.Wrap(path, string(src), err)
+			return nil, nil, diag.Wrap(path, src, err)
 		}
 		modName := joinName(mod.Name)
 		if _, dup := loaded[modName]; dup {
@@ -53,7 +74,7 @@ func LoadForServe(entry string) ([]*ast.Module, error) {
 		}
 		loaded[modName] = mod
 		paths[modName] = path
-		sources[modName] = string(src)
+		sources[modName] = src
 
 		// Resolve imports against the same directory.
 		for _, imp := range mod.Imports {
@@ -75,35 +96,62 @@ func LoadForServe(entry string) ([]*ast.Module, error) {
 	// Topological sort.
 	order, err := topoSort(loaded)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	// Type-check in order, accumulating shared aliases/customs/values.
+	// Type-check in order. Types defined in a module are only visible
+	// to other modules that import it — without this scoping, two
+	// pages could not both define `type Model = ...`.
 	tEnv := typecheck.BaseEnv()
-	allAliases := map[string]typecheck.TypeAlias{}
-	allCustoms := map[string]typecheck.CustomType{}
+	aliasesByModule := map[string]map[string]typecheck.TypeAlias{}
+	customsByModule := map[string]map[string]typecheck.CustomType{}
+	valueTypes := map[string]typecheck.Type{}
 	for _, name := range order {
 		mod := loaded[name]
-		res, err := typecheck.CheckModuleWith(mod, tEnv, allAliases, allCustoms)
+		// Build the importable type set for this module: union of
+		// every imported module's exports.
+		importedAliases := map[string]typecheck.TypeAlias{}
+		importedCustoms := map[string]typecheck.CustomType{}
+		for _, imp := range mod.Imports {
+			impName := joinName(imp.Module)
+			if a, ok := aliasesByModule[impName]; ok {
+				for k, v := range a {
+					importedAliases[k] = v
+				}
+			}
+			if c, ok := customsByModule[impName]; ok {
+				for k, v := range c {
+					importedCustoms[k] = v
+				}
+			}
+		}
+
+		res, err := typecheck.CheckModuleWith(mod, tEnv, importedAliases, importedCustoms)
 		if err != nil {
-			return nil, diag.Wrap(paths[name], sources[name], err)
+			return nil, nil, diag.Wrap(paths[name], sources[name], err)
 		}
 		for vname, t := range res.ValueTypes {
 			tEnv.Define(name+"."+vname, t)
+			valueTypes[name+"."+vname] = t
 		}
+		modAliases := map[string]typecheck.TypeAlias{}
 		for tname, alias := range res.TypeAliases {
-			allAliases[tname] = alias
+			modAliases[tname] = alias
 		}
+		aliasesByModule[name] = modAliases
+
+		modCustoms := map[string]typecheck.CustomType{}
 		for tname, ct := range res.CustomTypes {
-			allCustoms[tname] = ct
+			modCustoms[tname] = ct
 		}
+		customsByModule[name] = modCustoms
 	}
 
 	out := make([]*ast.Module, 0, len(order))
 	for _, name := range order {
 		out = append(out, loaded[name])
 	}
-	return out, nil
+	return out, valueTypes, nil
 }
 
 // resolveImport looks for a .mar file matching the dotted module name in the
@@ -137,33 +185,22 @@ func resolveImport(dir string, moduleName ast.ModuleName) (string, error) {
 	return "", fmt.Errorf("import %s not found in %s", joinName(moduleName), dir)
 }
 
-// LoadIntoEnv loads the entry file and its imports, evaluates all modules
-// into a shared runtime env, and returns the env. Used by `mar app` to look
-// up backend `routes`.
-func LoadIntoEnv(entry string) (*runtime.Env, error) {
-	rEnv, _, err := LoadIntoEnvWithModules(entry)
-	return rEnv, err
-}
-
-// LoadIntoEnvWithModules is like LoadIntoEnv but also returns the parsed
-// module ASTs. `mar app` needs both: the env (to evaluate Main.main and
-// extract backend routes) and the ASTs (to ship to the browser as JS).
-func LoadIntoEnvWithModules(entry string) (*runtime.Env, []*ast.Module, error) {
-	return LoadIntoEnvWithModulesAndHook(entry, nil)
-}
-
 // LoadIntoEnvWithModulesAndHook is the same as LoadIntoEnvWithModules but
 // runs `installBuiltins` after BaseEnv is created and before any module is
-// evaluated. Used by `mar app` to override App.fullstack with a version
+// evaluated. Used by `mar dev` to override App.fullstack with a version
 // that captures the project's module ASTs (the default builtin can't see
 // them and errors out).
+//
+// Returns the env, modules, and a "Module.value" -> Type map so callers
+// can enforce signatures (e.g. `Main.main : Effect String ()`) before
+// running anything.
 func LoadIntoEnvWithModulesAndHook(
 	entry string,
 	installBuiltins func(*runtime.Env, []*ast.Module),
-) (*runtime.Env, []*ast.Module, error) {
-	mods, err := LoadForServe(entry)
+) (*runtime.Env, []*ast.Module, map[string]typecheck.Type, error) {
+	mods, valueTypes, err := LoadForServeTyped(entry)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	rEnv := runtime.BaseEnv()
 	if installBuiltins != nil {
@@ -171,10 +208,10 @@ func LoadIntoEnvWithModulesAndHook(
 	}
 	for _, m := range mods {
 		if err := loadIntoEnv(m, joinName(m.Name), rEnv); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
-	return rEnv, mods, nil
+	return rEnv, mods, valueTypes, nil
 }
 
 // (joinName, isStdlib, topoSort live in project.go.)

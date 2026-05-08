@@ -1,58 +1,23 @@
-module Backend exposing (routes)
+module Backend exposing (services)
 
 
 import Shared
 
 
-type alias Request =
-    { url : String
-    , method : String
-    , body : String
-    , params : String -> Maybe String
-    }
-
-
-type alias Response =
-    { status : Int
-    , body : String
-    }
-
-
-notes : Entity
+-- SQLite schema lives here — the browser bundle never sees it.
+notes : Entity Shared.Note
 notes =
-    Entity.create "notes"
-        |> Entity.field "id" Entity.int
-        |> Entity.field "body" Entity.text
-        |> Entity.primaryKey "id"
-        |> Entity.notNull "body"
+    Entity.define "notes"
+        { id   = Entity.serial
+        , body = Entity.text Entity.notNull
+        }
 
 
--- Note: Entity.migrate runs lazily inside withDb. mar app does not migrate
--- on startup automatically; the first request creates the table.
-withDb : (Db -> Effect String Response) -> Effect String Response
-withDb fn =
-    Db.open "./examples/notes-fullstack/notes.db"
-        |> Effect.andThen (\db ->
-            Entity.migrate db [notes]
-                |> Effect.andThen (\_ -> fn db))
-
-
-listAll : Request -> Effect String Response
-listAll _ =
-    withDb (\db ->
-        Db.query db "SELECT id, body FROM notes ORDER BY id"
-            |> Effect.map (\rows -> Response.ok (JSON.encode rows)))
-
-
-create : Request -> Effect String Response
-create req =
-    withDb (\db ->
-        Db.execParams db "INSERT INTO notes (body) VALUES (?)" [req.body]
-            |> Effect.map (\_ -> Response.status 201 "ok"))
-
-
--- Exported for `mar app` to mount under /api/*.
-routes =
-    [ Shared.listEp   |> Endpoint.implement listAll
-    , Shared.createEp |> Endpoint.implement create
+-- Each entry pairs a contract from Shared with its handler. The
+-- mounted URL comes from the contract's identity, so the frontend's
+-- Service.call routes to the right handler regardless of how the
+-- implementation is bound here.
+services =
+    [ Service.implement Shared.listAllNotes (\_ -> Repo.all notes)
+    , Service.implement Shared.createNote   (\input -> Repo.create notes input)
     ]

@@ -1,0 +1,51 @@
+module Backend exposing (users, services)
+
+
+import Shared
+
+
+-- Entities live here, never in Shared — only the server touches SQL.
+users : Entity Shared.User
+users =
+    Entity.define "users"
+        { id    = Entity.serial
+        , email = Entity.text Entity.notNull
+        }
+
+
+notes : Entity Shared.Note
+notes =
+    Entity.define "notes"
+        { id       = Entity.serial
+        , body     = Entity.text Entity.notNull
+        , authorId = Entity.int Entity.notNull
+        }
+
+
+-- Business rules. Each takes the User as proof of authorization and
+-- is fully decoupled from the auth/transport layer — easy to test
+-- in isolation, and trivial to re-wire (e.g. swap Auth.protect for
+-- Service.implement on an internal-only variant).
+--
+-- Impl names match the wire contract names from Shared on purpose:
+-- `Shared.listMine` is implemented by `listMine` (this module).
+listMine : () -> Shared.User -> Effect String (List Shared.Note)
+listMine _ user =
+    Repo.findBy notes { authorId = user.id }
+
+
+createMine : { body : String } -> Shared.User -> Effect String Shared.Note
+createMine input user =
+    Repo.create notes
+        { body     = input.body
+        , authorId = user.id
+        }
+
+
+-- Service manifest: pure wiring. Auth.protect injects the logged user
+-- as the second arg of each handler; a missing/expired session
+-- returns 401 before the handler runs.
+services =
+    [ Auth.protect Shared.listMine   listMine
+    , Auth.protect Shared.createMine createMine
+    ]

@@ -2,96 +2,123 @@ module Frontend exposing (page)
 
 
 import Shared
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, list, section, header
+    , hstack
+    , text, textField, button, centered
+    , submit
+    )
 
 
-type alias Note =
-    { id : Int
-    , body : String
-    }
+-- Three-state machine for the notes list. Replaces the old
+-- (notes : List, status : String) pair: the bare `[]` made the
+-- view show "0 notes" while the first fetch was still in flight,
+-- and `status` was a stringly-typed mood ring. Now the state IS
+-- the data, the typechecker forces the view to handle every
+-- branch, and the Failed case finally has somewhere to live.
+type Notes
+    = Loading
+    | Loaded (List Shared.Note)
+    | Failed String
 
 
 type alias Model =
-    { notes : List Note
+    { notes : Notes
     , draft : String
-    , status : String
     }
 
 
 type Msg
-    = LoadedNotes (Result String String)
+    = NotesFetched (Result String (List Shared.Note))
     | DraftChanged String
     | SubmitClicked
-    | NoteCreated (Result String String)
+    | NoteCreated  (Result String Shared.Note)
 
 
 fetchAll : Effect String Msg
 fetchAll =
-    Endpoint.call Shared.backendBase Shared.listEp "" LoadedNotes
+    Service.call Shared.listAllNotes () NotesFetched
 
 
 init : () -> (Model, Effect String Msg)
 init _ =
-    ({ notes = [], draft = "", status = "loading…" }, fetchAll)
-
-
--- JSON.decode is type-trusted — we tell the compiler this returns
--- List Note and trust the backend's shape.
-decodeNotes : String -> List Note
-decodeNotes raw =
-    case JSON.decode raw of
-        Ok decoded -> decoded
-        Err _ -> []
+    ({ notes = Loading, draft = "" }, fetchAll)
 
 
 update : Msg -> Model -> (Model, Effect String Msg)
 update msg model =
     case msg of
-        LoadedNotes (Ok raw) ->
-            ({ model | notes = decodeNotes raw, status = "loaded" }, Effect.none)
+        NotesFetched (Ok loaded) ->
+            ({ model | notes = Loaded loaded }, Effect.none)
 
-        LoadedNotes (Err e) ->
-            ({ model | status = "error: " ++ e }, Effect.none)
+        NotesFetched (Err e) ->
+            ({ model | notes = Failed e }, Effect.none)
 
         DraftChanged value ->
             ({ model | draft = value }, Effect.none)
 
         SubmitClicked ->
-            ( { model | status = "saving…", draft = "" }
-            , Endpoint.call Shared.backendBase Shared.createEp model.draft NoteCreated
+            -- The Service contract is `Service NewNote Note` — the runtime
+            -- encodes the input record as JSON and decodes the response
+            -- straight into a typed Note. No JSON.encode / decode in user
+            -- code anymore.
+            --
+            -- Stale-while-revalidate: keep the current Loaded list
+            -- visible while the create + re-fetch round-trip; the
+            -- screen doesn't flash back to "Loading…" between adds.
+            ( { model | draft = "" }
+            , Service.call Shared.createNote { body = model.draft } NoteCreated
             )
 
         NoteCreated (Ok _) ->
-            ({ model | status = "added" }, fetchAll)
+            (model, fetchAll)
 
-        NoteCreated (Err e) ->
-            ({ model | status = "save failed: " ++ e }, Effect.none)
+        NoteCreated (Err _) ->
+            (model, Effect.none)
 
 
--- Each note carries a stable key (its id) so the diff tracks item
--- identity across renders. Survives reorder / insert-in-middle / delete
--- without scrambling DOM nodes or losing focus on inputs inside items.
-renderNoteWithKey : Note -> (String, View Msg)
-renderNoteWithKey note =
-    ( String.fromInt note.id
-    , View.text [] (String.fromInt note.id ++ ". " ++ note.body)
-    )
+renderNote : Shared.Note -> View Msg
+renderNote note =
+    text (String.fromInt note.id ++ ". " ++ note.body)
 
 
 view : Model -> View Msg
 view model =
-    View.section []
-        [ View.title [] "Notes"
-        , View.text [] ("Status: " ++ model.status)
-        , View.subtitle [] (String.fromInt (List.length model.notes) ++ " notes")
-        , View.keyedList [] (List.map renderNoteWithKey model.notes)
-        , View.subtitle [] "Add a note"
-        , View.row []
-            [ View.input [] model.draft DraftChanged
-            , View.button [] SubmitClicked "Add"
+    navigationStack [ navigationTitle "Notes" ]
+        [ list
+            [ section []
+                [ hstack []
+                    [ textField [ submit SubmitClicked ]
+                        "Add a note" model.draft DraftChanged
+                    , button [] SubmitClicked "Add"
+                    ]
+                ]
+            , notesSection model.notes
             ]
         ]
 
 
+notesSection : Notes -> View Msg
+notesSection notes =
+    case notes of
+        Loading ->
+            section [] [ text "Loading…" ]
+
+        Failed why ->
+            section [] [ text ("Couldn't load notes: " ++ why) ]
+
+        Loaded items ->
+            section [ header (String.fromInt (List.length items) ++ " notes") ]
+                (List.map renderNote (List.reverse items))
+
+
 page : Page
 page =
-    Page.root init update view
+    Page.create
+        { path = "/"
+        , title = "Notes"
+        , init = init
+        , update = update
+        , view = view
+        }

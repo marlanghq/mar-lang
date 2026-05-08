@@ -178,18 +178,9 @@ The flow is uniform:
 
 This makes "create post", "follow", "like", "save profile", and "load more" all the same kind of thing.
 
-## Auto CRUD removed
+## Entity, endpoint, route
 
-Earlier versions of Mar auto-generated CRUD endpoints from entity declarations. This was convenient for prototypes but coupled the entity (data shape) to the API (HTTP surface) in ways that didn't scale.
-
-The current model:
-
-- entity is **only** the data schema
-- endpoints are **explicit** typed contracts
-- handlers are **explicit** effectful functions
-- routes are **explicit** lists, organized by access policy
-
-If patterns repeat enough across applications, opt-in helpers (`Crud.scaffold`) may be introduced later. For now, every endpoint is written by hand. The cost is more code; the benefit is no hidden behavior.
+Mar keeps the data layer and the HTTP layer separate. An entity is only the data schema; endpoints are explicit typed contracts; handlers are explicit effectful functions; routes are explicit lists, organized by access policy. Every endpoint is written by hand — the cost is more code, the benefit is no hidden behavior.
 
 ## Shape of a screen
 
@@ -325,7 +316,7 @@ Important properties:
 
 ## Creating and editing without sugar
 
-Create and edit flows are explicit screens. The "compose post" example below replaces what older versions might have written as a single `create` shortcut:
+Create and edit flows are explicit screens — there is no `create` shortcut that hides the state machine. The "compose post" example below shows the full shape:
 
 ```elm
 module Screens.ComposePost exposing (..)

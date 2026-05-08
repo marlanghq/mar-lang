@@ -1,0 +1,31 @@
+module Frontend.Routes exposing (home, signIn, noteDetail)
+
+
+-- Centralized URL surface. Every page declares its `path` here so:
+--
+--   1. The whole route table fits on one screen
+--   2. Refactoring a URL pattern catches all `linkTo` / `Nav.pushTo`
+--      callsites in compile time (renaming `{id:Int}` → `{slug:String}`
+--      flips every consumer into a type error)
+--   3. There's exactly one place to look when reasoning about the
+--      app's URL surface
+--
+-- The String → Path coercion happens because each value carries a
+-- `: Path r` annotation. The compiler reads the annotation, parses
+-- the literal, and threads the typed row everywhere it flows.
+
+
+home : Path {}
+home = "/"
+
+
+signIn : Path {}
+signIn = "/sign-in"
+
+
+-- Dynamic route: `{id:Int}` means the matcher rejects /notes/abc
+-- (non-numeric) before the page mounts — caller falls through to
+-- the next matcher, which usually means "page not found" in this
+-- single-app setup.
+noteDetail : Path { id : Int }
+noteDetail = "/notes/{id:Int}"

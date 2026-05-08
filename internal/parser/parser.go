@@ -963,6 +963,7 @@ func isUpperFirst(name string) bool {
 func (p *parser) parseQualifiedUpperOrValue(first lexer.Token) (ast.ModuleName, string, error) {
 	p.advance() // consume the first UpperName
 	parts := []string{first.Value}
+chain:
 	for p.peek().Kind == lexer.KindDot {
 		next := p.peekAt(1)
 		switch next.Kind {
@@ -975,12 +976,8 @@ func (p *parser) parseQualifiedUpperOrValue(first lexer.Token) (ast.ModuleName, 
 			// All previous parts are the module path
 			return ast.ModuleName(parts), finalName, nil
 		default:
-			// Not a qualified-value continuation; stop chain.
-			break
-		}
-		// Avoid infinite loop if we didn't break above (should be unreachable)
-		if p.peek().Kind == lexer.KindDot && p.peekAt(1).Kind != lexer.KindUpperName && p.peekAt(1).Kind != lexer.KindLowerName {
-			break
+			// Not a qualified-value continuation; stop the chain.
+			break chain
 		}
 	}
 	if len(parts) == 1 {

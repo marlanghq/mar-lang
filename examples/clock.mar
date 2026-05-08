@@ -1,17 +1,16 @@
 module Clock exposing (main)
 
 
--- Browser app that fetches the current time from a backend.
+import UI exposing (navigationStack, navigationTitle, form, section, text, button, empty)
+
+
+-- Browser app that fetches the current time from a backend over HTTP.
 --
--- Run two terminals:
+-- This example targets a separately-hosted endpoint at
+-- http://localhost:3010/time. To exercise it end-to-end, host that
+-- endpoint with `mar dev` against an App.backend module of your own.
 --
---   terminal 1: ./mar run examples/clock-backend.mar
---               (backend serves /time on :3010)
---
---   terminal 2: ./mar serve examples/clock.mar
---               (browser app on :4000)
---
--- The browser app does Http.get "/time" on init and on every "Refresh" click.
+-- Open with: mar dev examples/clock.mar
 
 
 type alias Model =
@@ -47,16 +46,30 @@ update msg model =
 
 view : Model -> View Msg
 view model =
-    View.section []
-        [ View.title [] "Clock"
-        , View.text [] ("Server time: " ++ model.time)
-        , View.button [] Refresh "Refresh"
-        , case model.error of
-            Just e -> View.text [] ("Error: " ++ e)
-            Nothing -> View.empty
+    navigationStack [ navigationTitle "Clock" ]
+        [ form
+            [ section []
+                [ text ("Server time: " ++ model.time)
+                , button [] Refresh "Refresh"
+                , case model.error of
+                    Just e -> text ("Error: " ++ e)
+                    Nothing -> empty
+                ]
+            ]
         ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Clock"
+        , init = init
+        , update = update
+        , view = view
+        }
 
 
 main : Effect String ()
 main =
-    App.frontend [Page.root init update view]
+    App.frontend [ page ]

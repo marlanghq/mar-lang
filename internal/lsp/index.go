@@ -188,23 +188,38 @@ func IdentifierAt(source string, line, col int) string {
 }
 
 // HoverMarkdown produces the hover content for a symbol — Markdown with
-// a code block containing the type signature.
+// a code block containing the type signature. Stdlib symbols (flagged
+// via stdlibBuiltinTag in Summary) get a "_built-in_" footer instead of
+// a regular summary line.
 func HoverMarkdown(s Symbol) string {
+	builtin := s.Summary == stdlibBuiltinTag
 	switch s.Kind {
 	case SymValue:
+		body := fmt.Sprintf("```mar\n%s\n```", s.Name)
 		if s.Type != "" {
-			return fmt.Sprintf("```mar\n%s : %s\n```", s.Name, s.Type)
+			body = fmt.Sprintf("```mar\n%s : %s\n```", s.Name, s.Type)
 		}
-		return fmt.Sprintf("```mar\n%s\n```", s.Name)
+		if builtin {
+			return body + "\n_built-in_"
+		}
+		return body
 	case SymConstructor:
+		body := fmt.Sprintf("```mar\n%s\n```", s.Name)
 		if s.Type != "" {
-			return fmt.Sprintf("```mar\n%s : %s\n```\n_constructor_", s.Name, s.Type)
+			body = fmt.Sprintf("```mar\n%s : %s\n```", s.Name, s.Type)
 		}
-		return fmt.Sprintf("```mar\n%s\n```\n_constructor_", s.Name)
+		if builtin {
+			return body + "\n_built-in constructor_"
+		}
+		return body + "\n_constructor_"
 	case SymTypeAlias:
 		return fmt.Sprintf("```mar\n%s\n```", s.Summary)
 	case SymCustomType:
-		return fmt.Sprintf("```mar\n%s\n```", s.Summary)
+		body := fmt.Sprintf("```mar\n%s\n```", s.Summary)
+		if builtin {
+			return body + "\n_built-in_"
+		}
+		return body
 	}
 	return s.Name
 }

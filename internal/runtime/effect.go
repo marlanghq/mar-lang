@@ -4,10 +4,8 @@ package runtime
 //
 // An Effect is a value that, when interpreted by the runtime, produces
 // either an error or a result. User code only constructs and combines
-// Effects; the runtime is what executes them.
-//
-// This is an MVP shape. Real interpretation (HTTP, DB, etc.) will be added
-// when those subsystems exist.
+// Effects; the runtime is what executes them. Concrete effects (HTTP,
+// DB, time) are built on top of this base shape.
 type VEffect struct {
 	// Run is invoked by the runtime when the effect is executed. It returns
 	// either a Value (the success case) or an error (the failure case).
@@ -61,15 +59,16 @@ func AndThen(first VEffect, f func(Value) VEffect) VEffect {
 
 // effectBuiltins returns the runtime functions for building/combining Effects.
 //
-// Names mirror the planned mar-side API:
+// User-facing API (resolved through the qualified-alias mapping):
 //
 //	Effect.succeed : a -> Effect e a
 //	Effect.fail    : e -> Effect e a
 //	Effect.map     : (a -> b) -> Effect e a -> Effect e b
 //	Effect.andThen : (a -> Effect e b) -> Effect e a -> Effect e b
 //
-// MVP: flat names (effectSucceed etc.) until module-qualified names are
-// implemented.
+// The flat keys (effectSucceed, etc.) are the internal binding names;
+// qualified module syntax (`Effect.succeed`) resolves to them via the
+// alias map in builtins.go.
 func effectBuiltins() map[string]Value {
 	return map[string]Value{
 		"effectSucceed": nativeFn(1, func(args []Value) (Value, error) {
@@ -185,24 +184,3 @@ func errEffect(msg string) error {
 	return effectError{value: VString{V: msg}}
 }
 
-// RunEffect is the entry point for executing an Effect from outside the
-// language (e.g. from cmd/mar's `run` command). It interprets the effect
-// description and returns a Result-like Value:
-//
-//	Ok value  | success
-//	Err error | failure (the error encoded as a Value)
-func RunEffect(v Value) (Value, error) {
-	eff, ok := v.(VEffect)
-	if !ok {
-		// Not an effect: treat as already-resolved value.
-		return v, nil
-	}
-	result, err := eff.Run()
-	if err != nil {
-		if ee, ok := err.(effectError); ok {
-			return VCtor{Tag: "Err", Args: []Value{ee.value}}, nil
-		}
-		return nil, err
-	}
-	return VCtor{Tag: "Ok", Args: []Value{result}}, nil
-}

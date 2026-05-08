@@ -1,0 +1,176 @@
+module Frontend.Home exposing (page)
+
+
+import Shared
+import UI exposing
+    ( navigationStack, navigationTitle, trailing
+    , form, list, section, header
+    , hstack
+    , text, textField, button
+    , submit, disabled
+    )
+
+
+-- Protected page. `Page.protected` handles the bootstrap automatically:
+--   1. On entry, runs Auth.me.
+--   2. If no session, redirects to the `signInPage` declared in
+--      Auth.config (here Frontend.SignIn.page → "/sign-in").
+--   3. If logged in, threads the User into init/update/view as the
+--      first argument — no auth juggling in user code.
+
+
+-- The notes list is a small state machine instead of a bare
+-- `List Note`. Bare list forces `init` to start with `[]`, which
+-- the view then renders as "0 notes" while the fetch is still in
+-- flight — misleading UX. The three explicit states make the
+-- loading + error cases visible AND let the typechecker enforce
+-- that the view handles them all.
+type Notes
+    = Loading
+    | Loaded (List Shared.Note)
+    | Failed String
+
+
+type alias Model =
+    { notes : Notes
+    , draft : String
+    }
+
+
+type Msg
+    = NotesLoaded (Result String (List Shared.Note))
+    | DraftChanged String
+    | AddClicked
+    | NoteCreated (Result String Shared.Note)
+    | SignOutClicked
+    | SignedOut (Result String ())
+
+
+init : Shared.User -> () -> (Model, Effect String Msg)
+init _ _ =
+    ( { notes = Loading, draft = "" }
+    , Service.call Shared.listMine () NotesLoaded
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update _ msg model =
+    case msg of
+        NotesLoaded (Ok loaded) ->
+            ( { model | notes = Loaded loaded }, Effect.none )
+
+        NotesLoaded (Err why) ->
+            ( { model | notes = Failed why }, Effect.none )
+
+        DraftChanged value ->
+            ( { model | draft = value }, Effect.none )
+
+        AddClicked ->
+            -- Source of truth for "is the draft empty" — view also
+            -- disables the button visually. String.trim handles
+            -- whitespace-only.
+            if String.trim model.draft == "" then
+                ( model, Effect.none )
+            else
+                -- Pessimistic update: keep the draft in the model
+                -- until the server confirms. If anything fails
+                -- (network, server bug, session expired and the
+                -- framework redirects to sign-in mid-action), the
+                -- text isn't lost — `preservedScreenModels` keeps
+                -- the model intact and the user lands back here with
+                -- their input ready to retry.
+                --
+                -- Trade-off: a fast double-click during the round
+                -- trip COULD submit twice. For low-stakes content
+                -- like notes that's acceptable. For cart checkout /
+                -- payment / etc, you'd add a `submitting` flag — but
+                -- pair that with explicit reset on remount, since
+                -- the framework's model preservation otherwise traps
+                -- the user in "Saving…" forever after the redirect.
+                ( model
+                , Service.call Shared.createMine { body = model.draft } NoteCreated
+                )
+
+        NoteCreated (Ok _) ->
+            -- Server confirmed — now safe to clear the draft.
+            ( { model | draft = "" }
+            , Service.call Shared.listMine () NotesLoaded
+            )
+
+        NoteCreated (Err _) ->
+            -- Non-401 failures land here (network, server bug, etc).
+            -- Draft is still in the model; user can retry.
+            -- (401 mid-action never reaches this case — the framework
+            -- intercepts and redirects before dispatching the Err.)
+            ( model, Effect.none )
+
+        SignOutClicked ->
+            ( model, Auth.logout SignedOut )
+
+        SignedOut _ ->
+            -- Clear local state on the way out so a future sign-in
+            -- doesn't briefly flash the previous user's notes
+            -- before listMine returns (the framework preserves
+            -- per-page model across navigations).
+            ( { notes = Loading, draft = "" }
+            , Nav.replace "/sign-in"
+            )
+
+
+-- View built from SwiftUI-style primitives. iOS renders this as a
+-- real NavigationStack { List { Section { ... } } } — pull-to-refresh,
+-- swipe-to-delete, dark mode, safe-area, all native and free.
+-- Web renders semantic <main>/<ul>/<section> with CSS that mimics
+-- the iOS card-list look.
+view : Shared.User -> Model -> View Msg
+view user model =
+    navigationStack
+        [ navigationTitle ("Hi, " ++ user.email)
+        , trailing (button [] SignOutClicked "Sign out")
+        ]
+        [ list
+            [ section []
+                [ hstack []
+                    [ textField [ submit AddClicked ]
+                        "Add a note" model.draft DraftChanged
+                    , button
+                        [ disabled (String.trim model.draft == "") ]
+                        AddClicked "Add"
+                    ]
+                ]
+            , notesSection model.notes
+            ]
+        ]
+
+
+notesSection : Notes -> View Msg
+notesSection notes =
+    case notes of
+        Loading ->
+            section [] [ text "Loading…" ]
+
+        Failed why ->
+            section [] [ text ("Couldn't load notes: " ++ why) ]
+
+        Loaded items ->
+            -- List.reverse so the most recent note (highest id, last
+            -- inserted) shows up at the top — common UX expectation
+            -- for note-taking apps.
+            section [ header (String.fromInt (List.length items) ++ " notes") ]
+                (List.map renderNote (List.reverse items))
+
+
+renderNote : Shared.Note -> View Msg
+renderNote note =
+    text note.body
+
+
+page : Page
+page =
+    Page.protected
+        { path = "/"
+        , title = "Notes"
+        , init = init
+        , update = update
+        , view = view
+        }

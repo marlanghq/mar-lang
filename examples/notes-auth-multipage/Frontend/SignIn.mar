@@ -1,0 +1,149 @@
+module Frontend.SignIn exposing (page)
+
+
+import Shared
+import UI exposing (navigationStack, navigationTitle, form, section, text, textField, button, email, numericCode, submit)
+
+
+-- Local state machine for the sign-in flow. No bootstrap of Auth.me
+-- here — the framework lets the user visit /sign-in even when logged
+-- in (creates a new session); if you want auto-redirect-to-/notes
+-- when already logged in, see the (future) `Page.guest` combinator.
+
+
+type Model
+    = AskEmail String
+    | Submitting String
+    | AskCode String String
+
+
+-- DraftChanged / Submitted are step-agnostic — the Model already
+-- tells us whether the user is on the email or code screen, so the
+-- view binds the same handler at both steps.
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeRequested (Result String ())
+    | CodeVerified (Result String Shared.User)
+
+
+init : () -> (Model, Effect String Msg)
+init _ =
+    ( AskEmail "", Effect.none )
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        DraftChanged value ->
+            case model of
+                AskEmail _ ->
+                    ( AskEmail value, Effect.none )
+
+                AskCode email _ ->
+                    ( AskCode email value, Effect.none )
+
+                Submitting _ ->
+                    ( model, Effect.none )
+
+        Submitted ->
+            case model of
+                AskEmail email ->
+                    ( Submitting email
+                    , Auth.requestCode { email = email } CodeRequested
+                    )
+
+                AskCode email code ->
+                    ( Submitting email
+                    , Auth.verifyCode { email = email, code = code } CodeVerified
+                    )
+
+                Submitting _ ->
+                    ( model, Effect.none )
+
+        CodeRequested (Ok ()) ->
+            case model of
+                Submitting email ->
+                    ( AskCode email "", Effect.none )
+
+                _ ->
+                    ( model, Effect.none )
+
+        CodeRequested (Err _) ->
+            case model of
+                Submitting email ->
+                    ( AskEmail email, Effect.none )
+
+                _ ->
+                    ( model, Effect.none )
+
+        CodeVerified (Ok _) ->
+            -- Login worked. Nav.afterSignIn returns the user to where
+            -- a 401 sent them from (or "/" by default). Replaces history
+            -- so back-button doesn't return to sign-in. Reset the state
+            -- to AskEmail "" so a future sign-out + return doesn't land
+            -- on the stale "Working…" screen (the framework preserves
+            -- screen models across navigations to keep scroll/input state).
+            ( AskEmail "", Nav.afterSignIn )
+
+        CodeVerified (Err _) ->
+            case model of
+                Submitting email ->
+                    ( AskCode email "", Effect.none )
+
+                _ ->
+                    ( model, Effect.none )
+
+
+-- View built from SwiftUI-style primitives. Each step renders as a
+-- `navigationStack { form { section [...] } }` — same shape SwiftUI
+-- uses natively. iOS gets a real NavigationStack + Form + Section
+-- (with safe-area + table styling); web gets `<main><form><section>`
+-- with CSS that mimics the iOS card-list look.
+view : Model -> View Msg
+view model =
+    case model of
+        AskEmail draft ->
+            navigationStack [ navigationTitle "Sign in" ]
+                [ form
+                    [ section []
+                        [ text "Enter your email and we'll send a one-time code."
+                        , textField [ email, submit Submitted ]
+                            "Email" draft DraftChanged
+                        ]
+                    , section []
+                        [ button [] Submitted "Send me a code" ]
+                    ]
+                ]
+
+        AskCode emailAddr draft ->
+            navigationStack [ navigationTitle "Enter your code" ]
+                [ form
+                    [ section []
+                        [ text ("We sent a 6-digit code to " ++ emailAddr ++ ". With no SMTP configured, it prints in the dev server's terminal.")
+                        , textField [ numericCode, submit Submitted ]
+                            "Code" draft DraftChanged
+                        ]
+                    , section []
+                        [ button [] Submitted "Verify" ]
+                    ]
+                ]
+
+        Submitting _ ->
+            navigationStack [ navigationTitle "Sign in" ]
+                [ form
+                    [ section []
+                        [ text "Working…" ]
+                    ]
+                ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/sign-in"
+        , title = "Sign in"
+        , init = init
+        , update = update
+        , view = view
+        }
