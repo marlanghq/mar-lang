@@ -117,7 +117,11 @@ var flyRegions = []flyRegion{
 
 func runFly(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, flyUsage)
+		// One-shot exit (returns to shell) — blank line before and
+		// after per docs/cli-style.md §1.
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, flyUsage())
+		fmt.Fprintln(os.Stderr)
 		return 2
 	}
 	sub := args[0]
@@ -152,35 +156,53 @@ func runFly(args []string) int {
 	default:
 		fprintError("mar fly: unknown subcommand %q", sub)
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, flyUsage)
+		fmt.Fprintln(os.Stderr, flyUsage())
+		fmt.Fprintln(os.Stderr)
 		return 2
 	}
 }
 
-const flyUsage = `Usage: mar fly <command> [path]
+// flyUsage returns the help text for `mar fly`. Built dynamically
+// (not a const) so we can color subcommand names + commands per
+// docs/cli-style.md §3:
+//
+//   bold     section headers ("Commands:", "Typical first-deploy flow:")
+//   green    subcommand names + sample commands the user runs
+//   magenta  filesystem paths and config keys (mar.json, deploy/fly/...)
+//   cyan     URLs / paths in URLs (/_mar/admin)
+//
+// Plain text everywhere else.
+func flyUsage() string {
+	cmd := func(s string) string { return colorGreen(s) }
+	path := func(s string) string { return colorMagenta(s) }
+	url := func(s string) string { return colorCyan(s) }
+	hdr := func(s string) string { return colorBold(s) }
 
-Commands:
-  init       Generate deploy/fly/{Dockerfile,fly.toml} from mar.json.
-             Run once per project; commit the files.
-  provision  Create the fly app + volume + push secrets to fly. Run
-             once after init (or after destroy, to recreate).
-  deploy     Build the linux-amd64 binary and ship it. Run on every
-             release.
-  logs       Tail logs from the running machine(s).
-  status     Show app + machine status.
-  admin      Inspect production admin state (read-only); see
-             "mar fly admin --help".
-  database   Database operations (backup / list / download); see
-             "mar fly database --help". Restore is in the admin
-             panel UI at /_mar/admin.
-  destroy    Destroy the fly app and its volume. Asks for confirmation
-             twice — destructive.
-
-Typical first-deploy flow:
-  mar fly init && mar fly provision && mar fly deploy
-
-Subsequent deploys:
-  mar fly deploy`
+	return "Usage: " + cmd("mar fly") + " <command> [path]\n" +
+		"\n" +
+		hdr("Commands:") + "\n" +
+		"  " + cmd("init") + "       Generate " + path("deploy/fly/{Dockerfile,fly.toml}") + " from " + path("mar.json") + ".\n" +
+		"             Run once per project; commit the files.\n" +
+		"  " + cmd("provision") + "  Create the fly app + volume + push secrets to fly. Run\n" +
+		"             once after init (or after destroy, to recreate).\n" +
+		"  " + cmd("deploy") + "     Build the linux-amd64 binary and ship it. Run on every\n" +
+		"             release.\n" +
+		"  " + cmd("logs") + "       Tail logs from the running machine(s).\n" +
+		"  " + cmd("status") + "     Show app + machine status.\n" +
+		"  " + cmd("admin") + "      Inspect production admin state (read-only); see\n" +
+		"             " + cmd("mar fly admin --help") + ".\n" +
+		"  " + cmd("database") + "   Database operations (backup / list / download); see\n" +
+		"             " + cmd("mar fly database --help") + ". Restore is in the admin\n" +
+		"             panel UI at " + url("/_mar/admin") + ".\n" +
+		"  " + cmd("destroy") + "    Destroy the fly app and its volume. Asks for confirmation\n" +
+		"             twice — destructive.\n" +
+		"\n" +
+		hdr("Typical first-deploy flow:") + "\n" +
+		"  " + cmd("mar fly init && mar fly provision && mar fly deploy") + "\n" +
+		"\n" +
+		hdr("Subsequent deploys:") + "\n" +
+		"  " + cmd("mar fly deploy")
+}
 
 // runFlyInit scaffolds deploy/fly/Dockerfile + deploy/fly/fly.toml.
 // Interactive: prompts for the Fly app name (default = mar.json
