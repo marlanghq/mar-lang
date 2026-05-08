@@ -15,7 +15,13 @@ func printBanner(addr string, hub *ReloadHub, appName string) {
 	tty := isStdoutTTY()
 	bold := wrapANSI(tty, "\x1b[1m", "\x1b[0m")
 	cyan := wrapANSI(tty, "\x1b[36m", "\x1b[0m")
-	dim := wrapANSI(tty, "\x1b[2m", "\x1b[0m")
+	// Dim uses a 256-color medium-dark gray (code 240) instead of the
+	// stock `\x1b[2m` (faint) attribute — terminals render the faint
+	// attribute very lightly, almost invisible on some color schemes.
+	// 240 is a fixed shade ~40% from black, readable on both light
+	// and dark backgrounds without being so vivid it competes with
+	// the cyan/green elements next to it.
+	dim := wrapANSI(tty, "\x1b[38;5;240m", "\x1b[0m")
 
 	if appName == "" {
 		appName = "mar"
