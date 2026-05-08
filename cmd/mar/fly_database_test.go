@@ -2,9 +2,9 @@ package main
 
 import "testing"
 
-// TestHumanBytes pins the formatting used in `mar fly backup`'s
-// success line. We don't try to be exhaustive — just the boundary
-// values plus a representative real DB size.
+// TestHumanBytes pins the formatting used in `mar fly database
+// backup download`'s success line. We don't try to be exhaustive —
+// just the boundary values plus a representative real DB size.
 func TestHumanBytes(t *testing.T) {
 	cases := []struct {
 		in   int64

@@ -401,7 +401,7 @@ Commands:
   format [--check] <file>... Reformat .mar files in place
   config <dir>               Print mar.json
   migrate <plan|status> [path] Show pending / applied schema migrations (read-only)
-  fly <init|provision|deploy|destroy|logs|status|admin> [path]
+  fly <init|provision|deploy|destroy|logs|status|admin|database> [path]
                              Full Fly.io deployment workflow
   admin <add|remove|list> [args]
                              Manage admin panel access (mar.json admins list)
