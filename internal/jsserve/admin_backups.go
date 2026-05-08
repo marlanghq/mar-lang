@@ -140,6 +140,29 @@ func serveBundleDownload(w http.ResponseWriter, bundlePath string) {
 	_, _ = io.Copy(w, f)
 }
 
+// scheduleRestoreExit is the function performRestore calls to bring
+// the process down after the swap so Fly auto-restart picks up the
+// new mar.db. Production = os.Exit(2) after a 1.5s grace. Tests
+// inject a no-op so the test process survives.
+//
+// Var (not const) so a test can swap it via SetRestoreExitFuncForTest.
+// Defaults to the real exit.
+var scheduleRestoreExit = func() {
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		fmt.Fprintln(os.Stderr, "[mar admin] restore complete; exiting for restart")
+		os.Exit(2)
+	}()
+}
+
+// SetRestoreExitFuncForTest swaps the post-restore exit hook to a
+// caller-provided function. Test-only; production should never
+// touch this. The caller is responsible for restoring the default
+// after the test finishes.
+func SetRestoreExitFuncForTest(fn func()) {
+	scheduleRestoreExit = fn
+}
+
 // performRestore is the atomic-swap-and-exit flow:
 //
 //   1. Read the bundle's metadata.json + extract its mar.db to a
@@ -246,12 +269,9 @@ func performRestore(w http.ResponseWriter, livePath, bundlePath string) {
 
 	// Step 5: schedule the exit. The 1.5s grace lets the response
 	// land before the process dies. Fly's restart_policy brings the
-	// machine back up.
-	go func() {
-		time.Sleep(1500 * time.Millisecond)
-		fmt.Fprintln(os.Stderr, "[mar admin] restore complete; exiting for restart")
-		os.Exit(2)
-	}()
+	// machine back up. (Tests can swap this for a no-op via
+	// SetRestoreExitFuncForTest.)
+	scheduleRestoreExit()
 }
 
 // extractBundleForRestore extracts the tarball entries we need
