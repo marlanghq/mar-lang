@@ -3272,51 +3272,36 @@
   };
 
   // marBootstrap is the entry point invoked from the host HTML page.
-  // It loads the initial program, runs it, and (in dev) opens the SSE
+  // It fetches the program, runs it, and (in dev) opens the SSE
   // connection for hot reload + compile-error events.
   //
-  // Two ways the program can arrive:
-  //   1. Inline: <script type="application/json" id="mar-program"> in
-  //      the HTML. The server (mar dev / mar fly fullstack) embeds the
-  //      current program.json there so cold-start is one round-trip
-  //      total — no follow-up fetch needed.
-  //   2. Fetch: fall back to GET /_mar/program.json. Used when the
-  //      shell HTML doesn't carry an inline program (older scaffolds
-  //      or static builds that only ship runtime.js).
+  // The HTML head includes <link rel="preload" href="/_mar/program
+  // .json" as="fetch">, so this fetch is typically a cache hit on the
+  // browser's preload buffer — the actual download started in parallel
+  // with runtime.js as soon as the head was parsed. Total wait is
+  // max(T_runtime_load, T_program_download), not their sum.
   global.marBootstrap = function () {
-    function applyProgram(p) {
-      try { global.marRun(p); }
-      catch (e) {
-        console.error(e);
-        const root = document.getElementById('mar-root');
-        if (root) {
-          // Wipe the boot placeholder (and anything else) so the
-          // error message stands alone — otherwise "Loading…" stays
-          // stacked above the red error which reads like a fresh
-          // load is still in progress.
-          while (root.firstChild) root.removeChild(root.firstChild);
-          const pre = document.createElement('pre');
-          pre.style.color = '#b00';
-          pre.textContent = String(e && e.message || e);
-          root.appendChild(pre);
-        }
-      }
-      if (__MAR_DEV__ && global.__marDevMode) setupDevChannel();
-    }
-    const inlineEl = document.getElementById('mar-program');
-    if (inlineEl && inlineEl.textContent) {
-      try {
-        applyProgram(JSON.parse(inlineEl.textContent));
-        return;
-      } catch (e) {
-        // Inline parse failed — log and fall through to the fetch path
-        // so the user still gets a working app.
-        console.warn('inline mar-program failed to parse; falling back to fetch:', e);
-      }
-    }
     fetch('/_mar/program.json', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
-      .then(applyProgram);
+      .then(function (p) {
+        try { global.marRun(p); }
+        catch (e) {
+          console.error(e);
+          const root = document.getElementById('mar-root');
+          if (root) {
+            // Wipe the boot placeholder (and anything else) so the
+            // error message stands alone — otherwise "Loading…" stays
+            // stacked above the red error which reads like a fresh
+            // load is still in progress.
+            while (root.firstChild) root.removeChild(root.firstChild);
+            const pre = document.createElement('pre');
+            pre.style.color = '#b00';
+            pre.textContent = String(e && e.message || e);
+            root.appendChild(pre);
+          }
+        }
+        if (__MAR_DEV__ && global.__marDevMode) setupDevChannel();
+      });
   };
 
   // setupDevChannel opens the SSE connection used by `mar dev` for both

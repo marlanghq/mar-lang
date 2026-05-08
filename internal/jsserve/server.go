@@ -67,24 +67,26 @@ func serveProgramJSON(lp *LiveProgram) http.HandlerFunc {
 	}
 }
 
-// renderShell writes the HTML page with the current program.json
-// embedded inline as <script type="application/json" id="mar-program">.
+// renderShell writes the HTML page. The HTML stays small — program.json
+// is fetched separately; we use <link rel="preload"> in the head so the
+// browser kicks off both runtime.js AND program.json downloads as soon
+// as the head is parsed. Result: cold-start round-trips effectively =
+// max(T_runtime, T_program) instead of T_runtime + T_program.
 //
-// Cache-Control: no-store — the embedded program changes per deploy
-// (and per file save in dev). Without no-store, browsers could serve
-// a cached HTML pointing at a stale program. The SSE reload channel
-// covers in-tab updates; this header covers cross-tab / cold loads.
+// Why not inline the program in the HTML? Tried; reverted. For
+// returning users with runtime.js cached, an inline program means
+// the entire program ships in every HTML response — no ETag, no 304.
+// The separate /_mar/program.json keeps its strong ETag, so steady-
+// state visits only re-download the program when it actually changed.
 //
-// </script> inside the JSON would prematurely close the script tag.
-// Escape the `<` as `<` (or replace `</` with `<\/`); JSON.parse
-// reads either back identically. We use the latter — same trick the
-// static buildIndexHTML uses.
+// Cache-Control: no-store on the HTML — the runtime.js and program.json
+// links sit in the head, and we want every visit to re-fetch the shell
+// so a stale shell doesn't keep a returning user pinned to last
+// deploy's runtime.js by serving its old reference.
 func renderShell(w http.ResponseWriter, lp *LiveProgram) {
-	body := lp.ProgramJSON()
-	safeProgram := strings.ReplaceAll(string(body), "</", `<\/`)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = fmt.Fprintf(w, pageHTML, lp.Title(), safeProgram)
+	_, _ = fmt.Fprintf(w, pageHTML, lp.Title())
 }
 
 // programETag returns the strong ETag value for a program.json payload.
@@ -106,25 +108,25 @@ func programETag(body []byte) string {
 // Asset paths are stable (`/_mar/...`) so hot-reload's SSE channel sits
 // alongside them without colliding with user routes.
 //
-// Two `%s` substitutions:
-//   1. <title> — the app's name
-//   2. inline program.json — embedded as a <script type="application/json">
-//      tag so the runtime can boot without a second round-trip. Same
-//      trick the static `mar build` (App.frontend) uses; we did NOT
-//      apply it to mar dev / mar fly's HTML response originally because
-//      hot-reload made staleness a concern, but the SSE channel
-//      already forces window.location.reload() on each program change,
-//      so the embedded copy is always fresh by the time the browser
-//      re-fetches the HTML.
+// One `%s` substitution: <title>.
 //
-// Cold-start round-trips (web): 3 → 1 (HTML embeds program; runtime.js
-// is the only follow-up fetch). Same shape as iOS Approach C.
+// The <link rel="preload"> for /_mar/program.json is the cold-start
+// optimization. Browsers see both the preload AND the runtime.js
+// script tag while parsing the head and kick off both downloads in
+// parallel — when runtime.js executes and calls fetch('/_mar/program
+// .json'), the preload cache resolves it instantly. Effective wait
+// drops from T_runtime + T_program to max(T_runtime, T_program).
+//
+// crossorigin="anonymous" matches what fetch() uses by default;
+// omitting it would split the preload entry from the actual request
+// and the browser would issue two separate fetches.
 const pageHTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%s</title>
+<link rel="preload" href="/_mar/program.json" as="fetch" crossorigin="anonymous">
 <style>
   /* Reasonable defaults so the bare view DSL renders looking like a
      real app, not raw browser stock. The DSL itself stays sparse —
@@ -269,7 +271,6 @@ const pageHTML = `<!doctype html>
     .mar-boot-loading { animation-delay: 0s; }
   }
 </style>
-<script type="application/json" id="mar-program">%s</script>
 <script src="/_mar/runtime.js"></script>
 <script>
 window.addEventListener('DOMContentLoaded', function () {
