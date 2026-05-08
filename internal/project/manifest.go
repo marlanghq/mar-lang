@@ -63,7 +63,62 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	Path string `json:"path,omitempty"`
+	Path       string                `json:"path,omitempty"`
+	AutoBackup *DatabaseAutoBackup   `json:"autoBackup,omitempty"`
+}
+
+// DatabaseAutoBackup configures the periodic-backup goroutine that
+// writes consistent snapshots into a catalog on the same volume as
+// mar.db. Defaults (when the block is absent OR fields are zero):
+// enabled=true, intervalHours=6, retentionCount=28 — i.e. a week of
+// 4-per-day backups.
+//
+// Bounds are validated at compile time so misconfigured values fail
+// the build instead of silently snapping to defaults.
+type DatabaseAutoBackup struct {
+	// Enabled toggles the scheduler. *bool to distinguish "not set"
+	// (apply default true) from "explicitly false". Same pattern we
+	// use elsewhere where the absence of a value matters.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// IntervalHours is how often the goroutine wakes to take a new
+	// snapshot. Must be in [1, 168]. 1 = hourly (noisy; prefer
+	// streaming replication if you need tighter); 168 = weekly
+	// (looser is barely a backup). Default 6.
+	IntervalHours int `json:"intervalHours,omitempty"`
+
+	// RetentionCount is how many snapshots to keep in the catalog.
+	// Must be in [2, 100]. 1 is a single point of failure on the
+	// backup itself; 100+ doesn't fit on typical Fly volumes and
+	// should be exported off-machine. Default 28.
+	RetentionCount int `json:"retentionCount,omitempty"`
+}
+
+// AutoBackupEnabled reports whether automatic backups should run,
+// applying the default (true) when not explicitly set.
+func (a *DatabaseAutoBackup) AutoBackupEnabled() bool {
+	if a == nil || a.Enabled == nil {
+		return true
+	}
+	return *a.Enabled
+}
+
+// ResolvedIntervalHours returns the effective interval, applying the
+// default (6) when not set.
+func (a *DatabaseAutoBackup) ResolvedIntervalHours() int {
+	if a == nil || a.IntervalHours == 0 {
+		return 6
+	}
+	return a.IntervalHours
+}
+
+// ResolvedRetentionCount returns the effective retention, applying
+// the default (28) when not set.
+func (a *DatabaseAutoBackup) ResolvedRetentionCount() int {
+	if a == nil || a.RetentionCount == 0 {
+		return 28
+	}
+	return a.RetentionCount
 }
 
 type MailConfig struct {

@@ -108,6 +108,105 @@ func TestValidate_RecentRequestsSizeRejectsOutOfRange(t *testing.T) {
 	}
 }
 
+// TestValidate_AutoBackupAcceptsRange — both ends of the documented
+// range and a typical mid value should pass.
+func TestValidate_AutoBackupAcceptsRange(t *testing.T) {
+	cases := []struct {
+		name     string
+		interval int
+		retain   int
+	}{
+		{"min interval, min retain", 1, 2},
+		{"max interval, max retain", 168, 100},
+		{"defaults explicit", 6, 28},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Manifest{
+				Database: &DatabaseConfig{
+					AutoBackup: &DatabaseAutoBackup{
+						IntervalHours:  tc.interval,
+						RetentionCount: tc.retain,
+					},
+				},
+			}
+			if err := Validate(m, CompileTime); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidate_AutoBackupRejectsOutOfRange — values outside the
+// documented bounds fail with a message naming the field.
+func TestValidate_AutoBackupRejectsOutOfRange(t *testing.T) {
+	cases := []struct {
+		name     string
+		interval int
+		retain   int
+		wantSub  string // "" = expects validation to pass
+	}{
+		// 0 is treated as "not set" → default applies → no error.
+		{"interval 0 means unset, no error", 0, 28, ""},
+		{"interval negative", -1, 28, "intervalHours"},
+		{"interval above max", 200, 28, "intervalHours"},
+		{"retain below min (1)", 6, 1, "retentionCount"},
+		{"retain above max", 6, 200, "retentionCount"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Manifest{
+				Database: &DatabaseConfig{
+					AutoBackup: &DatabaseAutoBackup{
+						IntervalHours:  tc.interval,
+						RetentionCount: tc.retain,
+					},
+				},
+			}
+			err := Validate(m, CompileTime)
+			if tc.wantSub == "" {
+				if err != nil {
+					t.Errorf("expected no error; got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error mentioning %q; got nil", tc.wantSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error %q should mention %q", err.Error(), tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestAutoBackup_ResolvedDefaults — when fields are zero, the
+// resolver returns the documented defaults; explicit values pass
+// through verbatim.
+func TestAutoBackup_ResolvedDefaults(t *testing.T) {
+	var nilCfg *DatabaseAutoBackup
+	if nilCfg.AutoBackupEnabled() != true {
+		t.Error("nil receiver should default to enabled=true")
+	}
+	if nilCfg.ResolvedIntervalHours() != 6 {
+		t.Error("nil receiver should default to intervalHours=6")
+	}
+	if nilCfg.ResolvedRetentionCount() != 28 {
+		t.Error("nil receiver should default to retentionCount=28")
+	}
+	disabled := false
+	cfg := &DatabaseAutoBackup{Enabled: &disabled, IntervalHours: 24, RetentionCount: 7}
+	if cfg.AutoBackupEnabled() != false {
+		t.Error("explicit false should resolve to false")
+	}
+	if cfg.ResolvedIntervalHours() != 24 {
+		t.Error("explicit 24 should pass through")
+	}
+	if cfg.ResolvedRetentionCount() != 7 {
+		t.Error("explicit 7 should pass through")
+	}
+}
+
 // TestResolvedRecentRequestsSize pins the default-fallback behavior.
 // 0 / nil receiver / nil AdminPanel all yield the documented default;
 // explicit values pass through verbatim.

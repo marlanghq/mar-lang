@@ -41,6 +41,18 @@ const (
 	MaxRecentRequestsSize     = 5000
 )
 
+// Defaults for database.autoBackup knobs. Bounds rationale documented
+// in docs/admin-panel.md §11 (mirrors recentRequestsSize policy:
+// hard rejection over silent clamping).
+const (
+	DefaultAutoBackupIntervalHours  = 6
+	MinAutoBackupIntervalHours      = 1   // tighter than 1h → use streaming replication
+	MaxAutoBackupIntervalHours      = 168 // 1 week — looser is barely a backup
+	DefaultAutoBackupRetentionCount = 28
+	MinAutoBackupRetentionCount     = 2   // 1 = single point of failure
+	MaxAutoBackupRetentionCount     = 100 // larger → export off-machine
+)
+
 // emailRegex is a lightweight shape check — not full RFC 5322. We
 // just want to reject obvious garbage in `admins: [...]` at compile
 // time, not validate that the address actually exists.
@@ -62,6 +74,36 @@ func Validate(m *Manifest, phase ValidationPhase) error {
 	if err := validateAdminPanel(m, phase); err != nil {
 		return err
 	}
+	if err := validateDatabaseAutoBackup(m, phase); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateDatabaseAutoBackup enforces the bounds on the auto-backup
+// scheduler config. Hard rejection — same policy as adminPanel knobs.
+func validateDatabaseAutoBackup(m *Manifest, phase ValidationPhase) error {
+	if m.Database == nil || m.Database.AutoBackup == nil {
+		return nil
+	}
+	a := m.Database.AutoBackup
+	if a.IntervalHours != 0 {
+		if a.IntervalHours < MinAutoBackupIntervalHours || a.IntervalHours > MaxAutoBackupIntervalHours {
+			return fmt.Errorf(
+				"mar.json: database.autoBackup.intervalHours must be between %d and %d (got %d)",
+				MinAutoBackupIntervalHours, MaxAutoBackupIntervalHours, a.IntervalHours,
+			)
+		}
+	}
+	if a.RetentionCount != 0 {
+		if a.RetentionCount < MinAutoBackupRetentionCount || a.RetentionCount > MaxAutoBackupRetentionCount {
+			return fmt.Errorf(
+				"mar.json: database.autoBackup.retentionCount must be between %d and %d (got %d)",
+				MinAutoBackupRetentionCount, MaxAutoBackupRetentionCount, a.RetentionCount,
+			)
+		}
+	}
+	_ = phase
 	return nil
 }
 
