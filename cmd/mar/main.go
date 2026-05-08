@@ -94,7 +94,7 @@ func runBuild(args []string) int {
 		switch {
 		case a == "--target" || a == "-t":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "mar build: --target needs a value (e.g. linux-amd64)")
+				fprintError("mar build: --target needs a value (e.g. linux-amd64)")
 				return 2
 			}
 			target = args[i+1]
@@ -104,7 +104,7 @@ func runBuild(args []string) int {
 			i++
 		case a == "--out" || a == "-o":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "mar build: --out needs a value")
+				fprintError("mar build: --out needs a value")
 				return 2
 			}
 			outDir = args[i+1]
@@ -114,7 +114,7 @@ func runBuild(args []string) int {
 			i++
 		case a == "--base-url":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "mar build: --base-url needs a value")
+				fprintError("mar build: --base-url needs a value")
 				return 2
 			}
 			baseURL = args[i+1]
@@ -155,7 +155,7 @@ func runBuild(args []string) int {
 		return 0
 	}
 	if baseURL != "" {
-		fmt.Fprintln(os.Stderr, "mar build: --base-url only applies to --target ios")
+		fprintError("mar build: --base-url only applies to --target ios")
 		return 2
 	}
 	if err := scaffold.Build(entry, outDir, target); err != nil {
@@ -222,7 +222,12 @@ func runFormat(args []string) int {
 		}
 	}
 	if len(files) == 0 {
-		fmt.Fprintln(os.Stderr, "mar format: no files given\n\nusage: mar format [--check] <file.mar> [file.mar...]")
+		fmt.Fprintln(os.Stderr)
+		fprintError("mar format: no files given")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "usage: %s\n",
+			colorGreen("mar format [--check] <file.mar> [file.mar...]"))
+		fmt.Fprintln(os.Stderr)
 		return 2
 	}
 	dirty := 0
@@ -300,13 +305,15 @@ var (
 
 func main() {
 	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr)
 		usage()
+		fmt.Fprintln(os.Stderr)
 		os.Exit(2)
 	}
 	switch os.Args[1] {
 	case "check":
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "mar check: missing file argument")
+			fprintError("mar check: missing file argument")
 			os.Exit(2)
 		}
 		os.Exit(runCheck(os.Args[2]))
@@ -314,7 +321,7 @@ func main() {
 		os.Exit(runRepl())
 	case "config":
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "mar config: missing project directory")
+			fprintError("mar config: missing project directory")
 			os.Exit(2)
 		}
 		os.Exit(runConfig(os.Args[2]))
@@ -337,7 +344,13 @@ func main() {
 		}
 	case "init":
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "mar init: missing project name\n\nusage: mar init <name>")
+			// One-shot exit (returns to shell): blank before AND
+			// after per docs/cli-style.md §1.
+			fmt.Fprintln(os.Stderr)
+			fprintError("mar init: missing project name")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "usage: %s\n", colorGreen("mar init <name>"))
+			fmt.Fprintln(os.Stderr)
 			os.Exit(2)
 		}
 		name := os.Args[2]
@@ -345,7 +358,10 @@ func main() {
 			fprintError("mar init: %v", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Created %s/\n  cd %s && mar dev\n", name, name)
+		fmt.Println()
+		fmt.Printf("Created %s/\n", colorMagenta(name+"/"))
+		fmt.Printf("  %s\n", colorGreen("cd "+name+" && mar dev"))
+		fmt.Println()
 	case "build":
 		os.Exit(runBuild(os.Args[2:]))
 	case "migrate":
@@ -359,7 +375,9 @@ func main() {
 	case "version", "--version", "-v":
 		fmt.Printf("%s (%s)\n", version, commit)
 	case "help", "--help", "-h":
+		fmt.Fprintln(os.Stderr)
 		usage()
+		fmt.Fprintln(os.Stderr)
 	default:
 		// `mar foo.mar` or `mar examples/notes-auth` look like the
 		// user wanted to run a project but forgot the subcommand.
@@ -394,28 +412,41 @@ func looksLikePath(s string) bool {
 	return false
 }
 
+// usage prints the colored help block for `mar` (no args / `mar help`).
+// Caller is responsible for surrounding blank lines (this is shared by
+// the no-args branch and the explicit `mar help` branch, both of which
+// are one-shot exits).
+//
+// Color scheme (docs/cli-style.md §3):
+//   bold     section headers
+//   green    subcommand names + sample commands
+//   magenta  filesystem paths and config keys (mar.json)
 func usage() {
-	fmt.Fprintln(os.Stderr, `Usage: mar <command> [args]
+	cmd := func(s string) string { return colorGreen(s) }
+	path := func(s string) string { return colorMagenta(s) }
+	hdr := func(s string) string { return colorBold(s) }
 
-Commands:
-  dev    [path]              Run with hot reload (path defaults to ".")
-  build  [path] [--target T] Compile to dist/ (frontend) or binary (backend)
-                             [--out DIR] [--base-url URL]
-  init   <name>              Scaffold a new project at <name>/
-  check  <path>              Parse + type-check (no run)
-  format [--check] <file>... Reformat .mar files in place
-  config <dir>               Print mar.json
-  migrate <plan|status> [path] Show pending / applied schema migrations (read-only)
-  fly <init|provision|deploy|destroy|logs|status|admin|database> [path]
-                             Full Fly.io deployment workflow
-  admin <add|remove|list> [args]
-                             Manage admin panel access (mar.json admins list)
-  repl                       Interactive REPL
-  lsp                        Language server over stdio
-  completion <shell>         Generate shell completion (zsh, bash, fish)
-  version                    Print version
-
-Run 'mar <command> --help' for command-specific help.`)
+	fmt.Fprintln(os.Stderr, "Usage: "+cmd("mar")+" <command> [args]")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, hdr("Commands:"))
+	fmt.Fprintln(os.Stderr, "  "+cmd("dev")+`    [path]              Run with hot reload (path defaults to ".")`)
+	fmt.Fprintln(os.Stderr, "  "+cmd("build")+`  [path] [--target T] Compile to dist/ (frontend) or binary (backend)`)
+	fmt.Fprintln(os.Stderr, `                             [--out DIR] [--base-url URL]`)
+	fmt.Fprintln(os.Stderr, "  "+cmd("init")+"   <name>              Scaffold a new project at <name>/")
+	fmt.Fprintln(os.Stderr, "  "+cmd("check")+"  <path>              Parse + type-check (no run)")
+	fmt.Fprintln(os.Stderr, "  "+cmd("format")+" [--check] <file>... Reformat .mar files in place")
+	fmt.Fprintln(os.Stderr, "  "+cmd("config")+" <dir>               Print "+path("mar.json"))
+	fmt.Fprintln(os.Stderr, "  "+cmd("migrate")+" <plan|status> [path] Show pending / applied schema migrations (read-only)")
+	fmt.Fprintln(os.Stderr, "  "+cmd("fly")+" <init|provision|deploy|destroy|logs|status|admin|database> [path]")
+	fmt.Fprintln(os.Stderr, "                             Full Fly.io deployment workflow")
+	fmt.Fprintln(os.Stderr, "  "+cmd("admin")+" <add|remove|list> [args]")
+	fmt.Fprintln(os.Stderr, "                             Manage admin panel access ("+path("mar.json")+" admins list)")
+	fmt.Fprintln(os.Stderr, "  "+cmd("repl")+"                       Interactive REPL")
+	fmt.Fprintln(os.Stderr, "  "+cmd("lsp")+"                        Language server over stdio")
+	fmt.Fprintln(os.Stderr, "  "+cmd("completion")+" <shell>         Generate shell completion (zsh, bash, fish)")
+	fmt.Fprintln(os.Stderr, "  "+cmd("version")+"                    Print version")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Run "+cmd("mar <command> --help")+" for command-specific help.")
 }
 
 func runCheck(path string) int {
@@ -640,7 +671,7 @@ func runDev(path string) int {
 	if lp.Port() == 0 {
 		// `main` didn't call any of the App.* overrides — nothing to host.
 		// Just exit; this isn't a server.
-		fmt.Fprintln(os.Stderr, "mar dev: main returned without invoking App.serve / App.fullstack / App.serveScreens — nothing to host")
+		fprintError("mar dev: main returned without invoking App.serve / App.fullstack / App.serveScreens — nothing to host")
 		return 0
 	}
 

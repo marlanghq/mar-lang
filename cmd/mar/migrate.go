@@ -30,9 +30,12 @@ import (
 
 func runMigrate(args []string) int {
 	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr)
 		fprintError("mar migrate: missing subcommand")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "usage: mar migrate <plan|status> [path]")
+		fmt.Fprintf(os.Stderr, "usage: %s\n",
+			colorGreen("mar migrate <plan|status> [path]"))
+		fmt.Fprintln(os.Stderr)
 		return 2
 	}
 	sub := args[0]
@@ -46,9 +49,12 @@ func runMigrate(args []string) int {
 	case "status":
 		return runMigrateStatus(path)
 	default:
+		fmt.Fprintln(os.Stderr)
 		fprintError("mar migrate: unknown subcommand %q", sub)
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "usage: mar migrate <plan|status> [path]")
+		fmt.Fprintf(os.Stderr, "usage: %s\n",
+			colorGreen("mar migrate <plan|status> [path]"))
+		fmt.Fprintln(os.Stderr)
 		return 2
 	}
 }
