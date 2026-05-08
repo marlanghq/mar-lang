@@ -184,12 +184,12 @@ Add to mar.json:
 
   %s
 
-Hint: smtpPort is optional and defaults to 587 (Resend, SendGrid,
-      Mailgun, AWS SES, Postmark, Brevo, Mailjet all use it).
-
-Hint: sessionSecret and smtpPassword MUST be env:VAR_NAME — set
-      the values via 'mar fly provision' (or 'fly secrets set'
-      for bare fly deploys).`, strings.Join(e.Missing, "\n  "))
+Hints:
+  - smtpPort is optional and defaults to 587 (Resend, SendGrid,
+    Mailgun, AWS SES, Postmark, Brevo, Mailjet all use it).
+  - sessionSecret and smtpPassword MUST be env:VAR_NAME — set
+    the values via 'mar fly provision' (or 'fly secrets set' for
+    bare fly deploys).`, strings.Join(e.Missing, "\n  "))
 }
 
 // validateProductionConfig asserts the project's mar.json carries

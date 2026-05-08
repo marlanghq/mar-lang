@@ -215,19 +215,19 @@ func printProductionConfigError(e *scaffold.ProductionConfigError) {
 		}
 	}
 	fmt.Fprintln(os.Stderr)
-	// Hints follow the cli-style.md pattern: "Hint:" yellow, body plain
-	// with continuation indented to align under the colon. Two separate
-	// hints — separate concerns, easier to skim.
-	fprintHint("%s is optional and defaults to %s (Resend, SendGrid,",
+	// Multiple related hints under a single "Hints:" header so the
+	// section reads as a list (instead of two stacked "Hint:" blocks
+	// that would compete visually).
+	fmt.Fprintln(os.Stderr, colorYellow("Hints:"))
+	fmt.Fprintf(os.Stderr, "  - %s is optional and defaults to %s (Resend, SendGrid,\n",
 		colorMagenta("smtpPort"), colorCyan("587"))
-	fmt.Fprintln(os.Stderr, "      Mailgun, AWS SES, Postmark, Brevo, Mailjet all use it).")
-	fmt.Fprintln(os.Stderr)
-	fprintHint("%s and %s MUST be %s — set",
+	fmt.Fprintln(os.Stderr, "    Mailgun, AWS SES, Postmark, Brevo, Mailjet all use it).")
+	fmt.Fprintf(os.Stderr, "  - %s and %s MUST be %s — set\n",
 		colorMagenta("sessionSecret"), colorMagenta("smtpPassword"),
 		colorMagenta("env:VAR_NAME"))
-	fmt.Fprintf(os.Stderr, "      the values via %s (or %s\n",
+	fmt.Fprintf(os.Stderr, "    the values via %s (or %s for\n",
 		colorGreen("mar fly provision"), colorGreen("fly secrets set"))
-	fmt.Fprintln(os.Stderr, "      for bare fly deploys).")
+	fmt.Fprintln(os.Stderr, "    bare fly deploys).")
 	fmt.Fprintln(os.Stderr)
 }
 
