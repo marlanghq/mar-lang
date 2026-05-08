@@ -3271,26 +3271,47 @@
       });
   };
 
-  // marBootstrap is the entry point invoked from the host HTML page. It
-  // fetches the initial program, runs it, and opens the SSE connection
-  // that the dev server uses to push reload + compile-error events.
+  // marBootstrap is the entry point invoked from the host HTML page.
+  // It loads the initial program, runs it, and (in dev) opens the SSE
+  // connection for hot reload + compile-error events.
+  //
+  // Two ways the program can arrive:
+  //   1. Inline: <script type="application/json" id="mar-program"> in
+  //      the HTML. The server (mar dev / mar fly fullstack) embeds the
+  //      current program.json there so cold-start is one round-trip
+  //      total — no follow-up fetch needed.
+  //   2. Fetch: fall back to GET /_mar/program.json. Used when the
+  //      shell HTML doesn't carry an inline program (older scaffolds
+  //      or static builds that only ship runtime.js).
   global.marBootstrap = function () {
+    function applyProgram(p) {
+      try { global.marRun(p); }
+      catch (e) {
+        console.error(e);
+        const root = document.getElementById('mar-root');
+        if (root) {
+          const pre = document.createElement('pre');
+          pre.style.color = '#b00';
+          pre.textContent = String(e && e.message || e);
+          root.appendChild(pre);
+        }
+      }
+      if (__MAR_DEV__ && global.__marDevMode) setupDevChannel();
+    }
+    const inlineEl = document.getElementById('mar-program');
+    if (inlineEl && inlineEl.textContent) {
+      try {
+        applyProgram(JSON.parse(inlineEl.textContent));
+        return;
+      } catch (e) {
+        // Inline parse failed — log and fall through to the fetch path
+        // so the user still gets a working app.
+        console.warn('inline mar-program failed to parse; falling back to fetch:', e);
+      }
+    }
     fetch('/_mar/program.json', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
-      .then(function (p) {
-        try { global.marRun(p); }
-        catch (e) {
-          console.error(e);
-          const root = document.getElementById('mar-root');
-          if (root) {
-            const pre = document.createElement('pre');
-            pre.style.color = '#b00';
-            pre.textContent = String(e && e.message || e);
-            root.appendChild(pre);
-          }
-        }
-        if (__MAR_DEV__ && global.__marDevMode) setupDevChannel();
-      });
+      .then(applyProgram);
   };
 
   // setupDevChannel opens the SSE connection used by `mar dev` for both

@@ -67,6 +67,26 @@ func serveProgramJSON(lp *LiveProgram) http.HandlerFunc {
 	}
 }
 
+// renderShell writes the HTML page with the current program.json
+// embedded inline as <script type="application/json" id="mar-program">.
+//
+// Cache-Control: no-store — the embedded program changes per deploy
+// (and per file save in dev). Without no-store, browsers could serve
+// a cached HTML pointing at a stale program. The SSE reload channel
+// covers in-tab updates; this header covers cross-tab / cold loads.
+//
+// </script> inside the JSON would prematurely close the script tag.
+// Escape the `<` as `<` (or replace `</` with `<\/`); JSON.parse
+// reads either back identically. We use the latter — same trick the
+// static buildIndexHTML uses.
+func renderShell(w http.ResponseWriter, lp *LiveProgram) {
+	body := lp.ProgramJSON()
+	safeProgram := strings.ReplaceAll(string(body), "</", `<\/`)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = fmt.Fprintf(w, pageHTML, lp.Title(), safeProgram)
+}
+
 // programETag returns the strong ETag value for a program.json payload.
 // First 16 hex chars of the sha256 — plenty of collision space for a
 // single app's deploy history. Cached on the LiveProgram itself
@@ -85,6 +105,20 @@ func programETag(body []byte) string {
 // HTML page template. Loads the runtime, then the AST, then runs `main`.
 // Asset paths are stable (`/_mar/...`) so hot-reload's SSE channel sits
 // alongside them without colliding with user routes.
+//
+// Two `%s` substitutions:
+//   1. <title> — the app's name
+//   2. inline program.json — embedded as a <script type="application/json">
+//      tag so the runtime can boot without a second round-trip. Same
+//      trick the static `mar build` (App.frontend) uses; we did NOT
+//      apply it to mar dev / mar fly's HTML response originally because
+//      hot-reload made staleness a concern, but the SSE channel
+//      already forces window.location.reload() on each program change,
+//      so the embedded copy is always fresh by the time the browser
+//      re-fetches the HTML.
+//
+// Cold-start round-trips (web): 3 → 1 (HTML embeds program; runtime.js
+// is the only follow-up fetch). Same shape as iOS Approach C.
 const pageHTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -199,6 +233,7 @@ const pageHTML = `<!doctype html>
 </head>
 <body>
 <div id="mar-root"></div>
+<script type="application/json" id="mar-program">%s</script>
 <script src="/_mar/runtime.js"></script>
 <script>
 window.addEventListener('DOMContentLoaded', function () {
@@ -313,14 +348,12 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub) error {
 			dispatchBackend(lp.Routes(), r.URL.Path, w, r)
 		}))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprintf(w, pageHTML, lp.Title())
+			renderShell(w, lp)
 		})
 	case hasFrontend:
 		// Frontend-only: HTML at /.
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = fmt.Fprintf(w, pageHTML, lp.Title())
+			renderShell(w, lp)
 		})
 	case hasAPI:
 		// Backend-only: user routes mount directly at /. The /_mar/reload
