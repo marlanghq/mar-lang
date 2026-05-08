@@ -508,10 +508,14 @@ func bootAdminPanel(manifest *project.Manifest) error {
 		fmt.Printf("[mar] admin panel: synced %d admins (+%d -%d)\n", len(desired), added, removed)
 	}
 	if len(desired) == 0 && !adminHintShown {
+		// Multi-line hint block — blank line before & after per
+		// docs/cli-style.md §1 (spacing rules).
+		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr,
 			colorYellow("hint:")+" no admins configured — the admin panel at /_mar/admin is locked.")
 		fmt.Fprintln(os.Stderr,
 			"      run "+colorGreen("mar admin add YOUR_EMAIL")+" to enable it.")
+		fmt.Fprintln(os.Stderr)
 		adminHintShown = true
 	}
 	return nil
