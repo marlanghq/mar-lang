@@ -514,8 +514,11 @@ func bootAdminPanel(manifest *project.Manifest) error {
 		// avoids two blocks adjacent to each other doubling up on
 		// blanks (hint+banner was 2 blanks, should be 1).
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr,
-			colorYellow("hint:")+" no admins configured — the admin panel at /_mar/admin is locked.")
+		fmt.Fprintf(os.Stderr,
+			"%s no admins configured — the admin panel at %s is locked.\n",
+			colorYellow("hint:"),
+			colorCyan("/_mar/admin"),
+		)
 		fmt.Fprintln(os.Stderr,
 			"      run "+colorGreen("mar admin add YOUR_EMAIL")+" to enable it.")
 		adminHintShown = true

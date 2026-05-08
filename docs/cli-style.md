@@ -99,14 +99,41 @@ there's nothing visual to separate from.
 
 ## 3. Color rules — when to use which
 
-| Color       | Used for                                                           | Examples                                                       |
-|-------------|--------------------------------------------------------------------|----------------------------------------------------------------|
-| **red**     | Error headlines, dangerous actions, destructive confirmations      | `Error:`, `mar fly destroy` warnings, failed validation        |
-| **green**   | Success confirmations, *commands the user should run next*         | `✓ deployed`, `mar admin add YOUR_EMAIL`, `mar fly deploy`     |
-| **yellow**  | Hints, recoverable warnings, "did you mean" suggestions            | `Hint:`, `warn:`, missing-config nudges                        |
-| **cyan**    | Identifiers the user *typed or chose* — emails, app names, codes   | the email being added, `notes-app`, region codes (`gru`)       |
-| **magenta** | File paths, env variable names                                     | `mar.json`, `deploy/fly/fly.toml`, `env:SESSION_SECRET`        |
-| **bold**    | Section headers, key labels in interactive prompts                 | `Fly app name`, `Next steps:`, `Press Enter to use:`           |
+**Each color has exactly one role.** When in doubt, leave it
+uncolored or dim. Reusing a color for "things that aren't quite
+its role" dilutes the signal — readers stop trusting the cue.
+
+| Color       | Role                                                                          | Examples                                                       |
+|-------------|-------------------------------------------------------------------------------|----------------------------------------------------------------|
+| **red**     | Errors, dangerous actions, destructive confirmations                          | `Error:`, `mar fly destroy` warnings, failed validation        |
+| **green**   | **Executables** — commands the user should run                                | `mar admin add YOUR_EMAIL`, `mar fly deploy`, `lsof -ti:3000`  |
+| **yellow**  | Hints, recoverable warnings, "did you mean" suggestions                       | `Hint:`, `warn:`, missing-config nudges                        |
+| **cyan**    | **Links and addressable identifiers** — URLs, paths in URLs, emails, names    | `http://localhost:3000`, `/_mar/admin`, emails, app names, region codes |
+| **magenta** | **Paths and config keys** — file paths, env vars, db tables, config slots    | `mar.json`, `_mar_admins`, `env:SESSION_SECRET`, `mar.json["server"]["port"]` |
+| **bold**    | Section headers, key labels                                                   | `Fly app name`, `Next steps:`, `Press Enter to use:`           |
+| **dim**     | Auxiliary / status text that isn't itself a value                            | "Loading…", "Hot reload enabled.", `Local:` / `Admin:` labels |
+
+### 3.1 Distinguishing close-but-distinct cases
+
+Some pairs sit near each other; here's how to tell them apart:
+
+- **green vs cyan**: green = "you can RUN this" (a command). cyan
+  = "you can OPEN/REFERENCE this" (a URL, an email, an app name).
+  `mar admin add YOUR_EMAIL` is **green** (run it). Its URL output
+  `http://localhost:3000/_mar/admin` is **cyan** (open it).
+
+- **cyan vs magenta**: cyan = the live, addressable surface (URLs,
+  emails, app names — things you act on or send messages to).
+  magenta = the configuration surface (filesystem paths inside the
+  project, env var names, framework table names — things you grep
+  for or edit). Rule of thumb: if you'd paste it into a browser
+  or send it to someone, cyan. If you'd grep your codebase for it,
+  magenta.
+
+- **dim**: anything that's not itself a value, label, or command.
+  Status descriptors ("Hot reload enabled.", "Loading…"), footer
+  hints ("Save any .mar file to rebuild."), separator labels
+  (`Local:`). Dim says "I'm context, not the thing".
 
 ### 3.1 Combining rules
 

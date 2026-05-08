@@ -48,8 +48,12 @@ func printBanner(addr string, hub *ReloadHub, appName string) {
 	fmt.Printf("  %s %s\n", dim("Local:"), cyan(url))
 	fmt.Printf("  %s %s\n", dim("Admin:"), cyan(adminURL))
 	if hub != nil {
+		// "Hot reload enabled." is descriptive status, not an
+		// identifier or link — kept dim so cyan stays reserved for
+		// addressable things (URLs, emails, IDs) per
+		// docs/cli-style.md §3.
 		fmt.Printf("  %s %s\n",
-			cyan("Hot reload enabled."),
+			dim("Hot reload enabled."),
 			dim("Save any .mar file to rebuild."),
 		)
 	}
