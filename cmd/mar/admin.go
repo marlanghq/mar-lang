@@ -508,14 +508,16 @@ func bootAdminPanel(manifest *project.Manifest) error {
 		fmt.Printf("[mar] admin panel: synced %d admins (+%d -%d)\n", len(desired), added, removed)
 	}
 	if len(desired) == 0 && !adminHintShown {
-		// Multi-line hint block — blank line before & after per
-		// docs/cli-style.md §1 (spacing rules).
+		// Multi-line hint block. Blank line BEFORE only — whoever
+		// prints next is responsible for their own leading blank
+		// (docs/cli-style.md §1, "adjacent blocks rule"). This
+		// avoids two blocks adjacent to each other doubling up on
+		// blanks (hint+banner was 2 blanks, should be 1).
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr,
 			colorYellow("hint:")+" no admins configured — the admin panel at /_mar/admin is locked.")
 		fmt.Fprintln(os.Stderr,
 			"      run "+colorGreen("mar admin add YOUR_EMAIL")+" to enable it.")
-		fmt.Fprintln(os.Stderr)
 		adminHintShown = true
 	}
 	return nil

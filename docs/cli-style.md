@@ -14,20 +14,52 @@ next, and any warning at a glance, without parsing prose word by word.
 
 ## 1. Spacing
 
-Three rules:
+The simplest formulation:
 
-1. **Blank line before** every multi-line message block. Otherwise the
-   block runs into the user's previous prompt or into the previous
-   command's output.
-2. **Blank line after** every multi-line message block. Lets the next
-   prompt breathe.
-3. **No blank line** for terse one-liners (single-line errors, simple
-   confirmations like `(no change)`). Reserve the spacing budget for
-   blocks that need visual separation.
+> **Blank line BEFORE every multi-line block. Blank line AFTER only
+> when the block is the LAST thing the command will print before
+> exiting (returning control to the user's shell).**
 
-Concrete: any output longer than two lines, or any output that ends
-with hints / next-steps, gets blank lines on both sides. Single-line
-output doesn't.
+This is what the rest of the rules reduce to. Why:
+
+1. **Blank BEFORE always**: separates the block from whatever
+   preceded it (a previous block, a user's earlier command output,
+   or the shell prompt). Without it, blocks visually fuse.
+
+2. **Blank AFTER only at end of process**: when control returns to
+   the shell, a trailing blank gives the prompt room to breathe.
+   Without it, the prompt smashes against the last output line:
+   ```
+   The dev panel URL is http://localhost:3000/_mar/admin.
+   $
+   ```
+   With it:
+   ```
+   The dev panel URL is http://localhost:3000/_mar/admin.
+
+   $
+   ```
+
+3. **No blank AFTER mid-process**: if another block follows in the
+   SAME run (e.g. a boot-time hint followed by the dev banner),
+   adding blank-after-each gives TWO blanks between them — reads
+   as a gap, not a separator. Only the FOLLOWING block adds its
+   own leading blank; the preceding one stays tight.
+
+4. **No blank lines at all** for terse one-liners (single-line
+   errors, simple confirmations like `(no change)`). Reserve
+   the spacing budget for blocks that need visual separation.
+
+### Concrete mapping
+
+| Output type | Blank BEFORE | Blank AFTER |
+|---|---|---|
+| `mar admin add EMAIL` (happy path, one-shot) | ✓ | ✓ (returns to shell) |
+| `mar admin add EMAIL` (single-line "already in") | ✗ | ✗ |
+| `mar dev` boot-time hint (followed by banner) | ✓ | ✗ |
+| `mar dev` startup banner (followed by stable runtime) | ✓ | ✓ (Press Ctrl+C output, etc.) |
+| `mar build` production warn (followed by build output) | ✓ | ✗ |
+| Single-line error (`Error: ...`) | ✗ | ✗ |
 
 ```
 $ mar admin add me@example.com

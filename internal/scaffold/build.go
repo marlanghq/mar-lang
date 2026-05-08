@@ -149,8 +149,9 @@ func warnIfNoAdmins(projectDir string) {
 	if manifest != nil && len(manifest.Admins) > 0 {
 		return
 	}
-	// Multi-line block — bracket with blank lines per
-	// docs/cli-style.md §1 (spacing rules).
+	// Multi-line block. Blank line BEFORE only (docs/cli-style.md §1
+	// "adjacent blocks rule") — next caller adds their own leading
+	// blank.
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr,
 		"warn: building for production with no admins configured.")
@@ -158,7 +159,6 @@ func warnIfNoAdmins(projectDir string) {
 		"      the admin panel at /_mar/admin will be inaccessible.")
 	fmt.Fprintln(os.Stderr,
 		"      run `mar admin add YOUR_EMAIL` if you want admin access in production.")
-	fmt.Fprintln(os.Stderr)
 }
 
 // validateProductionConfig asserts the project's mar.json carries
