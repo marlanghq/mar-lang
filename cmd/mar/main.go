@@ -174,6 +174,37 @@ func runBuild(args []string) int {
 	return 0
 }
 
+// colorJSONSuggestion paints one line of a mar.json suggestion for
+// the operator. Two visual signals beyond plain magenta:
+//
+//   - "..." placeholders dim — they're the only thing the user
+//     actually has to replace; everything else (keys, env: refs,
+//     braces) gets pasted verbatim. Dimming them says "I'm a stub,
+//     fill me in" without making the whole snippet noisy.
+//   - Everything else stays magenta (config slot color from
+//     cli-style.md §3).
+//
+// Quotes around the placeholders stay magenta so the JSON shape
+// is preserved visually — only the inside-of-quotes "..." dims.
+func colorJSONSuggestion(line string) string {
+	// Replace each "..." placeholder by an ANSI-bracketed dim run
+	// inside the surrounding magenta. Done by tokenizing the line
+	// on the literal `"..."` triple-dot string.
+	const placeholder = `"..."`
+	if !strings.Contains(line, placeholder) {
+		return colorMagenta(line)
+	}
+	parts := strings.Split(line, placeholder)
+	var b strings.Builder
+	for i, p := range parts {
+		b.WriteString(colorMagenta(p))
+		if i < len(parts)-1 {
+			b.WriteString(colorDim(placeholder))
+		}
+	}
+	return b.String()
+}
+
 // printProductionConfigError pretty-prints the missing-config error
 // from `mar build --target=<production>` with the cli-style.md §3
 // palette. Multi-line block, blanks before/after (one-shot exit).
@@ -213,7 +244,7 @@ func printProductionConfigError(e *scaffold.ProductionConfigError) {
 			if !isLast && subIdx == len(subs)-1 {
 				suffix = ","
 			}
-			fmt.Fprintln(os.Stderr, "  "+colorMagenta(sub+suffix))
+			fmt.Fprintln(os.Stderr, "  "+colorJSONSuggestion(sub+suffix))
 		}
 	}
 	fmt.Fprintln(os.Stderr)
@@ -227,9 +258,8 @@ func printProductionConfigError(e *scaffold.ProductionConfigError) {
 	fmt.Fprintf(os.Stderr, "  - %s and %s MUST be %s — set\n",
 		colorMagenta("sessionSecret"), colorMagenta("smtpPassword"),
 		colorMagenta("env:VAR_NAME"))
-	fmt.Fprintf(os.Stderr, "    the values via %s (or %s for\n",
-		colorGreen("mar fly provision"), colorGreen("fly secrets set"))
-	fmt.Fprintln(os.Stderr, "    bare fly deploys).")
+	fmt.Fprintf(os.Stderr, "    the values via %s.\n",
+		colorGreen("mar fly provision"))
 	fmt.Fprintln(os.Stderr)
 }
 

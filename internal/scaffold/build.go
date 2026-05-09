@@ -188,8 +188,7 @@ Hints:
   - smtpPort is optional and defaults to 587 (Resend, SendGrid,
     Mailgun, AWS SES, Postmark, Brevo, Mailjet all use it).
   - sessionSecret and smtpPassword MUST be env:VAR_NAME — set
-    the values via 'mar fly provision' (or 'fly secrets set' for
-    bare fly deploys).`, joinMissingForPaste(e.Missing))
+    the values via 'mar fly provision'.`, joinMissingForPaste(e.Missing))
 }
 
 // joinMissingForPaste stitches the suggested mar.json fragments
