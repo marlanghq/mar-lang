@@ -202,16 +202,18 @@ func printProductionConfigError(e *scaffold.ProductionConfigError) {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, colorBold("Add to "+colorMagenta("mar.json")+":"))
 	fmt.Fprintln(os.Stderr)
-	for _, line := range e.Missing {
-		// e.Missing entries may themselves be multi-line (the mail
-		// JSON block). Indent the first line by 2; subsequent lines
-		// already carry their own formatting from the source.
-		for i, sub := range strings.Split(line, "\n") {
-			if i == 0 {
-				fmt.Fprintln(os.Stderr, "  "+colorMagenta(sub))
-			} else {
-				fmt.Fprintln(os.Stderr, "  "+colorMagenta(sub))
+	for entryIdx, line := range e.Missing {
+		// Each entry is a top-level JSON property suggestion. Append
+		// a comma to the closing line of every entry except the last
+		// so the snippets paste into mar.json as valid JSON.
+		isLast := entryIdx == len(e.Missing)-1
+		subs := strings.Split(line, "\n")
+		for subIdx, sub := range subs {
+			suffix := ""
+			if !isLast && subIdx == len(subs)-1 {
+				suffix = ","
 			}
+			fmt.Fprintln(os.Stderr, "  "+colorMagenta(sub+suffix))
 		}
 	}
 	fmt.Fprintln(os.Stderr)

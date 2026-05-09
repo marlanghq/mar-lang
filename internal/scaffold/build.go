@@ -189,7 +189,33 @@ Hints:
     Mailgun, AWS SES, Postmark, Brevo, Mailjet all use it).
   - sessionSecret and smtpPassword MUST be env:VAR_NAME — set
     the values via 'mar fly provision' (or 'fly secrets set' for
-    bare fly deploys).`, strings.Join(e.Missing, "\n  "))
+    bare fly deploys).`, joinMissingForPaste(e.Missing))
+}
+
+// joinMissingForPaste stitches the suggested mar.json fragments
+// together with valid commas between them, so the operator can
+// paste straight into mar.json without manually adding the comma
+// between top-level properties. The fragments themselves don't
+// carry a trailing comma (the validator builds them that way to
+// stay readable as standalone JSON).
+//
+// The connecting comma always lands on the closing line of one
+// entry, just before the newline-then-next-entry. The last entry
+// has no comma — it might be the last property in the user's
+// mar.json or might already have a comma in the user's file.
+func joinMissingForPaste(missing []string) string {
+	if len(missing) == 0 {
+		return ""
+	}
+	parts := make([]string, len(missing))
+	for i, m := range missing {
+		if i < len(missing)-1 {
+			parts[i] = m + ","
+		} else {
+			parts[i] = m
+		}
+	}
+	return strings.Join(parts, "\n  ")
 }
 
 // validateProductionConfig asserts the project's mar.json carries
