@@ -30,6 +30,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	_ "embed"
 	"fmt"
 	"os"
@@ -312,7 +313,7 @@ func runFlyInit(path string) int {
 func runFlyProvision(path string) int {
 	projectDir, _, err := loadFlyManifest(path)
 	if err != nil {
-		fprintError("mar fly provision: %v", err)
+		printManifestError("mar fly provision", err)
 		return 1
 	}
 	flyDir := filepath.Join(projectDir, "deploy", "fly")
@@ -387,12 +388,44 @@ func runFlyProvision(path string) int {
 	return 0
 }
 
+// printManifestError formats errors from manifest loading. Most
+// errors are passed through to fprintError as-is, but env-var-not-
+// set errors get the multi-line "Error + Hint" treatment because
+// the operator usually needs the friendly nudge to run mar fly
+// provision (which prompts for the value and calls fly secrets set
+// behind the scenes).
+//
+// `prefix` is the command name shown in the Error line, e.g.
+// "mar fly deploy" or "mar fly provision".
+func printManifestError(prefix string, err error) {
+	var envErr *project.EnvVarNotSetError
+	if errors.As(err, &envErr) {
+		fmt.Fprintln(os.Stderr)
+		if envErr.Field != "" {
+			fprintError("%s: %s references env var %s, which is not set.",
+				prefix,
+				colorMagenta(envErr.Field),
+				colorMagenta(envErr.VarName))
+		} else {
+			fprintError("%s: env var %s is not set.",
+				prefix, colorMagenta(envErr.VarName))
+		}
+		fmt.Fprintln(os.Stderr)
+		fprintHint("run %s — it'll prompt for the value and store it",
+			colorGreen("mar fly provision"))
+		fmt.Fprintln(os.Stderr, "      as a Fly secret automatically.")
+		fmt.Fprintln(os.Stderr)
+		return
+	}
+	fprintError("%s: %v", prefix, err)
+}
+
 // runFlyDeploy: build the linux-amd64 binary into deploy/fly/dist/
 // and run `fly deploy` from there.
 func runFlyDeploy(path string) int {
 	projectDir, manifest, err := loadFlyManifest(path)
 	if err != nil {
-		fprintError("mar fly deploy: %v", err)
+		printManifestError("mar fly deploy", err)
 		return 1
 	}
 	if manifest.Name == "" {

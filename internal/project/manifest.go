@@ -280,32 +280,72 @@ func checkUnknownTopFields(m map[string]json.RawMessage) error {
 // resolveEnvRefs walks string fields and replaces "env:VAR" with the
 // environment variable's value. If the var is missing, leaves the literal
 // alone (will be caught later for secret fields).
+//
+// Decorates *EnvVarNotSetError values with the manifest field path
+// so CLI consumers can show "mail.smtpPassword: env var ... not set"
+// without each call site doing the wrapping by hand.
 func resolveEnvRefs(m *Manifest) error {
 	if m.Mail != nil {
 		s, err := resolveStr(m.Mail.SMTPPassword)
 		if err != nil {
-			return fmt.Errorf("mail.smtpPassword: %v", err)
+			return decorateEnvErr(err, "mail.smtpPassword")
 		}
 		m.Mail.SMTPPassword = s
 		s, err = resolveStr(m.Mail.SMTPHost)
 		if err != nil {
-			return err
+			return decorateEnvErr(err, "mail.smtpHost")
 		}
 		m.Mail.SMTPHost = s
 		s, err = resolveStr(m.Mail.SMTPUsername)
 		if err != nil {
-			return err
+			return decorateEnvErr(err, "mail.smtpUsername")
 		}
 		m.Mail.SMTPUsername = s
 	}
 	if m.Auth != nil {
 		s, err := resolveStr(m.Auth.SessionSecret)
 		if err != nil {
-			return fmt.Errorf("auth.sessionSecret: %v", err)
+			return decorateEnvErr(err, "auth.sessionSecret")
 		}
 		m.Auth.SessionSecret = s
 	}
 	return nil
+}
+
+// EnvVarNotSetError is returned by manifest loading when a `env:VAR`
+// reference can't be resolved because VAR isn't in the process
+// environment. CLI callers (cmd/mar) catch this specifically to
+// render a friendly "Error + Hint" block pointing the user at the
+// right `mar fly provision` workflow; library callers fall back to
+// .Error() for a plain-text rendering.
+type EnvVarNotSetError struct {
+	// Field is the manifest path that referenced the env var, e.g.
+	// "mail.smtpPassword" or "auth.sessionSecret". Wrapped in by the
+	// resolveEnvRefs caller (resolveStr itself doesn't know which
+	// field it's resolving).
+	Field string
+
+	// VarName is the unresolved variable name (without the `env:`
+	// prefix), e.g. "SMTP_PASSWORD".
+	VarName string
+}
+
+func (e *EnvVarNotSetError) Error() string {
+	if e.Field == "" {
+		return fmt.Sprintf("env var %q is not set", e.VarName)
+	}
+	return fmt.Sprintf("%s: env var %q is not set", e.Field, e.VarName)
+}
+
+// decorateEnvErr stamps `field` onto an *EnvVarNotSetError so the
+// CLI can render the manifest path along with the var name. Other
+// error types pass through unchanged.
+func decorateEnvErr(err error, field string) error {
+	if e, ok := err.(*EnvVarNotSetError); ok && e.Field == "" {
+		e.Field = field
+		return e
+	}
+	return err
 }
 
 func resolveStr(s string) (string, error) {
@@ -315,7 +355,7 @@ func resolveStr(s string) (string, error) {
 	name := strings.TrimPrefix(s, "env:")
 	v, ok := os.LookupEnv(name)
 	if !ok {
-		return "", fmt.Errorf("env var %q is not set", name)
+		return "", &EnvVarNotSetError{VarName: name}
 	}
 	return v, nil
 }
