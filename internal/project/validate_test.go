@@ -207,6 +207,72 @@ func TestAutoBackup_ResolvedDefaults(t *testing.T) {
 	}
 }
 
+// TestValidate_Mail covers the shape rules on the mail block:
+// from must be email-shaped, smtpHost a bare hostname, smtpPort
+// in range, and the literal "..." placeholder is rejected
+// everywhere so users who paste the suggestion snippet but forget
+// to fill it in get a fail-fast instead of a runtime SMTP error.
+func TestValidate_Mail(t *testing.T) {
+	type tc struct {
+		name    string
+		mail    *MailConfig
+		wantSub string // "" → expects pass
+	}
+	cases := []tc{
+		{"empty block (no fields set)", &MailConfig{}, ""},
+		{"valid bare email + hostname", &MailConfig{
+			From: "x@y.com", SMTPHost: "smtp.x.com",
+			SMTPUsername: "apikey", SMTPPassword: "env:P",
+		}, ""},
+		{"valid display-name from", &MailConfig{
+			From: "App <x@y.com>", SMTPHost: "smtp.x.com",
+		}, ""},
+		{"valid port at lower bound", &MailConfig{SMTPPort: 1}, ""},
+		{"valid port at upper bound", &MailConfig{SMTPPort: 65535}, ""},
+		{"placeholder ... in from", &MailConfig{
+			From: "...", SMTPHost: "smtp.x.com",
+		}, "mail.from"},
+		{"placeholder ... in smtpHost", &MailConfig{
+			From: "x@y.com", SMTPHost: "...",
+		}, "mail.smtpHost"},
+		{"placeholder ... in smtpUsername", &MailConfig{
+			From: "x@y.com", SMTPHost: "smtp.x.com", SMTPUsername: "...",
+		}, "mail.smtpUsername"},
+		{"invalid email shape", &MailConfig{
+			From: "notanemail", SMTPHost: "smtp.x.com",
+		}, "mail.from"},
+		{"smtpHost with scheme", &MailConfig{
+			From: "x@y.com", SMTPHost: "https://smtp.x.com",
+		}, "mail.smtpHost"},
+		{"smtpHost with port suffix", &MailConfig{
+			From: "x@y.com", SMTPHost: "smtp.x.com:587",
+		}, "mail.smtpHost"},
+		{"smtpHost with path", &MailConfig{
+			From: "x@y.com", SMTPHost: "smtp.x.com/foo",
+		}, "mail.smtpHost"},
+		{"smtpPort negative", &MailConfig{SMTPPort: -1}, "mail.smtpPort"},
+		{"smtpPort too large", &MailConfig{SMTPPort: 70000}, "mail.smtpPort"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := &Manifest{Mail: c.mail}
+			err := Validate(m, CompileTime)
+			if c.wantSub == "" {
+				if err != nil {
+					t.Errorf("expected no error; got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error mentioning %q; got nil", c.wantSub)
+			}
+			if !strings.Contains(err.Error(), c.wantSub) {
+				t.Errorf("error %q should mention %q", err.Error(), c.wantSub)
+			}
+		})
+	}
+}
+
 // TestValidate_IOSServerURL covers the shape rules for ios.serverUrl.
 // Required-ness is enforced at build time (separate); validation only
 // kicks in when the field is present.

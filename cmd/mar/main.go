@@ -161,17 +161,35 @@ func runBuild(args []string) int {
 	}
 	if err := scaffold.Build(entry, outDir, target); err != nil {
 		// Production-config errors get a hand-formatted block (blanks
-		// + colors). Any other error goes through the regular diag
-		// path.
+		// + colors). Source errors (parser / typecheck with line
+		// numbers and snippets) keep diag.Format's rich rendering.
+		// Any other error (manifest validation, I/O, etc.) goes
+		// through fprintError so it gets the red "Error:" prefix.
 		var pcErr *scaffold.ProductionConfigError
-		if errors.As(err, &pcErr) {
+		switch {
+		case errors.As(err, &pcErr):
 			printProductionConfigError(pcErr)
-		} else {
+		case isSourceError(err):
 			fmt.Fprintln(os.Stderr, diag.Format(err))
+		default:
+			fmt.Fprintln(os.Stderr)
+			fprintError("mar build: %v", err)
+			fmt.Fprintln(os.Stderr)
 		}
 		return 1
 	}
 	return 0
+}
+
+// isSourceError reports whether err carries source-position info
+// that diag.Format would render with a code-snippet block. Anything
+// else gets the plain Error: prefix flow.
+func isSourceError(err error) bool {
+	// diag.SourceError is what `diag.Wrap` produces; the only path
+	// to it is through user-source compilation errors. Manifest
+	// validation, I/O, etc. never wrap into one.
+	formatted := diag.Format(err)
+	return formatted != err.Error()
 }
 
 // colorJSONSuggestion paints one line of a mar.json suggestion for

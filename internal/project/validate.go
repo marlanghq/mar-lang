@@ -16,6 +16,7 @@ package project
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // ValidationPhase distinguishes structural checks (no env resolution
@@ -92,6 +93,79 @@ func Validate(m *Manifest, phase ValidationPhase) error {
 	if err := validateIOS(m, phase); err != nil {
 		return err
 	}
+	if err := validateMail(m, phase); err != nil {
+		return err
+	}
+	return nil
+}
+
+// hostnameRegex matches a bare DNS hostname — labels separated by
+// dots, alphanumeric + hyphens (RFC 1123-ish). Used for smtpHost.
+// Deliberately rejects schemes (https://...), paths, ports — all
+// of which would break the SMTP dial.
+var hostnameRegex = regexp.MustCompile(
+	`^[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+$`)
+
+// validateMail enforces shape rules on the `mail` block:
+//   - from: valid email shape (when present)
+//   - smtpHost: bare hostname (no scheme, no path, no port)
+//   - smtpUsername: non-empty when present
+//   - smtpPort: in [1, 65535]
+//   - reject literal "..." placeholder in any field (catches users
+//     who pasted the suggested snippet without filling values in)
+//
+// Required-ness of any of these is enforced separately at build
+// time (when Auth.config is in use). This validator only catches
+// malformed values when present.
+func validateMail(m *Manifest, phase ValidationPhase) error {
+	if m.Mail == nil {
+		return nil
+	}
+	mail := m.Mail
+
+	// Reject the placeholder literal anywhere in the mail block —
+	// makes "I pasted the snippet but forgot to edit" a fail-fast
+	// instead of a runtime mystery.
+	for field, value := range map[string]string{
+		"mail.from":         mail.From,
+		"mail.smtpHost":     mail.SMTPHost,
+		"mail.smtpUsername": mail.SMTPUsername,
+	} {
+		if value == "..." {
+			return fmt.Errorf(
+				"mar.json: %s is the placeholder %q — fill in the real value",
+				field, "...")
+		}
+	}
+
+	if mail.From != "" {
+		// Allow either a bare email (`x@y.com`) or "Display Name
+		// <x@y.com>" — common shape on real-world SMTP From headers.
+		if !emailRegex.MatchString(mail.From) &&
+			!strings.Contains(mail.From, "<") {
+			return fmt.Errorf(
+				"mar.json: mail.from %q is not a valid email", mail.From)
+		}
+	}
+	if mail.SMTPHost != "" {
+		if !hostnameRegex.MatchString(mail.SMTPHost) {
+			return fmt.Errorf(
+				"mar.json: mail.smtpHost %q must be a bare hostname (no scheme, no port, no path)",
+				mail.SMTPHost)
+		}
+	}
+	// smtpUsername is intentionally permissive — providers use
+	// wildly different formats (literal "apikey", emails, ARN-like
+	// strings, etc.). Only catch obvious garbage (the "..." case
+	// already handled above + non-empty when present).
+	if mail.SMTPPort != 0 {
+		if mail.SMTPPort < 1 || mail.SMTPPort > 65535 {
+			return fmt.Errorf(
+				"mar.json: mail.smtpPort %d is out of range (1–65535)",
+				mail.SMTPPort)
+		}
+	}
+	_ = phase // shape rules apply to both phases
 	return nil
 }
 
