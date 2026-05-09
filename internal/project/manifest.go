@@ -312,6 +312,24 @@ func resolveEnvRefs(m *Manifest) error {
 	return nil
 }
 
+// FreeMailDomainError is returned by validateMail when the
+// `mail.from` address uses a domain Mar recognizes as free-mail
+// (gmail.com, outlook.com, etc). The CLI catches this specifically
+// to render an "Error + Hint" block explaining why provider SMTP
+// always rejects these — users on free-mail-as-from-address are
+// universally misconfigured, never intentional.
+type FreeMailDomainError struct {
+	From   string // e.g. "support@gmail.com"
+	Domain string // e.g. "gmail.com"
+}
+
+func (e *FreeMailDomainError) Error() string {
+	return fmt.Sprintf(
+		"mar.json: mail.from %q uses a free-mail domain (%s); SMTP providers "+
+			"reject sends from domains you haven't verified with them",
+		e.From, e.Domain)
+}
+
 // EnvVarNotSetError is returned by manifest loading when a `env:VAR`
 // reference can't be resolved because VAR isn't in the process
 // environment. CLI callers (cmd/mar) catch this specifically to

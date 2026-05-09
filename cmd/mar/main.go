@@ -160,15 +160,22 @@ func runBuild(args []string) int {
 		return 2
 	}
 	if err := scaffold.Build(entry, outDir, target); err != nil {
-		// Production-config errors get a hand-formatted block (blanks
-		// + colors). Source errors (parser / typecheck with line
-		// numbers and snippets) keep diag.Format's rich rendering.
-		// Any other error (manifest validation, I/O, etc.) goes
-		// through fprintError so it gets the red "Error:" prefix.
+		// Different error categories get different formatting:
+		//   - production-config errors → typed printer (blanks +
+		//     hints in cli-style.md §3 palette)
+		//   - free-mail-domain errors → typed printer with hint
+		//     about why providers reject these
+		//   - source errors (parser / typecheck) → diag.Format's
+		//     rich rendering with line numbers + snippets
+		//   - everything else (manifest validation, I/O, …) →
+		//     fprintError so it gets the red "Error:" prefix
 		var pcErr *scaffold.ProductionConfigError
+		var fmErr *project.FreeMailDomainError
 		switch {
 		case errors.As(err, &pcErr):
 			printProductionConfigError(pcErr)
+		case errors.As(err, &fmErr):
+			printFreeMailDomainError("mar build", fmErr)
 		case isSourceError(err):
 			fmt.Fprintln(os.Stderr, diag.Format(err))
 		default:
@@ -179,6 +186,29 @@ func runBuild(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// printFreeMailDomainError pretty-prints the validation error
+// for mail.from referencing a free-mail provider. Reused by the
+// mar build path; mar fly's printManifestError has its own copy
+// with the same shape.
+func printFreeMailDomainError(prefix string, e *project.FreeMailDomainError) {
+	fmt.Fprintln(os.Stderr)
+	fprintError("%s: %s %q uses a free-mail domain (%s).",
+		prefix,
+		colorMagenta("mail.from"),
+		e.From,
+		colorMagenta(e.Domain))
+	fmt.Fprintln(os.Stderr)
+	fprintHint("SMTP providers (Resend, SendGrid, AWS SES, etc.) only let you")
+	fmt.Fprintln(os.Stderr, "      send from a domain you've verified with them via DKIM/SPF.")
+	fmt.Fprintln(os.Stderr, "      Free-mail domains aren't yours, so the provider will reject")
+	fmt.Fprintln(os.Stderr, "      every send.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "      Use a domain you own — e.g. %s — and verify it\n",
+		colorCyan("notifications@my-app.com"))
+	fmt.Fprintln(os.Stderr, "      in your provider's dashboard.")
+	fmt.Fprintln(os.Stderr)
 }
 
 // isSourceError reports whether err carries source-position info

@@ -417,6 +417,11 @@ func printManifestError(prefix string, err error) {
 		fmt.Fprintln(os.Stderr)
 		return
 	}
+	var fmErr *project.FreeMailDomainError
+	if errors.As(err, &fmErr) {
+		printFreeMailDomainError(prefix, fmErr)
+		return
+	}
 	fprintError("%s: %v", prefix, err)
 }
 

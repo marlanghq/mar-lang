@@ -1,6 +1,7 @@
 package project
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -268,6 +269,63 @@ func TestValidate_Mail(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), c.wantSub) {
 				t.Errorf("error %q should mention %q", err.Error(), c.wantSub)
+			}
+		})
+	}
+}
+
+// TestValidate_MailRejectsFreeMailDomains — using gmail.com /
+// outlook.com / yahoo.com / etc. as the from address can never
+// work in production (SMTP providers won't let you send from
+// domains you haven't verified). Reject at compile time with the
+// typed FreeMailDomainError so the CLI can render the friendly
+// hint about how to fix it.
+func TestValidate_MailRejectsFreeMailDomains(t *testing.T) {
+	cases := []struct {
+		from   string
+		wantOK bool
+	}{
+		{"x@gmail.com", false},
+		{"App <support@gmail.com>", false}, // display-name form too
+		{"x@outlook.com", false},
+		{"x@hotmail.com", false},
+		{"x@yahoo.com", false},
+		{"x@yahoo.co.uk", false},
+		{"x@icloud.com", false},
+		{"x@proton.me", false},
+		{"x@aol.com", false},
+		{"x@uol.com.br", false},
+		{"X@GMAIL.COM", false}, // case-insensitive
+
+		{"hello@my-app.com", true},
+		{"App <hello@my-app.com>", true},
+		{"x@notes-app.fly.dev", true},
+		// fastmail / zoho deliberately NOT in the blocklist —
+		// some users do host on a real domain via these.
+		{"x@fastmail.com", true},
+		{"x@zoho.com", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.from, func(t *testing.T) {
+			m := &Manifest{Mail: &MailConfig{
+				From:         tc.from,
+				SMTPHost:     "smtp.x.com",
+				SMTPUsername: "u",
+			}}
+			err := Validate(m, CompileTime)
+			if tc.wantOK {
+				if err != nil {
+					t.Errorf("expected pass for %q; got %v", tc.from, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected free-mail rejection for %q; got nil", tc.from)
+			}
+			var fmErr *FreeMailDomainError
+			if !errors.As(err, &fmErr) {
+				t.Errorf("expected *FreeMailDomainError for %q; got %T (%v)",
+					tc.from, err, err)
 			}
 		})
 	}

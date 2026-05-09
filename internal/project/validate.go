@@ -99,6 +99,73 @@ func Validate(m *Manifest, phase ValidationPhase) error {
 	return nil
 }
 
+// extractEmailDomain pulls the domain part out of either a bare
+// email ("x@y.com" → "y.com") or a display-name email
+// ("Foo <x@y.com>" → "y.com"). Returns "" when the shape doesn't
+// match either form.
+func extractEmailDomain(addr string) string {
+	// Display-name form: take the last "<...>" group's contents.
+	if i := strings.LastIndex(addr, "<"); i >= 0 {
+		if j := strings.Index(addr[i+1:], ">"); j >= 0 {
+			addr = addr[i+1 : i+1+j]
+		}
+	}
+	at := strings.LastIndex(addr, "@")
+	if at < 0 || at == len(addr)-1 {
+		return ""
+	}
+	return addr[at+1:]
+}
+
+// freeMailDomains is the set of domains we treat as "free mail
+// providers". Using one of these in mail.from is always wrong —
+// SMTP providers (Resend, SendGrid, AWS SES, Postmark, …) only
+// let you send from domains you've verified via DKIM/SPF, and you
+// can never verify a domain you don't own.
+//
+// Curated, not exhaustive — covers the ~95% of common mistakes.
+// More obscure free providers (Zoho, Fastmail) deliberately stay
+// off the list because some users do host on a custom domain
+// through them.
+var freeMailDomains = map[string]bool{
+	// Google
+	"gmail.com":       true,
+	"googlemail.com":  true,
+	// Microsoft
+	"outlook.com":     true,
+	"hotmail.com":     true,
+	"hotmail.co.uk":   true,
+	"hotmail.fr":      true,
+	"live.com":        true,
+	"msn.com":         true,
+	// Yahoo (top regions)
+	"yahoo.com":       true,
+	"yahoo.co.uk":     true,
+	"yahoo.fr":        true,
+	"yahoo.es":        true,
+	"yahoo.de":        true,
+	"yahoo.com.br":    true,
+	"ymail.com":       true,
+	// Apple
+	"icloud.com":      true,
+	"me.com":          true,
+	"mac.com":         true,
+	// Proton
+	"proton.me":       true,
+	"protonmail.com":  true,
+	"pm.me":           true,
+	// AOL
+	"aol.com":         true,
+	// GMX
+	"gmx.com":         true,
+	"gmx.de":          true,
+	"gmx.net":         true,
+	// Brazilian-regional commonly used
+	"uol.com.br":      true,
+	"bol.com.br":      true,
+	"terra.com.br":    true,
+}
+
 // hostnameRegex matches a bare DNS hostname — labels separated by
 // dots, alphanumeric + hyphens (RFC 1123-ish). Used for smtpHost.
 // Deliberately rejects schemes (https://...), paths, ports — all
@@ -145,6 +212,18 @@ func validateMail(m *Manifest, phase ValidationPhase) error {
 			!strings.Contains(mail.From, "<") {
 			return fmt.Errorf(
 				"mar.json: mail.from %q is not a valid email", mail.From)
+		}
+		// Reject free-mail domains. Even if the email shape is
+		// valid, "from = anything@gmail.com" guarantees SMTP send
+		// failure — providers only allow domains you verified, and
+		// you can never verify gmail.com.
+		if domain := extractEmailDomain(mail.From); domain != "" {
+			if freeMailDomains[strings.ToLower(domain)] {
+				return &FreeMailDomainError{
+					From:   mail.From,
+					Domain: strings.ToLower(domain),
+				}
+			}
 		}
 	}
 	if mail.SMTPHost != "" {
