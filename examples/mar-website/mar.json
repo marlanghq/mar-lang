@@ -1,0 +1,10 @@
+{
+  "name": "mar-website",
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "mar-website",
+      "account": "850016a3ae644b7cd61cd6bf946f5917",
+      "apiToken": "env:CF_API_TOKEN"
+    }
+  }
+}

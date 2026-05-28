@@ -56,10 +56,21 @@ func NewRequestLogger(cap int) *RequestLogger {
 
 // Record appends a request log entry. When the buffer is full, the
 // oldest entry is overwritten (ring semantics).
+//
+// Path is sanitized before storage — emails, bearer tokens, and the
+// common sensitive query-param names (token, api_key, password,
+// secret, access_token) get replaced with <omitted>. See
+// SanitizeForLog for the full pattern list and rationale on
+// write-time vs read-time sanitization.
+//
+// UserEmail is intentionally NOT sanitized: the operator browsing
+// the recent-requests panel needs to identify who made the request,
+// and that field exists specifically for that purpose.
 func (r *RequestLogger) Record(entry RequestLog) {
 	if r == nil {
 		return
 	}
+	entry.Path = SanitizeForLog(entry.Path)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.full {

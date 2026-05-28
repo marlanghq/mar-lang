@@ -20,7 +20,7 @@ auth =
         { entity     = Backend.Users.users
         , identify   = \u -> u.email
         , signInPage = Frontend.SignIn.page
-        , email      = { from = "noreply@notes.local", subject = "Sign in to Notes" }
+        , email      = { subject = "Sign in to Notes" }
         , signup     = \email -> { email = email }
         , sessionDuration = Time.days 30
         }

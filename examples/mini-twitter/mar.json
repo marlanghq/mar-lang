@@ -1,0 +1,36 @@
+{
+  "name": "mini-twitter",
+
+  "auth": {
+    "sessionSecret": "env:SESSION_SECRET"
+  },
+
+  "mail": {
+    "from": "noreply@mini-twitter.local",
+    "smtpHost": "smtp.resend.com",
+    "smtpUsername": "resend",
+    "smtpPassword": "env:SMTP_PASSWORD"
+  },
+
+  "admins": ["op@mini-twitter.local"],
+
+  "adminPanel": {
+    "recentRequestsSize": 500
+  },
+
+  "rateLimit": {
+    "requestsPerMinute": 1200,
+    "burst": 60
+  },
+
+  "server": {
+    "maxBodyBytes": 65536
+  },
+
+  "database": {
+    "autoBackup": {
+      "intervalHours": 6,
+      "retentionCount": 28
+    }
+  }
+}

@@ -83,3 +83,34 @@ func mustWriteFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+// TestAnalyze_MultiModuleProject — end-to-end smoke against the
+// daily-checklist example. Mirrors what the LSP server does when the
+// editor opens Main.mar: read the file, hand it to `analyze` with
+// the path, expect zero diagnostics.
+//
+// A user-visible regression — "unknown qualified name:
+// Backend.Users.users" on a working project — would surface here as
+// a non-empty diags slice. Earlier this came back as a false positive
+// when the LSP fell through to single-file analysis instead of
+// running through projectAnalyze; the test ensures we stay in the
+// project-mode path for any example with a mar.json next to the
+// active file.
+func TestAnalyze_MultiModuleProject(t *testing.T) {
+	wd, _ := os.Getwd()
+	mainFile := filepath.Join(wd, "..", "..", "examples/daily-checklist/Main.mar")
+	abs, err := filepath.Abs(mainFile)
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+	content, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatalf("read %s: %v", abs, err)
+	}
+	s := &Server{}
+	diags := s.analyze(abs, string(content))
+	if len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for daily-checklist/Main.mar; got %d:\n%+v",
+			len(diags), diags)
+	}
+}

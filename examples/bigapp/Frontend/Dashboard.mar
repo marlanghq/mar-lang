@@ -1,0 +1,197 @@
+module Frontend.Dashboard exposing (page)
+
+
+import Shared exposing (IssueStatus(..), IssuePriority(..))
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , list, section, header, footer
+    , hstack, vstack
+    , title, subtitle, text, button, navigationLink, empty, spacer, errorText
+    )
+
+
+-- Dashboard — the landing page after sign-in. Pulls everything via
+-- a single `Shared.loadDashboard` Service call to avoid a fetch
+-- waterfall on first paint. The page is a state machine over
+-- Loading / Loaded / Failed so the typechecker forces every branch
+-- to be handled.
+
+
+type State
+    = Loading
+    | Loaded Shared.DashboardData
+    | Failed String
+
+
+type alias Model = State
+
+
+type Msg
+    = DashboardFetched (Result String Shared.DashboardData)
+    | SignOutClicked
+    | SignedOut (Result String ())
+
+
+init : Shared.User -> () -> (Model, Effect String Msg)
+init _ _ =
+    ( Loading, Service.call Shared.loadDashboard () DashboardFetched )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update _ msg model =
+    case msg of
+        DashboardFetched (Ok data) ->
+            ( Loaded data, Effect.none )
+
+        DashboardFetched (Err why) ->
+            ( Failed why, Effect.none )
+
+        SignOutClicked ->
+            ( model, Auth.logout SignedOut )
+
+        SignedOut _ ->
+            ( model, Nav.replaceTo Frontend.Routes.signIn {} )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+projectRow : Shared.Project -> View Msg
+projectRow project =
+    navigationLink [] Frontend.Routes.projectDetail { id = project.id }
+        (vstack []
+            [ text project.name
+            , subtitle project.description
+            ])
+
+
+issueRow : Shared.IssueView -> View Msg
+issueRow issue =
+    navigationLink [] Frontend.Routes.issueDetail { id = issue.id }
+        (vstack []
+            [ text ("#" ++ String.fromInt issue.number ++ " — " ++ issue.title)
+            , subtitle
+                ( issue.projectName
+                    ++ " · " ++ Shared.statusLabel issue.status
+                    ++ " · " ++ Shared.priorityLabel issue.priority
+                )
+            ])
+
+
+memberRow : Shared.TeamMemberView -> View Msg
+memberRow member =
+    -- Whole row is a navigation link to the Team Members manage
+    -- screen. The dashboard preview is read-only; managing roles
+    -- happens over there, so tapping any row takes you to the
+    -- place where action lives. Mirrors the iOS Settings "Tap a
+    -- row to drill into details" pattern.
+    navigationLink [] Frontend.Routes.teamMembers {}
+        (hstack []
+            [ vstack []
+                [ text member.name
+                , subtitle member.email
+                ]
+            , spacer
+            , text (String.fromInt member.openIssues ++ " open")
+            ])
+
+
+-- Section helpers that fall back to a quiet placeholder when the
+-- underlying list is empty. Avoids "0 items" headers that the eye
+-- has to skip past on a clean dashboard.
+
+projectsSection : List Shared.Project -> View Msg
+projectsSection projects =
+    if List.isEmpty projects then
+        section [ header "Projects" ]
+            [ subtitle "No projects yet. Create one to get started." ]
+    else
+        section
+            [ header ("Projects · " ++ String.fromInt (List.length projects))
+            , footer "Tap to open a project board."
+            ]
+            (List.map projectRow projects)
+
+
+myIssuesSection : List Shared.IssueView -> View Msg
+myIssuesSection items =
+    if List.isEmpty items then
+        section [ header "Assigned to me" ]
+            [ subtitle "Inbox zero. Nice." ]
+    else
+        section
+            [ header ("Assigned to me · " ++ String.fromInt (List.length items))
+            , footer "Open + In progress issues, sorted by recent activity."
+            ]
+            (List.map issueRow items)
+
+
+recentSection : List Shared.IssueView -> View Msg
+recentSection items =
+    if List.isEmpty items then
+        empty
+    else
+        section
+            [ header "Recently updated"
+            , footer "Across every project on your team."
+            ]
+            (List.map issueRow (List.reverse items))
+
+
+membersSection : List Shared.TeamMemberView -> View Msg
+membersSection members =
+    section
+        [ header "Team"
+        , footer "Tap into Team Members to manage roles."
+        ]
+        (List.map memberRow members)
+
+
+view : Shared.User -> Model -> View Msg
+view user model =
+    navigationStack
+        [ navigationTitle ("Hi, " ++ user.name)
+        , topBarTrailing (button [] SignOutClicked "Sign out")
+        ]
+        [ list [] (renderBody user model)
+        ]
+
+
+renderBody : Shared.User -> Model -> List (View Msg)
+renderBody _ model =
+    case model of
+        Loading ->
+            [ section [] [ text "Loading dashboard…" ] ]
+
+        Failed why ->
+            [ section [ header "Couldn't load" ] [ errorText why ] ]
+
+        Loaded data ->
+            [ section [ header "Jump to" ]
+                [ navigationLink [] Frontend.Routes.projects {} (text "All projects")
+                , navigationLink [] Frontend.Routes.myIssues {} (text "My issues")
+                , navigationLink [] Frontend.Routes.inbox    {} (text "Inbox")
+                , navigationLink [] Frontend.Routes.search   {} (text "Search issues")
+                , navigationLink [] Frontend.Routes.activity {} (text "Activity")
+                , navigationLink [] Frontend.Routes.teamMembers {} (text "Team members")
+                , navigationLink [] Frontend.Routes.settings {} (text "Settings")
+                ]
+            , projectsSection data.projects
+            , myIssuesSection data.myOpenIssues
+            , recentSection data.recentlyUpdated
+            , membersSection data.teamMembers
+            ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/"
+        , title  = "Dashboard"
+        , init   = init
+        , update = update
+        , view   = view
+        }

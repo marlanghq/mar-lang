@@ -12,6 +12,33 @@ import Foundation
 
 enum MarHTTP {
 
+    /// Response header carrying the freshly-minted session token on a
+    /// successful POST /_auth/verify-code. Mirror of the server-side
+    /// `bearerTokenHeader` constant in internal/jsserve/auth.go. The
+    /// runtime grabs it, stashes the value in Keychain, and attaches
+    /// it as `Authorization: Bearer …` on subsequent requests.
+    static let bearerTokenHeader = "X-Mar-Auth-Token"
+
+    /// Attach the stored bearer to `req` if Keychain has one. No-op
+    /// when there's no stored token — that's the pre-login state, the
+    /// request goes out anonymous, and the server returns 401 if the
+    /// route required auth. Called from every request site so the
+    /// runtime never forgets a credential.
+    private static func attachBearer(_ req: inout URLRequest) {
+        if let tok = MarKeychain.load(forKey: MarKeychain.sessionTokenKey) {
+            req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
+        }
+    }
+
+    /// Wipe the local credential. Called on Auth.logout and any time
+    /// the server tells us the session is invalid (401 on a Service
+    /// call, /_auth/me returning null). Idempotent — Keychain delete
+    /// of a missing key is a no-op.
+    @MainActor
+    static func clearStoredToken() {
+        MarKeychain.delete(forKey: MarKeychain.sessionTokenKey)
+    }
+
     /// Generic HTTP fire (used by Endpoint.call + Http.get/post).
     /// `url` is treated as absolute; the caller is responsible for
     /// concatenation. `body` is sent as-is (already JSON-encoded by
@@ -46,6 +73,7 @@ enum MarHTTP {
             req.httpBody = body.data(using: .utf8)
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
+        attachBearer(&req)
         URLSession.shared.dataTask(with: req) { data, response, error in
             let result = makeStringResult(data: data, response: response, error: error)
             Task { @MainActor in
@@ -59,6 +87,7 @@ enum MarHTTP {
         req.httpMethod = "POST"
         req.httpBody = body.data(using: .utf8)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        attachBearer(&req)
         URLSession.shared.dataTask(with: req) { data, response, error in
             // Auth-expiry interceptor: 401 from a Service.call means
             // the session is gone. Route to signInPath instead of
@@ -68,6 +97,11 @@ enum MarHTTP {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if status == 401 {
                 Task { @MainActor in
+                    // Token's no good — wipe it so the sign-in screen
+                    // doesn't keep re-trying the same dead credential
+                    // and so the next cold start lands on sign-in
+                    // cleanly instead of bouncing through a 401.
+                    clearStoredToken()
                     if AppContext.shared.handleAuthExpired() {
                         return
                     }
@@ -98,8 +132,15 @@ enum MarHTTP {
     /// Fires a POST to /_auth/<endpoint> with the runtime-encoded body.
     /// On 200, dispatches Ok (with the decoded value or unit). On
     /// non-2xx, dispatches Err with the server's error message.
-    /// Cookies are persisted by URLSession.shared automatically across
-    /// app launches via HTTPCookieStorage.shared.
+    ///
+    /// Sessions are credentialed via `Authorization: Bearer …` from
+    /// the Keychain-backed token. URLSession.shared also still
+    /// persists a Set-Cookie if the server happens to issue one, but
+    /// the Bearer is the authoritative credential — server-side
+    /// `extractSessionToken` returns the header value first, the
+    /// cookie only as a fallback. That keeps the model uniform with
+    /// future Android/Windows runtimes where cookie storage is
+    /// unreliable or absent.
     static func fireAuth(path: String, body: MarValue?, decode: AuthDecode, toMsg: MarValue) {
         Task { @MainActor in
             guard let url = MarDispatcher.shared.resolve(path: path) else {
@@ -117,11 +158,46 @@ enum MarHTTP {
                 req.httpBody = bodyData
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             }
+            attachBearer(&req)
             URLSession.shared.dataTask(with: req) { data, response, error in
+                // Capture the token from /_auth/verify-code's
+                // response before decoding. The server sets
+                // `X-Mar-Auth-Token` on success; we copy it to
+                // Keychain so subsequent requests carry the Bearer.
+                // The header is absent on other auth endpoints
+                // (request-code, logout) — `headerToken` is nil
+                // there and we skip the save.
+                if let http = response as? HTTPURLResponse,
+                   (200..<300).contains(http.statusCode),
+                   let headerToken = http.value(forHTTPHeaderField: bearerTokenHeader),
+                   !headerToken.isEmpty {
+                    MarKeychain.save(headerToken, forKey: MarKeychain.sessionTokenKey)
+                }
                 let outcome = decodeAuthResponse(
                     data: data, response: response, error: error, decode: decode
                 )
                 Task { @MainActor in
+                    // For user-returning auth endpoints (verify-code,
+                    // and any future signUp/refresh that yields a User),
+                    // park the freshly-authed user in AppContext BEFORE
+                    // dispatching the Msg. Two reasons:
+                    //
+                    //   1. The mar update typically returns a
+                    //      `Auth.completeSignIn` effect that lands on a
+                    //      Page.protected. The protectedView gate
+                    //      reads `currentUser` to decide whether to
+                    //      render or bounce back to sign-in. Without
+                    //      this capture, currentUser is nil → bounce
+                    //      → user "loops" back to the email screen.
+                    //
+                    //   2. Avoids an immediate redundant Auth.me round
+                    //      trip after sign-in, which is also racy
+                    //      against the just-set session cookie.
+                    if case .userJSON = decode,
+                       case .okJSON(let userVal) = outcome {
+                        AppContext.shared.currentUser =
+                            .ctor(tag: "Just", args: [userVal], origin: nil)
+                    }
                     deliverMsg(result: outcome, toMsg: toMsg)
                 }
             }.resume()
@@ -138,8 +214,13 @@ enum MarHTTP {
         guard let url = await MainActor.run(body: { MarDispatcher.shared.resolve(path: "/_auth/me") })
         else { return nil }
         do {
-            let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url))
+            var req = URLRequest(url: url)
+            attachBearer(&req)
+            let (data, response) = try await URLSession.shared.data(for: req)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                if http.statusCode == 401 {
+                    await MainActor.run { clearStoredToken() }
+                }
                 return nil
             }
             let any = (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]))
@@ -162,7 +243,9 @@ enum MarHTTP {
                 dispatchErr(toMsg, message: "invalid auth path: /_auth/me")
                 return
             }
-            URLSession.shared.dataTask(with: URLRequest(url: url)) { data, response, error in
+            var req = URLRequest(url: url)
+            attachBearer(&req)
+            URLSession.shared.dataTask(with: req) { data, response, error in
                 let outcome: FetchOutcome
                 if let error {
                     outcome = .err(error.localizedDescription)
@@ -196,12 +279,7 @@ enum MarHTTP {
         let raw = data ?? Data()
         let body = String(data: raw, encoding: .utf8) ?? ""
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            // Server returns {"error": "code"} on auth failures.
-            if let any = try? JSONSerialization.jsonObject(with: raw, options: []) as? [String: Any],
-               let code = any["error"] as? String {
-                return .err(code)
-            }
-            return .err(body.isEmpty ? "HTTP \(http.statusCode)" : body)
+            return .err(decodeServerError(body: raw, fallbackBody: body, status: http.statusCode))
         }
         switch decode {
         case .ackUnit:
@@ -216,6 +294,26 @@ enum MarHTTP {
         }
     }
 
+    /// Extract a stable error code from an HTTP error response body.
+    ///
+    /// Mar's framework endpoints (auth, rate-limit middleware, admin)
+    /// consistently shape error bodies as `{"error": "snake_case_code", ...}`.
+    /// When that shape is present, return just the code so user code
+    /// can `case` on it cleanly. Otherwise fall back to the raw body
+    /// or — if even the body is empty — to "HTTP <status>".
+    ///
+    /// Mirrors the JS runtime's `decodeServerError`. Without this,
+    /// a 429 from the gateway limiter would surface in a Result.Err
+    /// as the literal JSON string `{"error":"rate_limited",...}`,
+    /// defeating the point of having stable codes server-side.
+    private static func decodeServerError(body data: Data, fallbackBody: String, status: Int) -> String {
+        if let any = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+           let code = any["error"] as? String, !code.isEmpty {
+            return code
+        }
+        return fallbackBody.isEmpty ? "HTTP \(status)" : fallbackBody
+    }
+
     // MARK: - Result builders
 
     private enum FetchOutcome {
@@ -226,9 +324,10 @@ enum MarHTTP {
 
     private static func makeStringResult(data: Data?, response: URLResponse?, error: Error?) -> FetchOutcome {
         if let error { return .err(error.localizedDescription) }
-        let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        let raw = data ?? Data()
+        let body = String(data: raw, encoding: .utf8) ?? ""
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            return .err(body.isEmpty ? "HTTP \(http.statusCode)" : body)
+            return .err(decodeServerError(body: raw, fallbackBody: body, status: http.statusCode))
         }
         return .ok(body)
     }
@@ -238,7 +337,7 @@ enum MarHTTP {
         let bodyData = data ?? Data()
         let bodyString = String(data: bodyData, encoding: .utf8) ?? ""
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            return .err(bodyString.isEmpty ? "HTTP \(http.statusCode)" : bodyString)
+            return .err(decodeServerError(body: bodyData, fallbackBody: bodyString, status: http.statusCode))
         }
         do {
             let any = try JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])

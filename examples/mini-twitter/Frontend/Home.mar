@@ -1,0 +1,197 @@
+module Frontend.Home exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , form, list, section, header
+    , hstack, vstack
+    , text, textField, button, navigationLink, empty, errorText
+    , submit
+    )
+
+
+-- Home timeline. The page does two things:
+--
+--   1. Bootstrap: if the user has an empty handle (fresh signup),
+--      redirect them to /setup before showing the timeline. We do
+--      this from `init` rather than blocking the view, so the
+--      redirect happens before the user sees any flash of the
+--      timeline.
+--
+--   2. Timeline: list of TweetView newest-first, with an inline
+--      compose box at the top and per-tweet Delete on the user's
+--      own tweets.
+--
+-- Timeline data is a 3-state machine (Loading / Loaded / Failed)
+-- rather than a bare list so the typechecker forces the view to
+-- handle every case explicitly — no "0 tweets" flash during fetch.
+
+
+type Timeline
+    = Loading
+    | Loaded (List Shared.TweetView)
+    | Failed String
+
+
+type alias Model =
+    { timeline : Timeline
+    , draft    : String
+    , posting  : Bool
+    }
+
+
+type Msg
+    = TimelineFetched (Result String (List Shared.TweetView))
+    | DraftChanged String
+    | PostClicked
+    | TweetPosted (Result String Shared.Tweet)
+    | DeleteClicked Int
+    | TweetDeleted (Result String ())
+    | SignOutClicked
+    | SignedOut (Result String ())
+
+
+init : Shared.User -> () -> (Model, Effect String Msg)
+init user _ =
+    if user.handle == "" then
+        ( { timeline = Loading, draft = "", posting = False }
+        , Nav.replaceTo Frontend.Routes.setupProfile {}
+        )
+    else
+        ( { timeline = Loading, draft = "", posting = False }
+        , Service.call Shared.loadTimeline () TimelineFetched
+        )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update _ msg model =
+    case msg of
+        TimelineFetched (Ok items) ->
+            ( { model | timeline = Loaded items }, Effect.none )
+
+        TimelineFetched (Err why) ->
+            ( { model | timeline = Failed why }, Effect.none )
+
+        DraftChanged value ->
+            ( { model | draft = value }, Effect.none )
+
+        -- Stale-while-revalidate on Post / Delete: keep the
+        -- current Loaded list visible during the post-then-fetch
+        -- round-trip, so the page doesn't flash "Loading…" each
+        -- time the user takes an action.
+        PostClicked ->
+            ( { model | posting = True, draft = "" }
+            , Service.call Shared.composeTweet { body = model.draft } TweetPosted
+            )
+
+        TweetPosted (Ok _) ->
+            ( { model | posting = False }
+            , Service.call Shared.loadTimeline () TimelineFetched
+            )
+
+        TweetPosted (Err why) ->
+            ( { model | posting = False, timeline = Failed why }
+            , Effect.none
+            )
+
+        DeleteClicked tweetId ->
+            ( model
+            , Service.call Shared.deleteTweet { id = tweetId } TweetDeleted
+            )
+
+        TweetDeleted (Ok ()) ->
+            ( model, Service.call Shared.loadTimeline () TimelineFetched )
+
+        TweetDeleted (Err _) ->
+            -- 403 (not the owner) lands here. We don't surface it
+            -- because the UI only offers Delete on `isMine` rows
+            -- anyway; if a request reaches here with mismatched
+            -- ownership it's already suspicious.
+            ( model, Effect.none )
+
+        SignOutClicked ->
+            ( model, Auth.logout SignedOut )
+
+        SignedOut _ ->
+            ( model, Nav.replaceTo Frontend.Routes.signIn {} )
+
+
+renderTweet : Shared.TweetView -> View Msg
+renderTweet t =
+    hstack []
+        [ vstack []
+            [ hstack []
+                [ navigationLink [] Frontend.Routes.profile { handle = t.authorHandle } (text t.authorName)
+                , text ("@" ++ t.authorHandle)
+                ]
+            , text t.body
+            , text (Time.toIso t.createdAt)
+            ]
+        , if t.isMine then
+            button [] (DeleteClicked t.id) "Delete"
+          else
+            empty
+        ]
+
+
+composeRow : Model -> View Msg
+composeRow model =
+    let
+        label =
+            if model.posting then
+                "Posting…"
+            else
+                "Tweet"
+    in
+    section []
+        [ hstack []
+            [ textField [ submit PostClicked ]
+                "What's happening?" model.draft DraftChanged
+            , button [] PostClicked label
+            ]
+        ]
+
+
+timelineSection : Timeline -> View Msg
+timelineSection state =
+    case state of
+        Loading ->
+            section [] [ text "Loading…" ]
+
+        Failed why ->
+            section [] [ errorText ("Couldn't load: " ++ why) ]
+
+        Loaded [] ->
+            section []
+                [ text "Your timeline is empty. Follow people from their profile to see their tweets here."
+                ]
+
+        Loaded items ->
+            section [ header (String.fromInt (List.length items) ++ " tweets") ]
+                (List.map renderTweet items)
+
+
+view : Shared.User -> Model -> View Msg
+view user model =
+    navigationStack
+        [ navigationTitle ("@" ++ user.handle)
+        , topBarTrailing (button [] SignOutClicked "Sign out")
+        ]
+        [ list []
+            [ composeRow model
+            , timelineSection model.timeline
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/"
+        , title  = "mini-twitter"
+        , init   = init
+        , update = update
+        , view   = view
+        }

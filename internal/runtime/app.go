@@ -18,19 +18,19 @@ import (
 // in module Frontend gives Origin{Frontend, page}). App.fullstack reads
 // them to know which qualified name to use as the browser bundle entry.
 type VPage struct {
-	Path         string
-	InitFn       Value
-	UpdateFn     Value
-	ViewFn       Value
-	Title        string // empty = no override (host's HTML <title> stays)
-	Redirect     string // non-empty = Page.protected; redirect target if Auth.me returns Nothing
-	IsDynamic    bool   // true → Path is a pattern with `{name:Type}` segments;
+	Path      string
+	InitFn    Value
+	UpdateFn  Value
+	ViewFn    Value
+	Title     string // empty = no override (host's HTML <title> stays)
+	Redirect  string // non-empty = Page.protected; redirect target if Auth.me returns Nothing
+	IsDynamic bool   // true → Path is a pattern with `{name:Type}` segments;
 	//                  // runtime parses the URL and threads a Params record
 	//                  // through init/update/view as an extra leading arg.
-	IsProtected  bool   // duplicates `Redirect != ""` for clarity; future
+	IsProtected bool // duplicates `Redirect != ""` for clarity; future
 	//                  // protected variants without a redirect (eg. native
 	//                  // sheets) will still set this true.
-	PathPattern  []PathSegment // populated for dynamic pages; parsed once at
+	PathPattern []PathSegment // populated for dynamic pages; parsed once at
 	//                          // builder time so the bundle emit + matchers
 	//                          // don't re-parse the source string.
 	OriginModule string
@@ -233,13 +233,13 @@ func appBuiltins() map[string]Value {
 			}, nil
 		}),
 
-		// Nav.afterSignIn is the post-Auth.verifyCode helper that reads
+		// Auth.completeSignIn is the post-Auth.verifyCode helper that reads
 		// the captured `?next=` and navigates back to the origin. Pure
 		// browser-side concern — server evaluation shouldn't reach it.
-		"navAfterSignIn": VEffect{
-			Tag: "navAfterSignIn",
+		"authCompleteSignIn": VEffect{
+			Tag: "authCompleteSignIn",
 			Run: func() (Value, error) {
-				return nil, fmt.Errorf("Nav.afterSignIn is only available in the browser runtime")
+				return nil, fmt.Errorf("Auth.completeSignIn is only available in the browser runtime")
 			},
 		},
 

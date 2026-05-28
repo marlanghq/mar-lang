@@ -1,0 +1,145 @@
+module Backend.ActivityFeed exposing (services)
+
+
+import Backend.Activities
+import Backend.Users
+import Backend.Issues
+import Backend.Projects
+import Shared exposing
+    ( Role(..)
+    , ActivityVerb(..)
+    , ActivitySubject(..)
+    )
+
+
+-- ActivityFeed — the READ side of the audit log. Joins the raw
+-- activity rows with users, issues, and projects so the frontend
+-- can render "Marcio changed status of #42 to Closed in project
+-- bigapp" without per-row lookups. Lives in its own module
+-- (separate from Backend.Activities) so the emit helpers can stay
+-- on the dependency-graph leaf without forming a cycle with
+-- Issues / Projects.
+
+
+listRecent : Shared.ListRecentActivity -> Shared.User -> Effect String (List Shared.ActivityView)
+listRecent input user =
+    let
+        cap =
+            if input.limit <= 0 then
+                40
+            else if input.limit > 200 then
+                200
+            else
+                input.limit
+    in
+    -- Pull recent rows for the caller's team. Sort + take happen in
+    -- memory after the fetch — fine at the scale of an audit feed
+    -- (which a real product would cap-and-truncate via a sweeper).
+    Repo.findBy Backend.Activities.activities { teamId = user.teamId }
+        |> Effect.andThen
+            (\raw ->
+                let
+                    sorted =
+                        List.sortWith
+                            (\a b ->
+                                -- Descending by createdAt: newer rows
+                                -- come first.
+                                if Time.toMillis a.createdAt > Time.toMillis b.createdAt then
+                                    LT
+                                else if Time.toMillis a.createdAt < Time.toMillis b.createdAt then
+                                    GT
+                                else
+                                    EQ
+                            )
+                            raw
+                            |> List.take cap
+                in
+                Effect.sequence (List.map buildActivityView sorted)
+            )
+
+
+buildActivityView : Shared.Activity -> Effect String Shared.ActivityView
+buildActivityView a =
+    Repo.findById Backend.Users.users a.actorId
+        |> Effect.andThen
+            (\maybeActor ->
+                resolveIssueContext a
+                    |> Effect.map
+                        (\ctx ->
+                            { id          = a.id
+                            , actorId     = a.actorId
+                            , actorName   =
+                                case maybeActor of
+                                    Just u  -> u.name
+                                    Nothing -> "(deleted user)"
+                            , verb        = a.verb
+                            , subject     = a.subject
+                            , subjectId   = a.subjectId
+                            , extra       = a.extra
+                            , issueNumber = ctx.issueNumber
+                            , issueTitle  = ctx.issueTitle
+                            , projectSlug = ctx.projectSlug
+                            , createdAt   = a.createdAt
+                            }
+                        )
+            )
+
+
+-- resolveIssueContext fills in issue/project metadata when the
+-- activity points at an issue (directly) or a comment (which
+-- points at an issue via comment.issueId, stored in `extra` by
+-- the comment-flavored emitX helpers). For project activities,
+-- the context fields stay empty — the row itself has the project
+-- name in `extra`.
+resolveIssueContext : Shared.Activity -> Effect String { issueNumber : Int, issueTitle : String, projectSlug : String }
+resolveIssueContext a =
+    case a.subject of
+        OnIssue ->
+            lookupIssueContext a.subjectId
+
+        OnComment ->
+            -- Comment activities store the issueId in `extra` so we
+            -- can deep-link without an extra `comments` table hit.
+            case String.toInt a.extra of
+                Just issueId ->
+                    lookupIssueContext issueId
+
+                Nothing ->
+                    Effect.succeed { issueNumber = 0, issueTitle = "", projectSlug = "" }
+
+        OnProject ->
+            Effect.succeed { issueNumber = 0, issueTitle = "", projectSlug = "" }
+
+
+lookupIssueContext : Int -> Effect String { issueNumber : Int, issueTitle : String, projectSlug : String }
+lookupIssueContext issueId =
+    Repo.findById Backend.Issues.issues issueId
+        |> Effect.andThen
+            (\maybeIssue ->
+                case maybeIssue of
+                    Just issue ->
+                        Repo.findById Backend.Projects.projects issue.projectId
+                            |> Effect.map
+                                (\maybeProject ->
+                                    { issueNumber = issue.number
+                                    , issueTitle  = issue.title
+                                    , projectSlug =
+                                        case maybeProject of
+                                            Just p  -> p.slug
+                                            Nothing -> ""
+                                    }
+                                )
+
+                    Nothing ->
+                        Effect.succeed { issueNumber = 0, issueTitle = "", projectSlug = "" }
+            )
+
+
+-- ====================================================================
+-- SERVICES
+-- ====================================================================
+
+services =
+    [ -- Any authed user can browse their team's activity feed.
+      Auth.protect Shared.listRecentActivity listRecent
+    ]

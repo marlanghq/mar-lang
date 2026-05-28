@@ -1,0 +1,267 @@
+module Frontend.Showcase.Lists exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , list, section, keyedList, keyed, header, footer
+    , hstack, vstack
+    , subtitle, text, button, toggle, spacer, empty
+    , onMove, onDelete
+    )
+
+
+-- Demo: `list` + `section` with headers, footers, and dynamic
+-- content gated by toggles.
+--
+-- The shape Mar lists usually take: a sectioned list where each
+-- section has a header naming the group, an optional footer for
+-- metadata or hints, and a body of rows. This page demos that
+-- shape with two toggle-filtered groups and one reorderable
+-- group. Content is intentionally abstract ("Row 1", "Row 2") so
+-- the structure is the only thing on screen.
+
+
+type alias Row =
+    { id     : Int
+    , label  : String
+    , detail : String
+    , on     : Bool
+    , group  : Int   -- 1 = primary, 2 = secondary
+    }
+
+
+type alias Model =
+    { rows         : List Row
+    , showSecondary : Bool
+    , showOn        : Bool
+    -- Reorderable list state. Separate from `rows` so the two
+    -- sections (filterable static + reorderable) can be read
+    -- independently — mixing reorder/delete with filters would be
+    -- confusing in a single demo.
+    , reorderable   : List String
+    , editingList   : Bool
+    }
+
+
+type Msg
+    = ShowSecondaryChanged Bool
+    | ShowOnChanged Bool
+    | ToggleOn Int
+    | EditListClicked
+    | DoneEditingListClicked
+    | RowMoved Int Int
+    | RowDeleted Int
+
+
+seedRows : List Row
+seedRows =
+    [ { id = 1, label = "Row 1", detail = "Body text · primary group · off", on = False, group = 1 }
+    , { id = 2, label = "Row 2", detail = "Body text · primary group · on",  on = True,  group = 1 }
+    , { id = 3, label = "Row 3", detail = "Body text · primary group · off", on = False, group = 1 }
+    , { id = 4, label = "Row 4", detail = "Body text · secondary group · on",  on = True,  group = 2 }
+    , { id = 5, label = "Row 5", detail = "Body text · secondary group · off", on = False, group = 2 }
+    ]
+
+
+init : () -> (Model, Effect String Msg)
+init _ =
+    ( { rows = seedRows
+      , showSecondary = False
+      , showOn = True
+      , reorderable =
+          [ "Item A"
+          , "Item B"
+          , "Item C"
+          , "Item D"
+          ]
+      , editingList = False
+      }
+    , Effect.none
+    )
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        ShowSecondaryChanged v ->
+            ( { model | showSecondary = v }, Effect.none )
+
+        ShowOnChanged v ->
+            ( { model | showOn = v }, Effect.none )
+
+        ToggleOn rowId ->
+            ( { model | rows = List.map (toggleRow rowId) model.rows }
+            , Effect.none
+            )
+
+        EditListClicked ->
+            ( { model | editingList = True }, Effect.none )
+
+        DoneEditingListClicked ->
+            ( { model | editingList = False }, Effect.none )
+
+        RowMoved from to ->
+            -- List.move handles the in-list shuffle; the
+            -- (from, to) indices come from the onMove handler.
+            ( { model | reorderable = List.move from to model.reorderable }
+            , Effect.none
+            )
+
+        RowDeleted idx ->
+            -- onDelete fires the row index. Drop it from the
+            -- list — no confirmation in this demo, since this
+            -- page is about *demoing* the primitive, not the
+            -- destructive-action pattern.
+            ( { model | reorderable = removeAt idx model.reorderable }
+            , Effect.none
+            )
+
+
+-- removeAt drops the element at index `n` from a list. Used by
+-- the RowDeleted handler.
+removeAt : Int -> List a -> List a
+removeAt n xs =
+    case xs of
+        [] -> []
+        x :: rest ->
+            if n <= 0 then
+                rest
+            else
+                x :: removeAt (n - 1) rest
+
+
+toggleRow : Int -> Row -> Row
+toggleRow rowId r =
+    if r.id == rowId then
+        { r | on = r.on == False }
+    else
+        r
+
+
+-- A single row: label + detail on the left, on/off status pushed
+-- to the trailing edge by spacer. Tapping the trailing button
+-- flips the row's `on` flag — shows how a list row can host its
+-- own action.
+rowView : Row -> View Msg
+rowView r =
+    hstack []
+        [ vstack []
+            [ text r.label
+            , subtitle r.detail
+            ]
+        , spacer
+        , button [] (ToggleOn r.id)
+            (if r.on then "On" else "Off")
+        ]
+
+
+-- List.filter on rows, parameterized by the predicates the user
+-- chose with the toggles.
+visibleRows : Model -> (Row -> Bool) -> List Row
+visibleRows model extra =
+    List.filter
+        (\r ->
+            extra r
+                && (model.showSecondary || r.group == 1)
+                && (model.showOn || r.on == False)
+        )
+        model.rows
+
+
+-- Builds a section for one group of rows. Empty groups still
+-- render with a placeholder so the page structure doesn't shift
+-- between states.
+rowsSection : String -> List Row -> View Msg
+rowsSection name items =
+    if List.isEmpty items then
+        section [ header name ]
+            [ subtitle "(no rows match)" ]
+    else
+        section
+            [ header (name ++ " · " ++ String.fromInt (List.length items) ++ " rows") ]
+            (List.map rowView items)
+
+
+view : Model -> View Msg
+view model =
+    let
+        primary =
+            visibleRows model (\r -> r.group == 1)
+
+        secondary =
+            visibleRows model (\r -> r.group == 2)
+
+        -- Edit button toggles editing mode on the reorderable
+        -- section. In edit mode rows show drag handles (right) +
+        -- the red minus circle (left); outside edit mode they're
+        -- plain text rows.
+        editAffordance =
+            if model.editingList then
+                button [] DoneEditingListClicked "Done"
+            else
+                button [] EditListClicked "Edit"
+    in
+    navigationStack
+        [ navigationTitle "Lists & sections"
+        , topBarTrailing editAffordance
+        ]
+        [ list []
+            -- Reorderable section first so it sits right under the
+            -- "Edit" button in the nav bar — visually obvious that
+            -- the toolbar action toggles its affordances. Tucking
+            -- it at the bottom (a few sections down) hid the
+            -- connection and made the demo confusing.
+            [ reorderableSection model
+            , section [ header "Toggle filters" ]
+                [ toggle [] "Include rows that are On"     model.showOn        ShowOnChanged
+                , toggle [] "Include the secondary group"  model.showSecondary ShowSecondaryChanged
+                ]
+            , rowsSection "Primary group" primary
+            , if model.showSecondary then
+                rowsSection "Secondary group" secondary
+              else
+                empty
+            ]
+        ]
+
+
+-- reorderableSection demos `keyedList` + `keyed` + `onMove` +
+-- `onDelete`. Edit mode (driven by the trailing "Edit" button)
+-- wires both attrs so rows reorder via drag handles and delete
+-- via the red minus circle. Outside edit mode the affordances
+-- disappear and rows are just text.
+--
+-- The `keyed` MUST take a stable identifier of the row's content —
+-- NOT the row's position in the list. If you use the index, the
+-- keys shift every time a row is inserted, deleted, or reordered,
+-- and the reconciler ends up patching text into the wrong DOM
+-- nodes (delete row 0 → row 0\'s DOM stays, gets the row-1 text;
+-- row N\'s DOM gets removed → looks like rows 0 AND N were
+-- deleted). In a real app the key is usually a record id; here
+-- our items are bare strings, so the string itself is the
+-- identifier.
+reorderableSection : Model -> View Msg
+reorderableSection model =
+    keyedList
+        [ header "Reorderable & deletable"
+        , footer "Tap Edit (top right) to reveal drag handles + delete buttons. In edit mode, drag rows to reorder; tap the minus circle to remove a row."
+        , onMove   model.editingList RowMoved
+        , onDelete model.editingList RowDeleted
+        ]
+        (List.map renderReorderableItem model.reorderable)
+
+
+renderReorderableItem : String -> KeyedView Msg
+renderReorderableItem label =
+    keyed label (text label)
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/lists"
+        , title = "Lists"
+        , init = init
+        , update = update
+        , view = view
+        }

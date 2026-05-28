@@ -5,7 +5,7 @@ import UI exposing
     ( navigationStack, navigationTitle
     , form, list, section, header
     , hstack
-    , text, textField, button
+    , text, textField, button, errorText
     , submit
     )
 
@@ -32,9 +32,13 @@ type alias Entry =
 
 entries : Entity Entry
 entries =
-    Entity.define "entries"
-        { id   = Entity.serial
-        , name = Entity.text Entity.notNull
+    Entity.define
+        { name = "entries"
+        , columns =
+            { id   = Entity.serial
+            , name = Entity.text Entity.notNull
+            }
+        , uniques = []
         }
 
 
@@ -120,7 +124,7 @@ update msg model =
 view : Model -> View Msg
 view model =
     navigationStack [ navigationTitle "Guestbook" ]
-        [ list
+        [ list []
             [ section []
                 [ hstack []
                     [ textField [ submit SignClicked ]
@@ -140,7 +144,7 @@ entriesSection state =
             section [] [ text "Loading…" ]
 
         Failed why ->
-            section [] [ text ("Couldn't load entries: " ++ why) ]
+            section [] [ errorText ("Couldn't load entries: " ++ why) ]
 
         Loaded items ->
             section [ header (String.fromInt (List.length items) ++ " signatures") ]

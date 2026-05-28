@@ -68,10 +68,10 @@ func TestListCatalog_NewestFirst(t *testing.T) {
 // catalog entries (or aren't .tar.gz) are silently skipped.
 func TestListCatalog_IgnoresForeignFiles(t *testing.T) {
 	dir := t.TempDir()
-	mustTouch(t, filepath.Join(dir, "2026-05-08-100000.tar.gz"))   // valid
-	mustTouch(t, filepath.Join(dir, "README.md"))                   // foreign
-	mustTouch(t, filepath.Join(dir, "not-a-timestamp.tar.gz"))      // bad name
-	mustTouch(t, filepath.Join(dir, "2026-05-08-100000.txt"))       // wrong ext
+	mustTouch(t, filepath.Join(dir, "2026-05-08-100000.tar.gz")) // valid
+	mustTouch(t, filepath.Join(dir, "README.md"))                // foreign
+	mustTouch(t, filepath.Join(dir, "not-a-timestamp.tar.gz"))   // bad name
+	mustTouch(t, filepath.Join(dir, "2026-05-08-100000.txt"))    // wrong ext
 
 	got, err := ListCatalog(dir)
 	if err != nil {
@@ -133,6 +133,42 @@ func TestNewCatalogID(t *testing.T) {
 	want := "2026-05-08-143022"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestIsValidCatalogID — the defense-in-depth shape check the admin
+// download/restore handlers use before joining the id into a
+// filesystem path. Anything that isn't the exact layout
+// YYYY-MM-DD-HHMMSS gets rejected; this includes path-traversal
+// attempts, random words, and catalog-shaped strings with invalid
+// dates (e.g. month 13).
+func TestIsValidCatalogID(t *testing.T) {
+	good := []string{
+		"2026-05-08-143022",
+		"2020-01-01-000000",
+		"1970-01-01-000001",
+	}
+	bad := []string{
+		"",
+		"random",
+		"does-not-exist",
+		"abc",
+		"../etc/passwd",
+		"2020-13-99-XXXX",     // shape-ish but invalid
+		"2026-05-08-143022 ",  // trailing space
+		" 2026-05-08-143022",  // leading space
+		"2026-05-08-143022/x", // injection attempt
+		"2026-05-08-14:30:22", // colons, not the layout
+	}
+	for _, s := range good {
+		if !IsValidCatalogID(s) {
+			t.Errorf("good id %q rejected", s)
+		}
+	}
+	for _, s := range bad {
+		if IsValidCatalogID(s) {
+			t.Errorf("bad id %q accepted", s)
+		}
 	}
 }
 

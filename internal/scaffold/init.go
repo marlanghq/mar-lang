@@ -90,6 +90,15 @@ main =
 		".gitignore": `*.db
 *.db-shm
 *.db-wal
+*.db.lock
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.tar.gz
+.claude/
 dist/
 `,
 		"README.md": fmt.Sprintf("# %s\n\nA mar project. Get started:\n\n```bash\nmar dev\n```\n\nOpens http://localhost:3000.\n", name),

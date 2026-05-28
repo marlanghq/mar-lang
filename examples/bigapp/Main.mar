@@ -1,0 +1,106 @@
+module Main exposing (main)
+
+
+import Backend.Users
+import Backend.Teams
+import Backend.Projects
+import Backend.Issues
+import Backend.Comments
+import Backend.Labels
+import Backend.Milestones
+import Backend.Dashboard
+import Backend.Activities
+import Backend.ActivityFeed
+import Backend.Mentions
+import Backend.MentionInbox
+import Frontend.SignIn
+import Frontend.Dashboard
+import Frontend.Projects
+import Frontend.ProjectDetail
+import Frontend.IssueDetail
+import Frontend.NewIssue
+import Frontend.MyIssues
+import Frontend.Search
+import Frontend.Settings
+import Frontend.TeamMembers
+import Frontend.Activity
+import Frontend.Inbox
+import Shared exposing (Role(..))
+
+
+-- BigApp — issue tracker built to stress-test the mar compiler over
+-- a realistic full-stack codebase. ~9 entities, ~25 services,
+-- ~10 pages, thousands of lines of cross-module wiring.
+--
+-- The shape echoes a small Linear/Jira clone: teams own projects,
+-- projects contain issues, issues have status / priority / labels /
+-- milestones / comments / an assignee. Every page either fetches
+-- through a service (typed end-to-end via Shared.mar) or composes
+-- a small MVU state machine on top.
+
+
+auth : Auth Shared.User
+auth =
+    Auth.config
+        { entity     = Backend.Users.users
+        , identify   = \u -> u.email
+        , role       = \u -> u.role
+        , signInPage = Frontend.SignIn.page
+        , email      =
+            { subject = "Sign in to BigApp"
+            , body    = \code ttlMinutes ->
+                "Welcome to BigApp.\n\n" ++
+                "Your one-time code is " ++ code ++ "\n\n" ++
+                "It expires in " ++ String.fromInt ttlMinutes ++ " minutes. " ++
+                "If you didn't request this, you can ignore this email.\n"
+            }
+        , signup = \email ->
+            -- First sign-in for a new email: drop the user into team 1
+            -- as a Member. A real product would gate signups by invite
+            -- code or domain match; the showcase keeps it open so the
+            -- demo team picks up automatically.
+            --
+            -- `createdAt` is intentionally omitted — the framework
+            -- auto-fills TIMESTAMP columns with the current server
+            -- time, since signup hooks run synchronously and can't
+            -- call Time.now themselves.
+            { email  = email
+            , name   = email
+            , teamId = 1
+            , role   = Member
+            }
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Effect String ()
+main =
+    App.fullstack
+        { api      = []
+        , services =
+            List.concat
+                [ Backend.Teams.services
+                , Backend.Projects.services
+                , Backend.Issues.services
+                , Backend.Comments.services
+                , Backend.Labels.services
+                , Backend.Milestones.services
+                , Backend.Dashboard.services
+                , Backend.ActivityFeed.services
+                , Backend.MentionInbox.services
+                ]
+        , pages =
+            [ Frontend.SignIn.page
+            , Frontend.Dashboard.page
+            , Frontend.Projects.page
+            , Frontend.ProjectDetail.page
+            , Frontend.IssueDetail.page
+            , Frontend.NewIssue.page
+            , Frontend.MyIssues.page
+            , Frontend.Search.page
+            , Frontend.Settings.page
+            , Frontend.TeamMembers.page
+            , Frontend.Activity.page
+            , Frontend.Inbox.page
+            ]
+        }

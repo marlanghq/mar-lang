@@ -1,0 +1,227 @@
+module Frontend.Showcase.Forms exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, footer
+    , textField, textArea, button
+    , submit, email, password, newPassword, numeric, oneTimeCode, numericCode
+    , subtitle, text, errorText
+    , width, height, chars, lines
+    )
+
+
+-- Demo: `textField` with every input-kind modifier.
+--
+-- The modifiers tune three things at once on both platforms:
+--
+--   web : <input type>, autocomplete, inputmode, pattern
+--   iOS : keyboardType, textContentType, isSecure
+--
+-- Each section pairs the modifier with a placeholder so visitors
+-- can tap the field and see the keyboard / autofill chrome the
+-- platform offers (e.g. iOS suggests the Mail OTP for
+-- `numericCode`; Safari fills `password` from Keychain).
+--
+-- A live "Summary" section echoes the current values so changes
+-- are visible without devtools. Passwords mask as bullets so the
+-- summary stays safe to screen-share.
+
+
+type alias Model =
+    { email      : String
+    , password   : String
+    , newPwd     : String
+    , age        : String
+    , otp        : String
+    , otpAlt     : String
+    , bio        : String
+    , submitted  : Bool
+    }
+
+
+type Msg
+    = EmailChanged String
+    | PasswordChanged String
+    | NewPasswordChanged String
+    | AgeChanged String
+    | OtpChanged String
+    | OtpAltChanged String
+    | BioChanged String
+    | SubmitClicked
+    | Cleared
+
+
+emptyModel : Model
+emptyModel =
+    { email = "", password = "", newPwd = ""
+    , age = "", otp = "", otpAlt = ""
+    , bio = ""
+    , submitted = False
+    }
+
+
+init : () -> (Model, Effect String Msg)
+init _ = ( emptyModel, Effect.none )
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        EmailChanged v ->
+            ( { model | email = v, submitted = False }, Effect.none )
+
+        PasswordChanged v ->
+            ( { model | password = v, submitted = False }, Effect.none )
+
+        NewPasswordChanged v ->
+            ( { model | newPwd = v, submitted = False }, Effect.none )
+
+        AgeChanged v ->
+            ( { model | age = v, submitted = False }, Effect.none )
+
+        OtpChanged v ->
+            ( { model | otp = v, submitted = False }, Effect.none )
+
+        OtpAltChanged v ->
+            ( { model | otpAlt = v, submitted = False }, Effect.none )
+
+        BioChanged v ->
+            ( { model | bio = v, submitted = False }, Effect.none )
+
+        SubmitClicked ->
+            ( { model | submitted = True }, Effect.none )
+
+        Cleared ->
+            ( emptyModel, Effect.none )
+
+
+-- Build a row of N bullets so the Summary section can hint that a
+-- password field has a value without leaking it.
+bullets : String -> String
+bullets s =
+    if s == "" then
+        "(empty)"
+    else
+        String.join "" (List.map (\_ -> "•") (String.split "" s))
+
+
+-- Trivial "is this not a valid email shape" check for the
+-- errorText demo. Empty is allowed (don't shout at the user
+-- before they've typed); non-empty without an @ is rejected.
+-- A real validator would do more, but the showcase only needs
+-- something simple enough to trigger the error styling.
+emailLooksWrong : String -> Bool
+emailLooksWrong s =
+    if s == "" then
+        False
+    else
+        String.contains "@" s == False
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Forms" ]
+        [ form
+            [ section
+                [ header "email"
+                , footer "type=email, autocomplete=email, iOS suggests addresses from Contacts."
+                ]
+                [ textField [ email, submit SubmitClicked, width (chars 30) ]
+                    "you@example.com" model.email EmailChanged
+                ]
+            , section
+                [ header "password"
+                , footer "Masks input; Safari + iOS Keychain offer to autofill."
+                ]
+                [ textField [ password, submit SubmitClicked ]
+                    "Password" model.password PasswordChanged
+                ]
+            , section
+                [ header "newPassword"
+                , footer "Asks the password manager to generate + save a new one."
+                ]
+                [ textField [ newPassword, submit SubmitClicked ]
+                    "Choose a password" model.newPwd NewPasswordChanged
+                ]
+            , section
+                [ header "numeric"
+                , footer "Numeric keypad on mobile; rejects non-digit characters."
+                ]
+                [ textField [ numeric, submit SubmitClicked ]
+                    "Age" model.age AgeChanged
+                ]
+            , section
+                [ header "oneTimeCode"
+                , footer "iOS surfaces the latest OTP from Messages above the keyboard."
+                ]
+                [ textField [ oneTimeCode, submit SubmitClicked ]
+                    "6-digit code" model.otp OtpChanged
+                ]
+            , section
+                [ header "numericCode (numeric + oneTimeCode)"
+                , footer "Bundles the two: numeric keypad AND OTP autofill in one attr."
+                ]
+                [ textField [ numericCode, submit SubmitClicked ]
+                    "OTP" model.otpAlt OtpAltChanged
+                ]
+            , section
+                [ header "textArea (height via lines)"
+                , footer "Multi-line. `height (lines 4)` sets the visible row count without capping the text. Content beyond the visible area scrolls. Enter inserts a newline; Cmd/Ctrl+Enter fires submit."
+                ]
+                [ textArea [ submit SubmitClicked, height (lines 4) ]
+                    "Multi-line input" model.bio BioChanged
+                ]
+            -- ============= errorText validation pattern =============
+            --
+            -- errorText renders text styled with destructive intent
+            -- (red, semi-bold). The pattern below is the canonical
+            -- inline-validation shape: the field is always rendered,
+            -- and an errorText sits beneath it WHEN the model says
+            -- there's an error. No layout shift because empty-error
+            -- branches render nothing.
+            , section
+                [ header "errorText (inline validation)"
+                , footer "errorText sits below the field when validation fails. Try entering an email without an @ to see the message appear in red."
+                ]
+                [ textField [ email, submit SubmitClicked ]
+                    "you@example.com" model.email EmailChanged
+                , if emailLooksWrong model.email then
+                    errorText "Please enter a valid email address."
+                  else
+                    text ""
+                ]
+            , section [ header "actions" ]
+                [ button [] SubmitClicked "Submit"
+                , button [] Cleared "Clear"
+                ]
+            , section
+                [ header "Summary"
+                , footer
+                    (if model.submitted then
+                        "Submitted! (Demo only; nothing is sent.)"
+                     else
+                        "Tap Submit, or hit Enter / Return in any field above."
+                    )
+                ]
+                [ subtitle ("email · " ++ (if model.email == "" then "(empty)" else model.email))
+                , subtitle ("password · " ++ bullets model.password)
+                , subtitle ("new password · " ++ bullets model.newPwd)
+                , subtitle ("age · " ++ (if model.age == "" then "(empty)" else model.age))
+                , subtitle ("oneTimeCode · " ++ (if model.otp == "" then "(empty)" else model.otp))
+                , subtitle ("numericCode · " ++ (if model.otpAlt == "" then "(empty)" else model.otpAlt))
+                , subtitle ("bio · " ++ String.fromInt (String.length model.bio) ++ " chars")
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/forms"
+        , title = "Forms"
+        , init = init
+        , update = update
+        , view = view
+        }

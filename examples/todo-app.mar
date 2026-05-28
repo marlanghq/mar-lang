@@ -71,7 +71,7 @@ renderTodo t =
 view : Model -> View Msg
 view model =
     navigationStack [ navigationTitle "Todo" ]
-        [ list
+        [ list []
             [ section []
                 [ hstack []
                     [ textField [ submit AddTodo ]

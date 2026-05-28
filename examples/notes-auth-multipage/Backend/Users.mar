@@ -9,7 +9,11 @@ import Shared
 -- just the fields the framework needs.
 users : Entity Shared.User
 users =
-    Entity.define "users"
-        { id    = Entity.serial
-        , email = Entity.text Entity.notNull
+    Entity.define
+        { name = "users"
+        , columns =
+            { id    = Entity.serial
+            , email = Entity.text Entity.notNull
+            }
+        , uniques = []
         }

@@ -30,6 +30,8 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 		return VFloat{V: n.Value}, nil
 	case *ast.EString:
 		return VString{V: n.Value}, nil
+	case *ast.EChar:
+		return VChar{V: n.Value}, nil
 	case *ast.EUnit:
 		return VUnit{}, nil
 
@@ -324,6 +326,9 @@ func matchInto(pat ast.Pattern, v Value, bindings map[string]Value) bool {
 	case *ast.PString:
 		sv, ok := v.(VString)
 		return ok && sv.V == p.Value
+	case *ast.PChar:
+		cv, ok := v.(VChar)
+		return ok && cv.V == p.Value
 	case *ast.PUnit:
 		_, ok := v.(VUnit)
 		return ok
@@ -371,6 +376,28 @@ func matchInto(pat ast.Pattern, v Value, bindings map[string]Value) bool {
 		// Tail value is the rest of the list.
 		rest := VList{Elements: lv.Elements[1:]}
 		return matchInto(p.Tail, rest, bindings)
+	case *ast.PRecord:
+		// `{ f1, f2, ... }` — bind each listed field's value into the
+		// local scope. Partial-match semantics: the value record may
+		// have additional fields beyond those listed; we just ignore
+		// them. The typechecker has already verified that every
+		// listed field exists on the value's static type, so a
+		// missing field here means the runtime value is shaped
+		// differently than typecheck thought — which would itself be
+		// a typechecker bug. We treat that as "doesn't match" rather
+		// than panic.
+		rv, ok := v.(VRecord)
+		if !ok {
+			return false
+		}
+		for _, fname := range p.Fields {
+			fv, present := rv.Fields[fname]
+			if !present {
+				return false
+			}
+			bindings[fname] = fv
+		}
+		return true
 	}
 	return false
 }

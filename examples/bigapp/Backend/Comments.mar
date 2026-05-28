@@ -1,0 +1,284 @@
+module Backend.Comments exposing (comments, reactions, services, countForIssue)
+
+
+import Backend.Users
+import Backend.Issues
+import Backend.Activities
+import Backend.Mentions
+import Shared exposing (Role(..))
+
+
+-- Comments — one row per message under an issue. The view layer
+-- denormalizes the author so the frontend doesn't have to fan out
+-- user lookups per comment.
+comments : Entity Shared.Comment
+comments =
+    Entity.define
+        { name = "comments"
+        , columns =
+            { id        = Entity.serial
+            , issueId   = Entity.int  Entity.notNull
+            , authorId  = Entity.int  Entity.notNull
+            , body      = Entity.text Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- Reactions — emoji acks on comments. The composite UNIQUE on
+-- (commentId, userId, emoji) is what makes the toggle service safe:
+-- a second "add 👍" from the same user collapses into a no-op (and
+-- our toggle handler interprets the existing row as "remove it").
+-- Without the UNIQUE, two parallel clicks could land two rows for
+-- the same emoji from the same user and the toggle would drift.
+reactions : Entity Shared.Reaction
+reactions =
+    Entity.define
+        { name = "reactions"
+        , columns =
+            { id        = Entity.serial
+            , commentId = Entity.int  Entity.notNull
+            , userId    = Entity.int  Entity.notNull
+            , emoji     = Entity.text Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            }
+        , uniques = [["commentId", "userId", "emoji"]]
+        }
+
+
+-- ====================================================================
+-- HANDLERS
+-- ====================================================================
+
+listForIssue : Shared.ListComments -> Shared.User -> Effect String (List Shared.CommentView)
+listForIssue input user =
+    Repo.findBy comments { issueId = input.issueId }
+        |> Effect.andThen
+            (\raw ->
+                Effect.sequence (List.map (buildCommentView user.id) raw)
+            )
+
+
+create : Shared.NewComment -> Shared.User -> Effect String Shared.Comment
+create input user =
+    Time.now
+        |> Effect.andThen
+            (\now ->
+                Repo.create comments
+                    { issueId   = input.issueId
+                    , authorId  = user.id
+                    , body      = input.body
+                    , createdAt = now
+                    }
+                    |> Effect.andThen
+                        (\comment ->
+                            -- Two side effects after the primary
+                            -- write: parse + store @-mentions for the
+                            -- inbox, then emit the audit-log row. Both
+                            -- failures bubble up via the Effect monad
+                            -- (callers see them as a service error);
+                            -- the primary Repo.create has already
+                            -- committed by then so the comment
+                            -- survives even if these subsequent steps
+                            -- error out. That's the best-effort
+                            -- contract documented on the emit helpers.
+                            Backend.Mentions.parseAndStoreMentions comment
+                                |> Effect.andThen
+                                    (\_ ->
+                                        Backend.Activities.emitCommentCreated user comment
+                                    )
+                                |> Effect.map (\_ -> comment)
+                        )
+            )
+
+
+remove : Shared.DeleteComment -> Shared.User -> Effect String ()
+remove input user =
+    Repo.findById comments input.id
+        |> Effect.andThen
+            (\maybeComment ->
+                Repo.deleteById comments input.id
+                    |> Effect.andThen
+                        (\_ ->
+                            case maybeComment of
+                                Just c ->
+                                    Backend.Activities.emitCommentDeleted user c.id c.issueId
+
+                                Nothing ->
+                                    Effect.succeed ()
+                        )
+            )
+
+
+-- toggleReaction implements optimistic toggle semantics: if the
+-- (commentId, userId, emoji) triple already exists, delete it; if
+-- not, create it. The DB-level UNIQUE constraint guarantees we
+-- never accidentally create a duplicate even under racing tabs —
+-- the second `Repo.create` would fail; the lookup-first approach
+-- below avoids ever triggering that path on a normal request.
+--
+-- Errors from `Repo.create` (e.g. concurrent racing toggle) bubble
+-- up as a service error; the frontend re-fetches the comment view
+-- and converges to the right state on the next render.
+toggleReaction : Shared.ToggleReaction -> Shared.User -> Effect String ()
+toggleReaction input user =
+    Repo.findBy reactions
+        { commentId = input.commentId
+        , userId    = user.id
+        , emoji     = input.emoji
+        }
+        |> Effect.andThen
+            (\existing ->
+                case List.head existing of
+                    Just row ->
+                        Repo.deleteById reactions row.id
+
+                    Nothing ->
+                        Time.now
+                            |> Effect.andThen
+                                (\now ->
+                                    Repo.create reactions
+                                        { commentId = input.commentId
+                                        , userId    = user.id
+                                        , emoji     = input.emoji
+                                        , createdAt = now
+                                        }
+                                        |> Effect.andThen
+                                            (\_ ->
+                                                -- Audit only the ADD half of the
+                                                -- toggle. Removes are noise; the
+                                                -- timeline reads cleaner without
+                                                -- "Marcio reacted… and unreacted".
+                                                Backend.Activities.emitReactionAdded user input.commentId input.emoji
+                                            )
+                                )
+            )
+
+
+-- countForIssue — cheap helper to fill `commentCount` on an
+-- IssueView. Exported so Backend.Issues can call it after
+-- materializing each row.
+countForIssue : Int -> Effect String Int
+countForIssue issueId =
+    Repo.findBy comments { issueId = issueId }
+        |> Effect.map (\rows -> List.length rows)
+
+
+-- ====================================================================
+-- VIEW BUILDER
+-- ====================================================================
+
+-- buildCommentView denormalizes the author (name + email) onto the
+-- row AND attaches a reactions summary. The summary groups raw
+-- Reaction rows by emoji, counts each group, and flags any emoji
+-- the viewer themselves reacted with — that flag drives the
+-- "highlighted vs ghosted" pill state on the frontend.
+--
+-- Takes the viewer's user id so the `mineToo` flag is correct for
+-- each call. (Reactions are global per-comment; the personalization
+-- is at view-build time.)
+buildCommentView : Int -> Shared.Comment -> Effect String Shared.CommentView
+buildCommentView viewerId c =
+    Repo.findById Backend.Users.users c.authorId
+        |> Effect.andThen
+            (\maybeAuthor ->
+                Repo.findBy reactions { commentId = c.id }
+                    |> Effect.map
+                        (\reactRows ->
+                            let
+                                authorName =
+                                    case maybeAuthor of
+                                        Just u  -> u.name
+                                        Nothing -> "(deleted user)"
+
+                                authorEmail =
+                                    case maybeAuthor of
+                                        Just u  -> u.email
+                                        Nothing -> ""
+                            in
+                            { id          = c.id
+                            , issueId     = c.issueId
+                            , authorId    = c.authorId
+                            , authorName  = authorName
+                            , authorEmail = authorEmail
+                            , body        = c.body
+                            , createdAt   = c.createdAt
+                            , reactions   = summarizeReactions viewerId reactRows
+                            }
+                        )
+            )
+
+
+-- summarizeReactions groups raw reaction rows by emoji, computing
+-- both the total count per emoji and whether the viewer is among
+-- the reactors. Ordering of the returned list: by emoji string
+-- (stable + deterministic across re-renders) via List.sort.
+summarizeReactions : Int -> List Shared.Reaction -> List Shared.ReactionSummary
+summarizeReactions viewerId rows =
+    let
+        -- Distinct emojis in this comment's reactions. Mar's stdlib
+        -- has no List.unique today; the foldl below dedupes in O(n²)
+        -- which is fine for a comment that realistically tops out at
+        -- a handful of emoji variants. List.sort gives a stable view
+        -- order across calls.
+        distinctEmojis =
+            List.foldl
+                (\acc r ->
+                    if List.member r.emoji acc then
+                        acc
+                    else
+                        acc ++ [r.emoji]
+                )
+                []
+                rows
+                |> List.sort
+    in
+    List.map
+        (\emoji ->
+            let
+                matching = List.filter (\r -> r.emoji == emoji) rows
+            in
+            { emoji   = emoji
+            , count   = List.length matching
+            , mineToo = List.any (\r -> r.userId == viewerId) matching
+            }
+        )
+        distinctEmojis
+
+
+-- ====================================================================
+-- AUTHORIZATION
+-- ====================================================================
+
+-- Loader for delete: returns the comment so the policy can check
+-- whether the caller is the author OR an admin.
+loadCommentByDelete : Shared.DeleteComment -> Shared.User -> Effect String (Maybe Shared.Comment)
+loadCommentByDelete input _ =
+    Repo.findById comments input.id
+
+
+-- Anyone in the team can comment on any issue in the team (the
+-- ABAC check on listForIssue already enforces that). For delete,
+-- we additionally require either authorship OR admin.
+isAuthorOrAdmin : a -> Shared.User -> Shared.Comment -> Bool
+isAuthorOrAdmin _ caller comment =
+    case caller.role of
+        Admin  -> True
+        Member -> comment.authorId == caller.id
+
+
+-- Service manifest.
+services =
+    [ Auth.protect Shared.listComments  listForIssue
+    , Auth.protect Shared.createComment create
+
+    , Auth.protect Shared.deleteComment remove
+        |> Auth.authorize loadCommentByDelete isAuthorOrAdmin
+
+    -- Reactions: any authed user can toggle their own reaction
+    -- on any comment they can see. (The Auth.requireRole gate isn't
+    -- needed — toggleReaction is keyed on `user.id`, so no user can
+    -- modify someone else's reaction by construction.)
+    , Auth.protect Shared.toggleReaction toggleReaction
+    ]

@@ -1,12 +1,45 @@
 package jsserve
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"mar/internal/runtime"
 )
+
+// maxBodyBytes is the per-request body cap applied to /api/* and
+// /services/*. Loaded from mar.json["server"]["maxBodyBytes"] at
+// startup via SetMaxBodyBytes. The default (1 MiB, project.DefaultMaxBodyBytes)
+// is set here so the package is safe to use even if the CLI didn't
+// install one (test paths). Atomic so we don't need a mutex on the
+// read path, which is hit per-request.
+//
+// Secure-by-default: there is no "off" value — a missing or zero
+// configured value falls back to the default. Validation in the
+// project package guarantees user-configured values are in bounds
+// before they ever reach here.
+var maxBodyBytes atomic.Int64
+
+func init() {
+	// 1 MiB — same constant as project.DefaultMaxBodyBytes. Duplicated
+	// here (rather than imported) to avoid a project → jsserve back-
+	// reference; the values are pinned by tests in both packages.
+	maxBodyBytes.Store(1 << 20)
+}
+
+// SetMaxBodyBytes installs the per-request body cap. Called once at
+// boot from the CLI after mar.json is loaded. Values outside the
+// validator-enforced range are pinned to the default — a defensive
+// fallback if a caller ever bypasses Validate (e.g. test code).
+func SetMaxBodyBytes(n int64) {
+	if n < 1<<10 || n > 32<<20 { // [1 KiB, 32 MiB] — matches project bounds
+		n = 1 << 20
+	}
+	maxBodyBytes.Store(n)
+}
 
 // dispatchBackend mirrors the routing logic in runtime/server.go: matches
 // by method + path (with :name params), invokes the handler, runs the
@@ -31,7 +64,23 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 		if !ok {
 			continue
 		}
-		body, _ := io.ReadAll(req.Body)
+		// Cap the body. http.MaxBytesReader returns *http.MaxBytesError
+		// once the limit is hit; we surface that as 413 and bail. Without
+		// this cap, a single client sending Content-Length: 10GB would
+		// exhaust server memory before the handler runs (and the cap
+		// applies even when the client lies about Content-Length — the
+		// reader counts actual bytes).
+		req.Body = http.MaxBytesReader(w, req.Body, maxBodyBytes.Load())
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(w, "read request body", http.StatusBadRequest)
+			return
+		}
 		reqVal := buildRequestValue(req, body, params)
 		// If the route was produced by Auth.protected, attach the loaded
 		// user (or Nothing) under the well-known `__user` field so the
@@ -105,24 +154,25 @@ func requiresUser(r runtime.VRecord) bool {
 	return b.V
 }
 
-// loadUserForRequest reads the session cookie, validates the session,
-// loads the user record, returns it as Just/Nothing. Anything missing
-// or invalid → Nothing (the service wrapper turns that into 401).
+// loadUserForRequest reads the session token (cookie or Bearer header),
+// validates the session, loads the user record, returns it as
+// Just/Nothing. Anything missing or invalid → Nothing (the service
+// wrapper turns that into 401).
 func loadUserForRequest(req *http.Request) runtime.Value {
 	cfg := runtime.CurrentAuth()
 	secret := AuthSecret()
 	if cfg == nil || secret == "" {
 		return runtime.VCtor{Tag: "Nothing"}
 	}
-	c, err := req.Cookie(cookieName)
-	if err != nil || c.Value == "" {
+	tok := extractSessionToken(req)
+	if tok == "" {
 		return runtime.VCtor{Tag: "Nothing"}
 	}
 	db, err := dbHandle()
 	if err != nil {
 		return runtime.VCtor{Tag: "Nothing"}
 	}
-	uid, ok := sessionUserID(db, secret, c.Value)
+	uid, ok := sessionUserID(db, secret, tok)
 	if !ok {
 		return runtime.VCtor{Tag: "Nothing"}
 	}

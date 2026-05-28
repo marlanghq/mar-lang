@@ -1,0 +1,159 @@
+module Frontend.Profile exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , form, list, section, header
+    , hstack, vstack
+    , title, text, button, empty, errorText
+    )
+
+
+-- Public profile page. Fetches the ProfileView (user + counts +
+-- isFollowed + tweet list) and renders:
+--
+--   - Header: handle, display name, bio, follower / following
+--   - Follow / Unfollow button (hidden on own profile)
+--   - Tweet list [] (the user's own tweets, newest first)
+--
+-- The `{handle:String}` segment in the route is exposed as
+-- `params.handle` to init.
+
+
+type Loaded
+    = Loading
+    | Found Shared.ProfileView
+    | NotFound
+    | Failed String
+
+
+type alias Model =
+    { handle : String
+    , state  : Loaded
+    , busy   : Bool
+    }
+
+
+type Msg
+    = Fetched (Result String (Maybe Shared.ProfileView))
+    | FollowClicked
+    | UnfollowClicked
+    | FollowToggled (Result String ())
+
+
+init : Shared.User -> { handle : String } -> () -> (Model, Effect String Msg)
+init _ params _ =
+    ( { handle = params.handle, state = Loading, busy = False }
+    , Service.call Shared.loadProfile { handle = params.handle } Fetched
+    )
+
+
+update : Shared.User -> { handle : String } -> Msg -> Model -> (Model, Effect String Msg)
+update _ _ msg model =
+    case msg of
+        Fetched (Ok (Just view)) ->
+            ( { model | state = Found view }, Effect.none )
+
+        Fetched (Ok Nothing) ->
+            ( { model | state = NotFound }, Effect.none )
+
+        Fetched (Err why) ->
+            ( { model | state = Failed why }, Effect.none )
+
+        FollowClicked ->
+            ( { model | busy = True }
+            , Service.call Shared.follow { handle = model.handle } FollowToggled
+            )
+
+        UnfollowClicked ->
+            ( { model | busy = True }
+            , Service.call Shared.unfollow { handle = model.handle } FollowToggled
+            )
+
+        FollowToggled (Ok ()) ->
+            -- Re-fetch the profile to pick up the flipped counters
+            -- + isFollowed flag. Stale-while-revalidate: the old
+            -- state stays visible until the re-fetch lands.
+            ( { model | busy = False }
+            , Service.call Shared.loadProfile { handle = model.handle } Fetched
+            )
+
+        FollowToggled (Err _) ->
+            ( { model | busy = False }, Effect.none )
+
+
+renderTweet : Shared.TweetView -> View Msg
+renderTweet t =
+    section []
+        [ text t.body
+        , text (Time.toIso t.createdAt)
+        ]
+
+
+followButton : Shared.ProfileView -> Bool -> View Msg
+followButton view busy =
+    if view.isMe then
+        empty
+    else if busy then
+        button [] FollowClicked "…"
+    else if view.isFollowed then
+        button [] UnfollowClicked "Unfollow"
+    else
+        button [] FollowClicked "Follow"
+
+
+renderFound : Shared.ProfileView -> Bool -> View Msg
+renderFound view busy =
+    let
+        countLine =
+            text
+                (   String.fromInt view.followers  ++ " followers · "
+                 ++ String.fromInt view.following  ++ " following · "
+                 ++ String.fromInt view.tweetCount ++ " tweets"
+                )
+    in
+    list []
+        [ section []
+            [ title (view.user.displayName ++ " · @" ++ view.user.handle)
+            , if view.user.bio == "" then empty else text view.user.bio
+            , countLine
+            , followButton view busy
+            ]
+        , section [ header "Tweets" ]
+            (List.map renderTweet view.tweets)
+        ]
+
+
+view : Shared.User -> { handle : String } -> Model -> View Msg
+view _ _ model =
+    let
+        body =
+            case model.state of
+                Loading ->
+                    list [] [ section [] [ text "Loading…" ] ]
+
+                NotFound ->
+                    list [] [ section [] [ text "No user with that handle." ] ]
+
+                Failed why ->
+                    list [] [ section [] [ errorText ("Couldn't load: " ++ why) ] ]
+
+                Found view ->
+                    renderFound view model.busy
+    in
+    navigationStack
+        [ navigationTitle ("@" ++ model.handle) ]
+        [ body ]
+
+
+page : Page
+page =
+    Page.dynamicProtected
+        { path   = Frontend.Routes.profile
+        , title  = "Profile"
+        , init   = init
+        , update = update
+        , view   = view
+        }

@@ -26,16 +26,16 @@ type ModuleName []string
 
 // Exposing controls what a module exposes from itself or imports from another.
 type Exposing struct {
-	Pos    Pos
-	All    bool       // exposing (..)
-	Items  []ExposedItem // exposing (a, B, C(..))
+	Pos   Pos
+	All   bool          // exposing (..)
+	Items []ExposedItem // exposing (a, B, C(..))
 }
 
 // ExposedItem is a single name in an exposing list.
 type ExposedItem struct {
-	Pos    Pos
-	Name   string // "foo" (value) or "Foo" (type)
-	Open   bool   // true if "Foo(..)" — exposes type and all constructors
+	Pos  Pos
+	Name string // "foo" (value) or "Foo" (type)
+	Open bool   // true if "Foo(..)" — exposes type and all constructors
 }
 
 // --- Imports ---
@@ -63,7 +63,7 @@ type TypeAliasDecl struct {
 	Body   TypeExpr
 }
 
-func (d *TypeAliasDecl) declNode()      {}
+func (d *TypeAliasDecl) declNode()     {}
 func (d *TypeAliasDecl) Position() Pos { return d.Pos }
 
 // CustomTypeDecl — type Foo a = A | B Int | C String String
@@ -74,7 +74,7 @@ type CustomTypeDecl struct {
 	Constructors []Constructor
 }
 
-func (d *CustomTypeDecl) declNode()      {}
+func (d *CustomTypeDecl) declNode()     {}
 func (d *CustomTypeDecl) Position() Pos { return d.Pos }
 
 type Constructor struct {
@@ -91,7 +91,7 @@ type AnnotationDecl struct {
 	Type TypeExpr
 }
 
-func (d *AnnotationDecl) declNode()      {}
+func (d *AnnotationDecl) declNode()     {}
 func (d *AnnotationDecl) Position() Pos { return d.Pos }
 
 // ValueDecl — foo x y = expr
@@ -104,7 +104,7 @@ type ValueDecl struct {
 	Body   Expr
 }
 
-func (d *ValueDecl) declNode()      {}
+func (d *ValueDecl) declNode()     {}
 func (d *ValueDecl) Position() Pos { return d.Pos }
 
 // PortDecl — port foo : SomeType (rare; placeholder)
@@ -114,7 +114,7 @@ type PortDecl struct {
 	Type TypeExpr
 }
 
-func (d *PortDecl) declNode()      {}
+func (d *PortDecl) declNode()     {}
 func (d *PortDecl) Position() Pos { return d.Pos }
 
 // --- Type expressions ---
@@ -131,8 +131,8 @@ type TypeVar struct {
 	Name string
 }
 
-func (t *TypeVar) typeNode()       {}
-func (t *TypeVar) Position() Pos  { return t.Pos }
+func (t *TypeVar) typeNode()     {}
+func (t *TypeVar) Position() Pos { return t.Pos }
 
 // TypeCon — Int, String, MyType (uppercase, possibly qualified).
 // May be applied to args: List a, Result e a.
@@ -143,24 +143,24 @@ type TypeCon struct {
 	Args   []TypeExpr
 }
 
-func (t *TypeCon) typeNode()       {}
-func (t *TypeCon) Position() Pos  { return t.Pos }
+func (t *TypeCon) typeNode()     {}
+func (t *TypeCon) Position() Pos { return t.Pos }
 
 // TypeArrow — a -> b
 type TypeArrow struct {
-	Pos    Pos
-	From   TypeExpr
-	To     TypeExpr
+	Pos  Pos
+	From TypeExpr
+	To   TypeExpr
 }
 
-func (t *TypeArrow) typeNode()       {}
-func (t *TypeArrow) Position() Pos  { return t.Pos }
+func (t *TypeArrow) typeNode()     {}
+func (t *TypeArrow) Position() Pos { return t.Pos }
 
 // TypeRecord — { a : Int, b : String } or { r | a : Int } (row poly)
 type TypeRecord struct {
-	Pos       Pos
-	Extends   string         // "" if not extending; "r" for { r | ... }
-	Fields    []TypeRecField
+	Pos     Pos
+	Extends string // "" if not extending; "r" for { r | ... }
+	Fields  []TypeRecField
 }
 
 type TypeRecField struct {
@@ -169,8 +169,8 @@ type TypeRecField struct {
 	Type TypeExpr
 }
 
-func (t *TypeRecord) typeNode()       {}
-func (t *TypeRecord) Position() Pos  { return t.Pos }
+func (t *TypeRecord) typeNode()     {}
+func (t *TypeRecord) Position() Pos { return t.Pos }
 
 // TypeTuple — (Int, String) — n >= 2
 type TypeTuple struct {
@@ -178,16 +178,16 @@ type TypeTuple struct {
 	Members []TypeExpr
 }
 
-func (t *TypeTuple) typeNode()       {}
-func (t *TypeTuple) Position() Pos  { return t.Pos }
+func (t *TypeTuple) typeNode()     {}
+func (t *TypeTuple) Position() Pos { return t.Pos }
 
 // TypeUnit — () as a type
 type TypeUnit struct {
 	Pos Pos
 }
 
-func (t *TypeUnit) typeNode()       {}
-func (t *TypeUnit) Position() Pos  { return t.Pos }
+func (t *TypeUnit) typeNode()     {}
+func (t *TypeUnit) Position() Pos { return t.Pos }
 
 // --- Patterns (for function params, case branches, let bindings) ---
 
@@ -202,16 +202,16 @@ type PVar struct {
 	Name string
 }
 
-func (p *PVar) patNode()       {}
-func (p *PVar) Position() Pos  { return p.Pos }
+func (p *PVar) patNode()      {}
+func (p *PVar) Position() Pos { return p.Pos }
 
 // PWildcard — _
 type PWildcard struct {
 	Pos Pos
 }
 
-func (p *PWildcard) patNode()       {}
-func (p *PWildcard) Position() Pos  { return p.Pos }
+func (p *PWildcard) patNode()      {}
+func (p *PWildcard) Position() Pos { return p.Pos }
 
 // PInt is a literal pattern (also covers PString / PFloat literals).
 type PInt struct {
@@ -219,16 +219,26 @@ type PInt struct {
 	Value int64
 }
 
-func (p *PInt) patNode()       {}
-func (p *PInt) Position() Pos  { return p.Pos }
+func (p *PInt) patNode()      {}
+func (p *PInt) Position() Pos { return p.Pos }
 
 type PString struct {
 	Pos   Pos
 	Value string
 }
 
-func (p *PString) patNode()       {}
-func (p *PString) Position() Pos  { return p.Pos }
+func (p *PString) patNode()      {}
+func (p *PString) Position() Pos { return p.Pos }
+
+// PChar — char literal pattern: `case c of 'a' -> ...`. Compared by
+// rune equality at match time.
+type PChar struct {
+	Pos   Pos
+	Value rune
+}
+
+func (p *PChar) patNode()      {}
+func (p *PChar) Position() Pos { return p.Pos }
 
 // PCtor — Just x, Ok value, MyTag a b
 type PCtor struct {
@@ -238,8 +248,8 @@ type PCtor struct {
 	Args   []Pattern
 }
 
-func (p *PCtor) patNode()       {}
-func (p *PCtor) Position() Pos  { return p.Pos }
+func (p *PCtor) patNode()      {}
+func (p *PCtor) Position() Pos { return p.Pos }
 
 // PTuple — (a, b)
 type PTuple struct {
@@ -247,8 +257,8 @@ type PTuple struct {
 	Members []Pattern
 }
 
-func (p *PTuple) patNode()       {}
-func (p *PTuple) Position() Pos  { return p.Pos }
+func (p *PTuple) patNode()      {}
+func (p *PTuple) Position() Pos { return p.Pos }
 
 // PRecord — { a, b, c } — destructures record fields
 type PRecord struct {
@@ -256,16 +266,16 @@ type PRecord struct {
 	Fields []string
 }
 
-func (p *PRecord) patNode()       {}
-func (p *PRecord) Position() Pos  { return p.Pos }
+func (p *PRecord) patNode()      {}
+func (p *PRecord) Position() Pos { return p.Pos }
 
 // PUnit — ()
 type PUnit struct {
 	Pos Pos
 }
 
-func (p *PUnit) patNode()       {}
-func (p *PUnit) Position() Pos  { return p.Pos }
+func (p *PUnit) patNode()      {}
+func (p *PUnit) Position() Pos { return p.Pos }
 
 // PList — explicit list pattern, e.g. [], [a], [a, b]
 type PList struct {
@@ -299,24 +309,37 @@ type EInt struct {
 	Value int64
 }
 
-func (e *EInt) exprNode()       {}
-func (e *EInt) Position() Pos  { return e.Pos }
+func (e *EInt) exprNode()     {}
+func (e *EInt) Position() Pos { return e.Pos }
 
 type EFloat struct {
 	Pos   Pos
 	Value float64
 }
 
-func (e *EFloat) exprNode()       {}
-func (e *EFloat) Position() Pos  { return e.Pos }
+func (e *EFloat) exprNode()     {}
+func (e *EFloat) Position() Pos { return e.Pos }
 
 type EString struct {
 	Pos   Pos
 	Value string
 }
 
-func (e *EString) exprNode()       {}
-func (e *EString) Position() Pos  { return e.Pos }
+func (e *EString) exprNode()     {}
+func (e *EString) Position() Pos { return e.Pos }
+
+// EChar — single Unicode code point literal: 'a', '\n', '\u{1F600}'.
+// Value is the rune (int32). The lexer carries the decoded character
+// as a UTF-8 string in Token.Value; the parser decodes the single
+// rune. Used together with TChar in the typechecker and VChar (Go) /
+// VChar (JS) / .char (Swift) at runtime.
+type EChar struct {
+	Pos   Pos
+	Value rune
+}
+
+func (e *EChar) exprNode()     {}
+func (e *EChar) Position() Pos { return e.Pos }
 
 // EVar — foo, foo' (unqualified value)
 type EVar struct {
@@ -324,8 +347,8 @@ type EVar struct {
 	Name string
 }
 
-func (e *EVar) exprNode()       {}
-func (e *EVar) Position() Pos  { return e.Pos }
+func (e *EVar) exprNode()     {}
+func (e *EVar) Position() Pos { return e.Pos }
 
 // EQualified — Module.foo
 type EQualified struct {
@@ -334,8 +357,8 @@ type EQualified struct {
 	Name   string
 }
 
-func (e *EQualified) exprNode()       {}
-func (e *EQualified) Position() Pos  { return e.Pos }
+func (e *EQualified) exprNode()     {}
+func (e *EQualified) Position() Pos { return e.Pos }
 
 // ECtor — Just, Ok, MyTag (uppercase, may be qualified)
 type ECtor struct {
@@ -344,8 +367,8 @@ type ECtor struct {
 	Name   string
 }
 
-func (e *ECtor) exprNode()       {}
-func (e *ECtor) Position() Pos  { return e.Pos }
+func (e *ECtor) exprNode()     {}
+func (e *ECtor) Position() Pos { return e.Pos }
 
 // EFieldAccessor — .foo (a function: { r | foo : a } -> a)
 type EFieldAccessor struct {
@@ -353,8 +376,8 @@ type EFieldAccessor struct {
 	Field string
 }
 
-func (e *EFieldAccessor) exprNode()       {}
-func (e *EFieldAccessor) Position() Pos  { return e.Pos }
+func (e *EFieldAccessor) exprNode()     {}
+func (e *EFieldAccessor) Position() Pos { return e.Pos }
 
 // EFieldAccess — expr.foo
 type EFieldAccess struct {
@@ -363,8 +386,8 @@ type EFieldAccess struct {
 	Field  string
 }
 
-func (e *EFieldAccess) exprNode()       {}
-func (e *EFieldAccess) Position() Pos  { return e.Pos }
+func (e *EFieldAccess) exprNode()     {}
+func (e *EFieldAccess) Position() Pos { return e.Pos }
 
 // EApp — f x  (single application; chained calls become nested EApp)
 type EApp struct {
@@ -373,8 +396,8 @@ type EApp struct {
 	Arg Expr
 }
 
-func (e *EApp) exprNode()       {}
-func (e *EApp) Position() Pos  { return e.Pos }
+func (e *EApp) exprNode()     {}
+func (e *EApp) Position() Pos { return e.Pos }
 
 // EBinop — e1 OP e2 (kept as a binary node before precedence resolution)
 type EBinop struct {
@@ -384,8 +407,8 @@ type EBinop struct {
 	Right Expr
 }
 
-func (e *EBinop) exprNode()       {}
-func (e *EBinop) Position() Pos  { return e.Pos }
+func (e *EBinop) exprNode()     {}
+func (e *EBinop) Position() Pos { return e.Pos }
 
 // ELambda — \x y -> body
 type ELambda struct {
@@ -394,19 +417,19 @@ type ELambda struct {
 	Body   Expr
 }
 
-func (e *ELambda) exprNode()       {}
-func (e *ELambda) Position() Pos  { return e.Pos }
+func (e *ELambda) exprNode()     {}
+func (e *ELambda) Position() Pos { return e.Pos }
 
 // EIf — if c then t else e
 type EIf struct {
-	Pos   Pos
-	Cond  Expr
-	Then  Expr
-	Else  Expr
+	Pos  Pos
+	Cond Expr
+	Then Expr
+	Else Expr
 }
 
-func (e *EIf) exprNode()       {}
-func (e *EIf) Position() Pos  { return e.Pos }
+func (e *EIf) exprNode()     {}
+func (e *EIf) Position() Pos { return e.Pos }
 
 // ECase — case e of branches
 type ECase struct {
@@ -421,8 +444,8 @@ type CaseBranch struct {
 	Body    Expr
 }
 
-func (e *ECase) exprNode()       {}
-func (e *ECase) Position() Pos  { return e.Pos }
+func (e *ECase) exprNode()     {}
+func (e *ECase) Position() Pos { return e.Pos }
 
 // ELet — let bindings in body
 type ELet struct {
@@ -433,15 +456,15 @@ type ELet struct {
 
 // LetBinding is either a value binding (=) or an effect bind (<-).
 type LetBinding struct {
-	Pos       Pos
-	Pattern   Pattern
+	Pos        Pos
+	Pattern    Pattern
 	Annotation TypeExpr // optional; may be nil
-	Body      Expr
-	IsBind    bool // true for "x <- effect" (effect bind), false for "x = expr"
+	Body       Expr
+	IsBind     bool // true for "x <- effect" (effect bind), false for "x = expr"
 }
 
-func (e *ELet) exprNode()       {}
-func (e *ELet) Position() Pos  { return e.Pos }
+func (e *ELet) exprNode()     {}
+func (e *ELet) Position() Pos { return e.Pos }
 
 // ETuple — (a, b) when used as expression
 type ETuple struct {
@@ -449,8 +472,8 @@ type ETuple struct {
 	Members []Expr
 }
 
-func (e *ETuple) exprNode()       {}
-func (e *ETuple) Position() Pos  { return e.Pos }
+func (e *ETuple) exprNode()     {}
+func (e *ETuple) Position() Pos { return e.Pos }
 
 // EList — [a, b, c]
 type EList struct {
@@ -458,8 +481,8 @@ type EList struct {
 	Elements []Expr
 }
 
-func (e *EList) exprNode()       {}
-func (e *EList) Position() Pos  { return e.Pos }
+func (e *EList) exprNode()     {}
+func (e *EList) Position() Pos { return e.Pos }
 
 // ERecord — { a = 1, b = 2 }
 type ERecord struct {
@@ -473,8 +496,8 @@ type RecField struct {
 	Value Expr
 }
 
-func (e *ERecord) exprNode()       {}
-func (e *ERecord) Position() Pos  { return e.Pos }
+func (e *ERecord) exprNode()     {}
+func (e *ERecord) Position() Pos { return e.Pos }
 
 // ERecordUpdate — { record | field = newValue, other = ... }
 type ERecordUpdate struct {
@@ -483,16 +506,16 @@ type ERecordUpdate struct {
 	Fields []RecField
 }
 
-func (e *ERecordUpdate) exprNode()       {}
-func (e *ERecordUpdate) Position() Pos  { return e.Pos }
+func (e *ERecordUpdate) exprNode()     {}
+func (e *ERecordUpdate) Position() Pos { return e.Pos }
 
 // EUnit — ()
 type EUnit struct {
 	Pos Pos
 }
 
-func (e *EUnit) exprNode()       {}
-func (e *EUnit) Position() Pos  { return e.Pos }
+func (e *EUnit) exprNode()     {}
+func (e *EUnit) Position() Pos { return e.Pos }
 
 // ENegate — -expr (unary minus)
 type ENegate struct {
@@ -500,5 +523,5 @@ type ENegate struct {
 	Inner Expr
 }
 
-func (e *ENegate) exprNode()       {}
-func (e *ENegate) Position() Pos  { return e.Pos }
+func (e *ENegate) exprNode()     {}
+func (e *ENegate) Position() Pos { return e.Pos }

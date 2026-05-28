@@ -29,24 +29,35 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"mar/internal/project"
 )
 
-const flyDatabaseUsage = `Usage: mar fly database <command> [args]
-
-Commands:
-  backup                   Force a snapshot now. Lands in the
-                           production catalog (same place as
-                           auto-backups).
-  backups                  List the catalog (newest first).
-  backup download <id>     Pull a backup from the catalog to
-                           ./backups/<id>.tar.gz locally.
-
-Restore is in the admin panel UI: /_mar/admin → Database backups.`
+// flyDatabaseUsage returns the help text for `mar fly database`.
+// Same palette as flyUsage — see that function's comment.
+func flyDatabaseUsage() string {
+	bin := colorGreen("mar")
+	name := func(s string) string { return colorBold(s) }
+	url := func(s string) string { return colorCyan(s) }
+	hdr := func(s string) string { return colorBold(s) }
+	run := func(rest string) string { return bin + " " + name(rest) }
+	return "Usage: " + run("fly database") + " " + name("<command> [args]") + "\n" +
+		"\n" +
+		hdr("Commands:") + "\n" +
+		"  " + name("backup") + "                   Force a snapshot now. Lands in the\n" +
+		"                           production catalog (same place as\n" +
+		"                           auto-backups).\n" +
+		"  " + name("backups") + "                  List the catalog (newest first).\n" +
+		"  " + name("backup download <id>") + "     Pull a backup from the catalog to\n" +
+		"                           " + colorMagenta("./backups/<id>.tar.gz") + " locally.\n" +
+		"\n" +
+		"Restore is in the admin panel UI: " + url("/_mar/admin") + " → Database backups."
+}
 
 // runFlyDatabase dispatches `mar fly database <sub>`.
 func runFlyDatabase(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(os.Stderr, flyDatabaseUsage)
+		fmt.Fprintln(os.Stderr, flyDatabaseUsage())
 		if len(args) == 0 {
 			return 2
 		}
@@ -68,8 +79,8 @@ func runFlyDatabase(args []string) int {
 		return runFlyDatabaseList(".")
 	default:
 		fprintError("mar fly database: unknown subcommand %q", args[0])
+		fmt.Fprintln(os.Stderr, flyDatabaseUsage())
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, flyDatabaseUsage)
 		return 2
 	}
 }
@@ -88,16 +99,20 @@ const flyRemoteCatalogDir = "/data/backups"
 // backups) — no local download. Use `backup download <id>` if you
 // want a local copy.
 func runFlyDatabaseBackup(path string) int {
-	cfg, err := loadFlyConfig(path)
+	appName, _, _, err := resolveFlyApp(path)
 	if err != nil {
-		fprintError("mar fly database backup: %v", err)
+		if _, ok := err.(*project.DeployFlyError); ok {
+			printDeployFlyError(err)
+		} else {
+			fprintError("mar fly database backup: %v", err)
+		}
 		return 1
 	}
 	if _, err := requireFlyCLI(); err != nil {
 		fprintError("%v", err)
 		return 1
 	}
-	if err := ensureFlyAppExists(cfg.AppName); err != nil {
+	if err := ensureFlyAppExists(appName); err != nil {
 		fprintError("mar fly database backup: %v", err)
 		return 1
 	}
@@ -108,19 +123,28 @@ func runFlyDatabaseBackup(path string) int {
 	remotePath := flyRemoteCatalogDir + "/" + id + ".tar.gz"
 
 	fmt.Println()
-	fmt.Println("mar fly database backup: forcing a snapshot…")
-	fmt.Println()
 
-	cmd := exec.Command("fly", "ssh", "console",
-		"--app", cfg.AppName,
-		"-C", fmt.Sprintf("mkdir -p %s && mar-runtime backup %s",
-			flyRemoteCatalogDir, remotePath),
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		fprintError("mar fly database backup: snapshot failed:\n%s", out)
+	// The remote `mar-runtime backup` call runs over a fly ssh
+	// tunnel and stays silent for 5-30s depending on DB size.
+	// Capture the child output so the spinner has exclusive
+	// stdout access; on failure we surface whatever fly printed
+	// via fprintError below.
+	var snapshotOut []byte
+	if err := progressStepErr("Snapshotting database", func() error {
+		cmd := exec.Command("fly", "ssh", "console",
+			"--app", appName,
+			"-C", fmt.Sprintf("mkdir -p %s && mar-runtime backup %s",
+				flyRemoteCatalogDir, remotePath),
+		)
+		out, err := cmd.CombinedOutput()
+		snapshotOut = out
+		return err
+	}); err != nil {
+		fprintError("mar fly database backup: snapshot failed:\n%s", snapshotOut)
 		return 1
 	}
 
+	fmt.Println()
 	fmt.Printf("snapshot created in catalog: %s\n", colorCyan(id))
 	fmt.Println()
 	fmt.Printf("Pull a local copy with: %s\n",
@@ -132,44 +156,54 @@ func runFlyDatabaseBackup(path string) int {
 // runFlyDatabaseList shells `ls` on the remote catalog dir, parses
 // the output, and prints a tabular view.
 func runFlyDatabaseList(path string) int {
-	cfg, err := loadFlyConfig(path)
+	appName, _, _, err := resolveFlyApp(path)
 	if err != nil {
-		fprintError("mar fly database backups: %v", err)
+		if _, ok := err.(*project.DeployFlyError); ok {
+			printDeployFlyError(err)
+		} else {
+			fprintError("mar fly database backups: %v", err)
+		}
 		return 1
 	}
 	if _, err := requireFlyCLI(); err != nil {
 		fprintError("%v", err)
 		return 1
 	}
-	if err := ensureFlyAppExists(cfg.AppName); err != nil {
+	if err := ensureFlyAppExists(appName); err != nil {
 		fprintError("mar fly database backups: %v", err)
 		return 1
 	}
 
-	cmd := exec.Command("fly", "ssh", "console",
-		"--app", cfg.AppName,
-		"-C", fmt.Sprintf(
-			"if [ -d %s ]; then ls -1 %s | sort -r; else echo '__NO_CATALOG__'; fi",
-			flyRemoteCatalogDir, flyRemoteCatalogDir),
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
+	fmt.Println()
+
+	var out []byte
+	if err := progressStepErr("Loading catalog", func() error {
+		cmd := exec.Command("fly", "ssh", "console",
+			"--app", appName,
+			"-C", fmt.Sprintf(
+				"if [ -d %s ]; then ls -1 %s | sort -r; else echo '__NO_CATALOG__'; fi",
+				flyRemoteCatalogDir, flyRemoteCatalogDir),
+		)
+		o, e := cmd.CombinedOutput()
+		out = o
+		return e
+	}); err != nil {
 		fprintError("mar fly database backups: %v\n%s", err, out)
 		return 1
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) == 1 && strings.TrimSpace(lines[0]) == "__NO_CATALOG__" {
 		fmt.Println()
-		fmt.Printf("No backup catalog yet on %s.\n", colorCyan(cfg.AppName))
+		fmt.Printf("No backup catalog yet on %s.\n", colorCyan(appName))
 		fmt.Println()
 		fmt.Printf("Run %s to create the first backup, or wait for the auto-backup goroutine.\n",
-			colorGreen("mar fly database backup"))
+			cmdSuggest("fly database backup"))
 		fmt.Println()
 		return 0
 	}
 
 	fmt.Println()
-	fmt.Printf("backup catalog on %s (newest first):\n", colorCyan(cfg.AppName))
+	fmt.Printf("backup catalog on %s (newest first):\n", colorCyan(appName))
 	fmt.Println()
 	any := false
 	for _, line := range lines {
@@ -194,16 +228,20 @@ func runFlyDatabaseDownload(id, projectPath string) int {
 	if projectPath == "" {
 		projectPath = "."
 	}
-	cfg, err := loadFlyConfig(projectPath)
+	appName, _, _, err := resolveFlyApp(projectPath)
 	if err != nil {
-		fprintError("mar fly database backup download: %v", err)
+		if _, ok := err.(*project.DeployFlyError); ok {
+			printDeployFlyError(err)
+		} else {
+			fprintError("mar fly database backup download: %v", err)
+		}
 		return 1
 	}
 	if _, err := requireFlyCLI(); err != nil {
 		fprintError("%v", err)
 		return 1
 	}
-	if err := ensureFlyAppExists(cfg.AppName); err != nil {
+	if err := ensureFlyAppExists(appName); err != nil {
 		fprintError("mar fly database backup download: %v", err)
 		return 1
 	}
@@ -217,17 +255,26 @@ func runFlyDatabaseDownload(id, projectPath string) int {
 	remotePath := flyRemoteCatalogDir + "/" + id + ".tar.gz"
 
 	fmt.Println()
-	fmt.Printf("mar fly database backup download: pulling %s…\n", colorCyan(id))
-	fmt.Println()
 
-	get := exec.Command("fly", "ssh", "sftp", "get",
-		"--app", cfg.AppName,
-		remotePath, localPath,
-	)
-	if out, err := get.CombinedOutput(); err != nil {
-		fprintError("mar fly database backup download: %v\n%s", err, out)
+	// `fly ssh sftp get` is a single bulk transfer over an SSH
+	// tunnel. No progress reporting from fly, so the only signal
+	// the operator has that the wait is doing something is our
+	// spinner. Transfer can be tens of seconds for a real DB.
+	var sftpOut []byte
+	if err := progressStepErr(fmt.Sprintf("Pulling %s", colorCyan(id)), func() error {
+		get := exec.Command("fly", "ssh", "sftp", "get",
+			"--app", appName,
+			remotePath, localPath,
+		)
+		out, err := get.CombinedOutput()
+		sftpOut = out
+		return err
+	}); err != nil {
+		fprintError("mar fly database backup download: %v\n%s", err, sftpOut)
 		return 1
 	}
+
+	fmt.Println()
 
 	fi, _ := os.Stat(localPath)
 	var size string
@@ -244,7 +291,7 @@ func runFlyDatabaseDownload(id, projectPath string) int {
 		fmt.Printf("  created at:    %s\n", meta.CreatedAtRFC3339)
 		if len(meta.EnvRefs) > 0 {
 			fmt.Println()
-			fmt.Println("  required secrets to restore (set via `fly secrets set`):")
+			fmt.Println("  required secrets to restore (set via `mar fly secrets set`):")
 			for _, name := range meta.EnvRefs {
 				fmt.Printf("    %s\n", colorMagenta(name))
 			}

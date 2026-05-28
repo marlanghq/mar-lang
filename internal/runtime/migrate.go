@@ -28,27 +28,31 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"time"
 )
 
-// stderr is the destination for migrator log lines. Tests override
-// via SetMigrateStderr to capture output without leaking to the
-// real stderr.
-var migrateStderr io.Writer = os.Stderr
+// BlockedMigrationError is the structured error type the migrator
+// returns for unsafe schema changes. It splits the message into a
+// one-line `Summary` and a multi-line `Hint` so the CLI can render
+// them as the standard `Error:` (red) + `Hint:` (yellow) blocks
+// (see cmd/mar/color.go: fprintError / fprintHint).
+//
+// The Error() method falls back to the bundled `Summary\n\nHint`
+// shape so callers that just stringify the error still get a
+// readable message — useful for tests, logging, and the SSE
+// compile-error channel.
+type BlockedMigrationError struct {
+	Summary string // one-line headline (e.g. "migration blocked for entity tasks: ...")
+	Hint    string // multi-line body: root cause + remediation SQL + closing note
+}
 
-func stderr() io.Writer { return migrateStderr }
-
-// SetMigrateStderr redirects migrator log lines to the given writer.
-// Test-only helper. Pass nil to restore os.Stderr.
-func SetMigrateStderr(w io.Writer) {
-	if w == nil {
-		migrateStderr = os.Stderr
-		return
+func (e *BlockedMigrationError) Error() string {
+	if e.Hint == "" {
+		return e.Summary
 	}
-	migrateStderr = w
+	return e.Summary + "\n\n" + e.Hint
 }
 
 // MigrationStepKind classifies what a planned migration would do.
@@ -61,6 +65,12 @@ const (
 	StepRecreateEmpty // drop+recreate when nullability changed and table is empty
 	StepNoteOrphanTable
 	StepBlocked // unsafe — has a non-nil Error
+	// StepCreateUniqueIndex: a `CREATE UNIQUE INDEX IF NOT EXISTS`
+	// for a unique constraint declared via `Entity.unique`. Emitted
+	// after the table itself is present (so column references in the
+	// index resolve). Idempotent — re-running the migrator against a
+	// DB that already has the index is a no-op.
+	StepCreateUniqueIndex
 )
 
 // MigrationStep is one item in the diff plan.
@@ -99,6 +109,11 @@ func (s MigrationStep) migrationKind() string {
 		return "recreate_empty_table"
 	case StepNoteOrphanTable:
 		return "orphan_table"
+	case StepCreateUniqueIndex:
+		// Column carries the underscore-joined column list (set by
+		// planUniqueIndexes); using it as the audit suffix means
+		// audit log greps can distinguish indexes on the same table.
+		return "create_unique_index_" + s.Column
 	}
 	return "unknown"
 }
@@ -169,14 +184,14 @@ func RunBootMigrations() error {
 //	[migrate] table comments has no entity declaring it; ...
 func printRunSummary(s RunSummary) {
 	if len(s.Applied) > 0 {
-		fmt.Fprintf(stderr(), "[migrate] applied %d change(s) in %s\n",
+		fmt.Fprintf(os.Stderr, "[migrate] applied %d change(s) in %s\n",
 			len(s.Applied), s.Elapsed.Round(time.Millisecond))
 		for _, step := range s.Applied {
-			fmt.Fprintf(stderr(), "[migrate]   %s\n", step.Description)
+			fmt.Fprintf(os.Stderr, "[migrate]   %s\n", step.Description)
 		}
 	}
 	for _, note := range s.Notes {
-		fmt.Fprintf(stderr(), "[migrate] %s\n", note)
+		fmt.Fprintf(os.Stderr, "[migrate] %s\n", note)
 	}
 }
 
@@ -292,7 +307,7 @@ func (m *Migrator) acquireWithRetry() error {
 		} else if !isSqliteBusy(err) {
 			return err
 		}
-		fmt.Fprintf(stderr(), "[migrate] database %s is locked; retrying (%d/%d)\n",
+		fmt.Fprintf(os.Stderr, "[migrate] database %s is locked; retrying (%d/%d)\n",
 			displayPath(dbPath), i+1, attempts)
 		time.Sleep(delays[i])
 	}
@@ -399,12 +414,16 @@ func (m *Migrator) planEntity(ent VEntity) ([]MigrationStep, error) {
 		return nil, err
 	}
 	if !exists {
-		return []MigrationStep{{
+		steps := []MigrationStep{{
 			Kind:        StepCreateTable,
 			Table:       ent.Table,
 			SQL:         buildCreateTableSQLNew(ent),
 			Description: fmt.Sprintf("create table %s", ent.Table),
-		}}, nil
+		}}
+		// Indexes follow the CREATE TABLE so the column references
+		// resolve. SQLite would error otherwise.
+		steps = append(steps, planUniqueIndexes(ent)...)
+		return steps, nil
 	}
 
 	// Existing table — read live schema and diff column-by-column.
@@ -440,7 +459,60 @@ func (m *Migrator) planEntity(ent VEntity) ([]MigrationStep, error) {
 			return steps, nil // stop on first hard block — clear error path
 		}
 	}
+
+	// Unique indexes — emit unconditionally as IF NOT EXISTS. The
+	// migrator doesn't track per-index drift: an index that already
+	// matches is a no-op; an index that doesn't exist yet gets
+	// created. A removed Entity.unique leaves the old index in the
+	// DB (orphan) — documented as a v1 limitation; we'd add an
+	// "index drift" step later if it becomes a real problem.
+	steps = append(steps, planUniqueIndexes(ent)...)
 	return steps, nil
+}
+
+// planUniqueIndexes turns the entity's UniqueIndexes slice into a
+// sequence of StepCreateUniqueIndex steps. Empty if the entity has
+// no unique constraints. Index names are stable across boots
+// (<table>_uq_<col1>_<col2>...) so re-running the migrator emits the
+// same SQL the existing index already covers.
+func planUniqueIndexes(ent VEntity) []MigrationStep {
+	if len(ent.UniqueIndexes) == 0 {
+		return nil
+	}
+	steps := make([]MigrationStep, 0, len(ent.UniqueIndexes))
+	for _, cols := range ent.UniqueIndexes {
+		name := uniqueIndexName(ent.Table, cols)
+		steps = append(steps, MigrationStep{
+			Kind:        StepCreateUniqueIndex,
+			Table:       ent.Table,
+			Column:      strings.Join(cols, "_"), // used by migrationKind for audit suffix
+			SQL:         buildCreateUniqueIndexSQL(ent.Table, name, cols),
+			Description: fmt.Sprintf("create unique index %s on %s(%s)", name, ent.Table, strings.Join(cols, ", ")),
+		})
+	}
+	return steps
+}
+
+// uniqueIndexName builds the deterministic name we use for a
+// declared unique index. Format: `<table>_uq_<col1>_<col2>...`.
+// Stable across boots so `CREATE UNIQUE INDEX IF NOT EXISTS` is
+// idempotent — a re-run sees the same name and no-ops.
+func uniqueIndexName(table string, cols []string) string {
+	return table + "_uq_" + strings.Join(cols, "_")
+}
+
+// buildCreateUniqueIndexSQL emits the `CREATE UNIQUE INDEX IF NOT
+// EXISTS` statement. Both the index name and the column references
+// go through quoteIdent — column names are mar identifiers (alnum)
+// but quoting costs nothing and survives any future relaxation of
+// the allowed character set.
+func buildCreateUniqueIndexSQL(table, name string, cols []string) string {
+	quotedCols := make([]string, len(cols))
+	for i, c := range cols {
+		quotedCols[i] = quoteIdent(c)
+	}
+	return "CREATE UNIQUE INDEX IF NOT EXISTS " + quoteIdent(name) +
+		" ON " + quoteIdent(table) + " (" + strings.Join(quotedCols, ", ") + ")"
 }
 
 // planAddColumn decides whether adding a missing column is safe.
@@ -451,9 +523,8 @@ func (m *Migrator) planEntity(ent VEntity) ([]MigrationStep, error) {
 //     NOT NULL on empty tables.
 //
 // BLOCKED cases:
-//   - NOT NULL on a non-empty table without a default → user must
-//     either make it optional or (when Entity.default lands in v1)
-//     attach a default. The error message points at both fixes.
+//   - NOT NULL on a non-empty table → user must either make the
+//     column optional or backfill manually before re-running.
 //   - Serial column (auto-incrementing PK) — SQLite doesn't support
 //     adding AUTOINCREMENT via ALTER TABLE.
 func planAddColumn(ent VEntity, f EntityField, hasRows bool) (MigrationStep, error) {
@@ -463,9 +534,11 @@ func planAddColumn(ent VEntity, f EntityField, hasRows bool) (MigrationStep, err
 			Table:       ent.Table,
 			Column:      f.Name,
 			Description: fmt.Sprintf("blocked: cannot add auto-increment primary key to existing table %s", ent.Table),
-			Error: fmt.Errorf(`migration blocked for entity %s: cannot add auto-increment primary key %q to existing table %s.
-
-SQLite doesn't allow adding AUTOINCREMENT via ALTER TABLE. To migrate manually:
+			Error: &BlockedMigrationError{
+				Summary: fmt.Sprintf(
+					`migration blocked for entity %s: cannot add auto-increment primary key %q to existing table %s.`,
+					ent.Table, f.Name, ent.Table),
+				Hint: fmt.Sprintf(`SQLite doesn't allow adding AUTOINCREMENT via ALTER TABLE. To migrate manually:
 
     BEGIN TRANSACTION;
     ALTER TABLE %s RENAME TO %s_old;
@@ -474,9 +547,9 @@ SQLite doesn't allow adding AUTOINCREMENT via ALTER TABLE. To migrate manually:
     INSERT INTO %s (<other columns>) SELECT <other columns> FROM %s_old;
     DROP TABLE %s_old;
     COMMIT;`,
-				ent.Table, f.Name, ent.Table,
-				ent.Table, ent.Table, ent.Table, f.Name,
-				ent.Table, ent.Table, ent.Table),
+					ent.Table, ent.Table, ent.Table, f.Name,
+					ent.Table, ent.Table, ent.Table),
+			},
 		}, nil
 	}
 
@@ -486,21 +559,28 @@ SQLite doesn't allow adding AUTOINCREMENT via ALTER TABLE. To migrate manually:
 			Table:       ent.Table,
 			Column:      f.Name,
 			Description: fmt.Sprintf("blocked: cannot add NOT NULL column %q to non-empty table %s", f.Name, ent.Table),
-			Error: fmt.Errorf(`migration blocked for entity %s: cannot add required column %q (%s) to non-empty table %s.
+			Error: &BlockedMigrationError{
+				Summary: fmt.Sprintf(
+					`migration blocked for entity %s: cannot add required column %q (%s) to non-empty table %s.`,
+					ent.Table, f.Name, f.SQLType, ent.Table),
+				// Backticks mark identifiers; the CLI colorizer turns
+				// them cyan in the prose AND finds the same tokens
+				// in the SQL block to highlight there too. Don't
+				// rephrase without checking colorizeHint stays in
+				// sync — bare `tasks` / `position` in either spot
+				// is what makes the two halves visually match.
+				Hint: fmt.Sprintf(`Existing rows in `+"`"+`%s`+"`"+` would violate the NOT NULL constraint on `+"`"+`%s`+"`"+`.
 
-Options:
-  - Make the column optional in the entity declaration:
-      %s : ... -- without Entity.notNull
-  - Backfill the data manually first:
-      ALTER TABLE %s ADD COLUMN %s %s;
-      UPDATE %s SET %s = <value>;
-      -- then on next boot the migrator will assert NOT NULL and re-add the constraint.
+Either drop `+"`"+`Entity.notNull`+"`"+` from the declaration to make the column optional, or backfill manually:
 
-Note: a future Entity.default builtin will let you skip this manual step
-by attaching a default value the migrator can use to backfill.`,
-				ent.Table, f.Name, f.SQLType, ent.Table,
-				f.Name, ent.Table, f.Name, sqlTypeForDDL(f.SQLType),
-				ent.Table, f.Name),
+    ALTER TABLE %s ADD COLUMN %s %s;
+    UPDATE %s SET %s = <value>;
+
+After backfilling, re-run — the next boot detects the populated column and adds the NOT NULL constraint automatically.`,
+					ent.Table, f.Name,
+					ent.Table, f.Name, sqlTypeForDDL(f.SQLType),
+					ent.Table, f.Name),
+			},
 		}, nil
 	}
 
@@ -518,9 +598,11 @@ by attaching a default value the migrator can use to backfill.`,
 // when the column is fine.
 //
 // The Empty + Nullability-Change special case returns a
-// StepRecreateEmpty: the lispy version handled this by dropping the
-// (data-less) table and rebuilding from scratch, since no rows are
-// at risk. We mirror that.
+// StepRecreateEmpty: when the table has zero rows AND a nullability
+// constraint flipped (add/remove NOT NULL), we drop and rebuild from
+// scratch since no rows are at risk. The dev-time UX matters here —
+// most projects edit entity fields before any production data
+// exists, and a hard "incompatible change" error would feel hostile.
 func assertCompatibleColumn(ent VEntity, f EntityField, live tableInfoRow, hasRows bool) *MigrationStep {
 	expectedType := strings.ToUpper(sqlTypeForDDL(f.SQLType))
 	liveType := strings.ToUpper(strings.TrimSpace(live.Type))
@@ -530,9 +612,11 @@ func assertCompatibleColumn(ent VEntity, f EntityField, live tableInfoRow, hasRo
 			Table:       ent.Table,
 			Column:      f.Name,
 			Description: fmt.Sprintf("blocked: type changed for %s.%s", ent.Table, f.Name),
-			Error: fmt.Errorf(`migration blocked for entity %s.%s: column type changed from %s to %s in table %s.
-
-SQLite cannot change column types in place. To migrate manually:
+			Error: &BlockedMigrationError{
+				Summary: fmt.Sprintf(
+					`migration blocked for entity %s.%s: column type changed from %s to %s in table %s.`,
+					ent.Table, f.Name, liveType, expectedType, ent.Table),
+				Hint: fmt.Sprintf(`SQLite cannot change column types in place. To migrate manually:
 
     BEGIN TRANSACTION;
     ALTER TABLE %s RENAME TO %s_old;
@@ -541,9 +625,9 @@ SQLite cannot change column types in place. To migrate manually:
     INSERT INTO %s (<columns>) SELECT <columns, casting %s as needed> FROM %s_old;
     DROP TABLE %s_old;
     COMMIT;`,
-				ent.Table, f.Name, liveType, expectedType, ent.Table,
-				ent.Table, ent.Table, ent.Table,
-				ent.Table, f.Name, ent.Table, ent.Table),
+					ent.Table, ent.Table, ent.Table,
+					ent.Table, f.Name, ent.Table, ent.Table),
+			},
 		}
 	}
 
@@ -554,8 +638,12 @@ SQLite cannot change column types in place. To migrate manually:
 			Table:       ent.Table,
 			Column:      f.Name,
 			Description: fmt.Sprintf("blocked: primary-key shape changed for %s.%s", ent.Table, f.Name),
-			Error: fmt.Errorf(`migration blocked for entity %s.%s: primary-key shape changed in table %s. Mar does not auto-migrate primary-key changes; rename + rebuild the table manually.`,
-				ent.Table, f.Name, ent.Table),
+			Error: &BlockedMigrationError{
+				Summary: fmt.Sprintf(
+					`migration blocked for entity %s.%s: primary-key shape changed in table %s.`,
+					ent.Table, f.Name, ent.Table),
+				Hint: "Mar does not auto-migrate primary-key changes; rename + rebuild the table manually.",
+			},
 		}
 	}
 
@@ -577,9 +665,11 @@ SQLite cannot change column types in place. To migrate manually:
 				Table:       ent.Table,
 				Column:      f.Name,
 				Description: fmt.Sprintf("blocked: nullability changed for %s.%s", ent.Table, f.Name),
-				Error: fmt.Errorf(`migration blocked for entity %s.%s: nullability changed from %s to %s in table %s.
-
-SQLite cannot change NOT NULL constraints in place when data exists. To migrate manually:
+				Error: &BlockedMigrationError{
+					Summary: fmt.Sprintf(
+						`migration blocked for entity %s.%s: nullability changed from %s to %s in table %s.`,
+						ent.Table, f.Name, nullabilityLabel(liveNotNull), nullabilityLabel(expectedNotNull), ent.Table),
+					Hint: fmt.Sprintf(`SQLite cannot change NOT NULL constraints in place when data exists. To migrate manually:
 
     BEGIN TRANSACTION;
     ALTER TABLE %s RENAME TO %s_old;
@@ -587,8 +677,8 @@ SQLite cannot change NOT NULL constraints in place when data exists. To migrate 
     INSERT INTO %s (<columns>) SELECT <columns> FROM %s_old;
     DROP TABLE %s_old;
     COMMIT;`,
-					ent.Table, f.Name, nullabilityLabel(liveNotNull), nullabilityLabel(expectedNotNull), ent.Table,
-					ent.Table, ent.Table, ent.Table, ent.Table, ent.Table, ent.Table),
+						ent.Table, ent.Table, ent.Table, ent.Table, ent.Table, ent.Table),
+				},
 			}
 		}
 	}
@@ -617,7 +707,7 @@ func (m *Migrator) tableExists(name string) (bool, error) {
 		`SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1`,
 		name,
 	).Scan(&found)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
@@ -629,7 +719,7 @@ func (m *Migrator) tableExists(name string) (bool, error) {
 func (m *Migrator) tableHasRows(name string) (bool, error) {
 	var x int
 	err := m.db.QueryRow("SELECT 1 FROM " + quoteIdent(name) + " LIMIT 1").Scan(&x)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
@@ -706,11 +796,12 @@ func columnDefSQL(f EntityField) string {
 	return strings.Join(parts, " ")
 }
 
-// buildCreateTableSQLNew emits a non-IF-NOT-EXISTS CREATE TABLE for
-// the migrator. The IF-NOT-EXISTS variant exists in entity.go for
-// backward compat with the legacy lazy ensureMigrated path; the
-// migrator only emits CREATE for tables it has confirmed don't
-// exist.
+// buildCreateTableSQLNew emits a plain `CREATE TABLE` (no IF NOT
+// EXISTS) for the migrator. The migrator only emits CREATE for
+// tables it has just confirmed don't exist, so the guard would be
+// noise — and worse, would mask a real bug if drift were to make
+// the table already exist. entity.go has an IF-NOT-EXISTS variant
+// used elsewhere for one-shot static-table bootstrapping.
 func buildCreateTableSQLNew(e VEntity) string {
 	cols := make([]string, len(e.Fields))
 	for i, f := range e.Fields {

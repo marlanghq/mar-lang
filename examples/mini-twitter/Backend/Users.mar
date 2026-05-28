@@ -1,0 +1,31 @@
+module Backend.Users exposing (users)
+
+
+import Shared
+
+
+-- Users entity. The auth wiring in Main reads this through
+-- `Auth.config`. The `handle` and `displayName` columns are stored
+-- in this same row (rather than a separate profile table) because
+-- 1:1 profile data benefits from the join elimination, and storing
+-- the handle on the auth row lets us authenticate-and-look-up in
+-- one query.
+--
+-- `handle` and `displayName` start empty for fresh signups (the
+-- signup hook in Main creates the row before the user has picked a
+-- handle); the SetupProfile page is the first thing they hit and
+-- fills these in.
+users : Entity Shared.User
+users =
+    Entity.define
+        { name = "users"
+        , columns =
+            { id          = Entity.serial
+            , email       = Entity.text Entity.notNull
+            , handle      = Entity.text Entity.notNull
+            , displayName = Entity.text Entity.notNull
+            , bio         = Entity.text Entity.notNull
+            , createdAt   = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }

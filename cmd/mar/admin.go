@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,49 +29,60 @@ import (
 	"mar/internal/runtime"
 )
 
-const adminUsage = `mar admin — manage the admin panel access list
-
-Usage:
-  mar admin add EMAIL       Add EMAIL to mar.json["admins"]
-  mar admin remove EMAIL    Remove EMAIL from mar.json["admins"]
-  mar admin list            Print the current admins
-
-The admins list is the source of truth. The runtime syncs the
-_mar_admins DB table from this list on every boot.
-
-For production runtime inspection (last login, post-sync state),
-see "mar fly admin list".`
+// adminUsage returns the help text for `mar admin`. Same palette
+// as the root `mar` usage in main.go: only the literal `mar` binary
+// name is green; subcommand names and arg placeholders are bold;
+// paths magenta; headers bold.
+func adminUsage() string {
+	bin := colorGreen("mar")
+	name := func(s string) string { return colorBold(s) }
+	path := func(s string) string { return colorMagenta(s) }
+	hdr := func(s string) string { return colorBold(s) }
+	run := func(rest string) string { return bin + " " + name(rest) }
+	return bin + " " + name("admin") + " — manage the admin panel access list\n" +
+		"\n" +
+		hdr("Usage:") + "\n" +
+		"  " + run("admin add") + " " + name("EMAIL") + "       Add " + name("EMAIL") + " to " + path(`mar.json["admins"]`) + "\n" +
+		"  " + run("admin remove") + " " + name("EMAIL") + "    Remove " + name("EMAIL") + " from " + path(`mar.json["admins"]`) + "\n" +
+		"  " + run("admin list") + "            Print the current admins\n" +
+		"\n" +
+		"The admins list in " + path("mar.json") + " is the source of truth — the runtime\n" +
+		"re-syncs production from this list on every boot.\n" +
+		"\n" +
+		"For production runtime inspection (last login, post-sync state),\n" +
+		"see " + run("fly admin list") + "."
+}
 
 // runAdmin dispatches `mar admin <sub> ...`. Returns the process
 // exit code so main can propagate it.
 func runAdmin(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, adminUsage)
+		fmt.Fprintln(os.Stderr, adminUsage())
 		return 2
 	}
 	switch args[0] {
 	case "add":
 		if len(args) < 2 {
 			fprintError("mar admin add: missing EMAIL")
-			fprintHint("usage: %s", colorGreen("mar admin add YOUR_EMAIL"))
+			fprintHint("usage: %s", cmdSuggest("admin add <email>"))
 			return 2
 		}
 		return runAdminAdd(args[1])
 	case "remove", "rm":
 		if len(args) < 2 {
 			fprintError("mar admin remove: missing EMAIL")
-			fprintHint("usage: %s", colorGreen("mar admin remove YOUR_EMAIL"))
+			fprintHint("usage: %s", cmdSuggest("admin remove <email>"))
 			return 2
 		}
 		return runAdminRemove(args[1])
 	case "list", "ls":
 		return runAdminList()
 	case "-h", "--help", "help":
-		fmt.Println(adminUsage)
+		fmt.Println(adminUsage())
 		return 0
 	default:
 		fprintError("mar admin: unknown subcommand %q", args[0])
-		fprintHint("see %s", colorGreen("mar admin --help"))
+		fprintHint("see %s", cmdSuggest("admin --help"))
 		return 2
 	}
 }
@@ -131,14 +143,14 @@ func runAdminAdd(email string) int {
 	fmt.Printf("mar admin add: %s added to admins\n", colorCyan(email))
 	fmt.Println()
 	fmt.Printf("  → %s updated\n", colorMagenta("mar.json"))
-	fmt.Printf("  → next deploy will sync this to %s on production\n", colorMagenta("_mar_admins"))
+	fmt.Printf("  → next deploy will apply this to production's admin list\n")
 	fmt.Println()
 	fmt.Printf("In development, the sign-in code prints to the terminal (no SMTP needed).\n")
 	fmt.Printf("In production, codes are sent via the SMTP configured in %s.\n",
 		colorMagenta(`mar.json["mail"]`))
 	fmt.Println()
 	fmt.Printf("During development, the admin URL is %s.\n",
-		colorGreen(devAdminURL(manifest)))
+		colorCyan(devAdminURL(manifest)))
 	fmt.Println()
 	return 0
 }
@@ -197,7 +209,7 @@ func runAdminRemove(email string) int {
 	fmt.Printf("mar admin remove: %s removed from admins\n", colorCyan(email))
 	fmt.Println()
 	fmt.Printf("  → %s updated\n", colorMagenta("mar.json"))
-	fmt.Printf("  → next deploy will sync this to %s on production\n", colorMagenta("_mar_admins"))
+	fmt.Printf("  → next deploy will apply this to production's admin list\n")
 	fmt.Printf("  → existing admin sessions for %s will be revoked at next boot\n", colorCyan(email))
 	fmt.Println()
 	return 0
@@ -227,7 +239,7 @@ func runAdminList() int {
 		fmt.Printf("  %s\n", colorYellow("(none)"))
 		fmt.Println()
 		fmt.Printf("Run %s to enable the admin panel.\n",
-			colorGreen("mar admin add YOUR_EMAIL"))
+			cmdSuggest("admin add <email>"))
 		fmt.Println()
 		return 0
 	}
@@ -313,7 +325,7 @@ func patchAdmins(raw []byte, transform func([]string) []string) ([]byte, bool, e
 
 	// If admins didn't exist before, add it to keys (after "name" if
 	// present, else at the end, for predictable layout).
-	if !sliceContains(keys, "admins") {
+	if !slices.Contains(keys, "admins") {
 		insertAt := len(keys)
 		for i, k := range keys {
 			if k == "name" {
@@ -453,15 +465,6 @@ func equalStringSlice(a, b []string) bool {
 	return true
 }
 
-func sliceContains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
-}
-
 // LoadAdminsFromManifest is a small convenience for callers (the
 // boot-time sync, mostly) that don't need to mutate mar.json — they
 // just want the validated admins slice with consistent canonicalization.
@@ -508,16 +511,15 @@ func bootAdminPanel(manifest *project.Manifest) error {
 		fmt.Printf("[mar] admin panel: synced %d admins (+%d -%d)\n", len(desired), added, removed)
 	}
 	if len(desired) == 0 && !adminHintShown {
-		// Multi-line hint block. Blank line BEFORE only — whoever
-		// prints next is responsible for their own leading blank
-		// (docs/cli-style.md §1, "adjacent blocks rule"). This
-		// avoids two blocks adjacent to each other doubling up on
-		// blanks (hint+banner was 2 blanks, should be 1).
-		fmt.Fprintln(os.Stderr)
-		fprintHint("no admins configured — the admin panel at %s is locked.",
-			colorCyan("/_mar/admin"))
-		fmt.Fprintln(os.Stderr,
-			"      run "+colorGreen("mar admin add YOUR_EMAIL")+" to enable it.")
+		// Multi-line hint — continuation embedded in the format
+		// string so fprintHint emits the whole block as one unit
+		// (otherwise its trailing blank would split the Hint from
+		// the "run ..." line).
+		fprintHint(
+			"no admins configured — the admin panel at %s is locked.\n"+
+				"      run %s to enable it.",
+			colorCyan("/_mar/admin"),
+			cmdSuggest("admin add <email>"))
 		adminHintShown = true
 	}
 	return nil

@@ -1,0 +1,25 @@
+{
+  "name": "daily-checklist",
+  "admins": [
+    "mfdavid@gmail.com"
+  ],
+  "database": {
+    "path": "./checklist.db"
+  },
+  "auth": {
+    "sessionSecret": "env:SESSION_SECRET"
+  },
+  "mail": {
+    "from": "no-reply@segunda.tech",
+    "smtpHost": "smtp.resend.com",
+    "smtpUsername": "resend",
+    "smtpPassword": "env:SMTP_PASSWORD"
+  },
+  "ios": {
+    "bundleId": "com.yourcompany.dailychecklist",
+    "displayName": "daily-checklist",
+    "marketingVersion": "0.0.1",
+    "buildNumber": "1",
+    "serverUrl": "https://mar-daily-checklist.fly.dev"
+  }
+}

@@ -96,8 +96,49 @@ func stubUser(id int64, role string, extras map[string]Value) VRecord {
 }
 
 // just/nothing helpers
-func vJust(v Value) Value    { return VCtor{Tag: "Just", Args: []Value{v}} }
-func vNothing() Value        { return VCtor{Tag: "Nothing"} }
+func vJust(v Value) Value { return VCtor{Tag: "Just", Args: []Value{v}} }
+func vNothing() Value     { return VCtor{Tag: "Nothing"} }
+
+// TestAuthConfig_RejectsEmailFrom — the runtime parser must reject
+// `email.from` in Auth.config. The From: address lives in mar.json's
+// `mail.from` (the one verified with the SMTP provider); accepting
+// it in Mar source too would invite typos that silently shadow the
+// manifest value and break delivery at the provider. The reject
+// must fire loudly at startup, not silently in prod.
+func TestAuthConfig_RejectsEmailFrom(t *testing.T) {
+	entity := VEntity{
+		Table: "users",
+		Fields: []EntityField{
+			{Name: "id", SQLType: "INTEGER", NotNull: true, Serial: true},
+			{Name: "email", SQLType: "TEXT", NotNull: true},
+		},
+	}
+	identify := VFn{Arity: 1, Native: func(args []Value) (Value, error) { return VString{V: "x"}, nil }}
+	signup := VFn{Arity: 1, Native: func(args []Value) (Value, error) { return VRecord{}, nil }}
+
+	input := VRecord{
+		Order: []string{"entity", "identify", "email", "signup"},
+		Fields: map[string]Value{
+			"entity":   entity,
+			"identify": identify,
+			"email": VRecord{
+				Order: []string{"from", "subject"},
+				Fields: map[string]Value{
+					"from":    VString{V: "noreply@test.local"},
+					"subject": VString{V: "Sign in"},
+				},
+			},
+			"signup": signup,
+		},
+	}
+	_, err := makeAuthConfig([]Value{input})
+	if err == nil {
+		t.Fatal("expected error for Auth.config with email.from; got nil")
+	}
+	if !strings.Contains(err.Error(), "email.from") || !strings.Contains(err.Error(), "mail.from") {
+		t.Errorf("error should mention email.from and direct to mar.json's mail.from; got: %v", err)
+	}
+}
 
 // decorators ---------------------------------------------------------
 

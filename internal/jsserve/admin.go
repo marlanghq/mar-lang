@@ -22,6 +22,7 @@ import (
 
 	"mar/internal/admin"
 	"mar/internal/auth"
+	"mar/internal/project"
 	"mar/internal/runtime"
 )
 
@@ -46,28 +47,35 @@ var adminIPLimiter = auth.NewLimiter(20, time.Hour)
 // mountAdminHandlers registers all /_mar/admin/* routes on mux.
 // Called from ServeLive once the admin schema is ready. Routes:
 //
-//   /_mar/admin/auth/{request-code, verify-code, logout}
-//      — passwordless email-code flow (Phase 2)
+//	/_mar/admin/auth/{request-code, verify-code, logout}
+//	   — passwordless email-code flow (Phase 2)
 //
-//   /_mar/admin/static/{admin.css, admin.js}
-//      — embedded UI assets
+//	/_mar/admin/static/{admin.css, admin.js}
+//	   — embedded UI assets
 //
-//   /_mar/admin/api/whoami
-//      — session probe; 200 OK with the session record OR null
-//        (mirrors /_auth/whoami's shape).
+//	/_mar/admin/api/whoami
+//	   — session probe; 200 OK with the session record OR null
+//	     (mirrors /_auth/whoami's shape).
 //
-//   /_mar/admin/api/{server-info, db-stats, recent-requests, entity-rows}
-//      — JSON services consumed by the UI.
+//	/_mar/admin/api/{server-info, db-stats, recent-requests, entity-rows}
+//	   — JSON services consumed by the UI.
 //
-//   /_mar/admin/   (catch-all)
-//      — serves index.html (the SPA shell). Login state is detected
-//        client-side via /api/whoami so the same shell handles both
-//        unauthenticated and authenticated views.
+//	/_mar/admin/   (catch-all)
+//	   — serves index.html (the SPA shell). Login state is detected
+//	     client-side via /api/whoami so the same shell handles both
+//	     unauthenticated and authenticated views.
 func mountAdminHandlers(mux *http.ServeMux) {
-	mux.HandleFunc("/_mar/admin/auth/request-code", handleAdminRequestCode)
-	mux.HandleFunc("/_mar/admin/auth/verify-code", handleAdminVerifyCode)
-	mux.HandleFunc("/_mar/admin/auth/logout", handleAdminLogout)
+	// All /_mar/admin/auth/* and /_mar/admin/api/* endpoints sit
+	// behind the gateway rate limiter (per-IP, mar.json["rateLimit"]).
+	// /_mar/admin/auth/request-code additionally has adminIPLimiter
+	// (20/h) running inside the handler — see comment on that limiter.
+	mux.HandleFunc("/_mar/admin/auth/request-code", rateLimit(handleAdminRequestCode))
+	mux.HandleFunc("/_mar/admin/auth/verify-code", rateLimit(handleAdminVerifyCode))
+	mux.HandleFunc("/_mar/admin/auth/logout", rateLimit(handleAdminLogout))
 
+	// Static assets — bypass the rate limiter. The admin panel SPA
+	// loads CSS/JS once per page open; 429ing those would brick the
+	// UI for a legitimately bursty admin (think: opening 3 tabs).
 	staticFS := http.FS(admin.WebFS())
 	mux.Handle("/_mar/admin/static/", http.StripPrefix("/_mar/admin/static/",
 		http.FileServer(staticFS)))
@@ -80,16 +88,18 @@ func mountAdminHandlers(mux *http.ServeMux) {
 	// the user-auth convention so future frontend code looks
 	// identical for both. Other /api/* endpoints (which expose
 	// data, not session probes) keep the 401-on-no-session pattern.
-	mux.HandleFunc("/_mar/admin/api/whoami", handleAdminWhoami)
-	mux.HandleFunc("/_mar/admin/api/server-info", handleAdminServerInfo)
-	mux.HandleFunc("/_mar/admin/api/db-stats", handleAdminDBStats)
-	mux.HandleFunc("/_mar/admin/api/recent-requests", handleAdminRecentRequests)
-	mux.HandleFunc("/_mar/admin/api/entity-rows", handleAdminEntityRows)
+	mux.HandleFunc("/_mar/admin/api/whoami", rateLimit(handleAdminWhoami))
+	mux.HandleFunc("/_mar/admin/api/server-info", rateLimit(handleAdminServerInfo))
+	mux.HandleFunc("/_mar/admin/api/db-stats", rateLimit(handleAdminDBStats))
+	mux.HandleFunc("/_mar/admin/api/recent-requests", rateLimit(handleAdminRecentRequests))
+	mux.HandleFunc("/_mar/admin/api/entity-rows", rateLimit(handleAdminEntityRows))
 	mountAdminBackupHandlers(mux)
 
 	// Catch-all — serve the SPA shell. Path "/" matches "/_mar/admin"
 	// and any sub-route the JS router renders client-side. Must be
 	// registered last so the more-specific /api and /auth routes win.
+	// Not rate-limited: same reasoning as static assets — opening the
+	// page is a rare-but-bursty action.
 	mux.HandleFunc("/_mar/admin", handleAdminPage)
 	mux.HandleFunc("/_mar/admin/", handleAdminPage)
 }
@@ -244,6 +254,13 @@ func handleAdminRequestCode(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusBadRequest, "missing_email")
 		return
 	}
+	// Validate email shape — same reasoning as /_auth/request-code.
+	// Even though IsAdmin gates the actual send/issue downstream,
+	// rejecting garbage upfront keeps the codepath clean.
+	if !project.IsValidEmail(email) {
+		writeAuthError(w, http.StatusBadRequest, "invalid_email")
+		return
+	}
 
 	db, err := adminDB()
 	if err != nil {
@@ -361,7 +378,7 @@ func handleAdminVerifyCode(w http.ResponseWriter, r *http.Request) {
 		Path:     "/_mar/admin",
 		MaxAge:   int(admin.SessionTTL.Seconds()),
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   isHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"email": email})
@@ -388,7 +405,7 @@ func handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/_mar/admin",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   isHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -438,4 +455,3 @@ func SetAdminMailFrom(from string) {
 	adminMailFrom = from
 	authMu.Unlock()
 }
-

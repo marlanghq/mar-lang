@@ -2,19 +2,22 @@ module Frontend.SignIn exposing (page)
 
 
 import Shared
-import UI exposing (navigationStack, navigationTitle, form, section, text, textField, button, email, numericCode, submit)
+import UI exposing (navigationStack, navigationTitle, form, section, text, textField, button, email, numericCode, submit, empty, width, chars)
 
 
 -- Local state machine for the sign-in flow. No bootstrap of Auth.me
 -- here — the framework lets the user visit /sign-in even when logged
 -- in (creates a new session); if you want auto-redirect-to-/notes
 -- when already logged in, see the (future) `Page.guest` combinator.
-
-
+--
+-- The `Maybe String` slot on each input state carries the last
+-- server error for that step. `Just msg` renders inline below the
+-- input so the user sees why the previous attempt failed; `Nothing`
+-- renders to `empty` (a no-op view) so the layout doesn't jump.
 type Model
-    = AskEmail String
+    = AskEmail String (Maybe String)
     | Submitting String
-    | AskCode String String
+    | AskCode String String (Maybe String)
 
 
 -- DraftChanged / Submitted are step-agnostic — the Model already
@@ -29,31 +32,34 @@ type Msg
 
 init : () -> (Model, Effect String Msg)
 init _ =
-    ( AskEmail "", Effect.none )
+    ( AskEmail "" Nothing, Effect.none )
 
 
 update : Msg -> Model -> (Model, Effect String Msg)
 update msg model =
     case msg of
+        -- Typing clears any pending error — once the user edits the
+        -- input, the previous failure no longer reflects what's there.
+        -- Same pattern as a stale toast that clears on edit.
         DraftChanged value ->
             case model of
-                AskEmail _ ->
-                    ( AskEmail value, Effect.none )
+                AskEmail _ _ ->
+                    ( AskEmail value Nothing, Effect.none )
 
-                AskCode email _ ->
-                    ( AskCode email value, Effect.none )
+                AskCode email _ _ ->
+                    ( AskCode email value Nothing, Effect.none )
 
                 Submitting _ ->
                     ( model, Effect.none )
 
         Submitted ->
             case model of
-                AskEmail email ->
+                AskEmail email _ ->
                     ( Submitting email
                     , Auth.requestCode { email = email } CodeRequested
                     )
 
-                AskCode email code ->
+                AskCode email code _ ->
                     ( Submitting email
                     , Auth.verifyCode { email = email, code = code } CodeVerified
                     )
@@ -64,35 +70,72 @@ update msg model =
         CodeRequested (Ok ()) ->
             case model of
                 Submitting email ->
-                    ( AskCode email "", Effect.none )
+                    ( AskCode email "" Nothing, Effect.none )
 
                 _ ->
                     ( model, Effect.none )
 
-        CodeRequested (Err _) ->
+        -- requestCode failed (rate-limited, invalid email, etc.).
+        -- Park the explained error on AskEmail so the user sees what
+        -- went wrong and can retry without losing the email they
+        -- typed.
+        CodeRequested (Err why) ->
             case model of
                 Submitting email ->
-                    ( AskEmail email, Effect.none )
+                    ( AskEmail email (Just (explainError why)), Effect.none )
 
                 _ ->
                     ( model, Effect.none )
 
         CodeVerified (Ok _) ->
-            -- Login worked. Nav.afterSignIn returns the user to where
+            -- Login worked. Auth.completeSignIn returns the user to where
             -- a 401 sent them from (or "/" by default). Replaces history
             -- so back-button doesn't return to sign-in. Reset the state
             -- to AskEmail "" so a future sign-out + return doesn't land
             -- on the stale "Working…" screen (the framework preserves
             -- screen models across navigations to keep scroll/input state).
-            ( AskEmail "", Nav.afterSignIn )
+            ( AskEmail "" Nothing, Auth.completeSignIn )
 
-        CodeVerified (Err _) ->
+        -- verifyCode failed (wrong code, expired, too many tries).
+        -- Park the explained error on AskCode with the code field
+        -- cleared so the user can re-type without first deleting the
+        -- (now-invalid) previous attempt.
+        CodeVerified (Err why) ->
             case model of
                 Submitting email ->
-                    ( AskCode email "", Effect.none )
+                    ( AskCode email "" (Just (explainError why)), Effect.none )
 
                 _ ->
                     ( model, Effect.none )
+
+
+-- Translates the server's short error codes into human-readable
+-- text. Anything not in the table falls through to the raw code —
+-- useful during dev (operator sees the exact server identifier) and
+-- safe in prod (codes are reasonably readable already).
+explainError : String -> String
+explainError code =
+    case code of
+        "invalid_code" ->
+            "That code didn't work. Check your email or request a new one."
+
+        "too_many_attempts" ->
+            "Too many tries with this code. Request a new one."
+
+        "rate_limited" ->
+            "Too many attempts. Wait a moment before trying again."
+
+        "invalid_email" ->
+            "That doesn't look like a valid email address."
+
+        "missing_email" ->
+            "Email is required."
+
+        "missing_fields" ->
+            "Both fields are required."
+
+        _ ->
+            code
 
 
 -- View built from SwiftUI-style primitives. Each step renders as a
@@ -100,29 +143,35 @@ update msg model =
 -- uses natively. iOS gets a real NavigationStack + Form + Section
 -- (with safe-area + table styling); web gets `<main><form><section>`
 -- with CSS that mimics the iOS card-list look.
+--
+-- Errors surface as a plain text node directly below the input.
+-- `errorView` collapses to `empty` when there's nothing to show, so
+-- the layout doesn't jump between the success and failure cases.
 view : Model -> View Msg
 view model =
     case model of
-        AskEmail draft ->
+        AskEmail draft maybeErr ->
             navigationStack [ navigationTitle "Sign in" ]
                 [ form
                     [ section []
                         [ text "Enter your email and we'll send a one-time code."
-                        , textField [ email, submit Submitted ]
+                        , textField [ email, submit Submitted, width (chars 30) ]
                             "Email" draft DraftChanged
+                        , errorView maybeErr
                         ]
                     , section []
                         [ button [] Submitted "Send me a code" ]
                     ]
                 ]
 
-        AskCode emailAddr draft ->
+        AskCode emailAddr draft maybeErr ->
             navigationStack [ navigationTitle "Enter your code" ]
                 [ form
                     [ section []
-                        [ text ("We sent a 6-digit code to " ++ emailAddr ++ ". With no SMTP configured, it prints in the dev server's terminal.")
+                        [ text ("We sent a 6-digit code to " ++ emailAddr ++ ".")
                         , textField [ numericCode, submit Submitted ]
                             "Code" draft DraftChanged
+                        , errorView maybeErr
                         ]
                     , section []
                         [ button [] Submitted "Verify" ]
@@ -136,6 +185,16 @@ view model =
                         [ text "Working…" ]
                     ]
                 ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            text msg
 
 
 page : Page

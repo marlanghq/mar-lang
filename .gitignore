@@ -1,6 +1,15 @@
 *.db
 *.db-shm
 *.db-wal
+*.db.lock
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.tar.gz
+.claude/
 # macOS Finder metadata
 .DS_Store
 **/.DS_Store
@@ -14,6 +23,9 @@ dist/
 /mar-runtime
 vscode-mar/node_modules/
 vscode-mar/out/
+# Elm's per-project cache. Regenerated automatically by `elm make`.
+website/elm-stuff/
+website/review/elm-stuff/
 release-local.sh
 deploy/
 tmp/

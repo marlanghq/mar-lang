@@ -15,12 +15,29 @@
 import SwiftUI
 
 struct MarPageHost: View {
-    // PageRuntime is @Observable, so just holding a let-binding here
-    // is enough for SwiftUI to track property reads. @State would
-    // freeze the initial value (ignoring later inits with a fresh
-    // runtime), which is the wrong semantics when the parent re-
-    // creates MarPageHost on page navigation.
-    let runtime: PageRuntime
+    // Owned via @State so SwiftUI preserves the same PageRuntime
+    // instance across parent re-renders. Critical correctness fix:
+    // a background `program.json` refresh causes AppContext.pages
+    // to be reassigned mid-flight, which makes the route view
+    // rebuild with a freshly-constructed PageRuntime. As a plain
+    // `let`, that fresh instance would replace the live one, but
+    // .onAppear/.mount() wouldn't fire again (SwiftUI considers
+    // the route's identity stable). MarDispatcher.shared.current
+    // would still reference the now-orphaned old PageRuntime via
+    // `[weak self]` and silently no-op once it deallocates — any
+    // in-flight HTTP response would land on a dead runtime and the
+    // UI would freeze (e.g. "Working…" forever after Auth.verifyCode).
+    //
+    // With @State, the runtime survives re-renders. Navigation
+    // between distinct paths still works because each entry in
+    // NavigationStack's path is a fresh navigationDestination,
+    // which produces a new MarPageHost — @State is initialized
+    // anew per path, so the new page gets its own PageRuntime.
+    @State private var runtime: PageRuntime
+
+    init(runtime: PageRuntime) {
+        _runtime = State(initialValue: runtime)
+    }
 
     var body: some View {
         Group {

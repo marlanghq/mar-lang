@@ -10,6 +10,7 @@ import (
 
 	"mar/internal/appbundle"
 	"mar/internal/appbundle/stubs"
+	"mar/internal/apphost"
 	"mar/internal/ast"
 	"mar/internal/jsserve"
 	"mar/internal/project"
@@ -27,68 +28,22 @@ import (
 // Output depends on the topology the project's `main` picks:
 //
 //   - App.frontend → static dist/:
-//       index.html, runtime.js, program.json
+//     index.html, runtime.js, program.json
 //     Servable as plain files from any HTTP host (CDN, S3, etc.).
 //
 //   - App.backend or App.fullstack → self-contained executable:
-//       <distDir>/<projectName>      (or .exe on windows)
+//     <distDir>/<projectName>      (or .exe on windows)
 //     The mar-runtime stub for `target` is concatenated with a ZIP
 //     payload containing mar.json + every .mar source file. On startup
 //     the binary reads its own bytes, extracts the payload, and serves
 //     HTTP — no external mar toolchain required on the deploy host.
 func Build(entry, distDir, target string) error {
-	info, err := os.Stat(entry)
+	projectDir, bc, err := loadAndRunForBuild(entry)
 	if err != nil {
-		return fmt.Errorf("%s: %v", entry, err)
+		return err
 	}
-	mainFile := entry
-	projectDir := entry
-	if info.IsDir() {
-		mainFile = filepath.Join(entry, "Main.mar")
-		if _, err := os.Stat(mainFile); err != nil {
-			return fmt.Errorf("Main.mar not found in %s", entry)
-		}
-	} else {
-		projectDir = filepath.Dir(entry)
-	}
-
 	if target == "" {
 		target = stubs.HostTarget()
-	}
-
-	// Same load + override pattern as `mar dev`, but the overrides
-	// capture into a build context instead of a live server.
-	bc := &buildCtx{}
-	rEnv, _, _, err := project.LoadIntoEnvWithModulesAndHook(mainFile,
-		func(env *runtime.Env, mods []*ast.Module) {
-			fe := makeFrontendCapture(mods, bc)
-			env.Define("appFrontend", fe)
-			env.Define("App.frontend", fe)
-
-			be := makeBackendCapture(bc)
-			env.Define("appBackend", be)
-			env.Define("App.backend", be)
-
-			fs := makeFullstackCapture(mods, bc)
-			env.Define("appFullstack", fs)
-			env.Define("App.fullstack", fs)
-		})
-	if err != nil {
-		return err
-	}
-	mainVal, ok := rEnv.Lookup("Main.main")
-	if !ok {
-		mainVal, ok = rEnv.Lookup("main")
-	}
-	if !ok {
-		return fmt.Errorf("Main.mar must export `main`")
-	}
-	eff, ok := mainVal.(runtime.VEffect)
-	if !ok {
-		return fmt.Errorf("main is not an Effect (got %T)", mainVal)
-	}
-	if _, err := eff.Run(); err != nil {
-		return err
 	}
 
 	// Production validation. When the build target is a deploy
@@ -102,7 +57,7 @@ func Build(entry, distDir, target string) error {
 	// the host is sometimes used as a quick smoke test where the
 	// missing fields are intentional.
 	if isProductionTarget(target) {
-		if err := validateProductionConfig(projectDir); err != nil {
+		if err := ValidateProductionConfig(projectDir); err != nil {
 			return err
 		}
 		// Discovery warning — admin panel is opt-in and many projects
@@ -124,23 +79,30 @@ func Build(entry, distDir, target string) error {
 }
 
 // isProductionTarget reports whether `target` will be deployed to a
-// real host (vs. used as a local debugging artifact). All non-host
-// targets are deploys; host target is treated as dev unless
-// MAR_BUILD_PROD is set explicitly.
+// real host (vs. used as a local debugging artifact). Host target is
+// treated as dev; any non-host target (linux-amd64, etc.) is a deploy.
+//
+// To force prod-shaped output on your local machine without a deploy,
+// pick an explicit non-host target: `mar build --target=linux-amd64`
+// produces the same artifact `mar fly deploy` would push.
 func isProductionTarget(target string) bool {
 	if target == "" {
 		return false
 	}
-	if target == stubs.HostTarget() && os.Getenv("MAR_BUILD_PROD") == "" {
+	if target == stubs.HostTarget() {
 		return false
 	}
 	return true
 }
 
-// warnIfNoAdmins prints a one-line stderr hint when a production
-// build has no admins configured. Doesn't fail the build — admin
-// is opt-in. The warning ensures devs encountering the framework
-// for the first time learn the panel exists.
+// warnIfNoAdmins prints a stderr block when a production build has
+// no admins configured. Doesn't fail the build — some apps legitimately
+// don't want an admin panel — but flags the situation prominently so
+// the operator doesn't realize too late that prod has no admin access.
+//
+// `cmd/mar/fly.go` repeats this warning at the END of `mar fly deploy`
+// (after the long `fly deploy` output, when the operator's attention
+// is back) so the message isn't lost in scrollback.
 func warnIfNoAdmins(projectDir string) {
 	manifest, err := project.LoadManifestStructure(projectDir)
 	if err != nil {
@@ -154,11 +116,13 @@ func warnIfNoAdmins(projectDir string) {
 	// blank.
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr,
-		"Warn: building for production with no admins configured.")
+		"Warn: this production build has no admins configured.")
 	fmt.Fprintln(os.Stderr,
-		"      the admin panel at /_mar/admin will be inaccessible.")
+		"      The admin panel at /_mar/admin will reject every login.")
 	fmt.Fprintln(os.Stderr,
-		"      run `mar admin add YOUR_EMAIL` if you want admin access in production.")
+		"      Add an admin BEFORE deploying so you can manage prod:")
+	fmt.Fprintln(os.Stderr,
+		"        mar admin add <email>")
 }
 
 // ProductionConfigError is the structured error returned by
@@ -187,8 +151,11 @@ Add to mar.json:
 Hints:
   - smtpPort is optional and defaults to 587 (Resend, SendGrid,
     Mailgun, AWS SES, Postmark, Brevo, Mailjet all use it).
-  - sessionSecret and smtpPassword MUST be env:VAR_NAME — set
-    the values via 'mar fly provision'.`, joinMissingForPaste(e.Missing))
+  - sessionSecret and smtpPassword MUST be env:VAR_NAME — push
+    the actual values to Fly with 'mar fly secrets sync'.
+  - For Resend: smtpHost is "smtp.resend.com", smtpUsername is
+    "resend" (literal), and smtpPassword is your API key from
+    https://resend.com/api-keys.`, joinMissingForPaste(e.Missing))
 }
 
 // joinMissingForPaste stitches the suggested mar.json fragments
@@ -217,7 +184,112 @@ func joinMissingForPaste(missing []string) string {
 	return strings.Join(parts, "\n  ")
 }
 
-// validateProductionConfig asserts the project's mar.json carries
+// loadAndRunForBuild does the load + run-main step shared by Build
+// and Preflight. Returns the project directory + the populated
+// buildCtx (which captures App.frontend/backend/fullstack calls)
+// so the caller can decide what to do next.
+//
+// Side effect that matters: running main also registers global
+// runtime state (Entity.define hits runtime.RegisteredEntities,
+// Auth.config sets runtime.CurrentAuth, etc.). ValidateProductionConfig
+// reads CurrentAuth to know whether the app needs mail config —
+// so Preflight callers MUST run this before validating.
+func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err error) {
+	info, err := os.Stat(entry)
+	if err != nil {
+		return "", nil, fmt.Errorf("%s: %v", entry, err)
+	}
+	mainFile := entry
+	projectDir = entry
+	if info.IsDir() {
+		mainFile = filepath.Join(entry, "Main.mar")
+		if _, err := os.Stat(mainFile); err != nil {
+			return "", nil, fmt.Errorf("Main.mar not found in %s", entry)
+		}
+	} else {
+		projectDir = filepath.Dir(entry)
+	}
+
+	// Same load + override pattern as `mar dev`, but the overrides
+	// capture into a build context instead of a live server.
+	bc = &buildCtx{}
+	rEnv, mods, _, err := project.LoadIntoEnvWithModulesAndHook(mainFile,
+		func(env *runtime.Env, mods []*ast.Module) {
+			fe := makeFrontendCapture(mods, bc)
+			env.Define("appFrontend", fe)
+			env.Define("App.frontend", fe)
+
+			be := makeBackendCapture(bc)
+			env.Define("appBackend", be)
+			env.Define("App.backend", be)
+
+			fs := makeFullstackCapture(mods, bc)
+			env.Define("appFullstack", fs)
+			env.Define("App.fullstack", fs)
+		})
+	if err != nil {
+		return "", nil, err
+	}
+	mainVal, ok := project.LookupMain(rEnv, mods)
+	if !ok {
+		return "", nil, fmt.Errorf("Main.mar must export `main`")
+	}
+	eff, ok := mainVal.(runtime.VEffect)
+	if !ok {
+		return "", nil, fmt.Errorf("main is not an Effect (got %T)", mainVal)
+	}
+	if _, err := eff.Run(); err != nil {
+		return "", nil, err
+	}
+	return projectDir, bc, nil
+}
+
+// Preflight loads + runs the project's main (to register features
+// like Auth.config) and then validates mar.json against the result.
+// Produces no build artifacts. Used by deploy pre-flight so a
+// missing-config gap surfaces up front instead of after the app +
+// volume are already provisioned.
+//
+// Returns whatever ValidateProductionConfig would return:
+// *ProductionConfigError for missing fields (the CLI special-cases
+// it for nicer rendering), plain error for I/O or compile failures.
+func Preflight(projectDir string) error {
+	if _, _, err := loadAndRunForBuild(projectDir); err != nil {
+		return err
+	}
+	return ValidateProductionConfig(projectDir)
+}
+
+// Topology reports which App.* the project's main calls — "frontend",
+// "backend", or "fullstack". Runs main as a side effect (same path
+// Build / Preflight take), so the cost is one full evaluation.
+//
+// Used by `mar fly deploy` to pick the right Dockerfile shape:
+// frontend ships static files via Caddy; backend / fullstack ship
+// the self-contained binary. The fly subcommand calls this BEFORE
+// any cloud interaction so the operator sees compile errors in
+// main / mar.json first.
+//
+// Returns an error when main doesn\'t call any App.* (the project
+// has no executable shape).
+func Topology(projectDir string) (string, error) {
+	_, bc, err := loadAndRunForBuild(projectDir)
+	if err != nil {
+		return "", err
+	}
+	switch bc.kind {
+	case kindFrontend:
+		return "frontend", nil
+	case kindBackend:
+		return "backend", nil
+	case kindFullstack:
+		return "fullstack", nil
+	default:
+		return "", fmt.Errorf("main didn't call any of App.frontend / App.backend / App.fullstack — nothing to deploy")
+	}
+}
+
+// ValidateProductionConfig asserts the project's mar.json carries
 // the configuration the chosen runtime features need. Today
 // validates auth, mail, and the framework admin panel; other
 // features (Stripe, Twilio, etc.) would register their own
@@ -225,7 +297,13 @@ func joinMissingForPaste(missing []string) string {
 //
 // Returns *ProductionConfigError when mar.json needs additions.
 // Returns a plain error for unrelated I/O / parse problems.
-func validateProductionConfig(projectDir string) error {
+//
+// Called automatically by Build for production targets, AND by
+// `mar fly provision` as a pre-flight (so the operator catches the
+// gap before any Fly resources are created — otherwise provision
+// would succeed and the deploy would fail late with the same error).
+// Public so external callers (the fly provision wrapper) can run it.
+func ValidateProductionConfig(projectDir string) error {
 	// LoadManifestStructure reads without env-resolving — fly
 	// secrets aren't visible at build time, but we don't need
 	// their values, only that the env:VAR placeholder is wired.
@@ -302,7 +380,12 @@ func buildFrontendDist(distDir string, bc *buildCtx) error {
 	if err := os.MkdirAll(distDir, 0o755); err != nil {
 		return err
 	}
-	progJSON, err := makeProgramJSON(bc.frontMods, "main", false)
+	// Entry name "__entry" matches the synthetic decl PickFrontMods
+	// appends to bc.frontMods. Using "main" here would crash the
+	// browser with "entry not found: main" because the Main module
+	// itself isn\'t in frontMods (only modules reachable FROM pages
+	// are) — same convention as dev (apphost.go) and iOS (iosbuild.go).
+	progJSON, err := makeProgramJSON(bc.frontMods, "__entry", false)
 	if err != nil {
 		return err
 	}
@@ -419,7 +502,14 @@ const (
 type buildCtx struct {
 	kind      buildKind
 	frontMods []*ast.Module
-	title     string
+	// pages is the raw list of VPage values captured by App.frontend
+	// / App.fullstack. Saved so post-eval callers can build the
+	// synthetic `__entry = appFrontend [pages]` module that the
+	// browser / iOS runtimes look up at boot. Without it, the
+	// generated bundle has no top-level expression to evaluate and
+	// the runtime fails to mount any page.
+	pages []runtime.Value
+	title string
 }
 
 func makeFrontendCapture(mods []*ast.Module, bc *buildCtx) runtime.Value {
@@ -430,35 +520,27 @@ func makeFrontendCapture(mods []*ast.Module, bc *buildCtx) runtime.Value {
 			if !ok {
 				return nil, fmt.Errorf("App.frontend: expected List Page (got %T)", args[0])
 			}
-			roots := map[string]bool{}
-			for i, pv := range pageList.Elements {
-				page, ok := pv.(runtime.VPage)
-				if !ok {
-					return nil, fmt.Errorf("page %d is not a Page (got %T)", i, pv)
-				}
-				if page.OriginName == "" {
-					return nil, fmt.Errorf("page %d has no provenance — pages must be top-level bindings", i)
-				}
-				roots[page.OriginModule] = true
-			}
-			merged := []*ast.Module{}
-			seen := map[string]bool{}
-			for root := range roots {
-				for _, m := range reachableFrom(root, mods) {
-					name := joinName(m.Name)
-					if seen[name] {
-						continue
-					}
-					seen[name] = true
-					merged = append(merged, m)
-				}
+			// Delegate to apphost.PickFrontMods — the single source of
+			// truth for "page-reachable modules + synthetic __entry
+			// module". All three build paths (dev/apphost.go,
+			// web/here, iOS/iosbuild.go) go through it so the
+			// synthetic entry module always lands in the bundle.
+			// Skipping it would leave `envLookup("main")` failing at
+			// boot with "entry not found: main".
+			merged, err := apphost.PickFrontMods(pageList.Elements, mods)
+			if err != nil {
+				return nil, err
 			}
 			bc.kind = kindFrontend
 			bc.frontMods = merged
-			if len(merged) > 0 {
-				nm := merged[len(merged)-1].Name
-				if len(nm) > 0 {
+			bc.pages = pageList.Elements
+			// Title heuristic: pick the last USER-named module. The
+			// synthetic __entry module that PickFrontMods appends has
+			// Name == nil, so skip it.
+			for i := len(merged) - 1; i >= 0; i-- {
+				if nm := merged[i].Name; len(nm) > 0 {
 					bc.title = nm[len(nm)-1]
+					break
 				}
 			}
 			return runtime.VEffect{Tag: "appFrontend", Run: func() (runtime.Value, error) {
@@ -492,38 +574,6 @@ func makeFullstackCapture(mods []*ast.Module, bc *buildCtx) runtime.Value {
 	}
 }
 
-// reachableFrom + joinName are tiny duplicates of helpers in cmd/mar
-// and project — kept here to avoid circular imports.
-func reachableFrom(startModule string, mods []*ast.Module) []*ast.Module {
-	byName := map[string]*ast.Module{}
-	for _, m := range mods {
-		byName[joinName(m.Name)] = m
-	}
-	visited := map[string]bool{}
-	var order []*ast.Module
-	var visit func(name string)
-	visit = func(name string) {
-		if visited[name] {
-			return
-		}
-		visited[name] = true
-		mod, ok := byName[name]
-		if !ok {
-			return
-		}
-		for _, imp := range mod.Imports {
-			visit(joinName(imp.Module))
-		}
-		order = append(order, mod)
-	}
-	visit(startModule)
-	return order
-}
-
-func joinName(parts []string) string {
-	return strings.Join(parts, ".")
-}
-
 // makeProgramJSON serializes the merged frontend modules as the
 // browser bundle. devMode controls whether the JS runtime sets up
 // dev affordances (banner, SSE, time-travel) — false for built dists.
@@ -531,11 +581,11 @@ func makeProgramJSON(mods []*ast.Module, entry string, devMode bool) ([]byte, er
 	// Send modules separately so the browser/iOS runtime can register
 	// each decl under both its bare name (for intra-module references
 	// during evaluation) and a qualified `Module.name` form (so
-	// EQualified lookups from other modules resolve correctly). A
-	// previous version merged everything into one module here, which
-	// silently overwrote same-named decls across modules — two
-	// `Frontend.SignIn.page` and `Frontend.Home.page` collapsed into
-	// whichever was evaluated last, breaking multi-page apps.
+	// EQualified lookups from other modules resolve correctly).
+	// Merging everything into one module here is tempting but silently
+	// overwrites same-named decls across modules — e.g. both
+	// `Frontend.SignIn.page` and `Frontend.Home.page` would collapse
+	// into whichever was evaluated last, breaking multi-page apps.
 	serializedModules := make([]any, 0, len(mods))
 	for _, m := range mods {
 		serializedModules = append(serializedModules, jsserve.SerializeModule(m))
@@ -612,7 +662,7 @@ const productionPageHTML = `<!doctype html>
 <body>
 <div id="mar-root"></div>
 <script type="application/json" id="mar-program">%s</script>
-<script src="./runtime.js"></script>
+<script src="/runtime.js"></script>
 <script>
 window.addEventListener('DOMContentLoaded', function () {
   try {

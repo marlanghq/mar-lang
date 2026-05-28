@@ -1,9 +1,10 @@
 // Bonjour / mDNS discovery of mar backends on the local network.
 //
-// On launch, AppViewModel asks Discovery to start a browse for
-// `_mar._tcp`. Each server found is published as a DiscoveredServer.
-// When the user hasn't pinned a MarBaseURL via Settings yet,
-// AppViewModel auto-selects the first one resolved.
+// On launch (DEBUG builds only), AppViewModel asks Discovery to start
+// a browse for `_mar._tcp`. Each server found is published as a
+// DiscoveredServer; AppViewModel auto-selects the first one resolved,
+// which is how `mar dev` running on the developer's laptop gets
+// picked up by the iOS app without any URL configuration.
 //
 // Network framework choices:
 //   - NWBrowser is the supported Bonjour API on modern iOS. It
@@ -91,8 +92,9 @@ final class Discovery {
                 guard let resolved = await Self.resolve(endpoint: endpoint, name: name) else { return }
                 self?.merge(resolved)
             }
-            // Even before resolution, surface the name so the
-            // Settings tab can show "Resolving…" instead of empty.
+            // Even before resolution, surface the name with empty
+            // host/port — callers that show "discovered servers"
+            // can distinguish "found, resolving" from "fully ready".
             found.append(DiscoveredServer(name: name, host: "", port: 0))
         }
         // Replace placeholders only if we have nothing yet; otherwise

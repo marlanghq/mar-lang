@@ -1,0 +1,57 @@
+module Frontend.Examples exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header
+    , title, paragraph, span, link
+    )
+
+
+-- Examples page. Intentionally minimal: points at the GitHub
+-- `examples/` folder rather than duplicating each project's
+-- README inline. The reference apps evolve faster than the
+-- website would; sending people upstream keeps them looking at
+-- the current truth.
+
+
+type alias Model = ()
+
+
+type Msg
+    = NoOp
+
+
+init : () -> (Model, Effect String Msg)
+init _ = ((), Effect.none)
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update _ _ = ((), Effect.none)
+
+
+view : Model -> View Msg
+view _ =
+    navigationStack [ navigationTitle "Examples" ]
+        [ list []
+            [ section [ header "Where to find them" ]
+                [ title "Browse on GitHub"
+                , paragraph
+                    [ span [] "Reference Mar projects live in the "
+                    , span [link "https://github.com/marlanghq/mar-lang/tree/main/examples"] "examples/"
+                    , span [] " folder of the source repo. Open one alongside its README to see how a real Mar app is structured."
+                    ]
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/examples"
+        , title = "Examples"
+        , init = init
+        , update = update
+        , view = view
+        }

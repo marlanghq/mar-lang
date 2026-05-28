@@ -22,12 +22,16 @@ import Shared exposing (Role(..))
 
 notes : Entity Shared.Note
 notes =
-    Entity.define "notes"
-        { id        = Entity.serial
-        , body      = Entity.text Entity.notNull
-        , teamId    = Entity.int Entity.notNull
-        , authorId  = Entity.int Entity.notNull
-        , createdAt = Entity.timestamp Entity.notNull
+    Entity.define
+        { name = "notes"
+        , columns =
+            { id        = Entity.serial
+            , body      = Entity.text Entity.notNull
+            , teamId    = Entity.int Entity.notNull
+            , authorId  = Entity.int Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
         }
 
 

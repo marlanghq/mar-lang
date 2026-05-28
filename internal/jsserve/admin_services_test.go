@@ -60,7 +60,10 @@ func TestAdminServerInfo_BasicShape(t *testing.T) {
 func TestAdminServerInfo_RequiresAuth(t *testing.T) {
 	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
 	defer cleanup()
-	resp, _ := server.Client().Get(server.URL + "/_mar/admin/api/server-info")
+	resp, err := server.Client().Get(server.URL + "/_mar/admin/api/server-info")
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected 401; got %d", resp.StatusCode)
 	}
@@ -100,7 +103,10 @@ func TestAdminDBStats_SeparatesFrameworkFromBusiness(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, server.URL+"/_mar/admin/api/db-stats", nil)
 	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
-	resp, _ := client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	defer resp.Body.Close()
 	var got map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
@@ -194,7 +200,10 @@ func TestAdminRecentRequests_CaptureAndOrder(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, server.URL+"/_mar/admin/api/recent-requests", nil)
 	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
-	resp, _ := client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	defer resp.Body.Close()
 	var got map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
@@ -243,7 +252,10 @@ func TestAdminEntityRows_BrowsesUserTable(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet,
 		server.URL+"/_mar/admin/api/entity-rows?entity=notes&limit=3", nil)
 	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
-	resp, _ := client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("status: %d", resp.StatusCode)
@@ -318,7 +330,10 @@ func TestAdminEntityRows_RejectsUnknownEntity(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet,
 		server.URL+"/_mar/admin/api/entity-rows?entity=does_not_exist", nil)
 	req.AddCookie(&http.Cookie{Name: "mar_admin_session", Value: token})
-	resp, _ := client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404; got %d", resp.StatusCode)

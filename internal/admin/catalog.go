@@ -37,8 +37,8 @@ func CatalogDir(dbPath string) string {
 // panel API. SchemaFingerprint and other metadata live INSIDE the
 // tarball — Entry just describes what's on disk for listing.
 type CatalogEntry struct {
-	ID        string    // filename without .tar.gz extension, e.g. "2026-05-08-143022"
-	Path      string    // absolute path to the tarball
+	ID        string // filename without .tar.gz extension, e.g. "2026-05-08-143022"
+	Path      string // absolute path to the tarball
 	SizeBytes int64
 	CreatedAt time.Time // parsed from the filename timestamp
 }
@@ -57,6 +57,21 @@ func NewCatalogID(now time.Time) string {
 // inside the catalog directory.
 func CatalogPath(catalogDir, id string) string {
 	return filepath.Join(catalogDir, id+".tar.gz")
+}
+
+// IsValidCatalogID reports whether s matches the catalog ID layout
+// (YYYY-MM-DD-HHMMSS, all digits + dashes). Defense-in-depth against
+// path traversal: every place that takes an `id` from the network
+// must check this before joining into a filesystem path. Without it,
+// `..%2F..%2Fetc%2Fpasswd` would round-trip through filepath.Join
+// and only be blocked by the os.Stat that follows — fine but brittle.
+//
+// time.Parse with the catalog layout is the canonical check: it
+// rejects any string that isn't exactly the right shape, including
+// non-numeric characters and out-of-range fields.
+func IsValidCatalogID(s string) bool {
+	_, err := time.Parse(catalogIDLayout, s)
+	return err == nil
 }
 
 // ListCatalog returns all backup entries in the catalog, newest

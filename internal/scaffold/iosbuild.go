@@ -3,14 +3,88 @@ package scaffold
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strings"
 
+	"mar/internal/apphost"
 	"mar/internal/ast"
 	"mar/internal/iosbundle"
 	"mar/internal/project"
 	"mar/internal/runtime"
 )
+
+// IOSBuildResult is the structured outcome of BuildIOS — what the
+// caller needs to render a properly-formatted summary at the
+// presentation layer. Returning a value (instead of printing inline)
+// lets cmd/mar own the color palette and spacing rules without
+// scaffold having to import them.
+type IOSBuildResult struct {
+	// OutputDir is the absolute path to the materialized scaffold
+	// (e.g. <distDir>/<AppName>/).
+	OutputDir string
+
+	// ProjectDir is the project root (the directory containing
+	// mar.json). Exposed so cmd/mar can peek at sibling files like
+	// deploy/fly/fly.toml to enrich the "missing serverUrl"
+	// suggestion with the operator's actual deploy slug.
+	ProjectDir string
+
+	// AppName is the SwiftIdentifier-mangled name baked into the
+	// .pbxproj as the target / scheme name. May differ from
+	// manifest.Name when the manifest contains spaces or
+	// punctuation (e.g. "notes-fullstack" → "NotesFullstack").
+	AppName string
+
+	// BundleID, DisplayName, MarketingVersion, BuildNumber are the
+	// values from mar.json's `ios` block (all required for the
+	// build to succeed). Exposed so the build summary can echo
+	// what's about to be signed / archived.
+	BundleID         string
+	DisplayName      string
+	MarketingVersion string
+	BuildNumber      string
+
+	// BaseURL is the production backend URL baked into Info.plist
+	// as MarBaseURL — what RELEASE builds talk to. When empty,
+	// the bundle falls back to http://localhost:3000 and
+	// MissingServerURL is true.
+	BaseURL string
+
+	// MissingServerURL is true when ios.serverUrl in mar.json was
+	// not set. Caller should warn the operator before shipping to
+	// TestFlight / App Store.
+	MissingServerURL bool
+}
+
+// IOSConfigError reports that mar.json's `ios` block is missing
+// required fields. cmd/mar prints it as a typed error with a
+// paste-ready JSON snippet that combines the missing fields with
+// reasonable starter values — the operator can copy the block into
+// mar.json and have a working build on the next attempt.
+//
+// Captured separately from a plain `error` so cmd/mar can render it
+// with the production-config-style formatting (multi-line magenta
+// JSON, dimmed placeholders) without scaffold having to import the
+// color helpers.
+type IOSConfigError struct {
+	// Missing lists the field names that aren't set in mar.json,
+	// in stable order. Always at least one entry — empty Missing
+	// means the validation passed and IOSConfigError shouldn't
+	// have been constructed.
+	Missing []string
+
+	// Suggestions maps each missing field to the example value
+	// shown in the paste-ready JSON. Computed at validation time
+	// because some suggestions depend on context (bundleId
+	// includes the lowercased project name, displayName echoes
+	// manifest.name).
+	Suggestions map[string]string
+}
+
+func (e *IOSConfigError) Error() string {
+	return fmt.Sprintf("mar.json: ios block missing required fields: %s",
+		strings.Join(e.Missing, ", "))
+}
 
 // BuildIOS materializes a generic Swift/SwiftUI iOS scaffold under
 // <distDir>/<AppName>/, wired to talk to a mar backend via /_mar/schema.
@@ -27,97 +101,130 @@ import (
 //     discovery during local Xcode debug-builds; release builds talk
 //     only to ServerURL.
 //
-// `baseURLOverride` is an optional ad-hoc override (passed via
-// `--base-url`) that takes precedence over `ios.serverUrl` for this
-// invocation only. Useful for QA / staging without editing mar.json.
-//
 // The Swift code is regenerated on every build and intended as
 // disposable infrastructure: customizing your iOS app means changing
 // your mar code, not the iOS scaffolding.
-func BuildIOS(entry, distDir, baseURLOverride, marVersion string) error {
+func BuildIOS(entry, distDir, marVersion string) (IOSBuildResult, error) {
 	projectDir, err := resolveProjectDir(entry)
 	if err != nil {
-		return err
+		return IOSBuildResult{}, err
 	}
 
 	appName := defaultIOSAppName(projectDir)
-	// LoadManifest validates mar.json — including the new ios.serverUrl
-	// shape rule. Surface validation errors directly so the user sees
-	// "ios.serverUrl must be https://..." rather than mysterious
-	// downstream behavior.
-	manifest, mErr := project.LoadManifest(projectDir)
+	// Structure-only load (no env:VAR resolution). The iOS build
+	// reads only structural fields from the manifest; going through
+	// the env-resolving LoadManifest would fail on projects that
+	// reference SMTP_PASSWORD / SESSION_SECRET as Fly secrets
+	// (correctly absent from the developer's shell) and block the
+	// iOS build for no reason.
+	manifest, mErr := project.LoadManifestStructure(projectDir)
 	if mErr != nil {
-		return fmt.Errorf("mar build: %w", mErr)
+		return IOSBuildResult{}, fmt.Errorf("mar build: %w", mErr)
 	}
 	if manifest != nil && manifest.Name != "" {
 		appName = manifest.Name
 	}
 
-	// Resolve the backend URL by precedence:
-	//   1. --base-url flag (override for one-off builds)
-	//   2. mar.json ios.serverUrl (the documented home)
-	//   3. empty — Info.plist falls back to http://localhost:3000
-	//      AND the build prints a hint that release builds need a URL.
-	baseURL := baseURLOverride
-	if baseURL == "" && manifest != nil && manifest.IOS != nil {
-		baseURL = manifest.IOS.ServerURL
+	var ios *project.IOSConfig
+	if manifest != nil {
+		ios = manifest.IOS
 	}
-	if baseURL == "" {
-		fmt.Fprintln(os.Stderr,
-			"Warn: ios.serverUrl is not set in mar.json. The generated app will")
-		fmt.Fprintln(os.Stderr,
-			"      default to http://localhost:3000 in DEBUG (with Bonjour discovery)")
-		fmt.Fprintln(os.Stderr,
-			"      and have no production backend in RELEASE.")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr,
-			"      Add to mar.json before shipping to TestFlight / App Store:")
-		fmt.Fprintln(os.Stderr,
-			`        "ios": { "serverUrl": "https://my-app.fly.dev" }`)
-		fmt.Fprintln(os.Stderr)
+	if cfgErr := validateIOSConfig(ios, appName); cfgErr != nil {
+		return IOSBuildResult{}, cfgErr
 	}
 
 	// Compile the user's mar code into program.json so the iOS app
 	// can render its first screen instantly from the embedded bundle
-	// (Approach C — instant cold start). Failure here means the
-	// user's mar source has an error; surface it the same way other
-	// build paths do.
+	// (instant cold start). Failure here means the user's mar source
+	// has an error; surface it the same way other build paths do.
 	programJSON, err := compileIOSProgram(entry)
 	if err != nil {
-		return fmt.Errorf("mar build: %w", err)
+		return IOSBuildResult{}, fmt.Errorf("mar build: %w", err)
 	}
 
-	out, err := iosbundle.Generate(iosbundle.Spec{
-		AppName:           appName,
-		DefaultBaseURL:    baseURL,
-		MarVersion:        marVersion,
-		EmbeddedProgram:   programJSON,
-	}, distDir)
+	spec := iosbundle.Spec{
+		AppName:          appName,
+		BundleID:         ios.BundleID,
+		DisplayName:      ios.DisplayName,
+		MarketingVersion: ios.MarketingVersion,
+		BuildNumber:      ios.BuildNumber,
+		DefaultBaseURL:   ios.ServerURL,
+		MarVersion:       marVersion,
+		EmbeddedProgram:  programJSON,
+	}
+	out, err := iosbundle.Generate(spec, distDir)
 	if err != nil {
-		return err
+		return IOSBuildResult{}, err
 	}
 
-	fmt.Printf("[mar build] iOS scaffold written to %s\n", out)
+	// ServerURL is the only optional field. When empty the bundle
+	// falls back to http://localhost:3000 (handled inside
+	// iosbundle.Generate); the result echoes that fallback so the
+	// summary line is honest, and MissingServerURL flags the warn.
+	resolvedBaseURL := ios.ServerURL
+	if resolvedBaseURL == "" {
+		resolvedBaseURL = "http://localhost:3000"
+	}
+	return IOSBuildResult{
+		OutputDir:        out,
+		ProjectDir:       projectDir,
+		AppName:          iosbundle.SwiftIdentifier(appName),
+		BundleID:         ios.BundleID,
+		DisplayName:      ios.DisplayName,
+		MarketingVersion: ios.MarketingVersion,
+		BuildNumber:      ios.BuildNumber,
+		BaseURL:          resolvedBaseURL,
+		MissingServerURL: ios.ServerURL == "",
+	}, nil
+}
 
-	// If xcodegen is installed, generate the .xcodeproj for the user
-	// — saves the manual step. Falls through to printing instructions
-	// when it isn't found, so a fresh checkout still has a workable
-	// path forward.
-	if xcg, err := exec.LookPath("xcodegen"); err == nil {
-		cmd := exec.Command(xcg, "generate")
-		cmd.Dir = out
-		if cmdOut, err := cmd.CombinedOutput(); err != nil {
-			fmt.Printf("            xcodegen failed: %v\n%s\n", err, cmdOut)
-			fmt.Printf("            run manually: cd %s && xcodegen generate\n", out)
-		} else {
-			fmt.Printf("[mar build] xcodegen ✓\n")
-			fmt.Printf("            open %s/*.xcodeproj\n", out)
+// validateIOSConfig checks mar.json's `ios` block has every field
+// required to produce a signable bundle. Returns nil when all
+// required fields are present (ServerURL is optional and handled
+// via Warn, not Error).
+//
+// Suggestions for missing fields are computed here (rather than at
+// print-time) because some depend on context the printer doesn't
+// have: bundleId uses the lowercased app name, displayName echoes
+// the manifest.name literal.
+func validateIOSConfig(ios *project.IOSConfig, appName string) *IOSConfigError {
+	type field struct {
+		name       string
+		value      string
+		suggestion string
+	}
+	swiftName := iosbundle.SwiftIdentifier(appName)
+	fields := []field{
+		{"bundleId", ifConfig(ios, func(c *project.IOSConfig) string { return c.BundleID }),
+			"com.yourcompany." + strings.ToLower(swiftName)},
+		{"displayName", ifConfig(ios, func(c *project.IOSConfig) string { return c.DisplayName }),
+			appName},
+		{"marketingVersion", ifConfig(ios, func(c *project.IOSConfig) string { return c.MarketingVersion }),
+			"0.0.1"},
+		{"buildNumber", ifConfig(ios, func(c *project.IOSConfig) string { return c.BuildNumber }),
+			"1"},
+	}
+	var missing []string
+	suggestions := map[string]string{}
+	for _, f := range fields {
+		if f.value == "" {
+			missing = append(missing, f.name)
+			suggestions[f.name] = f.suggestion
 		}
-	} else {
-		fmt.Printf("            xcodegen not installed — install with `brew install xcodegen`,\n")
-		fmt.Printf("            then run: cd %s && xcodegen generate\n", out)
 	}
-	return nil
+	if len(missing) == 0 {
+		return nil
+	}
+	return &IOSConfigError{Missing: missing, Suggestions: suggestions}
+}
+
+// ifConfig is a small nil-safe getter so validateIOSConfig can treat
+// a missing `ios` block and a present-but-empty field identically.
+func ifConfig(ios *project.IOSConfig, get func(*project.IOSConfig) string) string {
+	if ios == nil {
+		return ""
+	}
+	return get(ios)
 }
 
 // resolveProjectDir accepts either a directory or a Main.mar file
@@ -157,13 +264,13 @@ func compileIOSProgram(entry string) ([]byte, error) {
 	}
 
 	bc := &buildCtx{}
-	rEnv, _, _, err := project.LoadIntoEnvWithModulesAndHook(mainFile,
+	rEnv, allMods, _, err := project.LoadIntoEnvWithModulesAndHook(mainFile,
 		func(env *runtime.Env, mods []*ast.Module) {
-			fe := makeIOSPagesCapture(mods, bc, false /*fromRecord*/)
+			fe := makeIOSPagesCapture(bc, false /*fromRecord*/)
 			env.Define("appFrontend", fe)
 			env.Define("App.frontend", fe)
 
-			fs := makeIOSPagesCapture(mods, bc, true /*fromRecord*/)
+			fs := makeIOSPagesCapture(bc, true /*fromRecord*/)
 			env.Define("appFullstack", fs)
 			env.Define("App.fullstack", fs)
 
@@ -174,10 +281,7 @@ func compileIOSProgram(entry string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	mainVal, ok := rEnv.Lookup("Main.main")
-	if !ok {
-		mainVal, ok = rEnv.Lookup("main")
-	}
+	mainVal, ok := project.LookupMain(rEnv, allMods)
 	if !ok {
 		return nil, fmt.Errorf("Main.mar must export `main`")
 	}
@@ -188,22 +292,39 @@ func compileIOSProgram(entry string) ([]byte, error) {
 	if _, err := eff.Run(); err != nil {
 		return nil, err
 	}
-	if len(bc.frontMods) == 0 {
+	if len(bc.pages) == 0 {
 		// App.backend project (no pages). iOS still needs a stub
 		// program; we ship an empty pages list so the shell can
-		// render a sensible placeholder ("No pages defined") and
-		// the operator can navigate to the Settings tab regardless.
+		// render a sensible "No pages defined" placeholder without
+		// crashing. No __entry needed when there's nothing to mount.
 		return makeProgramJSON(nil, "main", false)
 	}
-	return makeProgramJSON(bc.frontMods, "main", false)
+	// apphost.PickFrontMods does the page-reachable module walk AND
+	// appends a synthetic `__entry = appFrontend [pages]` module that
+	// the iOS runtime looks up at boot. Without that synthetic entry,
+	// the embedded program.json has nothing for env.lookup("main")
+	// or env.lookup("__entry") to find, runProgramSync throws,
+	// AppViewModel falls back to .loading, and the user sees the
+	// spinner instead of the instant cold-start the embedded
+	// snapshot was meant to provide.
+	mods, err := apphost.PickFrontMods(bc.pages, allMods)
+	if err != nil {
+		return nil, err
+	}
+	return makeProgramJSON(mods, "__entry", false)
 }
 
-// makeIOSPagesCapture mirrors makeFrontendCapture but is shared
-// between App.frontend (`fromRecord=false`, args[0] is the page
-// list) and App.fullstack (`fromRecord=true`, args[0] is a record
-// with a "pages" field). Both flow into the same buildCtx fields
-// so downstream extraction is identical.
-func makeIOSPagesCapture(mods []*ast.Module, bc *buildCtx, fromRecord bool) runtime.Value {
+// makeIOSPagesCapture captures the page list from App.frontend
+// (`fromRecord=false`, args[0] is the page list) or App.fullstack
+// (`fromRecord=true`, args[0] is a record with a "pages" field).
+// Both flow into the same buildCtx.pages slot; downstream callers
+// (compileIOSProgram) feed that into apphost.PickFrontMods which
+// does the page-reachable module walk + synthetic __entry append.
+//
+// Compare with makeFrontendCapture (the web build path), which
+// inlines the module walk locally instead of via apphost. Both
+// should converge on apphost once the web build is also migrated.
+func makeIOSPagesCapture(bc *buildCtx, fromRecord bool) runtime.Value {
 	tag := "appFrontend"
 	if fromRecord {
 		tag = "appFullstack"
@@ -233,7 +354,9 @@ func makeIOSPagesCapture(mods []*ast.Module, bc *buildCtx, fromRecord bool) runt
 				}
 			}
 
-			roots := map[string]bool{}
+			// Validate provenance up-front so the error fires here,
+			// in user-source context, rather than deep inside
+			// apphost.PickFrontMods later.
 			for i, pv := range pageList.Elements {
 				page, ok := pv.(runtime.VPage)
 				if !ok {
@@ -242,28 +365,9 @@ func makeIOSPagesCapture(mods []*ast.Module, bc *buildCtx, fromRecord bool) runt
 				if page.OriginName == "" {
 					return nil, fmt.Errorf("page %d has no provenance — pages must be top-level bindings", i)
 				}
-				roots[page.OriginModule] = true
-			}
-			merged := []*ast.Module{}
-			seen := map[string]bool{}
-			for root := range roots {
-				for _, m := range reachableFrom(root, mods) {
-					name := joinName(m.Name)
-					if seen[name] {
-						continue
-					}
-					seen[name] = true
-					merged = append(merged, m)
-				}
 			}
 			bc.kind = kindFrontend
-			bc.frontMods = merged
-			if len(merged) > 0 {
-				nm := merged[len(merged)-1].Name
-				if len(nm) > 0 {
-					bc.title = nm[len(nm)-1]
-				}
-			}
+			bc.pages = pageList.Elements
 			return runtime.VEffect{Tag: tag, Run: func() (runtime.Value, error) {
 				return runtime.VUnit{}, nil
 			}}, nil

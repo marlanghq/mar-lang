@@ -1,0 +1,22 @@
+module Frontend.Routes exposing (home, signIn, verifyCode)
+
+
+-- Single source of truth for every URL in the app. Typed paths
+-- (`Path r`) let Nav.pushTo / Nav.replaceTo check at compile-time
+-- that the params you pass match the URL's segments.
+
+
+home : Path {}
+home = "/"
+
+
+signIn : Path {}
+signIn = "/sign-in"
+
+
+-- After the SignIn page accepts an email, it pushes here, carrying
+-- the email as a typed path segment so the back button (auto-
+-- inserted by the navigation stack) returns the user to /sign-in
+-- with a blank form if they need to retry.
+verifyCode : Path { email : String }
+verifyCode = "/sign-in/verify/{email:String}"

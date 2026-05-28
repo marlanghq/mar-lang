@@ -1,0 +1,74 @@
+module Main exposing (main)
+
+
+import Backend.Users
+import Backend.Services
+import Frontend.SignIn
+import Frontend.SetupProfile
+import Frontend.Home
+import Frontend.Profile
+
+
+-- mini-twitter. Single-team-style social app: passwordless email
+-- sign-in, handle-based profiles, follow graph, timeline of tweets
+-- from followed accounts.
+--
+-- This is the wiring module. Reading top-to-bottom shows:
+--
+--   1. The auth config — entity, identify, signup, email subject.
+--      The session secret is read from env (mar.json delegates to
+--      env:SESSION_SECRET, set by `mar fly provision`).
+--
+--   2. The main effect — App.fullstack with the service list from
+--      Backend.Services and the page list of the four screens.
+
+
+auth : Auth Shared.User
+auth =
+    Auth.config
+        { entity     = Backend.Users.users
+        , identify   = \u -> u.email
+        , signInPage = Frontend.SignIn.page
+
+        -- The email content. The From: header comes from
+        -- mar.json["mail"]["from"] (the address verified with the
+        -- SMTP provider); a stale literal here is rejected at
+        -- boot, so there's only one place to set the From.
+        , email      =
+            { subject = "Sign in to mini-twitter"
+            , body    = \code ttlMinutes ->
+                "Welcome to mini-twitter!\n\n" ++
+                "Your one-time code is " ++ code ++ "\n\n" ++
+                "It expires in " ++ String.fromInt ttlMinutes ++
+                " minutes. If you didn't request this, you can ignore" ++
+                " this email.\n"
+            }
+
+        -- Signup hook: when a brand-new email arrives, we create
+        -- the User row with empty handle / displayName / bio. The
+        -- Home page's bootstrap (see Frontend/Home.mar `init`)
+        -- detects the empty handle and Nav.replaceTo's the user
+        -- to /setup so they pick those before seeing the app.
+        , signup     = \email ->
+            { email       = email
+            , handle      = ""
+            , displayName = ""
+            , bio         = ""
+            }
+
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Effect String ()
+main =
+    App.fullstack
+        { api      = []
+        , services = Backend.Services.services
+        , pages    =
+            [ Frontend.SignIn.page
+            , Frontend.SetupProfile.page
+            , Frontend.Home.page
+            , Frontend.Profile.page
+            ]
+        }

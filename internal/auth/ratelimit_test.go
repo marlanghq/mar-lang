@@ -7,6 +7,7 @@ import (
 
 func TestLimiterAllowsUpToMax(t *testing.T) {
 	l := NewLimiter(3, time.Hour)
+	t.Cleanup(l.Stop)
 	for i := 1; i <= 3; i++ {
 		ok, _ := l.Allow("alice")
 		if !ok {
@@ -20,6 +21,7 @@ func TestLimiterAllowsUpToMax(t *testing.T) {
 
 func TestLimiterIsKeyIsolated(t *testing.T) {
 	l := NewLimiter(2, time.Hour)
+	t.Cleanup(l.Stop)
 	for i := 0; i < 2; i++ {
 		_, _ = l.Allow("alice")
 	}
@@ -34,6 +36,7 @@ func TestLimiterIsKeyIsolated(t *testing.T) {
 
 func TestLimiterRetryAfterIsPositive(t *testing.T) {
 	l := NewLimiter(1, time.Hour)
+	t.Cleanup(l.Stop)
 	_, _ = l.Allow("alice")
 	ok, retry := l.Allow("alice")
 	if ok {
@@ -51,6 +54,7 @@ func TestLimiterSlidingWindow(t *testing.T) {
 	// 2 hits per window. First hit ages out after the window passes,
 	// freeing budget for a third attempt.
 	l := NewLimiter(2, 50*time.Millisecond)
+	t.Cleanup(l.Stop)
 	if ok, _ := l.Allow("alice"); !ok {
 		t.Fatalf("hit 1 should allow")
 	}

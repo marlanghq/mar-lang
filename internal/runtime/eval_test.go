@@ -254,3 +254,55 @@ func TestEvalLetWithFunction(t *testing.T) {
 		t.Fatalf("got %s", got)
 	}
 }
+
+// Record-pattern destructuring — runtime side. Typechecker tests cover
+// type inference + scope; these tests cover that values actually get
+// bound to the right fields at eval time.
+
+func TestEvalRecordPatternInCase(t *testing.T) {
+	src := `case { name = "Alice", age = 30 } of
+        { name, age } -> name`
+	if got := runValue(t, src); got != `"Alice"` {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestEvalRecordPatternBindsByFieldName(t *testing.T) {
+	// Order in the pattern shouldn't matter — bindings are by name,
+	// not position.
+	src := `case { name = "Alice", age = 30 } of
+        { age, name } -> age`
+	if got := runValue(t, src); got != "30" {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestEvalRecordPatternInLet(t *testing.T) {
+	src := `let
+        person = { first = "Ada", last = "Lovelace" }
+        { first, last } = person
+    in
+    first ++ " " ++ last`
+	if got := runValue(t, src); got != `"Ada Lovelace"` {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestEvalRecordPatternNestedInCtor(t *testing.T) {
+	src := `case Just { email = "a@b.com" } of
+        Just { email } -> email
+        Nothing -> ""`
+	if got := runValue(t, src); got != `"a@b.com"` {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestEvalRecordPatternPartialMatch(t *testing.T) {
+	// Pattern lists fewer fields than the record has — the extras
+	// are silently passed over.
+	src := `case { a = 1, b = 2, c = 3, d = 4 } of
+        { b, d } -> b + d`
+	if got := runValue(t, src); got != "6" {
+		t.Fatalf("got %s", got)
+	}
+}

@@ -1,7 +1,7 @@
 // Top-level state for the runtime. Owns:
 //
 //   - APIClient (program.json fetch + service POSTs)
-//   - Discovery (Bonjour browser)
+//   - Discovery (Bonjour browser, DEBUG only)
 //   - Program loader (fetches /_mar/program.json, decodes, runs main)
 //
 // The interesting work happens in `loadAll()`: fetch the JSON, decode
@@ -13,6 +13,15 @@
 // MainActor + @Observable so SwiftUI tracks property reads
 // automatically. APIClient is an actor so network calls happen off
 // the main thread.
+//
+// Backend URL resolution:
+//   - RELEASE: always the baked Info.plist MarBaseURL (set from
+//     mar.json's `ios.serverUrl`). Bonjour is compiled out.
+//   - DEBUG: same baked URL by default, but the Bonjour discovery
+//     loop overrides it the moment a `_mar._tcp` service appears
+//     on the LAN — typically `mar dev` running on the laptop. No
+//     UI, no UserDefaults; the override is purely automatic for
+//     the lifetime of the process.
 
 import Foundation
 import Observation
@@ -35,15 +44,10 @@ final class AppViewModel {
     /// uncommon).
     private(set) var pages: [DecodedPage] = []
 
-    var baseURLString: String
-
-    /// Whether the user pinned a baseURL in Settings. When false,
-    /// Discovery results auto-pick the first found server.
-    /// Always true in RELEASE builds (Bonjour is compiled out, so
-    /// the only sources of a baseURL are the baked default or a
-    /// manual override — both treated as "manual" since neither is
-    /// going to change without explicit operator action).
-    private(set) var hasManualBaseURL: Bool
+    /// Currently-active backend URL as a string. Starts at the baked
+    /// Info.plist value; in DEBUG, swaps to a discovered Bonjour
+    /// endpoint when one appears.
+    private(set) var baseURLString: String
 
     #if DEBUG
     let discovery = Discovery()
@@ -52,27 +56,27 @@ final class AppViewModel {
     @ObservationIgnored
     private let api: APIClient
 
+    /// Bytes of the program.json last successfully loaded. Lets the
+    /// background refresh path detect "nothing changed" and skip the
+    /// expensive (and state-resetting) re-run entirely. In typical
+    /// usage the embedded snapshot and the fetched program are
+    /// byte-identical (the user hasn't deployed since the .ipa was
+    /// built), so this short-circuits ~every refresh.
+    @ObservationIgnored
+    private var lastLoadedProgramBytes: Data?
+
     init() {
-        let resolved = AppViewModel.resolveInitialBaseURL()
-        self.baseURLString = resolved.url
-        #if DEBUG
-        self.hasManualBaseURL = resolved.fromUser
-        #else
-        // RELEASE: no Bonjour, so the baked URL or stored override
-        // IS the answer. Don't let auto-pick logic kick in even if
-        // it somehow runs.
-        self.hasManualBaseURL = true
-        #endif
-        let url = URL(string: resolved.url) ?? URL(string: "http://localhost:3000")!
+        let initial = AppViewModel.bakedBaseURL()
+        self.baseURLString = initial
+        let url = URL(string: initial) ?? URL(string: "http://localhost:3000")!
         self.api = APIClient(baseURL: url)
         MarDispatcher.shared.baseURL = url
 
-        // Approach C — instant cold-start. If `mar build --target ios`
-        // embedded a program.json snapshot in the app bundle, decode
-        // and execute it synchronously here so the first frame paints
-        // immediately. The network fetch in loadAll() then refreshes
-        // the in-memory program with whatever the server is serving
-        // right now.
+        // Instant cold-start. If `mar build --target ios` embedded a
+        // program.json snapshot in the app bundle, decode and execute
+        // it synchronously here so the first frame paints immediately.
+        // The network fetch in loadAll() then refreshes the in-memory
+        // program with whatever the server is serving right now.
         //
         // Failure to decode the embedded snapshot is logged and
         // swallowed: state stays .idle so the regular fetch path
@@ -112,21 +116,19 @@ final class AppViewModel {
         return try? Data(contentsOf: url)
     }
 
-    private static func resolveInitialBaseURL() -> (url: String, fromUser: Bool) {
-        if let stored = UserDefaults.standard.string(forKey: "MarBaseURL"),
-           !stored.isEmpty {
-            return (stored, true)
-        }
+    /// The baked Info.plist `MarBaseURL`, with a localhost fallback so
+    /// the app still launches if someone shipped without setting one
+    /// (the build emits a Warn in that case; this is just defensive).
+    private static func bakedBaseURL() -> String {
         if let baked = Bundle.main.object(forInfoDictionaryKey: "MarBaseURL") as? String,
            !baked.isEmpty {
-            return (baked, false)
+            return baked
         }
-        return ("http://localhost:3000", false)
+        return "http://localhost:3000"
     }
 
     #if DEBUG
     private func maybeAutoPick() {
-        guard !hasManualBaseURL else { return }
         let resolved = discovery.servers.compactMap { $0.url }
         guard let first = resolved.first else { return }
         let s = first.absoluteString
@@ -173,9 +175,28 @@ final class AppViewModel {
     /// App.fullstack. Synchronous because the body is all CPU work
     /// (decode + interpreter eval) — the async wrapper is kept on
     /// the public loadAll caller for the network fetch.
+    ///
+    /// Cheap to call repeatedly: when `data` matches the bytes from
+    /// the last successful load, we no-op entirely. This matters
+    /// because the cold-start flow loads the embedded snapshot AND
+    /// fires a background fetch of /_mar/program.json — the two are
+    /// usually identical, and re-running main on identical bytes
+    /// would needlessly tear down the user's navigation / auth
+    /// state (currentPath, currentUser, etc. in AppContext).
     private func runProgramSync(_ data: Data) throws {
+        if let prev = lastLoadedProgramBytes, prev == data {
+            return
+        }
         let program = try MarJSONCodec.decodeProgram(data)
-        AppContext.shared.reset()
+        // First load (no pages yet) gets a clean slate so we don't
+        // inherit stale state from a corrupted previous attempt.
+        // Subsequent loads preserve navigation + auth state — losing
+        // them on every background refresh would bounce a
+        // mid-session user back to the sign-in screen.
+        let isInitialLoad = AppContext.shared.pages.isEmpty
+        if isInitialLoad {
+            AppContext.shared.reset()
+        }
         // Auth metadata from the server-resolved Auth.config — the
         // mobile bundle doesn't include Main.mar, so the JS+Swift
         // runtimes can't run `auth = Auth.config { ... }` themselves.
@@ -207,47 +228,23 @@ final class AppViewModel {
 
         let decoded = AppContext.shared.decodedPages()
         self.pages = decoded
-        // Seed the active path. If the user landed via deep link or
-        // a previous nav, AppContext.currentPath may already be set
-        // — only initialize when blank.
-        if AppContext.shared.currentPath.isEmpty || AppContext.shared.currentPath == "/" {
+        // Seed the navigation stack only on the initial load. On a
+        // refresh (program changed but user was already navigating),
+        // keep wherever they are — but if the user's current top-of-
+        // stack no longer exists in the new program, reset to a
+        // sensible root so the renderer doesn't blank out on a
+        // missing match.
+        if isInitialLoad {
             if let first = decoded.first {
-                AppContext.shared.currentPath = first.path
+                AppContext.shared.seedRoot(first.path)
+            }
+        } else {
+            let current = AppContext.shared.currentPath
+            let stillExists = decoded.contains { $0.matchURL(current) != nil }
+            if !stillExists, let first = decoded.first {
+                AppContext.shared.navigate(path: first.path, replace: true)
             }
         }
+        lastLoadedProgramBytes = data
     }
-
-    func updateBaseURL(_ raw: String) async {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            UserDefaults.standard.removeObject(forKey: "MarBaseURL")
-            hasManualBaseURL = false
-            let fallback = AppViewModel.resolveInitialBaseURL()
-            baseURLString = fallback.url
-            if let url = URL(string: fallback.url) {
-                await api.setBaseURL(url)
-                MarDispatcher.shared.baseURL = url
-            }
-            await loadAll()
-            return
-        }
-        guard let url = URL(string: trimmed), url.scheme != nil else {
-            state = .failed("Invalid URL: \(trimmed)")
-            return
-        }
-        baseURLString = trimmed
-        hasManualBaseURL = true
-        UserDefaults.standard.set(trimmed, forKey: "MarBaseURL")
-        await api.setBaseURL(url)
-        MarDispatcher.shared.baseURL = url
-        await loadAll()
-    }
-
-    #if DEBUG
-    func selectDiscovered(_ server: DiscoveredServer) async {
-        guard let url = server.url else { return }
-        await updateBaseURL(url.absoluteString)
-    }
-    #endif
-
 }

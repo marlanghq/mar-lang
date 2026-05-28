@@ -23,9 +23,12 @@ enum MarJSONCodec {
 
     /// Foundation JSON value → MarValue. Mirrors `jsToMar` in
     /// runtime.js: numbers → Int, strings → String, bools → Bool,
-    /// null → Nothing, arrays → List, objects → Record.
+    /// null → unit, arrays → List, objects → Record.
+    /// (null maps to unit, NOT to Nothing — Nothing tags uniformly
+    /// via {"__ctor":"Nothing"} so it doesn\'t collide with VUnit\'s
+    /// null encoding.)
     static func jsonToMar(_ any: Any) -> MarValue {
-        if any is NSNull { return .ctor(tag: "Nothing", args: [], origin: nil) }
+        if any is NSNull { return .unit }
         if let n = any as? NSNumber {
             // Distinguish Bool from numeric — NSNumber wraps both
             // and `is Bool` only catches CFBoolean.
@@ -52,6 +55,17 @@ enum MarJSONCodec {
                 }
                 return .ctor(tag: tag, args: args, origin: nil)
             }
+            // Char round-trip — `{__char: "x"}` rebuilds a .char from
+            // the first Unicode scalar of the payload. Same convention
+            // as Go's convertJSON and JS jsToMar. If the scalar isn't
+            // a valid Unicode.Scalar (shouldn't happen — the producer
+            // is trusted), we fall back to U+FFFD.
+            if let s = dict["__char"] as? String, dict.count == 1 {
+                if let scalar = s.unicodeScalars.first {
+                    return .char(scalar)
+                }
+                return .char(Unicode.Scalar(0xFFFD)!)
+            }
             // Time round-trip — `{__time: "ISO 8601"}` rebuilds a
             // VTime so user code typed as `createdAt : Time`
             // actually receives a Time, not a String.
@@ -61,6 +75,26 @@ enum MarJSONCodec {
                 if let d = f.date(from: iso) {
                     return .time(Int(d.timeIntervalSince1970 * 1000))
                 }
+            }
+            // Dict / Set round-trip. Wire format mirrors the Go and JS
+            // sides exactly: `{__dict: [[k, v], ...]}` and
+            // `{__set: [k, ...]}`. We rebuild via the runtime's
+            // insert helpers so the sorted invariant survives even
+            // when the payload arrives out of order.
+            if let pairs = dict["__dict"] as? [Any] {
+                var d = MarValue.dict([])
+                for p in pairs {
+                    guard let arr = p as? [Any], arr.count == 2 else { continue }
+                    d = MarDict.insert(d, jsonToMar(arr[0]), jsonToMar(arr[1]))
+                }
+                return d
+            }
+            if let items = dict["__set"] as? [Any] {
+                var s = MarValue.set([])
+                for it in items {
+                    s = MarDict.setInsert(s, jsonToMar(it))
+                }
+                return s
             }
             var fields: [String: MarValue] = [:]
             var order: [String] = []
@@ -99,20 +133,35 @@ enum MarJSONCodec {
             }
             return dict
         case .ctor(let tag, let args, _):
-            // Maybe / Result get convenience encodings. Other ctors
-            // round-trip with the marker convention shared with the
-            // Go and JS runtimes.
+            // Every ctor — Nothing and Just included — uses the
+            // {"__ctor": ...} marker so generic decoders can
+            // round-trip them without collisions (transparent
+            // Nothing → null would clash with .unit\'s null
+            // encoding; transparent Just x → x would break
+            // generic decoders on record payloads). Ok/Err keep
+            // the convenience shape because the server-side
+            // decode for those tags is type-directed already.
             switch tag {
-            case "Just":    return args.first.map(marToJSON) ?? NSNull()
-            case "Nothing": return NSNull()
-            case "Ok":      return args.first.map(marToJSON) ?? NSNull()
-            case "Err":     return ["error": args.first.map(marToJSON) ?? NSNull()]
+            case "Ok":  return args.first.map(marToJSON) ?? NSNull()
+            case "Err": return ["error": args.first.map(marToJSON) ?? NSNull()]
             default:
                 if args.isEmpty {
                     return ["__ctor": tag] as [String: Any]
                 }
                 return ["__ctor": tag, "__args": args.map(marToJSON)] as [String: Any]
             }
+        case .char(let scalar):
+            // `{"__char": "x"}` — wraps the scalar in a 1-char string
+            // so non-Mar JSON consumers can still read it as text.
+            return ["__char": String(scalar)] as [String: Any]
+        case .dict(let pairs):
+            // `{"__dict": [[k, v], ...]}` — marker matches the Go and
+            // JS encoders. Pairs ride as 2-element arrays so non-
+            // String keys (Int / Float) round-trip too.
+            let arr = pairs.map { [marToJSON($0.0), marToJSON($0.1)] as [Any] }
+            return ["__dict": arr] as [String: Any]
+        case .set(let items):
+            return ["__set": items.map(marToJSON)] as [String: Any]
         case .fn, .view, .effect:
             return NSNull()
         }
@@ -207,6 +256,12 @@ enum MarJSONCodec {
             return .float(Double(intOf(dict["value"])))
         case "EString":
             return .string(stringOf(dict["value"]))
+        case "EChar":
+            // Go side ships the int code point; we sanitize and wrap
+            // in Unicode.Scalar. Invalid (surrogate / out-of-range)
+            // values fall back to U+FFFD — same contract as the JS
+            // side's sanitizeCodePoint.
+            return .char(scalarFromCode(intOf(dict["value"])))
         case "EUnit":
             return .unit
         case "EVar":
@@ -284,6 +339,7 @@ enum MarJSONCodec {
         case "PVar":        return .var(stringOf(any["name"]))
         case "PInt":        return .int(intOf(any["value"]))
         case "PString":     return .string(stringOf(any["value"]))
+        case "PChar":       return .char(scalarFromCode(intOf(any["value"])))
         case "PUnit":       return .unit
         case "PCtor":
             let args = try (any["args"] as? [[String: Any]] ?? []).map(decodePat)
@@ -297,6 +353,14 @@ enum MarJSONCodec {
         case "PCons":
             return .cons(head: try decodePat(any["head"] as? [String: Any] ?? [:]),
                          tail: try decodePat(any["tail"] as? [String: Any] ?? [:]))
+        case "PRecord":
+            // Field names arrive as a [String]; in the JSON they're
+            // typed as Any because the wire format uses []any. Coerce
+            // each to String, dropping any that aren't (defensive —
+            // the server should only ever emit strings here).
+            let raw = (any["fields"] as? [Any]) ?? []
+            let fields = raw.compactMap { $0 as? String }
+            return .record(fields: fields)
         default:
             throw MarRuntimeError.message("unknown pattern kind: \(kind)")
         }
@@ -315,5 +379,15 @@ enum MarJSONCodec {
     }
     private static func stringList(_ v: Any?) -> [String] {
         v as? [String] ?? []
+    }
+
+    /// Build a Unicode.Scalar from an Int code point, substituting
+    /// U+FFFD for out-of-range or surrogate values. Mirrors the
+    /// runtime/char.go sanitizeCodePoint and JS sanitizeCodePoint.
+    /// Force-unwrap on U+FFFD is safe — it's a valid scalar.
+    static func scalarFromCode(_ n: Int) -> Unicode.Scalar {
+        if n < 0 || n > 0x10FFFF { return Unicode.Scalar(0xFFFD)! }
+        if n >= 0xD800 && n <= 0xDFFF { return Unicode.Scalar(0xFFFD)! }
+        return Unicode.Scalar(UInt32(n)) ?? Unicode.Scalar(0xFFFD)!
     }
 }

@@ -9,9 +9,10 @@ import (
 )
 
 // TestDiscoverManifestEnvRefs covers the small regex-based scanner
-// that finds env:VAR references in mar.json. The scanner is what
-// `mar fly provision` uses to know which secrets to prompt for —
-// missing a ref means the secret never reaches fly.
+// that finds env:VAR references in mar.json. The scanner drives
+// secrets prompting + the pre-flight "missing on Fly" check inside
+// `mar fly deploy` — missing a ref means the secret never reaches
+// fly.
 func TestDiscoverManifestEnvRefs(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -90,59 +91,45 @@ func TestDiscoverManifestEnvRefs(t *testing.T) {
 	}
 }
 
-// TestReadFlyToml exercises the regex-based parser for the three
-// fields the wrappers need from a generated fly.toml.
-func TestReadFlyToml(t *testing.T) {
-	src := `app = "my-app"
-primary_region = "gru"
-
-[build]
-  dockerfile = "Dockerfile"
-
-[mounts]
-  source = "my_app_data"
-  destination = "/data"
-
-[http_service]
-  internal_port = 3000
-`
-	path := filepath.Join(t.TempDir(), "fly.toml")
-	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
-		t.Fatalf("write fly.toml: %v", err)
+// TestLoadFlyManifest_SkipsEnvResolution: the loader uses
+// LoadManifestStructure (not LoadManifest) so env:VAR refs in
+// mar.json don\'t need to be set in the operator\'s local shell.
+// Secrets live in Fly Secrets after `mar fly deploy` pushes them;
+// requiring them locally first would be backwards.
+func TestLoadFlyManifest_SkipsEnvResolution(t *testing.T) {
+	dir := t.TempDir()
+	manifest := `{
+  "name": "test-app",
+  "mail": {
+    "from": "noreply@test.app",
+    "smtpHost": "smtp.example.com",
+    "smtpPort": 587,
+    "smtpUsername": "u",
+    "smtpPassword": "env:SMTP_PASSWORD_THAT_IS_NEVER_SET"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(dir, "mar.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatalf("write mar.json: %v", err)
 	}
-	cfg, err := readFlyToml(path)
+	_ = os.Unsetenv("SMTP_PASSWORD_THAT_IS_NEVER_SET")
+
+	projectDir, m, err := loadFlyManifest(dir)
 	if err != nil {
-		t.Fatalf("readFlyToml: %v", err)
+		t.Fatalf("loadFlyManifest should not require env vars; got: %v", err)
 	}
-	if cfg.AppName != "my-app" {
-		t.Errorf("AppName: got %q, want %q", cfg.AppName, "my-app")
+	if projectDir != dir {
+		t.Errorf("projectDir: got %q, want %q", projectDir, dir)
 	}
-	if cfg.Region != "gru" {
-		t.Errorf("Region: got %q, want %q", cfg.Region, "gru")
-	}
-	if cfg.VolumeName != "my_app_data" {
-		t.Errorf("VolumeName: got %q, want %q", cfg.VolumeName, "my_app_data")
+	if m == nil || m.Name != "test-app" {
+		t.Errorf("manifest.Name: got %v, want test-app", m)
 	}
 }
 
-// TestReadFlyToml_MissingFields surfaces a clear error instead of
-// returning empty strings — the rest of the wrapper would otherwise
-// fail with a confusing fly CLI error.
-func TestReadFlyToml_MissingApp(t *testing.T) {
-	src := `primary_region = "gru"
-[mounts]
-  source = "data"
-`
-	path := filepath.Join(t.TempDir(), "fly.toml")
-	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
-		t.Fatalf("write fly.toml: %v", err)
-	}
-	_, err := readFlyToml(path)
-	if err == nil {
-		t.Fatal("expected error for missing app name; got nil")
-	}
-}
-
+// TestFlyVolumeName pins the canonical app-name → volume-name
+// translation. Fly volume names require [a-zA-Z0-9_]; app names
+// allow dashes. The mapping must be stable across deploys so
+// re-running deploy mounts the existing volume, not a fresh empty
+// one.
 func TestFlyVolumeName(t *testing.T) {
 	cases := []struct {
 		appName string
@@ -160,91 +147,56 @@ func TestFlyVolumeName(t *testing.T) {
 	}
 }
 
-// TestSlugifyFlyAppName covers the Fly-app-slug normalization. Same
-// cases the lispy version handled — re-deploying an app from old
-// mar.json's should produce identical slugs.
-func TestSlugifyFlyAppName(t *testing.T) {
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{"notes-auth-multipage", "notes-auth-multipage"},
-		{"My Cool App", "my-cool-app"},
-		{"camelCase", "camel-case"},
-		{"PascalCase", "pascal-case"},
-		{"with_underscore", "with-underscore"},
-		{"with.dots", "with-dots"},
-		{"--leading-trailing-hyphens--", "leading-trailing-hyphens"},
-		{"  whitespace  ", "whitespace"},
-		{"a---b", "a-b"},
-		{"", ""},
-	}
-	for _, tc := range cases {
-		got := slugifyFlyAppName(tc.in)
-		if got != tc.want {
-			t.Errorf("slugifyFlyAppName(%q): got %q, want %q", tc.in, got, tc.want)
+// TestPluralizeSecrets — tiny helper, but the message it backs gets
+// surfaced at deploy-time when secrets are missing; the test pins the
+// singular/plural distinction so a future tweak doesn\'t say
+// "1 secrets missing" or "3 secret missing".
+func TestPluralizeSecrets(t *testing.T) {
+	cases := map[int]string{0: "secrets", 1: "secret", 2: "secrets", 10: "secrets"}
+	for n, want := range cases {
+		if got := pluralizeSecrets(n); got != want {
+			t.Errorf("pluralizeSecrets(%d): got %q, want %q", n, got, want)
 		}
 	}
 }
 
-// TestFindFlyRegion confirms valid lookups + error path for unknown
-// codes. Whitespace and case-insensitive intentionally accepted —
-// users typing the picker output should not have to be precise.
-func TestFindFlyRegion(t *testing.T) {
-	if r, ok := findFlyRegion("gru"); !ok || r.Code != "gru" {
-		t.Errorf("findFlyRegion(gru): got %v ok=%v", r, ok)
+// TestGenerateDockerfile_Frontend — frontend topology should emit
+// the Caddy-on-Alpine Dockerfile that serves dist/ as static files.
+// No COPY of a Go binary; no debian; no ca-certificates apt step.
+func TestGenerateDockerfile_Frontend(t *testing.T) {
+	out := generateDockerfile(flyTopologyFrontend, "any", 80)
+	if !contains(out, "FROM caddy") {
+		t.Errorf("frontend Dockerfile missing Caddy base image:\n%s", out)
 	}
-	if r, ok := findFlyRegion("  GRU  "); !ok || r.Code != "gru" {
-		t.Errorf("case-insensitive + whitespace tolerance broke: got %v ok=%v", r, ok)
-	}
-	if _, ok := findFlyRegion("nonsense"); ok {
-		t.Error("findFlyRegion(nonsense): expected ok=false")
+	if !contains(out, "COPY dist/ /usr/share/caddy/") {
+		t.Errorf("frontend Dockerfile missing static COPY:\n%s", out)
 	}
 }
 
-// TestNormalizeFlyAppMemory exercises the memory option matcher.
-// Same case-insensitive + whitespace-tolerant rules as the region
-// matcher.
-func TestNormalizeFlyAppMemory(t *testing.T) {
-	cases := []struct {
-		in     string
-		want   string
-		wantOK bool
-	}{
-		{"256mb", "256mb", true},
-		{"  256MB  ", "256mb", true},
-		{"1gb", "1gb", true},
-		{"1GB", "1gb", true},
-		{"3gb", "", false},   // not in the curated set
-		{"forty", "", false}, // bogus
-		{"", "", false},
+// TestGenerateDockerfile_Backend — backend / fullstack should emit
+// the debian + binary shape, with the COPY using the project\'s
+// binary name (NOT the Fly app slug — those are deliberately
+// decoupled).
+func TestGenerateDockerfile_Backend(t *testing.T) {
+	out := generateDockerfile(flyTopologyFullstack, "notes-auth", 3000)
+	if !contains(out, "FROM debian:bookworm-slim") {
+		t.Errorf("backend Dockerfile missing debian base:\n%s", out)
 	}
-	for _, tc := range cases {
-		got, ok := normalizeFlyAppMemory(tc.in)
-		if got != tc.want || ok != tc.wantOK {
-			t.Errorf("normalizeFlyAppMemory(%q): got (%q, %v), want (%q, %v)",
-				tc.in, got, ok, tc.want, tc.wantOK)
+	if !contains(out, "COPY dist/notes-auth /app/notes-auth") {
+		t.Errorf("backend Dockerfile missing binary COPY:\n%s", out)
+	}
+	if !contains(out, `CMD ["/app/notes-auth"]`) {
+		t.Errorf("backend Dockerfile missing CMD with binary:\n%s", out)
+	}
+}
+
+// contains is a one-line wrapper around strings.Contains — keeps the
+// test bodies legible without an extra import line at the top.
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
 		}
 	}
-}
-
-// TestPromptFlyAppMemory_FromEnv confirms the FLY_MEMORY env var
-// overrides the prompt entirely (used in CI).
-func TestPromptFlyAppMemory_FromEnv(t *testing.T) {
-	t.Setenv("FLY_MEMORY", "1gb")
-	got, err := promptFlyAppMemory()
-	if err != nil {
-		t.Fatalf("promptFlyAppMemory: %v", err)
-	}
-	if got != "1gb" {
-		t.Errorf("got %q, want %q", got, "1gb")
-	}
-}
-
-func TestPromptFlyAppMemory_InvalidEnv(t *testing.T) {
-	t.Setenv("FLY_MEMORY", "9001gb")
-	_, err := promptFlyAppMemory()
-	if err == nil {
-		t.Fatal("expected error for invalid FLY_MEMORY; got nil")
-	}
+	return false
 }

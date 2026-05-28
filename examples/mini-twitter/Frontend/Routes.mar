@@ -1,0 +1,32 @@
+module Frontend.Routes exposing (home, signIn, setupProfile, profile)
+
+
+-- Centralized URL surface. Every page declares its `path` here so:
+--
+--   1. The whole route table fits on one screen.
+--   2. Refactoring a URL pattern catches all `Nav.pushTo` /
+--      `Nav.replaceTo` call-sites at compile time — flipping a
+--      route segment to a different type cascades into every
+--      consumer.
+--   3. There's exactly one place to look when reasoning about the
+--      app's URL surface.
+
+
+home : Path {}
+home = "/"
+
+
+signIn : Path {}
+signIn = "/sign-in"
+
+
+-- New users without a handle land here after sign-in.
+setupProfile : Path {}
+setupProfile = "/setup"
+
+
+-- Public profile by handle. The handle is treated as a String,
+-- matched against the `{handle:String}` segment; the page does a
+-- service round-trip and renders "User not found" for misses.
+profile : Path { handle : String }
+profile = "/p/{handle:String}"

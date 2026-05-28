@@ -1,5 +1,7 @@
 package typecheck
 
+import "mar/internal/ast"
+
 // Subst is a substitution: a mapping from type variable IDs to types.
 //
 // Substitutions are accumulated during unification. To apply a substitution
@@ -10,11 +12,49 @@ package typecheck
 // chains like t1 -> t2 -> Int resolve in one step.
 type Subst struct {
 	bindings map[int]Type
+
+	// exprTypes optionally records the inferred type for every
+	// expression Infer visits. Lazy-initialized via EnableExprTracking;
+	// nil = recording disabled. Used by the boundary shape lint
+	// (shape_lint.go) to look up the type of non-literal record values
+	// like `body = input.body` or `createdAt = now`.
+	exprTypes map[ast.Expr]Type
 }
 
 // NewSubst returns an empty substitution.
 func NewSubst() *Subst {
 	return &Subst{bindings: map[int]Type{}}
+}
+
+// EnableExprTracking turns on per-expression type recording for this
+// substitution. Must be called BEFORE Infer is invoked so the very
+// first inferred node lands in the map. Idempotent — calling twice
+// keeps the existing map (and any types it already holds).
+func (s *Subst) EnableExprTracking() {
+	if s.exprTypes == nil {
+		s.exprTypes = map[ast.Expr]Type{}
+	}
+}
+
+// ExtractExprTypes returns a map of every recorded expression's
+// inferred type, with the substitution already applied so the
+// caller doesn't have to. Nil when tracking wasn't enabled.
+//
+// Two passes happen during inference: Infer records the type AT THE
+// MOMENT it ran (often containing fresh type variables), and later
+// unifications refine those variables in `s.bindings`. ExtractExprTypes
+// applies the final bindings to each recorded type so the consumer
+// sees concrete shapes — String, Int, { email : String, … } — not
+// dangling t37 placeholders.
+func (s *Subst) ExtractExprTypes() map[ast.Expr]Type {
+	if s.exprTypes == nil {
+		return nil
+	}
+	out := make(map[ast.Expr]Type, len(s.exprTypes))
+	for e, t := range s.exprTypes {
+		out[e] = s.Apply(t)
+	}
+	return out
 }
 
 // Bind records that variable `id` should resolve to `t`. Performs no

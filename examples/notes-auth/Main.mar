@@ -12,7 +12,7 @@ auth =
     Auth.config
         { entity   = Backend.users
         , identify = \u -> u.email
-        , email    = { from = "noreply@notes.local", subject = "Sign in to Notes" }
+        , email    = { subject = "Sign in to Notes" }
         , signup   = \email -> { email = email }
         , sessionDuration = Time.days 30
         }

@@ -7,7 +7,7 @@ import UI exposing
     ( navigationStack, navigationTitle
     , form, section
     , title, text, textField, button, centered, empty
-    , email, numericCode, submit
+    , email, numericCode, submit, width, chars
     )
 
 
@@ -95,9 +95,9 @@ update msg model =
                     ( model, Effect.none )
 
         CodeVerified (Ok _) ->
-            -- Nav.afterSignIn returns the user to where a 401 sent them
+            -- Auth.completeSignIn returns the user to where a 401 sent them
             -- from (or the home page by default).
-            ( model, Nav.afterSignIn )
+            ( model, Auth.completeSignIn )
 
         CodeVerified (Err why) ->
             case model.step of
@@ -136,6 +136,14 @@ humanize raw =
         "the server didn't respond. Check your connection and try again."
     else if raw == "invalid_code" then
         "that code didn't match. Try again or request a new one."
+    else if raw == "invalid_email" then
+        "that doesn't look like a valid email address."
+    else if raw == "missing_email" then
+        "Email is required."
+    else if raw == "missing_fields" then
+        "Both fields are required."
+    else if raw == "too_many_attempts" then
+        "too many tries with this code. Request a new one."
     else if raw == "rate_limited" then
         "too many attempts. Wait a minute and try again."
     else
@@ -150,7 +158,7 @@ view model =
                 [ form
                     [ section []
                         [ text "Enter your email to receive a one-time code."
-                        , textField [ email, submit Submitted ]
+                        , textField [ email, submit Submitted, width (chars 30) ]
                             "Email" draft DraftChanged
                         ]
                     , section []

@@ -1,0 +1,91 @@
+module Backend.Teams exposing (teams, services, listMembers, updateMemberRole)
+
+
+import Backend.Users
+import Backend.Issues
+import Shared exposing (Role(..), IssueStatus(..))
+
+
+-- Teams entity. The signup hook in Main creates team-1 by default;
+-- a real product would let users either join an existing team by
+-- invite code or create their own. The slug is unique (enforced by
+-- the migration once we add UNIQUE constraints to the schema DSL).
+teams : Entity Shared.Team
+teams =
+    Entity.define
+        { name = "teams"
+        , columns =
+            { id        = Entity.serial
+            , name      = Entity.text Entity.notNull
+            , slug      = Entity.text Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ====================================================================
+-- TEAM MEMBERSHIP
+-- ====================================================================
+
+-- listMembers gives the Settings page (and the assignee picker on
+-- New Issue) a quick lookup of everyone in the caller's team. Each
+-- row carries an `openIssues` count so the page can show capacity
+-- at a glance without a second round-trip.
+listMembers : () -> Shared.User -> Effect String (List Shared.TeamMemberView)
+listMembers _ user =
+    Repo.findBy Backend.Users.users { teamId = user.teamId }
+        |> Effect.andThen
+            (\teamMembers ->
+                Effect.sequence
+                    (List.map (annotateMember user.teamId) teamMembers)
+            )
+
+
+annotateMember : Int -> Shared.User -> Effect String Shared.TeamMemberView
+annotateMember _ member =
+    Backend.Issues.countOpenForAssignee member.id
+        |> Effect.map
+            (\openIssues ->
+                { id         = member.id
+                , email      = member.email
+                , name       = member.name
+                , role       = member.role
+                , createdAt  = member.createdAt
+                , openIssues = openIssues
+                }
+            )
+
+
+-- updateMemberRole flips a member's role. Admin-only — gated by the
+-- decorator stack in `services` below. Same-team check ensures an
+-- admin from team A can't bump a user in team B.
+updateMemberRole : Shared.UpdateMemberRole -> Shared.User -> Effect String (Maybe Shared.User)
+updateMemberRole input _ =
+    Repo.update Backend.Users.users input.userId { role = input.role }
+
+
+-- Loader used by the ABAC authorize decorator. Returns Nothing when
+-- the userId doesn't exist (translated to 404); returns Just when it
+-- does (passed through to the policy).
+loadMemberByID : Shared.UpdateMemberRole -> Shared.User -> Effect String (Maybe Shared.User)
+loadMemberByID input _ =
+    Repo.findById Backend.Users.users input.userId
+
+
+-- Policy: only admins can change member roles, and only within their
+-- own team. Combined with `requireRole Admin` below — both checks
+-- compose so the policy reads top-to-bottom as the security story.
+sameTeam : a -> Shared.User -> Shared.User -> Bool
+sameTeam _ caller target =
+    caller.teamId == target.teamId
+
+
+-- Service manifest for everything team-membership related.
+services =
+    [ Auth.protect Shared.listTeamMembers listMembers
+
+    , Auth.protect Shared.updateMemberRole updateMemberRole
+        |> Auth.authorize   loadMemberByID sameTeam
+        |> Auth.requireRole Admin
+    ]

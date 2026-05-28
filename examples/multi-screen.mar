@@ -5,7 +5,7 @@ import UI exposing
     ( navigationStack, navigationTitle
     , form, list, section, header
     , hstack
-    , text, textField, button, link, centered
+    , text, textField, button, navigationLink, centered
     , submit
     )
 
@@ -16,8 +16,8 @@ import UI exposing
 -- Each has its own model, persisted per browser session.
 --
 -- Routes are declared as typed `Path {}` values so the in-app links
--- (`link counterPath ...`) are refactor-safe — change the URL pattern
--- and every link site flags in compile time.
+-- (`navigationLink counterPath ...`) are refactor-safe — change the
+-- URL pattern and every callsite flags in compile time.
 
 
 counterPath : Path {}
@@ -53,7 +53,7 @@ counterView n =
                 , hstack [] [ button [] Inc "Inc", button [] Dec "Dec" ]
                 ]
             , section []
-                [ link todosPath {} "Go to todos →" ]
+                [ navigationLink [] todosPath {} (text "Go to todos →") ]
             ]
         ]
 
@@ -90,7 +90,7 @@ todoUpdate msg model =
 todoView : TodoModel -> View TodoMsg
 todoView model =
     navigationStack [ navigationTitle "Todos" ]
-        [ list
+        [ list []
             [ section []
                 [ hstack []
                     [ textField [ submit AddItem ]
@@ -103,7 +103,7 @@ todoView model =
             , section [ header (String.fromInt (List.length model.items) ++ " items") ]
                 (List.map text model.items)
             , section []
-                [ link counterPath {} "← Back to counter" ]
+                [ navigationLink [] counterPath {} (text "← Back to counter") ]
             ]
         ]
 

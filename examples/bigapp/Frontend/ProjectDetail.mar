@@ -1,0 +1,234 @@
+module Frontend.ProjectDetail exposing (page)
+
+
+import Shared exposing (IssueStatus(..), Role(..))
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , list, section, header, footer
+    , hstack, vstack
+    , title, subtitle, text, button, navigationLink, empty, spacer, picker, errorText
+    )
+
+
+-- Project detail — header card with project metadata, a toggle row
+-- that filters issues by status, then the issue list itself.
+-- Three Service.call's compose the page: getProject, listIssues
+-- (filtered), and the delete action. Each piece lands in its own
+-- branch of the state machine so loading + error are explicit.
+
+
+type StatusFilter
+    = ShowOpen
+    | ShowInProgress
+    | ShowDone
+    | ShowWontFix
+    | ShowAll
+
+
+type alias Model =
+    { project : Maybe Shared.Project
+    , issues  : Maybe (List Shared.IssueView)
+    , filter  : StatusFilter
+    , error   : Maybe String
+    }
+
+
+type Msg
+    = ProjectFetched (Result String (Maybe Shared.Project))
+    | IssuesFetched (Result String (List Shared.IssueView))
+    | FilterChanged StatusFilter
+    | DeleteClicked
+    | ProjectDeleted (Result String ())
+
+
+init : Shared.User -> { id : Int } -> () -> (Model, Effect String Msg)
+init _ params _ =
+    ( { project = Nothing
+      , issues  = Nothing
+      , filter  = ShowOpen
+      , error   = Nothing
+      }
+    , Service.call Shared.getProject { id = params.id } ProjectFetched
+    )
+
+
+-- Helper that re-issues a listProjectIssues fetch for the active
+-- filter. Stale-while-revalidate keeps the previous list on screen.
+fetchIssuesFor : Int -> StatusFilter -> Effect String Msg
+fetchIssuesFor projectId filter =
+    let
+        input =
+            case filter of
+                ShowOpen       -> { projectId = projectId, status = Open,       showAll = False }
+                ShowInProgress -> { projectId = projectId, status = InProgress, showAll = False }
+                ShowDone       -> { projectId = projectId, status = Done,       showAll = False }
+                ShowWontFix    -> { projectId = projectId, status = WontFix,    showAll = False }
+                ShowAll        -> { projectId = projectId, status = Open,       showAll = True  }
+    in
+    Service.call Shared.listProjectIssues input IssuesFetched
+
+
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Effect String Msg)
+update _ params msg model =
+    case msg of
+        ProjectFetched (Ok maybe) ->
+            -- After the project loads, immediately fetch its issue
+            -- list using the default filter. This avoids stacking
+            -- the two Service.calls in init and keeps the failure
+            -- branches simple.
+            ( { model | project = maybe }
+            , fetchIssuesFor params.id model.filter
+            )
+
+        ProjectFetched (Err why) ->
+            ( { model | error = Just why }, Effect.none )
+
+        IssuesFetched (Ok items) ->
+            ( { model | issues = Just items }, Effect.none )
+
+        IssuesFetched (Err why) ->
+            ( { model | error = Just why }, Effect.none )
+
+        FilterChanged f ->
+            ( { model | filter = f }
+            , fetchIssuesFor params.id f
+            )
+
+        DeleteClicked ->
+            ( model
+            , Service.call Shared.deleteProject { id = params.id } ProjectDeleted
+            )
+
+        ProjectDeleted (Ok ()) ->
+            ( model, Nav.replaceTo Frontend.Routes.projects {} )
+
+        ProjectDeleted (Err why) ->
+            ( { model | error = Just why }, Effect.none )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+filterLabel : StatusFilter -> String
+filterLabel f =
+    case f of
+        ShowOpen       -> "Open"
+        ShowInProgress -> "In progress"
+        ShowDone       -> "Done"
+        ShowWontFix    -> "Won't fix"
+        ShowAll        -> "All"
+
+
+filtersSection : StatusFilter -> View Msg
+filtersSection current =
+    section
+        [ header "Filter issues by status"
+        , footer "Pick one. The list refreshes as you change."
+        ]
+        [ picker []
+            current
+            [ ShowOpen, ShowInProgress, ShowDone, ShowWontFix, ShowAll ]
+            filterLabel
+            FilterChanged
+        ]
+
+
+issueRow : Shared.IssueView -> View Msg
+issueRow issue =
+    navigationLink [] Frontend.Routes.issueDetail { id = issue.id }
+        (vstack []
+            [ text ("#" ++ String.fromInt issue.number ++ " — " ++ issue.title)
+            , subtitle
+                ( Shared.statusLabel issue.status
+                    ++ " · " ++ Shared.priorityLabel issue.priority
+                    ++ " · " ++ issue.assigneeName
+                )
+            ])
+
+
+issuesSection : Maybe (List Shared.IssueView) -> View Msg
+issuesSection state =
+    case state of
+        Nothing ->
+            section [] [ text "Loading issues…" ]
+
+        Just items ->
+            if List.isEmpty items then
+                section [ header "Issues" ]
+                    [ subtitle "Nothing matches the current filter." ]
+            else
+                section
+                    [ header ("Issues · " ++ String.fromInt (List.length items)) ]
+                    (List.map issueRow items)
+
+
+headerSection : Maybe Shared.Project -> View Msg
+headerSection maybeProject =
+    case maybeProject of
+        Just project ->
+            section [ header (project.slug ++ " · project") ]
+                [ title project.name
+                , text
+                    ( if project.description == "" then
+                        "No description yet."
+                      else
+                        project.description
+                    )
+                ]
+
+        Nothing ->
+            section [] [ text "Loading project…" ]
+
+
+errorBanner : Maybe String -> View Msg
+errorBanner maybeErr =
+    case maybeErr of
+        Just why -> section [ header "Couldn't load" ] [ errorText why ]
+        Nothing  -> empty
+
+
+view : Shared.User -> { id : Int } -> Model -> View Msg
+view user params model =
+    let
+        navTitle =
+            case model.project of
+                Just p  -> p.name
+                Nothing -> "Project"
+
+        actions =
+            case user.role of
+                Admin ->
+                    hstack []
+                        [ navigationLink [] Frontend.Routes.newIssue { projectId = params.id }
+                            (text "New issue")
+                        , spacer
+                        , button [] DeleteClicked "Delete"
+                        ]
+
+                Member ->
+                    navigationLink [] Frontend.Routes.newIssue { projectId = params.id }
+                        (text "New issue")
+    in
+    navigationStack [ navigationTitle navTitle ]
+        [ list []
+            [ errorBanner model.error
+            , headerSection model.project
+            , section [ header "Actions" ] [ actions ]
+            , filtersSection model.filter
+            , issuesSection model.issues
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.dynamicProtected
+        { path   = Frontend.Routes.projectDetail
+        , title  = "Project"
+        , init   = init
+        , update = update
+        , view   = view
+        }

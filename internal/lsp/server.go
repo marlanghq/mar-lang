@@ -15,6 +15,7 @@ package lsp
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -137,7 +138,7 @@ func (s *Server) notify(method string, params any) {
 func (s *Server) loop() error {
 	for {
 		msg, err := s.readMessage()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
@@ -235,8 +236,8 @@ func (s *Server) handleInitialize(msg *message) {
 			"completionProvider": map[string]any{
 				"triggerCharacters": []string{"."},
 			},
-			"inlayHintProvider":         true,
-			"codeActionProvider":        true,
+			"inlayHintProvider":          true,
+			"codeActionProvider":         true,
 			"documentFormattingProvider": true,
 		},
 		"serverInfo": map[string]any{
@@ -963,8 +964,8 @@ func didYouMeanFix(msgText, uri string, _ lspRange, diag map[string]any, idx *Do
 		return nil
 	}
 	return map[string]any{
-		"title": fmt.Sprintf("Did you mean `%s`?", suggestion),
-		"kind":  "quickfix",
+		"title":       fmt.Sprintf("Did you mean `%s`?", suggestion),
+		"kind":        "quickfix",
 		"diagnostics": []any{diag},
 		"edit": map[string]any{
 			"changes": map[string]any{
@@ -1028,8 +1029,8 @@ func badFieldFix(msgText, uri string, _ lspRange, diag map[string]any, idx *DocI
 		return nil
 	}
 	return map[string]any{
-		"title": fmt.Sprintf("Replace with `%s`", suggestion),
-		"kind":  "quickfix",
+		"title":       fmt.Sprintf("Replace with `%s`", suggestion),
+		"kind":        "quickfix",
 		"diagnostics": []any{diag},
 		"edit": map[string]any{
 			"changes": map[string]any{

@@ -7,9 +7,13 @@ import Shared
 -- SQLite schema lives here — the browser bundle never sees it.
 notes : Entity Shared.Note
 notes =
-    Entity.define "notes"
-        { id   = Entity.serial
-        , body = Entity.text Entity.notNull
+    Entity.define
+        { name = "notes"
+        , columns =
+            { id   = Entity.serial
+            , body = Entity.text Entity.notNull
+            }
+        , uniques = []
         }
 
 

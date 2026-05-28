@@ -1,0 +1,145 @@
+module Frontend.TeamMembers exposing (page)
+
+
+import Shared exposing (Role(..))
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , hstack, vstack
+    , title, subtitle, text, button, navigationLink, empty, spacer, toggle
+    )
+
+
+-- TeamMembers — manage everyone in the caller's team. Admins can
+-- flip another member's role between Admin and Member. Members
+-- can only view the roster.
+
+
+type alias Model =
+    { members : Maybe (List Shared.TeamMemberView)
+    , error   : Maybe String
+    , pending : Int  -- userId currently mid-update (0 = none); disables their row
+    }
+
+
+type Msg
+    = MembersFetched (Result String (List Shared.TeamMemberView))
+    | RoleToggled Int Role
+    | RoleUpdated (Result String (Maybe Shared.User))
+
+
+init : Shared.User -> () -> (Model, Effect String Msg)
+init _ _ =
+    ( { members = Nothing, error = Nothing, pending = 0 }
+    , Service.call Shared.listTeamMembers () MembersFetched
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update _ msg model =
+    case msg of
+        MembersFetched (Ok items) ->
+            ( { model | members = Just items, pending = 0 }, Effect.none )
+
+        MembersFetched (Err why) ->
+            ( { model | error = Just why }, Effect.none )
+
+        RoleToggled userId newRole ->
+            ( { model | pending = userId, error = Nothing }
+            , Service.call Shared.updateMemberRole
+                { userId = userId, role = newRole }
+                RoleUpdated
+            )
+
+        RoleUpdated (Ok _) ->
+            ( model, Service.call Shared.listTeamMembers () MembersFetched )
+
+        RoleUpdated (Err why) ->
+            ( { model | pending = 0, error = Just why }, Effect.none )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+roleToggle : Shared.User -> Shared.TeamMemberView -> View Msg
+roleToggle caller member =
+    let
+        isAdmin = member.role == Admin
+
+        -- Self can't demote self — keep the toggle inert for the
+        -- caller's own row to avoid the "locked yourself out" foot-
+        -- gun. Same goes for non-admins (no permission either way).
+        canToggle =
+            caller.role == Admin && caller.id /= member.id
+    in
+    if canToggle then
+        toggle [] "Admin" isAdmin
+            (\next ->
+                RoleToggled member.id (if next then Admin else Member)
+            )
+    else
+        subtitle (Shared.roleLabel member.role)
+
+
+memberRow : Shared.User -> Shared.TeamMemberView -> View Msg
+memberRow caller member =
+    hstack []
+        [ vstack []
+            [ text member.name
+            , subtitle (member.email ++ " · " ++ String.fromInt member.openIssues ++ " open")
+            ]
+        , spacer
+        , roleToggle caller member
+        ]
+
+
+view : Shared.User -> Model -> View Msg
+view user model =
+    let
+        body =
+            case model.members of
+                Nothing ->
+                    [ section [] [ text "Loading members…" ] ]
+
+                Just items ->
+                    if List.isEmpty items then
+                        [ section [ header "Team" ]
+                            [ subtitle "You're the only one here." ]
+                        ]
+                    else
+                        [ section
+                            [ header ("Members · " ++ String.fromInt (List.length items))
+                            , footer
+                                ( if user.role == Admin then
+                                    "Toggle Admin to promote / demote a member."
+                                  else
+                                    "Only admins can change roles."
+                                )
+                            ]
+                            (List.map (memberRow user) items)
+                        ]
+
+        errorBlock =
+            case model.error of
+                Just why ->
+                    section [ header "Couldn't update" ] [ text why ]
+
+                Nothing ->
+                    empty
+    in
+    navigationStack [ navigationTitle "Team members" ]
+        [ list [] (errorBlock :: body) ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/team"
+        , title  = "Team members"
+        , init   = init
+        , update = update
+        , view   = view
+        }

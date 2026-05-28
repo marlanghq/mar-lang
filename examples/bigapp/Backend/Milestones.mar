@@ -1,0 +1,92 @@
+module Backend.Milestones exposing (milestones, services)
+
+
+import Shared exposing (Role(..), MilestoneStatus(..))
+
+
+-- Milestones — groups of issues shipped together. A milestone is
+-- "open" while you're still adding/closing issues; "closed" when
+-- the release is done. The dashboard can surface burn-down for the
+-- current open milestone.
+milestones : Entity Shared.Milestone
+milestones =
+    Entity.define
+        { name = "milestones"
+        , columns =
+            { id          = Entity.serial
+            , projectId   = Entity.int  Entity.notNull
+            , name        = Entity.text Entity.notNull
+            , description = Entity.text Entity.notNull
+            , status      = Entity.enum [MilestoneOpen, MilestoneClosed] Entity.notNull
+            , createdAt   = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ====================================================================
+-- HANDLERS
+-- ====================================================================
+
+listForProject : Shared.ListProjectMilestones -> Shared.User -> Effect String (List Shared.Milestone)
+listForProject input _ =
+    Repo.findBy milestones { projectId = input.projectId }
+
+
+create : Shared.NewMilestone -> Shared.User -> Effect String Shared.Milestone
+create input _ =
+    Time.now
+        |> Effect.andThen
+            (\now ->
+                Repo.create milestones
+                    { projectId   = input.projectId
+                    , name        = input.name
+                    , description = input.description
+                    , status      = MilestoneOpen
+                    , createdAt   = now
+                    }
+            )
+
+
+close : Shared.CloseMilestone -> Shared.User -> Effect String (Maybe Shared.Milestone)
+close input _ =
+    Repo.update milestones input.id { status = MilestoneClosed }
+
+
+reopen : Shared.ReopenMilestone -> Shared.User -> Effect String (Maybe Shared.Milestone)
+reopen input _ =
+    Repo.update milestones input.id { status = MilestoneOpen }
+
+
+-- ====================================================================
+-- AUTHORIZATION
+-- ====================================================================
+
+loadByClose : Shared.CloseMilestone -> Shared.User -> Effect String (Maybe Shared.Milestone)
+loadByClose input _ =
+    Repo.findById milestones input.id
+
+
+loadByReopen : Shared.ReopenMilestone -> Shared.User -> Effect String (Maybe Shared.Milestone)
+loadByReopen input _ =
+    Repo.findById milestones input.id
+
+
+-- Same simplifying policy as labels: in-team users can manage their
+-- project's milestones. A real hardening pass would chain the
+-- project's teamId.
+sameTeamMilestone : a -> Shared.User -> Shared.Milestone -> Bool
+sameTeamMilestone _ _ _ =
+    True
+
+
+services =
+    [ Auth.protect Shared.listProjectMilestones listForProject
+    , Auth.protect Shared.createMilestone       create
+
+    , Auth.protect Shared.closeMilestone close
+        |> Auth.authorize loadByClose sameTeamMilestone
+
+    , Auth.protect Shared.reopenMilestone reopen
+        |> Auth.authorize loadByReopen sameTeamMilestone
+    ]

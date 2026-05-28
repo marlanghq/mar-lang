@@ -6,6 +6,15 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
+  /* color-scheme tells the browser the page supports both light
+     and dark UAs. Without it, form-control internals (input bg,
+     scrollbar tracks, autocomplete suggestion popovers, focus
+     rings) pick the LIGHT branch even when the OS is in dark
+     mode — visible as a white-on-dark scrollbar / suggestion
+     dropdown on the admin login form. With `light dark` listed,
+     the UA flips its internals to match the @media rule below. */
+  color-scheme: light dark;
+
   --bg: #f2f2f7;
   --card: #ffffff;
   --text: #000000;
@@ -37,6 +46,12 @@
   }
 }
 
+/* <html> picks up its own solid background matching the body's
+   var(--bg). Without this, Safari's overscroll bounce on long
+   entity-row tables reveals the html element above/below the body
+   — defaults to white, jarring on a dark-mode admin page. */
+html { background: var(--bg); }
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
@@ -45,6 +60,11 @@ body {
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
 }
+
+/* Explicit selection colors so highlighted text stays legible.
+   Browser default in dark mode washes light page text against a
+   light-blue selection background into near-invisibility. */
+::selection { background: rgba(10, 132, 255, 0.55); color: #ffffff; }
 
 main {
   max-width: 720px;
@@ -119,8 +139,13 @@ button:hover { opacity: 0.85; }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 button.secondary { background: transparent; color: var(--accent); padding: 6px 10px; }
 
-/* Form */
-input[type="email"], input[type="text"] {
+/* Form. Selector is broader than the original
+   `input[type="email"], input[type="text"]` — covers every
+   text-shaped input the admin could grow into (search, tel, url,
+   number) without each new type needing its own rule. Wrapped in
+   :where() to keep specificity at 0 so callers can override
+   without having to escalate their own selectors. */
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"])) {
   font: inherit;
   width: 100%;
   padding: 12px;

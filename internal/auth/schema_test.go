@@ -56,8 +56,8 @@ func TestSweepDeletesOldCodesAndSessions(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 	now := time.Now().Unix()
-	stale := now - 48*3600     // expired 2 days ago — past the 1-day grace
-	live := now + 600          // expires 10 min from now
+	stale := now - 48*3600 // expired 2 days ago — past the 1-day grace
+	live := now + 600      // expires 10 min from now
 
 	mustExec(t, db,
 		`INSERT INTO _mar_auth_codes(email, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?)`,

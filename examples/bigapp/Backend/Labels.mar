@@ -1,0 +1,149 @@
+module Backend.Labels exposing (labels, issueLabels, services)
+
+
+import Shared exposing (Role(..))
+
+
+-- Labels — tags attached to issues for categorization. Each project
+-- has its own set ("bug", "feature", "P0") so labels in project A
+-- never bleed into project B's autocomplete.
+labels : Entity Shared.Label
+labels =
+    Entity.define
+        { name = "labels"
+        , columns =
+            { id        = Entity.serial
+            , projectId = Entity.int  Entity.notNull
+            , name      = Entity.text Entity.notNull
+            , color     = Entity.text Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- Junction table — one row per (issue, label) attachment. Modeled
+-- with its own id (rather than a composite PK) so the framework's
+-- Repo.deleteById can target a specific row by serial. Production
+-- code would prefer the (issueId, labelId) composite PK + a
+-- delete-by-where query.
+issueLabels : Entity Shared.IssueLabel
+issueLabels =
+    Entity.define
+        { name = "issue_labels"
+        , columns =
+            { id      = Entity.serial
+            , issueId = Entity.int Entity.notNull
+            , labelId = Entity.int Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ====================================================================
+-- LABEL HANDLERS
+-- ====================================================================
+
+listForProject : Shared.ListProjectLabels -> Shared.User -> Effect String (List Shared.Label)
+listForProject input _ =
+    Repo.findBy labels { projectId = input.projectId }
+
+
+createLabel : Shared.NewLabel -> Shared.User -> Effect String Shared.Label
+createLabel input _ =
+    Time.now
+        |> Effect.andThen
+            (\now ->
+                Repo.create labels
+                    { projectId = input.projectId
+                    , name      = input.name
+                    , color     = input.color
+                    , createdAt = now
+                    }
+            )
+
+
+removeLabel : Shared.DeleteLabel -> Shared.User -> Effect String ()
+removeLabel input _ =
+    Repo.deleteById labels input.id
+
+
+-- ====================================================================
+-- ATTACHMENT HANDLERS
+-- ====================================================================
+
+attach : Shared.AttachLabel -> Shared.User -> Effect String Shared.IssueLabel
+attach input _ =
+    Repo.create issueLabels
+        { issueId = input.issueId
+        , labelId = input.labelId
+        }
+
+
+detach : Shared.DetachLabel -> Shared.User -> Effect String ()
+detach input _ =
+    -- The simple Repo doesn't have a delete-by-where yet, so we
+    -- fetch + filter + delete. For example-app traffic this is
+    -- fine; for thousands of labels per issue it'd want a proper
+    -- query.
+    Repo.findBy issueLabels { issueId = input.issueId, labelId = input.labelId }
+        |> Effect.andThen
+            (\rows ->
+                Effect.sequence
+                    (List.map (\r -> Repo.deleteById issueLabels r.id) rows)
+                    |> Effect.map (\_ -> ())
+            )
+
+
+listForIssue : Shared.ListIssueLabels -> Shared.User -> Effect String (List Shared.Label)
+listForIssue input _ =
+    Repo.findBy issueLabels { issueId = input.issueId }
+        |> Effect.andThen
+            (\pivots ->
+                Effect.sequence
+                    (List.map (\p -> Repo.findById labels p.labelId) pivots)
+                    |> Effect.map
+                        (\maybes ->
+                            -- Drop any nil labels (deleted out from
+                            -- under the pivot). Keeps the wire
+                            -- payload honest.
+                            List.foldl
+                                (\acc m ->
+                                    case m of
+                                        Just lbl -> acc ++ [lbl]
+                                        Nothing  -> acc
+                                )
+                                []
+                                maybes
+                        )
+            )
+
+
+-- ====================================================================
+-- AUTHORIZATION
+-- ====================================================================
+
+loadLabelByDelete : Shared.DeleteLabel -> Shared.User -> Effect String (Maybe Shared.Label)
+loadLabelByDelete input _ =
+    Repo.findById labels input.id
+
+
+-- Labels live under a project; the security model is "if you can
+-- read the project, you can manage its labels." For brevity we
+-- inline a permissive check; a hardened version would chain a
+-- project-team-id lookup like Projects.mar does.
+sameProject : a -> Shared.User -> Shared.Label -> Bool
+sameProject _ _ _ =
+    True
+
+
+services =
+    [ Auth.protect Shared.listProjectLabels listForProject
+    , Auth.protect Shared.createLabel       createLabel
+    , Auth.protect Shared.attachLabel       attach
+    , Auth.protect Shared.detachLabel       detach
+    , Auth.protect Shared.listIssueLabels   listForIssue
+
+    , Auth.protect Shared.deleteLabel removeLabel
+        |> Auth.authorize loadLabelByDelete sameProject
+    ]

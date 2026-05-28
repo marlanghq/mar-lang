@@ -39,6 +39,19 @@
   const VTuple  = (xs)       => ({ k: 'T', xs });
   const VRecord = (fields, order) => ({ k: 'R', fields, order });
   const VCtor   = (tag, args)=> ({ k: 'C', tag, args: args || [] });
+  // VChar — Unicode code point, distinct from a 1-char VString. Same
+  // model as Go's rune / Swift's Unicode.Scalar. JSON wire format is
+  // {"__char": "x"} (see jsToMar / marToJs below). `c` is the integer
+  // code point.
+  const VChar = (c) => ({ k: 'Ch', c });
+
+  // VDict / VSet — ordered, polymorphic comparable-keyed containers.
+  // Internal representation parallels the Go runtime: VDict.pairs is a
+  // sorted array of {key, value}; VSet.items is a sorted array. Sort
+  // key is cmpValues; "comparable" means Int / Float / String at
+  // runtime. Same wire markers as the Go side (`__dict`, `__set`).
+  const VDict   = (pairs)    => ({ k: 'M', pairs: pairs || [] });
+  const VSet    = (items)    => ({ k: 'Se', items: items || [] });
   const VFn     = (params, body, env, native, arity, applied) =>
     ({ k: 'Fn', params, body, env, native, arity, applied: applied || [] });
   const VView   = (tag, attrs, children, text, msg) =>
@@ -55,7 +68,14 @@
   // users back to /sign-in instead of mounting the protected page.
 
   function jsToMar(v) {
-    if (v === null || v === undefined) return VCtor('Nothing');
+    // null → VUnit. Previously null → VCtor('Nothing'), but that
+    // collided with VUnit's wire encoding (Go encodes () as null):
+    // a service `Int -> ()` returned null, decoded as Nothing on the
+    // client, and pattern `Ok ()` failed at runtime. Both Maybe
+    // constructors now tag uniformly via {"__ctor":"Nothing"} /
+    // {"__ctor":"Just",...}, matching encodeValue / valueToAny on
+    // the Go side and MarJSONCodec on iOS.
+    if (v === null || v === undefined) return VUnit();
     if (typeof v === 'number') return VInt(v | 0);
     if (typeof v === 'string') return VString(v);
     if (typeof v === 'boolean') return VBool(v);
@@ -75,6 +95,33 @@
       if (typeof v.__time === 'string') {
         const ms = Date.parse(v.__time);
         if (!isNaN(ms)) return VTime(ms);
+      }
+      // Char round-trip — `{__char: "x"}` from the Go encoder. Take
+      // the FIRST code point (covers BMP + supplementary planes). A
+      // malformed empty string degrades to U+FFFD rather than NaN.
+      if (typeof v.__char === 'string') {
+        const cp = v.__char.codePointAt(0);
+        return VChar(cp == null ? 0xFFFD : cp);
+      }
+      // Dict / Set round-trip. The encoder emits `{__dict:[[k,v],...]}`
+      // and `{__set:[i, ...]}`. We rebuild via the runtime's own
+      // insert helpers so the sorted invariant survives even when the
+      // wire payload arrives out of order (hand-written JSON, network
+      // intermediaries, etc).
+      if (Array.isArray(v.__dict)) {
+        let d = VDict([]);
+        for (const pair of v.__dict) {
+          if (!Array.isArray(pair) || pair.length !== 2) continue;
+          d = dictInsertHelper(d, jsToMar(pair[0]), jsToMar(pair[1]));
+        }
+        return d;
+      }
+      if (Array.isArray(v.__set)) {
+        let s = VSet([]);
+        for (const it of v.__set) {
+          s = setInsertHelper(s, jsToMar(it));
+        }
+        return s;
       }
       const fields = {};
       const order = [];
@@ -102,19 +149,77 @@
         return out;
       }
       case 'C':
-        // Maybe / Result get convenience encodings (transparent /
-        // shorthand error). All other constructors round-trip with
-        // the marker convention shared by the Go encoders.
-        if (v.tag === 'Just') return marToJs(v.args[0]);
-        if (v.tag === 'Nothing') return null;
+        // Every ctor — Nothing and Just included — uses the
+        // `__ctor` marker so generic decoders (jsToMar here, Go's
+        // jsonToMar, iOS MarJSONCodec) can rebuild a VCtor without
+        // needing type info at runtime. Transparent encodings
+        // (Nothing → null, Just x → x) would collide with VUnit's
+        // null and break generic decoders for record payloads, so
+        // we tag uniformly. The Ok/Err shortcuts below stay
+        // because the server-side decode for those tags is
+        // type-directed already (see runtime.Endpoint result
+        // handling).
         if (v.tag === 'Ok') return marToJs(v.args[0]);
         if (v.tag === 'Err') return { error: marToJs(v.args[0]) };
         if (!v.args || v.args.length === 0) return { __ctor: v.tag };
         return { __ctor: v.tag, __args: v.args.map(marToJs) };
       case 'D': return v.seconds;
       case 'TM': return { __time: new Date(v.millis).toISOString() };
+      case 'Ch': return { __char: String.fromCodePoint(v.c) };
+      case 'M':
+        return { __dict: v.pairs.map(p => [marToJs(p.key), marToJs(p.value)]) };
+      case 'Se':
+        return { __set: v.items.map(marToJs) };
       default: return null;
     }
+  }
+
+  // --- Dict / Set helpers (hoisted to IIFE level so jsToMar can use
+  // them during decode, before makeBuiltinEnv has installed builtins).
+  //
+  // `dictSearch` / `setSearch` return the insertion index (binary
+  // search) plus a `found` flag. Sort key is cmpValues; runtime
+  // throws if cmpValues hits a non-comparable Mar value.
+
+  function dictSearch(d, key) {
+    let lo = 0, hi = d.pairs.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const c = cmpValues(d.pairs[mid].key, key);
+      if (c < 0) lo = mid + 1; else hi = mid;
+    }
+    const found = lo < d.pairs.length && cmpValues(d.pairs[lo].key, key) === 0;
+    return { idx: lo, found };
+  }
+  function dictInsertHelper(d, key, value) {
+    const { idx, found } = dictSearch(d, key);
+    const pairs = d.pairs.slice();
+    if (found) pairs[idx] = { key, value };
+    else pairs.splice(idx, 0, { key, value });
+    return VDict(pairs);
+  }
+  function dictRemoveHelper(d, idx) {
+    const pairs = d.pairs.slice();
+    pairs.splice(idx, 1);
+    return VDict(pairs);
+  }
+
+  function setSearch(s, key) {
+    let lo = 0, hi = s.items.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const c = cmpValues(s.items[mid], key);
+      if (c < 0) lo = mid + 1; else hi = mid;
+    }
+    const found = lo < s.items.length && cmpValues(s.items[lo], key) === 0;
+    return { idx: lo, found };
+  }
+  function setInsertHelper(s, item) {
+    const { idx, found } = setSearch(s, item);
+    if (found) return s;
+    const items = s.items.slice();
+    items.splice(idx, 0, item);
+    return VSet(items);
   }
 
   // ---------- Path patterns ----------
@@ -318,12 +423,39 @@
 
   // ---------- Pattern matching ----------
 
+  // describeValue produces a short human-readable summary of a
+  // runtime value — used in error messages where pasting the full
+  // value would be too noisy (records with dozens of fields, deeply
+  // nested ctors). Keeps the same format for every value kind so
+  // the operator can match the error against the AST quickly.
+  function describeValue(v) {
+    if (v == null) return 'null';
+    switch (v.k) {
+      case 'I': return 'Int ' + v.n;
+      case 'F': return 'Float ' + v.n;
+      case 'S': return 'String ' + JSON.stringify(v.s);
+      case 'B': return 'Bool ' + v.b;
+      case 'U': return 'Unit';
+      case 'L': return 'List[' + v.xs.length + ']';
+      case 'T': return 'Tuple(' + v.xs.length + ')';
+      case 'R': return 'Record{' + (v.order || Object.keys(v.fields)).join(',') + '}';
+      case 'C': return 'Ctor ' + v.tag + (v.args && v.args.length ? '(' + v.args.length + ' arg)' : '');
+      case 'Fn': return 'Fn arity=' + v.arity;
+      case 'V': return 'View<' + v.tag + '>';
+      case 'E': return 'Effect<' + (v.tag || '?') + '>';
+      case 'D': return 'Duration ' + v.seconds + 's';
+      case 'TM': return 'Time ' + v.millis + 'ms';
+    }
+    return 'unknown';
+  }
+
   function matchInto(pat, v, bindings) {
     switch (pat.kind) {
       case 'PWildcard': return true;
       case 'PVar': bindings[pat.name] = v; return true;
       case 'PInt': return v.k === 'I' && v.n === pat.value;
       case 'PString': return v.k === 'S' && v.s === pat.value;
+      case 'PChar': return v.k === 'Ch' && v.c === pat.value;
       case 'PUnit': return v.k === 'U';
       case 'PCtor':
         if (v.k !== 'C' || v.tag !== pat.name || v.args.length !== pat.args.length) return false;
@@ -347,6 +479,26 @@
         if (v.k !== 'L' || v.xs.length === 0) return false;
         if (!matchInto(pat.head, v.xs[0], bindings)) return false;
         return matchInto(pat.tail, VList(v.xs.slice(1)), bindings);
+      case 'PRecord':
+        // `{ f1, f2, ... }` — bind each listed field's value into
+        // the scope. Partial-match: the value record may carry
+        // additional fields the pattern doesn't list. The
+        // typechecker already verified every listed field exists on
+        // the value's static type, so a missing field here would be
+        // a typechecker bug — treat it as a non-match rather than a
+        // hard crash.
+        //
+        // hasOwnProperty (not `in`) so prototype keys like
+        // `toString` / `hasOwnProperty` themselves can never satisfy
+        // the lookup. v.fields is a plain object literal so its
+        // prototype IS Object.prototype.
+        if (v.k !== 'R') return false;
+        for (let i = 0; i < pat.fields.length; i++) {
+          const fname = pat.fields[i];
+          if (!Object.prototype.hasOwnProperty.call(v.fields, fname)) return false;
+          bindings[fname] = v.fields[fname];
+        }
+        return true;
     }
     return false;
   }
@@ -358,6 +510,7 @@
       case 'EInt':    return VInt(e.value);
       case 'EFloat':  return VFloat(e.value);
       case 'EString': return VString(e.value);
+      case 'EChar':   return VChar(e.value);
       case 'EUnit':   return VUnit();
       case 'EVar': {
         const v = envLookup(env, e.name);
@@ -469,7 +622,12 @@
             return evalExpr(br.body, frame);
           }
         }
-        throw new Error('no case branch matched');
+        // Include the subject's shape in the error so the
+        // browser console points at WHICH case match exploded.
+        // A bare "no case branch matched" forces the operator to
+        // bisect by guesswork; with the tag/kind we usually
+        // spot the missing branch in seconds.
+        throw new Error('no case branch matched (subject: ' + describeValue(subj) + ')');
       }
     }
     throw new Error('unsupported expr: ' + e.kind);
@@ -482,6 +640,7 @@
     switch (a.k) {
       case 'I': case 'F': return a.n === b.n;
       case 'S': return a.s === b.s;
+      case 'Ch': return a.c === b.c;
       case 'B': return a.b === b.b;
       case 'U': return true;
       case 'C':
@@ -495,6 +654,19 @@
       case 'T':
         for (let i = 0; i < a.xs.length; i++) if (!eqValues(a.xs[i], b.xs[i])) return false;
         return true;
+      case 'M':
+        if (a.pairs.length !== b.pairs.length) return false;
+        for (let i = 0; i < a.pairs.length; i++) {
+          if (!eqValues(a.pairs[i].key, b.pairs[i].key)) return false;
+          if (!eqValues(a.pairs[i].value, b.pairs[i].value)) return false;
+        }
+        return true;
+      case 'Se':
+        if (a.items.length !== b.items.length) return false;
+        for (let i = 0; i < a.items.length; i++) {
+          if (!eqValues(a.items[i], b.items[i])) return false;
+        }
+        return true;
     }
     return false;
   }
@@ -502,6 +674,7 @@
   function cmpValues(a, b) {
     if (a.k === 'I' || a.k === 'F') return a.n - b.n;
     if (a.k === 'S') return a.s < b.s ? -1 : a.s > b.s ? 1 : 0;
+    if (a.k === 'Ch') return a.c - b.c;
     return 0;
   }
 
@@ -559,13 +732,17 @@
     const env = envNew(null);
     const def = (n, v) => envDefine(env, n, v);
 
-    // Booleans / Maybe / Result constructors
+    // Booleans / Maybe / Result / Order constructors. Order (LT/EQ/GT)
+    // is used by List.sortWith — same convention as Elm.
     def('True',  VBool(true));
     def('False', VBool(false));
     def('Nothing', VCtor('Nothing'));
     def('Just', native(1, args => VCtor('Just', [args[0]])));
     def('Ok',  native(1, args => VCtor('Ok',  [args[0]])));
     def('Err', native(1, args => VCtor('Err', [args[0]])));
+    def('LT', VCtor('LT'));
+    def('EQ', VCtor('EQ'));
+    def('GT', VCtor('GT'));
 
     // Arithmetic
     def('+', native(2, ([a, b]) => VInt(a.n + b.n)));
@@ -644,6 +821,98 @@
     def('stringTrim', stringTrimImpl);
     def('String.trim', stringTrimImpl);
 
+    // String.endsWith : String suffix -> String s -> Bool
+    const stringEndsWithImpl = native(2, ([suf, s]) =>
+      VBool(s.s.endsWith(suf.s)));
+    def('stringEndsWith', stringEndsWithImpl);
+    def('String.endsWith', stringEndsWithImpl);
+
+    // String.toInt : String -> Maybe Int — Number.isInteger after
+    // Number(s) rejects floats, NaN, whitespace-only strings (Number
+    // would happily return 0 on " " — we don't want that). parseInt
+    // would accept "12abc" as 12; Number(...) doesn't, which matches
+    // Elm's stricter behavior.
+    const stringToIntImpl = native(1, ([s]) => {
+      const trimmed = s.s.trim();
+      if (trimmed === '') return VCtor('Nothing');
+      const n = Number(trimmed);
+      if (!Number.isFinite(n) || !Number.isInteger(n)) return VCtor('Nothing');
+      return VCtor('Just', [VInt(n)]);
+    });
+    def('stringToInt', stringToIntImpl);
+    def('String.toInt', stringToIntImpl);
+
+    // String.toFloat : String -> Maybe Float
+    const stringToFloatImpl = native(1, ([s]) => {
+      const trimmed = s.s.trim();
+      if (trimmed === '') return VCtor('Nothing');
+      const n = Number(trimmed);
+      if (!Number.isFinite(n)) return VCtor('Nothing');
+      return VCtor('Just', [VFloat(n)]);
+    });
+    def('stringToFloat', stringToFloatImpl);
+    def('String.toFloat', stringToFloatImpl);
+
+    // String.fromFloat — JS's default Number.toString is already
+    // shortest-round-trip in modern engines.
+    const stringFromFloatImpl = native(1, ([f]) => VString(String(f.n)));
+    def('stringFromFloat', stringFromFloatImpl);
+    def('String.fromFloat', stringFromFloatImpl);
+
+    // String.replace : String needle -> String replacement -> String s -> String
+    // Uses String.prototype.replaceAll (ES2021+). All modern browsers
+    // we target support it.
+    const stringReplaceImpl = native(3, ([needle, rep, s]) =>
+      VString(s.s.split(needle.s).join(rep.s)));
+    def('stringReplace', stringReplaceImpl);
+    def('String.replace', stringReplaceImpl);
+
+    // String.repeat : Int -> String -> String
+    const stringRepeatImpl = native(2, ([n, s]) => {
+      if (n.n <= 0) return VString('');
+      return VString(s.s.repeat(n.n));
+    });
+    def('stringRepeat', stringRepeatImpl);
+    def('String.repeat', stringRepeatImpl);
+
+    // String.padLeft / padRight — pad with a SINGLE Char (Elm-style).
+    // The seed is one code point that we repeat to fill.
+    function padString(s, width, padCh, left) {
+      const padStr = String.fromCodePoint(padCh);
+      if (s.length >= width) return s;
+      const need = width - s.length;
+      let filler = '';
+      while (filler.length < need) filler += padStr;
+      filler = filler.slice(0, need);
+      return left ? filler + s : s + filler;
+    }
+    const stringPadLeftImpl = native(3, ([w, pad, s]) =>
+      VString(padString(s.s, w.n, pad.c, true)));
+    def('stringPadLeft', stringPadLeftImpl);
+    def('String.padLeft', stringPadLeftImpl);
+
+    const stringPadRightImpl = native(3, ([w, pad, s]) =>
+      VString(padString(s.s, w.n, pad.c, false)));
+    def('stringPadRight', stringPadRightImpl);
+    def('String.padRight', stringPadRightImpl);
+
+    // String.indexes : String needle -> String s -> List Int — every
+    // (non-overlapping) byte offset. Matches Elm's behavior.
+    const stringIndexesImpl = native(2, ([needle, s]) => {
+      if (needle.s === '') return VList([]);
+      const out = [];
+      let i = 0;
+      while (true) {
+        const j = s.s.indexOf(needle.s, i);
+        if (j < 0) break;
+        out.push(VInt(j));
+        i = j + needle.s.length;
+      }
+      return VList(out);
+    });
+    def('stringIndexes', stringIndexesImpl);
+    def('String.indexes', stringIndexesImpl);
+
     // List stdlib
     def('listLength', native(1, ([l]) => VInt(l.xs.length)));
     def('List.length', native(1, ([l]) => VInt(l.xs.length)));
@@ -694,6 +963,213 @@
     def('listIsEmpty', listIsEmptyImpl);
     def('List.isEmpty', listIsEmptyImpl);
 
+    // listTake / listDrop : Int -> List a -> List a
+    const listTakeImpl = native(2, ([n, l]) => {
+      const k = n.n;
+      if (k <= 0) return VList([]);
+      if (k >= l.xs.length) return l;
+      return VList(l.xs.slice(0, k));
+    });
+    def('listTake', listTakeImpl);
+    def('List.take', listTakeImpl);
+
+    const listDropImpl = native(2, ([n, l]) => {
+      const k = n.n;
+      if (k <= 0) return l;
+      if (k >= l.xs.length) return VList([]);
+      return VList(l.xs.slice(k));
+    });
+    def('listDrop', listDropImpl);
+    def('List.drop', listDropImpl);
+
+    // listMove : Int -> Int -> List a -> List a
+    // Pure splice — mirrors the Go impl: defensive no-op on
+    // from == to or out-of-bounds indices. Returns a NEW list;
+    // never mutates the input. Used by the `list` UI primitive's
+    // reorder gesture: the renderer fires onMove(from, to) and the
+    // app applies this to its model.
+    const listMoveImpl = native(3, ([fromV, toV, l]) => {
+      const from = fromV.n;
+      const to = toV.n;
+      const n = l.xs.length;
+      if (from === to || from < 0 || from >= n || to < 0 || to >= n) {
+        return l;
+      }
+      const out = l.xs.slice();
+      const [elt] = out.splice(from, 1);
+      out.splice(to, 0, elt);
+      return VList(out);
+    });
+    def('listMove', listMoveImpl);
+    def('List.move', listMoveImpl);
+
+    // listMember : a -> List a -> Bool — structural equality.
+    const listMemberImpl = native(2, ([needle, l]) => {
+      for (const e of l.xs) if (eqValues(needle, e)) return VBool(true);
+      return VBool(false);
+    });
+    def('listMember', listMemberImpl);
+    def('List.member', listMemberImpl);
+
+    // listAny / listAll — short-circuit.
+    const listAnyImpl = native(2, ([fn, l]) => {
+      for (const e of l.xs) if (apply(fn, e).b) return VBool(true);
+      return VBool(false);
+    });
+    def('listAny', listAnyImpl);
+    def('List.any', listAnyImpl);
+
+    const listAllImpl = native(2, ([fn, l]) => {
+      for (const e of l.xs) if (!apply(fn, e).b) return VBool(false);
+      return VBool(true);
+    });
+    def('listAll', listAllImpl);
+    def('List.all', listAllImpl);
+
+    // listFoldr : (a -> b -> b) -> b -> List a -> b
+    const listFoldrImpl = native(3, ([fn, acc, l]) => {
+      for (let i = l.xs.length - 1; i >= 0; i--) {
+        acc = apply(apply(fn, l.xs[i]), acc);
+      }
+      return acc;
+    });
+    def('listFoldr', listFoldrImpl);
+    def('List.foldr', listFoldrImpl);
+
+    // listIndexedMap : (Int -> a -> b) -> List a -> List b
+    const listIndexedMapImpl = native(2, ([fn, l]) =>
+      VList(l.xs.map((e, i) => apply(apply(fn, VInt(i)), e))));
+    def('listIndexedMap', listIndexedMapImpl);
+    def('List.indexedMap', listIndexedMapImpl);
+
+    // listRepeat : Int -> a -> List a
+    const listRepeatImpl = native(2, ([n, v]) => {
+      const k = n.n;
+      if (k <= 0) return VList([]);
+      const out = new Array(k);
+      for (let i = 0; i < k; i++) out[i] = v;
+      return VList(out);
+    });
+    def('listRepeat', listRepeatImpl);
+    def('List.repeat', listRepeatImpl);
+
+    // listIntersperse : a -> List a -> List a
+    const listIntersperseImpl = native(2, ([sep, l]) => {
+      const n = l.xs.length;
+      if (n <= 1) return l;
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        if (i > 0) out.push(sep);
+        out.push(l.xs[i]);
+      }
+      return VList(out);
+    });
+    def('listIntersperse', listIntersperseImpl);
+    def('List.intersperse', listIntersperseImpl);
+
+    // listPartition : (a -> Bool) -> List a -> (List a, List a)
+    const listPartitionImpl = native(2, ([fn, l]) => {
+      const yes = [];
+      const no = [];
+      for (const e of l.xs) (apply(fn, e).b ? yes : no).push(e);
+      return VTuple([VList(yes), VList(no)]);
+    });
+    def('listPartition', listPartitionImpl);
+    def('List.partition', listPartitionImpl);
+
+    // listConcatMap : (a -> List b) -> List a -> List b
+    const listConcatMapImpl = native(2, ([fn, l]) => {
+      const out = [];
+      for (const e of l.xs) {
+        const inner = apply(fn, e);
+        for (const x of inner.xs) out.push(x);
+      }
+      return VList(out);
+    });
+    def('listConcatMap', listConcatMapImpl);
+    def('List.concatMap', listConcatMapImpl);
+
+    // listFilterMap : (a -> Maybe b) -> List a -> List b
+    const listFilterMapImpl = native(2, ([fn, l]) => {
+      const out = [];
+      for (const e of l.xs) {
+        const v = apply(fn, e);
+        if (v && v.k === 'C' && v.tag === 'Just' && v.args.length === 1) {
+          out.push(v.args[0]);
+        }
+      }
+      return VList(out);
+    });
+    def('listFilterMap', listFilterMapImpl);
+    def('List.filterMap', listFilterMapImpl);
+
+    // listMaximum / listMinimum : List a -> Maybe a — uses cmpValues
+    // which only handles Int/Float/String. Non-comparable element
+    // types silently return Nothing rather than throwing.
+    function listExtremum(l, want) {
+      if (l.xs.length === 0) return VCtor('Nothing');
+      let best = l.xs[0];
+      for (let i = 1; i < l.xs.length; i++) {
+        const c = cmpValues(best, l.xs[i]);
+        if ((want === 'max' && c < 0) || (want === 'min' && c > 0)) best = l.xs[i];
+      }
+      return VCtor('Just', [best]);
+    }
+    const listMaximumImpl = native(1, ([l]) => listExtremum(l, 'max'));
+    def('listMaximum', listMaximumImpl);
+    def('List.maximum', listMaximumImpl);
+    const listMinimumImpl = native(1, ([l]) => listExtremum(l, 'min'));
+    def('listMinimum', listMinimumImpl);
+    def('List.minimum', listMinimumImpl);
+
+    // listProduct : List Int -> Int
+    const listProductImpl = native(1, ([l]) => {
+      let p = 1;
+      for (const e of l.xs) p *= e.n;
+      return VInt(p);
+    });
+    def('listProduct', listProductImpl);
+    def('List.product', listProductImpl);
+
+    // listSort / listSortBy / listSortWith — Array.prototype.sort is
+    // stable in all modern JS engines (ES2019+), so insertion order
+    // survives equal keys. Same semantics as Go's sort.SliceStable.
+    const listSortImpl = native(1, ([l]) =>
+      VList([...l.xs].sort(cmpValues)));
+    def('listSort', listSortImpl);
+    def('List.sort', listSortImpl);
+
+    const listSortByImpl = native(2, ([fn, l]) => {
+      // Cache keys so we don't run `fn` O(n log n) times.
+      const keys = l.xs.map(e => apply(fn, e));
+      const idx = l.xs.map((_, i) => i);
+      idx.sort((a, b) => cmpValues(keys[a], keys[b]));
+      return VList(idx.map(i => l.xs[i]));
+    });
+    def('listSortBy', listSortByImpl);
+    def('List.sortBy', listSortByImpl);
+
+    // listSortWith : (a -> a -> Order) -> List a -> List a
+    // Comparator returns LT / EQ / GT (a 3-way ADT) — translate to
+    // -1/0/1 inside the JS sort callback. `default` covers a comparator
+    // that returned something that isn't an Order ctor (typecheck
+    // should catch this, but the runtime guard keeps the failure mode
+    // localized rather than producing nonsense ordering).
+    const listSortWithImpl = native(2, ([fn, l]) =>
+      VList([...l.xs].sort((a, b) => {
+        const r = apply(apply(fn, a), b);
+        if (r.k === 'C') {
+          switch (r.tag) {
+            case 'LT': return -1;
+            case 'EQ': return 0;
+            case 'GT': return 1;
+          }
+        }
+        throw new Error('List.sortWith: comparator did not return Order (LT/EQ/GT)');
+      })));
+    def('listSortWith', listSortWithImpl);
+    def('List.sortWith', listSortWithImpl);
+
     const listConcatImpl = native(1, ([l]) => {
       const out = [];
       for (const inner of l.xs) {
@@ -733,6 +1209,529 @@
       r.tag === 'Err' ? VCtor('Err', [apply(fn, r.args[0])]) : r);
     def('resultMapError', resultMapErrorImpl);
     def('Result.mapError', resultMapErrorImpl);
+
+    // Result.withDefault : a -> Result e a -> a
+    const resultWithDefaultImpl = native(2, ([fallback, r]) =>
+      r.tag === 'Ok' && r.args.length === 1 ? r.args[0] : fallback);
+    def('resultWithDefault', resultWithDefaultImpl);
+    def('Result.withDefault', resultWithDefaultImpl);
+
+    // Result.fromMaybe : err -> Maybe a -> Result err a
+    const resultFromMaybeImpl = native(2, ([err, m]) =>
+      m.tag === 'Just' && m.args.length === 1
+        ? VCtor('Ok', [m.args[0]])
+        : VCtor('Err', [err]));
+    def('resultFromMaybe', resultFromMaybeImpl);
+    def('Result.fromMaybe', resultFromMaybeImpl);
+
+    // Result.toMaybe — discards the error info (matches Elm).
+    const resultToMaybeImpl = native(1, ([r]) =>
+      r.tag === 'Ok' && r.args.length === 1
+        ? VCtor('Just', [r.args[0]])
+        : VCtor('Nothing'));
+    def('resultToMaybe', resultToMaybeImpl);
+    def('Result.toMaybe', resultToMaybeImpl);
+
+    // Maybe.map2 / map3
+    const maybeMap2Impl = native(3, ([fn, a, b]) => {
+      if (a.tag !== 'Just' || b.tag !== 'Just') return VCtor('Nothing');
+      return VCtor('Just', [apply(apply(fn, a.args[0]), b.args[0])]);
+    });
+    def('maybeMap2', maybeMap2Impl);
+    def('Maybe.map2', maybeMap2Impl);
+
+    const maybeMap3Impl = native(4, ([fn, a, b, c]) => {
+      if (a.tag !== 'Just' || b.tag !== 'Just' || c.tag !== 'Just') return VCtor('Nothing');
+      return VCtor('Just', [apply(apply(apply(fn, a.args[0]), b.args[0]), c.args[0])]);
+    });
+    def('maybeMap3', maybeMap3Impl);
+    def('Maybe.map3', maybeMap3Impl);
+
+    // Maybe.andMap : Maybe a -> Maybe (a -> b) -> Maybe b
+    const maybeAndMapImpl = native(2, ([val, fn]) => {
+      if (val.tag !== 'Just' || fn.tag !== 'Just') return VCtor('Nothing');
+      return VCtor('Just', [apply(fn.args[0], val.args[0])]);
+    });
+    def('maybeAndMap', maybeAndMapImpl);
+    def('Maybe.andMap', maybeAndMapImpl);
+
+    // Maybe.filter : (a -> Bool) -> Maybe a -> Maybe a
+    const maybeFilterImpl = native(2, ([fn, m]) => {
+      if (m.tag !== 'Just' || m.args.length !== 1) return VCtor('Nothing');
+      return apply(fn, m.args[0]).b ? m : VCtor('Nothing');
+    });
+    def('maybeFilter', maybeFilterImpl);
+    def('Maybe.filter', maybeFilterImpl);
+
+    // Tuple — 2-tuple helpers. Tuples are VTuple values with .xs.
+    const tupleFirstImpl = native(1, ([t]) => t.xs[0]);
+    def('tupleFirst', tupleFirstImpl);
+    def('Tuple.first', tupleFirstImpl);
+
+    const tupleSecondImpl = native(1, ([t]) => t.xs[1]);
+    def('tupleSecond', tupleSecondImpl);
+    def('Tuple.second', tupleSecondImpl);
+
+    const tuplePairImpl = native(2, ([a, b]) => VTuple([a, b]));
+    def('tuplePair', tuplePairImpl);
+    def('Tuple.pair', tuplePairImpl);
+
+    const tupleMapFirstImpl = native(2, ([fn, t]) =>
+      VTuple([apply(fn, t.xs[0]), t.xs[1]]));
+    def('tupleMapFirst', tupleMapFirstImpl);
+    def('Tuple.mapFirst', tupleMapFirstImpl);
+
+    const tupleMapSecondImpl = native(2, ([fn, t]) =>
+      VTuple([t.xs[0], apply(fn, t.xs[1])]));
+    def('tupleMapSecond', tupleMapSecondImpl);
+    def('Tuple.mapSecond', tupleMapSecondImpl);
+
+    const tupleMapBothImpl = native(3, ([fnA, fnB, t]) =>
+      VTuple([apply(fnA, t.xs[0]), apply(fnB, t.xs[1])]));
+    def('tupleMapBoth', tupleMapBothImpl);
+    def('Tuple.mapBoth', tupleMapBothImpl);
+
+    // ---------- Dict ----------
+    //
+    // Elm-style polymorphic ordered map (sorted by key). Same wire
+    // format and same comparable-key constraint as the Go and Swift
+    // runtimes. Pairs slice IS the canonical representation — every
+    // mutation rebuilds it sorted via dictInsertHelper / etc.
+    def('dictEmpty', VDict([]));
+    def('Dict.empty', VDict([]));
+
+    const dictSingletonImpl = native(2, ([k, v]) => VDict([{ key: k, value: v }]));
+    def('dictSingleton', dictSingletonImpl);
+    def('Dict.singleton', dictSingletonImpl);
+
+    const dictInsertImpl = native(3, ([k, v, d]) => dictInsertHelper(d, k, v));
+    def('dictInsert', dictInsertImpl);
+    def('Dict.insert', dictInsertImpl);
+
+    const dictUpdateImpl = native(3, ([k, fn, d]) => {
+      const { idx, found } = dictSearch(d, k);
+      const current = found
+        ? VCtor('Just', [d.pairs[idx].value])
+        : VCtor('Nothing');
+      const next = apply(fn, current);
+      if (next.tag === 'Nothing') {
+        return found ? dictRemoveHelper(d, idx) : d;
+      }
+      if (next.tag === 'Just') {
+        return dictInsertHelper(d, k, next.args[0]);
+      }
+      throw new Error('Dict.update: function did not return a Maybe');
+    });
+    def('dictUpdate', dictUpdateImpl);
+    def('Dict.update', dictUpdateImpl);
+
+    const dictRemoveImpl = native(2, ([k, d]) => {
+      const { idx, found } = dictSearch(d, k);
+      return found ? dictRemoveHelper(d, idx) : d;
+    });
+    def('dictRemove', dictRemoveImpl);
+    def('Dict.remove', dictRemoveImpl);
+
+    const dictIsEmptyImpl = native(1, ([d]) => VBool(d.pairs.length === 0));
+    def('dictIsEmpty', dictIsEmptyImpl);
+    def('Dict.isEmpty', dictIsEmptyImpl);
+
+    const dictMemberImpl = native(2, ([k, d]) => VBool(dictSearch(d, k).found));
+    def('dictMember', dictMemberImpl);
+    def('Dict.member', dictMemberImpl);
+
+    const dictGetImpl = native(2, ([k, d]) => {
+      const { idx, found } = dictSearch(d, k);
+      return found ? VCtor('Just', [d.pairs[idx].value]) : VCtor('Nothing');
+    });
+    def('dictGet', dictGetImpl);
+    def('Dict.get', dictGetImpl);
+
+    const dictSizeImpl = native(1, ([d]) => VInt(d.pairs.length));
+    def('dictSize', dictSizeImpl);
+    def('Dict.size', dictSizeImpl);
+
+    const dictKeysImpl = native(1, ([d]) => VList(d.pairs.map(p => p.key)));
+    def('dictKeys', dictKeysImpl);
+    def('Dict.keys', dictKeysImpl);
+
+    const dictValuesImpl = native(1, ([d]) => VList(d.pairs.map(p => p.value)));
+    def('dictValues', dictValuesImpl);
+    def('Dict.values', dictValuesImpl);
+
+    const dictToListImpl = native(1, ([d]) =>
+      VList(d.pairs.map(p => VTuple([p.key, p.value]))));
+    def('dictToList', dictToListImpl);
+    def('Dict.toList', dictToListImpl);
+
+    const dictFromListImpl = native(1, ([l]) => {
+      let d = VDict([]);
+      for (const e of l.xs) {
+        d = dictInsertHelper(d, e.xs[0], e.xs[1]);
+      }
+      return d;
+    });
+    def('dictFromList', dictFromListImpl);
+    def('Dict.fromList', dictFromListImpl);
+
+    // Dict.map : (k -> v -> w) -> Dict k v -> Dict k w  — keys
+    // untouched so we keep the pair order without re-sorting.
+    const dictMapImpl = native(2, ([fn, d]) =>
+      VDict(d.pairs.map(p => ({ key: p.key, value: apply(apply(fn, p.key), p.value) }))));
+    def('dictMap', dictMapImpl);
+    def('Dict.map', dictMapImpl);
+
+    const dictFoldlImpl = native(3, ([fn, init, d]) => {
+      let acc = init;
+      for (const p of d.pairs) acc = apply(apply(apply(fn, p.key), p.value), acc);
+      return acc;
+    });
+    def('dictFoldl', dictFoldlImpl);
+    def('Dict.foldl', dictFoldlImpl);
+
+    const dictFoldrImpl = native(3, ([fn, init, d]) => {
+      let acc = init;
+      for (let i = d.pairs.length - 1; i >= 0; i--) {
+        const p = d.pairs[i];
+        acc = apply(apply(apply(fn, p.key), p.value), acc);
+      }
+      return acc;
+    });
+    def('dictFoldr', dictFoldrImpl);
+    def('Dict.foldr', dictFoldrImpl);
+
+    const dictFilterImpl = native(2, ([fn, d]) =>
+      VDict(d.pairs.filter(p => apply(apply(fn, p.key), p.value).b)));
+    def('dictFilter', dictFilterImpl);
+    def('Dict.filter', dictFilterImpl);
+
+    const dictPartitionImpl = native(2, ([fn, d]) => {
+      const yes = [], no = [];
+      for (const p of d.pairs) {
+        if (apply(apply(fn, p.key), p.value).b) yes.push(p);
+        else no.push(p);
+      }
+      return VTuple([VDict(yes), VDict(no)]);
+    });
+    def('dictPartition', dictPartitionImpl);
+    def('Dict.partition', dictPartitionImpl);
+
+    // Dict.union — left-biased: collision keeps `a`'s value.
+    const dictUnionImpl = native(2, ([a, b]) => {
+      const out = [];
+      let i = 0, j = 0;
+      while (i < a.pairs.length && j < b.pairs.length) {
+        const c = cmpValues(a.pairs[i].key, b.pairs[j].key);
+        if (c < 0) { out.push(a.pairs[i]); i++; }
+        else if (c > 0) { out.push(b.pairs[j]); j++; }
+        else { out.push(a.pairs[i]); i++; j++; }
+      }
+      while (i < a.pairs.length) out.push(a.pairs[i++]);
+      while (j < b.pairs.length) out.push(b.pairs[j++]);
+      return VDict(out);
+    });
+    def('dictUnion', dictUnionImpl);
+    def('Dict.union', dictUnionImpl);
+
+    const dictIntersectImpl = native(2, ([a, b]) => {
+      const out = [];
+      let i = 0, j = 0;
+      while (i < a.pairs.length && j < b.pairs.length) {
+        const c = cmpValues(a.pairs[i].key, b.pairs[j].key);
+        if (c < 0) i++;
+        else if (c > 0) j++;
+        else { out.push(a.pairs[i]); i++; j++; }
+      }
+      return VDict(out);
+    });
+    def('dictIntersect', dictIntersectImpl);
+    def('Dict.intersect', dictIntersectImpl);
+
+    const dictDiffImpl = native(2, ([a, b]) => {
+      const out = [];
+      let i = 0, j = 0;
+      while (i < a.pairs.length) {
+        if (j >= b.pairs.length) { out.push(...a.pairs.slice(i)); break; }
+        const c = cmpValues(a.pairs[i].key, b.pairs[j].key);
+        if (c < 0) { out.push(a.pairs[i]); i++; }
+        else if (c > 0) { j++; }
+        else { i++; j++; }
+      }
+      return VDict(out);
+    });
+    def('dictDiff', dictDiffImpl);
+    def('Dict.diff', dictDiffImpl);
+
+    // ---------- Set ----------
+    def('setEmpty', VSet([]));
+    def('Set.empty', VSet([]));
+
+    const setSingletonImpl = native(1, ([k]) => VSet([k]));
+    def('setSingleton', setSingletonImpl);
+    def('Set.singleton', setSingletonImpl);
+
+    const setInsertImpl = native(2, ([k, s]) => setInsertHelper(s, k));
+    def('setInsert', setInsertImpl);
+    def('Set.insert', setInsertImpl);
+
+    const setRemoveImpl = native(2, ([k, s]) => {
+      const { idx, found } = setSearch(s, k);
+      if (!found) return s;
+      const items = s.items.slice();
+      items.splice(idx, 1);
+      return VSet(items);
+    });
+    def('setRemove', setRemoveImpl);
+    def('Set.remove', setRemoveImpl);
+
+    const setIsEmptyImpl = native(1, ([s]) => VBool(s.items.length === 0));
+    def('setIsEmpty', setIsEmptyImpl);
+    def('Set.isEmpty', setIsEmptyImpl);
+
+    const setMemberImpl = native(2, ([k, s]) => VBool(setSearch(s, k).found));
+    def('setMember', setMemberImpl);
+    def('Set.member', setMemberImpl);
+
+    const setSizeImpl = native(1, ([s]) => VInt(s.items.length));
+    def('setSize', setSizeImpl);
+    def('Set.size', setSizeImpl);
+
+    const setToListImpl = native(1, ([s]) => VList(s.items.slice()));
+    def('setToList', setToListImpl);
+    def('Set.toList', setToListImpl);
+
+    const setFromListImpl = native(1, ([l]) => {
+      let s = VSet([]);
+      for (const e of l.xs) s = setInsertHelper(s, e);
+      return s;
+    });
+    def('setFromList', setFromListImpl);
+    def('Set.fromList', setFromListImpl);
+
+    // Set.map can change the element type, so we re-sort/dedupe via
+    // setInsertHelper rather than copy in place.
+    const setMapImpl = native(2, ([fn, s]) => {
+      let out = VSet([]);
+      for (const it of s.items) out = setInsertHelper(out, apply(fn, it));
+      return out;
+    });
+    def('setMap', setMapImpl);
+    def('Set.map', setMapImpl);
+
+    const setFoldlImpl = native(3, ([fn, init, s]) => {
+      let acc = init;
+      for (const it of s.items) acc = apply(apply(fn, it), acc);
+      return acc;
+    });
+    def('setFoldl', setFoldlImpl);
+    def('Set.foldl', setFoldlImpl);
+
+    const setFoldrImpl = native(3, ([fn, init, s]) => {
+      let acc = init;
+      for (let i = s.items.length - 1; i >= 0; i--) acc = apply(apply(fn, s.items[i]), acc);
+      return acc;
+    });
+    def('setFoldr', setFoldrImpl);
+    def('Set.foldr', setFoldrImpl);
+
+    const setFilterImpl = native(2, ([fn, s]) =>
+      VSet(s.items.filter(it => apply(fn, it).b)));
+    def('setFilter', setFilterImpl);
+    def('Set.filter', setFilterImpl);
+
+    const setPartitionImpl = native(2, ([fn, s]) => {
+      const yes = [], no = [];
+      for (const it of s.items) (apply(fn, it).b ? yes : no).push(it);
+      return VTuple([VSet(yes), VSet(no)]);
+    });
+    def('setPartition', setPartitionImpl);
+    def('Set.partition', setPartitionImpl);
+
+    const setUnionImpl = native(2, ([a, b]) => {
+      const out = [];
+      let i = 0, j = 0;
+      while (i < a.items.length && j < b.items.length) {
+        const c = cmpValues(a.items[i], b.items[j]);
+        if (c < 0) { out.push(a.items[i++]); }
+        else if (c > 0) { out.push(b.items[j++]); }
+        else { out.push(a.items[i++]); j++; }
+      }
+      while (i < a.items.length) out.push(a.items[i++]);
+      while (j < b.items.length) out.push(b.items[j++]);
+      return VSet(out);
+    });
+    def('setUnion', setUnionImpl);
+    def('Set.union', setUnionImpl);
+
+    const setIntersectImpl = native(2, ([a, b]) => {
+      const out = [];
+      let i = 0, j = 0;
+      while (i < a.items.length && j < b.items.length) {
+        const c = cmpValues(a.items[i], b.items[j]);
+        if (c < 0) i++;
+        else if (c > 0) j++;
+        else { out.push(a.items[i++]); j++; }
+      }
+      return VSet(out);
+    });
+    def('setIntersect', setIntersectImpl);
+    def('Set.intersect', setIntersectImpl);
+
+    const setDiffImpl = native(2, ([a, b]) => {
+      const out = [];
+      let i = 0, j = 0;
+      while (i < a.items.length) {
+        if (j >= b.items.length) { out.push(...a.items.slice(i)); break; }
+        const c = cmpValues(a.items[i], b.items[j]);
+        if (c < 0) { out.push(a.items[i++]); }
+        else if (c > 0) j++;
+        else { i++; j++; }
+      }
+      return VSet(out);
+    });
+    def('setDiff', setDiffImpl);
+    def('Set.diff', setDiffImpl);
+
+    // ---------- Char ----------
+    //
+    // Char in Mar is a Unicode code point — same model as Go's rune,
+    // Swift's Unicode.Scalar, Elm's Char. `c` is the integer code
+    // point on VChar.
+    //
+    // sanitizeCodePoint mirrors the Go side: out-of-range or surrogate
+    // inputs collapse to U+FFFD ("replacement character"), keeping the
+    // three runtimes able to represent every Char.fromCode result.
+    function sanitizeCodePoint(n) {
+      if (n < 0 || n > 0x10FFFF) return 0xFFFD;
+      if (n >= 0xD800 && n <= 0xDFFF) return 0xFFFD;
+      return n;
+    }
+
+    const charToCodeImpl = native(1, ([c]) => VInt(c.c));
+    def('charToCode', charToCodeImpl);
+    def('Char.toCode', charToCodeImpl);
+
+    const charFromCodeImpl = native(1, ([n]) => VChar(sanitizeCodePoint(n.n)));
+    def('charFromCode', charFromCodeImpl);
+    def('Char.fromCode', charFromCodeImpl);
+
+    // Char predicates — operate on the Unicode properties of the
+    // code point. We use JS regex with the `u` flag so things like
+    // `Char.isAlpha 'é'` work (and stay aligned with Go's unicode
+    // package, which is also Unicode-aware not ASCII-only).
+    const isDigitRe = /\p{Nd}/u;
+    const isAlphaRe = /\p{L}/u;
+    const isUpperRe = /\p{Lu}/u;
+    const isLowerRe = /\p{Ll}/u;
+
+    const charIsDigitImpl = native(1, ([c]) =>
+      VBool(isDigitRe.test(String.fromCodePoint(c.c))));
+    def('charIsDigit', charIsDigitImpl);
+    def('Char.isDigit', charIsDigitImpl);
+
+    const charIsAlphaImpl = native(1, ([c]) =>
+      VBool(isAlphaRe.test(String.fromCodePoint(c.c))));
+    def('charIsAlpha', charIsAlphaImpl);
+    def('Char.isAlpha', charIsAlphaImpl);
+
+    const charIsUpperImpl = native(1, ([c]) =>
+      VBool(isUpperRe.test(String.fromCodePoint(c.c))));
+    def('charIsUpper', charIsUpperImpl);
+    def('Char.isUpper', charIsUpperImpl);
+
+    const charIsLowerImpl = native(1, ([c]) =>
+      VBool(isLowerRe.test(String.fromCodePoint(c.c))));
+    def('charIsLower', charIsLowerImpl);
+    def('Char.isLower', charIsLowerImpl);
+
+    // toUpper / toLower — JS `.toUpperCase()` / `.toLowerCase()` on a
+    // 1-char string. Take the first code point of the result to stay
+    // in Char (e.g. 'ß'.toUpperCase() = "SS" in some locales —
+    // unlikely with the default locale, but we take the first scalar
+    // defensively to keep the type).
+    const charToUpperImpl = native(1, ([c]) => {
+      const up = String.fromCodePoint(c.c).toUpperCase();
+      return VChar(up.codePointAt(0));
+    });
+    def('charToUpper', charToUpperImpl);
+    def('Char.toUpper', charToUpperImpl);
+
+    const charToLowerImpl = native(1, ([c]) => {
+      const lo = String.fromCodePoint(c.c).toLowerCase();
+      return VChar(lo.codePointAt(0));
+    });
+    def('charToLower', charToLowerImpl);
+    def('Char.toLower', charToLowerImpl);
+
+    // String <-> [Char] bridges. Iterating a JS string with for..of
+    // (or spread) walks Unicode code points correctly (joins
+    // surrogate pairs into one scalar). Same semantics as Go's
+    // `for _, r := range s`.
+    const stringToListImpl = native(1, ([s]) => {
+      const out = [];
+      for (const ch of s.s) out.push(VChar(ch.codePointAt(0)));
+      return VList(out);
+    });
+    def('stringToList', stringToListImpl);
+    def('String.toList', stringToListImpl);
+
+    const stringFromListImpl = native(1, ([l]) => {
+      let out = '';
+      for (const c of l.xs) out += String.fromCodePoint(c.c);
+      return VString(out);
+    });
+    def('stringFromList', stringFromListImpl);
+    def('String.fromList', stringFromListImpl);
+
+    const stringConsImpl = native(2, ([c, s]) =>
+      VString(String.fromCodePoint(c.c) + s.s));
+    def('stringCons', stringConsImpl);
+    def('String.cons', stringConsImpl);
+
+    // String higher-order ops over Char. Iterating with `for..of`
+    // walks code points correctly (joins surrogate pairs into one
+    // scalar). Matches the Go side's `for _, r := range s`.
+    const stringMapImpl = native(2, ([fn, s]) => {
+      let out = '';
+      for (const ch of s.s) {
+        const r = apply(fn, VChar(ch.codePointAt(0)));
+        out += String.fromCodePoint(r.c);
+      }
+      return VString(out);
+    });
+    def('stringMap', stringMapImpl);
+    def('String.map', stringMapImpl);
+
+    const stringFilterImpl = native(2, ([fn, s]) => {
+      let out = '';
+      for (const ch of s.s) {
+        if (apply(fn, VChar(ch.codePointAt(0))).b) out += ch;
+      }
+      return VString(out);
+    });
+    def('stringFilter', stringFilterImpl);
+    def('String.filter', stringFilterImpl);
+
+    // stringFoldl : (Char -> b -> b) -> b -> String -> b
+    const stringFoldlImpl = native(3, ([fn, init, s]) => {
+      let acc = init;
+      for (const ch of s.s) {
+        acc = apply(apply(fn, VChar(ch.codePointAt(0))), acc);
+      }
+      return acc;
+    });
+    def('stringFoldl', stringFoldlImpl);
+    def('String.foldl', stringFoldlImpl);
+
+    // stringAny : (Char -> Bool) -> String -> Bool — short-circuit.
+    const stringAnyImpl = native(2, ([fn, s]) => {
+      for (const ch of s.s) {
+        if (apply(fn, VChar(ch.codePointAt(0))).b) return VBool(true);
+      }
+      return VBool(false);
+    });
+    def('stringAny', stringAnyImpl);
+    def('String.any', stringAnyImpl);
 
     // ---------- UI primitives — shared infrastructure ----------
     //
@@ -786,8 +1785,9 @@
     def('navigationStack', uiContainer('navigationStack'));
     def('UI.navigationStack', uiContainer('navigationStack'));
     def('form',  uiContentOnly('form'));   def('UI.form',    uiContentOnly('form'));
-    def('list',  uiContentOnly('uiList')); def('UI.list',    uiContentOnly('uiList'));
+    def('list',  uiContainer('uiList'));   def('UI.list',    uiContainer('uiList'));
     def('uiSection', uiContainer('uiSection')); def('UI.section', uiContainer('uiSection'));
+    def('uiKeyedList', uiContainer('uiKeyedList')); def('UI.keyedList', uiContainer('uiKeyedList'));
     def('hstack', uiContainer('hstack'));  def('UI.hstack',  uiContainer('hstack'));
     def('vstack', uiContainer('vstack'));  def('UI.vstack',  uiContainer('vstack'));
 
@@ -801,9 +1801,90 @@
     def('textField', native(4, uiTextField));
     def('UI.textField', native(4, uiTextField));
 
+    // textArea : List Attr -> String placeholder -> String value -> (String -> msg) -> View msg
+    // Multi-line text input. Same shape as textField — swapping
+    // `textField` for `textArea` in user code is the only change
+    // needed when the field needs to hold a paragraph instead of
+    // a single line. iOS renders a TextEditor; web renders a
+    // <textarea> with the same focus / submit / placeholder
+    // styling so the two stack visually inside a section.
+    //
+    // Submit semantics on the web mirror SwiftUI: a bare Enter
+    // inserts a newline (so users can write prose freely), and
+    // Cmd/Ctrl+Enter fires the `submit` attr if one is attached.
+    // The branching for that lives in attachSubmitDispatcher.
+    function uiTextArea(args) {
+      const [attrsList, placeholder, value, onChange] = args;
+      const attrs = collectAttrs(attrsList);
+      attrs.push({ name: 'placeholder', value: placeholder });
+      return VView('textArea', attrs, [], value.s, onChange);
+    }
+    def('textArea', native(4, uiTextArea));
+    def('UI.textArea', native(4, uiTextArea));
+
+    // picker : List Attr -> a -> List a -> (a -> String) -> (a -> msg) -> View msg
+    // Single-selection field. Use when an enum has more than a
+    // couple of variants and rendering one toggle per variant
+    // would dominate the form's vertical real estate (priority,
+    // assignee, milestone). iOS renders SwiftUI's Picker with the
+    // platform's native menu / wheel; web renders a styled
+    // <select>. `toLabel` is applied per option to produce the
+    // displayed string — same shape user code already has for
+    // status / priority badges (`Shared.priorityLabel`,
+    // `Shared.statusLabel`).
+    //
+    // The selected value is identified structurally (eqValues),
+    // so callers pass any ctor / int / string / record — whatever
+    // the option list contains.
+    function uiPicker(args) {
+      const [attrsList, selected, options, toLabel, onChange] = args;
+      const attrs = collectAttrs(attrsList);
+      // Stash the selected value, the option list, and the label
+      // function as attrs so createDOM/patchDOM can rebuild the
+      // <select> from `view.attrs` alone. msg carries onChange so
+      // the dispatcher path mirrors textField / toggle (apply
+      // view.msg to the selected option).
+      attrs.push({ name: 'selected', value: selected });
+      attrs.push({ name: 'options',  value: options });
+      attrs.push({ name: 'toLabel',  value: toLabel });
+      return VView('picker', attrs, [], '', onChange);
+    }
+    def('picker', native(5, uiPicker));
+    def('UI.picker', native(5, uiPicker));
+
     // text — UI version takes no attrs.
     const uiTextCtor = native(1, ([s]) => VView('text', [], [], s.s));
     def('uiText', uiTextCtor); def('UI.text', uiTextCtor);
+
+    // paragraph : List (Inline msg) -> View msg
+    // Block of flowing inline text. Children are `span` VViews
+    // produced by uiSpan; renderer flows them into one <p>.
+    const uiParagraphCtor = native(1, ([children]) =>
+      VView('paragraph', [], children.xs, ''));
+    def('uiParagraph', uiParagraphCtor); def('UI.paragraph', uiParagraphCtor);
+
+    // span : List (Attr Inline) -> String -> Inline msg
+    // Inline text run with styling attrs (bold/italic/code/link
+    // composing freely).
+    const uiSpanCtor = native(2, ([attrsList, s]) =>
+      VView('span', collectAttrs(attrsList), [], s.s));
+    def('uiSpan', uiSpanCtor); def('UI.span', uiSpanCtor);
+
+    // Inline attrs. Bare style markers (bold/italic/strikethrough/
+    // code) carry no payload; the renderer checks attr name to
+    // toggle the corresponding CSS class. `link` is the one
+    // parameterized inline attr — its payload is the destination URL.
+    const inlineBoldAttr          = flagAttr('inlineBold');
+    const inlineItalicAttr        = flagAttr('inlineItalic');
+    const inlineStrikethroughAttr = flagAttr('inlineStrikethrough');
+    const inlineCodeAttr          = flagAttr('inlineCode');
+    def('inlineBold', inlineBoldAttr);          def('UI.bold', inlineBoldAttr);
+    def('inlineItalic', inlineItalicAttr);      def('UI.italic', inlineItalicAttr);
+    def('inlineStrikethrough', inlineStrikethroughAttr);
+    def('UI.strikethrough', inlineStrikethroughAttr);
+    def('inlineCode', inlineCodeAttr);          def('UI.code', inlineCodeAttr);
+    const inlineLinkCtor = native(1, ([url]) => makeAttr('inlineLink', url));
+    def('inlineLink', inlineLinkCtor);          def('UI.link', inlineLinkCtor);
 
     // button : List Attr -> msg -> String -> View msg
     // Attrs carry modifiers like `disabled` that the renderer reads
@@ -818,6 +1899,58 @@
     const uiDisabledCtor = native(1, ([b]) => makeAttr('disabled', b));
     def('uiDisabled', uiDisabledCtor); def('UI.disabled', uiDisabledCtor);
 
+    // keyed : String -> View msg -> KeyedView msg
+    // Wraps a regular View in a stable identity (the key string) so
+    // it can be a child of UI.keyedList. The KeyedView distinction
+    // is compile-time only — at runtime we just append a `key` attr
+    // to the inner VView. The reconciler reads that attr when
+    // matching old/new children inside a keyedList.
+    //
+    // Returns a shallow copy with attrs extended (not the same VView
+    // mutated) so callers that hold a reference to the unwrapped
+    // view don\'t see their attrs grow as a side effect.
+    const uiKeyedCtor = native(2, ([keyStr, view]) => {
+      const attrs = view.attrs.slice();
+      attrs.push({ name: 'key', value: keyStr });
+      return VView(view.tag, attrs, view.children, view.text, view.msg);
+    });
+    def('uiKeyed', uiKeyedCtor); def('UI.keyed', uiKeyedCtor);
+
+    // onMove : Bool -> (Int -> Int -> msg) -> Attr KeyedList
+    // Reorder gesture handler for `list`. The Bool toggles whether
+    // drag affordances render (handle + tabindex + ARIA wiring);
+    // the function fires with (fromIdx, toIdx) once the user drops.
+    //
+    // Packs both into a single record value on the attr so the
+    // renderer's `list` handler can pull editing + handler off in
+    // one place. Storing them separately would make it easier to
+    // forget one when wiring the drag listeners.
+    const uiOnMoveCtor = native(2, ([editingV, handler]) => {
+      const editing = editingV && editingV.b === true;
+      return makeAttr('onMove', { editing, handler });
+    });
+    def('uiOnMove', uiOnMoveCtor); def('UI.onMove', uiOnMoveCtor);
+
+    // onDelete : Bool -> (Int -> msg) -> Attr Section
+    // Per-row delete affordance. Bool = "editing mode is currently
+    // on"; in that state, every row shows a permanent red `−` on
+    // the left (iOS-edit-mode style). When false, the affordance
+    // reveals on hover instead (iCloud-Web style — see
+    // docs/cli-surface-proposal.md for the design rationale).
+    //
+    // The handler receives the index of the deleted row. The app is
+    // expected to remove that index from its model (and typically
+    // fire a Service.call to persist), then optionally surface a
+    // toast with an Undo affordance.
+    //
+    // Same packing shape as onMove so renderers can pick both off in
+    // one place.
+    const uiOnDeleteCtor = native(2, ([editingV, handler]) => {
+      const editing = editingV && editingV.b === true;
+      return makeAttr('onDelete', { editing, handler });
+    });
+    def('uiOnDelete', uiOnDeleteCtor); def('UI.onDelete', uiOnDeleteCtor);
+
     // title / subtitle — reuse the existing "title" / "subtitle"
     // tags so createDOM's existing handling applies; UI styles
     // (font-size / weight / color) live in ensureUIStyles().
@@ -826,24 +1959,83 @@
     const uiSubtitleCtor = native(1, ([s]) => VView('subtitle', [], [], s.s));
     def('uiSubtitle', uiSubtitleCtor); def('UI.subtitle', uiSubtitleCtor);
 
-    // link : Path r -> r -> String -> View msg
-    // Renders as <a href="...">label</a> with a stamped href built
-    // from the typed Path + record (same machinery as linkTo).
-    def('uiLink', native(3, ([pathV, params, label]) => {
+    // errorText — same leaf shape as text/title/subtitle. Tag
+    // 'errorText' triggers the .mar-error-text CSS class in
+    // createDOM (red + semi-bold) and a role=alert for assistive
+    // tech. Mirrors Go's runtime/view.go uiErrorText + iOS's
+    // MarRenderer "errorText" case.
+    const uiErrorTextCtor = native(1, ([s]) => VView('errorText', [], [], s.s));
+    def('uiErrorText', uiErrorTextCtor); def('UI.errorText', uiErrorTextCtor);
+
+    // chars / lines — sizing units. Each wraps an Int in a record
+    // tagged with __unit so the renderer can dispatch on what the
+    // number means (horizontal characters vs vertical lines).
+    // Mirrors Go runtime's lengthValue helper.
+    const uiCharsCtor = native(1, ([n]) =>
+      VRecord({ __unit: VString('chars'), amount: VInt(n.n) }, ['__unit', 'amount']));
+    def('uiChars', uiCharsCtor); def('UI.chars', uiCharsCtor);
+    const uiLinesCtor = native(1, ([n]) =>
+      VRecord({ __unit: VString('lines'), amount: VInt(n.n) }, ['__unit', 'amount']));
+    def('uiLines', uiLinesCtor); def('UI.lines', uiLinesCtor);
+
+    // width / height — attribute builders. createDOM/patchDOM read
+    // the attr value (a Width or Height record), inspect __unit, and
+    // apply the right CSS (max-width: N ch + padding for chars,
+    // min-height: N lines for lines).
+    const uiWidthCtor  = native(1, ([v]) => makeAttr('width',  v));
+    def('uiWidth',  uiWidthCtor);  def('UI.width',  uiWidthCtor);
+    const uiHeightCtor = native(1, ([v]) => makeAttr('height', v));
+    def('uiHeight', uiHeightCtor); def('UI.height', uiHeightCtor);
+
+    // navigationLink : List Attr -> Path r -> r -> View msg -> View msg
+    // Mirror of SwiftUI's NavigationLink. The Path + record build
+    // the destination URL via the typed-path machinery; the
+    // child View becomes the tappable label. Renders as
+    // <a class="mar-navigation-link"> wrapping the child DOM.
+    // The leading attrs list carries `disabled` (and future
+    // modifiers) — uniform shape with every other interactive
+    // primitive.
+    def('uiNavigationLink', native(4, ([attrsList, pathV, params, child]) => {
       if (!pathV || pathV.k !== 'S') {
-        throw new Error('UI.link: expected Path, got ' + (pathV && pathV.k));
+        throw new Error('UI.navigationLink: expected Path, got ' + (pathV && pathV.k));
+      }
+      if (!child || child.k !== 'V') {
+        throw new Error('UI.navigationLink: expected View label, got ' + (child && child.k));
       }
       const pattern = parsePathCached(pathV.s);
       const url = buildPathURL(pattern, params);
-      const attrs = [{ name: 'href', value: VString(url) }];
-      return VView('link', attrs, [], label.s);
+      const attrs = collectAttrs(attrsList);
+      attrs.push({ name: 'href', value: VString(url) });
+      return VView('navigationLink', attrs, [child], '');
     }));
-    def('UI.link', envLookup(env, 'uiLink'));
+    def('UI.navigationLink', envLookup(env, 'uiNavigationLink'));
 
     // empty — no-op placeholder; same VView the existing renderer
     // already knows to handle (display: none).
     def('uiEmpty', VView('empty', [], [], ''));
     def('UI.empty', VView('empty', [], [], ''));
+
+    // spacer — SwiftUI's `Spacer()`. Expands along the containing
+    // stack's main axis to push siblings apart. On web that's a
+    // `flex: 1` div the parent flex container absorbs.
+    def('uiSpacer', VView('spacer', [], [], ''));
+    def('UI.spacer', VView('spacer', [], [], ''));
+
+    // toggle : List Attr -> String -> Bool -> (Bool -> msg) -> View msg
+    // Mirror of SwiftUI's Toggle(label, isOn: $value). Current
+    // state lives in the `isOn` attr, label in text, the
+    // `Bool -> msg` callback in msg. createDOM renders a label
+    // wrapping an iOS-style styled checkbox; on change the
+    // checkbox dispatches `msg(newValue)`. The leading attrs
+    // list carries modifiers like `disabled` — same shape every
+    // other interactive primitive uses (textField / button /
+    // picker), so the gating idiom is uniform.
+    def('uiToggle', native(4, ([attrsList, label, isOn, onChange]) => {
+      const attrs = collectAttrs(attrsList);
+      attrs.push({ name: 'isOn', value: VBool(!!isOn.b) });
+      return VView('toggle', attrs, [], label.s, onChange);
+    }));
+    def('UI.toggle', envLookup(env, 'uiToggle'));
 
     // centered : View msg -> View msg
     // Wraps child in a "centered" view tag. The renderer (createDOM
@@ -853,13 +2045,59 @@
       VView('centered', [], [child], ''));
     def('uiCentered', uiCenteredCtor); def('UI.centered', uiCenteredCtor);
 
+    // sheet : { open, onDismiss, outlet } -> List (View msg) -> View msg
+    //
+    // iOS-style page sheet. Parent owns open/closed state; framework
+    // renders the overlay + animation + history glue. See the
+    // createDOM/patchDOM case 'sheet' for the rendering logic and the
+    // `.mar-sheet-*` CSS rules for the visual treatment.
+    const uiSheetCtor = native(2, ([config, children]) => {
+      const open = config.fields.open;       // VBool
+      const outlet = config.fields.outlet;   // VString
+      const onDismiss = config.fields.onDismiss; // any Msg value
+      return VView('sheet', [
+        { name: 'open',   value: open },
+        { name: 'outlet', value: outlet },
+      ], children.xs, '', onDismiss);
+    });
+    def('uiSheet', uiSheetCtor); def('UI.sheet', uiSheetCtor);
+
+    // confirm : { title, confirmLabel, destructive, onConfirm,
+    //             onCancel } -> View msg
+    //
+    // Destructive-action confirmation dialog. Render-time semantics
+    // is "if this view appears in the tree, mount the modal; if it
+    // doesn't, the modal is gone." Apps therefore branch via `case`
+    // returning `UI.confirm {...}` when active and `UI.empty` when
+    // not — there's no explicit `isOpen` field.
+    //
+    // We stash both message handlers as attrs because the view has
+    // two distinct dispatch paths (confirm + cancel) and VView's
+    // single `msg` slot can only hold one. Renderer reads both off
+    // attrs when wiring the dialog buttons + backdrop tap.
+    const uiConfirmCtor = native(1, ([config]) => {
+      return VView('confirmDialog', [
+        { name: 'title',        value: config.fields.title },
+        { name: 'confirmLabel', value: config.fields.confirmLabel },
+        { name: 'destructive',  value: config.fields.destructive },
+        { name: 'onConfirm',    value: config.fields.onConfirm },
+        { name: 'onCancel',     value: config.fields.onCancel },
+      ], [], '', null);
+    });
+    def('uiConfirm', uiConfirmCtor); def('UI.confirm', uiConfirmCtor);
+
     // Modifier attrs.
     const navTitleCtor   = native(1, ([s]) => makeAttr('navigationTitle', s));
     def('navigationTitle', navTitleCtor); def('UI.navigationTitle', navTitleCtor);
-    const trailingCtor   = native(1, ([v]) => makeAttr('trailing', v));
-    def('trailing', trailingCtor); def('UI.trailing', trailingCtor);
-    const leadingCtor    = native(1, ([v]) => makeAttr('leading', v));
-    def('leading', leadingCtor); def('UI.leading', leadingCtor);
+    // topBarTrailing / topBarLeading — toolbar items at the trailing
+    // / leading edge of the top bar. Names match SwiftUI's
+    // `.topBarTrailing` / `.topBarLeading` placement (iOS 17+).
+    const topBarTrailingCtor = native(1, ([v]) => makeAttr('topBarTrailing', v));
+    def('uiTopBarTrailing', topBarTrailingCtor);
+    def('UI.topBarTrailing', topBarTrailingCtor);
+    const topBarLeadingCtor  = native(1, ([v]) => makeAttr('topBarLeading', v));
+    def('uiTopBarLeading',  topBarLeadingCtor);
+    def('UI.topBarLeading',  topBarLeadingCtor);
     const headerCtor     = native(1, ([s]) => makeAttr('header', s));
     def('header', headerCtor); def('UI.header', headerCtor);
     const footerCtor     = native(1, ([s]) => makeAttr('footer', s));
@@ -950,7 +2188,7 @@
     }, 'navReplace')));
     def('Nav.replace', envLookup(env, 'navReplace'));
 
-    // Nav.afterSignIn : Effect e ()
+    // Auth.completeSignIn : Effect e ()
     //
     // The right way to navigate after a successful Auth.verifyCode.
     // Reads the `?next=` query parameter (set by the framework when a
@@ -961,11 +2199,13 @@
     //
     // User code:
     //   SubmitDone (Ok ()) ->
-    //       ( model, Nav.afterSignIn )
+    //       ( model, Auth.completeSignIn )
     //
-    // Replaces the older `Nav.replace "/"` pattern. Pages that don't
-    // care about return-to-origin can keep using Nav.replace directly.
-    def('navAfterSignIn', VEffect(() => {
+    // Lives under Auth.* (not Nav.*) because it bundles auth-specific
+    // cleanup (resetting the auth-expired redirect coalescer) with
+    // the navigation step. Nav.* stays focused on pure navigation;
+    // Auth.* owns the post-login transition end-to-end.
+    def('authCompleteSignIn', VEffect(() => {
       const nav = globalThis.__marNav;
       if (!nav) return VUnit();
       let target = '/';
@@ -981,13 +2221,19 @@
       }
       // Reset the auth-expired coalescer so the next genuine session
       // expiry triggers a fresh redirect. Has to happen BEFORE the
-      // nav.replace because the post-replace render may itself fire
-      // a Service.call that would race against a stale flag.
+      // nav call because the post-replace render may itself fire a
+      // Service.call that would race against a stale flag.
       globalThis.__marRedirectingToSignIn = false;
-      nav.replace(target);
+      // replaceFresh (not replace) so the back button on the
+      // destination doesn't point at /sign-in/verify/<email>. The
+      // auth flow is one-way: once signed in, going "back" to the
+      // (now-irrelevant) code-entry screen would only confuse the
+      // user. Resetting depth to 0 reflects that this is a fresh
+      // starting point.
+      nav.replaceFresh(target);
       return VUnit();
-    }, 'navAfterSignIn'));
-    def('Nav.afterSignIn', envLookup(env, 'navAfterSignIn'));
+    }, 'authCompleteSignIn'));
+    def('Auth.completeSignIn', envLookup(env, 'authCompleteSignIn'));
 
     // isSafeReturnPath validates that a `?next=` value is a same-
     // origin relative path with no protocol-injection escape hatches.
@@ -1258,16 +2504,16 @@
     def('httpGet', native(2, ([url, toMsg]) => {
       return VEffect(() => {
         fetch(url.s)
-          .then(r => r.text().then(t => ({ ok: r.ok, body: t })))
+          .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
           .then(r => {
             const result = r.ok
               ? VCtor('Ok', [VString(r.body)])
-              : VCtor('Err', [VString(r.body || ('HTTP ' + (r.status || 0)))]);
+              : VCtor('Err', [VString(decodeServerError(r.body) || ('HTTP ' + (r.status || 0)))]);
             const msg = apply(toMsg, result);
             if (currentDispatch) currentDispatch(msg);
           })
           .catch(err => {
-            const msg = apply(toMsg, VCtor('Err', [VString(String(err))]));
+            const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
             if (currentDispatch) currentDispatch(msg);
           });
         return VUnit();
@@ -1334,16 +2580,16 @@
         const opts = { method };
         if (method !== 'GET' && method !== 'DELETE') opts.body = body.s;
         fetch(url, opts)
-          .then(r => r.text().then(t => ({ ok: r.ok, body: t })))
+          .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
           .then(r => {
             const result = r.ok
               ? VCtor('Ok', [VString(r.body)])
-              : VCtor('Err', [VString(r.body || ('HTTP ' + r.status))]);
+              : VCtor('Err', [VString(decodeServerError(r.body) || ('HTTP ' + r.status))]);
             const msg = apply(toMsg, result);
             if (currentDispatch) currentDispatch(msg);
           })
           .catch(err => {
-            const msg = apply(toMsg, VCtor('Err', [VString(String(err))]));
+            const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
             if (currentDispatch) currentDispatch(msg);
           });
         return VUnit();
@@ -1432,13 +2678,13 @@
             // Auth-expiry interceptor: a 401 on a Service.call means
             // the session is gone (or never existed). Send the user to
             // the configured signInPath, capturing where they were so
-            // Nav.afterSignIn can return them after a successful login.
+            // Auth.completeSignIn can return them after a successful login.
             // The Err is NOT dispatched — user code never sees this
             // case. This keeps "session expired" out of every update
             // function across the app.
             if (r.status === 401 && handleAuthExpired()) return;
             if (!r.ok) {
-              const msg = apply(toMsg, VCtor('Err', [VString(r.body || ('HTTP ' + r.status))]));
+              const msg = apply(toMsg, VCtor('Err', [VString(decodeServerError(r.body) || ('HTTP ' + r.status))]));
               if (currentDispatch) currentDispatch(msg);
               return;
             }
@@ -1454,13 +2700,42 @@
             if (currentDispatch) currentDispatch(msg);
           })
           .catch(err => {
-            const msg = apply(toMsg, VCtor('Err', [VString(String(err))]));
+            const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
             if (currentDispatch) currentDispatch(msg);
           });
         return VUnit();
       }, 'serviceCall');
     }));
     def('Service.call', envLookup(env, 'serviceCall'));
+
+    // friendlyFetchError translates a fetch() rejection into a
+    // user-facing string. fetch() only rejects on actual network
+    // failures (DNS down, server unreachable, request aborted,
+    // CORS blocked, browser offline); HTTP error statuses come
+    // through .then(r => ...) with r.ok=false, NOT here.
+    //
+    // The raw err.message varies by browser:
+    //   - Safari:  "Load failed"
+    //   - Chrome:  "Failed to fetch"
+    //   - Firefox: "NetworkError when attempting to fetch resource"
+    //
+    // None of those are useful to an end user. We collapse them
+    // into one calm sentence (two, when navigator.onLine confirms
+    // we're offline) and stash the raw text in the console for the
+    // developer debugging the issue.
+    //
+    // Used by every Service.call / Endpoint.call / Auth.* fetch
+    // .catch handler so apps consistently see clean error strings
+    // in their `Result String _` channels.
+    function friendlyFetchError(err) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[mar] network failure:', err);
+      }
+      const offline = (typeof navigator !== 'undefined' && navigator.onLine === false);
+      return offline
+        ? "You appear to be offline. Check your connection and try again."
+        : "Couldn't reach the server. Try again in a moment.";
+    }
 
     // handleAuthExpired centralizes the "401 from Service.call" reaction:
     //
@@ -1471,7 +2746,7 @@
     //   2. If we already navigated to sign-in for an earlier 401 in
     //      this batch (parallel Service.calls all expiring together),
     //      drop subsequent 401s on the floor — one redirect is enough.
-    //      The flag is reset by Nav.afterSignIn after a successful
+    //      The flag is reset by Auth.completeSignIn after a successful
     //      verifyCode, so the next legitimate session expiry will
     //      redirect again.
     //   3. Otherwise: capture the current path as `?next=`, navigate
@@ -1500,7 +2775,13 @@
         }
       } catch (_) { /* fall through with bare signInPath */ }
 
-      nav.replace(target);
+      // replaceFresh resets marDepth to 0 — /sign-in is an entry
+      // point, regardless of how deep into the app the user was
+      // when their session expired. Without the reset, a user
+      // bounced from /tasks/edit/42 (depth 1) would see a back
+      // button on /sign-in pointing at a page they can no longer
+      // access.
+      nav.replaceFresh(target);
       return true;
     }
 
@@ -1538,20 +2819,34 @@
             if (currentDispatch) currentDispatch(msg);
           })
           .catch(err => {
-            const msg = apply(toMsg, VCtor('Err', [VString(String(err))]));
+            const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
             if (currentDispatch) currentDispatch(msg);
           });
         return VUnit();
       }, 'authPost');
     }
 
-    function decodeAuthError(body) {
+    // decodeServerError tries to extract a stable error code from an
+    // HTTP error response body. The Mar runtime + framework endpoints
+    // (auth, rate-limit middleware, admin) consistently shape error
+    // bodies as `{"error": "snake_case_code", ...}`. When that shape
+    // is present, return just the code so user code can `case` on it
+    // cleanly. Otherwise fall back to the raw body or empty.
+    //
+    // Without this, a 429 from the gateway limiter would surface in
+    // a Result.Err as the literal string
+    //   `{"error":"rate_limited","retryAfterSeconds":3}`
+    // which apps would have to substring-match against — defeating
+    // the whole point of having stable codes server-side.
+    function decodeServerError(body) {
+      if (!body) return '';
       try {
         const j = JSON.parse(body);
-        return (j && j.error) || '';
-      } catch (_) {
-        return body || '';
-      }
+        if (j && typeof j.error === 'string') {
+          return j.error;
+        }
+      } catch (_) { /* fall through to raw body */ }
+      return body;
     }
 
     def('authRequestCode', native(2, ([req, toMsg]) => {
@@ -1565,7 +2860,36 @@
     def('Auth.verifyCode', envLookup(env, 'authVerifyCode'));
 
     def('authLogout', native(1, ([toMsg]) => {
-      return authPost('/_auth/logout', null, toMsg, () => VUnit());
+      // Optimistic logout: dispatch the result message IMMEDIATELY
+      // and fire the server request in the background as
+      // fire-and-forget. This is what production webapps
+      // (Gmail / Slack / Twitter) do — logout is fundamentally
+      // a UI gesture, not a transaction. Waiting for the server
+      // to clear its session before the user sees ANY response
+      // means a slow network leaves the operator stuck on a
+      // protected page with no feedback ("did my tap register?").
+      //
+      // Trade-off: if the server never receives the POST (network
+      // dropped, server down), the session cookie remains valid
+      // server-side until it expires naturally. The client UI has
+      // already moved to the sign-in page; if the user reloads,
+      // Page.protected's /_auth/whoami check would see the still-
+      // valid cookie and route them back to the protected page.
+      // Acceptable in practice: rare network failure + rare
+      // reload-immediately-after-logout combo. The operator
+      // explicitly asked for this trade in favor of responsive UX.
+      //
+      // We always dispatch Ok(()) — the request's HTTP outcome is
+      // irrelevant to the user's intent. The .catch on the fetch
+      // just swallows the error so it doesn't surface in console.
+      return VEffect(() => {
+        fetch('/_auth/logout', {
+          method: 'POST',
+          credentials: 'same-origin',
+        }).catch(() => { /* fire-and-forget: server-side cleanup is best-effort */ });
+        const msg = apply(toMsg, VCtor('Ok', [VUnit()]));
+        if (currentDispatch) currentDispatch(msg);
+      }, 'authLogout');
     }));
     def('Auth.logout', envLookup(env, 'authLogout'));
 
@@ -1595,7 +2919,7 @@
             if (currentDispatch) currentDispatch(msg);
           })
           .catch(err => {
-            const msg = apply(toMsg, VCtor('Err', [VString(String(err))]));
+            const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
             if (currentDispatch) currentDispatch(msg);
           });
         return VUnit();
@@ -1606,16 +2930,16 @@
     def('httpPost', native(3, ([url, body, toMsg]) => {
       return VEffect(() => {
         fetch(url.s, { method: 'POST', body: body.s })
-          .then(r => r.text().then(t => ({ ok: r.ok, body: t })))
+          .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
           .then(r => {
             const result = r.ok
               ? VCtor('Ok', [VString(r.body)])
-              : VCtor('Err', [VString(r.body || ('HTTP ' + (r.status || 0)))]);
+              : VCtor('Err', [VString(decodeServerError(r.body) || ('HTTP ' + (r.status || 0)))]);
             const msg = apply(toMsg, result);
             if (currentDispatch) currentDispatch(msg);
           })
           .catch(err => {
-            const msg = apply(toMsg, VCtor('Err', [VString(String(err))]));
+            const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
             if (currentDispatch) currentDispatch(msg);
           });
         return VUnit();
@@ -1655,6 +2979,794 @@
     });
   }
 
+  // getAttr reads a named attribute's value from a view, returning
+  // null when absent. Generic helper for attrs whose value is a
+  // record / object (not just a primitive). Used by onMove which
+  // packs { editing, handler } into the attr value.
+  function getAttrRaw(view, name) {
+    if (!view || !view.attrs) return null;
+    for (const a of view.attrs) {
+      if (a.name === name) return a.value;
+    }
+    return null;
+  }
+
+  // dispatchOnMove applies a Mar `(Int -> Int -> msg)` handler to
+  // the (from, to) indices and pushes the resulting Msg through
+  // the current MVU dispatcher.
+  //
+  // Used by the list reorder gesture — both the mouse/touch drag
+  // (attachListReorderDrag) and the keyboard grab (Padrão 2 in
+  // attachListReorderKeyboard, P6 below).
+  function dispatchOnMove(handler, from, to) {
+    if (!handler || from === to || !currentDispatch) return;
+    try {
+      const partial = apply(handler, VInt(from));
+      const msg = apply(partial, VInt(to));
+      currentDispatch(msg);
+    } catch (e) {
+      console.error('[mar] onMove dispatch failed:', e);
+    }
+  }
+
+  // attachListReorderDrag wires up the mouse/touch drag gesture on a
+  // `mar-list` element in edit mode.
+  //
+  // Behavior:
+  //   - Each child row gets a drag handle `<button.mar-drag-handle>`
+  //     prepended on the right side (added in createDOM when the
+  //     list has an onMove attr with editing=true).
+  //   - Pointer-down on a handle "lifts" the row (CSS class for
+  //     shadow + elevation), records starting index.
+  //   - Pointer-move calculates which row the cursor is currently
+  //     over (by comparing Y position to each row's mid-point),
+  //     showing a thin blue drop indicator line above that row.
+  //   - Pointer-up: if the cursor is over a different row,
+  //     dispatch onMove(start, target); reset all visual state.
+  //   - Escape key or pointer-cancel: cancel without dispatching.
+  //
+  // Realtime visual reorder: as the cursor moves over rows, those
+  // rows shift in place to "open up" the drop slot — no separate
+  // drop indicator needed (the visible gap IS the indicator). This
+  // mirrors iOS table-view drag where the list reflows continuously
+  // under the finger rather than waiting for the release.
+  function attachListReorderDrag(listEl, handler) {
+    let dragging = null;
+    const rows = () => Array.from(listEl.children).filter(c =>
+      !c.classList.contains('mar-drop-indicator') &&
+      !c.classList.contains('mar-live-region'));
+
+    function onPointerDown(ev) {
+      // Only react to the drag handle, not the whole row — clicking
+      // text or other content shouldn't start a drag.
+      const handle = ev.target.closest('.mar-drag-handle');
+      if (!handle) return;
+      const rowEl = handle.closest('.mar-section-body > *');
+      if (!rowEl || rowEl.parentNode !== listEl) return;
+
+      ev.preventDefault();
+      const rs = rows();
+      const startIdx = rs.indexOf(rowEl);
+      if (startIdx < 0) return;
+
+      // Attach pointermove/up/cancel listeners on DOCUMENT (not
+      // listEl) and DON'T use setPointerCapture. This is the
+      // "modern drag pattern" used by dnd-kit / react-dnd / etc.:
+      //
+      //   - Document-level listeners receive pointer events
+      //     anywhere on the page, so the user can drag past the
+      //     section's bounds without us losing the events. Same
+      //     benefit setPointerCapture would give, but without the
+      //     capture's iOS Safari side effects (a long-debugged
+      //     class of bugs where the gesture state machine doesn't
+      //     fully release on pointerup, leaving the page in a
+      //     "next tap is consumed" state — operator reported
+      //     EXACTLY this symptom after every drag: "any button
+      //     needs to be tapped twice; tapping somewhere first
+      //     releases it").
+      //
+      //   - Listeners are added per-drag and removed on
+      //     pointerup/cancel. No state outlives the drag. The
+      //     page is back to clean after release — same as if no
+      //     drag ever happened.
+      //
+      // Bound once here so add/remove use the same function
+      // reference; closures over `dragging` capture the same
+      // state the previous implementation had.
+      document.addEventListener('pointermove', onPointerMove);
+      document.addEventListener('pointerup', onPointerUp);
+      document.addEventListener('pointercancel', onPointerCancel);
+
+      rowEl.classList.add('mar-row-dragging');
+      // The drag-active class on the list enables a CSS transition
+      // on non-dragging siblings (transform 200ms ease-out). Setting
+      // transforms on them in onPointerMove then animates smoothly
+      // — without this class the shifts would snap on each cursor
+      // tick and feel jittery. See the CSS rule for the full pair.
+      listEl.classList.add('mar-section-drag-active');
+
+      // Snapshot every row's natural geometry BEFORE any shift is
+      // applied. We use this snapshot for two things in onPointerMove:
+      //
+      //   (a) Target-row hit testing. If we used live
+      //       getBoundingClientRect, the rects would reflect the
+      //       realtime shifts we ourselves applied — moving the
+      //       cursor 10px would cause a chain reaction (shift → new
+      //       rect → new target → new shift → ...) and the drop
+      //       slot would oscillate.
+      //
+      //   (b) The dragged row's natural height, which is the offset
+      //       OTHER rows shift by ("make room for one row"). We
+      //       pull it from the snapshot rather than measure live so
+      //       the value is stable across the gesture.
+      const rowGeometry = rs.map(r => {
+        const rect = r.getBoundingClientRect();
+        return { el: r, top: rect.top, height: rect.height };
+      });
+
+      dragging = {
+        rowEl,
+        startIdx,
+        lastTargetIdx: startIdx,
+        pointerId: ev.pointerId,
+        startPointerY: ev.clientY,
+        rowGeometry,
+      };
+    }
+
+    function onPointerMove(ev) {
+      if (!dragging) return;
+      ev.preventDefault();
+
+      // Translate the dragged row to follow the cursor. The delta is
+      // relative to where the pointer was at drag-start, so the row
+      // moves 1:1 with the finger / mouse. We compose the translate
+      // with a tiny scale-up (1.02) for the "picked up" feel that
+      // iOS uses on table-view drag — gives clear visual signal that
+      // THIS row is the one being moved, beyond the shadow alone.
+      const deltaY = ev.clientY - dragging.startPointerY;
+      dragging.rowEl.style.transform = 'translateY(' + deltaY + 'px) scale(1.02)';
+
+      // Find the conceptual drop slot using PRE-DRAG geometry (not
+      // live rects — see the snapshot rationale in onPointerDown).
+      // We do NOT skip the dragging row's entry in geom: including it
+      // lets a cursor on the dragging row's own slot resolve to
+      // startIdx (no-op), which is the correct UX for "small drag
+      // that doesn't cross a neighbor's midpoint". The previous skip
+      // caused the loop to leap over startIdx and bias the target
+      // one slot toward the cursor direction, producing wrong drops
+      // when dragging from the middle.
+      //
+      // Default = geom.length (the slot AFTER the last row) so a
+      // cursor below every midpoint resolves to "drop at the very
+      // end". Combined with the effectiveTarget adjustment below,
+      // this keeps the end-of-list drop reachable for DOWN drags.
+      const y = ev.clientY;
+      const geom = dragging.rowGeometry;
+      let target = geom.length;
+      for (let i = 0; i < geom.length; i++) {
+        if (y < geom[i].top + geom[i].height / 2) {
+          target = i;
+          break;
+        }
+      }
+      // listMove removes `from` first then inserts at `to` in the
+      // POST-REMOVAL list. For UP drags (target <= startIdx) the
+      // slots above startIdx are unaffected by the removal so target
+      // is dispatched as-is. For DOWN drags (target > startIdx)
+      // every slot after startIdx shifts up by one when from is
+      // removed, so the dispatched index is one less than the
+      // conceptual drop slot — without this -1 a drag that should
+      // land "above row N" instead lands BELOW row N.
+      const startIdx = dragging.startIdx;
+      const effectiveTarget =
+        target > startIdx ? target - 1 : target;
+
+      // Skip the shift recalc if the resolved target hasn't changed
+      // since the last move — the rows are already in the right
+      // positions and writing the same inline styles would just
+      // churn CSSOM.
+      if (effectiveTarget === dragging.lastTargetIdx) return;
+      dragging.lastTargetIdx = effectiveTarget;
+
+      // Realtime shifts on OTHER rows. Each row between the dragged
+      // row's home slot and the current target slot translates by
+      // ±rowHeight to open up the landing space. The combined
+      // effect: the user sees the list "reflowing" under their
+      // finger, the gap moving with them, no separate drop indicator
+      // needed.
+      //
+      // Indexed against effectiveTarget (not the raw cursor-side
+      // target) so the visual gap matches where listMove will
+      // actually drop the row. Using raw target would put the gap
+      // one row off for DOWN drags.
+      const rowHeight =
+        geom.find(g => g.el === dragging.rowEl).height;
+      for (let i = 0; i < geom.length; i++) {
+        const r = geom[i].el;
+        if (r === dragging.rowEl) continue;
+        let shift = 0;
+        if (effectiveTarget > startIdx && i > startIdx && i <= effectiveTarget) {
+          shift = -rowHeight;
+        } else if (effectiveTarget < startIdx && i >= effectiveTarget && i < startIdx) {
+          shift = rowHeight;
+        }
+        r.style.transform = shift === 0
+          ? ''
+          : 'translateY(' + shift + 'px)';
+      }
+    }
+
+    function onPointerUp(ev) {
+      if (!dragging) return;
+      // No preventDefault here — drop the pointerup default
+      // suppression. Modern drag-and-drop libraries (dnd-kit,
+      // react-dnd) intentionally don't preventDefault on pointerup
+      // because it can interfere with how iOS Safari processes the
+      // touch-sequence end (including the synthetic click that
+      // should — or shouldn't — fire). The drag itself has already
+      // happened; nothing useful to suppress at this point.
+      const { startIdx, lastTargetIdx, rowEl, rowGeometry } = dragging;
+
+      // Detach the document-level listeners we attached in
+      // onPointerDown. This is the cleanup that pointer-capture
+      // would have done implicitly (per spec) — but doing it
+      // ourselves means no dependency on the browser's release
+      // implementation. iOS Safari's broken implicit-release was
+      // the original "Done needs 2 taps after drag" bug; this
+      // structure sidesteps that entirely.
+      document.removeEventListener('pointermove', onPointerMove);
+      document.removeEventListener('pointerup', onPointerUp);
+      document.removeEventListener('pointercancel', onPointerCancel);
+
+
+      // FLIP drop animation — slide the dragged row smoothly from
+      // where the cursor released it to its final slot in the list,
+      // instead of snapping. Without this the row jumps wherever
+      // the reorder puts it, which reads as glitchy after the
+      // smooth follow-cursor drag.
+      //
+      // The OTHER rows DO NOT need a FLIP: their drag-time visual
+      // positions already match their post-reorder natural
+      // positions (the realtime shifts were rehearsing the final
+      // layout). So we clear their transforms synchronously and
+      // they stay visually still — the dispatch + DOM-reorder +
+      // transform-clear all happen in one sync block, so the
+      // browser paints a single coherent frame: rows in their new
+      // DOM slots, no transforms, no visible motion.
+      //
+      // Step-by-step (dragged row only):
+      //
+      //   1. FIRST: snapshot the dragged row's visual position
+      //      (cursor pos, with follow-cursor transform applied).
+      //   2. Disable transitions on all rows so the cleanups below
+      //      don't accidentally animate things we want instant.
+      //   3. Clear transforms on all rows. Dragged row briefly
+      //      snaps to its OLD-slot natural — invisible because we
+      //      stay in the sync block. Other rows stay put visually
+      //      (their drag-shift == post-reorder natural).
+      //   4. Dispatch reorder → MVU + render moves the dragged row
+      //      to its new DOM slot synchronously.
+      //   5. LAST: measure the dragged row's NEW natural position.
+      //   6. INVERT: re-apply a transform that visually puts the
+      //      dragged row back at the cursor's spot.
+      //   7. void offsetHeight forces a sync layout so the browser
+      //      commits the inverted state before the transition
+      //      target is set — without it Chrome may collapse the
+      //      next two style writes into a no-op.
+      //   8. PLAY: next frame, clear the transform. The transition
+      //      we set in step 7 animates from inverted (cursor) to
+      //      natural (final slot).
+
+      const cursorRect = rowEl.getBoundingClientRect();
+
+      // Step 2: disable transitions everywhere so the cleanups
+      // below don't kick off animations.
+      for (const g of rowGeometry) {
+        g.el.style.transition = 'none';
+      }
+
+      // Step 3: clear all inline transforms. Other rows' visual
+      // positions are unaffected (their drag-shifted position ==
+      // their post-reorder natural position). The dragged row
+      // would visually snap to its OLD slot if the browser painted
+      // here — but it doesn't, because we stay sync until step 6.
+      for (const g of rowGeometry) {
+        g.el.style.transform = '';
+      }
+
+      listEl.classList.remove('mar-section-drag-active');
+      dragging = null;
+
+      // Step 4: trigger the model update + re-render.
+      if (lastTargetIdx !== startIdx) {
+        dispatchOnMove(handler, startIdx, lastTargetIdx);
+      }
+
+      // Step 5: dragged row is now at its final slot. Measure.
+      const finalRect = rowEl.getBoundingClientRect();
+      const dx = cursorRect.left - finalRect.left;
+      const dy = cursorRect.top - finalRect.top;
+
+      // Restore inline transition='' on other rows so future drags
+      // can re-enable the realtime-shift transition via the
+      // .mar-section-drag-active class. Leaving inline 'none' on
+      // them would override the class rule and break the next
+      // drag.
+      for (const g of rowGeometry) {
+        if (g.el !== rowEl) g.el.style.transition = '';
+      }
+
+      // If the dragged row's cursor position already coincides
+      // with its final slot (rare — pointer didn't move much),
+      // skip the FLIP. Nothing to animate.
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+        rowEl.classList.remove('mar-row-dragging');
+        rowEl.style.transition = '';
+        rowEl.style.transform = '';
+        return;
+      }
+
+      // Step 6: invert — put the dragged row back where the
+      // cursor was. scale(1.02) lift carries through the
+      // animation so the row "lands" by shrinking to natural
+      // size + sliding simultaneously (iOS Reminders feel).
+      rowEl.style.transform = 'translate(' + dx + 'px, ' + dy + 'px) scale(1.02)';
+      // Step 7: force layout flush so the inverted state is
+      // committed before we declare the transition.
+      void rowEl.offsetHeight;
+      rowEl.style.transition = 'transform 260ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+
+      // Step 8: play — clear transform on next frame to trigger
+      // the transition. rAF ensures the inverted state was
+      // painted at least once before the animation starts.
+      requestAnimationFrame(() => {
+        rowEl.style.transform = '';
+        const cleanup = () => {
+          rowEl.classList.remove('mar-row-dragging');
+          rowEl.style.transition = '';
+          rowEl.style.transform = '';
+          rowEl.removeEventListener('transitionend', cleanup);
+        };
+        rowEl.addEventListener('transitionend', cleanup);
+      });
+    }
+
+    function onPointerCancel() {
+      if (!dragging) return;
+      const { rowEl, rowGeometry } = dragging;
+      // Detach document-level listeners (mirror of onPointerUp's
+      // cleanup) — see onPointerDown for the architecture.
+      document.removeEventListener('pointermove', onPointerMove);
+      document.removeEventListener('pointerup', onPointerUp);
+      document.removeEventListener('pointercancel', onPointerCancel);
+      rowEl.classList.remove('mar-row-dragging');
+      rowEl.style.transform = '';
+      rowEl.style.transition = '';
+      // Reset shifts on other rows too.
+      for (const g of rowGeometry) {
+        g.el.style.transform = '';
+        g.el.style.transition = '';
+      }
+      listEl.classList.remove('mar-section-drag-active');
+      dragging = null;
+    }
+
+    // Only pointerdown stays on listEl — that's the gesture-start
+    // detector (needs to fire when the user touches the drag
+    // handle inside this section). The move / up / cancel
+    // listeners get attached to DOCUMENT inside onPointerDown so
+    // they catch events anywhere on the page during the drag, and
+    // are detached on pointerup/cancel — no state outlives the
+    // gesture (the iOS Safari "stuck capture" bug was caused by
+    // listeners + setPointerCapture not unwinding cleanly).
+    listEl.addEventListener('pointerdown', onPointerDown);
+  }
+
+  // makeDragHandle creates the `≡` handle element prepended to each
+  // row in a reorderable list when edit mode is active. Pure DOM
+  // factory; the listener attachment is on the LIST element (event
+  // delegation) — see attachListReorderDrag.
+  function makeDragHandle() {
+    const h = document.createElement('button');
+    h.type = 'button';
+    h.className = 'mar-drag-handle';
+    h.setAttribute('aria-label', 'Drag to reorder');
+    // Three short horizontal bars — iOS-style drag affordance.
+    for (let i = 0; i < 3; i++) {
+      const bar = document.createElement('span');
+      bar.className = 'mar-drag-handle-bar';
+      h.appendChild(bar);
+    }
+    return h;
+  }
+
+  // ensureRowEditAffordances guarantees a row inside an editing
+  // section carries its drag handle + ARIA wiring, idempotently.
+  //
+  // Why this exists: the section's createDOM appends a handle to
+  // every child during the initial render. BUT keyed reconciliation
+  // can create new row DOM via createDOM(rowView) in two places —
+  //
+  //   (a) patchChildrenKeyed when newKey isn't in oldByKey (a row
+  //       added in edit mode, e.g. via the Add Task button), and
+  //   (b) patchDOM's tag-mismatch replacement (toggle → hstack on
+  //       edit-mode entry, or any future shape-shift)
+  //
+  // — and neither path goes through the section's createDOM loop,
+  // so the fresh row would be missing its handle. Calling this
+  // helper from those creation sites (and re-running it on the
+  // section's patch path) makes the handle's presence robust to
+  // however the row landed in the DOM.
+  //
+  // Idempotent: bails if a handle is already present, so the cost
+  // on the common case (row was created with handle) is one
+  // querySelector.
+  function ensureRowEditAffordances(rowEl, posIndex, totalCount) {
+    if (rowEl.querySelector(':scope > .mar-drag-handle') == null) {
+      rowEl.appendChild(makeDragHandle());
+    }
+    if (!rowEl.hasAttribute('tabindex')) rowEl.setAttribute('tabindex', '0');
+    if (!rowEl.hasAttribute('role')) rowEl.setAttribute('role', 'listitem');
+    if (!rowEl.hasAttribute('aria-grabbed')) rowEl.setAttribute('aria-grabbed', 'false');
+    // posinset / setsize ALWAYS get refreshed — these change on
+    // every reorder / insert / delete, and stale values would
+    // mislead screen readers.
+    rowEl.setAttribute('aria-posinset', String(posIndex + 1));
+    rowEl.setAttribute('aria-setsize', String(totalCount));
+    // Position-based classes drive the CSS that rounds the focus
+    // outline / grabbed bg at the section card's outer corners. Set
+    // here (not via CSS :first-child / :last-child) because the
+    // section body has non-row children too (mar-live-region for
+    // ARIA, mar-drop-indicator during active drag) that would
+    // confuse positional selectors. CSS gets a definitive boolean
+    // from JS, where we already know the true row count.
+    rowEl.classList.toggle('mar-row-first', posIndex === 0);
+    rowEl.classList.toggle('mar-row-last', posIndex === totalCount - 1);
+  }
+
+  // attachRowDeleteAffordance — appends the per-row delete button
+  // (iOS-edit-mode minus circle on the row's left). Only renders
+  // when the row is in edit mode: web's normal mode shows just the
+  // primary affordance (toggle / link) without a destructive option
+  // — the user enters Edit explicitly to do CRUD on the list.
+  //
+  // We considered the iCloud-Web hover-reveal pattern but it
+  // conflicts with apps that have a separate Edit mode (the
+  // canonical Mar shape): hovering rows in browse mode then
+  // surfaces a destructive action the user hasn't asked for, on
+  // top of the toggle they're trying to click. Edit-mode-only is
+  // less ambiguous and matches the iOS Mail/Notes/Reminders
+  // ergonomics exactly.
+  //
+  // The click handler dispatches `handler(idx)` — the framework's
+  // standard apply-then-dispatch — so the Mar app's `update` sees
+  // a `Msg.SomeDelete idx` and decides what to do (typically:
+  // remove from the local model + Service.call to persist +
+  // surface a toast with Undo).
+  //
+  // Idempotent: re-rendering a row that already has the button
+  // reuses the existing DOM node + listener (no stacking). When
+  // `editing=false`, any leftover button from a previous render
+  // gets removed, so flipping editing mode off cleans up after
+  // itself.
+  function attachRowDeleteAffordance(rowEl, posIndex, handler, isEditing) {
+    let btn = rowEl.querySelector(':scope > .mar-row-delete');
+    if (!isEditing) {
+      // Browse mode — remove any stale button from a previous
+      // render that had editing=true. This is the cleanup leg of
+      // toggling Edit → Done while the same DOM node persists.
+      if (btn) btn.remove();
+      return;
+    }
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'mar-row-delete';
+      btn.setAttribute('aria-label', 'Delete');
+      // Minus glyph as SVG so it stays crisp on retina without a
+      // font dependency. A 4-unit-tall bar in a 24-unit viewBox
+      // renders ~2.3px tall at the 14×14 SVG size — clearly
+      // visible against the red disc. The previous 2-unit bar
+      // disappeared to roughly 1px on standard DPI screens.
+      btn.innerHTML =
+        '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+        '<rect x="5" y="10" width="14" height="4" rx="2" fill="currentColor"/>' +
+        '</svg>';
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+
+        const dispatch = () => {
+          try {
+            const idxV = VInt(parseInt(btn.dataset.idx || '0', 10));
+            const msg = apply(handler, idxV);
+            if (currentDispatch) currentDispatch(msg);
+          } catch (e) {
+            console.error('[mar] onDelete dispatch failed:', e);
+          }
+        };
+
+        // iOS Mail / Notes swipe-delete animation: the row's
+        // height collapses to zero (so the rows below slide up
+        // smoothly), padding + border-bottom go with it, and the
+        // row's contents fade + slide ~40px left. ~260ms with
+        // an ease-in curve — accelerates as it leaves, which
+        // matches "you removed this" gravity better than a
+        // linear or symmetric ease.
+        //
+        // We hold the dispatch until the animation finishes so
+        // the patcher doesn't yank the DOM node out from under
+        // us. Cost is a 260ms delay before the network round
+        // trip — acceptable for a destructive action where the
+        // visual confirmation is the primary feedback.
+        //
+        // Fallback path: if Element.animate isn't available
+        // (very old browser, JSDOM in tests), we skip the
+        // animation and dispatch immediately so the action
+        // still works.
+        const r = ev.currentTarget.closest('.mar-section-body > *');
+        if (!r || typeof r.animate !== 'function') {
+          dispatch();
+          return;
+        }
+
+        // Capture the row\'s current concrete dimensions so the
+        // first keyframe is "this exact size" rather than the
+        // implicit 'auto' value, which can\'t interpolate.
+        const cs = getComputedStyle(r);
+        const h  = r.offsetHeight;
+        const pt = cs.paddingTop;
+        const pb = cs.paddingBottom;
+        const bb = cs.borderBottomWidth;
+
+        // `overflow: hidden` keeps the leaving content from
+        // bleeding into the row below as height shrinks. The
+        // style attribute survives the animation (Web Animations
+        // API doesn\'t clear it).
+        r.style.overflow = 'hidden';
+
+        try {
+          await r.animate([
+            {
+              height: h + 'px',
+              opacity: 1,
+              transform: 'translateX(0)',
+              paddingTop: pt,
+              paddingBottom: pb,
+              borderBottomWidth: bb,
+            },
+            {
+              height: '0px',
+              opacity: 0,
+              transform: 'translateX(-40px)',
+              paddingTop: '0px',
+              paddingBottom: '0px',
+              borderBottomWidth: '0px',
+            },
+          ], {
+            duration: 260,
+            easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+            fill: 'forwards',
+          }).finished;
+        } catch (_) {
+          // Animation can be cancelled if the node is removed
+          // from the DOM mid-play (e.g., a programmatic
+          // re-render races with the user click). Ignore and
+          // proceed to dispatch — the row is going away either
+          // way.
+        }
+
+        dispatch();
+      });
+      rowEl.appendChild(btn);
+    }
+    // Refresh per-render: the index shifts when rows above are
+    // inserted/removed. Stored on data-idx so the click handler
+    // (which closes over `btn` but not the current idx) reads it
+    // fresh at click time.
+    btn.dataset.idx = String(posIndex);
+  }
+
+  // attachListReorderKeyboard — Padrão 2 (WAI-ARIA grab + arrow
+  // keys) for keyboard / screen-reader users. Invisible to mouse
+  // users (no extra UI), discoverable via Tab focus + screen
+  // reader announcements.
+  //
+  // Flow:
+  //   1. Each row in edit mode is focusable (tabindex="0",
+  //      role="listitem", aria-label="<name>, item N of M").
+  //   2. Space or Enter on a focused row → enter "grabbed" state.
+  //      Visual focus ring stays; aria-grabbed="true".
+  //   3. ArrowUp / ArrowDown while grabbed → reorder live (moves
+  //      the DOM node, updates aria-posinset).
+  //   4. Space or Enter again → drop (fires onMove from original
+  //      idx to current idx).
+  //   5. Escape → cancel (revert the live moves, fire nothing).
+  //
+  // Live position announcements go through a single
+  // <div aria-live="polite"> attached to the list.
+  function attachListReorderKeyboard(listEl, handler, liveHost) {
+    const rows = () => Array.from(listEl.children).filter(c =>
+      !c.classList.contains('mar-drop-indicator') &&
+      !c.classList.contains('mar-live-region'));
+
+    // One shared live region per list — assistive tech reads
+    // updates as polite announcements.
+    //
+    // Hosted on `liveHost` (the section wrapper) — NOT on `listEl`
+    // (the section-body) — because `.mar-section-body > *` applies
+    // padding (10px 0), min-height (22px), and border-bottom (0.5px)
+    // to every direct child. Even though the live region is
+    // `position: absolute` (out of flow, so it doesn\'t push siblings),
+    // appending it as the last child of the body kicks the previous
+    // actual last row out of `:last-child` — gaining a hairline
+    // border, and visually nudging the section card\'s end by enough
+    // to read as a "phantom extra row" the moment Edit is toggled.
+    // Hosting on the section wrapper sidesteps all of that — the
+    // wrapper has no descendant rules to inherit.
+    const host = liveHost || listEl;
+    let live = host.querySelector(':scope > .mar-live-region');
+    if (!live) {
+      live = document.createElement('div');
+      live.className = 'mar-live-region';
+      live.setAttribute('aria-live', 'polite');
+      live.setAttribute('aria-atomic', 'true');
+      host.appendChild(live);
+    }
+    function announce(msg) {
+      // Clearing first forces re-announcement when the same text
+      // would otherwise repeat (e.g., consecutive arrow-up presses).
+      live.textContent = '';
+      // setTimeout 0 = next microtask, gives the screen reader
+      // time to register the clear before the new text.
+      setTimeout(() => { live.textContent = msg; }, 0);
+    }
+
+    let grabbed = null; // { rowEl, startIdx }
+
+    // onGrabbedBlur cancels the grab when focus leaves the grabbed
+    // row. Without this, pressing Tab while grabbed creates a
+    // "zombie" state: the row stays styled as `.mar-row-grabbed`
+    // (dark blue fill) AND another row picks up the browser's
+    // `:focus-visible` ring (blue outline) — two rows look
+    // "selected", subsequent Space presses can't resolve which
+    // row to act on, and arrow keys move the grabbed (invisible-
+    // to-the-user attention) instead of the focused one.
+    //
+    // We defer the check to a microtask via setTimeout(…, 0):
+    // some browsers fire transient blur/focus pairs when a node
+    // is moved via insertBefore (the very thing moveGrabbed does
+    // on each arrow keypress). By the time the microtask runs,
+    // focus has settled. If it landed back on the grabbed row,
+    // we keep the grab. If it landed elsewhere, the user
+    // intentionally shifted attention — cancel.
+    function onGrabbedBlur() {
+      setTimeout(() => {
+        if (!grabbed) return;
+        if (document.activeElement === grabbed.rowEl) return;
+        endGrab(false);
+      }, 0);
+    }
+
+    function startGrab(rowEl) {
+      const idx = rows().indexOf(rowEl);
+      if (idx < 0) return;
+      grabbed = { rowEl, startIdx: idx };
+      rowEl.setAttribute('aria-grabbed', 'true');
+      rowEl.classList.add('mar-row-grabbed');
+      rowEl.addEventListener('blur', onGrabbedBlur);
+      announce('Grabbed item ' + (idx + 1) + ' of ' + rows().length + '. Use up and down arrows to move.');
+    }
+
+    function endGrab(commit) {
+      if (!grabbed) return;
+      const { rowEl, startIdx } = grabbed;
+      const currentIdx = rows().indexOf(rowEl);
+      rowEl.setAttribute('aria-grabbed', 'false');
+      rowEl.classList.remove('mar-row-grabbed');
+      rowEl.removeEventListener('blur', onGrabbedBlur);
+      grabbed = null;
+      if (commit && currentIdx !== startIdx) {
+        // Fire the handler. The model update will cause a re-
+        // render that "officially" places the row; our local DOM
+        // moves were just preview.
+        dispatchOnMove(handler, startIdx, currentIdx);
+        announce('Moved to position ' + (currentIdx + 1) + ' of ' + rows().length + '.');
+      } else if (commit) {
+        announce('Dropped in place.');
+      } else {
+        announce('Move cancelled.');
+      }
+    }
+
+    function moveGrabbed(delta) {
+      if (!grabbed) return;
+      const rs = rows();
+      const idx = rs.indexOf(grabbed.rowEl);
+      const target = Math.max(0, Math.min(rs.length - 1, idx + delta));
+      if (target === idx) return;
+      // Move DOM live — gives instant visual + screen-reader
+      // feedback. The final model update happens on drop.
+      const anchor = (delta > 0)
+        ? (rs[target].nextSibling || null)
+        : rs[target];
+      listEl.insertBefore(grabbed.rowEl, anchor);
+      // Refresh position-driven classes + aria attrs on EVERY row,
+      // not just the grabbed one. `mar-row-first` / `mar-row-last`
+      // drive the rounded-corner border-radius (18px at the card's
+      // outer corners vs 8px between rows). insertBefore moves the
+      // grabbed row but leaves these classes stale on it AND on the
+      // rows it traded places with — so the focused outline shows
+      // an 8px corner where the card has an 18px curve, visible as
+      // a "broken" ring at the top or bottom row.
+      const afterMove = rows();
+      afterMove.forEach((r, i) => {
+        r.classList.toggle('mar-row-first', i === 0);
+        r.classList.toggle('mar-row-last', i === afterMove.length - 1);
+        r.setAttribute('aria-posinset', String(i + 1));
+        r.setAttribute('aria-setsize', String(afterMove.length));
+      });
+      // Restore focus to the moved row. Browsers vary: some
+      // preserve focus across insertBefore on the active element,
+      // some momentarily transfer it to `<body>` and the user-
+      // agent never moves it back. In the latter case our
+      // onGrabbedBlur handler sees `activeElement !== grabbed.rowEl`
+      // and cancels the grab — so after one arrow press, the next
+      // arrow / Space silently does nothing (the symptom the user
+      // saw: "ArrowDown worked, ArrowUp did nothing"). Explicitly
+      // re-focusing right after the move makes the gesture stable
+      // across all browsers.
+      grabbed.rowEl.focus();
+      announce('Position ' + (target + 1) + ' of ' + afterMove.length + '.');
+    }
+
+    listEl.addEventListener('keydown', (ev) => {
+      const rowEl = ev.target.closest('.mar-section-body > *');
+      if (!rowEl || rowEl.parentNode !== listEl) return;
+      if (rowEl.classList.contains('mar-drop-indicator') ||
+          rowEl.classList.contains('mar-live-region')) return;
+
+      switch (ev.key) {
+        case ' ':
+        case 'Enter':
+          ev.preventDefault();
+          if (grabbed) {
+            // Commit the drop regardless of which row currently
+            // has focus. The blur handler above should have
+            // already ended the grab if focus left the grabbed
+            // row — this is a defensive fallback for browsers /
+            // edge cases where the blur didn't fire (e.g.,
+            // focus moved via JS rather than user interaction).
+            endGrab(true);
+          } else {
+            startGrab(rowEl);
+          }
+          break;
+        case 'ArrowUp':
+          if (grabbed) { ev.preventDefault(); moveGrabbed(-1); }
+          break;
+        case 'ArrowDown':
+          if (grabbed) { ev.preventDefault(); moveGrabbed(1); }
+          break;
+        case 'Escape':
+          if (grabbed) {
+            ev.preventDefault();
+            // Revert the live moves by putting the row back at
+            // its starting index.
+            const rs = rows();
+            const currentIdx = rs.indexOf(grabbed.rowEl);
+            if (currentIdx !== grabbed.startIdx) {
+              const anchor = rs[grabbed.startIdx] || null;
+              listEl.insertBefore(grabbed.rowEl, anchor);
+            }
+            endGrab(false);
+          }
+          break;
+      }
+    });
+  }
+
   // Reads the `disabled` attr off a view; returns false when absent
   // or when the value isn't `true`. Renderer-side guard for buttons.
   function isDisabled(view) {
@@ -1672,6 +3784,31 @@
   // hover/focus styling and makes the browser skip the click event.
   function applyDisabledAttr(node, view) {
     node.disabled = isDisabled(view);
+  }
+
+  // Sync disabled state onto an <a> — which doesn't have a native
+  // `disabled` property. We set aria-disabled (assistive tech +
+  // [aria-disabled=true] CSS selector hook) and toggle a class so
+  // the stylesheet can fade the row + kill pointer events. The
+  // delegated link-click handler additionally consults isDisabled()
+  // before navigating, so keyboard activation (Enter on a focused
+  // link) is also blocked.
+  function applyAnchorDisabled(node, view) {
+    const disabled = isDisabled(view);
+    if (disabled) {
+      node.setAttribute('aria-disabled', 'true');
+      node.classList.add('mar-disabled');
+      // Pull the link out of tab order while disabled. Without
+      // this, Tab still lands on it (because we force tabindex=0
+      // on every navigationLink), and Enter activates the
+      // navigation — defeating the disabled state for keyboard
+      // users. Returns to tabindex=0 when re-enabled below.
+      node.setAttribute('tabindex', '-1');
+    } else {
+      node.removeAttribute('aria-disabled');
+      node.classList.remove('mar-disabled');
+      node.setAttribute('tabindex', '0');
+    }
   }
 
   // applyInputKind reads the input-kind flag attrs (email / password
@@ -1756,37 +3893,245 @@
     return a ? a.value.s : '';
   }
 
+  // applySizing reads `width` / `height` attrs (records with __unit
+  // and amount fields, built by UI.chars / UI.lines) and applies them
+  // to the DOM element. Both attrs are optional — sizing without them
+  // falls back to the input's default (full-width, browser/CSS
+  // default height).
+  //
+  // Padding constants here MUST stay in sync with the .mar-textfield
+  // CSS rule (10px 14px) so the calc() math lands on a width that
+  // actually fits N character columns visually.
+  function applySizing(node, view) {
+    const w = readLengthAttr(view, 'width');
+    if (w && w.unit === 'chars') {
+      // The width budget has to cover four things, in order:
+      //
+      //   - 28px horizontal padding (14px × 2 from .mar-textfield)
+      //   - 2px border (1px × 2)
+      //   - 2-4px slack for the caret + browser-specific scroll
+      //     padding (Safari adds a few px when the caret sits at the
+      //     trailing edge so it doesn't get clipped by the border)
+      //   - the actual N×ch content area
+      //
+      // box-sizing on .mar-textfield is `border-box`, so max-width
+      // INCLUDES padding + border — we have to bake them back in or
+      // the content area ends up ~Nch - 30px wide instead of Nch.
+      // Total constant: 28 + 2 + 4 = 34px.
+      //
+      // The accompanying `font-variant-numeric: tabular-nums` rule
+      // in the CSS makes every digit (0-9) render at exactly `1ch`
+      // wide. Without it, "888888" is ~5% wider than "111111" in
+      // proportional fonts (system-ui, SF Pro), causing horizontal
+      // scroll-flicker when the cursor passes near the trailing
+      // edge of code/numeric inputs.
+      node.style.maxWidth = 'calc(' + w.amount + 'ch + 34px)';
+      // Opt the input out of the hstack flex:1 stretch rule so a
+      // sized field beside a button doesn't get re-expanded by the
+      // flex layout. `0 0 auto` = don't grow, don't shrink, use the
+      // declared (max-)width.
+      node.style.flex = '0 0 auto';
+    }
+    const h = readLengthAttr(view, 'height');
+    if (h && h.unit === 'lines') {
+      if (node.tagName === 'TEXTAREA') {
+        // For <textarea>, the HTML-native `rows` attribute is the
+        // right way to set initial height in lines. The user can
+        // still drag the resize handle to grow it further (CSS rule
+        // `resize: vertical` is preserved).
+        node.setAttribute('rows', String(h.amount));
+      }
+    }
+  }
+
+  // readLengthAttr unwraps a sizing-attr value into { unit, amount }.
+  // The Mar-side type system enforces that `width` carries a Width
+  // (chars N) and `height` carries a Height (lines N), so the unit
+  // check here is defensive — a malformed value just returns null.
+  function readLengthAttr(view, name) {
+    if (!view.attrs) return null;
+    for (const a of view.attrs) {
+      if (a.name !== name) continue;
+      const v = a.value;
+      if (v && v.k === 'R' && v.fields) {
+        const u = v.fields.__unit;
+        const amt = v.fields.amount;
+        if (u && u.k === 'S' && amt && amt.k === 'I') {
+          return { unit: u.s, amount: amt.n };
+        }
+      }
+      return null;
+    }
+    return null;
+  }
+
+  // toggleIsOn reads the `isOn` Bool attr off a UI.toggle view.
+  // Defaults to false when missing so the DOM has a deterministic
+  // starting state.
+  function toggleIsOn(view) {
+    const a = view.attrs && view.attrs.find(a => a.name === 'isOn');
+    return !!(a && a.value && a.value.b);
+  }
+
+  // renderPickerOptions rebuilds the <option> children of a picker's
+  // <select> from the view's `options` / `selected` / `toLabel` attrs.
+  // Used by both createDOM (initial mount) and patchDOM (when the
+  // user's update swaps the model's options or selected value).
+  // Clears the select first so the patch path doesn't accumulate
+  // stale entries when an option is removed.
+  function renderPickerOptions(select, view) {
+    while (select.firstChild) select.removeChild(select.firstChild);
+    const optionsAttr = view.attrs.find(a => a.name === 'options');
+    const selectedAttr = view.attrs.find(a => a.name === 'selected');
+    const toLabelAttr = view.attrs.find(a => a.name === 'toLabel');
+    if (!optionsAttr || !optionsAttr.value || optionsAttr.value.k !== 'L') return;
+    if (!toLabelAttr || !toLabelAttr.value || toLabelAttr.value.k !== 'Fn') return;
+    const options = optionsAttr.value.xs;
+    const selected = selectedAttr && selectedAttr.value;
+    let selectedIdx = -1;
+    for (let i = 0; i < options.length; i++) {
+      const opt = document.createElement('option');
+      opt.value = String(i);
+      const labelV = apply(toLabelAttr.value, options[i]);
+      opt.textContent = (labelV && labelV.k === 'S') ? labelV.s : String(labelV);
+      select.appendChild(opt);
+      if (selected !== undefined && eqValues(options[i], selected)) {
+        selectedIdx = i;
+      }
+    }
+    // Set the select's value *after* options are appended — assigning
+    // before they exist silently fails and the dropdown shows the
+    // wrong default. -1 (no match) leaves the browser's default of
+    // index 0 in place, which is the safest fallback when the model's
+    // selected value isn't in the option list.
+    if (selectedIdx >= 0) select.value = String(selectedIdx);
+  }
+
   // buildNavigationBar pulls navigationTitle / trailing / leading
   // attrs off a navigationStack view and returns a fresh <header>
-  // element. The bar layouts as [leading] [title centered] [trailing].
-  // Always returns an element (even when no attrs are set) so
-  // patchDOM can keep the slot-0 DOM structure stable.
+  // element. The header has up to two stacked rows:
+  //
+  //   [toolbar-row]   ← optional — auto-back / leading on the left,
+  //                     trailing on the right. Both sides are glass
+  //                     pills floating over the page (iOS 26
+  //                     "Liquid Glass" toolbar pattern).
+  //   [title-row]     ← optional — the 32px bold large title.
+  //
+  // This mirrors iOS 26 large-title NavigationBar: action buttons
+  // sit in a small bar of glass pills above the big page title, so
+  // the title gets its own row and the chrome doesn\'t compete with
+  // it for horizontal space. Both rows are emitted only when there
+  // is something to put in them — root pages with no trailing
+  // collapse to just the title.
   function buildNavigationBar(view) {
     const header = document.createElement('header');
     header.className = 'mar-nav-bar';
     const titleAttr = view.attrs && view.attrs.find(a => a.name === 'navigationTitle');
-    const trailingAttr = view.attrs && view.attrs.find(a => a.name === 'trailing');
-    const leadingAttr  = view.attrs && view.attrs.find(a => a.name === 'leading');
-    if (!titleAttr && !trailingAttr && !leadingAttr) {
+    const trailingAttr = view.attrs && view.attrs.find(a => a.name === 'topBarTrailing');
+    const leadingAttr  = view.attrs && view.attrs.find(a => a.name === 'topBarLeading');
+    const depth = currentNavDepth();
+    // Back chevron is framework-owned and independent of any
+    // user-provided topBarLeading content — it appears whenever
+    // there's a previous page to return to. SwiftUI works the same
+    // way: .navigationBarBackButtonHidden(true) is the explicit
+    // opt-out, not the default consequence of setting toolbar
+    // items. Without this, a sub-page that uses topBarLeading for
+    // a custom button (Edit, Filter, ...) silently loses the
+    // ability to navigate back, which was the bug that motivated
+    // this whole refactor.
+    const autoBack = depth > 0;
+    if (!titleAttr && !trailingAttr && !leadingAttr && !autoBack) {
       header.style.display = 'none';
       return header;
     }
-    const left = document.createElement('div');
-    left.className = 'mar-nav-side';
-    if (leadingAttr) left.appendChild(createDOM(leadingAttr.value));
-    header.appendChild(left);
 
-    const center = document.createElement('div');
-    center.className = 'mar-nav-title';
-    if (titleAttr) center.textContent = titleAttr.value.s;
-    header.appendChild(center);
+    // Toolbar row — glass pills floating above the title. Left
+    // side holds the back chevron (if any) and the user's
+    // topBarLeading content (if any) IN THAT ORDER. Right side
+    // holds topBarTrailing. Only emitted if at least one slot has
+    // content.
+    if (autoBack || leadingAttr || trailingAttr) {
+      const toolbarRow = document.createElement('div');
+      toolbarRow.className = 'mar-nav-toolbar-row';
 
-    const right = document.createElement('div');
-    right.className = 'mar-nav-side mar-nav-side-trailing';
-    if (trailingAttr) right.appendChild(createDOM(trailingAttr.value));
-    header.appendChild(right);
+      const left = document.createElement('div');
+      left.className = 'mar-nav-side';
+      // Order matters: back chevron first (closest to the leading
+      // edge of the screen), custom topBarLeading after it. This
+      // mirrors SwiftUI's automatic placement — toolbar items go
+      // BESIDES the auto-injected back button, not in place of it.
+      if (autoBack) {
+        left.appendChild(buildBackButton());
+      }
+      if (leadingAttr) {
+        left.appendChild(createDOM(leadingAttr.value));
+      }
+      toolbarRow.appendChild(left);
+
+      const right = document.createElement('div');
+      right.className = 'mar-nav-side mar-nav-side-trailing';
+      if (trailingAttr) right.appendChild(createDOM(trailingAttr.value));
+      toolbarRow.appendChild(right);
+
+      header.appendChild(toolbarRow);
+    }
+
+    // Title row — just the bold large title.
+    if (titleAttr) {
+      const titleRow = document.createElement('div');
+      titleRow.className = 'mar-nav-title-row';
+      const titleEl = document.createElement('div');
+      titleEl.className = 'mar-nav-title';
+      titleEl.textContent = titleAttr.value.s;
+      titleRow.appendChild(titleEl);
+      header.appendChild(titleRow);
+    }
 
     return header;
+  }
+
+  // buildBackButton returns the iOS 26-style circular glass pill
+  // with just the chevron inside. No visible text — the previous
+  // screen\'s title goes into the `title` attribute as a hover
+  // tooltip + aria-label so the affordance is accessible without
+  // taking horizontal space in the toolbar.
+  function buildBackButton() {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mar-nav-back';
+    const prev = (history.state && history.state.prevTitle) || '';
+    btn.setAttribute('aria-label', prev ? 'Back to ' + prev : 'Back');
+    if (prev) btn.setAttribute('title', 'Back to ' + prev);
+    const chev = document.createElement('span');
+    chev.className = 'mar-nav-back-chev';
+    chev.textContent = '‹';
+    btn.appendChild(chev);
+    btn.addEventListener('click', () => {
+      // Native browser back — fires popstate, which calls render()
+      // with the previous URL + depth, triggering the "back"
+      // view-transition direction.
+      history.back();
+    });
+    return btn;
+  }
+
+  // currentNavDepth reads our SPA-internal "how deep into the
+  // navigation stack are we" counter, stamped onto history.state
+  // by every push / replace. Returns 0 when the entry has no state
+  // yet (e.g. the very first page load before mountPages runs the
+  // initial replace).
+  function currentNavDepth() {
+    return (history.state && typeof history.state.marDepth === 'number')
+      ? history.state.marDepth
+      : 0;
+  }
+
+  // Respect the OS-level "reduce motion" accessibility preference.
+  // Users who set this don't want page-transition slide animations
+  // — disable them entirely and just do the DOM swap.
+  function prefersReducedMotion() {
+    return window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }
 
   // ensureUIStyles injects the CSS for the UI.* vocabulary once. The
@@ -1811,19 +4156,54 @@
     // The same DSL still renders as proper iOS Forms on Swift —
     // only the WEB rendering picks the desktop idiom.
     style.textContent = [
-      // Apple-on-the-web vocabulary: SF Pro Display, generous space,
-      // pill-shaped buttons, near-black `#1d1d1f` text, Apple-blue
-      // (#0071e3) accents, soft 0.5px dividers — same language used
-      // on icloud.com / apple.com / music.apple.com. The page reads
-      // as content (the notes), not chrome (the form).
+      // System-flavored vocabulary: native system font stack,
+      // generous space, pill-shaped buttons, near-black `#1d1d1f`
+      // text, link-blue (#0071e3) accents, soft 0.5px dividers.
+      // The page reads as content (the notes), not chrome.
 
-      'html, body { margin: 0; padding: 0; height: 100%; }',
+      // height: 100% on html, min-height on body so the body's box
+      // grows past the viewport when content is taller. Without
+      // min-height (just height: 100%), the body stays exactly one
+      // viewport tall: anything below the fold shows html's solid
+      // background instead of the body's gradient, producing a
+      // visible horizontal "seam" partway down long pages.
+      'html { margin: 0; padding: 0; height: 100%; }',
+      'body { margin: 0; padding: 0; min-height: 100%; }',
+      // color-scheme tells the browser the page supports both light
+      // and dark UAs. Without it, form-control internals (input /
+      // textarea / select default backgrounds, scrollbar tracks,
+      // focus rings) pick the LIGHT branch even when the OS is in
+      // dark mode — visible as a stark white input on an otherwise
+      // dark page. With `light dark` listed, the UA flips its
+      // internals to match `prefers-color-scheme`, and our explicit
+      // .mar-textfield rules layer over a dark-correct UA default.
+      ':root { color-scheme: light dark; }',
+      // <html> picks up its own solid background matching the bottom
+      // of the body gradient. Two reasons:
+      //
+      //  1. Overscroll bounce (Safari, mobile in particular) reveals
+      //     the html element above/below the body. Without this it
+      //     defaults to white — jarring on a dark-mode page that's
+      //     otherwise charcoal.
+      //
+      //  2. The View Transitions API renders its snapshot pair
+      //     inside a transient overlay anchored to <html>. While the
+      //     two snapshots slide horizontally, the gap between them
+      //     briefly shows <html>'s background. Same default-white
+      //     story: would flash light during every page transition
+      //     in dark mode.
+      //
+      // The light-mode rule pairs with the @media (prefers-color-
+      // scheme: dark) override further down.
+      'html { background-color: #efeff2; }',
       'body {',
-      // Apple\'s signature off-white for content surfaces (used on
-      // icloud.com, apple.com support pages, etc.). White cards on
-      // white page have zero contrast — the card edges disappear,
-      // which is what was happening before.
-      '  background: #f5f5f7;',
+      // Subtle vertical gradient — "Liquid Glass" needs a hint of
+      // directional light to look right (glass without context
+      // looks like flat translucency). Light at the top fades to
+      // a slightly darker tone toward the bottom, so the glass
+      // pills and cards above pick up a soft top highlight.
+      '  background: linear-gradient(180deg, #fafafc 0%, #f5f5f7 60%, #efeff2 100%);',
+      '  background-attachment: fixed;',
       '  color: #1d1d1f;',
       '  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",',
       '    "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;',
@@ -1833,46 +4213,88 @@
       '  text-rendering: optimizeLegibility;',
       '}',
 
-      // Page container — Apple sites center content within ~980-1140px.
-      // Big top padding so the title has breathing room (Apple's hero
-      // pattern); the page is content-first, no nav chrome on top.
+      // Page container — content stays inside a ~1024px column to
+      // keep line lengths readable on wide displays. Big top padding
+      // gives the large title breathing room; the page is
+      // content-first, no nav chrome on top.
+      // iOS-specific notes:
+      //
+      // 1. Padding uses `max(<min>, env(safe-area-inset-*))` so the
+      //    page never renders content under the notch / Dynamic
+      //    Island / home indicator. On desktop and Android (where
+      //    the env() values are 0), the min wins and layout is
+      //    identical to before. On iPhone with notch the top padding
+      //    grows to ~44pt so the back button + title clear the
+      //    status bar properly.
+      //
+      // 2. `min-height` is declared twice: 100vh first as the
+      //    fallback, 100dvh second so supporting browsers (Safari
+      //    15.4+, Chrome 108+, Firefox 110+) use the dynamic value
+      //    that tracks URL-bar collapse. With plain 100vh, iOS
+      //    Safari reports the FULL viewport (URL bar hidden),
+      //    causing content to appear shifted up when the URL bar
+      //    is visible.
       '.mar-nav-stack {',
       '  display: block;',
       '  max-width: 1024px;',
       '  width: 100%;',
       '  margin: 0 auto;',
-      '  padding: 24px 32px 48px 32px;',
+      '  padding-top: max(24px, calc(env(safe-area-inset-top) + 12px));',
+      '  padding-right: max(32px, env(safe-area-inset-right));',
+      '  padding-bottom: max(48px, calc(env(safe-area-inset-bottom) + 24px));',
+      '  padding-left: max(32px, env(safe-area-inset-left));',
       '  min-height: 100vh;',
+      '  min-height: 100dvh;',
       '  box-sizing: border-box;',
       '}',
 
-      // Title bar — large but tight to the content below.
+      // Title bar — up to two stacked rows: a toolbar row of glass
+      // pills (back + trailing), then the large-title row. Mirrors
+      // iOS 26 large-title NavigationBar.
       '.mar-nav-bar {',
       '  display: flex;',
-      '  align-items: baseline;',
-      '  justify-content: space-between;',
-      '  gap: 24px;',
-      '  margin-bottom: 20px;',
+      '  flex-direction: column;',
+      '  gap: 16px;',
+      '  margin-bottom: 24px;',
       '}',
+      '.mar-nav-toolbar-row {',
+      '  display: flex;',
+      '  align-items: center;',
+      '  justify-content: space-between;',
+      '  gap: 12px;',
+      // Hangs the pills slightly outside the content column so
+      // they sit in the safe-area gutter — same visual gravity as
+      // iOS 26\'s floating toolbar.
+      '  margin-left: -8px;',
+      '  margin-right: -8px;',
+      '  min-height: 36px;',
+      '}',
+      '.mar-nav-title-row { display: block; }',
       '.mar-nav-title {',
       '  font-size: 32px;',
       '  font-weight: 700;',
       '  letter-spacing: -0.02em;',
       '  line-height: 1.15;',
-      '  flex: 1;',
       '  white-space: nowrap;',
       '  overflow: hidden;',
       '  text-overflow: ellipsis;',
       '}',
-      '.mar-nav-side { display: flex; align-items: center; gap: 12px; }',
+      '.mar-nav-side { display: flex; align-items: center; gap: 8px; }',
       '.mar-nav-side-trailing { justify-content: flex-end; }',
 
-      // Pill-shaped secondary buttons — Apple uses 980px radius in
-      // production (any number ≥ height/2 produces a pill, but they
-      // overshoot for safety). Subtle gray fill, never iOS-bright.
+      // Trailing nav buttons — glass pills. iOS 26 dropped the
+      // gray-fill toolbar buttons in favor of translucent pills
+      // that pick up backdrop blur. The inset white highlight is
+      // the "specular" — the cue your eye reads as glass rather
+      // than just translucent.
       '.mar-nav-side button {',
-      '  background: rgba(0, 0, 0, 0.05);',
-      '  border: none;',
+      '  background: rgba(255, 255, 255, 0.62);',
+      '  -webkit-backdrop-filter: blur(20px) saturate(180%);',
+      '  backdrop-filter: blur(20px) saturate(180%);',
+      '  border: 0.5px solid rgba(0, 0, 0, 0.06);',
+      '  box-shadow:',
+      '    inset 0 0.5px 0 rgba(255, 255, 255, 0.8),',
+      '    0 2px 8px rgba(0, 0, 0, 0.05);',
       '  color: #1d1d1f;',
       '  font-family: inherit;',
       '  font-size: 14px;',
@@ -1880,9 +4302,51 @@
       '  padding: 8px 18px;',
       '  border-radius: 980px;',
       '  cursor: pointer;',
-      '  transition: background 200ms;',
+      '  transition: background 200ms, transform 150ms;',
+      // touch-action: manipulation tells iOS Safari "this button
+      // accepts taps for click — don\'t hold the synthetic click
+      // for ~300ms waiting for a possible double-tap-to-zoom".
+      // Without it, after a touch-heavy gesture (like the drag
+      // reorder), the next tap on this button gets absorbed by
+      // Safari\'s gesture-disambiguation window: the operator
+      // sees "Done did nothing" on the first press, has to tap
+      // again. Applies cleanly to nav-bar action buttons (back,
+      // Done, Sign out) which are tap-only — no pinch or scroll.
+      '  touch-action: manipulation;',
       '}',
-      '.mar-nav-side button:hover { background: rgba(0, 0, 0, 0.08); }',
+      '.mar-nav-side button:hover { background: rgba(255, 255, 255, 0.85); }',
+      '.mar-nav-side button:active { transform: scale(0.96); }',
+
+      // Auto-inserted back button — circular glass pill with the
+      // chevron only. iOS 26 dropped the "‹ Back" / "‹ Previous"
+      // text label in favor of an icon-only pill that floats over
+      // the page. Accessibility lives in `aria-label` and the
+      // hover `title` tooltip (set in buildBackButton).
+      '.mar-nav-back {',
+      '  width: 36px; height: 36px;',
+      '  padding: 0;',
+      '  border-radius: 50%;',
+      '  background: rgba(255, 255, 255, 0.62);',
+      '  -webkit-backdrop-filter: blur(20px) saturate(180%);',
+      '  backdrop-filter: blur(20px) saturate(180%);',
+      '  border: 0.5px solid rgba(0, 0, 0, 0.06);',
+      '  box-shadow:',
+      '    inset 0 0.5px 0 rgba(255, 255, 255, 0.8),',
+      '    0 2px 8px rgba(0, 0, 0, 0.06);',
+      '  color: #0071e3;',
+      '  cursor: pointer;',
+      '  display: inline-flex;',
+      '  align-items: center;',
+      '  justify-content: center;',
+      '  transition: background 200ms, transform 150ms;',
+      '  touch-action: manipulation;',  // skip iOS 300ms double-tap delay
+      '}',
+      '.mar-nav-back:hover { background: rgba(255, 255, 255, 0.85); }',
+      '.mar-nav-back:active { transform: scale(0.92); }',
+      '.mar-nav-back-chev {',
+      '  font-size: 22px; font-weight: 600; line-height: 1;',
+      '  margin-top: -2px;',
+      '}',
 
       // Form / list / nav body — vertical stack with snug gap.
       // Cards have visible boundaries; just enough gap to keep them
@@ -1895,10 +4359,11 @@
       '  border: none;',
       '}',
 
-      // Section: Apple-web eyebrow header + iOS-style content card.
-      // Reset UA margin — some browsers give <section> ~1em vertical
-      // margin by default, which shows up as a chunky black gap
-      // between consecutive section cards on top of our form gap.
+      // Section: small uppercase eyebrow header above a rounded
+      // content card. Reset UA margin — some browsers give <section>
+      // ~1em vertical margin by default, which shows up as a chunky
+      // black gap between consecutive section cards on top of our
+      // form gap.
       '.mar-section { display: block; margin: 0; padding: 0; }',
       '.mar-section-header {',
       '  font-size: 12px; font-weight: 600;',
@@ -1906,15 +4371,46 @@
       '  color: #86868b;',
       '  padding: 0 4px; margin: 0 0 4px 0;',
       '}',
+      // Section card — iOS 26 "Liquid Glass" surface. Translucent
+      // white with backdrop blur + saturation so what\'s behind
+      // (the gradient page background) bleeds through softened.
+      // The inset specular highlight on the top edge + outer drop
+      // shadow give the "floating glass pane above the page" feel.
+      //
+      // The horizontal inset (16px) lives HERE on the parent rather
+      // than as margin on individual rows. That way replaced
+      // children — <input>, <textarea>, <select> — naturally fill
+      // the (now-narrower) content area via plain `width: 100%`,
+      // sidestepping the "width: auto means intrinsic on inputs"
+      // CSS gotcha that bit us when the inset was per-row.
       '.mar-section-body {',
-      '  background: #ffffff;',
-      '  border-radius: 12px;',
+      '  background: rgba(255, 255, 255, 0.72);',
+      '  -webkit-backdrop-filter: blur(40px) saturate(180%);',
+      '  backdrop-filter: blur(40px) saturate(180%);',
+      '  border-radius: 18px;',
+      '  border: 0.5px solid rgba(0, 0, 0, 0.04);',
       '  overflow: hidden;',
-      '  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.06);',
+      '  padding: 0 16px;',
+      '  box-shadow:',
+      '    inset 0 0.5px 0 rgba(255, 255, 255, 0.6),',
+      '    0 8px 24px rgba(0, 0, 0, 0.05);',
       '}',
+      // Rows: vertical padding only — horizontal inset now comes
+      // from the parent. Border-bottom becomes "inset divider"
+      // (matches iOS Settings rather than full-bleed dividers).
+      //
+      // `min-height: 22px` matches the height of the edit-mode
+      // affordances (drag handle, delete circle). Without this,
+      // tapping Edit would grow each row by 2-5px (depending on
+      // the browser's default line-height for 16px text) because
+      // the chrome is slightly taller than the natural text line.
+      // Locking the content area to 22px in normal mode too means
+      // the row dimensions are identical in both modes — no
+      // jumpy reflow when the user toggles Edit.
       '.mar-section-body > * {',
       '  display: block;',
-      '  padding: 10px 16px;',
+      '  padding: 10px 0;',
+      '  min-height: 22px;',
       '  border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);',
       '  font-size: 16px;',
       '}',
@@ -1924,6 +4420,250 @@
       '  padding: 0 4px; margin: 6px 0 0 0;',
       '}',
 
+      // ----- Reorderable section (UI.onMove) -----
+      //
+      // The section body gets a `mar-section-editing` class when
+      // edit mode is on; descendant rules hang off that so a
+      // non-edit section pays zero extra cost. Position: relative
+      // so the absolute-positioned drop indicator anchors here.
+      '.mar-section-editing { position: relative; }',
+      // Each row gets a trailing drag handle in edit mode. The
+      // row's vertical padding stays (inherited from the
+      // .mar-section-body > * rule); we just relayout the content
+      // as a flex row so the handle sits at the trailing edge.
+      '.mar-section-editing > * {',
+      '  display: flex; align-items: center;',
+      '  gap: 8px;',
+      '}',
+      // The handle: 36×22 — wide enough for a comfortable
+      // horizontal tap target (the row's vertical padding extends
+      // the hit area to the full 44pt Apple guideline), and
+      // height-matched exactly to the delete button + the row's
+      // min-height. Toggling edit mode doesn't cause any reflow
+      // because every chrome element (text, delete, handle) is
+      // ≤22px tall, and the row's min-height locks the inner
+      // area at 22px in both modes.
+      //
+      // The three bars inside are 18×2 each with a 3px gap,
+      // packing to 12px total — comfortably inside the 22px box.
+      '.mar-drag-handle {',
+      '  flex: 0 0 auto;',
+      '  width: 36px; height: 22px;',
+      '  display: flex; flex-direction: column;',
+      '  align-items: center; justify-content: center;',
+      '  gap: 3px;',
+      '  padding: 0;',
+      // `margin-left: auto` makes the handle self-position to the
+      // right edge of its flex row, consuming whatever slack the
+      // row has. Works whether the row is a plain `text` leaf
+      // (where the text node has no flex-grow) or an `hstack`
+      // (where the hstack children already fill space). The handle
+      // BELONGS at the trailing edge — putting the rule here makes
+      // that property of the handle itself, not a side-effect of
+      // whatever wrapper happens to be around it.
+      '  margin-left: auto;',
+      '  background: transparent;',
+      '  border: none;',
+      '  border-radius: 8px;',
+      '  cursor: grab;',
+      '  touch-action: none;',  // prevent the browser from scrolling on touch-drag
+      '  -webkit-tap-highlight-color: transparent;',
+      // Long-press on the handle on iOS shouldn\'t pop the
+      // text-selection callout (copy/paste/Define) — the handle is
+      // a grab affordance, not selectable content.
+      '  -webkit-user-select: none; user-select: none;',
+      '  -webkit-touch-callout: none;',
+      '}',
+      '.mar-drag-handle:active { cursor: grabbing; }',
+      // The row that hosts this button is rendered as `.mar-hstack`
+      // in edit mode (Mar wraps `keyed` rows as hstacks to attach
+      // the reorder key). The generic `.mar-hstack > button`
+      // chrome below already excludes .mar-drag-handle via
+      // :not(), but the failure mode if that exclusion ever
+      // misses (cache, chained-:not() bug, future selector
+      // refactor) is severe — the handle turns into a solid
+      // white pill on hover, making the bars invisible against
+      // it. Belt-and-braces: force transparent at higher
+      // specificity than the hstack rule, with !important on
+      // hover/focus/active.
+      '.mar-hstack > .mar-drag-handle,',
+      '.mar-hstack > .mar-drag-handle:hover,',
+      '.mar-hstack > .mar-drag-handle:focus,',
+      '.mar-hstack > .mar-drag-handle:active {',
+      '  background: transparent !important;',
+      '  border: none !important;',
+      '  box-shadow: none !important;',
+      '}',
+      '.mar-drag-handle-bar {',
+      '  display: block;',
+      '  width: 18px; height: 2px;',
+      '  background: #c7c7cc;',
+      '  border-radius: 1px;',
+      '  pointer-events: none;',  // so the row's pointerdown fires on the button, not the bar
+      '}',
+      // Realtime reorder transition. When a drag is in progress the
+      // section gets `.mar-section-drag-active`, and non-dragged
+      // rows get an inline transform: translateY(±rowHeight) in
+      // onPointerMove to "open up" the drop slot under the cursor.
+      // This rule applies a CSS transition to those transforms so
+      // the shifts animate smoothly instead of snapping per
+      // cursor-tick. `:not(.mar-row-dragging)` excludes the dragged
+      // row itself, whose follow-cursor transform must update 1:1
+      // with the pointer (any transition there would lag the
+      // pointer behind the finger).
+      '.mar-section-drag-active > *:not(.mar-row-dragging) {',
+      '  transition: transform 200ms cubic-bezier(0.32, 0.72, 0, 1);',
+      '}',
+
+      // Row being actively dragged — opaque background + elevated
+      // shadow + above-siblings z-index so it reads as a card
+      // floating over the rest of the list. The pointer-move
+      // handler also applies an inline `transform: translateY(...)
+      // scale(1.02)` so the row follows the cursor and feels
+      // "picked up". The 10px border-radius rounds the floating
+      // card slightly so it doesn't look like the same flush row
+      // it was at rest.
+      //
+      // Border-bottom suppressed: the `.mar-section-body > *` rule
+      // gives every child a hairline divider, which on a card
+      // that's now floating reads as a stray underline.
+      '.mar-row-dragging {',
+      '  background: #ffffff;',
+      '  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22), 0 4px 8px rgba(0, 0, 0, 0.08);',
+      '  border-radius: 10px;',
+      '  border-bottom: none !important;',
+      '  z-index: 2;',
+      '  position: relative;',
+      '}',
+      // Keyboard focus on a row — Tab navigates between rows in
+      // edit mode (each has tabindex="0"). Without an explicit
+      // :focus-visible rule, the browser draws its default outline
+      // which gets visually swallowed by the row's flush layout
+      // and the dark page background. A subtle blue outline makes
+      // "I just Tabbed here" obvious — same color as the grabbed
+      // state below, but no background tint so the two states
+      // remain distinguishable (focused = "could grab", grabbed =
+      // "actively moving").
+      '.mar-section-editing > *:focus-visible {',
+      '  outline: 2px solid #0a84ff;',
+      '  outline-offset: -2px;',
+      '  border-radius: 8px;',
+      '}',
+      // Keyboard "grabbed" state — distinct from focused (adds the
+      // background tint to say "arrow keys will move this row").
+      // Both styles share the outline so the visual transition
+      // from focused → grabbed is just the bg-fill flashing on.
+      '.mar-row-grabbed {',
+      '  outline: 2px solid #0a84ff;',
+      '  outline-offset: -2px;',
+      '  background: rgba(10, 132, 255, 0.08);',
+      '  border-radius: 8px;',
+      '}',
+      // Focus, grab, and active-drag states all stretch the
+      // highlight to the section card's edges. The section-body
+      // has `padding: 0 16px` around its rows; without
+      // compensating, the outline / bg tint / dragged-card surface
+      // floats inset from the card's edges with a 16px gap that
+      // reads as "this is some inner thing, not the whole row".
+      //
+      // Negative left/right margins (-16px) pull the row's BOX out
+      // to the section's padding edges; equal left/right padding
+      // (16px) restores the content position so text / buttons /
+      // handle don't shift. Result: outline + bg + lift span the
+      // full row width (edge to edge of the rounded card),
+      // content stays in its place — the iOS Settings "selected
+      // row" look.
+      //
+      // Including `.mar-row-dragging` here makes the lifted card
+      // also fill the full width so the dragged surface visually
+      // detaches from the section's inner padding rails.
+      '.mar-section-editing > *:focus-visible,',
+      '.mar-section-editing > *.mar-row-grabbed,',
+      '.mar-section-editing > *.mar-row-dragging {',
+      '  margin-left: -16px;',
+      '  margin-right: -16px;',
+      '  padding-left: 16px;',
+      '  padding-right: 16px;',
+      '}',
+      // Corner rounding for the first and last rows — match the
+      // section card's outer border-radius (18px) so the outline
+      // and bg fill curve smoothly into the card's rounded
+      // corners. Without these overrides, the rectangular 8px
+      // radius of the row's highlight crosses through the card's
+      // 18px curved corner area, leaving a visible "ledge" where
+      // the row outline's straight edge cuts across the card's
+      // bend. Middle rows keep the default 8px (flat top/bottom
+      // edges, since they border other rows).
+      //
+      // The `:first-child:last-child` combo handles the single-row
+      // case — both top AND bottom corners round.
+      '.mar-row-first:focus-visible,',
+      '.mar-row-first.mar-row-grabbed {',
+      '  border-radius: 18px 18px 8px 8px;',
+      '}',
+      '.mar-row-last:focus-visible,',
+      '.mar-row-last.mar-row-grabbed {',
+      '  border-radius: 8px 8px 18px 18px;',
+      '}',
+      '.mar-row-first.mar-row-last:focus-visible,',
+      '.mar-row-first.mar-row-last.mar-row-grabbed {',
+      '  border-radius: 18px;',
+      '}',
+      // Drop indicator — thin blue line shown between rows during
+      // drag. Absolutely positioned over the list root; the JS
+      // updates `top` as the cursor moves.
+      //
+      // The explicit `padding: 0; border: 0` overrides the
+      // `.mar-section-body > *` rule above which gives every child
+      // 10px vertical padding + a hairline border-bottom. Without
+      // these overrides the "2px line" actually renders as a ~22px
+      // blob (2px content + 20px padding + 0.5px border) — visible
+      // as a fat blue bar in the screenshot. Absolute positioning
+      // takes the element OUT OF FLOW but it still inherits the
+      // box-model properties applied by the descendant selector.
+      '.mar-drop-indicator {',
+      '  position: absolute;',
+      '  left: 0; right: 0;',
+      '  height: 2px;',
+      '  padding: 0;',
+      '  border: 0;',
+      '  background: #0a84ff;',
+      '  border-radius: 1px;',
+      '  pointer-events: none;',
+      '  z-index: 1;',
+      '}',
+      // ARIA live region — visually hidden but exposed to screen
+      // readers. The reorder code writes "Grabbed item 2 of 5"
+      // etc. here, the screen reader announces it politely.
+      '.mar-live-region {',
+      '  position: absolute;',
+      '  width: 1px; height: 1px;',
+      '  margin: -1px; padding: 0;',
+      '  overflow: hidden;',
+      '  clip: rect(0, 0, 0, 0);',
+      '  white-space: nowrap; border: 0;',
+      '}',
+      // Dark mode handle / grabbed adjustments.
+      //
+      // For the dragged row in dark mode: light-mode goes #ffffff
+      // (clearly lighter than the page), so dark mode needs the
+      // opposite contrast — a tint LIGHTER than the surrounding
+      // section-body card, with a stronger shadow to read as
+      // "floating above" against the near-black page. Bumping to
+      // rgba(72,72,74,…) (≈ iOS systemGray3) lifts it visibly
+      // above the section-body's rgba(44,44,46,…) backing.
+      //
+      '@media (prefers-color-scheme: dark) {',
+      '  .mar-drag-handle-bar { background: rgba(255, 255, 255, 0.4); }',
+      '  .mar-row-dragging {',
+      '    background: rgb(72, 72, 74);',
+      '    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.7), 0 4px 8px rgba(0, 0, 0, 0.4);',
+      '  }',
+      '  .mar-row-grabbed {',
+      '    background: rgba(10, 132, 255, 0.18);',
+      '  }',
+      '}',
+
       // Stacks
       '.mar-hstack {',
       '  display: flex; flex-direction: row; align-items: center;',
@@ -1931,15 +4671,25 @@
       '}',
       '.mar-hstack > * { flex: 1; min-width: 0; }',
       '.mar-hstack > button { flex: 0 0 auto; }',
+      // Title / subtitle leaves inside an hstack behave as natural-
+      // width labels (like SwiftUI Text), so wrapping one with
+      // spacers — `hstack [ button "-", spacer, title "0", spacer,
+      // button "+" ]` — actually centers it instead of having it
+      // compete with the spacers for flex space.
+      '.mar-hstack > .mar-title, .mar-hstack > .mar-subtitle { flex: 0 0 auto; }',
       '.mar-vstack {',
       '  display: flex; flex-direction: column; align-items: stretch;',
-      '  gap: 12px;',
+      // 6px is the SwiftUI-feel default — tight enough that a
+      // title/subtitle pair reads as a single row (the iOS Settings
+      // pattern), loose enough that a vstack of three sibling
+      // sentences still has breathing room. The previous 12px
+      // pushed two-line nav rows to feel like two separate items.
+      '  gap: 6px;',
       '}',
 
-      // Inputs — soft fill, big, prominent. Focus shows the Apple
-      // blue ring (matches the `Sign in` / `Verify` flow on iCloud).
-      // Input — always has visible web-input chrome (border, fill,
-      // rounded, Apple-blue focus ring). What changes with context is
+      // Inputs — soft fill, big, prominent. Focus shows the
+      // link-blue ring. Always has visible chrome (border, fill,
+      // rounded, focus ring). What changes with context is
       // POSITIONING:
       //   - inside a section card: vertical+horizontal margin so the
       //     input is visually inset from the card edges
@@ -1952,6 +4702,16 @@
       '.mar-textfield {',
       '  display: block; box-sizing: border-box;',
       '  width: 100%;',
+      // Explicitly cancel the `max-width: 24rem` set by the HTML\'s
+      // baseline `<style>` reset (see internal/jsserve/server.go). That
+      // reset uses a `:where(input:not(...))` selector with zero
+      // specificity, expecting any rule that mentions `.mar-textfield`
+      // by class to win — but specificity comparison happens per
+      // PROPERTY, not per rule. `.mar-textfield` declares `width` but
+      // not `max-width`, so the reset\'s 24rem cap leaks through and
+      // hard-caps every mar-styled input at 384px regardless of
+      // container. Setting `max-width: none` here neutralizes it.
+      '  max-width: none;',
       '  margin: 0;',
       '  padding: 10px 14px;',
       '  border: 1px solid rgba(0, 0, 0, 0.12);',
@@ -1968,11 +4728,62 @@
       '  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.12);',
       '}',
       '.mar-textfield::placeholder { color: #86868b; }',
+      // Tabular numerals — every digit (0-9) renders at exactly the
+      // same advance width, making CSS `ch` calculations exact for
+      // numeric-content inputs. Without this, in proportional fonts
+      // like system-ui / SF Pro, "888888" is ~5% wider than "111111",
+      // causing horizontal scroll-flicker when the cursor passes the
+      // trailing edge of a sized field (e.g. `width (chars 6)` on a
+      // 6-digit code input).
+      //
+      // Scoped to inputs with `inputmode="numeric"` (set by `numeric` /
+      // `numericCode` attrs) so non-numeric fields keep proportional
+      // digits, which read better in regular prose.
+      '.mar-textfield[inputmode="numeric"] {',
+      '  font-variant-numeric: tabular-nums;',
+      '}',
+      // Disabled textfield / textarea — keeps the same visual frame
+      // but dims the text + placeholder and switches the cursor so
+      // the user knows clicking won\'t do anything. `not-allowed`
+      // matches the cursor we use on disabled buttons.
+      '.mar-textfield:disabled {',
+      '  background: rgba(0, 0, 0, 0.02);',
+      '  color: rgba(0, 0, 0, 0.36);',
+      '  cursor: not-allowed;',
+      '  border-color: rgba(0, 0, 0, 0.06);',
+      '}',
+      '.mar-textfield:disabled::placeholder { color: rgba(0, 0, 0, 0.24); }',
+      // Multi-line textarea variant. Inherits all the .mar-textfield
+      // base styling (borders, focus ring, padding) and adds the bits
+      // that don't apply to <input>: a relaxed line-height, vertical
+      // resize affordance, and a font-family pin so it renders in the
+      // same sans the rest of the form uses (browsers default
+      // <textarea> to a monospace stack on some platforms).
+      '.mar-textarea {',
+      '  line-height: 1.4;',
+      '  font-family: inherit;',
+      '  resize: vertical;',
+      '  min-height: 80px;',
+      '}',
       // Inside a section card directly — horizontal margin so the
       // input has breathing room from the card edges.
+      //
+      // Width is `calc(100% - 32px)` (not the more obvious `auto` or
+      // `100%`) because <input> and <textarea> are CSS-replaced
+      // elements: `width: auto` falls back to their *intrinsic*
+      // width (~20em ≈ 280px, derived from the default `size="20"`),
+      // not "fill parent". Plain `width: 100%` plus 32px of margin
+      // would overflow the card by 32px. Subtracting the margins
+      // explicitly is the simplest expression of "fill the card,
+      // minus the inset" that works for replaced elements.
+      // Inside a section card: just a small vertical margin between
+      // rows. Horizontal inset comes from the parent's `padding-inline`
+      // (see `.mar-section-body` rule above), so the textfield's
+      // base `width: 100%` already fills correctly — no need for
+      // the calc() workaround that didn't survive whatever was
+      // shadowing it.
       '.mar-section-body > .mar-textfield {',
-      '  margin: 8px 16px;',
-      '  width: auto;',
+      '  margin: 8px 0;',
       '}',
       // Inside an hstack, fill the available row, no margin.
       '.mar-hstack > .mar-textfield {',
@@ -1980,23 +4791,205 @@
       '  margin: 0;',
       '}',
 
-      // Section-row buttons (full-width tappy actions): Apple-blue
-      // text, no fill — matches Apple\'s "Continue with Apple" /
-      // "Sign in" link styling.
-      // Buttons — always Apple-blue pill, regardless of context.
-      // What changes is sizing/margin: full-width inside a section
-      // card (the primary "Verify" / "Send" CTA pattern), compact
-      // inline when in an hstack (next to an input).
-      '.mar-section-body > button, .mar-hstack > button {',
+      // Picker — single-selection dropdown. The wrapping div is the
+      // visual chrome (border, focus state, custom chevron); the
+      // inner <select> stays a plain native control so accessibility
+      // (keyboard nav, screen-reader, mobile native popover) keeps
+      // working. We hide the browser's default chevron via
+      // appearance:none so the only chevron the user sees is our
+      // overlay glyph, which we can position consistently across
+      // platforms.
+      '.mar-picker {',
+      '  display: flex; align-items: center;',
+      // `isolation: isolate` keeps the ::before's `z-index: -1`
+      // inside the picker's local stacking context. Without it,
+      // the negative z-index escapes to the html root and paints
+      // behind the section card's white background — invisible.
+      // Same fix as `a.mar-navigation-link`.
+      '  position: relative;',
+      '  isolation: isolate;',
+      '  cursor: pointer;',
+      '  user-select: none;',
+      '}',
+      '.mar-picker-select {',
+      '  flex: 1; min-width: 0;',
+      '  appearance: none; -webkit-appearance: none;',
+      '  background: transparent;',
+      '  border: none;',
+      // 24px right pad reserves space for the chevron; the chevron
+      // is absolutely positioned at right: 0 (see below) and would
+      // otherwise overlap the longest option label.
+      '  padding: 4px 24px 4px 0;',
+      '  margin: 0;',
+      '  font: inherit; color: inherit;',
+      // Left-align the value. Matches the readability the user
+      // asked for — the eye scans from the section header on the
+      // left, and the trailing chevron at the row's right edge
+      // closes the visual frame. (SwiftUI Form Picker right-aligns
+      // the value flush against the chevron; we don\'t copy that
+      // here because long values on web tend to feel disconnected
+      // from the section header when right-aligned.)
+      '  text-align: left;',
+      '  text-align-last: left;',
+      '  cursor: pointer;',
+      '  outline: none;',
+      '}',
+      // The chevron sits in the trailing slot of the row, mirroring
+      // SwiftUI's Picker (which shows the value flush-right + a
+      // menu indicator). aria-hidden in markup; dimmed in CSS so
+      // it reads as decorative chrome. Glyph is the two-arrow
+      // "select-up-down" indicator — the iOS 17+ Picker(.menu)
+      // convention. Apple's symbol is `chevron.up.chevron.down`;
+      // we render it inline via a stacked SVG that ships with the
+      // runtime so it renders identically across fonts (`›`
+      // rotated is jagged on some renderers; standalone `⌄` looks
+      // like a typo).
+      //
+      // Sized to roughly match the visual weight of the
+      // navigationLink chevron (1.4em `›`). The SVG itself is
+      // 18×22; container box matches so the strokes don\'t get
+      // anti-aliased into a blur.
+      '.mar-picker-chevron {',
+      '  position: absolute; right: 2px;',
+      '  top: 50%; transform: translateY(-50%);',
+      '  display: inline-flex; flex-direction: column;',
+      '  align-items: center; justify-content: center;',
+      '  width: 18px; height: 22px;',
+      '  color: #8e8e93;',
+      '  line-height: 1;',
+      '  pointer-events: none;',
+      '}',
+      // Inside a section card — same row layout as toggle: label-ish
+      // text on the left (the selected value) and the trailing
+      // disclosure chevron on the right. The section-body > * rule
+      // supplies the 10px/16px padding so we don\'t restate it here.
+      '.mar-section-body > .mar-picker {',
+      '  width: auto;',
+      '}',
+      // Keyboard-focus tint, full-bleed across the row. Same pattern
+      // as navigationLink hover (inset: -1px -16px): a ::before
+      // pseudo paints the focus background past the picker's own box
+      // so the cyan tint reaches the card's inner edge instead of
+      // leaving white strips where the parent's 16px padding lives.
+      // The card's overflow:hidden + 18px border-radius clips the
+      // ::before at the card corners; no mismatched-radii problem.
+      // Anchored against the picker's existing `position: relative`.
+      '.mar-picker::before {',
+      '  content: "";',
+      '  position: absolute;',
+      '  inset: -1px -16px;',
+      '  background: transparent;',
+      '  pointer-events: none;',
+      '  transition: background 120ms;',
+      '  z-index: -1;',
+      '}',
+      // Hover tint matches navigationLink (a sibling row in the
+      // same section card) so the two row shapes feel like one
+      // affordance vocabulary. Source order matters: hover first,
+      // focus-within second, so a focused-AND-hovered picker
+      // shows the focus blue, not the hover gray. Same precedence
+      // as navigationLink.
+      //
+      // `:not(.mar-disabled)` suppresses BOTH tints when the picker
+      // is inert — matches the convention used by button/
+      // navigationLink/etc: disabled = ZERO interactive feedback,
+      // only the `not-allowed` cursor signals "this exists but
+      // doesn\'t respond." Without this guard, a disabled picker
+      // would light up gray on hover, falsely inviting interaction.
+      '.mar-picker:not(.mar-disabled):hover::before {',
+      '  background: rgba(0, 0, 0, 0.04);',
+      '}',
+      '.mar-picker:not(.mar-disabled):focus-within::before {',
+      '  background: rgba(0, 113, 227, 0.10);',
+      '}',
+      // Disabled picker — fade the value text + chevron and switch
+      // the cursor. The inner <select disabled> blocks the dropdown;
+      // .mar-disabled is toggled on the wrapper by the renderer so
+      // the chevron (a separate <span>) and any future overlay
+      // chrome can react too.
+      '.mar-picker.mar-disabled { cursor: not-allowed; }',
+      '.mar-picker.mar-disabled .mar-picker-select {',
+      '  color: rgba(0, 0, 0, 0.36);',
+      '  cursor: not-allowed;',
+      '}',
+      '.mar-picker.mar-disabled .mar-picker-chevron {',
+      '  color: rgba(0, 0, 0, 0.18);',
+      '}',
+
+      // Buttons split into two roles (iOS 26 hierarchy):
+      //
+      //   PRIMARY CTA  — section-body direct child. Full-width
+      //                  action like "Verify" / "Submit". Solid
+      //                  blue fill, white text — the visual
+      //                  weight reads "do this".
+      //
+      //   SECONDARY    — hstack child (inline next to other row
+      //                  content, like "Add" beside an input, or
+      //                  "Delete" in a task row). Glass pill with
+      //                  link-blue TEXT instead of solid blue —
+      //                  quiet-action treatment.
+      '.mar-section-body > button {',
       '  background: #0071e3; border: none; color: white;',
-      '  font-weight: 500;',
+      '  font-family: inherit; font-weight: 500;',
       '  border-radius: 980px;',
-      '  cursor: pointer; font-family: inherit;',
-      '  transition: background 200ms;',
+      '  cursor: pointer;',
+      '  transition: background 200ms, opacity 200ms;',
+      '  touch-action: manipulation;',  // skip iOS 300ms double-tap delay
       '}',
-      '.mar-section-body > button:hover, .mar-hstack > button:hover {',
-      '  background: #0077ed;',
+      '.mar-section-body > button:hover { background: #0077ed; }',
+      '.mar-section-body > button:disabled {',
+      '  background: #c7c7cc; color: rgba(255, 255, 255, 0.85);',
+      '  cursor: not-allowed; opacity: 0.55;',
       '}',
+      '.mar-section-body > button:disabled:hover { background: #c7c7cc; }',
+      // Generic `.mar-hstack > button` chrome — the pill / blur /
+      // blue-link look for action buttons inline in a row (Add, Save,
+      // etc.). Two buttons are EXCEPTIONS and need their own visual
+      // identity preserved, so they're excluded via :not():
+      //   - .mar-drag-handle: the three-bars reorder grip. The hstack
+      //     style would give it the same pill look as Add and turn it
+      //     into yet another generic button; we want the bare gray
+      //     bars.
+      //   - .mar-row-delete: the red minus-circle delete affordance.
+      //     The hstack rule's background + border-radius:980px + blue
+      //     color would turn it into a pill instead of the red round
+      //     destructive-action button defined down in the
+      //     onDelete-affordance CSS.
+      // Both exclusions matter because the row is rendered as an
+      // hstack in edit mode (see Frontend/Home.mar's renderTaskRow);
+      // the delete button + drag handle get appended INTO that
+      // hstack, where they would otherwise inherit these styles via
+      // selector specificity ((0,1,1) > (0,1,0)).
+      '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete) {',
+      '  background: rgba(255, 255, 255, 0.62);',
+      '  -webkit-backdrop-filter: blur(20px) saturate(180%);',
+      '  backdrop-filter: blur(20px) saturate(180%);',
+      '  border: 0.5px solid rgba(0, 0, 0, 0.06);',
+      '  box-shadow:',
+      '    inset 0 0.5px 0 rgba(255, 255, 255, 0.8),',
+      '    0 2px 8px rgba(0, 0, 0, 0.04);',
+      '  color: #0071e3;',
+      '  font-family: inherit; font-weight: 500;',
+      '  border-radius: 980px;',
+      '  cursor: pointer;',
+      '  transition: background 200ms, transform 150ms;',
+      '}',
+      // touch-action: manipulation on regular hstack buttons (Add,
+      // etc.). Same exclusions as above: drag handle needs
+      // touch-action: none for pointer-drag; delete button has its
+      // own rule below.
+      '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete) {',
+      '  touch-action: manipulation;',
+      '}',
+      '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):hover { background: rgba(255, 255, 255, 0.88); }',
+      '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):active { transform: scale(0.96); }',
+      '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):disabled {',
+      '  background: rgba(0, 0, 0, 0.04);',
+      '  color: rgba(0, 0, 0, 0.28);',
+      '  cursor: not-allowed;',
+      '  box-shadow: none;',
+      '}',
+      '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):disabled:hover { background: rgba(0, 0, 0, 0.04); }',
       // Section-card button — full row action (sign-in form CTA).
       '.mar-section-body > button {',
       '  display: block;',
@@ -2016,9 +5009,9 @@
       // hstack inside section card — already gets row padding from
       // the section-body > * rule. No extra needed.
 
-      // Title / subtitle — heading text. Typography matches Apple-
-      // web hierarchy. Scoped via class to avoid clobbering h1/h2
-      // used elsewhere (e.g. .mar-section-header is also <h2>).
+      // Title / subtitle — heading text in the body of a section.
+      // Scoped via class to avoid clobbering h1/h2 used elsewhere
+      // (e.g. .mar-section-header is also <h2>).
       '.mar-title {',
       '  font-size: 24px; font-weight: 700; letter-spacing: -0.015em;',
       '  margin: 0; line-height: 1.2;',
@@ -2027,11 +5020,170 @@
       '  font-size: 17px; font-weight: 400; color: #86868b;',
       '  margin: 0; line-height: 1.35;',
       '}',
-      // Inline links — Apple-blue, no underline (Apple convention).
-      'a.mar-link {',
-      '  color: #0071e3; text-decoration: none; cursor: pointer;',
+      // errorText — red + semi-bold so "couldn't reach the server"
+      // and similar destructive-state messages jump out from the
+      // surrounding plain body text. The shade is iOS systemRed
+      // (#ff3b30) which has good contrast on both light and dark
+      // section-card backgrounds; the dark-mode override below
+      // shifts to a slightly lighter variant for legibility against
+      // the darker card.
+      '.mar-error-text {',
+      '  font-size: 15px; font-weight: 600;',
+      '  color: #ff3b30;',
+      '  margin: 0; line-height: 1.4;',
       '}',
-      'a.mar-link:hover { text-decoration: underline; }',
+      '@media (prefers-color-scheme: dark) {',
+      '  .mar-error-text { color: #ff6961; }',
+      '}',
+      // paragraph + inline atoms — flowing block of mixed-styled
+      // text. The block sets natural body-text dimensions; inline
+      // atoms compose freely via additive CSS classes so `[bold,
+      // code]` (bold inline code) works without special-casing.
+      '.mar-paragraph {',
+      '  font-size: 17px; line-height: 1.4;',
+      '  margin: 0;',
+      '  color: inherit;',
+      // overflow-wrap so long URLs in `link` text break instead of
+      // forcing horizontal scroll on narrow screens.
+      '  overflow-wrap: anywhere;',
+      '}',
+      '.mar-inline { color: inherit; }',
+      '.mar-inline-bold { font-weight: 700; }',
+      '.mar-inline-italic { font-style: italic; }',
+      '.mar-inline-strike { text-decoration: line-through; }',
+      // Inline code — monospace + subtle background tint + small
+      // radius. Padding kept tight (1px x 4px) so the run sits on
+      // the same baseline as surrounding text without bumping the
+      // line-height.
+      '.mar-inline-code {',
+      '  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;',
+      '  font-size: 0.92em;',
+      '  background: rgba(0, 0, 0, 0.06);',
+      '  padding: 1px 4px; border-radius: 4px;',
+      '}',
+      '@media (prefers-color-scheme: dark) {',
+      '  .mar-inline-code { background: rgba(255, 255, 255, 0.10); }',
+      '}',
+      // Inline link — accent color + underline. Underline is the
+      // affordance signal; on hover the underline thickens slightly
+      // for feedback without changing position (text-decoration-
+      // thickness keeps layout stable).
+      '.mar-inline-link {',
+      '  color: #0a84ff; text-decoration: underline;',
+      '  text-decoration-thickness: 1px;',
+      '  text-underline-offset: 2px;',
+      '}',
+      '.mar-inline-link:hover { text-decoration-thickness: 2px; }',
+      '.mar-inline-link:focus-visible {',
+      '  outline: 2px solid #0a84ff; outline-offset: 2px;',
+      '  border-radius: 2px;',
+      '}',
+      // navigationLink — full-width tappable area with a chevron
+      // on the trailing edge, mirroring how iOS NavigationLink
+      // renders inside a list. Child content keeps the inherited
+      // text color so a vstack of text+subtitle (typical row label)
+      // reads naturally without restyling.
+      'a.mar-navigation-link {',
+      '  display: flex; align-items: center; justify-content: space-between;',
+      '  gap: 12px;',
+      '  width: 100%;',
+      '  color: inherit; text-decoration: none; cursor: pointer;',
+      // No explicit padding — the parent `.mar-section-body > *`
+      // rule supplies 10px 0 to every row inside a section card,
+      // and the parent itself supplies the 16px horizontal inset
+      // via its own `padding: 0 16px`. The link content sits
+      // visually inset from the card edges that way.
+      //
+      // `position: relative` anchors the ::before that paints the
+      // hover/focus tint full-bleed (see below).
+      //
+      // `isolation: isolate` forces a stacking context on the link.
+      // Without it, the ::before's `z-index: -1` escapes to the
+      // nearest stacking-context ancestor (the html root) and ends
+      // up painting BEHIND the section card's white background —
+      // so hover + focus tints become invisible. With isolation,
+      // the ::before stays inside the link's local context: behind
+      // the link's static content (text + chevron), above the
+      // section card's background.
+      '  position: relative;',
+      '  isolation: isolate;',
+      '}',
+      'a.mar-navigation-link::after {',
+      '  content: "›";',
+      '  color: #c7c7cc; font-size: 1.4em; line-height: 1;',
+      '  flex-shrink: 0;',
+      '}',
+      // Hover background — paints full-bleed across the row including
+      // the card's 16px horizontal padding. A naive
+      // `:hover { background }` on the link only covers the link's
+      // own box, leaving white strips where the parent padding sits
+      // (the "weird border" bug).
+      //
+      // Geometry:
+      //   - left/right -16px: extend past the parent card's
+      //     horizontal padding so the tint reaches the card's inner
+      //     border. `.mar-section-body` has overflow:hidden so any
+      //     bleed past the card's content box is clipped.
+      //   - top/bottom -1px: bleeds past the link's padding box just
+      //     enough to cover the 0.5px row divider (this row's own
+      //     border-bottom, and the previous row's border-bottom that
+      //     sits flush against this row's top). Without this, the
+      //     hover tint leaves a thin white sliver at the row's top
+      //     and bottom edges — visible at standard zoom.
+      //
+      // Anchored against the link's `position: relative`. z-index: -1
+      // keeps the paint within the link's stacking context (so it
+      // doesn't bleed into siblings) while still appearing BELOW
+      // the link's static content (text + chevron).
+      'a.mar-navigation-link::before {',
+      '  content: "";',
+      '  position: absolute;',
+      '  inset: -1px -16px;',
+      '  background: transparent;',
+      '  pointer-events: none;',
+      '  transition: background 120ms;',
+      '  z-index: -1;',
+      '}',
+      'a.mar-navigation-link:hover::before { background: rgba(0,0,0,0.07); }',
+      // Keyboard-focus tint. Without this, Tab navigation lands on
+      // the link with no visible change — users assume Tab is
+      // skipping the row entirely. Same ::before painter as hover,
+      // brighter color so focus reads distinctly from a casual
+      // mouseover. `:focus-visible` (not `:focus`) so a click on
+      // the row doesn't leave a ring behind after the page changes.
+      // The link's own outline is suppressed since the tint plays
+      // the role of focus indicator full-bleed.
+      'a.mar-navigation-link:focus { outline: none; }',
+      'a.mar-navigation-link:focus-visible::before { background: rgba(0, 113, 227, 0.10); }',
+      // Disabled navigationLink — fade the text + chevron, kill the
+      // hover background, cursor flips to `not-allowed`. The click
+      // itself is swallowed by the delegated handler (onLinkClick
+      // reads __marView.attrs and bails out for disabled links) —
+      // so we DON\'T set `pointer-events: none` here: that would
+      // also suppress the cursor change, leaving the link looking
+      // identical to its enabled sibling on hover. Trade-off:
+      // mouse events still reach the link, but the JS handler is
+      // the authoritative gate, mirroring how `<button disabled>`
+      // works (no pointer-events override; the browser handles
+      // the click suppression).
+      'a.mar-navigation-link.mar-disabled {',
+      '  color: rgba(0, 0, 0, 0.36);',
+      '  cursor: not-allowed;',
+      '}',
+      'a.mar-navigation-link.mar-disabled:hover::before { background: transparent; }',
+      'a.mar-navigation-link.mar-disabled:focus-visible::before { background: transparent; }',
+      'a.mar-navigation-link.mar-disabled::after { color: rgba(0, 0, 0, 0.18); }',
+      // Row-style subtitle: when the subtitle is the second line of a
+      // navigation-link\'s title/subtitle pair, render it smaller and
+      // closer to the title (the iOS Settings two-line row look).
+      // Outside of that context, .mar-subtitle stays at body-text size
+      // so subtitles in section bodies (captions, paragraphs) read
+      // naturally.
+      'a.mar-navigation-link .mar-subtitle {',
+      '  font-size: 14px;',
+      '  line-height: 1.3;',
+      '}',
+      'a.mar-navigation-link .mar-vstack { gap: 2px; }',
 
       // Centered — fills viewport and centers child both axes.
       // Used for full-screen Loading / EmptyState / Error views.
@@ -2043,22 +5195,438 @@
       '  text-align: center;',
       '}',
 
-      // Dark mode — Apple-graphite (`#1d1d1f`), not pure black.
-      // Tracks Apple\'s actual dark theme on apple.com / Music.
+      // Spacer — SwiftUI Spacer(). Flex filler that pushes siblings
+      // along the parent flex container\'s main axis. Inside an
+      // hstack it expands horizontally; inside vstack, vertically.
+      '.mar-spacer { flex: 1 1 auto; align-self: stretch; }',
+
+      // Toggle — mobile-style switch. The native checkbox is hidden
+      // via appearance:none and re-drawn as a 51x31 pill with a 27px
+      // white thumb that slides on the :checked state. Standard
+      // touch-target dimensions.
+      '.mar-toggle {',
+      '  display: flex; align-items: center; justify-content: space-between;',
+      '  gap: 12px;',
+      // No padding here — let the parent .mar-section-body > * rule
+      // supply 10px 16px (same as text / subtitle / button rows), so
+      // the toggle\'s label is inset from the card\'s leading edge
+      // and the switch from the trailing edge. Setting `padding`
+      // here would override on equal specificity (later wins) and
+      // the row would butt against the card borders.
+      '  cursor: pointer;',
+      '  user-select: none;',
+      '}',
+      '.mar-toggle-label { flex: 1; min-width: 0; }',
+      '.mar-toggle-switch {',
+      '  appearance: none; -webkit-appearance: none;',
+      '  flex: 0 0 auto;',
+      '  width: 51px; height: 31px;',
+      '  border-radius: 31px;',
+      '  background: #e9e9eb;',
+      '  position: relative;',
+      '  cursor: pointer;',
+      '  transition: background-color 0.2s ease;',
+      '  margin: 0;',
+      '}',
+      '.mar-toggle-switch::before {',
+      '  content: "";',
+      '  position: absolute;',
+      '  top: 2px; left: 2px;',
+      '  width: 27px; height: 27px;',
+      '  border-radius: 50%;',
+      '  background: white;',
+      '  box-shadow: 0 3px 8px rgba(0,0,0,0.15), 0 1px 1px rgba(0,0,0,0.06);',
+      '  transition: transform 0.2s ease;',
+      '}',
+      '.mar-toggle-switch:checked { background: #34c759; }',
+      '.mar-toggle-switch:checked::before { transform: translateX(20px); }',
+      '.mar-toggle-switch:focus-visible {',
+      '  outline: none;',
+      '  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.25);',
+      '}',
+      // Disabled toggle — switch loses its color (or its green if
+      // ON), and the label / cursor go inert. `.mar-disabled` is
+      // toggled on the <label> wrapper so the label-text faded
+      // tone matches the visually-disabled switch.
+      '.mar-toggle.mar-disabled { cursor: not-allowed; }',
+      '.mar-toggle.mar-disabled .mar-toggle-label {',
+      '  color: rgba(0, 0, 0, 0.36);',
+      '}',
+      '.mar-toggle-switch:disabled {',
+      '  opacity: 0.5;',
+      '  cursor: not-allowed;',
+      '}',
+
+      // ---------- Sheet (modal page sheet) ----------
+      //
+      // iOS-style sheet: slides up from the bottom, leaves a sliver of
+      // the parent visible at the top, dims + blurs the parent behind a
+      // backdrop. The DOM structure is:
+      //
+      //   .mar-sheet-backdrop (full-screen overlay; click → dismiss)
+      //     .mar-sheet-panel (the actual sheet card)
+      //       .mar-sheet-handle (drag affordance — non-functional v1)
+      //       {sheet content}
+      //
+      // The backdrop is ALWAYS in the DOM (so re-renders can flip
+      // open/close without DOM churn) but display: none when closed so
+      // it never blocks clicks on the parent.
+      '.mar-sheet-backdrop {',
+      '  position: fixed; inset: 0;',
+      '  background: rgba(0, 0, 0, 0.4);',
+      '  -webkit-backdrop-filter: blur(8px);',
+      '  backdrop-filter: blur(8px);',
+      // ALWAYS display: flex (not toggled to none) so CSS transitions
+      // can animate from closed → open. `display: none → flex` is a
+      // discrete change the browser never tweens — the sheet would
+      // pop in instantly. opacity 0 + pointer-events: none makes the
+      // closed state both invisible and click-through.
+      '  display: flex; flex-direction: column;',
+      '  justify-content: flex-end;',
+      '  z-index: 2000;',
+      '  opacity: 0;',
+      '  pointer-events: none;',
+      '  transition: opacity 280ms cubic-bezier(0.32, 0.72, 0, 1);',
+      '}',
+      '.mar-sheet-backdrop.mar-sheet-open {',
+      '  opacity: 1;',
+      '  pointer-events: auto;',
+      '}',
+
+      // Panel — the actual sheet card.
+      // - Page sheet style: leaves ~10vh of the parent visible at top.
+      // - Rounded top corners only (bottom flush with screen edge).
+      // - White background with subtle inset highlight on top edge.
+      // - Slide-up animation with iOS-spec cubic-bezier.
+      // Panel sizes to its content (no min-height). Previously had
+      // min-height: 50vh which forced a half-screen panel even with
+      // a one-line message — large empty area under the content.
+      // iOS native page-sheets also size to content; users can drag
+      // the handle to expand to detents, which we don't have yet.
+      // The 90vh cap keeps an over-long content from pinning the
+      // backdrop offscreen.
+      //
+      // Padding moved here from the children: 20px horizontal,
+      // 20px bottom, 4px top (the handle's own 8px margin
+      // contributes the rest at the top). Content inside the sheet
+      // gets its breathing room without each child having to
+      // remember to indent.
+      '.mar-sheet-panel {',
+      '  background: #f5f5f7;',
+      '  border-radius: 14px 14px 0 0;',
+      '  max-height: 90vh;',
+      '  width: 100%;',
+      '  max-width: 1024px;',
+      '  margin: 0 auto;',
+      '  overflow-y: auto;',
+      '  overflow-x: hidden;',
+      '  padding: 4px 20px 20px;',
+      '  box-shadow:',
+      '    inset 0 0.5px 0 rgba(255, 255, 255, 0.8),',
+      '    0 -8px 32px rgba(0, 0, 0, 0.12);',
+      '  transform: translateY(100%);',
+      '  transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);',
+      '  position: relative;',
+      '}',
+      '.mar-sheet-open .mar-sheet-panel { transform: translateY(0); }',
+
+      // Drag handle — small pill at the top-center, signals "this can
+      // be dragged down to dismiss". Visual affordance only in v1; the
+      // drag gesture itself is iOS-native (page sheet) and not yet
+      // wired up on web.
+      //
+      // Negative horizontal margins cancel the panel\'s 20px side
+      // padding so the handle stays centered against the panel\'s
+      // outer edges, not the content area.
+      '.mar-sheet-handle {',
+      '  width: 36px; height: 5px;',
+      '  background: rgba(0, 0, 0, 0.2);',
+      '  border-radius: 2.5px;',
+      '  margin: 8px auto 14px;',
+      '  flex-shrink: 0;',
+      '}',
+
+      // Page-level containers (form, list, nav-body) inside a sheet
+      // already supply their own card padding via .mar-section etc;
+      // they shouldn\'t double-pad against the sheet\'s own. Cancel
+      // the sheet's horizontal padding for them via negative margin
+      // so they get full-width treatment like a normal page.
+      '.mar-sheet-panel > .mar-form,',
+      '.mar-sheet-panel > .mar-list,',
+      '.mar-sheet-panel > .mar-nav-body {',
+      '  margin-left: -20px;',
+      '  margin-right: -20px;',
+      '}',
+
+      // Dark mode adjustments — match the rest of the runtime\'s dark
+      // theme without re-stating every rule.
       '@media (prefers-color-scheme: dark) {',
-      '  body { background: #1d1d1f; color: #f5f5f7; }',
-      '  .mar-nav-bar { border-bottom: none; }',
-      '  .mar-nav-side button {',
-      '    background: rgba(255, 255, 255, 0.1); color: #f5f5f7;',
+      '  .mar-sheet-backdrop { background: rgba(0, 0, 0, 0.6); }',
+      '  .mar-sheet-panel {',
+      '    background: #1c1c1e;',
+      '    box-shadow:',
+      '      inset 0 0.5px 0 rgba(255, 255, 255, 0.08),',
+      '      0 -8px 32px rgba(0, 0, 0, 0.4);',
       '  }',
-      '  .mar-nav-side button:hover { background: rgba(255, 255, 255, 0.15); }',
+      '  .mar-sheet-handle { background: rgba(255, 255, 255, 0.3); }',
+      '}',
+
+      // ---------- Confirm dialog (UI.confirm) ----------
+      //
+      // Apple-Music-style destructive confirmation. Structure:
+      //
+      //   .mar-confirm-backdrop (fixed full-screen + blur)
+      //     .mar-confirm-dialog (centered card, max 320px)
+      //       .mar-confirm-title (the question)
+      //       .mar-confirm-actions (horizontal row of buttons)
+      //         .mar-confirm-cancel
+      //         .mar-confirm-confirm[.destructive]
+      //
+      // Unlike .mar-sheet-backdrop, this one is mounted only when
+      // the modal is showing — the parent's `case` returns
+      // `UI.confirm {...}` only when active, `UI.empty` otherwise.
+      // So no opacity-toggle hack needed; we just animate the
+      // entrance from the moment the element mounts.
+      '.mar-confirm-backdrop {',
+      '  position: fixed; inset: 0;',
+      '  background: rgba(0, 0, 0, 0.4);',
+      '  -webkit-backdrop-filter: blur(8px) saturate(180%);',
+      '  backdrop-filter: blur(8px) saturate(180%);',
+      '  display: flex; align-items: center; justify-content: center;',
+      '  z-index: 2100;',  // above sheet (2000)
+      '  animation: mar-confirm-backdrop-in 200ms ease-out;',
+      '  padding: 24px;',
+      '}',
+      '@keyframes mar-confirm-backdrop-in {',
+      '  from { opacity: 0; }',
+      '  to   { opacity: 1; }',
+      '}',
+      // Dialog card. Width capped at 320px (Apple Music print). Two
+      // stacked sections (title up top, actions below). Subtle
+      // shadow so it floats off the backdrop.
+      '.mar-confirm-dialog {',
+      '  background: rgba(245, 245, 247, 0.96);',
+      '  -webkit-backdrop-filter: blur(20px) saturate(180%);',
+      '  backdrop-filter: blur(20px) saturate(180%);',
+      '  border: 0.5px solid rgba(0, 0, 0, 0.08);',
+      '  border-radius: 14px;',
+      '  width: 100%;',
+      '  max-width: 320px;',
+      '  padding: 18px 18px 12px;',
+      '  box-shadow:',
+      '    0 16px 48px rgba(0, 0, 0, 0.18),',
+      '    inset 0 0.5px 0 rgba(255, 255, 255, 0.8);',
+      '  animation: mar-confirm-dialog-in 220ms cubic-bezier(0.32, 0.72, 0, 1);',
+      '}',
+      '@keyframes mar-confirm-dialog-in {',
+      '  from { opacity: 0; transform: scale(0.92); }',
+      '  to   { opacity: 1; transform: scale(1); }',
+      '}',
+      '.mar-confirm-title {',
+      '  margin: 0 0 16px;',
+      '  font: 600 15px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;',
+      '  color: #000;',
+      '  text-align: center;',
+      '  line-height: 1.35;',
+      '}',
+      '.mar-confirm-actions {',
+      '  display: flex; gap: 8px;',
+      '  flex-direction: row;',
+      '}',
+      // Both buttons share the same chrome — pill shape, full
+      // height. Cancel is system fill, Confirm has the accent color
+      // (red when destructive=True, blue otherwise).
+      '.mar-confirm-actions > button {',
+      '  flex: 1;',
+      '  appearance: none;',
+      '  border: none;',
+      '  padding: 10px 14px;',
+      '  border-radius: 980px;',
+      '  font: 500 15px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;',
+      '  cursor: pointer;',
+      '  transition: background 150ms ease, transform 100ms ease;',
+      '  -webkit-tap-highlight-color: transparent;',
+      '  touch-action: manipulation;',
+      '}',
+      '.mar-confirm-actions > button:active { transform: scale(0.97); }',
+      '.mar-confirm-cancel {',
+      '  background: rgba(0, 0, 0, 0.06);',
+      '  color: #000;',
+      '}',
+      '.mar-confirm-cancel:hover { background: rgba(0, 0, 0, 0.10); }',
+      // Non-destructive confirm — system blue accent.
+      '.mar-confirm-confirm {',
+      '  background: #007aff;',
+      '  color: #ffffff;',
+      '}',
+      '.mar-confirm-confirm:hover { background: #0066d6; }',
+      // Destructive variant — system red. Same iOS color as
+      // .mar-row-delete and SwiftUI .destructive role.
+      '.mar-confirm-confirm.destructive {',
+      '  background: #ff3b30;',
+      '  color: #ffffff;',
+      '}',
+      '.mar-confirm-confirm.destructive:hover { background: #e0352b; }',
+
+      // Dark mode — switch the dialog card to dark glass + adjust
+      // button colors so contrast stays readable.
+      '@media (prefers-color-scheme: dark) {',
+      '  .mar-confirm-backdrop { background: rgba(0, 0, 0, 0.6); }',
+      '  .mar-confirm-dialog {',
+      '    background: rgba(44, 44, 46, 0.96);',
+      '    border-color: rgba(255, 255, 255, 0.08);',
+      '    box-shadow:',
+      '      0 16px 48px rgba(0, 0, 0, 0.5),',
+      '      inset 0 0.5px 0 rgba(255, 255, 255, 0.1);',
+      '  }',
+      '  .mar-confirm-title { color: #ffffff; }',
+      '  .mar-confirm-cancel {',
+      '    background: rgba(255, 255, 255, 0.10);',
+      '    color: #ffffff;',
+      '  }',
+      '  .mar-confirm-cancel:hover { background: rgba(255, 255, 255, 0.16); }',
+      '  .mar-confirm-confirm { background: #0a84ff; }',
+      '  .mar-confirm-confirm:hover { background: #0070dd; }',
+      '  .mar-confirm-confirm.destructive { background: #ff453a; }',
+      '  .mar-confirm-confirm.destructive:hover { background: #e63d34; }',
+      '}',
+
+      // ---------- Page transitions ----------
+      //
+      // The mar runtime wraps a navigation\'s DOM swap in
+      // `document.startViewTransition(swap)` when the View
+      // Transitions API exists (Chrome 111+, Safari 18+,
+      // Firefox 129+ behind flag). The browser captures the old
+      // tree as `::view-transition-old(root)` and the new tree
+      // as `::view-transition-new(root)`; we drive the actual
+      // animation here with CSS keyframes selected by the
+      // `data-mar-nav-dir` attribute the runtime stamps on
+      // <html> before the swap.
+      //
+      // The keyframes mirror iOS NavigationStack:
+      //   forward (push) — new slides in from the right, old
+      //     parallaxes slightly left and dims.
+      //   back (pop)     — reversed: new slides in from the left,
+      //     old slides out to the right.
+      //
+      // Timing curve is the standard "page push" easing —
+      // cubic-bezier(0.32, 0.72, 0, 1) — applied at 400ms. Below
+      // ~320ms the slide reads as a snap; above ~480ms it starts
+      // feeling sluggish on a browser.
+      '@keyframes mar-slide-in-right { from { transform: translateX(100%); } }',
+      '@keyframes mar-slide-out-left  {  to  { transform: translateX(-25%); opacity: 0.5; } }',
+      '@keyframes mar-slide-in-left  { from { transform: translateX(-25%); opacity: 0.5; } }',
+      '@keyframes mar-slide-out-right {  to  { transform: translateX(100%); } }',
+      'html[data-mar-nav-dir="forward"]::view-transition-old(root) {',
+      '  animation: 400ms cubic-bezier(0.32, 0.72, 0, 1) both mar-slide-out-left;',
+      '}',
+      'html[data-mar-nav-dir="forward"]::view-transition-new(root) {',
+      '  animation: 400ms cubic-bezier(0.32, 0.72, 0, 1) both mar-slide-in-right;',
+      '}',
+      'html[data-mar-nav-dir="back"]::view-transition-old(root) {',
+      '  animation: 400ms cubic-bezier(0.32, 0.72, 0, 1) both mar-slide-out-right;',
+      '}',
+      'html[data-mar-nav-dir="back"]::view-transition-new(root) {',
+      '  animation: 400ms cubic-bezier(0.32, 0.72, 0, 1) both mar-slide-in-left;',
+      '}',
+      // ----- Fade transition (replace / replaceFresh) -----
+      //
+      // Cross-fade with a subtle scale-up on the incoming view. Used
+      // when the navigation isn't a stack movement but a context
+      // change (logout, sign-in completed, auth-expired redirect).
+      //
+      // The visual idiom is what iOS uses for Sign in with Apple
+      // confirmations, Apple Pay completion, FaceID success → app
+      // unlock, and the Photos / Apple Music "you switched modes"
+      // transitions: outgoing dissolves while the new content
+      // settles in from slightly smaller (0.96 → 1.0). No
+      // horizontal motion → reads as "new context", not "next/prev
+      // screen". Duration sits at 280ms — fast enough to feel
+      // responsive after a tap, slow enough that the scale registers
+      // as deliberate rather than a flash.
+      //
+      // Easing is the same iOS curve used for the slide so the
+      // perceived "personality" stays consistent across nav verbs.
+      '@keyframes mar-fade-out { to { opacity: 0; } }',
+      '@keyframes mar-fade-in-scale {',
+      '  from { opacity: 0; transform: scale(0.96); }',
+      '  to   { opacity: 1; transform: scale(1); }',
+      '}',
+      'html[data-mar-nav-dir="fade"]::view-transition-old(root) {',
+      '  animation: 220ms cubic-bezier(0.32, 0.72, 0, 1) both mar-fade-out;',
+      '}',
+      'html[data-mar-nav-dir="fade"]::view-transition-new(root) {',
+      '  animation: 280ms cubic-bezier(0.32, 0.72, 0, 1) both mar-fade-in-scale;',
+      '  transform-origin: center center;',
+      '}',
+      // Dev dock pin. The dock element carries
+      // `view-transition-name: mar-dev-dock` (see createDevDock),
+      // which splits it out of the `root` snapshot group into its
+      // own. `animation: none` here keeps that group static
+      // through the page transition — so the bottom-right widget
+      // stays anchored while the page slides under it. Without
+      // this rule the browser would default to a cross-fade,
+      // which on a static element with identical old/new content
+      // looks like a brief flicker.
+      '::view-transition-group(mar-dev-dock),',
+      '::view-transition-old(mar-dev-dock),',
+      '::view-transition-new(mar-dev-dock) {',
+      '  animation: none !important;',
+      '}',
+      // Accessibility — kill the slide for users who set
+      // `prefers-reduced-motion`. The runtime also skips the
+      // startViewTransition call entirely in that case, but the
+      // CSS guard belongs here too for any non-runtime triggers
+      // (e.g. dev-tools forcing a transition).
+      '@media (prefers-reduced-motion: reduce) {',
+      '  ::view-transition-old(root), ::view-transition-new(root) {',
+      '    animation: none !important;',
+      '  }',
+      '}',
+
+      // Dark mode — iOS 26 "Liquid Glass" on a near-black graphite
+      // page. The gradient hints at light coming from above; the
+      // glass surfaces (cards, pills) tint that light bluish-warm
+      // via subtle saturation in the backdrop filter.
+      '@media (prefers-color-scheme: dark) {',
+      // Match <html> to the darkest stop of the body gradient. Same
+      // rationale as the light-mode rule above: bottom-bounce
+      // overscroll and view-transition gaps would otherwise flash
+      // white through the dark page. Also add an explicit
+      // ::selection so highlighted text stays legible — the
+      // browser's default selection color on macOS is a light
+      // blue/grey that washes out the page's #f5f5f7 text into
+      // near-invisibility against the highlight.
+      '  html { background-color: #161618; }',
+      '  ::selection { background: rgba(10, 132, 255, 0.55); color: #ffffff; }',
+      '  body {',
+      '    background: linear-gradient(180deg, #232326 0%, #1d1d1f 60%, #161618 100%);',
+      '    color: #f5f5f7;',
+      '  }',
+      // Glass pills (back button, trailing nav buttons, inline
+      // hstack actions) all share the same translucent white tint
+      // — the backdrop blur picks up the page gradient behind.
+      '  .mar-nav-back, .mar-nav-side button {',
+      '    background: rgba(255, 255, 255, 0.08);',
+      '    border: 0.5px solid rgba(255, 255, 255, 0.12);',
+      '    box-shadow:',
+      '      inset 0 0.5px 0 rgba(255, 255, 255, 0.15),',
+      '      0 2px 8px rgba(0, 0, 0, 0.3);',
+      '  }',
+      '  .mar-nav-back { color: #0a84ff; }',
+      '  .mar-nav-back:hover { background: rgba(255, 255, 255, 0.14); }',
+      '  .mar-nav-side button { color: #f5f5f7; }',
+      '  .mar-nav-side button:hover { background: rgba(255, 255, 255, 0.14); }',
+      // Section card in dark glass — translucent slate that lets
+      // the gradient bleed through under the blur.
       '  .mar-section-body {',
-      '    background: #2c2c2e;',
-      '    box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.06);',
+      '    background: rgba(44, 44, 46, 0.7);',
+      '    border: 0.5px solid rgba(255, 255, 255, 0.06);',
+      '    box-shadow:',
+      '      inset 0 0.5px 0 rgba(255, 255, 255, 0.08),',
+      '      0 8px 24px rgba(0, 0, 0, 0.35);',
       '  }',
-      '  .mar-section-body > * {',
-      '    border-bottom-color: rgba(255, 255, 255, 0.08);',
-      '  }',
+      '  .mar-section-body > * { border-bottom-color: rgba(255, 255, 255, 0.08); }',
       '  .mar-section-body > *:last-child { border-bottom: none; }',
       '  .mar-section-header, .mar-section-footer { color: #86868b; }',
       '  .mar-textfield::placeholder { color: #86868b; }',
@@ -2071,15 +5639,120 @@
       '    border-color: rgba(10, 132, 255, 0.6);',
       '    box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.18);',
       '  }',
-      // Buttons in dark mode keep the blue-pill look (white text on
-      // blue), just slightly brighter blue to stay legible against
-      // the darker background.
-      '  .mar-section-body > button, .mar-hstack > button {',
+      // Disabled textfield in dark mode. The light-mode rule uses
+      // `color: rgba(0,0,0,0.36)` — 36% black on a near-black
+      // surface in dark mode lands the text essentially invisible.
+      // Operator reported they couldn't read the email address
+      // they had just typed while the "Sending…" request was in
+      // flight. Mirror the dimming PROPORTIONALLY against white,
+      // not by reusing the light-mode rgba: text goes to ~50%
+      // white (still clearly readable), placeholder to ~30%, and
+      // the surface stays the same translucent slate as the
+      // enabled state so the field's outline doesn't shift.
+      '  .mar-textfield:disabled {',
+      '    background: rgba(255, 255, 255, 0.04);',
+      '    color: rgba(255, 255, 255, 0.5);',
+      '    border-color: rgba(255, 255, 255, 0.08);',
+      '  }',
+      '  .mar-textfield:disabled::placeholder { color: rgba(255, 255, 255, 0.3); }',
+      // Primary CTAs stay solid blue, just brighter for legibility
+      // on the darker surface.
+      '  .mar-section-body > button {',
       '    background: #0a84ff; color: white;',
       '  }',
-      '  .mar-section-body > button:hover, .mar-hstack > button:hover {',
-      '    background: #2997ff;',
+      '  .mar-section-body > button:hover { background: #2997ff; }',
+      '  .mar-section-body > button:disabled {',
+      '    background: #3a3a3c; color: rgba(255, 255, 255, 0.4);',
       '  }',
+      '  .mar-section-body > button:disabled:hover { background: #3a3a3c; }',
+      // Secondary (hstack) buttons in dark mode — same glass
+      // treatment with blue text. Exclusions match the light-mode
+      // selectors above (drag handle + delete button keep their
+      // own chrome).
+      '  .mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete) {',
+      '    background: rgba(255, 255, 255, 0.08);',
+      '    border: 0.5px solid rgba(255, 255, 255, 0.12);',
+      '    box-shadow:',
+      '      inset 0 0.5px 0 rgba(255, 255, 255, 0.15),',
+      '      0 2px 8px rgba(0, 0, 0, 0.3);',
+      '    color: #0a84ff;',
+      '  }',
+      '  .mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):hover { background: rgba(255, 255, 255, 0.14); }',
+      '  .mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):disabled {',
+      '    background: rgba(255, 255, 255, 0.04);',
+      '    color: rgba(255, 255, 255, 0.3);',
+      '    box-shadow: none;',
+      '  }',
+      '  .mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):disabled:hover { background: rgba(255, 255, 255, 0.04); }',
+      // Toggle in dark mode: off-track turns dark grey, on-track
+      // keeps the same iOS green; thumb stays white.
+      '  .mar-toggle-switch { background: #39393d; }',
+      '  .mar-toggle-switch:checked { background: #34c759; }',
+      '}',
+
+      // ===== onDelete per-row affordance (edit-mode only) =====
+      //
+      // Single visual mode: when the section is in delete-editing
+      // state, every row carries a red `−` circle at its LEFT (iOS
+      // Mail/Notes/Reminders edit-mode chrome). Outside edit mode
+      // the button isn't rendered at all — see
+      // attachRowDeleteAffordance — so this CSS doesn't need to
+      // cover that case.
+      //
+      // We use compound selectors (`.mar-section-body
+      // .mar-row-delete`) for size + shape so we win the cascade
+      // against the generic `.mar-hstack > button { flex: 0 0
+      // auto; }` rule defined earlier; the row that hosts the
+      // button IS an `.mar-hstack` in edit mode (Mar code wraps
+      // the row in `hstack [key] [text ...]` to attach the
+      // reorder key), and without enough specificity the chrome
+      // styles bleed in and turn the disc into a stretched pill.
+      '.mar-section-body .mar-row-delete {',
+      '  flex: 0 0 22px;',
+      '  width: 22px;',
+      '  min-width: 22px;',
+      '  height: 22px;',
+      '  min-height: 22px;',
+      '  border-radius: 50%;',
+      '  border: none;',
+      '  padding: 0;',
+      '  background: #ff3b30;',
+      '  color: #ffffff;',
+      '  display: inline-flex;',
+      '  align-items: center;',
+      '  justify-content: center;',
+      '  cursor: pointer;',
+      '  -webkit-tap-highlight-color: transparent;',
+      '  transition: transform 150ms ease;',
+      '  box-shadow: none;',
+      '}',
+      '.mar-section-body .mar-row-delete:hover { background: #e0352b; }',
+      '.mar-section-body .mar-row-delete:active { transform: scale(0.92); }',
+      // Row layout in edit-with-delete mode: row becomes a flex
+      // container so the delete button (order:-1) can sit on the
+      // left of whatever the row's normal content is. The
+      // negative margin pokes the disc out into the section
+      // card\'s padding gutter — same offset iOS uses.
+      '.mar-section-delete-edit > * {',
+      '  display: flex;',
+      '  align-items: center;',
+      '  gap: 12px;',
+      '}',
+      '.mar-section-delete-edit > * > .mar-row-delete {',
+      '  order: -1;',
+      '  margin-left: -4px;',
+      '}',
+      // Exit animation is driven imperatively via Web Animations
+      // API in attachRowDeleteAffordance — see that function for
+      // the keyframes (height collapse + slide-left + fade). The
+      // imperative path needs concrete `from` keyframes (current
+      // height, current padding), so the animation has to be
+      // built per-row at click time, not via a fixed CSS class.
+      // Dark mode: tone the red down — full system-red against a
+      // dark background reads harsh.
+      '@media (prefers-color-scheme: dark) {',
+      '  .mar-section-body .mar-row-delete { background: #ff453a; }',
+      '  .mar-section-body .mar-row-delete:hover { background: #e63d34; }',
       '}',
     ].join('\n');
     document.head.appendChild(style);
@@ -2093,15 +5766,29 @@
       case 'text':            return 'span';
       case 'title':           return 'h1';
       case 'subtitle':        return 'h2';
+      case 'errorText':       return 'p';
+      case 'paragraph':       return 'p';
+      // span: <a> when an inlineLink attr is present, <span>
+      // otherwise. createDOM handles the link case directly because
+      // the choice depends on attrs, not just tag. Leaving the
+      // default here at 'span' keeps the no-link path simple.
+      case 'span':            return 'span';
       case 'button':          return 'button';
-      case 'link':            return 'a';
+      case 'navigationLink':  return 'a';
       case 'navigationStack': return 'main';
       case 'form':            return 'form';
       case 'uiList':          return 'ul';
       case 'uiSection':       return 'section';
+      case 'uiKeyedList':     return 'section';
       case 'hstack':          return 'div';
       case 'vstack':          return 'div';
       case 'textField':       return 'input';
+      case 'textArea':        return 'textarea';
+      case 'picker':          return 'div';
+      case 'spacer':          return 'div';
+      case 'toggle':          return 'label';
+      case 'sheet':           return 'div';  // .mar-sheet-backdrop wrapper
+      case 'confirmDialog':   return 'div';  // .mar-confirm-backdrop wrapper
       default:                return 'div';
     }
   }
@@ -2117,13 +5804,64 @@
       setMarView(e, view);
       return e;
     }
-    const tag = domTagFor(view.tag);
+    // span: tag depends on attrs (link → <a>, otherwise <span>).
+    // Resolve up-front so we don\'t create a wrong element and
+    // re-wrap it. All the styling lives in CSS classes added below.
+    let tag = domTagFor(view.tag);
+    if (view.tag === 'span') {
+      const linkAttr = (view.attrs || []).find(a => a.name === 'inlineLink');
+      if (linkAttr) tag = 'a';
+    }
     const e = document.createElement(tag);
     setMarView(e, view);
     switch (view.tag) {
       case 'text':
         e.textContent = view.text;
         break;
+      case 'paragraph':
+        // Block of flowing inline content. Children are `span`
+        // VViews; createDOM recurses to build the right inline
+        // elements. Class drives the block-level styling (margin,
+        // line-height); the children carry their own per-run
+        // styling.
+        ensureUIStyles();
+        e.className = 'mar-paragraph';
+        for (const child of (view.children || [])) {
+          e.appendChild(createDOM(child));
+        }
+        break;
+      case 'span': {
+        // Inline run. Compose CSS classes from the attrs: bold,
+        // italic, strikethrough, code; the linkAttr (resolved
+        // above) becomes an href. All classes are independent so
+        // `[bold, code]` (bold inline code) works without
+        // special-casing.
+        ensureUIStyles();
+        const classes = ['mar-inline'];
+        let href = null;
+        for (const a of (view.attrs || [])) {
+          switch (a.name) {
+            case 'inlineBold':          classes.push('mar-inline-bold'); break;
+            case 'inlineItalic':        classes.push('mar-inline-italic'); break;
+            case 'inlineStrikethrough': classes.push('mar-inline-strike'); break;
+            case 'inlineCode':          classes.push('mar-inline-code'); break;
+            case 'inlineLink':          href = a.value && a.value.s; break;
+          }
+        }
+        if (href) {
+          classes.push('mar-inline-link');
+          e.setAttribute('href', href);
+          // External target — link inline text always opens off-
+          // site (we don\'t have an "internal inline link"
+          // primitive; navigationLink covers internal). New tab +
+          // noopener so the source page can\'t be poked at.
+          e.setAttribute('target', '_blank');
+          e.setAttribute('rel', 'noopener noreferrer');
+        }
+        e.className = classes.join(' ');
+        e.textContent = view.text;
+        break;
+      }
       case 'title':
         ensureUIStyles();
         e.className = 'mar-title';
@@ -2134,20 +5872,53 @@
         e.className = 'mar-subtitle';
         e.textContent = view.text;
         break;
+      case 'errorText':
+        // Red + semi-bold via .mar-error-text. role="alert" so
+        // assistive tech announces the message when it appears
+        // (errors typically arrive after an action, not at page
+        // load — the live-region announcement is the whole point).
+        ensureUIStyles();
+        e.className = 'mar-error-text';
+        e.setAttribute('role', 'alert');
+        e.textContent = view.text;
+        break;
       case 'button':
         e.textContent = view.text;
         applyDisabledAttr(e, view);
         attachClickDispatcher(e);
         break;
-      case 'link':
+      case 'navigationLink':
+        // Tappable navigation: full-width anchor wrapping the
+        // child view DOM. The delegated SPA-routing interceptor
+        // in mountPages catches the click via `[href^="/"]` and
+        // pushes through history.pushState instead of doing a
+        // full reload.
+        //
+        // `disabled` here can't use the HTML disabled property —
+        // <a> doesn't have one. Instead we mark the link with
+        // aria-disabled + a CSS class; the delegated click handler
+        // (onLinkClick) reads __marView.attrs and skips
+        // navigation when disabled, and the CSS dims + sets
+        // pointer-events: none so hover stays inert.
+        //
+        // `tabindex="0"` forces the link into the keyboard tab
+        // order. Without it, Safari on macOS skips <a> elements by
+        // default (it considers links "content", not "controls",
+        // unless the user enables Settings > Advanced > "Press
+        // Tab to highlight each item on a webpage"). For an app
+        // where navigationLink IS a primary control — Settings-row
+        // style "go to next screen" — we want every browser to
+        // tab through it without the user fiddling with system
+        // preferences. tabindex="0" is a no-op in Chrome/Firefox
+        // (they tab to links anyway) and the right knob for Safari.
         ensureUIStyles();
-        e.className = 'mar-link';
+        e.className = 'mar-navigation-link';
         e.setAttribute('href', getAttr(view, 'href'));
-        e.textContent = view.text;
-        // Intercept clicks: if the href maps to a known mar page,
-        // SPA-route via history.pushState instead of full reload.
-        // (Existing delegated link interceptor in mountPages handles
-        // this generically via `[href^="/"]` selector.)
+        e.setAttribute('tabindex', '0');
+        applyAnchorDisabled(e, view);
+        for (const child of view.children) {
+          e.appendChild(createDOM(child));
+        }
         break;
       // ---------- UI.* (SwiftUI-style) ----------
       //
@@ -2184,17 +5955,29 @@
       case 'uiList':
         // <div.mar-list>{sections-or-rows}</div> — always a div
         // wrapper with children rendered directly. Avoids <li>
-        // wrapping (semantic noise without payoff for sectioned lists).
+        // wrapping (semantic noise without payoff for sectioned
+        // lists). No reorder semantics on the list itself — those
+        // live on its constituent `section`s (see the uiSection
+        // ctor for handle wiring + keyboard a11y).
         ensureUIStyles();
         e.className = 'mar-list';
         for (const c of view.children) e.appendChild(createDOM(c));
         break;
-      case 'uiSection': {
+      case 'uiSection':
+      case 'uiKeyedList': {
         // <section>
         //   <h2.mar-section-header>  ← always present; hidden if empty
         //   <div.mar-section-body>   ← stable wrapper, children diffed
         //   <p.mar-section-footer>   ← always present; hidden if empty
         // </section>
+        //
+        // uiSection and uiKeyedList share the same visual chrome
+        // (rounded card with header + footer). The semantic
+        // difference is at the type level: uiKeyedList children
+        // each carry a `key` attr (injected by `UI.keyed`), while
+        // uiSection children don\'t. The reconciler reads the key
+        // for keyed children automatically — no special-casing
+        // needed here.
         ensureUIStyles();
         e.className = 'mar-section';
         const headerText = getAttr(view, 'header');
@@ -2206,7 +5989,45 @@
         e.appendChild(h);
         const body = document.createElement('div');
         body.className = 'mar-section-body';
-        for (const c of view.children) body.appendChild(createDOM(c));
+        // Reorder support — driven by the `onMove` attr's editing
+        // flag. In edit mode each row gets a drag handle (mouse /
+        // touch) AND becomes keyboard-focusable with grab + arrow
+        // semantics (Padrão 2, screen-reader friendly). Both
+        // gestures dispatch the same onMove(from, to) handler.
+        const onMoveAttrS = getAttrRaw(view, 'onMove');
+        const editingS = !!(onMoveAttrS && onMoveAttrS.editing);
+        const handlerS = onMoveAttrS && onMoveAttrS.handler;
+        const onDeleteAttrS = getAttrRaw(view, 'onDelete');
+        const deleteEditingS = !!(onDeleteAttrS && onDeleteAttrS.editing);
+        const deleteHandlerS = onDeleteAttrS && onDeleteAttrS.handler;
+        if (editingS) body.classList.add('mar-section-editing');
+        // `.mar-section-delete-edit` flips the section body into the
+        // layout that hosts a per-row delete affordance on the left
+        // of each row (iOS edit-mode minus circle). Only on when
+        // the app explicitly opts into onDelete + editing=true; in
+        // browse mode the rows are plain (no destructive control
+        // surface).
+        if (deleteEditingS) body.classList.add('mar-section-delete-edit');
+        const totalS = view.children.length;
+        for (let i = 0; i < totalS; i++) {
+          const childEl = createDOM(view.children[i]);
+          if (editingS) {
+            ensureRowEditAffordances(childEl, i, totalS);
+          }
+          if (deleteHandlerS) {
+            attachRowDeleteAffordance(childEl, i, deleteHandlerS, deleteEditingS);
+          }
+          body.appendChild(childEl);
+        }
+        if (editingS && handlerS) {
+          attachListReorderDrag(body, handlerS);
+          // Live-region hosted on the section wrapper (`e`), not on
+          // the body. See the function for why — TLDR: appending to
+          // body shifts the last actual row out of `:last-child` and
+          // it gains a hairline border, reading as a phantom extra
+          // row.
+          attachListReorderKeyboard(body, handlerS, e);
+        }
         e.appendChild(body);
         const f = document.createElement('p');
         f.className = 'mar-section-footer';
@@ -2229,11 +6050,97 @@
         ensureUIStyles();
         e.className = 'mar-textfield';
         applyInputKind(e, view);
+        applySizing(e, view);
         const ph = getAttr(view, 'placeholder');
         if (ph) e.setAttribute('placeholder', ph);
         e.value = view.text;
+        // `<input disabled>` natively suppresses focus, typing, AND
+        // the `input` / `keydown` events — so neither
+        // attachInputDispatcher nor attachSubmitDispatcher needs an
+        // extra guard once we sync the DOM property here.
+        applyDisabledAttr(e, view);
         attachInputDispatcher(e);
         attachSubmitDispatcher(e);
+        break;
+      }
+      case 'textArea': {
+        // Same dispatcher wiring as textField — the renderer just
+        // emits a <textarea> instead of <input>. We reuse the
+        // textfield CSS class so the borders / focus ring / padding
+        // line up with neighboring textField rows; a small
+        // textArea-specific override (min-height, line-height)
+        // lives alongside.
+        ensureUIStyles();
+        e.className = 'mar-textfield mar-textarea';
+        const ph = getAttr(view, 'placeholder');
+        if (ph) e.setAttribute('placeholder', ph);
+        e.value = view.text;
+        // A reasonable default — three lines of room without
+        // committing to a tall fixed block. User code can override
+        // via `[ height (lines N) ]` (applySizing sets rows).
+        if (!e.hasAttribute('rows')) e.setAttribute('rows', '3');
+        applySizing(e, view);
+        applyDisabledAttr(e, view);
+        attachInputDispatcher(e);
+        attachSubmitDispatcher(e);
+        break;
+      }
+      case 'picker': {
+        // <div.mar-picker>
+        //   <select.mar-picker-select>
+        //     <option value="0">Label1</option>
+        //     <option value="1" selected>Label2</option>
+        //     ...
+        //   </select>
+        //   <span.mar-picker-chevron aria-hidden>›</span>
+        // </div>
+        //
+        // The wrapping div lets us layer a custom chevron over the
+        // native select without losing the platform's accessible
+        // dropdown UI (keyboard nav, screen-reader announcements,
+        // mobile native popover). The chevron is decorative — the
+        // <select> itself is the focusable / interactive surface.
+        ensureUIStyles();
+        e.className = 'mar-picker';
+        applySizing(e, view);
+        const select = document.createElement('select');
+        select.className = 'mar-picker-select';
+        renderPickerOptions(select, view);
+        // `<select disabled>` natively blocks the dropdown from
+        // opening and suppresses change events — so we sync the
+        // property on the inner element, not the wrapping div.
+        // Mirror the disabled state onto the wrapper too so CSS
+        // can grey-out the chevron + text via :has() / class.
+        applyDisabledAttr(select, view);
+        e.classList.toggle('mar-disabled', isDisabled(view));
+        e.appendChild(select);
+        // Inline SVG renders consistently across browsers / fonts —
+        // unlike a unicode chevron glyph which Safari + Chrome
+        // sometimes render as a thin stub or fail to size with the
+        // surrounding CSS font-size. Two stacked triangles mirror
+        // SwiftUI's Picker(.menu) "select-up-down" indicator.
+        const chevron = document.createElement('span');
+        chevron.className = 'mar-picker-chevron';
+        chevron.setAttribute('aria-hidden', 'true');
+        chevron.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="18" ' +
+          'viewBox="0 0 14 18" fill="none" stroke="currentColor" ' +
+          'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+          '<polyline points="3,7 7,3 11,7"/>' +
+          '<polyline points="3,11 7,15 11,11"/>' +
+          '</svg>';
+        e.appendChild(chevron);
+        select.addEventListener('change', () => {
+          const v = e.__marView;
+          if (!currentDispatch || !v || v.msg == null) return;
+          const optionsAttr = v.attrs.find(a => a.name === 'options');
+          if (!optionsAttr || !optionsAttr.value || optionsAttr.value.k !== 'L') return;
+          const idx = parseInt(select.value, 10);
+          if (!Number.isFinite(idx)) return;
+          const picked = optionsAttr.value.xs[idx];
+          if (picked === undefined) return;
+          currentDispatch(apply(v.msg, picked));
+        });
         break;
       }
       case 'centered':
@@ -2243,10 +6150,310 @@
         e.className = 'mar-centered';
         for (const c of view.children) e.appendChild(createDOM(c));
         break;
+      case 'spacer':
+        // Flex filler — the parent flex container (hstack / vstack
+        // / section-body) absorbs it and pushes siblings apart.
+        ensureUIStyles();
+        e.className = 'mar-spacer';
+        break;
+      case 'toggle': {
+        // <label.mar-toggle>
+        //   <span.mar-toggle-label>{text}</span>
+        //   <input.mar-toggle-switch type=checkbox>
+        // </label>
+        //
+        // Stable structure so patchDOM can update text + checked
+        // state in place without recreating nodes (the checkbox's
+        // styled track/thumb survives re-renders that way).
+        ensureUIStyles();
+        e.className = 'mar-toggle';
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'mar-toggle-label';
+        labelSpan.textContent = view.text;
+        e.appendChild(labelSpan);
+        const sw = document.createElement('input');
+        sw.type = 'checkbox';
+        sw.className = 'mar-toggle-switch';
+        sw.checked = toggleIsOn(view);
+        // `<input type=checkbox disabled>` natively swallows clicks
+        // and change events, so the dispatcher below never fires
+        // while disabled. Sync the class on the <label> so CSS can
+        // fade the label text + cursor along with the switch.
+        applyDisabledAttr(sw, view);
+        e.classList.toggle('mar-disabled', isDisabled(view));
+        sw.addEventListener('change', () => {
+          const v = e.__marView;
+          if (!currentDispatch || !v || v.msg == null) return;
+          currentDispatch(apply(v.msg, VBool(sw.checked)));
+        });
+        e.appendChild(sw);
+        break;
+      }
+      case 'sheet': {
+        // Sheet structure:
+        //   <div.mar-sheet-backdrop[.open]>          ← e itself
+        //     <div.mar-sheet-panel>
+        //       <div.mar-sheet-handle></div>         ← drag affordance
+        //       {sheet content children}
+        //     </div>
+        //   </div>
+        //
+        // The wrapper is always in the DOM (stable for diff). CSS
+        // toggles via the `.open` class — slide-up + backdrop fade.
+        // When `open=false` the wrapper is `display: none` so it
+        // doesn't block clicks on the parent page.
+        ensureUIStyles();
+        e.className = 'mar-sheet-backdrop';
+        applySheetOpenState(e, view);
+        const panel = document.createElement('div');
+        panel.className = 'mar-sheet-panel';
+        const handle = document.createElement('div');
+        handle.className = 'mar-sheet-handle';
+        handle.setAttribute('aria-hidden', 'true');
+        panel.appendChild(handle);
+        for (const c of view.children) panel.appendChild(createDOM(c));
+        e.appendChild(panel);
+        attachSheetDismissDispatchers(e);
+        break;
+      }
+      case 'confirmDialog': {
+        // Modal confirmation structure:
+        //   <div.mar-confirm-backdrop>                  ← e itself
+        //     <div.mar-confirm-dialog>
+        //       <p.mar-confirm-title>{title}</p>
+        //       <div.mar-confirm-actions>
+        //         <button.mar-confirm-cancel>Cancel</button>
+        //         <button.mar-confirm-confirm[.destructive]>{label}</button>
+        //       </div>
+        //     </div>
+        //   </div>
+        //
+        // The presence of the view in the tree IS the "is open"
+        // state — when the parent's `case` returns `UI.empty`
+        // instead, the entire backdrop unmounts and the modal
+        // disappears with no extra wiring. Animation in / out is
+        // handled by CSS keyframes on the backdrop class.
+        //
+        // Backdrop click + Escape both dispatch onCancel, matching
+        // the iOS .confirmationDialog semantics of "tap outside =
+        // cancel". The two buttons dispatch their respective msgs.
+        ensureUIStyles();
+        e.className = 'mar-confirm-backdrop';
+        e.setAttribute('role', 'alertdialog');
+        e.setAttribute('aria-modal', 'true');
+        const dialog = document.createElement('div');
+        dialog.className = 'mar-confirm-dialog';
+        const title = document.createElement('p');
+        title.className = 'mar-confirm-title';
+        title.textContent = confirmDialogAttr(view, 'title');
+        dialog.appendChild(title);
+        const actions = document.createElement('div');
+        actions.className = 'mar-confirm-actions';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'mar-confirm-cancel';
+        cancelBtn.textContent = 'Cancel';
+        const confirmBtn = document.createElement('button');
+        confirmBtn.type = 'button';
+        confirmBtn.className = 'mar-confirm-confirm';
+        if (confirmDialogAttrRaw(view, 'destructive')) {
+          confirmBtn.classList.add('destructive');
+        }
+        confirmBtn.textContent = confirmDialogAttr(view, 'confirmLabel');
+        actions.appendChild(cancelBtn);
+        actions.appendChild(confirmBtn);
+        dialog.appendChild(actions);
+        e.appendChild(dialog);
+        attachConfirmDialogDispatchers(e);
+        break;
+      }
       default:
         for (const c of view.children) e.appendChild(createDOM(c));
     }
     return e;
+  }
+
+  // ---------- Sheet dispatch + history glue ----------
+  //
+  // A sheet's open/close state is owned by the parent's Model. To make
+  // the browser back button close the sheet (matching iOS swipe-down),
+  // the framework injects a synthetic history entry when the sheet
+  // opens, and pops it when the sheet closes. The `outlet` field on
+  // the view is the identifier used to avoid clobbering legitimate
+  // history navigation.
+  //
+  // Tracking which sheets are currently open by outlet name; lets us
+  // tell "back button popped our entry" apart from "the user clicked
+  // a link". A push/pop pair is balanced when the parent flips
+  // open=true→false on its own (e.g. after a successful create).
+  const sheetHistory = { open: new Set() };
+
+  function applySheetOpenState(node, view) {
+    const open = sheetIsOpen(view);
+    // Single class for the open state. Default (no class) = closed.
+    // The .mar-sheet-closed class was redundant once display: none was
+    // removed; transitions live on the base + .mar-sheet-open selectors.
+    node.classList.toggle('mar-sheet-open', open);
+    const outlet = sheetOutlet(view);
+    syncSheetHistory(outlet, open);
+  }
+
+  // Read attrs directly off the view — getAttr() in this file
+  // assumes string attrs (returns `.value.s`), which would silently
+  // drop a VBool. Mirroring toggleIsOn's direct-lookup pattern.
+  function sheetIsOpen(view) {
+    const a = view.attrs && view.attrs.find(a => a.name === 'open');
+    return !!(a && a.value && a.value.b);
+  }
+  function sheetOutlet(view) {
+    const a = view.attrs && view.attrs.find(a => a.name === 'outlet');
+    return a && a.value && typeof a.value.s === 'string' ? a.value.s : '';
+  }
+
+  // ---------- Confirm dialog helpers ----------
+  //
+  // Attrs come off the view typed (VString/VBool/Msg-shaped), unlike
+  // the rest of the codebase that uses getAttr() and silently
+  // assumes a string. Each helper reads its expected type and
+  // returns a usable JS value with a safe default if anything's
+  // missing.
+
+  function confirmDialogAttr(view, name) {
+    const a = view.attrs && view.attrs.find(a => a.name === name);
+    return a && a.value && typeof a.value.s === 'string' ? a.value.s : '';
+  }
+  function confirmDialogAttrRaw(view, name) {
+    const a = view.attrs && view.attrs.find(a => a.name === name);
+    return a && a.value ? (a.value.b === true) : false;
+  }
+  function confirmDialogHandler(view, name) {
+    const a = view.attrs && view.attrs.find(a => a.name === name);
+    return a && a.value ? a.value : null;
+  }
+
+  // attachConfirmDialogDispatchers wires the three dispatch sources:
+  //   - Click on the destructive button → onConfirm
+  //   - Click on the cancel button     → onCancel
+  //   - Click on the backdrop (not on the dialog itself) → onCancel
+  //
+  // We bind to the wrapper element (which IS the backdrop) and use
+  // event delegation so the listeners survive child re-renders.
+  // The escape-key handler is bound to document so it works
+  // regardless of focus, but only fires while a confirm dialog is
+  // mounted (we check via :scope traversal on each press).
+  function attachConfirmDialogDispatchers(backdropEl) {
+    if (backdropEl.__marConfirmWired) return;
+    backdropEl.__marConfirmWired = true;
+
+    backdropEl.addEventListener('click', (ev) => {
+      const v = backdropEl.__marView;
+      if (!v || !currentDispatch) return;
+      // Find which logical button (if any) was hit.
+      let kind = null;
+      if (ev.target.classList.contains('mar-confirm-confirm')) {
+        kind = 'onConfirm';
+      } else if (ev.target.classList.contains('mar-confirm-cancel')) {
+        kind = 'onCancel';
+      } else if (ev.target === backdropEl) {
+        // Bare-backdrop click (didn't hit the dialog) — treat as cancel.
+        kind = 'onCancel';
+      }
+      if (!kind) return;
+      const handler = confirmDialogHandler(v, kind);
+      if (handler) currentDispatch(handler);
+    });
+  }
+
+  // Document-level Escape handler — installed once. Walks the
+  // currently-mounted DOM for a `.mar-confirm-backdrop` and
+  // dispatches its onCancel. Doing this at the document level (vs.
+  // on each backdrop) means we don't need focus inside the dialog
+  // for Escape to work, which matches iOS / Apple Music behavior
+  // (Escape always closes, regardless of where the focus ring
+  // happens to be).
+  if (typeof document !== 'undefined' && !document.__marConfirmEscWired) {
+    document.__marConfirmEscWired = true;
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return;
+      const backdrop = document.querySelector('.mar-confirm-backdrop');
+      if (!backdrop) return;
+      const v = backdrop.__marView;
+      if (!v || !currentDispatch) return;
+      const handler = confirmDialogHandler(v, 'onCancel');
+      if (handler) currentDispatch(handler);
+    });
+  }
+
+  // syncSheetHistory mirrors the sheet's open state into the browser
+  // history. push when open transitions false→true, back when
+  // true→false (so the user-initiated dismiss leaves no orphan entry).
+  // popstate handler in attachSheetDismissDispatchers fires the
+  // user-back-button path separately.
+  function syncSheetHistory(outlet, open) {
+    if (!outlet) return;
+    const wasOpen = sheetHistory.open.has(outlet);
+    if (open && !wasOpen) {
+      sheetHistory.open.add(outlet);
+      const url = new URL(location.href);
+      url.searchParams.set('sheet', outlet);
+      history.pushState({ __marSheet: outlet }, '', url.toString());
+    } else if (!open && wasOpen) {
+      sheetHistory.open.delete(outlet);
+      // history.back() to remove our pushed entry. The popstate
+      // handler below checks our `closing` flag to avoid re-dispatching
+      // onDismiss when WE caused the pop.
+      sheetClosingProgrammatically = true;
+      history.back();
+    }
+  }
+
+  let sheetClosingProgrammatically = false;
+
+  // attachSheetDismissDispatchers binds the backdrop click, Escape
+  // key, and browser back button to the sheet's onDismiss Msg. Called
+  // once per sheet wrapper element; reads node.__marView at event
+  // time so the latest onDismiss is dispatched even after re-render.
+  function attachSheetDismissDispatchers(node) {
+    if (node.__sheetDispatchersBound) return;
+    node.__sheetDispatchersBound = true;
+
+    // Backdrop click — only dismiss when the user clicks the wrapper
+    // itself, not bubbled from the panel content.
+    node.addEventListener('click', (ev) => {
+      if (ev.target !== node) return;
+      dispatchSheetDismiss(node);
+    });
+
+    // Escape key — only when this sheet is open (sheets stack
+    // semantically; outermost sheet closes first).
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return;
+      if (!node.__marView || !sheetIsOpen(node.__marView)) return;
+      dispatchSheetDismiss(node);
+    });
+
+    // Browser back button — popstate fires when the user hits Back.
+    // If WE just called history.back() to clean up an outlet, ignore
+    // (the parent already closed the sheet via Msg). Otherwise the
+    // user wants to close: dispatch onDismiss so the parent flips
+    // its open flag.
+    window.addEventListener('popstate', () => {
+      if (sheetClosingProgrammatically) {
+        sheetClosingProgrammatically = false;
+        return;
+      }
+      if (!node.__marView || !sheetIsOpen(node.__marView)) return;
+      // Forget the outlet — the URL entry is already gone.
+      const outlet = sheetOutlet(node.__marView);
+      if (outlet) sheetHistory.open.delete(outlet);
+      dispatchSheetDismiss(node);
+    });
+  }
+
+  function dispatchSheetDismiss(node) {
+    const v = node.__marView;
+    if (!currentDispatch || !v || v.msg == null) return;
+    currentDispatch(v.msg);
   }
 
   // patchDOM updates `node` (currently rendering oldView, available as
@@ -2266,25 +6473,147 @@
       case 'text':
       case 'title':
       case 'subtitle':
+      case 'errorText':
         if (node.textContent !== newView.text) node.textContent = newView.text;
         break;
       case 'button':
         if (node.textContent !== newView.text) node.textContent = newView.text;
         applyDisabledAttr(node, newView);
         break;
-      case 'link': {
+      case 'navigationLink': {
         const newHref = getAttr(newView, 'href');
         if (node.getAttribute('href') !== newHref) node.setAttribute('href', newHref);
-        if (node.textContent !== newView.text) node.textContent = newView.text;
+        applyAnchorDisabled(node, newView);
+        // Patch children in place — same shape as the other
+        // container tags (hstack/vstack/section). Lets a focused
+        // input nested inside a navigationLink survive a re-render.
+        patchChildrenPositional(node, oldView.children || [], newView.children || [], 'navigationLink');
         break;
       }
       case 'textField':
+      case 'textArea':
         // Only write if the value diverges — avoids resetting the cursor
         // mid-keystroke when the model just echoes what the user typed.
+        // Same patch path for both shapes; the input vs textarea is
+        // already pinned by node.tagName from the initial createDOM.
         if (node.value !== newView.text) node.value = newView.text;
+        applyDisabledAttr(node, newView);
+        // Re-apply sizing on every patch — cheap (idempotent: same
+        // attrs produce the same inline style), and necessary when
+        // user code dynamically swaps the width/height attr (rare
+        // but valid — e.g. `if model.compact then width (chars 12)
+        // else width (chars 40)`).
+        applySizing(node, newView);
         break;
+      case 'picker': {
+        // Re-render the option list only when something changed.
+        // Comparing the underlying VList / VFn / VValue refs lets
+        // the common "same options, only selected differs" path
+        // avoid recreating the <option> nodes (which would flicker
+        // the dropdown if open). When refs match, just sync the
+        // select.value index.
+        const select = node.querySelector(':scope > .mar-picker-select');
+        if (!select) break;
+        applyDisabledAttr(select, newView);
+        node.classList.toggle('mar-disabled', isDisabled(newView));
+        applySizing(node, newView);
+        const oldOptions = oldView.attrs.find(a => a.name === 'options');
+        const newOptions = newView.attrs.find(a => a.name === 'options');
+        const oldToLabel = oldView.attrs.find(a => a.name === 'toLabel');
+        const newToLabel = newView.attrs.find(a => a.name === 'toLabel');
+        const optionsChanged =
+          !oldOptions || !newOptions ||
+          oldOptions.value !== newOptions.value ||
+          (oldToLabel && newToLabel && oldToLabel.value !== newToLabel.value);
+        if (optionsChanged) {
+          renderPickerOptions(select, newView);
+        } else {
+          const selectedAttr = newView.attrs.find(a => a.name === 'selected');
+          const opts = newOptions.value.xs;
+          if (selectedAttr && selectedAttr.value) {
+            for (let i = 0; i < opts.length; i++) {
+              if (eqValues(opts[i], selectedAttr.value)) {
+                if (select.value !== String(i)) select.value = String(i);
+                break;
+              }
+            }
+          }
+        }
+        break;
+      }
       case 'empty':
         break;
+      case 'spacer':
+        // No content, no listeners — nothing to update. The CSS
+        // class drives the layout entirely.
+        break;
+      case 'toggle': {
+        // Slot 0: <span.mar-toggle-label> — sync text.
+        // Slot 1: <input.mar-toggle-switch> — sync checked.
+        // Listener on the input reads view.msg from the label via
+        // closure, so __marView already updated above is enough.
+        const labelSpan = node.querySelector(':scope > .mar-toggle-label');
+        const sw = node.querySelector(':scope > .mar-toggle-switch');
+        if (labelSpan && labelSpan.textContent !== newView.text) {
+          labelSpan.textContent = newView.text;
+        }
+        if (sw) {
+          const next = toggleIsOn(newView);
+          if (sw.checked !== next) sw.checked = next;
+          applyDisabledAttr(sw, newView);
+        }
+        node.classList.toggle('mar-disabled', isDisabled(newView));
+        break;
+      }
+      case 'sheet': {
+        // Apply new open-state (drives CSS class + history pushState/back
+        // sync). Then diff the panel's content children.
+        applySheetOpenState(node, newView);
+        const panel = node.querySelector(':scope > .mar-sheet-panel');
+        if (panel) {
+          // Panel's first child is the persistent .mar-sheet-handle —
+          // diff starts from index 1.
+          const oldChildren = oldView.children || [];
+          const newChildren = newView.children || [];
+          // Children render at panel[1..], handle is at panel[0].
+          const offset = 1;
+          for (let i = 0; i < newChildren.length; i++) {
+            const child = panel.children[offset + i];
+            if (!child) {
+              panel.appendChild(createDOM(newChildren[i]));
+            } else if (child.__marView && child.__marView.tag === newChildren[i].tag) {
+              patchDOM(child, newChildren[i]);
+            } else {
+              panel.replaceChild(createDOM(newChildren[i]), child);
+            }
+          }
+          // Remove extras.
+          while (panel.children.length > offset + newChildren.length) {
+            panel.removeChild(panel.lastChild);
+          }
+        }
+        break;
+      }
+      case 'confirmDialog': {
+        // Refresh the title + button label + destructive class. The
+        // attrs are stored on the view; we just rewrite the
+        // corresponding DOM nodes in place. Listeners stay attached
+        // via attachConfirmDialogDispatchers (it's idempotent and
+        // bound to the backdrop wrapper, not the inner buttons).
+        const titleEl = node.querySelector(':scope > .mar-confirm-dialog > .mar-confirm-title');
+        if (titleEl) titleEl.textContent = confirmDialogAttr(newView, 'title');
+        const confirmBtn = node.querySelector(':scope > .mar-confirm-dialog > .mar-confirm-actions > .mar-confirm-confirm');
+        if (confirmBtn) {
+          confirmBtn.textContent = confirmDialogAttr(newView, 'confirmLabel');
+          confirmBtn.classList.toggle('destructive', confirmDialogAttrRaw(newView, 'destructive'));
+        }
+        // No children to diff — the dialog's content is fully
+        // attribute-driven. The view's onConfirm / onCancel
+        // handlers live on the (newly-stored) view via setMarView;
+        // the listener reads them from there at click-time, so they
+        // automatically pick up the new dispatchers.
+        break;
+      }
       // navigationStack / uiSection patch in place: the surrounding
       // chrome (nav bar, section header/footer) gets re-rendered, but
       // the body wrapper stays the same DOM node so any focused input
@@ -2303,7 +6632,8 @@
         }
         break;
       }
-      case 'uiSection': {
+      case 'uiSection':
+      case 'uiKeyedList': {
         const headerText = getAttr(newView, 'header');
         const footerText = getAttr(newView, 'footer');
         const h = node.querySelector(':scope > .mar-section-header');
@@ -2318,13 +6648,68 @@
           f.style.display = footerText ? '' : 'none';
         }
         if (body) {
+          // When the editing flag of `onMove` OR `onDelete` flips,
+          // the row structure changes (drag handles + delete
+          // buttons appear / disappear; listeners get rebound).
+          // Rebuild the section body wholesale — toggling edit
+          // mode is rare (one tap) and a fresh subtree is simpler
+          // than diffing every affordance in/out.
+          //
+          // We only watch the `.editing` flag on onDelete, not the
+          // presence of the attr itself: the delete button is gated
+          // entirely on editing=true (see attachRowDeleteAffordance
+          // — browse mode shows no destructive control), so the
+          // attr can come and go between renders without visual
+          // change as long as editing stays false.
+          const oldOnMoveS = getAttrRaw(oldView, 'onMove');
+          const newOnMoveS = getAttrRaw(newView, 'onMove');
+          const oldEdS = !!(oldOnMoveS && oldOnMoveS.editing);
+          const newEdS = !!(newOnMoveS && newOnMoveS.editing);
+          const oldOnDelS = getAttrRaw(oldView, 'onDelete');
+          const newOnDelS = getAttrRaw(newView, 'onDelete');
+          const oldDelEdS = !!(oldOnDelS && oldOnDelS.editing);
+          const newDelEdS = !!(newOnDelS && newOnDelS.editing);
+          if (oldEdS !== newEdS || oldDelEdS !== newDelEdS) {
+            const fresh = createDOM(newView);
+            node.parentNode.replaceChild(fresh, node);
+            break;
+          }
+          // Stable editing state — keyed reconciliation handles
+          // reorders without losing handle wiring (drag listeners
+          // are bound to the section-body element, not the rows).
           patchChildrenPositional(body, oldView.children, newView.children, 'uiSection');
+          // Defensive sweep: ensure every current row has its
+          // edit-mode affordances. patchChildrenKeyed can create
+          // new rows via createDOM(rowView) when a new key appears
+          // (Add Task, restored row via Undo, tag swap toggle ↔
+          // hstack); all of those bypass the section's own
+          // createDOM loop where these affordances are normally
+          // appended. Without this sweep, those rows would render
+          // WITHOUT a delete button or drag handle while siblings
+          // have one — the visible "only first row has no delete"
+          // symptom users hit after an Undo.
+          //
+          // Cheap: O(N) querySelector calls, with the inner work
+          // (re-appending) skipped via idempotent guards in the
+          // helpers themselves. Done unconditionally per row so
+          // index-based per-row state (aria-posinset, dataset.idx)
+          // stays in sync after reorders / inserts / removes.
+          const rows = body.querySelectorAll(':scope > *:not(.mar-drop-indicator):not(.mar-live-region)');
+          if (newEdS) {
+            for (let i = 0; i < rows.length; i++) {
+              ensureRowEditAffordances(rows[i], i, rows.length);
+            }
+          }
+          if (newOnDelS && newOnDelS.handler) {
+            for (let i = 0; i < rows.length; i++) {
+              attachRowDeleteAffordance(rows[i], i, newOnDelS.handler, newDelEdS);
+            }
+          }
         }
         break;
       }
       case 'uiList':
-        // No wrapper structure — children are direct. Plain positional
-        // diff handles it.
+        // No reorder semantics on list itself; just diff children.
         patchChildrenPositional(node, oldView.children, newView.children, 'uiList');
         break;
       case 'form':
@@ -2339,7 +6724,18 @@
   // patchChildrenPositional walks DOM children and VView children in
   // lockstep. Same-tag pairs are patched in place; new entries are
   // appended; removed entries are detached.
+  //
+  // Dispatches to patchChildrenKeyed when any child carries a `key`
+  // attr — preserves identity (focus, animation, scroll, custom
+  // state on the DOM node) across reorders. Positional matching is
+  // a fast path for the common case (homogeneous static-order
+  // lists like form sections); keyed is the right thing for
+  // anything that can reorder.
   function patchChildrenPositional(parentNode, oldChildren, newChildren, _parentTag) {
+    if (hasAnyKey(oldChildren) || hasAnyKey(newChildren)) {
+      patchChildrenKeyed(parentNode, oldChildren, newChildren);
+      return;
+    }
     const domChildren = parentNode.childNodes;
     const max = Math.max(oldChildren.length, newChildren.length);
     for (let i = 0; i < max; i++) {
@@ -2362,6 +6758,100 @@
     }
   }
 
+  // hasAnyKey returns true if any view in the list declares a
+  // `key` attr. Used by patchChildrenPositional to decide whether
+  // to switch to keyed mode.
+  function hasAnyKey(children) {
+    for (const c of children) if (viewKey(c)) return true;
+    return false;
+  }
+
+  // viewKey extracts the `key` attr value (or null) from a view.
+  // Lives next to hasAnyKey so call sites pull identity in one
+  // place — if we later move keys off the attrs list onto a
+  // dedicated field of VView, only this one helper changes.
+  function viewKey(view) {
+    if (!view || !view.attrs) return null;
+    for (const a of view.attrs) {
+      if (a.name === 'key' && a.value && a.value.k === 'S') {
+        return a.value.s;
+      }
+    }
+    return null;
+  }
+
+  // patchChildrenKeyed reorders DOM children to match newChildren by
+  // matching `key` attrs across renders. Steps:
+  //
+  //   1. Build a map from old key → existing DOM node.
+  //   2. Walk newChildren in order. For each:
+  //      - If the key exists in the map: reuse that DOM node,
+  //        moving it via insertBefore to its new position, then
+  //        patch its content in place. Mark it as "consumed".
+  //      - If no key match (new entry): create a fresh DOM node.
+  //      - If a new child has no key, fall back to creating fresh.
+  //        (Mixing keyed and unkeyed siblings is a smell; we don't
+  //        attempt clever matching — the unkeyed ones are treated
+  //        as always-new.)
+  //   3. After the walk, remove any old DOM nodes whose key wasn't
+  //      consumed by the new list (i.e., the item was removed).
+  //
+  // The result: rows that moved keep their DOM node (and with it
+  // focus, scroll, animation state), rows that vanished are removed,
+  // rows that appeared are created.
+  function patchChildrenKeyed(parentNode, oldChildren, newChildren) {
+    const domChildren = Array.from(parentNode.childNodes);
+
+    // Step 1: index old DOM nodes by key.
+    const oldByKey = new Map();
+    for (let i = 0; i < oldChildren.length; i++) {
+      const k = viewKey(oldChildren[i]);
+      if (k != null && domChildren[i]) {
+        oldByKey.set(k, { node: domChildren[i], view: oldChildren[i] });
+      }
+    }
+
+    // Step 2: walk newChildren in order, reordering DOM as we go.
+    // `cursor` tracks the position where the next reused/created
+    // node should land. We use insertBefore(node, anchor) where
+    // anchor is the node currently at `cursor` — that's the only
+    // primitive that handles "move to position N" correctly even
+    // when the node is already somewhere else in the parent.
+    const consumed = new Set();
+    for (let i = 0; i < newChildren.length; i++) {
+      const newChild = newChildren[i];
+      const newK = viewKey(newChild);
+      const anchor = parentNode.childNodes[i] || null;
+      if (newK != null && oldByKey.has(newK)) {
+        // Reuse: move the existing node to position i.
+        const { node, view: oldView } = oldByKey.get(newK);
+        consumed.add(newK);
+        if (node !== anchor) {
+          parentNode.insertBefore(node, anchor);
+        }
+        // Patch content in place (handles attr / text / children
+        // changes; preserves the DOM identity we just moved).
+        patchDOM(node, newChild);
+      } else {
+        // New entry — create fresh and insert at position i.
+        const node = createDOM(newChild);
+        parentNode.insertBefore(node, anchor);
+      }
+    }
+
+    // Step 3: remove any old keyed nodes that weren't consumed.
+    // Also remove any extra positional (unkeyed) leftovers past the
+    // new length.
+    for (const [k, entry] of oldByKey) {
+      if (!consumed.has(k) && entry.node.parentNode === parentNode) {
+        parentNode.removeChild(entry.node);
+      }
+    }
+    while (parentNode.childNodes.length > newChildren.length) {
+      parentNode.removeChild(parentNode.lastChild);
+    }
+  }
+
   // ---------- MVU loop ----------
 
   function unwrapModelTuple(v) {
@@ -2377,10 +6867,57 @@
     }
   }
 
+  // Listener bookkeeping that survives across mountPages calls.
+  //
+  // `mar dev`\'s hot reload re-invokes mountPages on every save
+  // (see marReload → marRun). Without explicitly removing the
+  // previous listeners, each call would stack ANOTHER popstate
+  // listener on `window` and ANOTHER click delegator on
+  // `#mar-root`. After N reloads, every `history.back()` would
+  // fire N+1 render() closures in parallel, each tied to a stale
+  // mountPages scope, racing to startViewTransition (only one is
+  // allowed in flight — the rest reject silently). The visible
+  // symptom is the back button needing several presses to
+  // actually advance the URL.
+  //
+  // We track the most recent listener references at IIFE scope
+  // and remove them on each new mountPages, so there\'s always
+  // exactly one active listener of each kind.
+  let prevPopstateHandler = null;
+  let prevLinkClickHandler = null;
+  let prevLinkClickRoot = null;
+
   // mountPages mounts a list of pages with URL-based routing. A
   // single-page app is just a list of one page (path "/"). Each page
   // has its own model — selected by window.location.pathname.
   // Falls back to the first page when the URL doesn't match any path.
+  // iOS Safari needs a no-op touch listener on `document` to enter
+  // its "delegated event delivery" mode. WITHOUT this, after a
+  // long-touch gesture (like our drag reorder), Safari leaves the
+  // page in a state where the next tap on any button is consumed
+  // by gesture-state cleanup instead of firing the button's click
+  // handler — operator must tap twice. The fix is documented voodoo
+  // (the same trick FastClick used in the late 2010s, the same
+  // reason jQuery Mobile shipped an empty body click handler):
+  // adding a passive listener to `document` flips Safari onto a
+  // code path that delivers events immediately after touchend
+  // instead of waiting for the gesture state machine.
+  //
+  // Discovered empirically: when the operator pasted a console
+  // snippet that attached debug listeners to `document`, the
+  // double-tap bug vanished immediately. Reload (without the
+  // snippet) brought the bug back. That's the signature of this
+  // exact iOS Safari quirk.
+  //
+  // Installed once per page load (the iife wrapping the runtime
+  // runs once per page). Hot-reload doesn't need to re-install
+  // because the previous listener stays attached; even if a
+  // second one were added, both being no-ops doesn't matter.
+  if (typeof document !== 'undefined' && !document.__marTouchPrimer) {
+    document.addEventListener('touchstart', function () {}, { passive: true });
+    document.__marTouchPrimer = true;
+  }
+
   function mountPages(pageList) {
     const pages = {};
     let firstPath = null;
@@ -2566,6 +7103,20 @@
     let mounted = null;
     let mountedPath = null;
     let routerInstalled = false;
+    // Tracks the marDepth at the last DOM-swap render. The next swap
+    // compares newDepth vs this to pick the view-transition direction
+    // (forward / back / none).
+    //
+    // `firstRender` short-circuits the direction computation on the
+    // very first render of this mountPages call: there is no previous
+    // depth to compare against. Without this, a cold load on a deep
+    // sub-page (e.g. /projects/42, marDepth=2, restored from BFCache
+    // or browser session) would compute newDepth(2) > lastSeen(0) →
+    // 'forward' and play a slide-in-from-right on top of the initial
+    // mount. Same trap on hot-reload (the IIFE re-runs with a fresh
+    // lastSeenNavDepth while history.state preserves the real depth).
+    let lastSeenNavDepth = 0;
+    let firstRender = true;
 
     // Returns the User value for a protected page, or null if we
     // either don't have an answer yet or the user isn't logged in.
@@ -2594,6 +7145,33 @@
       return apply(apply(applyExtras(pg, pg.update), msg), model);
     }
 
+    // When the user agent already animated this traversal itself
+    // (Safari macOS two-finger swipe-back is the canonical case),
+    // we skip our own startViewTransition for the next render so
+    // animations don't stack. The flag is set by the popstate
+    // handler below — it reads PopStateEvent.hasUAVisualTransition,
+    // a standard property browsers expose during traversal-driven
+    // visual transitions. Reset to false after a single render.
+    let skipNextViewTransition = false;
+
+    // Tracks WHICH nav verb triggered the upcoming render so we can
+    // pick a direction-correct animation. Depth alone isn't enough:
+    //
+    //   - Nav.replace    → same depth, but it's a context change
+    //     (logout, switching modes); use 'fade' (no direction).
+    //   - Nav.replaceFresh → depth resets to 0; semantically it's
+    //     ALSO a context change (sign-in completed, redirected
+    //     after auth-expired), not a "go back" — use 'fade'.
+    //   - Nav.push       → depth grows; use 'forward' slide.
+    //   - browser back   → depth shrinks; use 'back' slide.
+    //
+    // The depth heuristic alone would render replaceFresh as 'back'
+    // (because newDepth < lastSeen), which implies "going back into
+    // history" — visually wrong since the previous flow is gone.
+    // Set just before render() by the nav primitives below; read
+    // and cleared inside render().
+    let pendingNavKind = null;
+
     function render() {
       const pg = currentPage();
       if (!pg) return;
@@ -2617,8 +7195,11 @@
             return;
           }
           // Replace history (no back-button to a page the user can't
-          // see) and route to the sign-in page.
-          history.replaceState({}, '', signInPath);
+          // see) and route to the sign-in page. Marked as 'replace'
+          // so the cross-fade animation fires — the protected page
+          // never visibly mounted, so a slide would be misleading.
+          pendingNavKind = 'replace';
+          replaceNav(signInPath);
           render();
           return;
         }
@@ -2651,31 +7232,142 @@
       // navigation gives no useful work. Use activeKey (URL-based for
       // dynamic pages) so /notes/abc → /notes/xyz also resets the DOM.
       if (mounted == null || mountedPath !== pg.activeKey) {
-        while (root.firstChild) root.removeChild(root.firstChild);
-        mounted = createDOM(viewVal);
-        root.appendChild(mounted);
-        mountedPath = pg.activeKey;
+        // Compute the slide direction. Three signals feed into it,
+        // in priority order:
+        //
+        //   1. firstRender — cold load / reload / direct URL: skip
+        //      animation entirely. There's no "previous" to leave.
+        //
+        //   2. pendingNavKind — explicit verb just called by the
+        //      app code. `replace` and `replaceFresh` map to 'fade'
+        //      (cross-fade with subtle scale): the destination is a
+        //      context change, not a stack movement, so a slide
+        //      would imply a back/forward semantic that isn't there.
+        //      `push` falls through to the depth heuristic so the
+        //      direction still matches the depth delta.
+        //
+        //   3. depth delta — popstate (browser back/forward) and
+        //      any other untagged path. Forward (push) → slide in
+        //      from the right + old parallax left. Back (pop) →
+        //      reversed. Same depth → no animation.
+        //
+        // The cross-fade is iOS-modern: similar to what Photos,
+        // Apple Music, and Sign in with Apple use when transitioning
+        // between non-hierarchical contexts. Reads as "you stepped
+        // into a new place" without implying a stack direction.
+        const newDepth = currentNavDepth();
+        let dir;
+        if (firstRender) {
+          dir = 'none';
+        } else if (pendingNavKind === 'replace' || pendingNavKind === 'replaceFresh') {
+          dir = 'fade';
+        } else if (newDepth > lastSeenNavDepth) {
+          dir = 'forward';
+        } else if (newDepth < lastSeenNavDepth) {
+          dir = 'back';
+        } else {
+          dir = 'none';
+        }
+        firstRender = false;
+        lastSeenNavDepth = newDepth;
+        pendingNavKind = null;
+        // Scroll-to-top policy. Native iOS NavigationStack pushes
+        // always land the new screen at the top; modern web SPAs
+        // mirror that. The three cases:
+        //
+        //   - 'forward' / 'fade': fresh destination, user wants
+        //     to start reading from the top. Reset scroll.
+        //   - 'back': the user is RETURNING to a page they were
+        //     reading. Browser's history.scrollRestoration =
+        //     'auto' (the default) restores the scroll position
+        //     from when they left, so we DON'T touch it.
+        //   - 'none': first render / same depth refresh. Already
+        //     at the top or intentionally not navigating, so no
+        //     reset.
+        const shouldScrollTop = (dir === 'forward' || dir === 'fade');
+        const swap = () => {
+          while (root.firstChild) root.removeChild(root.firstChild);
+          mounted = createDOM(viewVal);
+          root.appendChild(mounted);
+          mountedPath = pg.activeKey;
+          if (shouldScrollTop) {
+            // `auto` (not 'smooth') because the page itself is
+            // animating in via View Transitions / cross-fade —
+            // adding a second animated scroll on top reads as
+            // jittery. Instant reset is correct here.
+            window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+          }
+        };
+        if (dir === 'none'
+            || !document.startViewTransition
+            || prefersReducedMotion()
+            || skipNextViewTransition) {
+          // Reset the flag — only the immediately-following render
+          // should skip; subsequent button-back clicks need their
+          // own transition.
+          skipNextViewTransition = false;
+          swap();
+        } else {
+          // The data-attribute drives the CSS that picks the right
+          // keyframes (forward vs back). We clear it on the
+          // transition's `finished` so a subsequent same-depth
+          // render doesn't accidentally inherit the previous run's
+          // direction.
+          document.documentElement.dataset.marNavDir = dir;
+          const t = document.startViewTransition(swap);
+          t.finished
+            .catch(() => { /* user-cancelled / skipped — ignore */ })
+            .finally(() => {
+              delete document.documentElement.dataset.marNavDir;
+            });
+        }
       } else {
+        // Same page, just an MVU re-render (model changed; URL didn't).
+        // Patch in place — no view-transition, no animation. Clear
+        // pendingNavKind even though we didn't consume it for direction
+        // selection above (the swap branch did), so a stale flag from
+        // an early-exit render (e.g. authUser fetch race) doesn't leak
+        // into the NEXT swap.
         mounted = patchDOM(mounted, viewVal);
+        pendingNavKind = null;
       }
 
       // Intercept link clicks pointing at known page paths so navigation
       // stays in-process (no full page reload). One delegated listener on
-      // the root catches clicks from any descendant anchor — installed
-      // once, so we don't have to re-scan the DOM on every render or
-      // tag each anchor with a flag.
+      // the root catches clicks from any descendant anchor.
+      //
+      // Hot reload re-runs mountPages which re-runs this block. We
+      // remove the previous mount\'s listener before installing a
+      // new one (see prevLinkClickHandler comment above) so the
+      // root doesn\'t accumulate stale closures that reference
+      // dead `pages` / `pushNav` / `render` from old mounts.
       if (!routerInstalled) {
         routerInstalled = true;
-        root.addEventListener('click', (ev) => {
+        if (prevLinkClickHandler && prevLinkClickRoot) {
+          prevLinkClickRoot.removeEventListener('click', prevLinkClickHandler);
+        }
+        const onLinkClick = (ev) => {
           const a = ev.target.closest && ev.target.closest('a[href^="/"]');
           if (!a) return;
+          // Disabled navigationLink: swallow the click so the
+          // browser doesn't follow the href (full reload) and
+          // skip the SPA push. Mirrors how disabled <button>
+          // suppresses dispatch.
+          const lv = a.__marView;
+          if (lv && isDisabled(lv)) {
+            ev.preventDefault();
+            return;
+          }
           const href = a.getAttribute('href');
           if (matchesAnyPage(href)) {
             ev.preventDefault();
-            history.pushState({}, '', href);
+            pushNav(href);
             render();
           }
-        });
+        };
+        root.addEventListener('click', onLinkClick);
+        prevLinkClickHandler = onLinkClick;
+        prevLinkClickRoot = root;
       }
     }
 
@@ -2690,19 +7382,69 @@
       return false;
     }
 
+    // pushNav / replaceNav wrap history.pushState / replaceState
+    // with the bookkeeping the nav chrome reads back later:
+    //
+    //   marDepth   — depth counter for the auto back button
+    //                (buildNavigationBar reads currentNavDepth())
+    //                and the view-transition direction detector
+    //                (render() compares old vs new depth).
+    //   prevTitle  — title of the page we\'re LEAVING, captured
+    //                from document.title at push time. The back
+    //                button on the next page reads this to render
+    //                "‹ <where back goes>" instead of a generic
+    //                "‹ Back". Mirrors iOS Settings, where the
+    //                back chevron is labeled with the previous
+    //                screen\'s name.
+    //
+    // pushNav bumps depth and stamps the leaving page\'s title.
+    // replaceNav preserves both (the user didn\'t actually
+    // navigate, just changed the URL of the current entry, so
+    // the back target stays the same).
+    function pushNav(path) {
+      const leavingTitle = document.title || '';
+      history.pushState(
+        { marDepth: currentNavDepth() + 1, prevTitle: leavingTitle },
+        '',
+        path,
+      );
+    }
+    function replaceNav(path) {
+      const prev = (history.state && history.state.prevTitle) || '';
+      history.replaceState(
+        { marDepth: currentNavDepth(), prevTitle: prev },
+        '',
+        path,
+      );
+    }
+
     // Expose programmatic navigation so Nav.push / Nav.replace can
     // reach into this closure. Last call wins — successive mountPages
     // (e.g. hot-reload) replace the table.
     globalThis.__marNav = {
       push: (path) => {
-        history.pushState({}, '', path);
+        pendingNavKind = 'push';
+        pushNav(path);
         render();
       },
       replace: (path) => {
-        history.replaceState({}, '', path);
+        pendingNavKind = 'replace';
+        replaceNav(path);
         // Auth state may have changed (login/logout drives most replace
         // calls). Invalidate the cache so the next protected page
         // re-fetches /_auth/whoami.
+        authUser = null;
+        render();
+      },
+      // replaceFresh: like replace, but also resets marDepth to 0 so
+      // the destination has no back-button into the (now-completed)
+      // flow that brought us here. Used by Auth.completeSignIn and by the
+      // auth-expired redirect — both are entry-point transitions
+      // where "going back" makes no sense (you'd land on a page you
+      // either can't access yet, or that you just finished with).
+      replaceFresh: (path) => {
+        pendingNavKind = 'replaceFresh';
+        history.replaceState({ marDepth: 0, prevTitle: '' }, '', path);
         authUser = null;
         render();
       },
@@ -3122,14 +7864,62 @@
       runEffect(out.effect);
     };
 
-    window.addEventListener('popstate', render);
+    // Stamp marDepth: 0 onto the initial history entry so every
+    // subsequent push/replace can read + bump it. Without this, the
+    // first navigation sees `history.state == null`, treats depth as
+    // 0, pushes with depth 1 — which is correct but only by accident.
+    // Doing it explicitly here keeps `currentNavDepth()` honest from
+    // the very first render onward.
+    if (history.state == null || typeof history.state.marDepth !== 'number') {
+      replaceNav(window.location.pathname + window.location.search + window.location.hash);
+    }
+
+    // Replace the previous popstate listener (from the prior
+    // mountPages, if any) with this mount\'s render. See the
+    // `prevPopstateHandler` declaration above for why this matters
+    // on hot reload.
+    //
+    // We wrap render() in a shim that inspects the PopStateEvent's
+    // `hasUAVisualTransition` flag — set to true by Safari (and
+    // other UAs) when a back/forward traversal triggered by a
+    // platform gesture (two-finger swipe-back on macOS Safari) is
+    // ALREADY being visually transitioned by the browser. Layering
+    // our own startViewTransition on top of that produces a
+    // visible double-animation. The shim suppresses our transition
+    // for exactly that one render.
+    const handlePopState = (ev) => {
+      if (ev && ev.hasUAVisualTransition) {
+        skipNextViewTransition = true;
+      }
+      render();
+    };
+    if (prevPopstateHandler) {
+      window.removeEventListener('popstate', prevPopstateHandler);
+    }
+    prevPopstateHandler = handlePopState;
+    window.addEventListener('popstate', handlePopState);
     render();
     return VUnit();
   }
 
   // ---------- Module loader ----------
 
-  function loadModule(env, mod) {
+  function loadModule(env, mod, modulesByName) {
+    const modName = (mod.name || []).join('.');
+    // Per-module env scoping. The synthetic `__entry` module
+    // (apphost.PickFrontMods appends it with `name: nil`) is special-
+    // cased: its `__entry` value has to live in the shared env so
+    // marRun's `envLookup(env, program.entry)` finds it. Real modules
+    // get their own frame so two modules that both declare a bare
+    // `page` / `renderBody` / `projectsSection` (and bigapp has all
+    // three) don't clobber each other in the shared bindings — the
+    // last-write-wins on a shared env makes the result depend on the
+    // non-deterministic topo iteration order, which is why this bug
+    // was intermittent. Closures captured in modEnv chain to the
+    // shared env via parent so cross-module qualified lookups still
+    // succeed.
+    const modEnv = modName ? envNew(env) : env;
+
     // Pass 0: process `import M exposing (...)` so bare names bind to
     // already-known qualified values. Mirrors the typechecker; without
     // this, code that typechecks (e.g. `column [...]` after
@@ -3138,22 +7928,35 @@
     if (mod.imports) {
       for (const imp of mod.imports) {
         if (!imp.exposing || imp.exposing.length === 0) continue;
-        const modName = (imp.module || []).join('.');
+        const impName = (imp.module || []).join('.');
         for (const item of imp.exposing) {
-          const qualified = modName + '.' + item.name;
-          const v = envLookup(env, qualified);
+          const qualified = impName + '.' + item.name;
+          const v = envLookup(modEnv, qualified);
           if (v !== undefined) {
-            envDefine(env, item.name, v);
+            envDefine(modEnv, item.name, v);
+          }
+          // `Type(..)` — pull every constructor of the imported type
+          // into the bare namespace too. The imported module's AST is
+          // the source of truth for the ctor list.
+          if (item.open && modulesByName) {
+            const impMod = modulesByName[impName];
+            if (impMod && impMod.decls) {
+              for (const d of impMod.decls) {
+                if (d.kind !== 'CustomTypeDecl' || d.name !== item.name) continue;
+                for (const c of d.constructors) {
+                  const cv = envLookup(modEnv, impName + '.' + c.name);
+                  if (cv !== undefined) envDefine(modEnv, c.name, cv);
+                }
+              }
+            }
           }
         }
       }
     }
-    const modName = (mod.name || []).join('.');
-    // Pass 1: register custom-type constructors. Bare for intra-
-    // module use; qualified so other modules can reference them too
-    // (matters when a module exports a custom type and another
-    // module pattern-matches on its constructors via `import M
-    // exposing (T(..))`).
+    // Pass 1: register custom-type constructors. Bare goes into
+    // modEnv (module-local); qualified `Module.Ctor` goes into the
+    // shared env so `import M exposing (T(..))` from other modules
+    // (Pass 0 above) can find it.
     for (const d of mod.decls) {
       if (d.kind === 'CustomTypeDecl') {
         const ctorNames = [];
@@ -3163,7 +7966,7 @@
           const ctor = arity === 0
             ? VCtor(c.name)
             : native(arity, args => VCtor(c.name, args));
-          envDefine(env, c.name, ctor);
+          envDefine(modEnv, c.name, ctor);
           if (modName) envDefine(env, modName + '.' + c.name, ctor);
           ctorNames.push(c.name);
           if (arity > 0) allZeroArg = false;
@@ -3180,33 +7983,32 @@
         }
       }
     }
-    // Pass 2: pre-bind value names with placeholders.
+    // Pass 2: pre-bind value names with placeholders. Module-local —
+    // only this module's body needs the self-reference; other modules
+    // reach the value via its qualified alias once Pass 3 runs.
     for (const d of mod.decls) {
       if (d.kind === 'ValueDecl') {
-        envDefine(env, d.name, VUnit());
-        if (modName) envDefine(env, modName + '.' + d.name, VUnit());
+        envDefine(modEnv, d.name, VUnit());
       }
     }
-    // Pass 3: evaluate. Each value is registered both bare (for
-    // intra-module references during evaluation; safe because mar
-    // forbids name collisions within a module) and qualified
-    // (`Module.name`) so EQualified lookups from other modules work.
-    // Without the qualified alias, two modules that both define
-    // `page` would silently overwrite each other in the bare slot.
+    // Pass 3: evaluate. Bodies resolve bare names against modEnv
+    // (shadowing but chaining to env); closures captured here keep
+    // modEnv as their lexical env, so calls from other modules still
+    // see this module's own bare bindings.
     for (const d of mod.decls) {
       if (d.kind !== 'ValueDecl') continue;
       let body = d.body;
       if (d.params && d.params.length > 0) {
         body = { kind: 'ELambda', params: d.params, body };
       }
-      let val = evalExpr(body, env);
+      let val = evalExpr(body, modEnv);
       // Stamp Service values with their binding's name + module so
       // Service.call can derive the URL. Mirrors how the Go runtime
       // attaches OriginModule/OriginName via the project loader.
       if (val && val.k === 'C' && val.tag === '__Service' && !val.originName) {
         val = Object.assign({}, val, { originModule: modName, originName: d.name });
       }
-      envDefine(env, d.name, val);
+      envDefine(modEnv, d.name, val);
       if (modName) envDefine(env, modName + '.' + d.name, val);
     }
   }
@@ -3235,8 +8037,16 @@
     const modules = Array.isArray(program.modules)
       ? program.modules
       : (program.module ? [program.module] : []);
+    // Index modules by dotted name so loadModule's Pass 0 can resolve
+    // `import M exposing (Type(..))` against M's AST (we need M's
+    // constructor list to expose them all as bare).
+    const modulesByName = Object.create(null);
+    for (const m of modules) {
+      const name = (m.name || []).join('.');
+      if (name) modulesByName[name] = m;
+    }
     for (const mod of modules) {
-      loadModule(env, mod);
+      loadModule(env, mod, modulesByName);
     }
     const main = envLookup(env, program.entry || 'main');
     if (main === undefined) {
@@ -3280,9 +8090,26 @@
   // browser's preload buffer — the actual download started in parallel
   // with runtime.js as soon as the head was parsed. Total wait is
   // max(T_runtime_load, T_program_download), not their sum.
+  //
+  // No `cache: 'no-store'` here even though the response is meant to
+  // be fresh on every cold start. The server already pins
+  // `Cache-Control: no-store` on the response (see
+  // /_mar/program.json handler in server.go), so the browser won't
+  // persist it between page loads. Setting `cache: 'no-store'` on
+  // the fetch *additionally* would make Chrome refuse to use the
+  // preloaded entry (the cache modes have to match), which manifests
+  // as the warning "preloaded using link preload but not used within
+  // a few seconds" — and the second network round-trip defeats the
+  // whole point of the preload.
   global.marBootstrap = function () {
-    fetch('/_mar/program.json', { cache: 'no-store' })
-      .then(function (r) { return r.json(); })
+    // Reuse the eager fetch the HTML shell started (see server.go's
+    // inline <script> in the <head>) so we don't issue a second
+    // network round-trip. Fall back to a fresh fetch when the shell
+    // didn't provide one (e.g. when the runtime is mounted by a
+    // non-mar host page like the static `dist/` build).
+    var pending = global.__marProgramPromise
+      || fetch('/_mar/program.json').then(function (r) { return r.json(); });
+    pending
       .then(function (p) {
         try { global.marRun(p); }
         catch (e) {
@@ -3438,6 +8265,17 @@
     root.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, monospace';
     root.style.fontSize = '12px';
     root.style.display = 'none';
+    // Pin the dock during page view-transitions. The default
+    // `::view-transition-old(root)` / `::view-transition-new(root)`
+    // snapshots include the whole document — dock and all — so the
+    // dock slides with the page despite being at `position: fixed`.
+    // Giving it its own `view-transition-name` opts it out of the
+    // root group: the browser snapshots the dock as a separate,
+    // continuous element across old→new. Combined with the CSS
+    // rule disabling animation for that name (see ensureUIStyles),
+    // the dock stays visually anchored to the bottom-right while
+    // the page slides underneath.
+    root.style.viewTransitionName = 'mar-dev-dock';
 
     const panelEl = document.createElement('div');
     panelEl.style.background = '#1f2937';

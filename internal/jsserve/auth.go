@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mar/internal/auth"
+	"mar/internal/project"
 	"mar/internal/runtime"
 )
 
@@ -21,14 +22,14 @@ import (
 // the user-supplied registration (entity, signup hook, etc.) lives in
 // runtime.CurrentAuth().
 var (
-	authMu        sync.RWMutex
-	authSecret    string
-	authSMTPCfg   auth.SMTPConfig
-	authCodeTTL   = 10 * time.Minute
-	authSessTTL   = 30 * 24 * time.Hour // overridden by Auth.config sessionDuration
-	emailLimiter  = auth.NewLimiter(3, time.Hour)  // per-email
-	ipLimiter     = auth.NewLimiter(20, time.Hour) // per-IP
-	cookieName    = "mar_session"
+	authMu       sync.RWMutex
+	authSecret   string
+	authSMTPCfg  auth.SMTPConfig
+	authCodeTTL  = 10 * time.Minute
+	authSessTTL  = 30 * 24 * time.Hour            // overridden by Auth.config sessionDuration
+	emailLimiter = auth.NewLimiter(3, time.Hour)  // per-email
+	ipLimiter    = auth.NewLimiter(20, time.Hour) // per-IP
+	cookieName   = "mar_session"
 
 	// sweeperOnce ensures the background expired-sessions/codes sweeper
 	// is started at most once per process, even if mountAuthHandlers
@@ -68,26 +69,26 @@ func SMTP() auth.SMTPConfig {
 	return authSMTPCfg
 }
 
-// maybeVerifySMTP runs the boot-time SMTP connectivity check unless
-// it shouldn't. Returns nil in three skip cases:
+// maybeVerifySMTP runs the boot-time SMTP connectivity check. Returns
+// nil only when there's no SMTP to verify (dev's stdout-sink path: an
+// empty Host means auth.Send falls back to printing the email locally
+// instead of talking to a real server).
 //
-//   1. Host is empty — dev's stdout-sink path. There's no SMTP to
-//      verify; auth.Send falls back to printing the email locally.
-//   2. MAR_SKIP_SMTP_CHECK env var is set — escape hatch for demos
-//      that boot with auth turned off, or restore-from-backup
-//      scenarios where infra isn't fully wired yet.
-//   3. (Future) any other case the spec adds.
+// When SMTP IS configured, the check is unconditional: connection
+// failure, auth failure, or any other SMTP-level error fails the boot
+// before the HTTP listener opens. Caller (ServeLive) surfaces the
+// error to the operator and exits the process — fly / systemd /
+// whatever supervises sees an unhealthy machine and refuses to mark
+// the deploy as live.
 //
-// Otherwise calls auth.VerifySMTPConfig and returns any error.
-// Caller (ServeLive) is expected to surface this to the operator
-// and exit the process — boot fails before the listener opens, so
-// fly / systemd / whatever supervises it sees an unhealthy machine.
+// The opt-out is structural rather than a hidden env var: an app
+// that wants to boot without SMTP just omits the `mail.from` field
+// (and SMTP secret refs) from mar.json. Once configured, the check
+// runs; you don't get to half-configure SMTP and silently skip
+// verification.
 func maybeVerifySMTP() error {
 	cfg := SMTP()
 	if cfg.Host == "" {
-		return nil
-	}
-	if os.Getenv("MAR_SKIP_SMTP_CHECK") != "" {
 		return nil
 	}
 	return auth.VerifySMTPConfig(cfg)
@@ -99,10 +100,16 @@ func maybeVerifySMTP() error {
 // secret is available. The path prefix is reserved (manifest check
 // forbids user routes under /_auth).
 func mountAuthHandlers(mux *http.ServeMux) {
-	mux.HandleFunc("/_auth/request-code", handleRequestCode)
-	mux.HandleFunc("/_auth/verify-code", handleVerifyCode)
-	mux.HandleFunc("/_auth/logout", handleLogout)
-	mux.HandleFunc("/_auth/whoami", handleWhoami)
+	// All /_auth/* endpoints sit behind the gateway rate limiter
+	// (per-IP, configured via mar.json["rateLimit"]). request-code and
+	// verify-code also have tighter per-endpoint limiters inside the
+	// handler (emailLimiter, ipLimiter) — the gateway one is the
+	// cheap, broad first cut; the inner ones are the strict, auth-
+	// specific second cut. Both layers apply.
+	mux.HandleFunc("/_auth/request-code", rateLimit(handleRequestCode))
+	mux.HandleFunc("/_auth/verify-code", rateLimit(handleVerifyCode))
+	mux.HandleFunc("/_auth/logout", rateLimit(handleLogout))
+	mux.HandleFunc("/_auth/whoami", rateLimit(handleWhoami))
 	startAuthSweeper()
 }
 
@@ -175,6 +182,29 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+// isHTTPS reports whether the original client connected over TLS.
+// Looks at both r.TLS (direct HTTPS to this process) and the
+// X-Forwarded-Proto header (TLS terminated by a proxy — the
+// standard prod topology on Fly.io, Cloudflare, nginx, …). Without
+// the header check, `Secure` cookie flag would always be false in
+// production because the proxy→app hop is plain HTTP.
+//
+// Used to set the `Secure` flag on auth + admin cookies. Returning
+// false errs on the unsafe side (cookie still sent over HTTP), but
+// the bigger picture is that any prod deploy MUST front the app
+// with HTTPS — this helper just makes the flag reflect that.
+func isHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	// Fly + most reverse proxies set this; case-insensitive header
+	// lookup is built into net/http.
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	return false
+}
+
 // handleRequestCode: POST /_auth/request-code  { email }
 //
 // Always returns 200 (after a small minimum delay) regardless of
@@ -188,18 +218,28 @@ func handleRequestCode(w http.ResponseWriter, r *http.Request) {
 	cfg := runtime.CurrentAuth()
 	secret := AuthSecret()
 	if cfg == nil || secret == "" {
-		writeAuthError(w, http.StatusServiceUnavailable, "auth not configured")
+		writeAuthError(w, http.StatusServiceUnavailable, "auth_not_configured")
 		return
 	}
 	body, err := readJSON(r)
 	if err != nil {
-		writeAuthError(w, http.StatusBadRequest, "invalid json")
+		writeAuthError(w, http.StatusBadRequest, "invalid_json")
 		return
 	}
 	email, _ := body["email"].(string)
 	email = strings.TrimSpace(strings.ToLower(email))
 	if email == "" {
-		writeAuthError(w, http.StatusBadRequest, "missing email")
+		writeAuthError(w, http.StatusBadRequest, "missing_email")
+		return
+	}
+	// Validate email shape before any DB / SMTP work. Without this,
+	// garbage like "not-an-email" would still trigger EnsureUser →
+	// create a users row → fail at SMTP send. With the gateway rate
+	// limit in place the DoS surface is bounded, but the row stays
+	// behind. Block it upfront. Shape-only (RFC 5322 we don't try);
+	// SMTP is what actually proves deliverability.
+	if !project.IsValidEmail(email) {
+		writeAuthError(w, http.StatusBadRequest, "invalid_email")
 		return
 	}
 	// Rate limit before any DB / email work.
@@ -217,19 +257,24 @@ func handleRequestCode(w http.ResponseWriter, r *http.Request) {
 	}
 	db, err := dbHandle()
 	if err != nil {
-		writeAuthError(w, http.StatusServiceUnavailable, "no database")
+		writeAuthError(w, http.StatusServiceUnavailable, "no_database")
 		return
 	}
 	_ = db
 	// Ensure user exists — if not, run the signup hook to create one.
+	// Log the underlying error server-side so operators can diagnose
+	// it; the client only ever sees the stable code. Without this
+	// split, a Go-level error string (DB driver message, etc.) would
+	// leak into the user's UI via the Result.Err channel.
 	if _, err := runtime.EnsureUser(*cfg, email); err != nil {
-		writeAuthError(w, http.StatusInternalServerError, fmt.Sprintf("signup: %v", err))
+		fmt.Fprintf(os.Stderr, "[mar auth] signup failed for %s: %v\n", email, err)
+		writeAuthError(w, http.StatusInternalServerError, "signup_failed")
 		return
 	}
 	// Generate code, store hash, email it.
 	code, err := auth.Code(6)
 	if err != nil {
-		writeAuthError(w, http.StatusInternalServerError, "code generation")
+		writeAuthError(w, http.StatusInternalServerError, "code_generation_failed")
 		return
 	}
 	now := time.Now().Unix()
@@ -238,7 +283,7 @@ func handleRequestCode(w http.ResponseWriter, r *http.Request) {
 		`INSERT INTO _mar_auth_codes (email, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?)`,
 		email, auth.Hash(secret, code), exp, now,
 	); err != nil {
-		writeAuthError(w, http.StatusInternalServerError, "store")
+		writeAuthError(w, http.StatusInternalServerError, "store_failed")
 		return
 	}
 	ttlMin := int(authCodeTTL.Minutes())
@@ -254,13 +299,29 @@ func handleRequestCode(w http.ResponseWriter, r *http.Request) {
 			emailBody = custom
 		}
 	}
+	// From address: mar.json's `mail.from` is the single source of
+	// truth — the address registered with the SMTP provider
+	// (Resend, SendGrid, SES, …). mailFrom() returns the manifest
+	// value at boot. An empty string in dev (no mail block) is
+	// fine because the stdout sink doesn't actually transmit
+	// anywhere; the fallback below keeps the From: header
+	// syntactically valid.
+	fromAddr := mailFrom()
+	if fromAddr == "" {
+		fromAddr = "noreply@localhost"
+	}
 	if err := auth.Send(SMTP(), auth.Email{
-		From:    cfg.EmailFrom,
+		From:    fromAddr,
 		To:      email,
 		Subject: cfg.EmailSubject,
 		Body:    emailBody,
 	}); err != nil {
-		writeAuthError(w, http.StatusInternalServerError, fmt.Sprintf("send: %v", err))
+		// Same pattern as the signup hook above — log full SMTP /
+		// provider error for ops, surface only a stable code so the
+		// user's UI doesn't end up showing "EOF" or "535 auth
+		// failed" or whatever the upstream returned.
+		fmt.Fprintf(os.Stderr, "[mar auth] send failed for %s: %v\n", email, err)
+		writeAuthError(w, http.StatusInternalServerError, "send_failed")
 		return
 	}
 	// Constant-ish minimum delay to mask whether the email existed.
@@ -280,12 +341,12 @@ func handleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	cfg := runtime.CurrentAuth()
 	secret := AuthSecret()
 	if cfg == nil || secret == "" {
-		writeAuthError(w, http.StatusServiceUnavailable, "auth not configured")
+		writeAuthError(w, http.StatusServiceUnavailable, "auth_not_configured")
 		return
 	}
 	body, err := readJSON(r)
 	if err != nil {
-		writeAuthError(w, http.StatusBadRequest, "invalid json")
+		writeAuthError(w, http.StatusBadRequest, "invalid_json")
 		return
 	}
 	email, _ := body["email"].(string)
@@ -293,22 +354,22 @@ func handleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	email = strings.TrimSpace(strings.ToLower(email))
 	codeStr = strings.TrimSpace(codeStr)
 	if email == "" || codeStr == "" {
-		writeAuthError(w, http.StatusBadRequest, "missing fields")
+		writeAuthError(w, http.StatusBadRequest, "missing_fields")
 		return
 	}
 	db, err := dbHandle()
 	if err != nil {
-		writeAuthError(w, http.StatusServiceUnavailable, "no database")
+		writeAuthError(w, http.StatusServiceUnavailable, "no_database")
 		return
 	}
 	now := time.Now().Unix()
 	// Find the most recent unlocked, unexpired code for this email.
 	var (
-		id        int64
+		id         int64
 		storedHash string
-		attempts  int
-		expiresAt int64
-		lockedAt  sql.NullInt64
+		attempts   int
+		expiresAt  int64
+		lockedAt   sql.NullInt64
 	)
 	row := db.QueryRow(
 		`SELECT id, code_hash, attempts, expires_at, locked_at
@@ -346,7 +407,7 @@ func handleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	// Mint session.
 	tok, err := auth.Token()
 	if err != nil {
-		writeAuthError(w, http.StatusInternalServerError, "token")
+		writeAuthError(w, http.StatusInternalServerError, "token_failed")
 		return
 	}
 	sessTTL := authSessTTL
@@ -358,19 +419,41 @@ func handleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		`INSERT INTO _mar_auth_sessions (token_hash, user_id, expires_at, created_at, last_used_at) VALUES (?, ?, ?, ?, ?)`,
 		auth.Hash(secret, tok), userID, exp, now, now,
 	); err != nil {
-		writeAuthError(w, http.StatusInternalServerError, "session")
+		writeAuthError(w, http.StatusInternalServerError, "session_failed")
 		return
 	}
 	// Set cookie. SameSite=Lax, HttpOnly, Secure when over HTTPS.
+	// `isHTTPS` checks both direct TLS and X-Forwarded-Proto so
+	// the flag stays correct behind Fly's proxy (where r.TLS is
+	// always nil because TLS terminates upstream).
+	//
+	// Both Expires AND Max-Age are set on purpose. By RFC 6265,
+	// Max-Age alone is enough to mark a cookie as persistent and
+	// browsers honor it. But iOS URLSession's HTTPCookieStorage
+	// has a long-standing quirk where Set-Cookie headers carrying
+	// only Max-Age (no Expires) are treated as session cookies
+	// and dropped at app exit — meaning the native iOS app would
+	// ask the user to log in again on every cold start. Emitting
+	// Expires alongside Max-Age makes URLSession persist the
+	// cookie to ~/Library/Cookies/Cookies.binarycookies as
+	// intended. The web side is unaffected: when both are
+	// present, the RFC says Max-Age wins.
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    tok,
 		Path:     "/",
+		Expires:  time.Now().Add(sessTTL),
 		MaxAge:   int(sessTTL.Seconds()),
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   isHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
+	// Native clients (iOS/Android/etc.) read the token from this
+	// header and stash it in platform secure storage to attach as
+	// `Authorization: Bearer <tok>` on subsequent requests. Web
+	// clients ignore the header — they got the same value as an
+	// HttpOnly cookie above, which their browser handles automatically.
+	w.Header().Set(bearerTokenHeader, tok)
 	// Return the user record.
 	userJSON, err := runtime.LoadUserJSON(*cfg, userID)
 	if err != nil {
@@ -389,16 +472,16 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
+	if tok := extractSessionToken(r); tok != "" {
 		secret := AuthSecret()
 		if db, err := dbHandle(); err == nil && secret != "" {
 			_, _ = db.Exec(`DELETE FROM _mar_auth_sessions WHERE token_hash = ?`,
-				auth.Hash(secret, c.Value))
+				auth.Hash(secret, tok))
 		}
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: cookieName, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		HttpOnly: true, Secure: isHTTPS(r), SameSite: http.SameSiteLaxMode,
 	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -420,8 +503,8 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, nil)
 		return
 	}
-	c, err := r.Cookie(cookieName)
-	if err != nil || c.Value == "" {
+	tok := extractSessionToken(r)
+	if tok == "" {
 		writeJSON(w, http.StatusOK, nil)
 		return
 	}
@@ -430,7 +513,7 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, nil)
 		return
 	}
-	userID, ok := sessionUserID(db, secret, c.Value)
+	userID, ok := sessionUserID(db, secret, tok)
 	if !ok {
 		writeJSON(w, http.StatusOK, nil)
 		return
@@ -442,6 +525,56 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, userJSON)
 }
+
+// extractSessionToken returns the raw session token from a request,
+// trying both transports — `Authorization: Bearer <token>` first, then
+// the session cookie — and returns "" if neither is present.
+//
+// Two transports because Mar has two kinds of clients:
+//
+//   - Web (browser): HttpOnly cookie. JS code can't read or attach it,
+//     which is the whole point — XSS can't exfiltrate a session.
+//   - Native runtimes (iOS/macOS/Android/Windows): Authorization header.
+//     The native app stores the token in the platform's secure storage
+//     (Keychain on Apple, EncryptedSharedPreferences on Android, etc.)
+//     and attaches it explicitly per request. Cookie persistence across
+//     app launches is unreliable on most non-Apple platforms; an
+//     explicit header sidesteps the whole stack of per-platform cookie
+//     jar bugs.
+//
+// Bearer wins over cookie if both are present. In practice the same
+// client never sends both (web has no token to bear; native disables
+// cookies on its HTTP client) — but if a misbehaving proxy were to
+// inject a stale cookie alongside a fresh Authorization header, the
+// header is the source of truth.
+func extractSessionToken(r *http.Request) string {
+	if h := r.Header.Get("Authorization"); h != "" {
+		// Header is "Bearer <token>" (case-insensitive scheme per
+		// RFC 7235). Trim the scheme, accept the rest as the token.
+		const prefix = "bearer "
+		if len(h) > len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
+			tok := strings.TrimSpace(h[len(prefix):])
+			if tok != "" {
+				return tok
+			}
+		}
+	}
+	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
+		return c.Value
+	}
+	return ""
+}
+
+// bearerTokenHeader is the response header carrying the session token to
+// native clients on successful /_auth/verify-code. Web clients ignore
+// it (they use the Set-Cookie that comes alongside); the iOS/Android/etc
+// runtimes read it and stash the value in platform secure storage.
+//
+// Header (rather than wrapping the response body in `{user, token}`)
+// because it keeps the wire shape of the user record stable — Mar code
+// receives `Result String User` regardless of platform, and the
+// runtime layer hides the credential ferrying.
+const bearerTokenHeader = "X-Mar-Auth-Token"
 
 // sessionUserID returns the user_id for a valid (unexpired) session
 // token, or false if the token doesn't match a live session.

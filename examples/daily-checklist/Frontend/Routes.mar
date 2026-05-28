@@ -1,0 +1,33 @@
+module Frontend.Routes exposing (home, signIn, verifyCode)
+
+
+-- Centralized URL surface for the daily-checklist app. Every page
+-- declares its `path` here so:
+--
+--   1. The whole route table fits on one screen.
+--   2. Refactoring a URL pattern catches all `linkTo` / `Nav.pushTo`
+--      callsites in compile time (renaming `{email:String}` →
+--      `{token:String}` flips every consumer into a type error).
+--   3. There's exactly one place to look when reasoning about the
+--      app's URL surface.
+--
+-- The String → Path coercion happens because each value carries a
+-- `: Path r` annotation. The compiler reads the annotation, parses
+-- the literal, and threads the typed row everywhere it flows.
+
+
+home : Path {}
+home = "/"
+
+
+signIn : Path {}
+signIn = "/sign-in"
+
+
+-- Dynamic route: after the user submits an email, the SignIn page
+-- pushes to this URL carrying the email as a typed path segment.
+-- That way the back button (auto-inserted by the navigation stack)
+-- returns the user to /sign-in with the email field empty so they
+-- can retry — no extra state plumbing required.
+verifyCode : Path { email : String }
+verifyCode = "/sign-in/verify/{email:String}"

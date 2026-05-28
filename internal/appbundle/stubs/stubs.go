@@ -18,6 +18,7 @@ import (
 	"embed"
 	"fmt"
 	goruntime "runtime"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -98,10 +99,5 @@ func targetFromFile(filename string) string {
 }
 
 func validTarget(target string) bool {
-	for _, t := range TargetList {
-		if t == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(TargetList, target)
 }

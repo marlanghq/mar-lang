@@ -3,10 +3,10 @@ module Frontend.Home exposing (page)
 
 import Shared
 import UI exposing
-    ( navigationStack, navigationTitle, trailing
+    ( navigationStack, navigationTitle, topBarTrailing
     , form, list, section, header
     , hstack
-    , text, textField, button
+    , text, textField, button, errorText
     , submit, disabled
     )
 
@@ -126,9 +126,9 @@ view : Shared.User -> Model -> View Msg
 view user model =
     navigationStack
         [ navigationTitle ("Hi, " ++ user.email)
-        , trailing (button [] SignOutClicked "Sign out")
+        , topBarTrailing (button [] SignOutClicked "Sign out")
         ]
-        [ list
+        [ list []
             [ section []
                 [ hstack []
                     [ textField [ submit AddClicked ]
@@ -150,7 +150,7 @@ notesSection notes =
             section [] [ text "Loading…" ]
 
         Failed why ->
-            section [] [ text ("Couldn't load notes: " ++ why) ]
+            section [] [ errorText ("Couldn't load notes: " ++ why) ]
 
         Loaded items ->
             -- List.reverse so the most recent note (highest id, last

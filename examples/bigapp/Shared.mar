@@ -1,0 +1,726 @@
+module Shared exposing (..)
+
+
+-- BigApp domain — a project-management / issue tracker built to
+-- stress-test the mar compiler over a realistic multi-module
+-- codebase. Models the kind of system a small team would build to
+-- manage their own work: teams own projects, projects contain
+-- issues, issues collect comments, get labeled, grouped into
+-- milestones, and assigned to teammates.
+--
+-- This module is the contract layer. Both Backend (which implements
+-- services) and Frontend (which calls them) import from here. Every
+-- entity record, every Service.declare, every enum lives in one
+-- place so renaming a field shows up as compile errors everywhere
+-- it's consumed.
+
+
+-- ====================================================================
+-- ACTIVITY
+-- ====================================================================
+--
+-- Activities are append-only audit log entries: one row per
+-- significant action (issue created, status changed, commented,
+-- reaction added, …). They're a derived denormalization of what
+-- happens across the system — handlers in the writeful services
+-- emit an activity row as a side effect of the primary write.
+--
+-- Verb is a closed enum so the frontend can render verb-specific
+-- copy ("Marcio opened issue #42" vs "Marcio commented on #42")
+-- without a fragile string match.
+--
+-- Subject is the resource the action targets. Three flavors
+-- (Project / Issue / Comment) cover the surface today; adding a
+-- fourth means one new ctor + one new render branch.
+
+type ActivityVerb
+    = CreatedIssue
+    | ChangedIssueStatus
+    | DeletedIssue
+    | CommentedOnIssue
+    | DeletedComment
+    | ReactedToComment
+    | CreatedProject
+    | DeletedProject
+
+
+type ActivitySubject
+    = OnProject
+    | OnIssue
+    | OnComment
+
+
+-- The stored row. `subjectId` carries the id of the target resource;
+-- `extra` carries verb-specific context (status name, emoji, etc.)
+-- as a free-form string so a single shape works for every verb. The
+-- view layer parses extra according to the verb.
+type alias Activity =
+    { id        : Int
+    , teamId    : Int
+    , actorId   : Int
+    , verb      : ActivityVerb
+    , subject   : ActivitySubject
+    , subjectId : Int
+    , extra     : String
+    , createdAt : Time
+    }
+
+
+-- ActivityView: what the frontend renders. We denormalize actor
+-- name and (where applicable) the issue's project + number so the
+-- timeline doesn't need per-row lookups in the browser.
+type alias ActivityView =
+    { id          : Int
+    , actorId     : Int
+    , actorName   : String
+    , verb        : ActivityVerb
+    , subject     : ActivitySubject
+    , subjectId   : Int
+    , extra       : String
+    , -- When subject == OnIssue or OnComment, these point at the
+      -- parent issue's metadata so the timeline can deep-link.
+      -- Empty (0 / "") when not applicable.
+      issueNumber : Int
+    , issueTitle  : String
+    , projectSlug : String
+    , createdAt   : Time
+    }
+
+
+type alias ListRecentActivity =
+    { limit : Int    -- 0 = use default
+    }
+
+
+-- ====================================================================
+-- IDENTITY + AUTHORIZATION
+-- ====================================================================
+
+-- Two roles. Admin can manage team membership + delete other people's
+-- content; Member can do everything else. Stored as `Entity.enum`
+-- in the users table → TEXT with a CHECK constraint, so a typo in
+-- `Auth.requireRole Adimn` is a compile error not a never-allowed
+-- runtime path.
+type Role
+    = Admin
+    | Member
+
+
+type alias User =
+    { id        : Int
+    , email     : String
+    , name      : String
+    , teamId    : Int
+    , role      : Role
+    , createdAt : Time
+    }
+
+
+type alias Team =
+    { id        : Int
+    , name      : String
+    , slug      : String
+    , createdAt : Time
+    }
+
+
+-- ====================================================================
+-- PROJECTS
+-- ====================================================================
+
+type alias Project =
+    { id          : Int
+    , teamId      : Int
+    , name        : String
+    , slug        : String
+    , description : String
+    , createdAt   : Time
+    }
+
+
+-- Service input types — small records so callers (frontend, iOS) can
+-- build them without referring to the full entity. Keeps the public
+-- API of each Service.* small and explicit.
+type alias NewProject =
+    { name        : String
+    , slug        : String
+    , description : String
+    }
+
+
+type alias GetProject =
+    { id : Int
+    }
+
+
+type alias EditProject =
+    { id          : Int
+    , name        : String
+    , description : String
+    }
+
+
+type alias DeleteProject =
+    { id : Int
+    }
+
+
+-- ====================================================================
+-- ISSUES
+-- ====================================================================
+
+-- Lifecycle of an issue:
+--
+--   Open ──→ InProgress ──→ Done
+--     ↑                       │
+--     └────── reopen ─────────┘
+--
+-- Closed-as-WontFix is a separate terminal state from Done — Done
+-- means "the work is finished and shipped", WontFix means "we
+-- decided not to do it". UI surfaces them differently (Done = green
+-- check, WontFix = gray) so the team can reason about trade-offs at
+-- review time.
+type IssueStatus
+    = Open
+    | InProgress
+    | Done
+    | WontFix
+
+
+-- Priority — four levels mapping to the standard "urgency × impact"
+-- grid. Stored as enum, so adding a new priority is a one-line
+-- change here + the migration that follows.
+type IssuePriority
+    = NoPriority
+    | Low
+    | Medium
+    | High
+    | Urgent
+
+
+type alias Issue =
+    { id          : Int
+    , projectId   : Int
+    , number      : Int          -- per-project counter, surfaced to humans as "PROJ-42"
+    , title       : String
+    , description : String
+    , status      : IssueStatus
+    , priority    : IssuePriority
+    , assigneeId  : Int          -- 0 = unassigned (no nullable column needed)
+    , reporterId  : Int
+    , milestoneId : Int          -- 0 = no milestone
+    , createdAt   : Time
+    , updatedAt   : Time
+    }
+
+
+-- IssueView denormalizes the issue with author + assignee info so
+-- the frontend doesn't have to fan out N+1 lookups. The backend
+-- builds this server-side; the wire format trades a slightly bigger
+-- payload for an instant render.
+type alias IssueView =
+    { id              : Int
+    , projectId       : Int
+    , projectSlug     : String
+    , projectName     : String
+    , number          : Int
+    , title           : String
+    , description     : String
+    , status          : IssueStatus
+    , priority        : IssuePriority
+    , assigneeId      : Int
+    , assigneeName    : String
+    , assigneeEmail   : String
+    , reporterId      : Int
+    , reporterName    : String
+    , reporterEmail   : String
+    , milestoneId     : Int
+    , milestoneName   : String
+    , commentCount    : Int
+    , createdAt       : Time
+    , updatedAt       : Time
+    }
+
+
+type alias NewIssue =
+    { projectId   : Int
+    , title       : String
+    , description : String
+    , priority    : IssuePriority
+    , assigneeId  : Int
+    , milestoneId : Int
+    }
+
+
+type alias GetIssue =
+    { id : Int
+    }
+
+
+type alias EditIssue =
+    { id          : Int
+    , title       : String
+    , description : String
+    , priority    : IssuePriority
+    , assigneeId  : Int
+    , milestoneId : Int
+    }
+
+
+type alias ChangeStatus =
+    { id     : Int
+    , status : IssueStatus
+    }
+
+
+type alias DeleteIssue =
+    { id : Int
+    }
+
+
+type alias ListProjectIssues =
+    { projectId : Int
+    , status    : IssueStatus  -- pass Open as the "show me everything" sentinel; filter helpers expand on this server-side
+    , showAll   : Bool          -- when true, ignore status and return every issue
+    }
+
+
+type alias SearchIssues =
+    { query : String
+    }
+
+
+-- ====================================================================
+-- COMMENTS
+-- ====================================================================
+
+type alias Comment =
+    { id        : Int
+    , issueId   : Int
+    , authorId  : Int
+    , body      : String
+    , createdAt : Time
+    }
+
+
+-- ====================================================================
+-- REACTIONS
+-- ====================================================================
+--
+-- Declared BEFORE CommentView because CommentView's `reactions`
+-- field references ReactionSummary. (Mar's type-alias resolution
+-- expects forward declarations to be in source order.)
+--
+-- One row per (comment, user, emoji) triple. Composite UNIQUE on
+-- that triple keeps "Marcio added 👍" idempotent — clicking the
+-- same emoji twice toggles instead of stacking. The toggle service
+-- inserts when absent, deletes when present.
+
+type alias Reaction =
+    { id        : Int
+    , commentId : Int
+    , userId    : Int
+    , emoji     : String
+    , createdAt : Time
+    }
+
+
+type alias ReactionSummary =
+    { emoji   : String
+    , count   : Int
+    , mineToo : Bool
+    }
+
+
+type alias ToggleReaction =
+    { commentId : Int
+    , emoji     : String
+    }
+
+
+-- ====================================================================
+-- MENTIONS
+-- ====================================================================
+--
+-- A mention is "I (commenter) called you out by @handle". One row
+-- per (comment, mentioned-user) pair — the UNIQUE on those two
+-- columns means a comment can mention the same person five times in
+-- its body and still produce a single inbox entry. Mentions are
+-- never edited; if a comment is deleted, its mentions cascade away
+-- via the delete handler.
+--
+-- The `seen` field lets the Inbox page mark items as read without
+-- deleting the row, so "how many unread mentions" stays answerable.
+
+type alias Mention =
+    { id              : Int
+    , commentId       : Int
+    , mentionedUserId : Int
+    , authorId        : Int
+    , createdAt       : Time
+    , seen            : Bool
+    }
+
+
+-- View shape served to the Inbox page: denormalizes everything the
+-- UI needs (author name, issue context, comment snippet) so the
+-- frontend doesn't fan out per-row lookups.
+type alias MentionView =
+    { id              : Int
+    , commentId       : Int
+    , mentionedUserId : Int
+    , authorId        : Int
+    , authorName      : String
+    , issueId         : Int
+    , issueNumber     : Int
+    , issueTitle      : String
+    , projectSlug     : String
+    , bodyPreview     : String
+    , createdAt       : Time
+    , seen            : Bool
+    }
+
+
+type alias ListMyMentions =
+    { onlyUnseen : Bool
+    }
+
+
+type alias MarkMentionSeen =
+    { id : Int
+    }
+
+
+type alias CommentView =
+    { id          : Int
+    , issueId     : Int
+    , authorId    : Int
+    , authorName  : String
+    , authorEmail : String
+    , body        : String
+    , createdAt   : Time
+    , reactions   : List ReactionSummary
+    }
+
+
+type alias NewComment =
+    { issueId : Int
+    , body    : String
+    }
+
+
+type alias DeleteComment =
+    { id : Int
+    }
+
+
+type alias ListComments =
+    { issueId : Int
+    }
+
+
+-- ====================================================================
+-- LABELS
+-- ====================================================================
+
+type alias Label =
+    { id        : Int
+    , projectId : Int
+    , name      : String
+    , color     : String   -- "#RRGGBB" hex
+    , createdAt : Time
+    }
+
+
+type alias IssueLabel =
+    { id      : Int
+    , issueId : Int
+    , labelId : Int
+    }
+
+
+type alias NewLabel =
+    { projectId : Int
+    , name      : String
+    , color     : String
+    }
+
+
+type alias DeleteLabel =
+    { id : Int
+    }
+
+
+type alias ListProjectLabels =
+    { projectId : Int
+    }
+
+
+type alias AttachLabel =
+    { issueId : Int
+    , labelId : Int
+    }
+
+
+type alias DetachLabel =
+    { issueId : Int
+    , labelId : Int
+    }
+
+
+type alias ListIssueLabels =
+    { issueId : Int
+    }
+
+
+-- ====================================================================
+-- MILESTONES
+-- ====================================================================
+
+type MilestoneStatus
+    = MilestoneOpen
+    | MilestoneClosed
+
+
+type alias Milestone =
+    { id          : Int
+    , projectId   : Int
+    , name        : String
+    , description : String
+    , status      : MilestoneStatus
+    , createdAt   : Time
+    }
+
+
+type alias NewMilestone =
+    { projectId   : Int
+    , name        : String
+    , description : String
+    }
+
+
+type alias CloseMilestone =
+    { id : Int
+    }
+
+
+type alias ReopenMilestone =
+    { id : Int
+    }
+
+
+type alias ListProjectMilestones =
+    { projectId : Int
+    }
+
+
+-- ====================================================================
+-- TEAM MEMBERSHIP
+-- ====================================================================
+
+type alias TeamMemberView =
+    { id          : Int
+    , email       : String
+    , name        : String
+    , role        : Role
+    , createdAt   : Time
+    , openIssues  : Int
+    }
+
+
+type alias UpdateMemberRole =
+    { userId : Int
+    , role   : Role
+    }
+
+
+-- ====================================================================
+-- DASHBOARD
+-- ====================================================================
+
+-- Single round-trip payload for the Dashboard page. Bundling four
+-- related lists into one Service call keeps the initial render
+-- waterfall-free: the page mounts with everything it needs from a
+-- single fetch instead of fanning out to four endpoints.
+type alias DashboardData =
+    { projects        : List Project
+    , myOpenIssues    : List IssueView
+    , recentlyUpdated : List IssueView
+    , teamMembers     : List TeamMemberView
+    }
+
+
+-- ====================================================================
+-- SERVICE CONTRACTS
+-- ====================================================================
+--
+-- Each Service.declare is a typed RPC between frontend and backend.
+-- The backend implements it in Backend/*; the frontend calls it via
+-- Service.call. The compiler enforces that argument and return
+-- shapes line up — adding a field here ripples into every consumer.
+
+
+-- Projects
+listProjects : Service () (List Project)
+listProjects = Service.declare
+
+getProject : Service GetProject (Maybe Project)
+getProject = Service.declare
+
+createProject : Service NewProject Project
+createProject = Service.declare
+
+editProject : Service EditProject (Maybe Project)
+editProject = Service.declare
+
+deleteProject : Service DeleteProject ()
+deleteProject = Service.declare
+
+
+-- Issues
+listProjectIssues : Service ListProjectIssues (List IssueView)
+listProjectIssues = Service.declare
+
+getIssue : Service GetIssue (Maybe IssueView)
+getIssue = Service.declare
+
+createIssue : Service NewIssue Issue
+createIssue = Service.declare
+
+editIssue : Service EditIssue (Maybe Issue)
+editIssue = Service.declare
+
+changeIssueStatus : Service ChangeStatus (Maybe Issue)
+changeIssueStatus = Service.declare
+
+deleteIssue : Service DeleteIssue ()
+deleteIssue = Service.declare
+
+myOpenIssues : Service () (List IssueView)
+myOpenIssues = Service.declare
+
+searchIssues : Service SearchIssues (List IssueView)
+searchIssues = Service.declare
+
+
+-- Comments
+listComments : Service ListComments (List CommentView)
+listComments = Service.declare
+
+createComment : Service NewComment Comment
+createComment = Service.declare
+
+deleteComment : Service DeleteComment ()
+deleteComment = Service.declare
+
+-- Toggle a reaction: insert when absent, remove when present.
+-- Idempotent UX-wise; backend enforces uniqueness via
+-- Entity.unique [["commentId","userId","emoji"]].
+toggleReaction : Service ToggleReaction ()
+toggleReaction = Service.declare
+
+
+-- Labels
+listProjectLabels : Service ListProjectLabels (List Label)
+listProjectLabels = Service.declare
+
+createLabel : Service NewLabel Label
+createLabel = Service.declare
+
+deleteLabel : Service DeleteLabel ()
+deleteLabel = Service.declare
+
+attachLabel : Service AttachLabel IssueLabel
+attachLabel = Service.declare
+
+detachLabel : Service DetachLabel ()
+detachLabel = Service.declare
+
+listIssueLabels : Service ListIssueLabels (List Label)
+listIssueLabels = Service.declare
+
+
+-- Milestones
+listProjectMilestones : Service ListProjectMilestones (List Milestone)
+listProjectMilestones = Service.declare
+
+createMilestone : Service NewMilestone Milestone
+createMilestone = Service.declare
+
+closeMilestone : Service CloseMilestone (Maybe Milestone)
+closeMilestone = Service.declare
+
+reopenMilestone : Service ReopenMilestone (Maybe Milestone)
+reopenMilestone = Service.declare
+
+
+-- Team
+listTeamMembers : Service () (List TeamMemberView)
+listTeamMembers = Service.declare
+
+updateMemberRole : Service UpdateMemberRole (Maybe User)
+updateMemberRole = Service.declare
+
+
+-- Dashboard
+loadDashboard : Service () DashboardData
+loadDashboard = Service.declare
+
+
+-- Activity feed
+listRecentActivity : Service ListRecentActivity (List ActivityView)
+listRecentActivity = Service.declare
+
+
+-- Mentions / Inbox
+listMyMentions : Service ListMyMentions (List MentionView)
+listMyMentions = Service.declare
+
+markMentionSeen : Service MarkMentionSeen ()
+markMentionSeen = Service.declare
+
+
+-- ====================================================================
+-- DISPLAY HELPERS
+-- ====================================================================
+
+-- Plain-text label for each status. Used in dropdowns, badges, and
+-- the section headers on filtered lists. Kept here so frontend AND
+-- backend agree on the user-facing string.
+statusLabel : IssueStatus -> String
+statusLabel s =
+    case s of
+        Open        -> "Open"
+        InProgress  -> "In progress"
+        Done        -> "Done"
+        WontFix     -> "Won't fix"
+
+
+priorityLabel : IssuePriority -> String
+priorityLabel p =
+    case p of
+        NoPriority -> "No priority"
+        Low        -> "Low"
+        Medium     -> "Medium"
+        High       -> "High"
+        Urgent     -> "Urgent"
+
+
+roleLabel : Role -> String
+roleLabel r =
+    case r of
+        Admin  -> "Admin"
+        Member -> "Member"
+
+
+milestoneStatusLabel : MilestoneStatus -> String
+milestoneStatusLabel s =
+    case s of
+        MilestoneOpen   -> "Open"
+        MilestoneClosed -> "Closed"
+
+
+-- Pretty-printed issue handle: "ProjectName · #42 — Title"
+issueHandle : IssueView -> String
+issueHandle i =
+    i.projectName ++ " · #" ++ String.fromInt i.number ++ " — " ++ i.title

@@ -1,0 +1,625 @@
+module Frontend.Home exposing (page)
+
+
+import Shared
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , form, list, section, keyedList, keyed, header, footer, subtitle
+    , hstack, vstack, spacer
+    , text, textField, button, toggle, errorText
+    , submit, disabled, onMove, onDelete
+    , confirm, empty
+    )
+
+
+-- Protected daily checklist. Page.protected runs Auth.me on entry and
+-- redirects to /sign-in if there's no session; on success it threads
+-- the User into init / update / view as the first argument.
+--
+-- Layout (two modes, optimized for everyday use):
+--
+--   DEFAULT MODE (the one you see 99% of the time):
+--     * Just the task list with toggles. Nothing else visible.
+--     * "Clear ticks" quiet button at the bottom.
+--     * Top-right: "Edit" (enters edit mode) + "Sign out".
+--
+--   EDIT MODE (rare, when adding or removing tasks):
+--     * "New task" input + button at the top.
+--     * Toggles dropped; each row shows the task name. The native
+--       per-row delete affordance handles destructive actions:
+--         - Web: hover row → red `−` slides in from the right; click
+--           deletes immediately + shows an Undo toast.
+--         - iOS: swipe-to-delete in normal mode + edit-mode minus
+--           circles in edit mode (native SwiftUI .onDelete).
+--     * Top-right: "Done" (exits back to default).
+--
+-- Empty state: the add input is visible directly so a new user can
+-- start without discovering edit mode first.
+--
+-- Delete UX: Apple-Music-style confirmation modal. Tapping the
+-- per-row delete affordance arms `confirmingDelete` with the task;
+-- the view conditionally renders a `UI.confirm` dialog over the
+-- page. The user explicitly taps "Delete" to commit or "Cancel"
+-- (or backdrop / Escape) to abort. No undo path — the dialog itself
+-- is the rate of error correction. Matches what Apple Music does
+-- for "Delete from Library".
+
+
+-- ====================================================================
+-- MODEL
+-- ====================================================================
+--
+-- `items` is `Maybe` so we can distinguish "haven't fetched yet"
+-- (Nothing → spinner) from "loaded zero" (Just [] → empty state).
+-- `editing` is the only mode toggle.
+--
+-- `confirmingDelete` carries the task awaiting the user's confirm
+-- on the modal dialog. Nothing means no modal showing; Just task
+-- means the dialog is open and a Delete tap will remove that task.
+type alias Model =
+    { items            : Maybe (List Shared.Task)
+    , error            : Maybe String
+    , draft            : String
+    , busy             : Bool
+    , editing          : Bool
+    , confirmingDelete : Maybe Shared.Task
+    }
+
+
+type Msg
+    = TasksFetched (Result String (List Shared.Task))
+    | DraftChanged String
+    | AddClicked
+    | TaskAdded (Result String Shared.Task)
+    | ToggleChanged Int Bool
+    | TaskUpdated Int Bool (Result String (Maybe Shared.Task))
+    | DeleteRowAt Int                          -- onDelete fires; opens confirm
+    | DeleteConfirmed                          -- user tapped Delete on confirm
+    | DeleteCancelled                          -- user tapped Cancel / backdrop / Esc
+    | TaskDeleted (Result String ())
+    | ResetAllClicked
+    | ResetDone (List Shared.Task) (Result String ())
+    | EditClicked
+    | DoneEditingClicked
+    | TaskMoved Int Int
+    | TaskReordered (Result String ())
+    | SignOutClicked
+    | SignedOut (Result String ())
+
+
+init : Shared.User -> () -> (Model, Effect String Msg)
+init _ _ =
+    ( { items = Nothing
+      , error = Nothing
+      , draft = ""
+      , busy = False
+      , editing = False
+      , confirmingDelete = Nothing
+      }
+    , Service.call Shared.listTasks () TasksFetched
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update _ msg model =
+    case msg of
+        TasksFetched (Ok items) ->
+            -- Auto-edit on the FIRST fetch when the list comes back
+            -- empty (new user signing in, or someone who once cleared
+            -- their list entirely). The reasoning: an empty checklist
+            -- is a setup state, not a usage state — dropping straight
+            -- into edit mode means the "New task" input is visible
+            -- immediately and the user can add several rows in a row
+            -- without first discovering the Edit affordance.
+            --
+            -- Subsequent fetches (e.g. the refresh after Add / Delete /
+            -- Reset) preserve the user's existing `editing` choice so
+            -- adding the first task doesn't kick them out of edit
+            -- mode prematurely. The "first fetch" signal is just
+            -- "model.items was still Nothing when this arrived".
+            let
+                firstLoad =
+                    case model.items of
+                        Nothing -> True
+                        Just _  -> False
+
+                startInEdit =
+                    firstLoad && List.isEmpty items
+            in
+            ( { model
+                | items = Just items
+                , error = Nothing
+                , editing = if startInEdit then True else model.editing
+              }
+            , Effect.none
+            )
+
+        TasksFetched (Err why) ->
+            ( { model | error = Just why }, Effect.none )
+
+        DraftChanged value ->
+            ( { model | draft = value }, Effect.none )
+
+        AddClicked ->
+            if model.draft == "" then
+                ( model, Effect.none )
+            else
+                ( { model | busy = True }
+                , Service.call Shared.addTask { name = model.draft } TaskAdded
+                )
+
+        TaskAdded (Ok _) ->
+            ( { model | draft = "", busy = False }
+            , Service.call Shared.listTasks () TasksFetched
+            )
+
+        TaskAdded (Err why) ->
+            ( { model | busy = False, error = Just why }, Effect.none )
+
+        ToggleChanged id newValue ->
+            -- Optimistic local update: flip the toggle in the UI
+            -- immediately so the user doesn't see a delay between
+            -- tap and visual response. We pass `(id, newValue)` to
+            -- the response Msg so the failure branch can undo *this
+            -- specific flip* locally — no need for a refetch, which
+            -- might also fail (offline / network blip) and leave
+            -- the UI permanently out of sync with the server.
+            ( { model
+                | items = Maybe.map (updateLocalDone id newValue) model.items
+              }
+            , Service.call Shared.toggleTask
+                { id = id, done = newValue }
+                (TaskUpdated id newValue)
+            )
+
+        TaskUpdated _ _ (Ok _) ->
+            ( model, Effect.none )
+
+        TaskUpdated id attempted (Err why) ->
+            -- Server rejected the toggle. Revert the optimistic flip
+            -- locally by flipping the row back to !attempted. For
+            -- a Bool field that's also exactly the original value,
+            -- so this works even if the user has tapped the same
+            -- toggle multiple times before the response landed: each
+            -- failed call undoes only its own flip.
+            let
+                original =
+                    if attempted then False else True
+            in
+            ( { model
+                | items = Maybe.map (updateLocalDone id original) model.items
+                , error = Just why
+              }
+            , Effect.none
+            )
+
+        DeleteRowAt idx ->
+            -- The native delete affordance (swipe on iOS, minus
+            -- circle in edit mode on web) fired. Don't delete
+            -- immediately — open the confirmation dialog by stashing
+            -- the task in `confirmingDelete`. Actual removal happens
+            -- in DeleteConfirmed below.
+            case model.items of
+                Just items ->
+                    case nth idx items of
+                        Just task ->
+                            ( { model | confirmingDelete = Just task }
+                            , Effect.none
+                            )
+
+                        Nothing ->
+                            ( model, Effect.none )
+
+                Nothing ->
+                    ( model, Effect.none )
+
+        DeleteConfirmed ->
+            -- User tapped Delete on the modal. Optimistically
+            -- remove the row from the local items list, fire the
+            -- delete to the server, and close the modal.
+            case model.confirmingDelete of
+                Just task ->
+                    ( { model
+                        | items = Maybe.map
+                            (List.filter (\t -> t.id /= task.id))
+                            model.items
+                        , confirmingDelete = Nothing
+                      }
+                    , Service.call Shared.deleteTask { id = task.id } TaskDeleted
+                    )
+
+                Nothing ->
+                    ( model, Effect.none )
+
+        DeleteCancelled ->
+            -- User tapped Cancel / backdrop / Escape. Close the
+            -- modal, no other state changes.
+            ( { model | confirmingDelete = Nothing }, Effect.none )
+
+        TaskDeleted (Ok ()) ->
+            -- Server confirmed. The optimistic removal already
+            -- happened, nothing else to do.
+            ( model, Effect.none )
+
+        TaskDeleted (Err why) ->
+            -- Server rejected. We already removed the row locally
+            -- and lost the cached task object (it lived only in
+            -- `confirmingDelete`, which we cleared at the moment
+            -- of dispatch). Refetch to recover the truth.
+            ( { model | error = Just why }
+            , Service.call Shared.listTasks () TasksFetched
+            )
+
+        ResetAllClicked ->
+            -- Optimistic: pre-flip every task to done=False for instant
+            -- feedback. Pass the pre-reset snapshot to ResetDone so the
+            -- failure path can restore the exact prior state (which
+            -- tasks were done, which weren't) instead of trying to
+            -- refetch (which can also fail offline).
+            case model.items of
+                Just snapshot ->
+                    ( { model
+                        | items = Just (List.map (\t -> { t | done = False }) snapshot)
+                      }
+                    , Service.call Shared.resetAll () (ResetDone snapshot)
+                    )
+
+                Nothing ->
+                    ( model, Effect.none )
+
+        ResetDone _ (Ok _) ->
+            ( model, Effect.none )
+
+        ResetDone snapshot (Err why) ->
+            -- Restore the pre-reset state locally. The Maybe wrapping
+            -- ensures we don't clobber a `Nothing` items field that
+            -- somehow appeared between the click and the response.
+            ( { model
+                | items = Just snapshot
+                , error = Just why
+              }
+            , Effect.none
+            )
+
+        TaskMoved from to ->
+            -- Optimistic local reorder: apply List.move to model.items
+            -- immediately so the user sees the new order without
+            -- waiting for the server. Then persist by sending the
+            -- full re-ordered ID list to the backend — the server
+            -- rewrites position columns in a single pass.
+            case model.items of
+                Just items ->
+                    let
+                        reordered =
+                            List.move from to items
+
+                        orderedIds =
+                            List.map (\t -> t.id) reordered
+                    in
+                    ( { model | items = Just reordered }
+                    , Service.call Shared.reorderTasks
+                        { orderedIds = orderedIds }
+                        TaskReordered
+                    )
+
+                Nothing ->
+                    ( model, Effect.none )
+
+        TaskReordered (Ok ()) ->
+            -- Server confirmed the reorder. No local state to change
+            -- (we updated optimistically above).
+            ( model, Effect.none )
+
+        TaskReordered (Err why) ->
+            -- Persistence failed. We could roll back the optimistic
+            -- update by re-fetching, but the simplest UX is to just
+            -- show the error and let the user retry. Next listTasks
+            -- (e.g. after adding a task) will reconcile from the
+            -- server's view.
+            ( { model | error = Just why }, Effect.none )
+
+        EditClicked ->
+            -- Entering edit mode starts clean — no row armed.
+            ( { model | editing = True }
+            , Effect.none
+            )
+
+        DoneEditingClicked ->
+            -- Leaving edit mode: clear draft + any armed delete (the
+            -- Delete buttons won't even render once `editing = False`).
+            ( { model | editing = False, draft = "", confirmingDelete = Nothing }
+            , Effect.none
+            )
+
+        SignOutClicked ->
+            ( model, Auth.logout SignedOut )
+
+        SignedOut _ ->
+            -- Auth.logout clears the cookie; the next Auth-protected
+            -- call will 401, which the framework intercepts and sends
+            -- the user to /sign-in. Issuing an explicit nav makes the
+            -- transition immediate instead of waiting for the next
+            -- action.
+            ( model, Auth.completeSignIn )
+
+
+-- Apply a toggle's new state to one task in the local list. Used
+-- by the optimistic-update path above.
+updateLocalDone : Int -> Bool -> List Shared.Task -> List Shared.Task
+updateLocalDone id newValue items =
+    List.map
+        (\t -> if t.id == id then { t | done = newValue } else t)
+        items
+
+
+-- nth returns the i-th element of a list, or Nothing if out of
+-- range. Used by DeleteRowAt to translate the onDelete index into
+-- the actual task object.
+nth : Int -> List a -> Maybe a
+nth idx xs =
+    case xs of
+        [] -> Nothing
+        x :: rest ->
+            if idx <= 0 then Just x else nth (idx - 1) rest
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+view : Shared.User -> Model -> View Msg
+view user model =
+    navigationStack (navigationBarAttrs user model)
+        [ list [] (sections model)
+        , confirmDialog model
+        ]
+
+
+-- confirmDialog renders the destructive-action modal when the user
+-- has armed a delete (by tapping the row's `−`). The dialog lives
+-- as a sibling of the main `list` inside the navigation stack;
+-- when `confirmingDelete` is Nothing we return `empty`, which
+-- unmounts the dialog entirely. Cancel + backdrop tap + Escape all
+-- dispatch DeleteCancelled; the confirm button dispatches
+-- DeleteConfirmed.
+confirmDialog : Model -> View Msg
+confirmDialog model =
+    case model.confirmingDelete of
+        Just task ->
+            confirm
+                { title        = "Delete \"" ++ task.name ++ "\"?"
+                , confirmLabel = "Delete"
+                , destructive  = True
+                , onConfirm    = DeleteConfirmed
+                , onCancel     = DeleteCancelled
+                }
+
+        Nothing ->
+            empty
+
+
+-- The top bar shows the title plus a mode-aware right-side action.
+--   - Editing → "Done" (always available, even with 0 tasks; the
+--     user might just be browsing and want out)
+--   - Not editing, has tasks → "Edit" (entry into management mode)
+--   - Not editing, no tasks → nothing (no tasks to manage; the
+--     auto-edit path will put them back into edit mode on next
+--     refresh anyway)
+-- And a constant "Sign out" at the trailing edge.
+navigationBarAttrs : Shared.User -> Model -> List (Attr NavStack)
+navigationBarAttrs _ model =
+    let
+        hasTasks =
+            case model.items of
+                Just items -> if List.isEmpty items then False else True
+                Nothing    -> False
+
+        showEditAffordance =
+            model.editing || hasTasks
+
+        editAffordance =
+            if model.editing then
+                button [] DoneEditingClicked "Done"
+            else
+                button [] EditClicked "Edit"
+    in
+    if showEditAffordance then
+        [ navigationTitle "Today"
+        , topBarTrailing
+            (hstack []
+                [ editAffordance
+                , button [] SignOutClicked "Sign out"
+                ]
+            )
+        ]
+    else
+        [ navigationTitle "Today"
+        , topBarTrailing (button [] SignOutClicked "Sign out")
+        ]
+
+
+-- sections composes the page top-to-bottom based on the current
+-- mode + state. Kept as a single list so the page reads in order
+-- and adding a new section is a one-line insertion.
+sections : Model -> List (View Msg)
+sections model =
+    case model.items of
+        Nothing ->
+            [ section [] [ text "Loading…" ] ]
+
+        Just items ->
+            List.concat
+                [ errorSection model
+                , addSectionIfNeeded model items
+                , tasksSection model items
+                , footerSection model items
+                ]
+
+
+errorSection : Model -> List (View Msg)
+errorSection model =
+    case model.error of
+        Just why ->
+            [ section [ header "Something went wrong" ] [ errorText why ] ]
+
+        Nothing ->
+            []
+
+
+-- addSectionIfNeeded shows the new-task input in edit mode. The
+-- section header is always "New task" — earlier versions special-
+-- cased the empty list with a "Get started by adding a task"
+-- variant, but that created a "first-task screen" that looked
+-- structurally different from the "N tasks screen", making the
+-- transition feel like a context switch instead of just adding a
+-- row.
+--
+-- The `|| List.isEmpty` fallback covers a defensive edge case:
+-- if a user somehow lands in non-edit mode with no tasks (e.g. by
+-- tapping Done after deleting all rows), the input still renders
+-- so they can keep going without having to find Edit again.
+addSectionIfNeeded : Model -> List Shared.Task -> List (View Msg)
+addSectionIfNeeded model items =
+    let
+        shouldShow = model.editing || List.isEmpty items
+        ctaLabel   = if model.busy then "Adding…" else "Add"
+    in
+    if shouldShow then
+        -- `disabled model.busy` on BOTH the input AND the button: with
+        -- only the button disabled, the user could keep typing into
+        -- the field after pressing Add, then have their post-submit
+        -- keystrokes silently land in the model.draft AFTER the
+        -- service returns and resets draft=""  — a confusing
+        -- "where did my text go" moment. Disabling the input freezes
+        -- the form as a single atomic unit while the server thinks.
+        [ section [ header "New task" ]
+            [ hstack []
+                [ textField [ submit AddClicked, disabled model.busy ]
+                    "e.g. take 8am meds" model.draft DraftChanged
+                , button [ disabled model.busy ] AddClicked ctaLabel
+                ]
+            ]
+        ]
+    else
+        []
+
+
+-- tasksSection shows the list of tasks, headed by either the "X of
+-- Y done" counter (default mode, focuses you on progress) or just
+-- "Tasks" (edit mode, where the counter is irrelevant).
+--
+-- In edit mode it ALWAYS renders, including the empty case — with
+-- a "No tasks yet." placeholder so the section card stays present
+-- and the screen structure doesn't change shape when the user adds
+-- their first row. In default mode an empty list hides the section
+-- entirely (there's nothing to mark done and no useful counter to
+-- show).
+tasksSection : Model -> List Shared.Task -> List (View Msg)
+tasksSection model items =
+    if List.isEmpty items then
+        if model.editing then
+            [ section [ header "Tasks" ] [ subtitle "No tasks yet." ] ]
+        else
+            []
+    else
+        let
+            headerLabel =
+                if model.editing then
+                    "Tasks"
+                else
+                    let
+                        done = List.length (List.filter (\t -> t.done) items)
+                        total = List.length items
+                    in
+                    String.fromInt done ++ " of " ++ String.fromInt total ++ " done"
+        in
+        -- onMove only wires its editing flag in edit mode — outside
+        -- edit, no drag handles / listeners. Inside edit, each row
+        -- gets a drag handle on the right + keyboard grab via
+        -- Space/arrow keys. Same `TaskMoved` Msg both ways.
+        --
+        -- onDelete is ALWAYS wired (editing flag tracks the current
+        -- mode). Outside edit mode, web reveals the red `−` on hover
+        -- and iOS surfaces swipe-to-delete; inside edit mode both
+        -- platforms show the permanent minus circle. The handler
+        -- (`DeleteRowAt`) receives the row's index in either case.
+        --
+        -- `keyedList` (vs. plain `section`) is what makes onMove +
+        -- onDelete safe at the type level: every child must be a
+        -- KeyedView (produced by `keyed`), so the reconciler always
+        -- has a stable identity to match rows across reorders +
+        -- deletes. Using `section` here would be a compile error.
+        [ keyedList
+            [ header headerLabel
+            , onMove model.editing TaskMoved
+            , onDelete model.editing DeleteRowAt
+            ]
+            (List.map (renderTaskRow model) items)
+        ]
+
+
+renderTaskRow : Model -> Shared.Task -> KeyedView Msg
+renderTaskRow model task =
+    -- `keyed` wraps the inner view with a stable identity (task.id)
+    -- so the reconciler can track this row across reorders / deletes
+    -- / inserts — preserving animation, focus, and (on iOS) the row
+    -- identity for VoiceOver. The KeyedView return type is required
+    -- by `keyedList` — passing a raw View is a compile error, so
+    -- forgetting the key is impossible.
+    keyed (String.fromInt task.id)
+        (if model.editing then
+            -- Edit mode: drop the toggle — it's locked and adds
+            -- visual noise. Just the task name; the per-row delete
+            -- affordance lives on the surrounding keyedList's
+            -- `onDelete` attr. On web a red `−` slides in from the
+            -- right on hover (or sits permanently on the left in
+            -- edit mode, iOS-style). On iOS native swipe-to-delete
+            -- + edit-mode minus circle do the same.
+            text task.name
+         else
+            -- Default mode: just the toggle. Maximum tap target,
+            -- zero visual noise.
+            toggle [] task.name task.done (ToggleChanged task.id)
+        )
+
+
+-- footerSection — only the daily "Clear ticks" affordance, and only
+-- in default mode. In edit mode there's no footer affordance; the
+-- orientation message lives at the top via editIntroSection and the
+-- exit is the "Done" button in the navigation bar.
+footerSection : Model -> List Shared.Task -> List (View Msg)
+footerSection model items =
+    if List.isEmpty items then
+        []
+    else if model.editing then
+        []
+    else
+        resetActionSection
+
+
+-- resetActionSection — the daily "I'm done for today, clear the
+-- toggles for tomorrow" affordance. Used rarely (once a day) and
+-- shouldn't compete with the toggle list for attention, so it's a
+-- single tight section: no header, short label, one-line footer.
+resetActionSection : List (View Msg)
+resetActionSection =
+    [ section [ footer "Fresh start for the next day." ]
+        [ button [] ResetAllClicked "Clear ticks" ]
+    ]
+
+
+-- ====================================================================
+-- WIRING
+-- ====================================================================
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/"
+        , title  = "Today"
+        , init   = init
+        , update = update
+        , view   = view
+        }

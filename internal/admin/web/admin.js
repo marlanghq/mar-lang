@@ -26,8 +26,6 @@
     requests: null,
     backups: null,            // { items: [{id, sizeBytes, createdAtMs}, ...] } | { error }
     browsing: null,           // { entity, rows, cursor, error }
-    restoreState: null,       // null | 'pending' | 'staged' | 'failed'
-    restoreMessage: '',
     error: '',
   };
 
@@ -81,7 +79,12 @@
       setState({
         loginStage: 'code',
         loginEmail: email,
-        loginInfo: 'If your email is on the admin list, a code is on the way.',
+        // Single consolidated message — keeps the security ambiguity
+        // ("if ... on the admin list") AND shows the typed email back
+        // as confirmation. Replaces the older two-banner flow that
+        // read redundantly.
+        loginInfo:
+          'If ' + email + ' is on the admin list, a 6-digit code is on the way.',
       });
     } else if (r.status === 429) {
       setState({ loginStage: 'email', loginError: 'Too many attempts. Try again later.' });
@@ -124,69 +127,6 @@
       db:       d.ok ? d.body : { error: 'unavailable' },
       requests: r.ok ? r.body : { error: 'unavailable' },
       backups:  b.ok ? b.body : { error: 'unavailable' },
-    });
-  }
-
-  async function restoreBackup(id) {
-    const confirmed = window.confirm(
-      'Restore this backup? The current database will be moved to a ' +
-      '.bak file and the server will restart automatically.\n\n' +
-      'Any data written between now and the restart will be lost.'
-    );
-    if (!confirmed) return;
-
-    setState({ restoreState: 'pending', restoreMessage: 'Applying restore…' });
-    const r = await fetch('/_mar/admin/api/database-backup/' + encodeURIComponent(id) + '/restore', {
-      method: 'POST',
-      credentials: 'include',
-    });
-    let body = null;
-    try { body = await r.json(); } catch { /* */ }
-
-    if (r.status === 409 && body && body.error === 'schema_mismatch') {
-      setState({
-        restoreState: 'failed',
-        restoreMessage:
-          'Schema mismatch — this backup was taken against a different schema ' +
-          '(likely a migration ran since). Restore manually by deploying the ' +
-          'matching binary first.',
-      });
-      return;
-    }
-    if (!r.ok) {
-      setState({
-        restoreState: 'failed',
-        restoreMessage: 'Restore failed (' + r.status + '). See server logs.',
-      });
-      return;
-    }
-
-    setState({
-      restoreState: 'staged',
-      restoreMessage:
-        'Restore staged. The server is restarting — this page will reload when it is back.',
-    });
-    pollUntilUp();
-  }
-
-  // pollUntilUp pings /whoami every 1.5s for up to 60s after a
-  // restore. Once it gets a 200 (server is back), reloads the page
-  // so the operator sees the restored state.
-  async function pollUntilUp() {
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 1500));
-      try {
-        const r = await fetch('/_mar/admin/api/whoami', { credentials: 'include' });
-        if (r.ok) {
-          window.location.reload();
-          return;
-        }
-      } catch (_) { /* still down */ }
-    }
-    setState({
-      restoreState: 'failed',
-      restoreMessage: 'Server did not come back within 60s. Check fly machine status.',
     });
   }
 
@@ -278,7 +218,11 @@
       ];
     } else {
       formInner = [
-        el('p', null, 'A 6-digit code was just sent to ' + state.loginEmail + '.'),
+        // No separate "code sent to X" line here — the loginInfo
+        // banner above the form already names the email AND notes the
+        // 6-digit length, so duplicating it just made the screen feel
+        // verbose. Code input + Sign in button are enough below the
+        // banner.
         el('label', { for: 'code' }, 'Code'),
         el('input', {
           id: 'code', type: 'text', autofocus: true, required: true,
@@ -340,11 +284,9 @@
           el('div', { class: 'empty' }, 'unavailable')));
     }
     const items = state.backups.items || [];
-    const banner = state.restoreState ? renderRestoreBanner() : null;
     if (items.length === 0) {
       return el('div', { class: 'section' },
         el('div', { class: 'section-header' }, 'Database backups'),
-        banner,
         el('div', { class: 'section-body' },
           el('div', { class: 'empty' },
             'No backups yet. The first auto-backup runs after the configured interval.')));
@@ -355,12 +297,12 @@
         el('div', { class: 'value', style: 'font-size: 11px;' },
           formatBytes(b.sizeBytes) + ' • ' + formatRelativeTime(b.createdAtMs)),
       ),
+      // Only Download for now — Restore-from-panel was removed because
+      // the swap requires either a process restart or in-process DB
+      // pool re-pooling, neither of which is platform-neutral. Operator
+      // restores manually from the downloaded bundle. See BACKLOG.md
+      // ("Admin — Database restore CLI") for the planned ergonomic CLI.
       el('div', null,
-        el('button', {
-          class: 'secondary',
-          onclick: () => restoreBackup(b.id),
-          disabled: state.restoreState === 'pending' || state.restoreState === 'staged',
-        }, 'Restore'),
         el('button', {
           class: 'secondary',
           onclick: () => downloadBackup(b.id),
@@ -369,16 +311,8 @@
     ));
     return el('div', { class: 'section' },
       el('div', { class: 'section-header' }, 'Database backups (' + items.length + ')'),
-      banner,
       el('div', { class: 'section-body' }, ...rows),
     );
-  }
-
-  function renderRestoreBanner() {
-    if (!state.restoreState) return null;
-    const cls = state.restoreState === 'failed' ? 'banner' : 'banner banner-info';
-    return el('div', { class: cls, style: 'margin: 8px 12px;' },
-      state.restoreMessage);
   }
 
   function renderTopbar() {

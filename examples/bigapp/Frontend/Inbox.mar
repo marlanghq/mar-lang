@@ -1,0 +1,178 @@
+module Frontend.Inbox exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , vstack, hstack
+    , text, subtitle, navigationLink, errorText
+    , button
+    )
+
+
+-- Inbox — every @-mention pointed at the logged user, newest first.
+-- A row shows who mentioned them, in which issue, and the first
+-- ~140 chars of the comment body. Tap to deep-link into the issue;
+-- tapping also marks the mention as seen (server-side state).
+--
+-- Two filters: All vs Unread. Filter state lives in the model;
+-- swapping it triggers a re-fetch.
+
+
+type alias Model =
+    { items    : Maybe (List Shared.MentionView)
+    , error    : Maybe String
+    , onlyUnseen : Bool
+    }
+
+
+type Msg
+    = MentionsFetched (Result String (List Shared.MentionView))
+    | ToggleFilterClicked
+    | OpenMention Int Int          -- mentionId, issueId
+    | SeenAcknowledged (Result String ())
+
+
+init : Shared.User -> () -> (Model, Effect String Msg)
+init _ _ =
+    ( { items = Nothing, error = Nothing, onlyUnseen = False }
+    , Service.call Shared.listMyMentions { onlyUnseen = False } MentionsFetched
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update _ msg model =
+    case msg of
+        MentionsFetched (Ok items) ->
+            ( { model | items = Just items }, Effect.none )
+
+        MentionsFetched (Err why) ->
+            ( { model | error = Just why }, Effect.none )
+
+        ToggleFilterClicked ->
+            let
+                flipped =
+                    if model.onlyUnseen then False else True
+            in
+            ( { model | onlyUnseen = flipped, items = Nothing }
+            , Service.call Shared.listMyMentions { onlyUnseen = flipped } MentionsFetched
+            )
+
+        OpenMention mentionId _ ->
+            -- Mark seen as we open it. We don't refresh the local
+            -- list immediately — the user is navigating away; the
+            -- next visit will reflect the seenAt update.
+            ( model
+            , Service.call Shared.markMentionSeen { id = mentionId } SeenAcknowledged
+            )
+
+        SeenAcknowledged _ ->
+            -- Fire-and-forget; ignore success or failure. (Worst
+            -- case: a marked-seen mention shows as unread on next
+            -- visit; the user re-clicks, mark fires again. Idempotent.)
+            ( model, Effect.none )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+mentionRow : Shared.MentionView -> View Msg
+mentionRow m =
+    let
+        issueRef =
+            if m.issueNumber > 0 then
+                if m.issueTitle == "" then
+                    "#" ++ String.fromInt m.issueNumber
+                else
+                    "#" ++ String.fromInt m.issueNumber ++ " " ++ m.issueTitle
+            else
+                "(unknown issue)"
+
+        unreadTag =
+            if m.seen then "" else " · NEW"
+
+        title =
+            m.authorName ++ " mentioned you in " ++ issueRef ++ unreadTag
+    in
+    if m.issueId > 0 then
+        navigationLink [] Frontend.Routes.issueDetail { id = m.issueId }
+            (vstack []
+                [ text title
+                , subtitle m.bodyPreview
+                ]
+            )
+    else
+        -- Deleted issue: just the text, no link target.
+        vstack []
+            [ text title
+            , subtitle m.bodyPreview
+            ]
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    navigationStack [ navigationTitle "Inbox" ]
+        [ list []
+            (List.concat
+                [ filterSection model
+                , renderBody model
+                ]
+            )
+        ]
+
+
+filterSection : Model -> List (View Msg)
+filterSection model =
+    let
+        cta =
+            if model.onlyUnseen then "Showing unread · Show all" else "Showing all · Show unread"
+    in
+    [ section [ header "Filter" ]
+        [ button [] ToggleFilterClicked cta ]
+    ]
+
+
+renderBody : Model -> List (View Msg)
+renderBody model =
+    case model.error of
+        Just why ->
+            [ section [ header "Couldn't load" ] [ errorText why ] ]
+
+        Nothing ->
+            case model.items of
+                Nothing ->
+                    [ section [] [ text "Loading mentions…" ] ]
+
+                Just items ->
+                    if List.isEmpty items then
+                        [ section [ header "Inbox zero" ]
+                            [ subtitle
+                                (if model.onlyUnseen then
+                                    "No unread mentions. You're caught up."
+                                 else
+                                    "Nobody's tagged you yet."
+                                )
+                            ]
+                        ]
+                    else
+                        [ section
+                            [ header ("Mentions · " ++ String.fromInt (List.length items))
+                            , footer "Newest first. Tap an entry to mark it read."
+                            ]
+                            (List.map mentionRow items)
+                        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/inbox"
+        , title  = "Inbox"
+        , init   = init
+        , update = update
+        , view   = view
+        }

@@ -1,0 +1,118 @@
+module Frontend.GetStarted exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , vstack
+    , title, subtitle, text
+    , paragraph, span
+    , code, link
+    )
+
+
+-- "Get started" page — the four-command path from zero to a deployed
+-- app. Each step gets its own section so the reader can scan the
+-- shape before reading the body text.
+
+
+type alias Model = ()
+
+
+type Msg
+    = NoOp
+
+
+init : () -> (Model, Effect String Msg)
+init _ = ((), Effect.none)
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update _ _ = ((), Effect.none)
+
+
+view : Model -> View Msg
+view _ =
+    navigationStack [ navigationTitle "Get started" ]
+        [ list []
+            [ section [ header "1 — Install" ]
+                [ subtitle "Single binary, no runtime, no package manager."
+                , paragraph
+                    [ span [] "Download the "
+                    , span [code] "mar"
+                    , span [] " binary for your platform from "
+                    , span [link "https://github.com/marlanghq/mar-lang/releases"] "the releases page"
+                    , span [] " and drop it on your PATH. Expect Windows to work; day-to-day development happens on macOS and Linux."
+                    ]
+                , paragraph
+                    [ span [] "Verify with "
+                    , span [code] "mar version"
+                    , span [] "."
+                    ]
+                ]
+            , section [ header "2 — Scaffold a project" ]
+                [ subtitle "mar init my-app"
+                , paragraph
+                    [ span [] "Creates a new directory "
+                    , span [code] "my-app/"
+                    , span [] " with "
+                    , span [code] "Main.mar"
+                    , span [] ", "
+                    , span [code] "Frontend/"
+                    , span [] ", "
+                    , span [code] "mar.json"
+                    , span [] ", and a "
+                    , span [code] ".gitignore"
+                    , span [] ". The scaffold is intentionally tiny (one page, one service), so the shape is obvious before you customize."
+                    ]
+                ]
+            , section [ header "3 — Run it locally" ]
+                [ subtitle "mar dev"
+                , paragraph
+                    [ span [] "Boots a hot-reload dev server. Edit a "
+                    , span [code] ".mar"
+                    , span [] " file, the browser refreshes; the change is type-checked first, so a broken edit shows the error overlay instead of a blank screen. SQLite lives in the project dir, auth runs without SMTP (codes print to stdout), and the admin panel is live at "
+                    , span [code] "/_mar/admin"
+                    , span [] "."
+                    ]
+                ]
+            , section
+                [ header "4 — Deploy"
+                , footer "Same binary works against any Linux host. Other providers (Render, Railway, raw VPS) work too; Fly is just the one with a wrapped flow."
+                ]
+                [ subtitle "mar fly deploy"
+                , paragraph
+                    [ span [] "Add a "
+                    , span [code] "deploy.fly"
+                    , span [] " block to "
+                    , span [code] "mar.json"
+                    , span [] " with app, region, and memory; then run "
+                    , span [code] "mar fly deploy"
+                    , span [] ". The first run creates the Fly app, provisions a volume (if you have a backend), prompts for any "
+                    , span [code] "env:VAR"
+                    , span [] " secrets declared in "
+                    , span [code] "mar.json"
+                    , span [] ", builds a linux-amd64 binary, generates a Dockerfile + fly.toml in a temp dir, and pushes. Subsequent deploys take seconds."
+                    ]
+                ]
+            , section [ header "Where to look next" ]
+                [ vstack []
+                    [ text "• docs/mar.md: the language reference"
+                    , text "• docs/deployment-fly.md: the deploy flow in detail"
+                    , text "• docs/admin-panel.md: the built-in admin"
+                    , text "• examples/: five reference projects with progressively more features"
+                    ]
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/get-started"
+        , title = "Get started"
+        , init = init
+        , update = update
+        , view = view
+        }

@@ -1,0 +1,230 @@
+module Frontend.Showcase.Modals exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , vstack, hstack, spacer
+    , title, subtitle, text, button
+    , sheet, confirm, empty
+    )
+
+
+-- Demo: modal overlays.
+--
+--   UI.sheet   : iOS-style page sheet that slides up from the
+--                bottom. State (open/closed) lives in the parent's
+--                Model; renderer animates + handles dismiss.
+--   UI.confirm : destructive-action confirmation dialog. Renders
+--                only when the parent returns it (via `case` →
+--                `confirm {...}` vs `empty`). Apple Music's
+--                "Delete from Library" pattern.
+--
+-- Both share the same architectural shape: parent owns presence
+-- as part of its Model, view returns the modal view when active,
+-- the renderer mounts it as an overlay above the rest of the
+-- page. No imperative show()/hide() — pure MVU.
+
+
+-- ====================================================================
+-- MODEL
+-- ====================================================================
+--
+-- showSheet      : Bool         — whether UI.sheet is currently up
+-- confirmingItem : Maybe String — task awaiting confirm (the modal
+--                                 is open iff this is Just; Nothing
+--                                 means no modal showing)
+type alias Model =
+    { showSheet      : Bool
+    , confirmingItem : Maybe String
+    , lastAction     : String
+    }
+
+
+type Msg
+    = OpenSheet
+    | CloseSheet
+    | OpenConfirmFor String
+    | ConfirmYes
+    | ConfirmNo
+
+
+init : () -> (Model, Effect String Msg)
+init _ =
+    ( { showSheet = False
+      , confirmingItem = Nothing
+      , lastAction = "(nothing yet)"
+      }
+    , Effect.none
+    )
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        OpenSheet ->
+            ( { model | showSheet = True }, Effect.none )
+
+        CloseSheet ->
+            -- Same Msg dispatched by:
+            --   * tapping the Close button inside the sheet
+            --   * the sheet's onDismiss (backdrop click, browser
+            --     back, iOS swipe-down)
+            -- Both paths funnel here so dismissal is uniform.
+            ( { model | showSheet = False, lastAction = "Sheet dismissed" }
+            , Effect.none
+            )
+
+        OpenConfirmFor item ->
+            ( { model | confirmingItem = Just item }, Effect.none )
+
+        ConfirmYes ->
+            case model.confirmingItem of
+                Just item ->
+                    ( { model
+                        | confirmingItem = Nothing
+                        , lastAction = "Confirmed delete: " ++ item
+                      }
+                    , Effect.none
+                    )
+
+                Nothing ->
+                    ( model, Effect.none )
+
+        ConfirmNo ->
+            ( { model | confirmingItem = Nothing, lastAction = "Cancelled" }
+            , Effect.none
+            )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Modals" ]
+        [ list []
+            [ aboutSection
+            , sheetSection
+            , confirmSection
+            , statusSection model
+            ]
+        -- The sheet anchors at this level (sibling of list inside
+        -- the navigation stack). SwiftUI / web renderer routes the
+        -- actual overlay to window-level regardless, so position
+        -- in the tree doesn't matter visually. We tag the open
+        -- state from the Model and a Msg for dismiss.
+        , sheet
+            { open      = model.showSheet
+            , onDismiss = CloseSheet
+            , outlet    = "demo-sheet"
+            }
+            [ sheetContent model ]
+        -- Same idea for the confirm dialog — view function returns
+        -- `confirm {...}` when active, `empty` when not. Renderer
+        -- mounts / unmounts the overlay accordingly. No "isOpen"
+        -- field; presence-in-the-tree IS the open state.
+        , confirmDialog model
+        ]
+
+
+aboutSection : View Msg
+aboutSection =
+    section [ header "About modals" ]
+        [ title "Two overlay patterns"
+        , text "UI.sheet slides up from the bottom. Use it for editing details, secondary tasks, or any context that benefits from focus without leaving the page."
+        , text "UI.confirm is a centered alert with Cancel + destructive action. Use it when the user is about to do something irreversible."
+        ]
+
+
+sheetSection : View Msg
+sheetSection =
+    section [ header "UI.sheet", footer "Drag the handle down, tap the backdrop, or hit Close to dismiss." ]
+        [ button [] OpenSheet "Open sheet"
+        ]
+
+
+confirmSection : View Msg
+confirmSection =
+    section [ header "UI.confirm", footer "Try Cancel, the backdrop, and Escape; all dismiss without firing the destructive action." ]
+        [ button [] (OpenConfirmFor "Item A") "Delete Item A"
+        , button [] (OpenConfirmFor "Item B") "Delete Item B"
+        ]
+
+
+statusSection : Model -> View Msg
+statusSection model =
+    section [ header "Last action" ]
+        [ subtitle model.lastAction
+        ]
+
+
+-- Sheet content. The recommended iOS-style structure: a top
+-- toolbar with `[Cancel] (spacer) (title) (spacer) [Done]`, then
+-- a body below it. The title sits centered because the two
+-- spacers around it equalize the leading/trailing slack.
+--
+-- Mar doesn\'t need a dedicated `UI.sheetToolbar` primitive —
+-- this hstack + spacer + title pattern produces the same shape
+-- and is short enough to inline at the call site. Apps that
+-- want consistency across multiple sheets typically wrap it in
+-- their own helper function.
+sheetContent : Model -> View Msg
+sheetContent _ =
+    vstack []
+        [ -- Toolbar row. Both Cancel and Done dispatch CloseSheet
+          -- in this demo; a real app would have Done commit
+          -- changes (e.g. dispatch a Save Msg) and Cancel discard.
+          hstack []
+            [ button [] CloseSheet "Cancel"
+            , spacer
+            , title "Sheet title"
+            , spacer
+            , button [] CloseSheet "Done"
+            ]
+        , -- Body. Mar sheets accept any view tree, so this could
+          -- be a form, a list, a navigationStack of its own —
+          -- whatever the workflow needs. We use a section card to
+          -- keep the visual consistent with the rest of the
+          -- showcase.
+          list []
+            [ section [ header "About sheets" ]
+                [ text "Sheets slide up from the bottom and carry their own scroll. On iOS they have a native drag-to-dismiss gesture; on web the handle is decorative for now."
+                , text "Tap Cancel, Done, or the backdrop to dismiss."
+                ]
+            ]
+        ]
+
+
+-- The dialog is conditionally rendered. When `confirmingItem` is
+-- Nothing, `empty` returns a view that the renderer treats as
+-- "nothing to mount" — the modal isn't in the DOM / scene graph at
+-- all. Just-state mounts the actual overlay with the task name in
+-- the prompt.
+confirmDialog : Model -> View Msg
+confirmDialog model =
+    case model.confirmingItem of
+        Just item ->
+            confirm
+                { title        = "Delete \"" ++ item ++ "\"?"
+                , confirmLabel = "Delete"
+                , destructive  = True
+                , onConfirm    = ConfirmYes
+                , onCancel     = ConfirmNo
+                }
+
+        Nothing ->
+            empty
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/modals"
+        , title = "Modals"
+        , init = init
+        , update = update
+        , view = view
+        }

@@ -11,9 +11,13 @@ import Shared exposing (Role(..))
 -- service decorator like `Auth.requireRole`, fails at compile time.
 users : Entity Shared.User
 users =
-    Entity.define "users"
-        { id     = Entity.serial
-        , email  = Entity.text Entity.notNull
-        , teamId = Entity.int  Entity.notNull
-        , role   = Entity.enum [Member, Admin] Entity.notNull
+    Entity.define
+        { name = "users"
+        , columns =
+            { id     = Entity.serial
+            , email  = Entity.text Entity.notNull
+            , teamId = Entity.int  Entity.notNull
+            , role   = Entity.enum [Member, Admin] Entity.notNull
+            }
+        , uniques = []
         }

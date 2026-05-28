@@ -8,10 +8,14 @@ import Shared
 -- business rules, and exports its slice of the services list.
 notes : Entity Shared.Note
 notes =
-    Entity.define "notes"
-        { id       = Entity.serial
-        , body     = Entity.text Entity.notNull
-        , authorId = Entity.int Entity.notNull
+    Entity.define
+        { name = "notes"
+        , columns =
+            { id       = Entity.serial
+            , body     = Entity.text Entity.notNull
+            , authorId = Entity.int Entity.notNull
+            }
+        , uniques = []
         }
 
 

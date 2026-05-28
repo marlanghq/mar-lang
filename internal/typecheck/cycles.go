@@ -182,8 +182,8 @@ func collectTopLevelRefs(e ast.Expr, decls map[string]declInfo, locals map[strin
 		collectTopLevelRefs(n.Record, decls, locals, out)
 	case *ast.ENegate:
 		collectTopLevelRefs(n.Inner, decls, locals, out)
-	// EInt, EFloat, EString, EUnit, EFieldAccessor, EQualified, ECtor:
-	// no top-level refs to collect.
+		// EInt, EFloat, EString, EUnit, EFieldAccessor, EQualified, ECtor:
+		// no top-level refs to collect.
 	}
 }
 

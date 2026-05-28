@@ -6,7 +6,7 @@ import UI exposing
     ( navigationStack, navigationTitle
     , form, list, section, header
     , hstack
-    , text, textField, button, centered
+    , text, textField, button, centered, errorText
     , submit
     )
 
@@ -86,7 +86,7 @@ renderNote note =
 view : Model -> View Msg
 view model =
     navigationStack [ navigationTitle "Notes" ]
-        [ list
+        [ list []
             [ section []
                 [ hstack []
                     [ textField [ submit SubmitClicked ]
@@ -106,7 +106,7 @@ notesSection notes =
             section [] [ text "Loading…" ]
 
         Failed why ->
-            section [] [ text ("Couldn't load notes: " ++ why) ]
+            section [] [ errorText ("Couldn't load notes: " ++ why) ]
 
         Loaded items ->
             section [ header (String.fromInt (List.length items) ++ " notes") ]

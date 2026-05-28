@@ -22,19 +22,18 @@ import (
 
 	"mar/internal/apphost"
 	"mar/internal/ast"
-	"mar/internal/diag"
 	"mar/internal/jsserve"
 	"mar/internal/project"
 	"mar/internal/runtime"
 )
 
 func runMigrate(args []string) int {
+	// fprintError adds leading + trailing blanks. The usage line
+	// + final blank go right after — no extra separator needed.
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr)
 		fprintError("mar migrate: missing subcommand")
-		fmt.Fprintln(os.Stderr)
 		fmt.Fprintf(os.Stderr, "usage: %s\n",
-			colorGreen("mar migrate <plan|status> [path]"))
+			cmdSuggest("migrate <plan|status> [path]"))
 		fmt.Fprintln(os.Stderr)
 		return 2
 	}
@@ -49,11 +48,9 @@ func runMigrate(args []string) int {
 	case "status":
 		return runMigrateStatus(path)
 	default:
-		fmt.Fprintln(os.Stderr)
 		fprintError("mar migrate: unknown subcommand %q", sub)
-		fmt.Fprintln(os.Stderr)
 		fmt.Fprintf(os.Stderr, "usage: %s\n",
-			colorGreen("mar migrate <plan|status> [path]"))
+			cmdSuggest("migrate <plan|status> [path]"))
 		fmt.Fprintln(os.Stderr)
 		return 2
 	}
@@ -66,7 +63,7 @@ func runMigrate(args []string) int {
 func runMigratePlan(path string) int {
 	db, err := loadProjectAndOpenDB(path)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, diag.Format(err))
+		printError("mar migrate plan", err)
 		return 1
 	}
 	if db == nil {
@@ -117,8 +114,12 @@ func runMigratePlan(path string) int {
 			colorRed(fmt.Sprintf("%d", len(blocked))),
 			colorRed("FAIL"))
 		for _, s := range blocked {
-			fmt.Println(s.Error)
-			fmt.Println()
+			// printError handles the *BlockedMigrationError split into
+			// Error: + Hint: blocks (colored) automatically and falls
+			// back to diag.Format for anything else. No prefix here —
+			// the surrounding "[migrate plan] N change(s) would FAIL"
+			// header already sets the context.
+			printError("", s.Error)
 		}
 		return 1
 	}
@@ -132,7 +133,7 @@ func runMigratePlan(path string) int {
 func runMigrateStatus(path string) int {
 	db, err := loadProjectAndOpenDB(path)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, diag.Format(err))
+		printError("mar migrate status", err)
 		return 1
 	}
 	if db == nil {
@@ -198,15 +199,18 @@ func loadProjectAndOpenDB(path string) (*sql.DB, error) {
 	if dbPath, _ := project.ResolveDatabasePath(manifest, projectDir); dbPath != "" {
 		runtime.SetDBPath(dbPath)
 	}
-	// Fresh entity registry for this command invocation.
-	runtime.ResetRegisteredEntities()
+	// Fresh registries for this command invocation. Defensive — the
+	// process is one-shot so the maps are already empty, but using
+	// the shared helper keeps the reset surface in sync with
+	// `mar dev`'s hot-reload path.
+	runtime.ResetForReload()
 
 	// Build a throwaway LiveProgram + apphost overrides so evaluating
 	// `main` doesn't crash trying to call the un-overridden App.*
 	// builtins. We don't actually serve anything; we only care about
 	// the side-effect of Entity.define registrations.
 	lp := &jsserve.LiveProgram{}
-	rEnv, _, _, err := project.LoadIntoEnvWithModulesAndHook(entryFile,
+	rEnv, mods, _, err := project.LoadIntoEnvWithModulesAndHook(entryFile,
 		func(env *runtime.Env, mods []*ast.Module) {
 			apphost.Install(env, mods, 0, lp)
 		})
@@ -218,10 +222,7 @@ func loadProjectAndOpenDB(path string) (*sql.DB, error) {
 	// Errors here are surface-level (program crashed during setup);
 	// surface them so the operator sees what's wrong before
 	// trying to migrate against a half-evaluated registry.
-	mainVal, ok := rEnv.Lookup("Main.main")
-	if !ok {
-		mainVal, _ = rEnv.Lookup("main")
-	}
+	mainVal, _ := project.LookupMain(rEnv, mods)
 	if eff, ok := mainVal.(runtime.VEffect); ok {
 		_, _ = eff.Run() // best-effort: registration may have happened before any error
 	}

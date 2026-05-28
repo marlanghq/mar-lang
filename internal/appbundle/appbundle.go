@@ -21,6 +21,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -74,7 +75,7 @@ func BuildPayload(input BuildInput) ([]byte, error) {
 	for name := range input.Sources {
 		names = append(names, name)
 	}
-	sortStrings(names)
+	slices.Sort(names)
 	for _, name := range names {
 		if err := addZipFile(w, sourceDir+name, input.Sources[name]); err != nil {
 			return nil, err
@@ -171,6 +172,16 @@ func LoadReaderAt(r io.ReaderAt, size int64) (*Bundle, error) {
 }
 
 // parsePayload decompresses the ZIP and assembles a Bundle.
+//
+// Each entry name is validated by safeBundleEntryName before any
+// further processing. A bundle produced by BuildPayload only ever
+// contains "mar.json" or "src/<rel>" entries with clean relative
+// paths; anything outside that shape (path traversal, absolute
+// paths, alternate separators, or entries other than the manifest
+// and the source tree) signals a tampered payload and is rejected
+// hard rather than silently ignored. This blocks zip-slip even if
+// the consumer (ExtractToDir, callers reading Sources directly) is
+// less paranoid downstream.
 func parsePayload(payload []byte) (*Bundle, error) {
 	zr, err := zip.NewReader(bytes.NewReader(payload), int64(len(payload)))
 	if err != nil {
@@ -178,6 +189,9 @@ func parsePayload(payload []byte) (*Bundle, error) {
 	}
 	bundle := &Bundle{Sources: map[string][]byte{}}
 	for _, file := range zr.File {
+		if err := safeBundleEntryName(file.Name); err != nil {
+			return nil, fmt.Errorf("appbundle: rejected entry %q: %w", file.Name, err)
+		}
 		data, err := readZipEntry(file)
 		if err != nil {
 			return nil, fmt.Errorf("appbundle: read %s: %w", file.Name, err)
@@ -188,12 +202,67 @@ func parsePayload(payload []byte) (*Bundle, error) {
 		case strings.HasPrefix(file.Name, sourceDir):
 			rel := strings.TrimPrefix(file.Name, sourceDir)
 			bundle.Sources[rel] = data
+		default:
+			// safeBundleEntryName already constrained the name to
+			// either manifestFile or sourceDir + clean rel — any
+			// path that reaches this branch is a bug in that helper.
+			return nil, fmt.Errorf("appbundle: unexpected entry %q (bug: name passed validation but matched no known shape)", file.Name)
 		}
 	}
 	if len(bundle.Sources) == 0 {
 		return nil, errors.New("appbundle: payload contains no source files")
 	}
 	return bundle, nil
+}
+
+// safeBundleEntryName rejects ZIP entry names that could escape the
+// extraction directory or fall outside the bundle's expected shape.
+//
+// Defense against zip-slip: an attacker who can replace the payload
+// appended to a `mar build` binary could otherwise embed entries
+// named "src/../../../home/user/.bashrc" and ExtractToDir would
+// happily write outside its destination directory once filepath.Join
+// collapses the ".." segments.
+//
+// Rules:
+//   - Name must be exactly "mar.json" OR have the "src/" prefix.
+//   - No backslashes (ZIP spec uses "/" only; a "\" suggests either
+//     a malformed archive or a deliberate attempt to slip past path
+//     parsers).
+//   - No absolute paths.
+//   - No empty/"."/".." segments after splitting on "/" — blocks
+//     traversal in any position.
+//   - For "src/<rel>" entries, the rel portion must be non-empty.
+//
+// Bundles produced by BuildPayload always satisfy these rules; any
+// rejection here is by definition a tampered (or hand-crafted)
+// payload.
+func safeBundleEntryName(name string) error {
+	if name == "" {
+		return errors.New("empty entry name")
+	}
+	if strings.ContainsRune(name, '\\') {
+		return errors.New("backslash in entry name (ZIP entries must use forward slashes)")
+	}
+	if strings.HasPrefix(name, "/") {
+		return errors.New("absolute path in entry name")
+	}
+	for _, seg := range strings.Split(name, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("unsafe path segment %q", seg)
+		}
+	}
+	if name == manifestFile {
+		return nil
+	}
+	if strings.HasPrefix(name, sourceDir) {
+		rel := strings.TrimPrefix(name, sourceDir)
+		if rel == "" {
+			return errors.New("empty source-relative path")
+		}
+		return nil
+	}
+	return fmt.Errorf("entry is neither %q nor under %q", manifestFile, sourceDir)
 }
 
 // ErrNoBundle is returned by Load* when the binary doesn't carry a
@@ -238,15 +307,43 @@ func CollectSources(projectDir string) (map[string][]byte, error) {
 // regular files. Used by mar-runtime to materialize the project on disk
 // so the existing project loader (which reads from filesystem) can take
 // over without further changes.
+//
+// Every output path is re-checked to be under destDir before any
+// write. parsePayload already rejects unsafe entry names at load
+// time, so a Bundle produced by LoadExecutable / LoadReaderAt can
+// never reach this function with a malicious rel; the re-check is
+// belt-and-suspenders for callers that build a Bundle by hand
+// (tests, future programmatic construction) and skip the safeguards.
 func ExtractToDir(b *Bundle, destDir string) error {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return err
+	}
+	absDestDir, err := filepath.Abs(destDir)
+	if err != nil {
+		return fmt.Errorf("appbundle: resolve destDir: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(destDir, manifestFile), b.ManifestJSON, 0o644); err != nil {
 		return err
 	}
 	for rel, data := range b.Sources {
+		if err := safeBundleEntryName(sourceDir + rel); err != nil {
+			return fmt.Errorf("appbundle: unsafe source path %q: %w", rel, err)
+		}
 		dest := filepath.Join(destDir, filepath.FromSlash(rel))
+		absDest, err := filepath.Abs(dest)
+		if err != nil {
+			return fmt.Errorf("appbundle: resolve dest: %w", err)
+		}
+		// filepath.Rel handles trailing-separator subtleties and
+		// returns a path starting with ".." iff absDest escapes
+		// absDestDir. The "==" check covers the (impossible-but-cheap)
+		// case where rel resolves exactly to destDir itself.
+		relCheck, err := filepath.Rel(absDestDir, absDest)
+		if err != nil ||
+			relCheck == ".." ||
+			strings.HasPrefix(relCheck, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("appbundle: path %q resolves outside destDir", rel)
+		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}
@@ -280,12 +377,4 @@ func readZipEntry(file *zip.File) ([]byte, error) {
 	}
 	defer rc.Close()
 	return io.ReadAll(rc)
-}
-
-func sortStrings(xs []string) {
-	for i := 1; i < len(xs); i++ {
-		for j := i; j > 0 && xs[j-1] > xs[j]; j-- {
-			xs[j-1], xs[j] = xs[j], xs[j-1]
-		}
-	}
 }

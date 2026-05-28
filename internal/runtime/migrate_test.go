@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,14 +144,7 @@ func TestMigrate_AddNullableColumn(t *testing.T) {
 	}
 }
 
-// (4) Add required field with default → SKIPPED in v0 (Entity.default
-// not yet implemented). When the builder lands, this test should
-// verify the column is added with the default backfilled.
-func TestMigrate_AddRequiredWithDefault_Skipped(t *testing.T) {
-	t.Skip("Entity.default deferred to v1 — see docs/migrations.md 'v0 deferrals'")
-}
-
-// (6) Type change: Int → String → BLOCKED with type-changed error.
+// (4) Type change: Int → String → BLOCKED with type-changed error.
 func TestMigrate_TypeChange_Blocked(t *testing.T) {
 	db := openTempDB(t)
 	// Initial: id INTEGER, body INTEGER (yes, weird, but we're
@@ -176,13 +170,7 @@ func TestMigrate_TypeChange_Blocked(t *testing.T) {
 	}
 }
 
-// (7) Add belongsTo to existing table → SKIPPED in v0
-// (Entity.belongsTo not yet implemented).
-func TestMigrate_AddBelongsTo_Skipped(t *testing.T) {
-	t.Skip("Entity.belongsTo deferred to v1 — see docs/migrations.md 'v0 deferrals'")
-}
-
-// (8) Drift on extra column: manually add a column to the live
+// (5) Drift on extra column: manually add a column to the live
 // table; restart with an entity that doesn't declare it. Boot should
 // succeed.
 func TestMigrate_ExtraColumn_KeptWithWarning(t *testing.T) {
@@ -275,6 +263,101 @@ func TestMigrate_PlanShowsBlockedSteps(t *testing.T) {
 	}
 	if !foundBlocked {
 		t.Fatalf("expected blocked step for category; plan was:\n%+v", plan)
+	}
+}
+
+// Blocked migrations must expose a *BlockedMigrationError so the CLI
+// can split the message into the standard `Error:` (red headline) +
+// `Hint:` (yellow body) blocks. The whole point of the structured
+// type is to enable colored rendering — if the underlying error
+// degrades to a generic fmt.Errorf, the CLI loses both the split and
+// the colors and the message falls back to a plain raw print.
+//
+// Pins:
+//   - errors.As succeeds against *BlockedMigrationError.
+//   - Summary is the one-line headline (no embedded newlines).
+//   - Hint is non-empty for the cases that have remediation guidance.
+//   - The Error() method bundles Summary + "\n\n" + Hint so callers
+//     that just stringify (tests, raw logs, SSE channel) still get
+//     the full message.
+func TestMigrate_BlockedErrorIsStructured(t *testing.T) {
+	db := openTempDB(t)
+	if _, err := NewMigrator(db, []VEntity{notesEntity()}).Run(); err != nil {
+		t.Fatalf("seed migrate: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO notes (body) VALUES ('row')`); err != nil {
+		t.Fatalf("seed row: %v", err)
+	}
+	withRequired := VEntity{
+		Table: "notes",
+		Fields: []EntityField{
+			{Name: "id", SQLType: "INTEGER", NotNull: true, Serial: true},
+			{Name: "body", SQLType: "TEXT", NotNull: true},
+			{Name: "category", SQLType: "TEXT", NotNull: true},
+		},
+	}
+	_, err := NewMigrator(db, []VEntity{withRequired}).Run()
+	if err == nil {
+		t.Fatalf("expected blocked error, got nil")
+	}
+
+	var be *BlockedMigrationError
+	if !errors.As(err, &be) {
+		t.Fatalf("expected *BlockedMigrationError, got %T (%v)", err, err)
+	}
+	if be.Summary == "" {
+		t.Fatal("Summary is empty")
+	}
+	if strings.Contains(be.Summary, "\n") {
+		t.Errorf("Summary should be a one-liner, got:\n%s", be.Summary)
+	}
+	if !strings.Contains(be.Summary, "migration blocked for entity notes") {
+		t.Errorf("Summary missing expected prefix: %q", be.Summary)
+	}
+	if !strings.Contains(be.Summary, `"category"`) {
+		t.Errorf("Summary missing column name: %q", be.Summary)
+	}
+	if be.Hint == "" {
+		t.Fatal("Hint is empty for a remediation-eligible case")
+	}
+	if !strings.Contains(be.Hint, "ALTER TABLE") {
+		t.Errorf("Hint missing remediation SQL: %s", be.Hint)
+	}
+	// Migration errors must follow the established prefix grammar
+	// (`Error:` / `Hint:` only, no ad-hoc labels) and must never
+	// promise unreleased features — both rules came from operator
+	// pushback. Catch the patterns, not the specific phrasings,
+	// so future drift toward the same shape gets blocked.
+	bannedSubstrings := []string{
+		"Note:", // non-standard prefix label
+		"Tip:",  // ditto
+		"FYI:",  // ditto
+	}
+	bannedPatterns := []string{
+		"a future ",           // "a future X will..."
+		"will let you",        // "X will let you skip..."
+		"once it lands",       // "once it lands, the migrator..."
+		"once X lands",        // generic "once X lands"
+		"coming soon",         // "coming soon"
+		"not yet implemented", // "not yet implemented" — implies "but will be"
+		"deferred to",         // "deferred to v1"
+	}
+	for _, s := range bannedSubstrings {
+		if strings.Contains(be.Hint, s) {
+			t.Errorf("Hint contains banned label %q:\n%s", s, be.Hint)
+		}
+	}
+	lc := strings.ToLower(be.Hint)
+	for _, p := range bannedPatterns {
+		if strings.Contains(lc, p) {
+			t.Errorf("Hint contains banned future-promise phrase %q:\n%s", p, be.Hint)
+		}
+	}
+	// Error() must bundle the parts so callers that stringify the
+	// error (rather than introspect the struct) get the full message.
+	full := err.Error()
+	if !strings.Contains(full, be.Summary) || !strings.Contains(full, be.Hint) {
+		t.Errorf("Error() doesn't bundle Summary + Hint:\n%s", full)
 	}
 }
 

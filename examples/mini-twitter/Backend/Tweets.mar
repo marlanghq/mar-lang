@@ -1,0 +1,22 @@
+module Backend.Tweets exposing (tweets)
+
+
+import Shared
+
+
+-- Tweets entity. The body is capped at 280 chars by the frontend +
+-- service handler — we don't enforce it at the column type because
+-- Mar's `Entity.text` is unbounded by default; the cap is policy,
+-- not schema.
+tweets : Entity Shared.Tweet
+tweets =
+    Entity.define
+        { name = "tweets"
+        , columns =
+            { id        = Entity.serial
+            , body      = Entity.text Entity.notNull
+            , authorId  = Entity.int  Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }

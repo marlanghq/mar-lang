@@ -1,0 +1,128 @@
+module Frontend.SetupProfile exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section
+    , title, text, textField, button, empty, errorText
+    , submit
+    )
+
+
+-- One-time setup. New users land here straight after sign-in
+-- because the signup hook in Main creates a row with an empty
+-- handle, and the Home page's bootstrap redirects when it sees
+-- one. The redirect goes through Nav.replaceTo so the back button
+-- doesn't land the user on /sign-in again.
+
+
+type alias Model =
+    { handle      : String
+    , displayName : String
+    , bio         : String
+    , submitting  : Bool
+    , error       : Maybe String
+    }
+
+
+type Msg
+    = HandleChanged String
+    | DisplayNameChanged String
+    | BioChanged String
+    | Submitted
+    | Saved (Result String Shared.User)
+
+
+init : Shared.User -> () -> (Model, Effect String Msg)
+init user _ =
+    ( { handle      = user.handle
+      , displayName = user.displayName
+      , bio         = user.bio
+      , submitting  = False
+      , error       = Nothing
+      }
+    , Effect.none
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update _ msg model =
+    case msg of
+        HandleChanged v ->
+            ( { model | handle = v }, Effect.none )
+
+        DisplayNameChanged v ->
+            ( { model | displayName = v }, Effect.none )
+
+        BioChanged v ->
+            ( { model | bio = v }, Effect.none )
+
+        Submitted ->
+            ( { model | submitting = True, error = Nothing }
+            , Service.call Shared.setupProfile
+                { handle      = model.handle
+                , displayName = model.displayName
+                , bio         = model.bio
+                }
+                Saved
+            )
+
+        Saved (Ok _) ->
+            -- Setup complete — push to home with a replace so the
+            -- back button doesn't return here.
+            ( { model | submitting = False }
+            , Nav.replaceTo Frontend.Routes.home {}
+            )
+
+        Saved (Err why) ->
+            ( { model | submitting = False, error = Just why }
+            , Effect.none
+            )
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    let
+        errorRow =
+            case model.error of
+                Just why -> section [] [ errorText why ]
+                Nothing  -> empty
+
+        cta =
+            if model.submitting then
+                "Saving…"
+            else
+                "Continue"
+    in
+    navigationStack [ navigationTitle "Welcome" ]
+        [ form
+            [ section []
+                [ title "Pick your handle"
+                , text "This is how other people will find you on mini-twitter. Letters, digits, and underscores; up to 20 characters."
+                ]
+            , section []
+                [ textField [ submit Submitted ]
+                    "Handle (e.g. ada)" model.handle HandleChanged
+                , textField [ submit Submitted ]
+                    "Display name" model.displayName DisplayNameChanged
+                , textField []
+                    "Bio (optional)" model.bio BioChanged
+                ]
+            , section []
+                [ button [] Submitted cta ]
+            , errorRow
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/setup"
+        , title  = "Welcome"
+        , init   = init
+        , update = update
+        , view   = view
+        }

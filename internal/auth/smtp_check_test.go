@@ -19,6 +19,24 @@ func TestVerifySMTPConfig_NoOpWhenHostEmpty(t *testing.T) {
 	}
 }
 
+// TestVerifySMTPConfig_NoOpWhenPasswordEmpty mirrors the case where
+// the operator declared a real `smtpHost` in mar.json but the
+// `env:SMTP_PASSWORD` ref couldn't be resolved (mar dev's tolerant
+// loader leaves it empty). Send falls back to the stdout sink in
+// that situation, so VerifySMTPConfig should skip the preflight
+// auth attempt rather than fail with the provider's "missing
+// password" error.
+func TestVerifySMTPConfig_NoOpWhenPasswordEmpty(t *testing.T) {
+	if err := VerifySMTPConfig(SMTPConfig{
+		Host:     "smtp.example.com",
+		Port:     587,
+		Username: "x",
+		// Password intentionally empty.
+	}); err != nil {
+		t.Errorf("expected nil when password is empty; got %v", err)
+	}
+}
+
 // TestVerifySMTPConfig_TCPConnectFailure simulates a host that
 // resolves but refuses connections — we expect a FriendlyError
 // pointing at the TCP-connect stage.
@@ -27,8 +45,9 @@ func TestVerifySMTPConfig_TCPConnectFailure(t *testing.T) {
 	// We pick port 1 specifically because nobody legitimately runs
 	// services there (privileged port, never used by SMTP).
 	err := VerifySMTPConfig(SMTPConfig{
-		Host: "127.0.0.1",
-		Port: 1,
+		Host:     "127.0.0.1",
+		Port:     1,
+		Password: "x", // non-empty so the preflight check actually runs
 	})
 	if err == nil {
 		t.Fatal("expected error connecting to 127.0.0.1:1; got nil")
@@ -66,7 +85,7 @@ func TestVerifySMTPConfig_GreetingFailure(t *testing.T) {
 	}()
 
 	host, port := splitHostPort(t, ln.Addr().String())
-	err = VerifySMTPConfig(SMTPConfig{Host: host, Port: port})
+	err = VerifySMTPConfig(SMTPConfig{Host: host, Port: port, Password: "x"})
 	if err == nil {
 		t.Fatal("expected greeting failure; got nil")
 	}
@@ -115,7 +134,7 @@ func TestVerifySMTPConfig_StartTLSFailure(t *testing.T) {
 	}()
 
 	host, port := splitHostPort(t, ln.Addr().String())
-	err = VerifySMTPConfig(SMTPConfig{Host: host, Port: port})
+	err = VerifySMTPConfig(SMTPConfig{Host: host, Port: port, Password: "x"})
 	if err == nil {
 		t.Fatal("expected STARTTLS failure; got nil")
 	}
@@ -171,8 +190,9 @@ func TestVerifySMTPConfig_TimeoutBudget(t *testing.T) {
 	}
 	start := time.Now()
 	err := VerifySMTPConfig(SMTPConfig{
-		Host: "203.0.113.1", // TEST-NET-3, never routable
-		Port: 587,
+		Host:     "203.0.113.1", // TEST-NET-3, never routable
+		Port:     587,
+		Password: "x", // non-empty so the preflight check actually runs
 	})
 	elapsed := time.Since(start)
 	if err == nil {

@@ -24,20 +24,31 @@ type Value interface {
 // VInt is an integer value.
 type VInt struct{ V int64 }
 
-func (VInt) isValue() {}
+func (VInt) isValue()          {}
 func (v VInt) Display() string { return fmt.Sprintf("%d", v.V) }
 
 // VFloat is a floating-point value.
 type VFloat struct{ V float64 }
 
-func (VFloat) isValue() {}
+func (VFloat) isValue()          {}
 func (v VFloat) Display() string { return fmt.Sprintf("%g", v.V) }
 
 // VString is a string value.
 type VString struct{ V string }
 
-func (VString) isValue() {}
+func (VString) isValue()          {}
 func (v VString) Display() string { return fmt.Sprintf("%q", v.V) }
+
+// VChar is a single Unicode code point (rune in Go terms). Distinct
+// from VString so that `'a' == "a"` is a type error rather than a
+// silently-true equality, and so List Char / String round-trip
+// (via String.toList / fromList) stays meaningful.
+//
+// Wire format on the JSON boundary is `{"__char": "x"}` — see json.go.
+type VChar struct{ V rune }
+
+func (VChar) isValue()          {}
+func (v VChar) Display() string { return fmt.Sprintf("'%c'", v.V) }
 
 // VBool is a boolean value.
 type VBool struct{ V bool }
@@ -53,8 +64,8 @@ func (v VBool) Display() string {
 // VUnit is the unit value ().
 type VUnit struct{}
 
-func (VUnit) isValue()         {}
-func (VUnit) Display() string  { return "()" }
+func (VUnit) isValue()        {}
+func (VUnit) Display() string { return "()" }
 
 // VDuration is a time interval, normalized to seconds. Built only via
 // Time.seconds / Time.minutes / Time.hours / Time.days / Time.weeks
@@ -81,15 +92,15 @@ func (v VTime) Display() string {
 // VFn is a function value: either a closure (user lambda) or a built-in.
 type VFn struct {
 	// For closures:
-	Params  []string
-	Body    any // *ast.Expr — typed as any to avoid import cycle
-	Env     *Env
+	Params []string
+	Body   any // *ast.Expr — typed as any to avoid import cycle
+	Env    *Env
 	// For built-ins:
-	Native  func([]Value) (Value, error)
+	Native func([]Value) (Value, error)
 	// For partial application: arguments collected so far.
 	Applied []Value
 	// Total arity (params for closure, fixed for native).
-	Arity   int
+	Arity int
 	// CtorTag is set when this VFn was produced by makeCtorValue for a
 	// custom-type constructor with arity ≥ 1. Empty string for plain
 	// functions. Renderers read this to recognize a constructor
@@ -172,6 +183,76 @@ func (t VTuple) Display() string {
 		parts[i] = m.Display()
 	}
 	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+// VDict is an ordered dictionary value (the Dict module's underlying
+// representation). Keys are kept sorted by compareValues to give
+// O(n) ops on insert/get/remove for now — a simple, easy-to-audit
+// implementation. Upgrade to a balanced tree if perfilation shows a
+// hot path.
+//
+// The pairs slice IS the canonical representation; keeping it sorted
+// lets us:
+//   - Diff two dicts (union/intersect/diff) in linear time
+//   - Iterate in deterministic key order (so toList is stable)
+//   - Equality-compare via memberwise pair equality (no rebalance noise)
+//
+// Keys must be "comparable" per compareValues — Int / Float / String /
+// Char. The typechecker enforces this at call sites; the runtime
+// returns an error if a non-comparable key sneaks through.
+type VDict struct {
+	// Pairs is sorted ascending by Key (per compareValues). MUST
+	// stay sorted across mutations — every helper that touches
+	// pairs rebuilds them in order.
+	Pairs []VDictPair
+}
+
+// VDictPair is one key/value entry. Stored as a struct (not a tuple)
+// so the Go compiler keeps it tight; the user-facing API exposes
+// these as `(k, v)` tuples via Dict.toList.
+type VDictPair struct {
+	Key   Value
+	Value Value
+}
+
+func (VDict) isValue() {}
+func (d VDict) Display() string {
+	if len(d.Pairs) == 0 {
+		return "Dict.empty"
+	}
+	parts := make([]string, len(d.Pairs))
+	for i, p := range d.Pairs {
+		parts[i] = p.Key.Display() + " => " + p.Value.Display()
+	}
+	return "Dict{" + strings.Join(parts, ", ") + "}"
+}
+
+// VSet is an ordered set value (the Set module's underlying
+// representation). Items are kept sorted by compareValues. Same
+// "comparable-only" key constraint as VDict — the typechecker
+// enforces it at call sites, the runtime guards against accidents.
+//
+// Internally we could have reused VDict-with-Unit-values (which is how
+// Elm implements Set), but a dedicated VSet keeps Display() readable
+// ("Set{1, 2, 3}" vs "Dict{1 => (), 2 => (), 3 => ()}") and lets the
+// JSON codec emit a cleaner wire ("__set":[1,2,3]) without a synthetic
+// Unit on every entry.
+type VSet struct {
+	// Items is sorted ascending per compareValues. MUST stay sorted
+	// across mutations — every helper rebuilds them in order.
+	Items []Value
+}
+
+func (VSet) isValue() {}
+func (s VSet) Display() string {
+	if len(s.Items) == 0 {
+		return "Set.empty"
+	}
+	parts := make([]string, len(s.Items))
+	for i, it := range s.Items {
+		parts[i] = it.Display()
+	}
+	return "Set{" + strings.Join(parts, ", ") + "}"
 }
 
 func atomicDisplay(v Value) string {

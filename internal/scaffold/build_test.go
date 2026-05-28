@@ -20,7 +20,7 @@ func TestValidateProductionConfig_NoAuthSkips(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "mar.json"), `{"name":"no-auth-app"}`)
 
-	if err := validateProductionConfig(dir); err != nil {
+	if err := ValidateProductionConfig(dir); err != nil {
 		t.Fatalf("expected no error when auth isn't registered; got %v", err)
 	}
 }
@@ -34,7 +34,7 @@ func TestValidateProductionConfig_AuthRequiresMail(t *testing.T) {
 	registerFakeAuth()
 	t.Cleanup(runtime.ResetAuthForTesting)
 
-	err := validateProductionConfig(dir)
+	err := ValidateProductionConfig(dir)
 	if err == nil {
 		t.Fatal("expected error for missing auth+mail config; got nil")
 	}
@@ -65,7 +65,7 @@ func TestValidateProductionConfig_PartialMail(t *testing.T) {
 	registerFakeAuth()
 	t.Cleanup(runtime.ResetAuthForTesting)
 
-	err := validateProductionConfig(dir)
+	err := ValidateProductionConfig(dir)
 	if err == nil {
 		t.Fatal("expected error for partial mail config; got nil")
 	}
@@ -100,7 +100,7 @@ func TestValidateProductionConfig_HappyPath(t *testing.T) {
 	registerFakeAuth()
 	t.Cleanup(runtime.ResetAuthForTesting)
 
-	if err := validateProductionConfig(dir); err != nil {
+	if err := ValidateProductionConfig(dir); err != nil {
 		t.Errorf("expected nil for fully configured project; got %v", err)
 	}
 }
@@ -139,10 +139,9 @@ func writeFile(t *testing.T, path, content string) {
 }
 
 // registerFakeAuth simulates the side effect Auth.config has at
-// runtime so validateProductionConfig sees a registered Auth.
+// runtime so ValidateProductionConfig sees a registered Auth.
 // Calling RegisterAuth with a zero VAuth is enough — the validator
 // only checks `CurrentAuth() != nil`.
 func registerFakeAuth() {
 	runtime.RegisterAuth(runtime.VAuth{})
 }
-

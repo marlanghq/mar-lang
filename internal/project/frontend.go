@@ -106,6 +106,10 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 	aliasesByModule := map[string]map[string]typecheck.TypeAlias{}
 	customsByModule := map[string]map[string]typecheck.CustomType{}
 	valueTypes := map[string]typecheck.Type{}
+	// Per-expression types from every module merged here. The shape
+	// lint consults this map to validate non-literal record values
+	// (e.g. `body = input.body`) against entity column types.
+	allExprTypes := map[ast.Expr]typecheck.Type{}
 	for _, name := range order {
 		mod := loaded[name]
 		// Build the importable type set for this module: union of
@@ -134,6 +138,9 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 			tEnv.Define(name+"."+vname, t)
 			valueTypes[name+"."+vname] = t
 		}
+		for e, t := range res.ExprTypes {
+			allExprTypes[e] = t
+		}
 		modAliases := map[string]typecheck.TypeAlias{}
 		for tname, alias := range res.TypeAliases {
 			modAliases[tname] = alias
@@ -151,14 +158,30 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 	for _, name := range order {
 		out = append(out, loaded[name])
 	}
+
+	// Boundary shape lint. Catches record-shape mismatches at
+	// Repo.* / Auth.config callsites that BaseEnv's polymorphic
+	// types let through. Surfaces the FIRST issue as a regular
+	// source error so the CLI's snippet renderer kicks in — same
+	// shape as a typecheck.InferError. (Reporting them all at once
+	// would need a multi-error wrapper; one-at-a-time fits the
+	// existing pipeline and matches how typecheck.CheckModule
+	// surfaces only the first inference failure.)
+	if issues := typecheck.RunShapeLint(out, allExprTypes); len(issues) > 0 {
+		issue := issues[0]
+		modPath := paths[issue.Module]
+		modSrc := sources[issue.Module]
+		return nil, nil, diag.Wrap(modPath, modSrc, &issue)
+	}
+
 	return out, valueTypes, nil
 }
 
 // resolveImport looks for a .mar file matching the dotted module name in the
 // given directory (and its subdirectories that match the path).
 //
-//   Foo       -> dir/Foo.mar
-//   Foo.Bar   -> dir/Foo/Bar.mar
+//	Foo       -> dir/Foo.mar
+//	Foo.Bar   -> dir/Foo/Bar.mar
 func resolveImport(dir string, moduleName ast.ModuleName) (string, error) {
 	if len(moduleName) == 0 {
 		return "", fmt.Errorf("empty module name")
@@ -206,12 +229,23 @@ func LoadIntoEnvWithModulesAndHook(
 	if installBuiltins != nil {
 		installBuiltins(rEnv, mods)
 	}
+	byName := indexModules(mods)
 	for _, m := range mods {
-		if err := loadIntoEnv(m, joinName(m.Name), rEnv); err != nil {
+		if err := loadIntoEnv(m, joinName(m.Name), rEnv, byName); err != nil {
 			return nil, nil, nil, err
 		}
 	}
 	return rEnv, mods, valueTypes, nil
+}
+
+// indexModules keys modules by their dotted name. Used by loadIntoEnv to
+// resolve `import M exposing (Type(..))` against the imported module's AST.
+func indexModules(mods []*ast.Module) map[string]*ast.Module {
+	out := make(map[string]*ast.Module, len(mods))
+	for _, m := range mods {
+		out[joinName(m.Name)] = m
+	}
+	return out
 }
 
 // (joinName, isStdlib, topoSort live in project.go.)

@@ -44,6 +44,15 @@ func BaseEnv() *Env {
 	for name, v := range timeBuiltins() {
 		env.Define(name, v)
 	}
+	for name, v := range dictBuiltins() {
+		env.Define(name, v)
+	}
+	for name, v := range setBuiltins() {
+		env.Define(name, v)
+	}
+	for name, v := range charBuiltins() {
+		env.Define(name, v)
+	}
 	env = extendBaseEnv(env)
 	// Register qualified aliases (List.map etc.) that point to the same values.
 	for q, f := range qualifiedAliasMapping() {
@@ -54,114 +63,192 @@ func BaseEnv() *Env {
 	return env
 }
 
+// QualifiedAliasNames returns the set of `Module.name` qualified
+// stdlib bindings the runtime knows about. Exposed for drift tests
+// that compare this set against typecheck.BaseQualifiedSymbols —
+// without coverage here, a builtin can typecheck but fail at runtime
+// with "unbound qualified name: Foo.bar".
+func QualifiedAliasNames() map[string]bool {
+	out := make(map[string]bool)
+	for q := range qualifiedAliasMapping() {
+		out[q] = true
+	}
+	return out
+}
+
 // qualifiedAliasMapping returns Module.name -> flat name for stdlib aliases.
 func qualifiedAliasMapping() map[string]string {
 	return map[string]string{
-		"List.length":   "listLength",
-		"List.map":      "listMap",
-		"List.filter":   "listFilter",
-		"List.foldl":    "listFoldl",
-		"List.sum":      "listSum",
-		"List.range":    "listRange",
-		"List.reverse":  "listReverse",
-		"List.head":     "listHead",
-		"List.tail":     "listTail",
-		"List.isEmpty":  "listIsEmpty",
-		"List.concat":   "listConcat",
+		// List
+		"List.length":      "listLength",
+		"List.map":         "listMap",
+		"List.filter":      "listFilter",
+		"List.foldl":       "listFoldl",
+		"List.foldr":       "listFoldr",
+		"List.sum":         "listSum",
+		"List.product":     "listProduct",
+		"List.range":       "listRange",
+		"List.reverse":     "listReverse",
+		"List.head":        "listHead",
+		"List.tail":        "listTail",
+		"List.isEmpty":     "listIsEmpty",
+		"List.concat":      "listConcat",
+		"List.take":        "listTake",
+		"List.drop":        "listDrop",
+		"List.move":        "listMove",
+		"List.member":      "listMember",
+		"List.any":         "listAny",
+		"List.all":         "listAll",
+		"List.indexedMap":  "listIndexedMap",
+		"List.repeat":      "listRepeat",
+		"List.intersperse": "listIntersperse",
+		"List.partition":   "listPartition",
+		"List.concatMap":   "listConcatMap",
+		"List.filterMap":   "listFilterMap",
+		"List.maximum":     "listMaximum",
+		"List.minimum":     "listMinimum",
+		"List.sort":        "listSort",
+		"List.sortBy":      "listSortBy",
+		"List.sortWith":    "listSortWith",
+		// String
 		"String.length":     "stringLength",
 		"String.contains":   "stringContains",
 		"String.startsWith": "stringStartsWith",
+		"String.endsWith":   "stringEndsWith",
 		"String.fromInt":    "stringFromInt",
+		"String.toInt":      "stringToInt",
+		"String.fromFloat":  "stringFromFloat",
+		"String.toFloat":    "stringToFloat",
 		"String.toUpper":    "stringToUpper",
 		"String.toLower":    "stringToLower",
-		"Maybe.withDefault": "maybeWithDefault",
-		"Maybe.map":         "maybeMap",
-		"Maybe.andThen":     "maybeAndThen",
-		"Result.map":        "resultMap",
-		"Result.andThen":    "resultAndThen",
-		"Result.mapError":   "resultMapError",
 		"String.split":      "stringSplit",
 		"String.join":       "stringJoin",
 		"String.trim":       "stringTrim",
-		"Effect.succeed":    "effectSucceed",
-		"Effect.fail":       "effectFail",
-		"Effect.map":        "effectMap",
-		"Effect.andThen":    "effectAndThen",
-		"Effect.forEach":    "effectForEach",
-		"Effect.sequence":   "effectSequence",
-		"Effect.none":       "effectNone",
-		"Time.seconds":      "timeSeconds",
-		"Time.minutes":      "timeMinutes",
-		"Time.hours":        "timeHours",
-		"Time.days":         "timeDays",
-		"Time.weeks":        "timeWeeks",
-		"Time.toSeconds":    "timeToSeconds",
-		"Time.now":          "timeNow",
-		"Time.add":          "timeAdd",
-		"Time.sub":          "timeSub",
-		"Time.diff":         "timeDiff",
-		"Time.before":       "timeBefore",
-		"Time.after":        "timeAfter",
-		"Time.toIso":        "timeToIso",
-		"Time.fromIso":      "timeFromIso",
-		"Time.toMillis":     "timeToMillis",
-		"Time.fromYMD":      "timeFromYMD",
-		"Time.addDays":      "timeAddDays",
-		"Time.addMonths":    "timeAddMonths",
-		"Time.addYears":     "timeAddYears",
-		"Time.year":         "timeYear",
-		"Time.month":        "timeMonth",
-		"Time.day":          "timeDay",
-		"Time.hour":         "timeHour",
-		"Time.minute":       "timeMinute",
-		"Time.second":       "timeSecond",
-		"Http.get":    "httpGet",
-		"Http.post":   "httpPost",
-		"JSON.encode": "jsonEncode",
-		"JSON.decode": "jsonDecode",
+		"String.replace":    "stringReplace",
+		"String.repeat":     "stringRepeat",
+		"String.padLeft":    "stringPadLeft",
+		"String.padRight":   "stringPadRight",
+		"String.indexes":    "stringIndexes",
+		"String.toList":     "stringToList",
+		"String.fromList":   "stringFromList",
+		"String.cons":       "stringCons",
+		"String.map":        "stringMap",
+		"String.filter":     "stringFilter",
+		"String.foldl":      "stringFoldl",
+		"String.any":        "stringAny",
+		// Char
+		"Char.toCode":   "charToCode",
+		"Char.fromCode": "charFromCode",
+		"Char.isDigit":  "charIsDigit",
+		"Char.isAlpha":  "charIsAlpha",
+		"Char.isUpper":  "charIsUpper",
+		"Char.isLower":  "charIsLower",
+		"Char.toUpper":  "charToUpper",
+		"Char.toLower":  "charToLower",
+		// Maybe
+		"Maybe.withDefault": "maybeWithDefault",
+		"Maybe.map":         "maybeMap",
+		"Maybe.andThen":     "maybeAndThen",
+		"Maybe.map2":        "maybeMap2",
+		"Maybe.map3":        "maybeMap3",
+		"Maybe.andMap":      "maybeAndMap",
+		"Maybe.filter":      "maybeFilter",
+		// Result
+		"Result.map":         "resultMap",
+		"Result.andThen":     "resultAndThen",
+		"Result.mapError":    "resultMapError",
+		"Result.withDefault": "resultWithDefault",
+		"Result.fromMaybe":   "resultFromMaybe",
+		"Result.toMaybe":     "resultToMaybe",
+		// Tuple
+		"Tuple.first":     "tupleFirst",
+		"Tuple.second":    "tupleSecond",
+		"Tuple.pair":      "tuplePair",
+		"Tuple.mapFirst":  "tupleMapFirst",
+		"Tuple.mapSecond": "tupleMapSecond",
+		"Tuple.mapBoth":   "tupleMapBoth",
+		"Effect.succeed":  "effectSucceed",
+		"Effect.fail":     "effectFail",
+		"Effect.map":      "effectMap",
+		"Effect.andThen":  "effectAndThen",
+		"Effect.forEach":  "effectForEach",
+		"Effect.sequence": "effectSequence",
+		"Effect.none":     "effectNone",
+		"Time.seconds":    "timeSeconds",
+		"Time.minutes":    "timeMinutes",
+		"Time.hours":      "timeHours",
+		"Time.days":       "timeDays",
+		"Time.weeks":      "timeWeeks",
+		"Time.toSeconds":  "timeToSeconds",
+		"Time.now":        "timeNow",
+		"Time.add":        "timeAdd",
+		"Time.sub":        "timeSub",
+		"Time.diff":       "timeDiff",
+		"Time.before":     "timeBefore",
+		"Time.after":      "timeAfter",
+		"Time.toIso":      "timeToIso",
+		"Time.fromIso":    "timeFromIso",
+		"Time.toMillis":   "timeToMillis",
+		"Time.fromYMD":    "timeFromYMD",
+		"Time.addDays":    "timeAddDays",
+		"Time.addMonths":  "timeAddMonths",
+		"Time.addYears":   "timeAddYears",
+		"Time.year":       "timeYear",
+		"Time.month":      "timeMonth",
+		"Time.day":        "timeDay",
+		"Time.hour":       "timeHour",
+		"Time.minute":     "timeMinute",
+		"Time.second":     "timeSecond",
+		"Http.get":        "httpGet",
+		"Http.post":       "httpPost",
+		"JSON.encode":     "jsonEncode",
+		"JSON.decode":     "jsonDecode",
 		// Low-level endpoint builders + Endpoint.implement.
 		"Endpoint.get":       "endpointGet",
 		"Endpoint.post":      "endpointPost",
 		"Endpoint.implement": "endpointImplement",
 		"Endpoint.call":      "endpointCall",
 		// REST sugar.
-		"Endpoint.list":   "endpointList",
-		"Endpoint.show":   "endpointShow",
-		"Endpoint.create": "endpointCreate",
-		"Endpoint.update": "endpointUpdate",
-		"Endpoint.delete": "endpointDelete",
+		"Endpoint.list":     "endpointList",
+		"Endpoint.show":     "endpointShow",
+		"Endpoint.create":   "endpointCreate",
+		"Endpoint.update":   "endpointUpdate",
+		"Endpoint.delete":   "endpointDelete",
 		"Response.ok":       "responseOk",
 		"Response.notFound": "responseNotFound",
 		"Response.status":   "responseStatus",
 		// Entity (record-literal form)
-		"Entity.define":  "entityDefine",
-		"Entity.serial":  "entitySerial",
-		"Entity.int":     "entityInt",
-		"Entity.text":    "entityText",
-		"Entity.bool":    "entityBool",
+		"Entity.define":    "entityDefine",
+		"Entity.serial":    "entitySerial",
+		"Entity.int":       "entityInt",
+		"Entity.text":      "entityText",
+		"Entity.bool":      "entityBool",
 		"Entity.enum":      "entityEnum",
 		"Entity.timestamp": "entityTimestamp",
-		"Entity.notNull": "entityNotNull",
+		"Entity.notNull":   "entityNotNull",
 		// Repo
-		"Repo.all":        "repoAll",
-		"Repo.findById":   "repoFindByID",
-		"Repo.findBy":     "repoFindBy",
-		"Repo.create":     "repoCreate",
-		"Repo.update":     "repoUpdate",
-		"Repo.deleteById": "repoDeleteByID",
-		"App.frontend":      "appFrontend",
-		"App.backend":       "appBackend",
-		"App.fullstack":     "appFullstack",
-		"Page.create":       "pageCreate",
-		"Page.protected":         "pageProtected",
-		"Page.dynamic":           "pageDynamic",
-		"Page.dynamicProtected":  "pageDynamicProtected",
-		"Nav.push":          "navPush",
-		"Nav.replace":       "navReplace",
-		"Nav.afterSignIn":   "navAfterSignIn",
-		"Service.declare":   "serviceDeclare",
-		"Service.implement": "serviceImplement",
-		"Service.call":      "serviceCall",
+		"Repo.all":              "repoAll",
+		"Repo.findById":         "repoFindByID",
+		"Repo.findBy":           "repoFindBy",
+		"Repo.create":           "repoCreate",
+		"Repo.update":           "repoUpdate",
+		"Repo.deleteById":       "repoDeleteByID",
+		"App.frontend":          "appFrontend",
+		"App.backend":           "appBackend",
+		"App.fullstack":         "appFullstack",
+		"Page.create":           "pageCreate",
+		"Page.protected":        "pageProtected",
+		"Page.dynamic":          "pageDynamic",
+		"Page.dynamicProtected": "pageDynamicProtected",
+		"Nav.push":              "navPush",
+		"Nav.replace":           "navReplace",
+		"Auth.completeSignIn":   "authCompleteSignIn",
+		"Nav.pushTo":            "navPushTo",
+		"Nav.replaceTo":         "navReplaceTo",
+		"linkTo":                "linkTo",
+		"Service.declare":       "serviceDeclare",
+		"Service.implement":     "serviceImplement",
+		"Service.call":          "serviceCall",
 		// Auth (passwordless email-code authentication)
 		"Auth.config":       "authConfig",
 		"Auth.protect":      "authProtect",
@@ -172,6 +259,106 @@ func qualifiedAliasMapping() map[string]string {
 		"Auth.verifyCode":   "authVerifyCode",
 		"Auth.logout":       "authLogout",
 		"Auth.me":           "authMe",
+		// UI module: SwiftUI-style declarative vocabulary. The flat
+		// names (uiText / navigationStack / etc.) are already bound by
+		// viewBuiltins(); these aliases make `UI.text` and friends
+		// resolvable too, so `import UI exposing (text)` works the
+		// same way it does in the typecheck env, JS runtime, and iOS
+		// loader. Without these, an `import UI exposing (text)`
+		// typechecks but explodes at runtime: project.loadIntoEnv
+		// looks up `UI.text`, finds nothing, and never binds bare
+		// `text`.
+		"UI.navigationStack": "navigationStack",
+		"UI.form":            "form",
+		"UI.list":            "list",
+		"UI.section":         "uiSection",
+		"UI.keyedList":       "uiKeyedList",
+		"UI.hstack":          "hstack",
+		"UI.vstack":          "vstack",
+		"UI.textField":       "textField",
+		"UI.textArea":        "textArea",
+		"UI.picker":          "picker",
+		"UI.navigationTitle": "navigationTitle",
+		"UI.topBarTrailing":  "uiTopBarTrailing",
+		"UI.topBarLeading":   "uiTopBarLeading",
+		"UI.header":          "header",
+		"UI.footer":          "footer",
+		"UI.numericCode":     "numericCode",
+		"UI.disabled":        "uiDisabled",
+		"UI.keyed":           "uiKeyed",
+		"UI.onMove":          "uiOnMove",
+		"UI.onDelete":        "uiOnDelete",
+		"UI.text":            "uiText",
+		"UI.button":          "uiButton",
+		"UI.title":           "uiTitle",
+		"UI.subtitle":        "uiSubtitle",
+		"UI.errorText":       "uiErrorText",
+		"UI.paragraph":       "uiParagraph",
+		"UI.span":            "uiSpan",
+		"UI.bold":            "inlineBold",
+		"UI.italic":          "inlineItalic",
+		"UI.strikethrough":   "inlineStrikethrough",
+		"UI.code":            "inlineCode",
+		"UI.link":            "inlineLink",
+		"UI.chars":           "uiChars",
+		"UI.lines":           "uiLines",
+		"UI.width":           "uiWidth",
+		"UI.height":          "uiHeight",
+		"UI.navigationLink":  "uiNavigationLink",
+		"UI.spacer":          "uiSpacer",
+		"UI.toggle":          "uiToggle",
+		"UI.sheet":           "uiSheet",
+		"UI.confirm":         "uiConfirm",
+		"UI.empty":           "uiEmpty",
+		"UI.centered":        "uiCentered",
+		"UI.email":           "viewEmail",
+		"UI.password":        "viewPassword",
+		"UI.newPassword":     "viewNewPassword",
+		"UI.numeric":         "viewNumeric",
+		"UI.oneTimeCode":     "viewOneTimeCode",
+		"UI.submit":          "viewSubmit",
+		// Dict: Elm-style polymorphic ordered map. Keys must be a
+		// comparable type at runtime (Int / Float / String). Sorted
+		// internally so toList / keys / values iteration is stable.
+		"Dict.empty":     "dictEmpty",
+		"Dict.singleton": "dictSingleton",
+		"Dict.insert":    "dictInsert",
+		"Dict.update":    "dictUpdate",
+		"Dict.remove":    "dictRemove",
+		"Dict.isEmpty":   "dictIsEmpty",
+		"Dict.member":    "dictMember",
+		"Dict.get":       "dictGet",
+		"Dict.size":      "dictSize",
+		"Dict.keys":      "dictKeys",
+		"Dict.values":    "dictValues",
+		"Dict.toList":    "dictToList",
+		"Dict.fromList":  "dictFromList",
+		"Dict.map":       "dictMap",
+		"Dict.foldl":     "dictFoldl",
+		"Dict.foldr":     "dictFoldr",
+		"Dict.filter":    "dictFilter",
+		"Dict.partition": "dictPartition",
+		"Dict.union":     "dictUnion",
+		"Dict.intersect": "dictIntersect",
+		"Dict.diff":      "dictDiff",
+		// Set: Dict-but-keys-only. Same comparable-key constraint.
+		"Set.empty":     "setEmpty",
+		"Set.singleton": "setSingleton",
+		"Set.insert":    "setInsert",
+		"Set.remove":    "setRemove",
+		"Set.isEmpty":   "setIsEmpty",
+		"Set.member":    "setMember",
+		"Set.size":      "setSize",
+		"Set.toList":    "setToList",
+		"Set.fromList":  "setFromList",
+		"Set.map":       "setMap",
+		"Set.foldl":     "setFoldl",
+		"Set.foldr":     "setFoldr",
+		"Set.filter":    "setFilter",
+		"Set.partition": "setPartition",
+		"Set.union":     "setUnion",
+		"Set.intersect": "setIntersect",
+		"Set.diff":      "setDiff",
 	}
 }
 
@@ -183,7 +370,7 @@ func builtins() map[string]Value {
 
 		// Maybe constructors
 		"Nothing": VCtor{Tag: "Nothing"},
-		"Just":    nativeFn(1, func(args []Value) (Value, error) {
+		"Just": nativeFn(1, func(args []Value) (Value, error) {
 			return VCtor{Tag: "Just", Args: []Value{args[0]}}, nil
 		}),
 
@@ -194,6 +381,12 @@ func builtins() map[string]Value {
 		"Err": nativeFn(1, func(args []Value) (Value, error) {
 			return VCtor{Tag: "Err", Args: []Value{args[0]}}, nil
 		}),
+
+		// Order constructors — nullary, like Nothing. Mirrors Elm's
+		// Order type for List.sortWith comparators.
+		"LT": VCtor{Tag: "LT"},
+		"EQ": VCtor{Tag: "EQ"},
+		"GT": VCtor{Tag: "GT"},
 
 		// Arithmetic
 		"+": nativeFn(2, addOp),
@@ -357,6 +550,9 @@ func equalValues(a, b Value) bool {
 	case VString:
 		bv, ok := b.(VString)
 		return ok && av.V == bv.V
+	case VChar:
+		bv, ok := b.(VChar)
+		return ok && av.V == bv.V
 	case VBool:
 		bv, ok := b.(VBool)
 		return ok && av.V == bv.V
@@ -434,6 +630,15 @@ func compareValues(a, b Value) (int, error) {
 		return 0, nil
 	case VString:
 		bv := b.(VString)
+		switch {
+		case av.V < bv.V:
+			return -1, nil
+		case av.V > bv.V:
+			return 1, nil
+		}
+		return 0, nil
+	case VChar:
+		bv := b.(VChar)
 		switch {
 		case av.V < bv.V:
 			return -1, nil

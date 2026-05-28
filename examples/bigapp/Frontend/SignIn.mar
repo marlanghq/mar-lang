@@ -1,0 +1,206 @@
+module Frontend.SignIn exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, footer
+    , title, text, textField, button, empty
+    , email, numericCode, submit, width, chars
+    )
+
+
+-- Sign-in flow with visible error feedback.
+--
+-- The model splits into a `step` (what the user is doing right now —
+-- entering email, waiting on the network, entering code) and a
+-- separate `error` field. Errors stay visible until the user tries
+-- again, instead of the form silently flashing back to the previous
+-- state when a request fails.
+
+
+type Step
+    = AskEmail String
+    | Submitting String
+    | AskCode String String
+
+
+type alias Model =
+    { step  : Step
+    , error : Maybe String
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeRequested (Result String ())
+    | CodeVerified (Result String Shared.User)
+
+
+init : () -> (Model, Effect String Msg)
+init _ =
+    ( { step = AskEmail "", error = Nothing }, Effect.none )
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        DraftChanged value ->
+            ( { model | step = updateDraft value model.step }, Effect.none )
+
+        Submitted ->
+            case model.step of
+                AskEmail emailAddr ->
+                    if emailAddr == "" then
+                        ( { model | error = Just "Email is required." }, Effect.none )
+                    else
+                        ( { model | step = Submitting emailAddr, error = Nothing }
+                        , Auth.requestCode { email = emailAddr } CodeRequested
+                        )
+
+                AskCode emailAddr code ->
+                    if code == "" then
+                        ( { model | error = Just "Code is required." }, Effect.none )
+                    else
+                        ( { model | step = Submitting emailAddr, error = Nothing }
+                        , Auth.verifyCode { email = emailAddr, code = code } CodeVerified
+                        )
+
+                Submitting _ ->
+                    ( model, Effect.none )
+
+        CodeRequested (Ok ()) ->
+            case model.step of
+                Submitting emailAddr ->
+                    ( { model | step = AskCode emailAddr "", error = Nothing }
+                    , Effect.none
+                    )
+
+                _ ->
+                    ( model, Effect.none )
+
+        CodeRequested (Err why) ->
+            case model.step of
+                Submitting emailAddr ->
+                    ( { step = AskEmail emailAddr, error = Just (humanize why) }
+                    , Effect.none
+                    )
+
+                _ ->
+                    ( { model | error = Just (humanize why) }, Effect.none )
+
+        CodeVerified (Ok _) ->
+            -- Verified — Mar's auth runtime stores the session and the
+            -- next render will route the user to the configured
+            -- post-signin destination. We don't need to navigate here
+            -- explicitly; just clear local state.
+            ( { step = AskEmail "", error = Nothing }
+            , Auth.completeSignIn
+            )
+
+        CodeVerified (Err why) ->
+            case model.step of
+                Submitting emailAddr ->
+                    ( { step = AskCode emailAddr "", error = Just (humanize why) }
+                    , Effect.none
+                    )
+
+                _ ->
+                    ( { model | error = Just (humanize why) }, Effect.none )
+
+
+updateDraft : String -> Step -> Step
+updateDraft value step =
+    case step of
+        AskEmail _ ->
+            AskEmail value
+
+        AskCode emailAddr _ ->
+            AskCode emailAddr value
+
+        Submitting emailAddr ->
+            Submitting emailAddr
+
+
+-- Translate the framework's wire codes into human-readable
+-- explanations. The default catches any unknown variant so future
+-- backend errors land in the UI without crashing the case.
+humanize : String -> String
+humanize code =
+    case code of
+        "missing_email"           -> "Email is required."
+        "invalid email"           -> "That email doesn't look right."
+        "missing code"            -> "Code is required."
+        "invalid code"            -> "Wrong code. Try again or request a new one."
+        "expired code"            -> "Code expired. Request a new one."
+        "rate limited email"      -> "Too many code requests for this email. Try again later."
+        "rate limited ip"         -> "Too many code requests from this IP. Try again later."
+        other                     -> "Couldn't sign you in: " ++ other
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+errorBox : Maybe String -> View Msg
+errorBox maybeErr =
+    case maybeErr of
+        Just msg -> text msg
+        Nothing  -> empty
+
+
+view : Model -> View Msg
+view model =
+    case model.step of
+        AskEmail emailDraft ->
+            navigationStack [ navigationTitle "Sign in" ]
+                [ form
+                    [ section [ header "Welcome to BigApp" ]
+                        [ title "Sign in"
+                        , text "Enter your email and we'll send a one-time code."
+                        , textField [ email, submit Submitted, width (chars 30) ]
+                            "you@example.com" emailDraft DraftChanged
+                        , errorBox model.error
+                        ]
+                    , section []
+                        [ button [] Submitted "Send me a code" ]
+                    , section [ footer "No password. New users are added automatically." ]
+                        []
+                    ]
+                ]
+
+        AskCode emailAddr codeDraft ->
+            navigationStack [ navigationTitle "Enter your code" ]
+                [ form
+                    [ section [ header "Almost there" ]
+                        [ text ("We sent a 6-digit code to " ++ emailAddr ++ ".")
+                        , textField [ numericCode, submit Submitted ]
+                            "Code" codeDraft DraftChanged
+                        , errorBox model.error
+                        ]
+                    , section []
+                        [ button [] Submitted "Verify" ]
+                    ]
+                ]
+
+        Submitting _ ->
+            navigationStack [ navigationTitle "Working…" ]
+                [ form
+                    [ section []
+                        [ text "Talking to the server…" ]
+                    ]
+                ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/sign-in"
+        , title = "Sign in"
+        , init = init
+        , update = update
+        , view = view
+        }

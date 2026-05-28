@@ -182,12 +182,37 @@ func builtinCustomTypes() map[string]CustomType {
 			Constructors: map[string]CustomCtor{"True": {Result: TBool}, "False": {Result: TBool}},
 			CtorOrder:    []string{"True", "False"},
 		},
+		// Order — three-way comparison result. Mirrors Elm exactly so
+		// user code that came from Elm (or that the user wrote
+		// expecting Elm-style semantics for sortWith) just works.
+		// Registered as a built-in custom type so `case ord of LT -> ...`
+		// pattern matches exhaustively.
+		"Order": {
+			Name:   "Order",
+			Params: nil,
+			Constructors: map[string]CustomCtor{
+				"LT": {Result: TOrder},
+				"EQ": {Result: TOrder},
+				"GT": {Result: TOrder},
+			},
+			CtorOrder: []string{"LT", "EQ", "GT"},
+		},
 	}
 }
 
 func baseBindings() map[string]Type {
 	a := TVar{ID: -1}
 	b := TVar{ID: -2}
+
+	// `cmp` is the Comparable-constrained quantified var used by the
+	// ordering operators below. Same mechanism as Dict/Set keys: when
+	// the user writes `record1 < record2`, unification tries to bind
+	// this comparable TVar to a TRecord, the unifier rejects it, and
+	// inferBinop surfaces the kind-mismatch reason. Strict semantics —
+	// only Int / Float / String / Char satisfy Comparable. Tuples /
+	// lists / records / custom types don't (the runtime's
+	// compareValues doesn't recurse).
+	cmp := TVar{ID: -22, Constraint: KindComparable}
 
 	out := map[string]Type{}
 
@@ -198,7 +223,9 @@ func baseBindings() map[string]Type {
 	out["*"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
 	out["/"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
 
-	// Comparisons: forall a. a -> a -> Bool
+	// Equality: forall a. a -> a -> Bool. Stays polymorphic because
+	// equalValues is fully structural — records, tuples, lists, ctors
+	// all compare element-wise. Equality is universal; ordering is not.
 	out["=="] = TForall{
 		Vars: []int{a.ID},
 		Body: TArrow{From: a, To: TArrow{From: a, To: TBool}},
@@ -207,21 +234,24 @@ func baseBindings() map[string]Type {
 		Vars: []int{a.ID},
 		Body: TArrow{From: a, To: TArrow{From: a, To: TBool}},
 	}
+	// Ordering: forall k:Comparable. k -> k -> Bool. Comparable is
+	// Int / Float / String / Char only — see the `cmp` declaration
+	// above for the rationale.
 	out["<"] = TForall{
-		Vars: []int{a.ID},
-		Body: TArrow{From: a, To: TArrow{From: a, To: TBool}},
+		Vars: []int{cmp.ID},
+		Body: TArrow{From: cmp, To: TArrow{From: cmp, To: TBool}},
 	}
 	out[">"] = TForall{
-		Vars: []int{a.ID},
-		Body: TArrow{From: a, To: TArrow{From: a, To: TBool}},
+		Vars: []int{cmp.ID},
+		Body: TArrow{From: cmp, To: TArrow{From: cmp, To: TBool}},
 	}
 	out["<="] = TForall{
-		Vars: []int{a.ID},
-		Body: TArrow{From: a, To: TArrow{From: a, To: TBool}},
+		Vars: []int{cmp.ID},
+		Body: TArrow{From: cmp, To: TArrow{From: cmp, To: TBool}},
 	}
 	out[">="] = TForall{
-		Vars: []int{a.ID},
-		Body: TArrow{From: a, To: TArrow{From: a, To: TBool}},
+		Vars: []int{cmp.ID},
+		Body: TArrow{From: cmp, To: TArrow{From: cmp, To: TBool}},
 	}
 
 	// Logical
@@ -271,6 +301,11 @@ func baseBindings() map[string]Type {
 	out["Ok"] = TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: b, To: TResult(a, b)}}
 	out["Err"] = TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: a, To: TResult(a, b)}}
 
+	// Order constructors — nullary, monomorphic.
+	out["LT"] = TOrder
+	out["EQ"] = TOrder
+	out["GT"] = TOrder
+
 	// --- stdlib (List, String, Maybe) ---
 	for k, v := range stdlibBindings() {
 		out[k] = v
@@ -282,6 +317,14 @@ func baseBindings() map[string]Type {
 func stdlibBindings() map[string]Type {
 	a := TVar{ID: -3}
 	b := TVar{ID: -4}
+
+	// Comparable-constrained vars for Dict / Set keys. IDs -20 and -21
+	// sit outside the existing range used by other stdlib schemes
+	// (-3..-10 and -101..-102) so there's no aliasing risk. The
+	// Constraint field makes the unifier reject non-comparable types
+	// (Records / tuples / arbitrary custom types) at the call site.
+	dictK := TVar{ID: -20, Constraint: KindComparable}
+	setJ := TVar{ID: -21, Constraint: KindComparable}
 
 	return map[string]Type{
 		// List
@@ -317,6 +360,137 @@ func stdlibBindings() map[string]Type {
 		"listTail":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(a), To: TMaybe(TList(a))}},
 		"listIsEmpty": TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(a), To: TBool}},
 		"listConcat":  TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(TList(a)), To: TList(a)}},
+
+		// listTake / listDrop : Int -> List a -> List a
+		"listTake": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TInt, To: TArrow{From: TList(a), To: TList(a)}},
+		},
+		"listDrop": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TInt, To: TArrow{From: TList(a), To: TList(a)}},
+		},
+		// List.move : Int -> Int -> List a -> List a
+		// Pure list-splice helper. Removes the element at `from` and
+		// inserts it at `to`. Returns the input unchanged when
+		// from == to or either index is out of range — defensive so
+		// stale Msgs (race conditions) don't corrupt the list.
+		"listMove": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TList(a), To: TList(a)}}},
+		},
+		// listMember : a -> List a -> Bool
+		"listMember": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: a, To: TArrow{From: TList(a), To: TBool}},
+		},
+		// listAny / listAll : (a -> Bool) -> List a -> Bool
+		"listAny": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TArrow{From: a, To: TBool},
+				To:   TArrow{From: TList(a), To: TBool},
+			},
+		},
+		"listAll": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TArrow{From: a, To: TBool},
+				To:   TArrow{From: TList(a), To: TBool},
+			},
+		},
+		// listFoldr : (a -> b -> b) -> b -> List a -> b
+		"listFoldr": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: a, To: TArrow{From: b, To: b}},
+				To: TArrow{
+					From: b,
+					To:   TArrow{From: TList(a), To: b},
+				},
+			},
+		},
+		// listIndexedMap : (Int -> a -> b) -> List a -> List b
+		"listIndexedMap": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: TInt, To: TArrow{From: a, To: b}},
+				To:   TArrow{From: TList(a), To: TList(b)},
+			},
+		},
+		// listRepeat : Int -> a -> List a
+		"listRepeat": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TInt, To: TArrow{From: a, To: TList(a)}},
+		},
+		// listIntersperse : a -> List a -> List a
+		"listIntersperse": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: a, To: TArrow{From: TList(a), To: TList(a)}},
+		},
+		// listPartition : (a -> Bool) -> List a -> (List a, List a)
+		"listPartition": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TArrow{From: a, To: TBool},
+				To: TArrow{
+					From: TList(a),
+					To:   TTuple{Members: []Type{TList(a), TList(a)}},
+				},
+			},
+		},
+		// listConcatMap : (a -> List b) -> List a -> List b
+		"listConcatMap": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: a, To: TList(b)},
+				To:   TArrow{From: TList(a), To: TList(b)},
+			},
+		},
+		// listFilterMap : (a -> Maybe b) -> List a -> List b
+		"listFilterMap": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: a, To: TMaybe(b)},
+				To:   TArrow{From: TList(a), To: TList(b)},
+			},
+		},
+		// listMaximum / listMinimum : List a -> Maybe a
+		"listMaximum": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TList(a), To: TMaybe(a)},
+		},
+		"listMinimum": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TList(a), To: TMaybe(a)},
+		},
+		// listProduct : List Int -> Int (same shape as listSum)
+		"listProduct": TArrow{From: TList(TInt), To: TInt},
+		// listSort : List a -> List a
+		"listSort": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TList(a), To: TList(a)},
+		},
+		// listSortBy : (a -> b) -> List a -> List a
+		"listSortBy": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: a, To: b},
+				To:   TArrow{From: TList(a), To: TList(a)},
+			},
+		},
+		// listSortWith : (a -> a -> Order) -> List a -> List a
+		// Comparator returns LT / EQ / GT — same convention as Elm.
+		// (Earlier drafts used Int -1/0/1; using a named sum type
+		// makes the result self-documenting and prevents the "I
+		// returned 1 but meant LT" foot-gun.)
+		"listSortWith": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TArrow{From: a, To: TArrow{From: a, To: TOrder}},
+				To:   TArrow{From: TList(a), To: TList(a)},
+			},
+		},
 
 		// String
 		"stringLength":     TArrow{From: TString, To: TInt},
@@ -367,10 +541,175 @@ func stdlibBindings() map[string]Type {
 				To:   TArrow{From: TResult(a, b), To: TResult(TVar{ID: -7}, b)},
 			},
 		},
+		// Result extras
+		"resultWithDefault": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{From: b, To: TArrow{From: TResult(a, b), To: b}},
+		},
+		"resultFromMaybe": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{From: a, To: TArrow{From: TMaybe(b), To: TResult(a, b)}},
+		},
+		"resultToMaybe": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{From: TResult(a, b), To: TMaybe(b)},
+		},
+		// Maybe extras
+		"maybeMap2": TForall{
+			Vars: []int{a.ID, b.ID, -8},
+			Body: TArrow{
+				From: TArrow{From: a, To: TArrow{From: b, To: TVar{ID: -8}}},
+				To: TArrow{
+					From: TMaybe(a),
+					To: TArrow{
+						From: TMaybe(b),
+						To:   TMaybe(TVar{ID: -8}),
+					},
+				},
+			},
+		},
+		"maybeMap3": TForall{
+			Vars: []int{a.ID, b.ID, -8, -9},
+			Body: TArrow{
+				From: TArrow{From: a, To: TArrow{From: b, To: TArrow{From: TVar{ID: -8}, To: TVar{ID: -9}}}},
+				To: TArrow{
+					From: TMaybe(a),
+					To: TArrow{
+						From: TMaybe(b),
+						To: TArrow{
+							From: TMaybe(TVar{ID: -8}),
+							To:   TMaybe(TVar{ID: -9}),
+						},
+					},
+				},
+			},
+		},
+		// maybeAndMap : Maybe a -> Maybe (a -> b) -> Maybe b
+		"maybeAndMap": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TMaybe(a),
+				To:   TArrow{From: TMaybe(TArrow{From: a, To: b}), To: TMaybe(b)},
+			},
+		},
+		"maybeFilter": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TArrow{From: a, To: TBool},
+				To:   TArrow{From: TMaybe(a), To: TMaybe(a)},
+			},
+		},
+		// Tuple — 2-tuple helpers. The tvars a, b are the two element
+		// positions; ' (prime) suffix on output names tracks the
+		// mapBoth/mapFirst/mapSecond renames cleanly.
+		"tupleFirst": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{From: TTuple{Members: []Type{a, b}}, To: a},
+		},
+		"tupleSecond": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{From: TTuple{Members: []Type{a, b}}, To: b},
+		},
+		"tuplePair": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: a,
+				To:   TArrow{From: b, To: TTuple{Members: []Type{a, b}}},
+			},
+		},
+		"tupleMapFirst": TForall{
+			Vars: []int{a.ID, b.ID, -8},
+			Body: TArrow{
+				From: TArrow{From: a, To: TVar{ID: -8}},
+				To: TArrow{
+					From: TTuple{Members: []Type{a, b}},
+					To:   TTuple{Members: []Type{TVar{ID: -8}, b}},
+				},
+			},
+		},
+		"tupleMapSecond": TForall{
+			Vars: []int{a.ID, b.ID, -8},
+			Body: TArrow{
+				From: TArrow{From: b, To: TVar{ID: -8}},
+				To: TArrow{
+					From: TTuple{Members: []Type{a, b}},
+					To:   TTuple{Members: []Type{a, TVar{ID: -8}}},
+				},
+			},
+		},
+		"tupleMapBoth": TForall{
+			Vars: []int{a.ID, b.ID, -8, -9},
+			Body: TArrow{
+				From: TArrow{From: a, To: TVar{ID: -8}},
+				To: TArrow{
+					From: TArrow{From: b, To: TVar{ID: -9}},
+					To: TArrow{
+						From: TTuple{Members: []Type{a, b}},
+						To:   TTuple{Members: []Type{TVar{ID: -8}, TVar{ID: -9}}},
+					},
+				},
+			},
+		},
 		// String extras
-		"stringSplit": TArrow{From: TString, To: TArrow{From: TString, To: TList(TString)}},
-		"stringJoin":  TArrow{From: TString, To: TArrow{From: TList(TString), To: TString}},
-		"stringTrim":  TArrow{From: TString, To: TString},
+		"stringSplit":     TArrow{From: TString, To: TArrow{From: TString, To: TList(TString)}},
+		"stringJoin":      TArrow{From: TString, To: TArrow{From: TList(TString), To: TString}},
+		"stringTrim":      TArrow{From: TString, To: TString},
+		"stringEndsWith":  TArrow{From: TString, To: TArrow{From: TString, To: TBool}},
+		"stringToInt":     TArrow{From: TString, To: TMaybe(TInt)},
+		"stringToFloat":   TArrow{From: TString, To: TMaybe(TFloat)},
+		"stringFromFloat": TArrow{From: TFloat, To: TString},
+		"stringReplace": TArrow{
+			From: TString,
+			To:   TArrow{From: TString, To: TArrow{From: TString, To: TString}},
+		},
+		"stringRepeat": TArrow{From: TInt, To: TArrow{From: TString, To: TString}},
+		// padLeft / padRight take a Char (Elm-style) — see stringPadLeft
+		// in internal/runtime/stdlib.go for the rationale.
+		"stringPadLeft": TArrow{
+			From: TInt,
+			To:   TArrow{From: TChar, To: TArrow{From: TString, To: TString}},
+		},
+		"stringPadRight": TArrow{
+			From: TInt,
+			To:   TArrow{From: TChar, To: TArrow{From: TString, To: TString}},
+		},
+		"stringIndexes": TArrow{From: TString, To: TArrow{From: TString, To: TList(TInt)}},
+		// String <-> [Char] bridges.
+		"stringToList":   TArrow{From: TString, To: TList(TChar)},
+		"stringFromList": TArrow{From: TList(TChar), To: TString},
+		"stringCons":     TArrow{From: TChar, To: TArrow{From: TString, To: TString}},
+		// String higher-order ops over Char. The accumulator type
+		// `b` is reused from the outer scope, polymorphic per call.
+		"stringMap": TArrow{
+			From: TArrow{From: TChar, To: TChar},
+			To:   TArrow{From: TString, To: TString},
+		},
+		"stringFilter": TArrow{
+			From: TArrow{From: TChar, To: TBool},
+			To:   TArrow{From: TString, To: TString},
+		},
+		// stringFoldl : (Char -> b -> b) -> b -> String -> b
+		"stringFoldl": TForall{
+			Vars: []int{b.ID},
+			Body: TArrow{
+				From: TArrow{From: TChar, To: TArrow{From: b, To: b}},
+				To:   TArrow{From: b, To: TArrow{From: TString, To: b}},
+			},
+		},
+		"stringAny": TArrow{
+			From: TArrow{From: TChar, To: TBool},
+			To:   TArrow{From: TString, To: TBool},
+		},
+
+		// Char module — monomorphic. Unicode code point semantics.
+		"charToCode":   TArrow{From: TChar, To: TInt},
+		"charFromCode": TArrow{From: TInt, To: TChar},
+		"charIsDigit":  TArrow{From: TChar, To: TBool},
+		"charIsAlpha":  TArrow{From: TChar, To: TBool},
+		"charIsUpper":  TArrow{From: TChar, To: TBool},
+		"charIsLower":  TArrow{From: TChar, To: TBool},
+		"charToUpper":  TArrow{From: TChar, To: TChar},
+		"charToLower":  TArrow{From: TChar, To: TChar},
 
 		// Effect
 		"effectSucceed": TForall{
@@ -505,6 +844,206 @@ func stdlibBindings() map[string]Type {
 		"timeMinute": TArrow{From: TTime, To: TInt},
 		"timeSecond": TArrow{From: TTime, To: TInt},
 
+		// Dict k v / Set k — Elm-style polymorphic containers with a
+		// Comparable constraint on the key. The constraint lives on
+		// the TVar itself (KindComparable); the unifier rejects any
+		// attempt to bind it to a Record / custom type / tuple /
+		// function at the call site. This catches `Dict.fromList
+		// [({name: "bob"}, 1)]` at compile time with a message like
+		// "a record is not comparable; allowed key types are Int,
+		// Float, String, Char" — no more waiting for a runtime
+		// "comparison: unsupported types" surprise.
+		//
+		// k / j are the Comparable-marked vars (IDs -20 / -21).
+		// v / acc / w continue to use the unconstrained `a` / `b` /
+		// -10 already in scope.
+		"dictEmpty": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TDict(dictK, b),
+		},
+		"dictSingleton": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: dictK, To: TArrow{From: b, To: TDict(dictK, b)}},
+		},
+		"dictInsert": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{
+				From: dictK,
+				To:   TArrow{From: b, To: TArrow{From: TDict(dictK, b), To: TDict(dictK, b)}},
+			},
+		},
+		// dictUpdate : k -> (Maybe v -> Maybe v) -> Dict k v -> Dict k v
+		"dictUpdate": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{
+				From: dictK,
+				To: TArrow{
+					From: TArrow{From: TMaybe(b), To: TMaybe(b)},
+					To:   TArrow{From: TDict(dictK, b), To: TDict(dictK, b)},
+				},
+			},
+		},
+		"dictRemove": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: dictK, To: TArrow{From: TDict(dictK, b), To: TDict(dictK, b)}},
+		},
+		"dictIsEmpty": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: TDict(dictK, b), To: TBool},
+		},
+		"dictMember": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: dictK, To: TArrow{From: TDict(dictK, b), To: TBool}},
+		},
+		"dictGet": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: dictK, To: TArrow{From: TDict(dictK, b), To: TMaybe(b)}},
+		},
+		"dictSize": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: TDict(dictK, b), To: TInt},
+		},
+		"dictKeys": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: TDict(dictK, b), To: TList(dictK)},
+		},
+		"dictValues": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: TDict(dictK, b), To: TList(b)},
+		},
+		"dictToList": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: TDict(dictK, b), To: TList(TTuple{Members: []Type{dictK, b}})},
+		},
+		"dictFromList": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: TList(TTuple{Members: []Type{dictK, b}}), To: TDict(dictK, b)},
+		},
+		// dictMap : (k -> v -> w) -> Dict k v -> Dict k w
+		"dictMap": TForall{
+			Vars: []int{dictK.ID, b.ID, -10},
+			Body: TArrow{
+				From: TArrow{From: dictK, To: TArrow{From: b, To: TVar{ID: -10}}},
+				To:   TArrow{From: TDict(dictK, b), To: TDict(dictK, TVar{ID: -10})},
+			},
+		},
+		// dictFoldl / dictFoldr : (k -> v -> acc -> acc) -> acc -> Dict k v -> acc
+		"dictFoldl": TForall{
+			Vars: []int{dictK.ID, b.ID, -10},
+			Body: TArrow{
+				From: TArrow{From: dictK, To: TArrow{From: b, To: TArrow{From: TVar{ID: -10}, To: TVar{ID: -10}}}},
+				To:   TArrow{From: TVar{ID: -10}, To: TArrow{From: TDict(dictK, b), To: TVar{ID: -10}}},
+			},
+		},
+		"dictFoldr": TForall{
+			Vars: []int{dictK.ID, b.ID, -10},
+			Body: TArrow{
+				From: TArrow{From: dictK, To: TArrow{From: b, To: TArrow{From: TVar{ID: -10}, To: TVar{ID: -10}}}},
+				To:   TArrow{From: TVar{ID: -10}, To: TArrow{From: TDict(dictK, b), To: TVar{ID: -10}}},
+			},
+		},
+		"dictFilter": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: dictK, To: TArrow{From: b, To: TBool}},
+				To:   TArrow{From: TDict(dictK, b), To: TDict(dictK, b)},
+			},
+		},
+		"dictPartition": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: dictK, To: TArrow{From: b, To: TBool}},
+				To: TArrow{
+					From: TDict(dictK, b),
+					To:   TTuple{Members: []Type{TDict(dictK, b), TDict(dictK, b)}},
+				},
+			},
+		},
+		"dictUnion": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: TDict(dictK, b), To: TArrow{From: TDict(dictK, b), To: TDict(dictK, b)}},
+		},
+		"dictIntersect": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: TDict(dictK, b), To: TArrow{From: TDict(dictK, b), To: TDict(dictK, b)}},
+		},
+		"dictDiff": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{From: TDict(dictK, b), To: TArrow{From: TDict(dictK, b), To: TDict(dictK, b)}},
+		},
+
+		// Set k — same Comparable constraint as Dict's key.
+		"setEmpty":     TForall{Vars: []int{dictK.ID}, Body: TSet(dictK)},
+		"setSingleton": TForall{Vars: []int{dictK.ID}, Body: TArrow{From: dictK, To: TSet(dictK)}},
+		"setInsert": TForall{
+			Vars: []int{dictK.ID},
+			Body: TArrow{From: dictK, To: TArrow{From: TSet(dictK), To: TSet(dictK)}},
+		},
+		"setRemove": TForall{
+			Vars: []int{dictK.ID},
+			Body: TArrow{From: dictK, To: TArrow{From: TSet(dictK), To: TSet(dictK)}},
+		},
+		"setIsEmpty": TForall{Vars: []int{dictK.ID}, Body: TArrow{From: TSet(dictK), To: TBool}},
+		"setMember": TForall{
+			Vars: []int{dictK.ID},
+			Body: TArrow{From: dictK, To: TArrow{From: TSet(dictK), To: TBool}},
+		},
+		"setSize":   TForall{Vars: []int{dictK.ID}, Body: TArrow{From: TSet(dictK), To: TInt}},
+		"setToList": TForall{Vars: []int{dictK.ID}, Body: TArrow{From: TSet(dictK), To: TList(dictK)}},
+		"setFromList": TForall{
+			Vars: []int{dictK.ID},
+			Body: TArrow{From: TList(dictK), To: TSet(dictK)},
+		},
+		// setMap : (k -> j) -> Set k -> Set j — BOTH sides comparable
+		// (the output set re-sorts and needs comparable keys too).
+		"setMap": TForall{
+			Vars: []int{dictK.ID, setJ.ID},
+			Body: TArrow{From: TArrow{From: dictK, To: setJ}, To: TArrow{From: TSet(dictK), To: TSet(setJ)}},
+		},
+		"setFoldl": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: dictK, To: TArrow{From: b, To: b}},
+				To:   TArrow{From: b, To: TArrow{From: TSet(dictK), To: b}},
+			},
+		},
+		"setFoldr": TForall{
+			Vars: []int{dictK.ID, b.ID},
+			Body: TArrow{
+				From: TArrow{From: dictK, To: TArrow{From: b, To: b}},
+				To:   TArrow{From: b, To: TArrow{From: TSet(dictK), To: b}},
+			},
+		},
+		"setFilter": TForall{
+			Vars: []int{dictK.ID},
+			Body: TArrow{
+				From: TArrow{From: dictK, To: TBool},
+				To:   TArrow{From: TSet(dictK), To: TSet(dictK)},
+			},
+		},
+		"setPartition": TForall{
+			Vars: []int{dictK.ID},
+			Body: TArrow{
+				From: TArrow{From: dictK, To: TBool},
+				To: TArrow{
+					From: TSet(dictK),
+					To:   TTuple{Members: []Type{TSet(dictK), TSet(dictK)}},
+				},
+			},
+		},
+		"setUnion": TForall{
+			Vars: []int{dictK.ID},
+			Body: TArrow{From: TSet(dictK), To: TArrow{From: TSet(dictK), To: TSet(dictK)}},
+		},
+		"setIntersect": TForall{
+			Vars: []int{dictK.ID},
+			Body: TArrow{From: TSet(dictK), To: TArrow{From: TSet(dictK), To: TSet(dictK)}},
+		},
+		"setDiff": TForall{
+			Vars: []int{dictK.ID},
+			Body: TArrow{From: TSet(dictK), To: TArrow{From: TSet(dictK), To: TSet(dictK)}},
+		},
+
 		// Entity.timestamp : Constraint -> Column Time
 		// Stored as INTEGER (Unix milliseconds). Round-trips to/from
 		// Time values via the repo encode/decode path so handlers
@@ -555,7 +1094,7 @@ func stdlibBindings() map[string]Type {
 		// full-stack — apps host themselves through App.frontend / App.backend
 		// / App.fullstack. Endpoint.implement is the typed builder that
 		// produces routes today.)
-		"responseOk": TArrow{From: TString, To: serverResponseType()},
+		"responseOk":       TArrow{From: TString, To: serverResponseType()},
 		"responseNotFound": serverResponseType(),
 		"responseStatus":   TArrow{From: TInt, To: TArrow{From: TString, To: serverResponseType()}},
 
@@ -659,26 +1198,40 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Entity declaration (record-literal form)
+		// Entity declaration (single-record form)
 		//
 		//   notes : Entity Note
 		//   notes =
-		//       Entity.define "notes"
-		//           { id   = Entity.serial
-		//           , body = Entity.text Entity.notNull
+		//       Entity.define
+		//           { name    = "notes"
+		//           , columns =
+		//               { id   = Entity.serial
+		//               , body = Entity.text Entity.notNull
+		//               }
+		//           , uniques = []
 		//           }
 		//
-		// Entity.define is fully polymorphic in both the schema record and
-		// the row type — the runtime cross-checks at first Repo call that
-		// the schema's keys/types are compatible with the row record. Trade-
-		// off documented in mar.md: a one-time per-entity assertion gives
-		// every downstream Repo call full type safety on field names and
-		// types.
+		// Entity.define takes a single record carrying every piece of
+		// the entity declaration: its table name, its column schema,
+		// and any composite unique constraints. The `columns` sub-
+		// record is fully polymorphic; the runtime cross-checks at
+		// first Repo call that the schema's keys/types are compatible
+		// with the row record. Trade-off documented in mar.md.
+		//
+		// `uniques` is required even when empty (`[]`) — Mar has no
+		// default-argument story, so explicit "none here" is the rule.
 		"entityDefine": TForall{
 			Vars: []int{a.ID, b.ID},
 			Body: TArrow{
-				From: TString,
-				To:   TArrow{From: b, To: TEntity(a)},
+				From: TRecord{
+					Fields: map[string]Type{
+						"name":    TString,
+						"columns": b,
+						"uniques": TList(TList(TString)),
+					},
+					Order: []string{"name", "columns", "uniques"},
+				},
+				To: TEntity(a),
 			},
 		},
 		// Column constructors. Each carries the value type stored in that
@@ -702,7 +1255,7 @@ func stdlibBindings() map[string]Type {
 				To:   TArrow{From: TConstraint(), To: TColumn(a)},
 			},
 		},
-		// Constraints. Only `notNull` is exposed today; optional / unique /
+		// Constraints. Only `notNull` is exposed today; optional /
 		// foreign-key constraints would land once the type checker can
 		// express the row-type ⇄ schema correspondence for nullable columns.
 		"entityNotNull": TConstraint(),
@@ -773,15 +1326,33 @@ func stdlibBindings() map[string]Type {
 		// Without an input-kind, browsers/keychains guess from page
 		// context — usually wrong on auth screens, where Safari treats
 		// the first un-typed input as a password field.
+		// submit : forall msg. msg -> Attr Input
+		// Polymorphic in the message (so it composes with any page's Msg);
+		// host pinned to Input — only applies to text fields / text
+		// areas / pickers.
 		"viewSubmit": TForall{
 			Vars: []int{a.ID},
-			Body: TArrow{From: a, To: TAttr()},
+			Body: TArrow{From: a, To: TAttr(TAttrInputHost())},
 		},
-		"viewEmail":       TAttr(),
-		"viewPassword":    TAttr(),
-		"viewNewPassword": TAttr(),
-		"viewNumeric":     TAttr(),
-		"viewOneTimeCode": TAttr(),
+		"viewEmail":       TAttr(TAttrInputHost()),
+		"viewPassword":    TAttr(TAttrInputHost()),
+		"viewNewPassword": TAttr(TAttrInputHost()),
+		"viewNumeric":     TAttr(TAttrInputHost()),
+		"viewOneTimeCode": TAttr(TAttrInputHost()),
+
+		// chars / lines — sizing units for inputs. `chars 6` returns a
+		// `Width` (≈ 6 character columns at the current font); `lines 5`
+		// returns a `Height` (≈ 5 lines tall at the current line-height).
+		// Separate types so the typechecker rejects nonsense like
+		// `width (lines 5)` and `height (chars 5)` at compile time.
+		"uiChars": TArrow{From: TInt, To: TWidth()},
+		"uiLines": TArrow{From: TInt, To: THeight()},
+
+		// width  : Width  -> Attr Input — sets max width of an input.
+		// height : Height -> Attr Input — sets initial height of a
+		// textArea (no effect on textField/picker today).
+		"uiWidth":  TArrow{From: TWidth(), To: TAttr(TAttrInputHost())},
+		"uiHeight": TArrow{From: THeight(), To: TAttr(TAttrInputHost())},
 
 		// ---------- UI module: SwiftUI-style declarative vocabulary ----------
 		//
@@ -802,7 +1373,7 @@ func stdlibBindings() map[string]Type {
 		"navigationStack": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{
-				From: TList(TAttr()),
+				From: TList(TAttr(TAttrNavStackHost())),
 				To:   TArrow{From: TList(TView(a)), To: TView(a)},
 			},
 		},
@@ -817,14 +1388,22 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TList(TView(a)), To: TView(a)},
 		},
 
-		// UI.list : List (View msg) -> View msg
+		// UI.list : List (Attr List) -> List (View msg) -> View msg
 		// Vertical list of rows or sections. iOS: SwiftUI List (with
 		// dividers, hover, swipe-actions hooks). Web: <ul> with
 		// list-style CSS. Use for content (notes, items); use form
 		// for input groupings.
+		//
+		// Reorder + delete semantics live on `keyedList` (children
+		// have stable identity), not on `list` itself. `list` is the
+		// page-level wrapper that hosts a mix of sections /
+		// keyedLists.
 		"list": TForall{
 			Vars: []int{a.ID},
-			Body: TArrow{From: TList(TView(a)), To: TView(a)},
+			Body: TArrow{
+				From: TList(TAttr(TAttrListHost())),
+				To:   TArrow{From: TList(TView(a)), To: TView(a)},
+			},
 		},
 
 		// UI.section : List Attr -> List (View msg) -> View msg
@@ -834,8 +1413,31 @@ func stdlibBindings() map[string]Type {
 		"uiSection": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{
-				From: TList(TAttr()),
+				From: TList(TAttr(TAttrSectionHost())),
 				To:   TArrow{From: TList(TView(a)), To: TView(a)},
+			},
+		},
+
+		// UI.keyedList : List (Attr KeyedList) -> List (KeyedView msg) -> View msg
+		// Section-shaped container for HOMOGENEOUS items with
+		// stable identity. Mirrors `section` visually (rounded card,
+		// optional header/footer), but its children must be
+		// `KeyedView msg` (produced by `UI.keyed`) — not regular
+		// Views. This dedicated children type is what makes
+		// `onMove` and `onDelete` safe: the reconciler always has a
+		// key to match each row across mutations, so deleting row
+		// 0 actually removes row 0\'s DOM (not, say, row N\'s DOM
+		// with row 1\'s text patched into row 0).
+		//
+		// Composes with `list` like `section` does — you can mix
+		// keyedList and section as siblings inside a `list` for
+		// pages that have both editable collections AND static
+		// grouped content.
+		"uiKeyedList": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TList(TAttr(TAttrKeyedListHost())),
+				To:   TArrow{From: TList(TKeyedView(a)), To: TView(a)},
 			},
 		},
 
@@ -845,14 +1447,14 @@ func stdlibBindings() map[string]Type {
 		"hstack": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{
-				From: TList(TAttr()),
+				From: TList(TAttr(TAttrStackHost())),
 				To:   TArrow{From: TList(TView(a)), To: TView(a)},
 			},
 		},
 		"vstack": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{
-				From: TList(TAttr()),
+				From: TList(TAttr(TAttrStackHost())),
 				To:   TArrow{From: TList(TView(a)), To: TView(a)},
 			},
 		},
@@ -865,7 +1467,7 @@ func stdlibBindings() map[string]Type {
 		"textField": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{
-				From: TList(TAttr()),
+				From: TList(TAttr(TAttrInputHost())),
 				To: TArrow{
 					From: TString,
 					To: TArrow{
@@ -879,30 +1481,97 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
+		// UI.textArea : List Attr -> String -> String -> (String -> msg) -> View msg
+		// Multi-line variant of textField for prose-shaped fields
+		// (issue description, note body, biography). Same arg
+		// shape; the renderer emits a <textarea> instead of an
+		// <input>. iOS gets TextEditor. Use textField when the
+		// answer fits on one line, textArea when it doesn't.
+		"textArea": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TList(TAttr(TAttrInputHost())),
+				To: TArrow{
+					From: TString,
+					To: TArrow{
+						From: TString,
+						To: TArrow{
+							From: TArrow{From: TString, To: a},
+							To:   TView(a),
+						},
+					},
+				},
+			},
+		},
+
+		// UI.picker : List Attr -> a -> List a -> (a -> String) -> (a -> msg) -> View msg
+		// Single-selection field. `a` is the option's value type
+		// (typically a custom enum like `IssuePriority`), `m`
+		// (the second tvar) is the Msg ctor type. The picker
+		// renders the currently-selected option, dispatches the
+		// `(a -> msg)` callback when the user picks a different
+		// option. Mirrors SwiftUI's Picker(selection: $value):
+		// natural fit when the candidate set has more than ~2
+		// variants and a column of toggles would dominate the
+		// form's vertical space (priority, milestone, assignee,
+		// status). Use toggle for boolean / two-state fields.
+		"picker": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TList(TAttr(TAttrInputHost())),
+				To: TArrow{
+					From: a,
+					To: TArrow{
+						From: TList(a),
+						To: TArrow{
+							From: TArrow{From: a, To: TString},
+							To: TArrow{
+								From: TArrow{From: a, To: b},
+								To:   TView(b),
+							},
+						},
+					},
+				},
+			},
+		},
+
 		// UI attrs.
 
-		// navigationTitle : String -> Attr
+		// navigationTitle : String -> Attr NavStack
 		// Sets the navigation bar title (iOS) / page heading (web).
-		"navigationTitle": TArrow{From: TString, To: TAttr()},
+		"navigationTitle": TArrow{From: TString, To: TAttr(TAttrNavStackHost())},
 
-		// trailing / leading : View msg -> Attr
-		// Add a toolbar item to the navigation stack. iOS: ToolbarItem
-		// with .topBarTrailing / .topBarLeading placement. Web: button
-		// rendered to the right / left of the page heading.
-		"trailing": TForall{
+		// topBarTrailing / topBarLeading : forall msg. View msg -> Attr NavStack
+		// Add a toolbar item to the top bar of the navigation stack.
+		// Names match SwiftUI's `.topBarTrailing` / `.topBarLeading`
+		// placement (iOS 17+) — positional, not coupled to the
+		// "navigation" semantics, so future top-bar uses (chat
+		// headers, custom dashboards) can reuse the same vocabulary.
+		"uiTopBarTrailing": TForall{
 			Vars: []int{a.ID},
-			Body: TArrow{From: TView(a), To: TAttr()},
+			Body: TArrow{From: TView(a), To: TAttr(TAttrNavStackHost())},
 		},
-		"leading": TForall{
+		"uiTopBarLeading": TForall{
 			Vars: []int{a.ID},
-			Body: TArrow{From: TView(a), To: TAttr()},
+			Body: TArrow{From: TView(a), To: TAttr(TAttrNavStackHost())},
 		},
 
-		// header / footer : String -> Attr
-		// Text label for a UI.section's top / bottom. iOS: Section's
-		// header/footer slots. Web: <h2>/<small> within the section.
-		"header": TArrow{From: TString, To: TAttr()},
-		"footer": TArrow{From: TString, To: TAttr()},
+		// header / footer : forall h. String -> Attr h
+		// Text label for the top / bottom of a section-shaped container.
+		// Honored by `section` and `keyedList` (both render the rounded
+		// card with optional header eyebrow + footer caption). Other
+		// hosts silently ignore — declared universal so the same attr
+		// name works in both contexts without requiring a typeclass.
+		// iOS: Section's header/footer slots. Web: <h2>/<small> in the
+		// section card chrome.
+		"header": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TString, To: TAttr(a)},
+		},
+		"footer": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TString, To: TAttr(a)},
+		},
 
 		// UI.text : String -> View msg
 		// Plain text. Like View.text but without the leading attrs
@@ -920,7 +1589,7 @@ func stdlibBindings() map[string]Type {
 		"uiButton": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{
-				From: TList(TAttr()),
+				From: TList(TAttr(TAttrButtonHost())),
 				To: TArrow{
 					From: a,
 					To:   TArrow{From: TString, To: TView(a)},
@@ -928,20 +1597,112 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// UI.disabled : Bool -> Attr
-		// Attached to a button (and in the future, other interactive
-		// views), this attr greys it out and suppresses the click
-		// dispatch. iOS: `.disabled(flag)` modifier. Web: `disabled`
-		// attribute on <button>.
-		"uiDisabled": TArrow{From: TBool, To: TAttr()},
+		// UI.disabled : forall h. Bool -> Attr h
+		// Universal attr — works on any host. Greys out the view and
+		// suppresses interaction (dispatch / submit). Inputs, buttons,
+		// links, toggles all honor it. Containers ignore it (no
+		// interaction to suppress) but still typecheck because the
+		// host is polymorphic.
+		"uiDisabled": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TBool, To: TAttr(a)},
+		},
 
-		// numericCode : Attr
+		// UI.keyed : String -> View msg -> KeyedView msg
+		// Wraps a regular View in a stable identity (the String key)
+		// so it can be a child of UI.keyedList. The reconciler uses
+		// the key to match this row to its previous DOM / SwiftUI
+		// node across reorders / deletes / inserts — preserving
+		// animation, input focus, and scroll position.
+		//
+		// The key MUST be a stable identifier of the row's content
+		// (record id, unique label, etc.) — NOT the row's position
+		// in the list. Index-based keys shift when the list mutates
+		// and the reconciler ends up patching content into the wrong
+		// DOM nodes (e.g. delete row 0 → row 0\'s DOM stays, gets
+		// row 1\'s text; row N\'s DOM gets removed → looks like both
+		// row 0 AND row N were deleted).
+		//
+		// Returns the dedicated KeyedView type — keyedList only
+		// accepts these, and `keyed` is the only way to produce one.
+		// This makes it impossible to pass a plain `View` into a
+		// `keyedList` (compile error) or to forget the key entirely.
+		"uiKeyed": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TString,
+				To:   TArrow{From: TView(a), To: TKeyedView(a)},
+			},
+		},
+
+		// UI.onMove : Bool -> (Int -> Int -> msg) -> Attr KeyedList
+		// Makes a `keyedList` reorderable. The Bool is "is edit mode
+		// currently active" — when False, no drag affordance shows
+		// and the callback never fires; when True, rows render a
+		// drag handle (web) / become `.onMove`-enabled (iOS).
+		//
+		// The callback receives `(fromIdx, toIdx)` once the user
+		// completes a drag (or keyboard reorder via Space+arrows).
+		// The app is responsible for applying the move to its model
+		// (typically via `List.move`) and, if persistence is
+		// desired, calling whatever Service updates the backend.
+		// The framework does NOT touch the model — view is purely a
+		// function of the children order.
+		//
+		// Bundling Bool + callback into a single attr (instead of
+		// two separate attrs like `editing` and `onMove`) makes it
+		// impossible to declare one without the other — eliminates
+		// a class of "edit mode toggled but no handler wired"
+		// silent bugs.
+		//
+		// Host = KeyedList because reorder requires identity. The
+		// regular `section` doesn\'t carry keys, so applying onMove
+		// to a section is a type error (caught at compile time).
+		"uiOnMove": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TBool,
+				To: TArrow{
+					From: TArrow{From: TInt, To: TArrow{From: TInt, To: a}},
+					To:   TAttr(TAttrKeyedListHost()),
+				},
+			},
+		},
+
+		// UI.onDelete : Bool -> (Int -> msg) -> Attr KeyedList
+		// Makes a `keyedList`'s rows deletable. The Bool is the
+		// "editing mode" flag — when True, every row shows a
+		// permanent delete affordance (web: red `−` on the left,
+		// iOS: native edit-mode minus button); when False, web
+		// reveals the affordance on hover and iOS surfaces swipe-
+		// to-delete. The callback receives the row's index and
+		// returns the Msg to dispatch.
+		//
+		// Bundling Bool + callback into one attr (same shape as
+		// onMove) ensures both are always declared together —
+		// catches "deletion enabled but no handler" at compile
+		// time.
+		//
+		// Host = KeyedList (same as onMove): per-row deletion needs
+		// identity to animate the disappearance of the right row.
+		"uiOnDelete": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TBool,
+				To: TArrow{
+					From: TArrow{From: TInt, To: a},
+					To:   TAttr(TAttrKeyedListHost()),
+				},
+			},
+		},
+
+		// numericCode : Attr Input
 		// Convenience attr combining `numeric` (10-key pad) +
 		// `oneTimeCode` (Code-from-Mail / SMS autofill). The common
 		// case for OTP / 2FA inputs. iOS: keyboardType .numberPad +
 		// textContentType .oneTimeCode. Web: inputmode="numeric" +
 		// autocomplete="one-time-code".
-		"numericCode": TAttr(),
+		"numericCode": TAttr(TAttrInputHost()),
 
 		// UI.title : String -> View msg
 		// Heading text. iOS: Text with .font(.title2.weight(.bold)).
@@ -960,18 +1721,136 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TString, To: TView(a)},
 		},
 
-		// UI.link : Path r -> r -> String -> View msg
-		// Clickable navigation link. The Path + record produce the
-		// destination URL via the same machinery as `linkTo`, so
-		// refactoring a route catches all link sites in compile time.
-		// iOS: NavigationLink. Web: <a href="...">.
-		"uiLink": TForall{
+		// UI.paragraph : List (Inline msg) -> View msg
+		// Flowing block of inline text. Children are inline `text`
+		// runs, each carrying its own attrs (bold, italic, code,
+		// link, ...). Renders as <p> on web; AttributedString in a
+		// Text on iOS. The first primitive that gives Mar a way to
+		// mix multiple inline styles (a bold word, an inline code
+		// span, a clickable link) inside a single wrapping
+		// paragraph of body text.
+		"uiParagraph": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TList(TInline(a)),
+				To:   TView(a),
+			},
+		},
+
+		// UI.span : List (Attr Inline) -> String -> Inline msg
+		//
+		// Inline text run, used ONLY inside `paragraph`. Distinct
+		// name from `UI.text` (which is the existing block-level
+		// leaf `String -> View msg`) to avoid overloading — Mar
+		// binds one name to one type. Mental model: <span> in
+		// HTML, AttributedString.Run on iOS.
+		//
+		// Attrs (bold/italic/strikethrough/code/link) compose
+		// freely: `span [bold, link "url"] "label"` gives a bold
+		// link, `span [code, italic] "deprecated()"` gives italic
+		// code, etc.
+		"uiSpan": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TList(TAttr(TAttrInlineHost())),
+				To:   TArrow{From: TString, To: TInline(a)},
+			},
+		},
+
+		// Inline attrs. bold/italic/strikethrough/code are bare
+		// markers; link carries a URL string.
+		"inlineBold":          TAttr(TAttrInlineHost()),
+		"inlineItalic":        TAttr(TAttrInlineHost()),
+		"inlineStrikethrough": TAttr(TAttrInlineHost()),
+		"inlineCode":          TAttr(TAttrInlineHost()),
+		"inlineLink": TArrow{
+			From: TString,
+			To:   TAttr(TAttrInlineHost()),
+		},
+
+		// UI.errorText : String -> View msg
+		// Error message — semantically distinct from `text` so the
+		// renderer can style it with destructive intent (red foreground
+		// + semi-bold weight). Use for "couldn't reach the server",
+		// "invalid code", form-validation feedback, etc — anywhere the
+		// user needs to see what went wrong at a glance. iOS: Text with
+		// .foregroundStyle(.red).fontWeight(.semibold). Web: <p> with
+		// the `.mar-error-text` class.
+		"uiErrorText": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TString, To: TView(a)},
+		},
+
+		// UI.navigationLink : List Attr -> Path r -> r -> View msg -> View msg
+		// Tappable navigation to another mar page. Mirror of
+		// SwiftUI's `NavigationLink(value:){content}`: the typed
+		// Path + record build the destination URL via the same
+		// machinery as `linkTo`, and the content View becomes the
+		// label — single-line `text` for a plain text link, or a
+		// multi-line `vstack` for a list-style row with the
+		// chevron auto-centered. The leading attrs list carries
+		// `disabled` (and future modifiers) so a link can be
+		// greyed-out / inert without removing it from the tree.
+		//
+		// Refactor-safe: renaming a route's URL pattern is a
+		// compile-time error at every `navigationLink` site.
+		//
+		// Platform mapping:
+		//   - iOS: NavigationLink wrapping the child view.
+		//   - Web: <a class="mar-navigation-link"> wrapping the
+		//     child DOM, with a `›` chevron after the content via
+		//     CSS to match the iOS row look.
+		//
+		// Deliberately not called `link`: "link" connotes a web
+		// anchor (open URL, possibly external), whereas
+		// `navigationLink` says exactly what it does — push a new
+		// page onto the navigation stack. External URLs are not
+		// this builtin's concern (they'd use a separate primitive).
+		"uiNavigationLink": TForall{
 			Vars: []int{-40, a.ID},
 			Body: TArrow{
-				From: TPath(TVar{ID: -40}),
+				From: TList(TAttr(TAttrLinkHost())),
 				To: TArrow{
-					From: TVar{ID: -40},
-					To:   TArrow{From: TString, To: TView(a)},
+					From: TPath(TVar{ID: -40}),
+					To: TArrow{
+						From: TVar{ID: -40},
+						To:   TArrow{From: TView(a), To: TView(a)},
+					},
+				},
+			},
+		},
+
+		// UI.spacer : View msg
+		// Pure SwiftUI primitive — `Spacer()` — that expands to fill
+		// the available space along a stack's main axis. The classic
+		// "label on the left, action on the right" pattern is
+		// `hstack [ text "..." , spacer , button [] ... ]`. On web,
+		// renders as a `<div class="mar-spacer">` with `flex: 1`.
+		"uiSpacer": TForall{
+			Vars: []int{a.ID},
+			Body: TView(a),
+		},
+
+		// UI.toggle : List Attr -> String -> Bool -> (Bool -> msg) -> View msg
+		// Mirror of SwiftUI's `Toggle("Label", isOn: $value)`.
+		// Leading attrs list carries `disabled` (and future
+		// modifiers); then label, current state, message ctor
+		// (same `oldValue -> msg` shape as `textField`). iOS
+		// renders the native iOS switch; web uses a CSS-styled
+		// checkbox that visually matches.
+		"uiToggle": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TList(TAttr(TAttrToggleHost())),
+				To: TArrow{
+					From: TString,
+					To: TArrow{
+						From: TBool,
+						To: TArrow{
+							From: TArrow{From: TBool, To: TVar{ID: a.ID}},
+							To:   TView(a),
+						},
+					},
 				},
 			},
 		},
@@ -984,6 +1863,40 @@ func stdlibBindings() map[string]Type {
 			Body: TView(a),
 		},
 
+		// UI.sheet : { open, onDismiss, outlet } -> List (View msg) -> View msg
+		//
+		// Modal sheet that slides up from the bottom (iOS-style page sheet).
+		// Lives as a view modifier on the parent page — the parent owns
+		// open/closed state in its own Model. Mirrors SwiftUI's
+		// `.sheet(isPresented:)` modifier API.
+		//
+		//   open      : Bool         — whether the sheet is currently visible
+		//   onDismiss : msg          — dispatched when the user dismisses
+		//                              (swipe down, Escape, backdrop click,
+		//                              browser back button)
+		//   outlet    : String       — identifier for this sheet in the
+		//                              navigation state. Required so the
+		//                              browser history can capture
+		//                              open/close transitions; iOS uses
+		//                              it as a routing tag.
+		"uiSheet": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TRecord{
+					Fields: map[string]Type{
+						"open":      TBool,
+						"onDismiss": a,
+						"outlet":    TString,
+					},
+					Order: []string{"open", "onDismiss", "outlet"},
+				},
+				To: TArrow{
+					From: TList(TView(a)),
+					To:   TView(a),
+				},
+			},
+		},
+
 		// UI.centered : View msg -> View msg
 		// Wraps a view in a container that fills the available space
 		// and centers its child both horizontally and vertically. Use
@@ -993,6 +1906,50 @@ func stdlibBindings() map[string]Type {
 		"uiCentered": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{From: TView(a), To: TView(a)},
+		},
+
+		// UI.confirm : { title, confirmLabel, destructive,
+		//                onConfirm, onCancel } -> View msg
+		//
+		// Modal destructive-action confirmation dialog. Renders as
+		// a floating overlay with a backdrop — iOS maps to
+		// `.confirmationDialog` (the system sheet that pops from
+		// the bottom on iPhone, anchored centered on iPad), web
+		// renders a centered alert-style dialog with backdrop blur.
+		//
+		//   title        : String  — primary question, e.g.
+		//                            "Delete \"Buy milk\"?"
+		//   confirmLabel : String  — label on the destructive button,
+		//                            e.g. "Delete"
+		//   destructive  : Bool    — True → confirm button is red
+		//                            (iOS .destructive role; web red
+		//                            tint). False → system accent
+		//                            (blue) for benign confirms.
+		//   onConfirm    : msg     — dispatched when user taps confirm
+		//   onCancel     : msg     — dispatched when user taps cancel,
+		//                            OR taps backdrop / swipes down /
+		//                            presses Escape (web).
+		//
+		// Pattern: parent owns a `Maybe Something` in its Model. View
+		// returns `UI.confirm {...}` when Just, `UI.empty` when
+		// Nothing. The dialog is conceptually a sibling of the
+		// underlying page content; both render simultaneously, with
+		// the dialog floating on top.
+		"uiConfirm": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TRecord{
+					Fields: map[string]Type{
+						"title":        TString,
+						"confirmLabel": TString,
+						"destructive":  TBool,
+						"onConfirm":    a,
+						"onCancel":     a,
+					},
+					Order: []string{"title", "confirmLabel", "destructive", "onConfirm", "onCancel"},
+				},
+				To: TView(a),
+			},
 		},
 
 		// Page — a single MVU screen bound to a URL path.
@@ -1130,7 +2087,7 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TString, To: TEffect(a, b)},
 		},
 
-		// Nav.afterSignIn : Effect e msg
+		// Auth.completeSignIn : Effect e msg
 		// Use as the navigation step after Auth.verifyCode succeeds.
 		// Reads the framework-managed `next` slot — set when a 401
 		// from a Service.call sent the user here, or when a deep link
@@ -1138,7 +2095,12 @@ func stdlibBindings() map[string]Type {
 		// "/" when no return target was captured. Web validates that
 		// the captured path is same-origin to prevent open-redirect
 		// abuse via crafted ?next= parameters.
-		"navAfterSignIn": TForall{
+		//
+		// Lives under Auth.* (not Nav.*) because it bundles auth-
+		// specific cleanup (resetting the auth-expired redirect
+		// coalescer) with the navigation step. Nav stays focused on
+		// pure navigation; Auth owns the post-login transition.
+		"authCompleteSignIn": TForall{
 			Vars: []int{a.ID, b.ID},
 			Body: TEffect(a, b),
 		},
@@ -1487,68 +2449,125 @@ func serverRouteType() Type {
 // works just like `listMap`).
 func qualifiedAliases(flat map[string]Type) map[string]Type {
 	mapping := map[string]string{
-		"List.length":   "listLength",
-		"List.map":      "listMap",
-		"List.filter":   "listFilter",
-		"List.foldl":    "listFoldl",
-		"List.sum":      "listSum",
-		"List.range":    "listRange",
-		"List.reverse":  "listReverse",
-		"List.head":     "listHead",
-		"List.tail":     "listTail",
-		"List.isEmpty":  "listIsEmpty",
-		"List.concat":   "listConcat",
+		"List.length":       "listLength",
+		"List.map":          "listMap",
+		"List.filter":       "listFilter",
+		"List.foldl":        "listFoldl",
+		"List.foldr":        "listFoldr",
+		"List.sum":          "listSum",
+		"List.product":      "listProduct",
+		"List.range":        "listRange",
+		"List.reverse":      "listReverse",
+		"List.head":         "listHead",
+		"List.tail":         "listTail",
+		"List.isEmpty":      "listIsEmpty",
+		"List.concat":       "listConcat",
+		"List.take":         "listTake",
+		"List.drop":         "listDrop",
+		"List.move":         "listMove",
+		"List.member":       "listMember",
+		"List.any":          "listAny",
+		"List.all":          "listAll",
+		"List.indexedMap":   "listIndexedMap",
+		"List.repeat":       "listRepeat",
+		"List.intersperse":  "listIntersperse",
+		"List.partition":    "listPartition",
+		"List.concatMap":    "listConcatMap",
+		"List.filterMap":    "listFilterMap",
+		"List.maximum":      "listMaximum",
+		"List.minimum":      "listMinimum",
+		"List.sort":         "listSort",
+		"List.sortBy":       "listSortBy",
+		"List.sortWith":     "listSortWith",
 		"String.length":     "stringLength",
 		"String.contains":   "stringContains",
 		"String.startsWith": "stringStartsWith",
+		"String.endsWith":   "stringEndsWith",
 		"String.fromInt":    "stringFromInt",
+		"String.toInt":      "stringToInt",
+		"String.fromFloat":  "stringFromFloat",
+		"String.toFloat":    "stringToFloat",
 		"String.toUpper":    "stringToUpper",
 		"String.toLower":    "stringToLower",
-		"Maybe.withDefault": "maybeWithDefault",
-		"Maybe.map":         "maybeMap",
-		"Maybe.andThen":     "maybeAndThen",
-		"Result.map":        "resultMap",
-		"Result.andThen":    "resultAndThen",
-		"Result.mapError":   "resultMapError",
-		"String.split":      "stringSplit",
-		"String.join":       "stringJoin",
-		"String.trim":       "stringTrim",
-		"Effect.succeed":    "effectSucceed",
-		"Effect.fail":       "effectFail",
-		"Effect.map":        "effectMap",
-		"Effect.andThen":    "effectAndThen",
-		"Effect.forEach":    "effectForEach",
-		"Effect.sequence":   "effectSequence",
-		"Effect.none":       "effectNone",
-		"Time.seconds":      "timeSeconds",
-		"Time.minutes":      "timeMinutes",
-		"Time.hours":        "timeHours",
-		"Time.days":         "timeDays",
-		"Time.weeks":        "timeWeeks",
-		"Time.toSeconds":    "timeToSeconds",
-		"Time.now":          "timeNow",
-		"Time.add":          "timeAdd",
-		"Time.sub":          "timeSub",
-		"Time.diff":         "timeDiff",
-		"Time.before":       "timeBefore",
-		"Time.after":        "timeAfter",
-		"Time.toIso":        "timeToIso",
-		"Time.fromIso":      "timeFromIso",
-		"Time.toMillis":     "timeToMillis",
-		"Time.fromYMD":      "timeFromYMD",
-		"Time.addDays":      "timeAddDays",
-		"Time.addMonths":    "timeAddMonths",
-		"Time.addYears":     "timeAddYears",
-		"Time.year":         "timeYear",
-		"Time.month":        "timeMonth",
-		"Time.day":          "timeDay",
-		"Time.hour":         "timeHour",
-		"Time.minute":       "timeMinute",
-		"Time.second":       "timeSecond",
-		"Http.get":    "httpGet",
-		"Http.post":   "httpPost",
-		"JSON.encode": "jsonEncode",
-		"JSON.decode": "jsonDecode",
+		"String.replace":    "stringReplace",
+		"String.repeat":     "stringRepeat",
+		"String.padLeft":    "stringPadLeft",
+		"String.padRight":   "stringPadRight",
+		"String.indexes":    "stringIndexes",
+		"String.toList":     "stringToList",
+		"String.fromList":   "stringFromList",
+		"String.cons":       "stringCons",
+		"String.map":        "stringMap",
+		"String.filter":     "stringFilter",
+		"String.foldl":      "stringFoldl",
+		"String.any":        "stringAny",
+		// Char
+		"Char.toCode":        "charToCode",
+		"Char.fromCode":      "charFromCode",
+		"Char.isDigit":       "charIsDigit",
+		"Char.isAlpha":       "charIsAlpha",
+		"Char.isUpper":       "charIsUpper",
+		"Char.isLower":       "charIsLower",
+		"Char.toUpper":       "charToUpper",
+		"Char.toLower":       "charToLower",
+		"Maybe.withDefault":  "maybeWithDefault",
+		"Maybe.map":          "maybeMap",
+		"Maybe.andThen":      "maybeAndThen",
+		"Maybe.map2":         "maybeMap2",
+		"Maybe.map3":         "maybeMap3",
+		"Maybe.andMap":       "maybeAndMap",
+		"Maybe.filter":       "maybeFilter",
+		"Result.map":         "resultMap",
+		"Result.andThen":     "resultAndThen",
+		"Result.mapError":    "resultMapError",
+		"Result.withDefault": "resultWithDefault",
+		"Result.fromMaybe":   "resultFromMaybe",
+		"Result.toMaybe":     "resultToMaybe",
+		"Tuple.first":        "tupleFirst",
+		"Tuple.second":       "tupleSecond",
+		"Tuple.pair":         "tuplePair",
+		"Tuple.mapFirst":     "tupleMapFirst",
+		"Tuple.mapSecond":    "tupleMapSecond",
+		"Tuple.mapBoth":      "tupleMapBoth",
+		"String.split":       "stringSplit",
+		"String.join":        "stringJoin",
+		"String.trim":        "stringTrim",
+		"Effect.succeed":     "effectSucceed",
+		"Effect.fail":        "effectFail",
+		"Effect.map":         "effectMap",
+		"Effect.andThen":     "effectAndThen",
+		"Effect.forEach":     "effectForEach",
+		"Effect.sequence":    "effectSequence",
+		"Effect.none":        "effectNone",
+		"Time.seconds":       "timeSeconds",
+		"Time.minutes":       "timeMinutes",
+		"Time.hours":         "timeHours",
+		"Time.days":          "timeDays",
+		"Time.weeks":         "timeWeeks",
+		"Time.toSeconds":     "timeToSeconds",
+		"Time.now":           "timeNow",
+		"Time.add":           "timeAdd",
+		"Time.sub":           "timeSub",
+		"Time.diff":          "timeDiff",
+		"Time.before":        "timeBefore",
+		"Time.after":         "timeAfter",
+		"Time.toIso":         "timeToIso",
+		"Time.fromIso":       "timeFromIso",
+		"Time.toMillis":      "timeToMillis",
+		"Time.fromYMD":       "timeFromYMD",
+		"Time.addDays":       "timeAddDays",
+		"Time.addMonths":     "timeAddMonths",
+		"Time.addYears":      "timeAddYears",
+		"Time.year":          "timeYear",
+		"Time.month":         "timeMonth",
+		"Time.day":           "timeDay",
+		"Time.hour":          "timeHour",
+		"Time.minute":        "timeMinute",
+		"Time.second":        "timeSecond",
+		"Http.get":           "httpGet",
+		"Http.post":          "httpPost",
+		"JSON.encode":        "jsonEncode",
+		"JSON.decode":        "jsonDecode",
 		// Low-level endpoint builders (paired with Endpoint.implement) — for
 		// custom paths like `/sign`, SSR routes, etc.
 		"Endpoint.get":       "endpointGet",
@@ -1557,23 +2576,23 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Endpoint.call":      "endpointCall",
 		// REST sugar — common shapes with auto path-param parse, JSON
 		// decode/encode, and method-derived status code.
-		"Endpoint.list":   "endpointList",
-		"Endpoint.show":   "endpointShow",
-		"Endpoint.create": "endpointCreate",
-		"Endpoint.update": "endpointUpdate",
-		"Endpoint.delete": "endpointDelete",
+		"Endpoint.list":     "endpointList",
+		"Endpoint.show":     "endpointShow",
+		"Endpoint.create":   "endpointCreate",
+		"Endpoint.update":   "endpointUpdate",
+		"Endpoint.delete":   "endpointDelete",
 		"Response.ok":       "responseOk",
 		"Response.notFound": "responseNotFound",
 		"Response.status":   "responseStatus",
 		// Entity (record-literal form)
-		"Entity.define":  "entityDefine",
-		"Entity.serial":  "entitySerial",
-		"Entity.int":     "entityInt",
-		"Entity.text":    "entityText",
-		"Entity.bool":    "entityBool",
-		"Entity.enum":    "entityEnum",
+		"Entity.define":    "entityDefine",
+		"Entity.serial":    "entitySerial",
+		"Entity.int":       "entityInt",
+		"Entity.text":      "entityText",
+		"Entity.bool":      "entityBool",
+		"Entity.enum":      "entityEnum",
 		"Entity.timestamp": "entityTimestamp",
-		"Entity.notNull": "entityNotNull",
+		"Entity.notNull":   "entityNotNull",
 		// Repo
 		"Repo.all":        "repoAll",
 		"Repo.findById":   "repoFindByID",
@@ -1586,21 +2605,39 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"UI.form":            "form",
 		"UI.list":            "list",
 		"UI.section":         "uiSection",
+		"UI.keyedList":       "uiKeyedList",
 		"UI.hstack":          "hstack",
 		"UI.vstack":          "vstack",
 		"UI.textField":       "textField",
+		"UI.textArea":        "textArea",
+		"UI.picker":          "picker",
 		"UI.navigationTitle": "navigationTitle",
-		"UI.trailing":        "trailing",
-		"UI.leading":         "leading",
+		"UI.topBarTrailing":  "uiTopBarTrailing",
+		"UI.topBarLeading":   "uiTopBarLeading",
 		"UI.header":          "header",
 		"UI.footer":          "footer",
 		"UI.numericCode":     "numericCode",
 		"UI.disabled":        "uiDisabled",
+		"UI.keyed":           "uiKeyed",
+		"UI.onMove":          "uiOnMove",
+		"UI.onDelete":        "uiOnDelete",
 		"UI.text":            "uiText",
 		"UI.button":          "uiButton",
 		"UI.title":           "uiTitle",
 		"UI.subtitle":        "uiSubtitle",
-		"UI.link":            "uiLink",
+		"UI.errorText":       "uiErrorText",
+		"UI.paragraph":       "uiParagraph",
+		"UI.span":            "uiSpan",
+		"UI.bold":            "inlineBold",
+		"UI.italic":          "inlineItalic",
+		"UI.strikethrough":   "inlineStrikethrough",
+		"UI.code":            "inlineCode",
+		"UI.link":            "inlineLink",
+		"UI.navigationLink":  "uiNavigationLink",
+		"UI.spacer":          "uiSpacer",
+		"UI.toggle":          "uiToggle",
+		"UI.sheet":           "uiSheet",
+		"UI.confirm":         "uiConfirm",
 		"UI.empty":           "uiEmpty",
 		"UI.centered":        "uiCentered",
 		// Re-expose a handful of View.* attrs under UI.* so user code
@@ -1613,37 +2650,87 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"UI.numeric":     "viewNumeric",
 		"UI.oneTimeCode": "viewOneTimeCode",
 		"UI.submit":      "viewSubmit",
-		"App.frontend":      "appFrontend",
-		"App.backend":       "appBackend",
-		"App.fullstack":     "appFullstack",
+		// Sizing — width / height accept Width / Height values built
+		// via chars / lines. Type-safe units: `chars` only builds Width,
+		// `lines` only builds Height, so `height (chars 6)` is a type
+		// error caught by the typechecker.
+		"UI.chars":      "uiChars",
+		"UI.lines":      "uiLines",
+		"UI.width":      "uiWidth",
+		"UI.height":     "uiHeight",
+		"App.frontend":  "appFrontend",
+		"App.backend":   "appBackend",
+		"App.fullstack": "appFullstack",
 		// Service: typed RPC contracts.
-		"Service.declare":   "serviceDeclare",
-		"Service.implement": "serviceImplement",
-		"Service.call":      "serviceCall",
-		"Page.create":       "pageCreate",
-		"Page.protected":         "pageProtected",
-		"Page.dynamic":           "pageDynamic",
-		"Page.dynamicProtected":  "pageDynamicProtected",
-		"Nav.push":          "navPush",
-		"Nav.replace":       "navReplace",
-		"Nav.afterSignIn":   "navAfterSignIn",
-		"Nav.pushTo":        "navPushTo",
-		"Nav.replaceTo":     "navReplaceTo",
+		"Service.declare":       "serviceDeclare",
+		"Service.implement":     "serviceImplement",
+		"Service.call":          "serviceCall",
+		"Page.create":           "pageCreate",
+		"Page.protected":        "pageProtected",
+		"Page.dynamic":          "pageDynamic",
+		"Page.dynamicProtected": "pageDynamicProtected",
+		"Nav.push":              "navPush",
+		"Nav.replace":           "navReplace",
+		"Auth.completeSignIn":   "authCompleteSignIn",
+		"Nav.pushTo":            "navPushTo",
+		"Nav.replaceTo":         "navReplaceTo",
 		// linkTo is a top-level builtin (no qualifier) — same vibe as
 		// the standalone `text`, `column`, etc. that the View module
 		// exports without a prefix. It's the everyday way to build a
 		// URL from a typed Path.
-		"linkTo":            "linkTo",
+		"linkTo": "linkTo",
 		// Auth: passwordless email-code authentication.
-		"Auth.config":      "authConfig",
-		"Auth.protect":       "authProtect",
-		"Auth.requireRole":   "authRequireRole",
-		"Auth.authorize":     "authAuthorize",
-		"Auth.requireOwner":  "authRequireOwner",
-		"Auth.requestCode":   "authRequestCode",
-		"Auth.verifyCode":  "authVerifyCode",
-		"Auth.logout":      "authLogout",
-		"Auth.me":          "authMe",
+		"Auth.config":       "authConfig",
+		"Auth.protect":      "authProtect",
+		"Auth.requireRole":  "authRequireRole",
+		"Auth.authorize":    "authAuthorize",
+		"Auth.requireOwner": "authRequireOwner",
+		"Auth.requestCode":  "authRequestCode",
+		"Auth.verifyCode":   "authVerifyCode",
+		"Auth.logout":       "authLogout",
+		"Auth.me":           "authMe",
+		// Dict: Elm-style polymorphic ordered map. Comparable-key
+		// constraint enforced at runtime (the HM core doesn't yet
+		// model type-class constraints).
+		"Dict.empty":     "dictEmpty",
+		"Dict.singleton": "dictSingleton",
+		"Dict.insert":    "dictInsert",
+		"Dict.update":    "dictUpdate",
+		"Dict.remove":    "dictRemove",
+		"Dict.isEmpty":   "dictIsEmpty",
+		"Dict.member":    "dictMember",
+		"Dict.get":       "dictGet",
+		"Dict.size":      "dictSize",
+		"Dict.keys":      "dictKeys",
+		"Dict.values":    "dictValues",
+		"Dict.toList":    "dictToList",
+		"Dict.fromList":  "dictFromList",
+		"Dict.map":       "dictMap",
+		"Dict.foldl":     "dictFoldl",
+		"Dict.foldr":     "dictFoldr",
+		"Dict.filter":    "dictFilter",
+		"Dict.partition": "dictPartition",
+		"Dict.union":     "dictUnion",
+		"Dict.intersect": "dictIntersect",
+		"Dict.diff":      "dictDiff",
+		// Set: Dict-but-keys-only.
+		"Set.empty":     "setEmpty",
+		"Set.singleton": "setSingleton",
+		"Set.insert":    "setInsert",
+		"Set.remove":    "setRemove",
+		"Set.isEmpty":   "setIsEmpty",
+		"Set.member":    "setMember",
+		"Set.size":      "setSize",
+		"Set.toList":    "setToList",
+		"Set.fromList":  "setFromList",
+		"Set.map":       "setMap",
+		"Set.foldl":     "setFoldl",
+		"Set.foldr":     "setFoldr",
+		"Set.filter":    "setFilter",
+		"Set.partition": "setPartition",
+		"Set.union":     "setUnion",
+		"Set.intersect": "setIntersect",
+		"Set.diff":      "setDiff",
 	}
 	out := map[string]Type{}
 	for q, f := range mapping {

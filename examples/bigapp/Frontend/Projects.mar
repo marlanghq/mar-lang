@@ -1,0 +1,224 @@
+module Frontend.Projects exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , form, list, section, header, footer
+    , hstack, vstack
+    , title, subtitle, text, textField, textArea, button, navigationLink, empty, spacer, errorText
+    , submit, sheet, disabled
+    )
+
+
+-- Projects list — every project the team owns. The "+ New" button in
+-- the toolbar opens a sheet (UI.sheet, iOS-style modal) with the
+-- create form. The lista stays visible behind the sheet, and dismissing
+-- the sheet (Cancel, backdrop tap, swipe-down, browser back) returns
+-- here without losing state.
+--
+-- The sheet's state — open flag plus draft fields — lives in this
+-- Model. Same pattern SwiftUI uses for sheet-bound state: parent owns,
+-- sheet content is just view (newProjectForm below).
+
+
+type alias Model =
+    { items     : Maybe (List Shared.Project)
+    , error     : Maybe String
+    -- ↓ sheet state (controlled by parent, per SwiftUI convention)
+    , sheetOpen : Bool
+    , draftName : String
+    , draftSlug : String
+    , draftDesc : String
+    , creating  : Bool
+    }
+
+
+type Msg
+    = ProjectsFetched (Result String (List Shared.Project))
+    | OpenSheet
+    | CloseSheet
+    | NameChanged String
+    | SlugChanged String
+    | DescChanged String
+    | CreateClicked
+    | ProjectCreated (Result String Shared.Project)
+
+
+init : Shared.User -> () -> (Model, Effect String Msg)
+init _ _ =
+    ( { items     = Nothing
+      , error     = Nothing
+      , sheetOpen = False
+      , draftName = ""
+      , draftSlug = ""
+      , draftDesc = ""
+      , creating  = False
+      }
+    , Service.call Shared.listProjects () ProjectsFetched
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update _ msg model =
+    case msg of
+        ProjectsFetched (Ok items) ->
+            ( { model | items = Just items, error = Nothing }, Effect.none )
+
+        ProjectsFetched (Err why) ->
+            ( { model | error = Just why }, Effect.none )
+
+        OpenSheet ->
+            -- Fresh form every time the sheet opens — clears any
+            -- leftover values from a previous cancelled attempt.
+            ( { model
+                | sheetOpen = True
+                , draftName = ""
+                , draftSlug = ""
+                , draftDesc = ""
+                , error     = Nothing
+                , creating  = False
+              }
+            , Effect.none
+            )
+
+        CloseSheet ->
+            ( { model | sheetOpen = False, creating = False }, Effect.none )
+
+        NameChanged value ->
+            ( { model | draftName = value }, Effect.none )
+
+        SlugChanged value ->
+            ( { model | draftSlug = value }, Effect.none )
+
+        DescChanged value ->
+            ( { model | draftDesc = value }, Effect.none )
+
+        CreateClicked ->
+            if model.draftName == "" || model.draftSlug == "" then
+                ( { model | error = Just "Name and slug are required." }, Effect.none )
+            else
+                ( { model | creating = True, error = Nothing }
+                , Service.call Shared.createProject
+                    { name = model.draftName, slug = model.draftSlug, description = model.draftDesc }
+                    ProjectCreated
+                )
+
+        ProjectCreated (Ok _) ->
+            -- Created — close the sheet and refresh the list. Same
+            -- update function so no cross-page coordination needed.
+            ( { model
+                | sheetOpen = False
+                , creating  = False
+                , draftName = ""
+                , draftSlug = ""
+                , draftDesc = ""
+              }
+            , Service.call Shared.listProjects () ProjectsFetched
+            )
+
+        ProjectCreated (Err why) ->
+            ( { model | creating = False, error = Just why }, Effect.none )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+newProjectForm : Model -> View Msg
+newProjectForm model =
+    let
+        canSubmit =
+            model.draftName /= "" && model.draftSlug /= "" && model.creating == False
+
+        ctaLabel =
+            if model.creating then "Creating…" else "Create"
+    in
+    navigationStack
+        [ navigationTitle "New Project"
+        , topBarTrailing
+            (button [ disabled (canSubmit == False) ] CreateClicked ctaLabel)
+        ]
+        [ list []
+            [ errorBanner model.error
+            , section
+                [ header "Details"
+                , footer "Slug is a short identifier shown as a fallback when a project has no description."
+                ]
+                [ textField [] "Name" model.draftName NameChanged
+                , textField [] "Slug (e.g. api-v2)" model.draftSlug SlugChanged
+                , textArea [ submit CreateClicked ] "Description" model.draftDesc DescChanged
+                ]
+            ]
+        ]
+
+
+projectRow : Shared.Project -> View Msg
+projectRow project =
+    navigationLink [] Frontend.Routes.projectDetail { id = project.id }
+        (vstack []
+            [ text project.name
+            , subtitle
+                (if project.description == "" then
+                    "/" ++ project.slug
+                 else
+                    project.description
+                )
+            ])
+
+
+projectsSection : Maybe (List Shared.Project) -> View Msg
+projectsSection state =
+    case state of
+        Nothing ->
+            section [] [ text "Loading projects…" ]
+
+        Just items ->
+            if List.isEmpty items then
+                section [ header "Projects" ]
+                    [ subtitle "No projects yet. Tap “+ New” to create the first." ]
+            else
+                section
+                    [ header ("Projects · " ++ String.fromInt (List.length items)) ]
+                    (List.map projectRow items)
+
+
+errorBanner : Maybe String -> View Msg
+errorBanner maybeErr =
+    case maybeErr of
+        Just why ->
+            section [ header "Couldn't process" ] [ errorText why ]
+
+        Nothing ->
+            empty
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    navigationStack
+        [ navigationTitle "Projects"
+        , topBarTrailing (button [] OpenSheet "+ New")
+        ]
+        [ list []
+            [ projectsSection model.items
+            ]
+        , sheet
+            { open      = model.sheetOpen
+            , onDismiss = CloseSheet
+            , outlet    = "new-project"
+            }
+            [ newProjectForm model ]
+        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/projects"
+        , title  = "Projects"
+        , init   = init
+        , update = update
+        , view   = view
+        }

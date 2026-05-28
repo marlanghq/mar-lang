@@ -32,6 +32,7 @@ import (
 	"mar/internal/diag"
 	"mar/internal/jsserve"
 	"mar/internal/project"
+	"mar/internal/ratelimit"
 	"mar/internal/runtime"
 )
 
@@ -75,6 +76,9 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "backup" {
 		os.Exit(runRuntimeBackup(os.Args[2:]))
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "restore-db" {
+		os.Exit(runRuntimeRestore(os.Args[2:]))
 	}
 	if err := runEmbeddedOrArg(); err != nil {
 		fmt.Fprintln(os.Stderr, diag.Format(err))
@@ -142,7 +146,7 @@ func runRuntimeAdminList() int {
 		return 1
 	}
 	fmt.Println()
-	fmt.Println("admins (from runtime _mar_admins, post-sync):")
+	fmt.Println("admins (from runtime DB, post-sync):")
 	if len(live) == 0 {
 		fmt.Println("  (none)")
 	} else {
@@ -266,25 +270,26 @@ func runEmbeddedOrArg() error {
 // dir (so the existing project loader, which reads from filesystem, can
 // take over without changes) and then runs from there.
 //
-// We stamp MAR_DEV_LAUNCH_CWD with the user's startup cwd BEFORE
+// We stamp MAR_LAUNCH_CWD with the user's startup cwd BEFORE
 // extracting, so relative paths in mar.json (e.g. `./notes.db`) still
 // resolve against the directory the user launched the binary from, not
 // against the temp extraction dir. Without that, the SQLite file would
 // land inside `/tmp/mar-runtime-xxx/` and disappear at the next OS
 // cleanup — silently destroying production data on every restart.
 func runEmbedded(b *appbundle.Bundle) error {
-	if _, set := os.LookupEnv("MAR_DEV_LAUNCH_CWD"); !set {
+	if _, set := os.LookupEnv("MAR_LAUNCH_CWD"); !set {
 		if cwd, err := os.Getwd(); err == nil {
-			os.Setenv("MAR_DEV_LAUNCH_CWD", cwd)
+			os.Setenv("MAR_LAUNCH_CWD", cwd)
 		}
 	}
 	tmp, err := os.MkdirTemp("", "mar-runtime-*")
 	if err != nil {
 		return err
 	}
-	// Best-effort cleanup. We don't defer if exec.Run blocks the process
-	// inside ListenAndServe — but ListenAndServe never returns cleanly
-	// in the success path, so cleanup happens via the OS on exit.
+	// Best-effort cleanup. We don't defer the rmdir because the server
+	// loop (jsserve.ServeLive → http.Serve) never returns cleanly in
+	// the success path — the process blocks there until SIGTERM. So
+	// the temp dir lives until the OS reaps it on exit.
 	if err := appbundle.ExtractToDir(b, tmp); err != nil {
 		os.RemoveAll(tmp)
 		return err
@@ -334,6 +339,27 @@ func runFromPath(path string) error {
 	jsserve.SetAdminBuildInfo("dev") // production fills this via ldflags later
 	jsserve.SetAdminRequestBufferSize(project.ResolvedRecentRequestsSize(manifest))
 
+	// Gateway rate limiter — always on, per-IP, configured via
+	// mar.json["rateLimit"]. validateRateLimit already ran during
+	// LoadManifest above; here we just resolve the policy. Rate is
+	// converted from per-minute (operator-friendly) to per-second
+	// (token-bucket internal unit).
+	var rateLimitCfg *project.RateLimitConfig
+	if manifest != nil {
+		rateLimitCfg = manifest.RateLimit
+	}
+	jsserve.SetRateLimit(ratelimit.New(ratelimit.Policy{
+		Rate:  float64(rateLimitCfg.ResolvedRequestsPerMinute()) / 60.0,
+		Burst: rateLimitCfg.ResolvedBurst(),
+	}))
+
+	// Per-request body cap (see cmd/mar/main.go for the rationale).
+	var serverCfg *project.ServerConfig
+	if manifest != nil {
+		serverCfg = manifest.Server
+	}
+	jsserve.SetMaxBodyBytes(serverCfg.ResolvedMaxBodyBytes())
+
 	// Admin panel boot — schema + sync from mar.json["admins"]. Same
 	// DB the user-auth uses; the _mar_admin_* tables coexist with
 	// user entities under the reserved framework prefix.
@@ -341,6 +367,17 @@ func runFromPath(path string) error {
 		db, dbErr := runtime.OpenDB()
 		if dbErr != nil {
 			return fmt.Errorf("admin panel: %w", dbErr)
+		}
+		// Acquire the exclusive advisory lock on the DB file, held
+		// for the process lifetime. Blocks a second instance of the
+		// runtime against the same DB, and signals the restore CLI
+		// that the server is in use. Kernel releases on process exit
+		// regardless of how — clean shutdown, SIGKILL, panic, etc.
+		if err := runtime.HoldDBLock(dbPath); err != nil {
+			if errors.Is(err, runtime.ErrDBLocked) {
+				return fmt.Errorf("database %s is locked by another process (another mar-runtime instance, or restore-db in progress)", dbPath)
+			}
+			return fmt.Errorf("database lock: %w", err)
 		}
 		desired := canonicalAdmins(manifestAdmins(manifest))
 		added, removed, err := admin.Boot(db, desired, time.Now().UnixMilli())
@@ -370,7 +407,13 @@ func runFromPath(path string) error {
 	// devMode stays false so the JS bundle skips dev affordances and
 	// ServeLive (called with hub=nil below) doesn't register /_mar/reload.
 
-	rEnv, _, _, err := project.LoadIntoEnvWithModulesAndHook(entryFile,
+	// Parse-only loader (no typecheck pass) — the embedded payload
+	// was already type-checked at `mar build` time, so re-checking
+	// every boot wastes startup AND pulls `internal/typecheck`
+	// (~100 KB + crypto/fips140 init data) into the link graph for
+	// no benefit. See LoadIntoEnvForRuntime's doc for the full
+	// rationale.
+	rEnv, mods, err := project.LoadIntoEnvForRuntime(entryFile,
 		func(env *runtime.Env, mods []*ast.Module) {
 			apphost.Install(env, mods, port, lp)
 		})
@@ -378,10 +421,7 @@ func runFromPath(path string) error {
 		return err
 	}
 
-	mainVal, ok := rEnv.Lookup("Main.main")
-	if !ok {
-		mainVal, ok = rEnv.Lookup("main")
-	}
+	mainVal, ok := project.LookupMain(rEnv, mods)
 	if !ok {
 		return fmt.Errorf("%s: no `main` exported", entryFile)
 	}
@@ -397,7 +437,7 @@ func runFromPath(path string) error {
 	}
 
 	// hub=nil: production server, no SSE / hot-reload endpoint.
-	return jsserve.ServeLive(port, lp, nil)
+	return jsserve.ServeLive(port, lp, nil, nil)
 }
 
 func resolveEntry(path string) (entryFile string, projectDir string, err error) {

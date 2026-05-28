@@ -154,6 +154,28 @@ func Load(root string) (*Project, error) {
 		}
 	}
 
+	// Boundary shape lint — catches Entity.define / Repo.* /
+	// Auth.config issues that BaseEnv's polymorphic types let
+	// through. Includes the new Entity.define checks: literal name,
+	// portable identifier shape, reserved-prefix rejection, and
+	// project-wide duplicate-name detection. Without this call here,
+	// `mar check` would silently accept programs that `mar dev`
+	// rejects at boot.
+	//
+	// Note: we pass nil for the expression-type map because Load
+	// doesn't keep one. The lint's literal-only mode is enough for
+	// the entity-name checks; the record-shape checks that need
+	// types are skipped silently when the map is nil (already the
+	// documented behavior of RunShapeLint).
+	orderedMods := make([]*ast.Module, 0, len(order))
+	for _, name := range order {
+		orderedMods = append(orderedMods, parsed[name])
+	}
+	if issues := typecheck.RunShapeLint(orderedMods, nil); len(issues) > 0 {
+		issue := issues[0]
+		return nil, diag.Wrap(paths[issue.Module], sources[issue.Module], &issue)
+	}
+
 	return &Project{
 		Root:    root,
 		Modules: mods,
@@ -161,12 +183,30 @@ func Load(root string) (*Project, error) {
 	}, nil
 }
 
-// loadIntoEnv evaluates a module's value declarations into an existing
-// runtime env, registering each value with both its bare name (in the
-// module's frame) and its qualified Module.name. Also processes
-// `import M exposing (...)` clauses so the runtime sees the same
-// bindings the typechecker accepted.
-func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env) error {
+// loadIntoEnv evaluates a module's value declarations into a fresh
+// per-module env that chains to the shared `rEnv`. Bare names defined
+// in this module live in the local frame; qualified `Module.name`
+// aliases are published to `rEnv` so other modules can resolve them
+// via `EQualified`. Also processes `import M exposing (...)` clauses
+// so the runtime sees the same bare-name bindings the typechecker
+// accepted.
+//
+// `modulesByName` is the project-wide module map. It's only consulted
+// here to resolve `import M exposing (Type(..))` — we need the list of
+// constructors for `Type`, which lives in `M`'s AST.
+//
+// Why per-module: with a single shared env, two modules that both
+// declare a bare name (e.g. `Backend.Projects.projects = Entity ...`
+// and `Frontend.Routes.projects : Path` — yes this happens in real
+// code) would clobber each other on load. The flat env's last-write-
+// wins would then feed the wrong value into bare references inside
+// either module's handlers. Putting each module in its own frame
+// keeps bare names module-local; cross-module references must use
+// `Module.name`, which the parser/typechecker already enforce except
+// for explicit `exposing` imports.
+func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByName map[string]*ast.Module) error {
+	modEnv := runtime.NewChildEnv(rEnv)
+
 	// Pass 0: import exposing — bare-name aliases for runtime values
 	// already in env. Mirrors what CheckModuleWith does at the type
 	// level; without this, code like `column [...]` after
@@ -178,18 +218,37 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env) error {
 		}
 		impName := joinName(imp.Module)
 		for _, item := range imp.Exposing.Items {
-			if v, ok := rEnv.Lookup(impName + "." + item.Name); ok {
-				rEnv.Define(item.Name, v)
+			if v, ok := modEnv.Lookup(impName + "." + item.Name); ok {
+				modEnv.Define(item.Name, v)
+			}
+			// `Type(..)`: pull every constructor of the imported type
+			// into the bare namespace too. The imported module's AST
+			// is the source of truth for the ctor list.
+			if item.Open {
+				if impMod, ok := modulesByName[impName]; ok {
+					for _, d := range impMod.Decls {
+						ct, ok := d.(*ast.CustomTypeDecl)
+						if !ok || ct.Name != item.Name {
+							continue
+						}
+						for _, c := range ct.Constructors {
+							if v, ok := modEnv.Lookup(impName + "." + c.Name); ok {
+								modEnv.Define(c.Name, v)
+							}
+						}
+					}
+				}
 			}
 		}
 	}
 
 	// Pass 1: register custom-type constructors.
 	// Also populate the path-pattern enum registry for any zero-arg
-	// ctor type (so `{role:Role}` segments resolve at runtime). We
-	// register under both the bare name and the fully-qualified one
-	// so a path declared in a module that imports `Shared.Role`
-	// resolves the same as one declared in `Shared` itself.
+	// ctor type (so `{role:Role}` segments resolve at runtime). The
+	// bare ctor name lives in modEnv (module-local); the qualified
+	// `Module.Ctor` form is published to the shared `rEnv` so
+	// `import M exposing (Type(..))` in Pass 0 of other modules can
+	// find it.
 	for _, d := range mod.Decls {
 		ct, ok := d.(*ast.CustomTypeDecl)
 		if !ok {
@@ -199,7 +258,7 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env) error {
 		ctorArities := map[string]int{}
 		for _, c := range ct.Constructors {
 			v := makeCtorValueLocal(c.Name, len(c.Args))
-			rEnv.Define(c.Name, v)
+			modEnv.Define(c.Name, v)
 			rEnv.Define(modName+"."+c.Name, v)
 			ctorNames = append(ctorNames, c.Name)
 			ctorArities[c.Name] = len(c.Args)
@@ -209,15 +268,21 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env) error {
 	}
 
 	// Pass 2: pre-bind values to placeholders (for mutual recursion).
+	// Local to modEnv — only this module's body needs the placeholder
+	// for self-/mutual reference; other modules see the final value
+	// via the qualified name set in Pass 3.
 	for _, d := range mod.Decls {
 		v, ok := d.(*ast.ValueDecl)
 		if !ok {
 			continue
 		}
-		rEnv.Define(v.Name, runtime.VUnit{})
+		modEnv.Define(v.Name, runtime.VUnit{})
 	}
 
-	// Pass 3: evaluate.
+	// Pass 3: evaluate. The body resolves bare names against modEnv
+	// (which shadows but chains to rEnv); closures captured here keep
+	// modEnv as their lexical env, so calls from other modules still
+	// see this module's own bare bindings.
 	for _, d := range mod.Decls {
 		v, ok := d.(*ast.ValueDecl)
 		if !ok {
@@ -227,7 +292,7 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env) error {
 		if len(v.Params) > 0 {
 			body = &ast.ELambda{Pos: v.Pos, Params: v.Params, Body: body}
 		}
-		val, err := runtime.Eval(body, rEnv)
+		val, err := runtime.Eval(body, modEnv)
 		if err != nil {
 			return err
 		}
@@ -246,14 +311,42 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env) error {
 			svc.OriginName = v.Name
 			val = svc
 		}
-		rEnv.Define(v.Name, val)
+		modEnv.Define(v.Name, val)
 		rEnv.Define(modName+"."+v.Name, val)
 	}
 	return nil
 }
 
-// makeCtorValueLocal mirrors runtime.makeCtorValue but lives here to avoid
-// exposing it. (Could be exported instead later.)
+// LookupMain finds the project's entry `main` value. Tries the
+// `Main.main` convention first (multi-file projects with a dedicated
+// `module Main` entry point), then falls back to the entry module's
+// qualified name. The entry is always last in `mods`
+// because the loader's BFS starts from the entry file and the topo
+// sort emits dependencies before their dependents — so for any
+// project the user can run, mods[len(mods)-1] is the file they
+// passed on the CLI.
+//
+// Returns the value and ok=true when found. Bare-name `main` is
+// intentionally not consulted: per-module env scoping (see
+// loadIntoEnv) keeps bare names module-local, so a bare `main` in
+// the shared `rEnv` is never registered.
+func LookupMain(rEnv *runtime.Env, mods []*ast.Module) (runtime.Value, bool) {
+	if v, ok := rEnv.Lookup("Main.main"); ok {
+		return v, true
+	}
+	if len(mods) == 0 {
+		return nil, false
+	}
+	entry := joinName(mods[len(mods)-1].Name)
+	return rEnv.Lookup(entry + ".main")
+}
+
+// makeCtorValueLocal builds the runtime value for a custom-type
+// constructor. Duplicates runtime.makeCtorValue (which lives in
+// module.go and is reachable only from the runtime package's own
+// tests). Keeping the project-side copy avoids widening the runtime
+// package's exported surface for a helper that has exactly one
+// caller (loadIntoEnv, below).
 func makeCtorValueLocal(tag string, arity int) runtime.Value {
 	if arity == 0 {
 		return runtime.VCtor{Tag: tag}

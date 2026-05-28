@@ -1,0 +1,43 @@
+module Backend.Dashboard exposing (services)
+
+
+import Backend.Projects
+import Backend.Issues
+import Backend.Teams
+import Shared
+
+
+-- Dashboard composes four related lists into a single round-trip
+-- payload. Bundling them prevents the typical "fan out from /me to
+-- /projects + /my-issues + /recent + /members" waterfall that makes
+-- the first paint feel slow.
+
+
+load : () -> Shared.User -> Effect String Shared.DashboardData
+load _ user =
+    Repo.findBy Backend.Projects.projects { teamId = user.teamId }
+        |> Effect.andThen
+            (\projects ->
+                Backend.Issues.listOpenForAssignee user
+                    |> Effect.andThen
+                        (\myOpen ->
+                            Backend.Issues.listRecent user
+                                |> Effect.andThen
+                                    (\recent ->
+                                        Backend.Teams.listMembers () user
+                                            |> Effect.map
+                                                (\members ->
+                                                    { projects        = projects
+                                                    , myOpenIssues    = myOpen
+                                                    , recentlyUpdated = recent
+                                                    , teamMembers     = members
+                                                    }
+                                                )
+                                    )
+                        )
+            )
+
+
+services =
+    [ Auth.protect Shared.loadDashboard load
+    ]

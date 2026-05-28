@@ -21,6 +21,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 // envRefRegex matches `"env:VAR_NAME"` inside JSON text. The string
@@ -62,4 +63,27 @@ func EnvRefsFromFile(path string) ([]string, error) {
 		return nil, err
 	}
 	return EnvRefsFromBytes(raw), nil
+}
+
+// SessionSecretEnvVar returns the env var name that backs
+// auth.sessionSecret in the manifest. Returns "" when the manifest
+// has no auth.sessionSecret, or when the value isn't an env:VAR
+// reference (e.g. a literal in dev manifests).
+//
+// Used by `mar fly provision` to decide whether the session secret
+// can be auto-generated (when it's an env ref the operator owns) vs.
+// has to be left alone. A separate function rather than a generic
+// "field → env var" map because auth.sessionSecret is the ONE secret
+// the framework knows how to generate a correct value for; every
+// other env var is an external credential (SMTP password, API key,
+// etc.) the operator must supply.
+func SessionSecretEnvVar(m *Manifest) string {
+	if m == nil || m.Auth == nil {
+		return ""
+	}
+	s := m.Auth.SessionSecret
+	if !strings.HasPrefix(s, "env:") {
+		return ""
+	}
+	return strings.TrimPrefix(s, "env:")
 }

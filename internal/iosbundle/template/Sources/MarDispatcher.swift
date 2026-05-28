@@ -20,6 +20,16 @@ final class MarDispatcher {
     /// a stale closure would dispatch into a torn-down page.
     var current: ((MarValue) -> Void)?
 
+    /// Identity tag for the page that owns `current`. Set together
+    /// with `current` on mount, checked on unmount. Lets the
+    /// outgoing page detect that someone else (the incoming page)
+    /// has already taken over the dispatcher slot — without this
+    /// check, a page-swap whose onAppear fires before the previous
+    /// page's onDisappear would have the outgoing unmount wipe the
+    /// incoming page's freshly-set closure, orphaning every async
+    /// msg (Service.call results, button taps, etc.).
+    var currentOwner: ObjectIdentifier?
+
     /// Backend URL for service / Http calls. Updated whenever
     /// AppViewModel resolves a new baseURL (Bonjour pick, manual
     /// override, baked default).

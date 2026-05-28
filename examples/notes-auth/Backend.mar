@@ -7,18 +7,26 @@ import Shared
 -- Entities live here, never in Shared — only the server touches SQL.
 users : Entity Shared.User
 users =
-    Entity.define "users"
-        { id    = Entity.serial
-        , email = Entity.text Entity.notNull
+    Entity.define
+        { name = "users"
+        , columns =
+            { id    = Entity.serial
+            , email = Entity.text Entity.notNull
+            }
+        , uniques = []
         }
 
 
 notes : Entity Shared.Note
 notes =
-    Entity.define "notes"
-        { id       = Entity.serial
-        , body     = Entity.text Entity.notNull
-        , authorId = Entity.int Entity.notNull
+    Entity.define
+        { name = "notes"
+        , columns =
+            { id       = Entity.serial
+            , body     = Entity.text Entity.notNull
+            , authorId = Entity.int Entity.notNull
+            }
+        , uniques = []
         }
 
 

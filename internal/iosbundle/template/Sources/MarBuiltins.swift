@@ -18,13 +18,21 @@ enum MarBuiltins {
     static func makeEnv() -> Env {
         let env = Env(parent: nil)
 
-        // MARK: Booleans / Maybe / Result
+        // MARK: Booleans / Maybe / Result / Order
+        //
+        // Order (LT/EQ/GT) is the three-way comparison result returned
+        // by List.sortWith comparators. Same convention as Elm — using
+        // a named sum type beats raw -1/0/1 Ints because the call site
+        // reads as "compareName a b -> LT" instead of "-> -1".
         env.define("True",  .bool(true))
         env.define("False", .bool(false))
         env.define("Nothing", .ctor(tag: "Nothing", args: [], origin: nil))
         env.define("Just",  .fn(MarFn.native(1) { .ctor(tag: "Just", args: $0, origin: nil) }))
         env.define("Ok",    .fn(MarFn.native(1) { .ctor(tag: "Ok",   args: $0, origin: nil) }))
         env.define("Err",   .fn(MarFn.native(1) { .ctor(tag: "Err",  args: $0, origin: nil) }))
+        env.define("LT",    .ctor(tag: "LT", args: [], origin: nil))
+        env.define("EQ",    .ctor(tag: "EQ", args: [], origin: nil))
+        env.define("GT",    .ctor(tag: "GT", args: [], origin: nil))
 
         // MARK: Arithmetic (integer for now; matches runtime.js)
         env.define("+", .fn(MarFn.native(2) { args in .int(asInt(args[0]) + asInt(args[1])) }))
@@ -177,6 +185,135 @@ enum MarBuiltins {
         env.define("stringTrim",  .fn(stringTrim))
         env.define("String.trim", .fn(stringTrim))
 
+        // String.endsWith : String suffix -> String s -> Bool
+        let stringEndsWith = MarFn.native(2) { args in
+            guard case .string(let suf) = args[0], case .string(let s) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "String, String", got: Eval.typeOf(args[0]))
+            }
+            return .bool(s.hasSuffix(suf))
+        }
+        env.define("stringEndsWith",  .fn(stringEndsWith))
+        env.define("String.endsWith", .fn(stringEndsWith))
+
+        // String.toInt / toFloat : Maybe-returning parsers — Nothing
+        // on any parse failure (empty / non-digit / overflow).
+        let stringToInt = MarFn.native(1) { args in
+            guard case .string(let s) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
+            }
+            if let n = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return .ctor(tag: "Just", args: [.int(n)], origin: nil)
+            }
+            return .ctor(tag: "Nothing", args: [], origin: nil)
+        }
+        env.define("stringToInt",  .fn(stringToInt))
+        env.define("String.toInt", .fn(stringToInt))
+
+        let stringToFloat = MarFn.native(1) { args in
+            guard case .string(let s) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
+            }
+            if let f = Double(s.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return .ctor(tag: "Just", args: [.float(f)], origin: nil)
+            }
+            return .ctor(tag: "Nothing", args: [], origin: nil)
+        }
+        env.define("stringToFloat",  .fn(stringToFloat))
+        env.define("String.toFloat", .fn(stringToFloat))
+
+        // String.fromFloat — Swift's default String(Double) gives
+        // shortest round-trip representation.
+        let stringFromFloat = MarFn.native(1) { args in
+            guard case .float(let f) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "Float", got: Eval.typeOf(args[0]))
+            }
+            return .string(String(f))
+        }
+        env.define("stringFromFloat",  .fn(stringFromFloat))
+        env.define("String.fromFloat", .fn(stringFromFloat))
+
+        // String.replace : needle -> replacement -> s -> String
+        let stringReplace = MarFn.native(3) { args in
+            guard case .string(let needle) = args[0],
+                  case .string(let rep) = args[1],
+                  case .string(let s) = args[2] else {
+                throw MarRuntimeError.typeMismatch(expected: "String, String, String", got: Eval.typeOf(args[0]))
+            }
+            return .string(s.replacingOccurrences(of: needle, with: rep))
+        }
+        env.define("stringReplace",  .fn(stringReplace))
+        env.define("String.replace", .fn(stringReplace))
+
+        // String.repeat : Int -> String -> String
+        let stringRepeat = MarFn.native(2) { args in
+            guard case .int(let n) = args[0], case .string(let s) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "Int, String", got: Eval.typeOf(args[0]))
+            }
+            if n <= 0 { return .string("") }
+            return .string(String(repeating: s, count: n))
+        }
+        env.define("stringRepeat",  .fn(stringRepeat))
+        env.define("String.repeat", .fn(stringRepeat))
+
+        // String.padLeft / padRight — pad with a Char (Elm-style).
+        // Stays in sync with the Go/JS sides where `pad` is a single
+        // code point repeated to fill.
+        func padString(_ s: String, _ width: Int, _ pad: Unicode.Scalar, _ left: Bool) -> String {
+            if s.count >= width { return s }
+            let need = width - s.count
+            let filler = String(repeating: String(pad), count: need)
+            return left ? filler + s : s + filler
+        }
+
+        let stringPadLeft = MarFn.native(3) { args in
+            guard case .int(let w) = args[0],
+                  case .char(let pad) = args[1],
+                  case .string(let s) = args[2] else {
+                throw MarRuntimeError.typeMismatch(expected: "Int, Char, String", got: Eval.typeOf(args[0]))
+            }
+            return .string(padString(s, w, pad, true))
+        }
+        env.define("stringPadLeft",  .fn(stringPadLeft))
+        env.define("String.padLeft", .fn(stringPadLeft))
+
+        let stringPadRight = MarFn.native(3) { args in
+            guard case .int(let w) = args[0],
+                  case .char(let pad) = args[1],
+                  case .string(let s) = args[2] else {
+                throw MarRuntimeError.typeMismatch(expected: "Int, Char, String", got: Eval.typeOf(args[0]))
+            }
+            return .string(padString(s, w, pad, false))
+        }
+        env.define("stringPadRight",  .fn(stringPadRight))
+        env.define("String.padRight", .fn(stringPadRight))
+
+        // String.indexes : needle -> s -> List Int — non-overlapping
+        // byte offsets of every occurrence. Matches Elm + the Go/JS
+        // runtimes.
+        let stringIndexes = MarFn.native(2) { args in
+            guard case .string(let needle) = args[0], case .string(let s) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "String, String", got: Eval.typeOf(args[0]))
+            }
+            if needle.isEmpty { return .list([]) }
+            var out: [MarValue] = []
+            // Walk a position cursor through s, jumping past each
+            // match. Counts UTF-16-style code units (NSString
+            // semantics) to stay byte-compatible with the JS runtime.
+            let ns = s as NSString
+            let nl = needle as NSString
+            var search = NSRange(location: 0, length: ns.length)
+            while search.length > 0 {
+                let r = ns.range(of: needle, options: [], range: search)
+                if r.location == NSNotFound { break }
+                out.append(.int(r.location))
+                let next = r.location + nl.length
+                search = NSRange(location: next, length: ns.length - next)
+            }
+            return .list(out)
+        }
+        env.define("stringIndexes",  .fn(stringIndexes))
+        env.define("String.indexes", .fn(stringIndexes))
+
         // MARK: List stdlib
         let listLength = MarFn.native(1) { args in
             guard case .list(let xs) = args[0] else {
@@ -324,6 +461,297 @@ enum MarBuiltins {
         env.define("listConcat",  .fn(listConcat))
         env.define("List.concat", .fn(listConcat))
 
+        // MARK: List.take / List.drop
+        let listTake = MarFn.native(2) { args in
+            guard case .int(let n) = args[0], case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "Int, List", got: Eval.typeOf(args[0]))
+            }
+            if n <= 0 { return .list([]) }
+            if n >= xs.count { return .list(xs) }
+            return .list(Array(xs.prefix(n)))
+        }
+        env.define("listTake",  .fn(listTake))
+        env.define("List.take", .fn(listTake))
+
+        let listDrop = MarFn.native(2) { args in
+            guard case .int(let n) = args[0], case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "Int, List", got: Eval.typeOf(args[0]))
+            }
+            if n <= 0 { return .list(xs) }
+            if n >= xs.count { return .list([]) }
+            return .list(Array(xs.dropFirst(n)))
+        }
+        env.define("listDrop",  .fn(listDrop))
+        env.define("List.drop", .fn(listDrop))
+
+        // MARK: List.move — pure splice (from → to). Mirrors the Go
+        // and JS impls: no-op on from == to or out-of-bounds indices
+        // so stale Msgs (race between client and server where the
+        // list shrunk) don't corrupt the data.
+        let listMove = MarFn.native(3) { args in
+            guard case .int(let from) = args[0], case .int(let to) = args[1], case .list(let xs) = args[2] else {
+                throw MarRuntimeError.typeMismatch(expected: "Int, Int, List", got: Eval.typeOf(args[0]))
+            }
+            let n = xs.count
+            if from == to || from < 0 || from >= n || to < 0 || to >= n { return .list(xs) }
+            var out = xs
+            let elt = out.remove(at: from)
+            out.insert(elt, at: to)
+            return .list(out)
+        }
+        env.define("listMove",  .fn(listMove))
+        env.define("List.move", .fn(listMove))
+
+        // MARK: List.member — structural equality.
+        let listMember = MarFn.native(2) { args in
+            guard case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
+            }
+            for x in xs where args[0].equalsMar(x) { return .bool(true) }
+            return .bool(false)
+        }
+        env.define("listMember",  .fn(listMember))
+        env.define("List.member", .fn(listMember))
+
+        // MARK: List.any / List.all — short-circuit.
+        let listAny = MarFn.native(2) { args in
+            guard case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
+            }
+            for x in xs {
+                if case .bool(true) = try Eval.apply(args[0], x) { return .bool(true) }
+            }
+            return .bool(false)
+        }
+        env.define("listAny",  .fn(listAny))
+        env.define("List.any", .fn(listAny))
+
+        let listAll = MarFn.native(2) { args in
+            guard case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
+            }
+            for x in xs {
+                if case .bool(false) = try Eval.apply(args[0], x) { return .bool(false) }
+            }
+            return .bool(true)
+        }
+        env.define("listAll",  .fn(listAll))
+        env.define("List.all", .fn(listAll))
+
+        // MARK: List.foldr : (a -> b -> b) -> b -> List a -> b
+        let listFoldr = MarFn.native(3) { args in
+            var acc = args[1]
+            guard case .list(let xs) = args[2] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[2]))
+            }
+            for x in xs.reversed() {
+                let partial = try Eval.apply(args[0], x)
+                acc = try Eval.apply(partial, acc)
+            }
+            return acc
+        }
+        env.define("listFoldr",  .fn(listFoldr))
+        env.define("List.foldr", .fn(listFoldr))
+
+        // MARK: List.indexedMap : (Int -> a -> b) -> List a -> List b
+        let listIndexedMap = MarFn.native(2) { args in
+            guard case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
+            }
+            var out: [MarValue] = []
+            out.reserveCapacity(xs.count)
+            for (i, x) in xs.enumerated() {
+                let partial = try Eval.apply(args[0], .int(i))
+                out.append(try Eval.apply(partial, x))
+            }
+            return .list(out)
+        }
+        env.define("listIndexedMap",  .fn(listIndexedMap))
+        env.define("List.indexedMap", .fn(listIndexedMap))
+
+        // MARK: List.repeat : Int -> a -> List a
+        let listRepeat = MarFn.native(2) { args in
+            guard case .int(let n) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "Int", got: Eval.typeOf(args[0]))
+            }
+            if n <= 0 { return .list([]) }
+            return .list(Array(repeating: args[1], count: n))
+        }
+        env.define("listRepeat",  .fn(listRepeat))
+        env.define("List.repeat", .fn(listRepeat))
+
+        // MARK: List.intersperse : a -> List a -> List a
+        let listIntersperse = MarFn.native(2) { args in
+            guard case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
+            }
+            if xs.count <= 1 { return .list(xs) }
+            var out: [MarValue] = []
+            out.reserveCapacity(2 * xs.count - 1)
+            for (i, x) in xs.enumerated() {
+                if i > 0 { out.append(args[0]) }
+                out.append(x)
+            }
+            return .list(out)
+        }
+        env.define("listIntersperse",  .fn(listIntersperse))
+        env.define("List.intersperse", .fn(listIntersperse))
+
+        // MARK: List.partition : (a -> Bool) -> List a -> (List a, List a)
+        let listPartition = MarFn.native(2) { args in
+            guard case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
+            }
+            var yes: [MarValue] = []
+            var no: [MarValue] = []
+            for x in xs {
+                if case .bool(true) = try Eval.apply(args[0], x) {
+                    yes.append(x)
+                } else {
+                    no.append(x)
+                }
+            }
+            return .tuple([.list(yes), .list(no)])
+        }
+        env.define("listPartition",  .fn(listPartition))
+        env.define("List.partition", .fn(listPartition))
+
+        // MARK: List.concatMap : (a -> List b) -> List a -> List b
+        let listConcatMap = MarFn.native(2) { args in
+            guard case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
+            }
+            var out: [MarValue] = []
+            for x in xs {
+                let r = try Eval.apply(args[0], x)
+                guard case .list(let inner) = r else {
+                    throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(r))
+                }
+                out.append(contentsOf: inner)
+            }
+            return .list(out)
+        }
+        env.define("listConcatMap",  .fn(listConcatMap))
+        env.define("List.concatMap", .fn(listConcatMap))
+
+        // MARK: List.filterMap : (a -> Maybe b) -> List a -> List b
+        let listFilterMap = MarFn.native(2) { args in
+            guard case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
+            }
+            var out: [MarValue] = []
+            for x in xs {
+                let r = try Eval.apply(args[0], x)
+                if case .ctor(let tag, let cargs, _) = r, tag == "Just", cargs.count == 1 {
+                    out.append(cargs[0])
+                }
+            }
+            return .list(out)
+        }
+        env.define("listFilterMap",  .fn(listFilterMap))
+        env.define("List.filterMap", .fn(listFilterMap))
+
+        // MARK: List.maximum / List.minimum : List a -> Maybe a
+        // compareMar only orders Int/Float/String; non-comparable
+        // element types silently return Nothing rather than throwing.
+        let listMaximum = MarFn.native(1) { args in
+            guard case .list(let xs) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
+            }
+            guard var best = xs.first else { return .ctor(tag: "Nothing", args: [], origin: nil) }
+            for x in xs.dropFirst() where best.compareMar(x) < 0 { best = x }
+            return .ctor(tag: "Just", args: [best], origin: nil)
+        }
+        env.define("listMaximum",  .fn(listMaximum))
+        env.define("List.maximum", .fn(listMaximum))
+
+        let listMinimum = MarFn.native(1) { args in
+            guard case .list(let xs) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
+            }
+            guard var best = xs.first else { return .ctor(tag: "Nothing", args: [], origin: nil) }
+            for x in xs.dropFirst() where best.compareMar(x) > 0 { best = x }
+            return .ctor(tag: "Just", args: [best], origin: nil)
+        }
+        env.define("listMinimum",  .fn(listMinimum))
+        env.define("List.minimum", .fn(listMinimum))
+
+        // MARK: List.product : List Int -> Int
+        let listProduct = MarFn.native(1) { args in
+            guard case .list(let xs) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
+            }
+            var p = 1
+            for x in xs { p *= asInt(x) }
+            return .int(p)
+        }
+        env.define("listProduct",  .fn(listProduct))
+        env.define("List.product", .fn(listProduct))
+
+        // MARK: List.sort / sortBy / sortWith
+        // Swift's Array.sort(by:) is stable since Swift 5.0.
+        let listSort = MarFn.native(1) { args in
+            guard case .list(let xs) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
+            }
+            return .list(xs.sorted { $0.compareMar($1) < 0 })
+        }
+        env.define("listSort",  .fn(listSort))
+        env.define("List.sort", .fn(listSort))
+
+        let listSortBy = MarFn.native(2) { args in
+            guard case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
+            }
+            // Cache keys: fn runs once per element, not O(n log n).
+            var keys: [MarValue] = []
+            keys.reserveCapacity(xs.count)
+            for x in xs { keys.append(try Eval.apply(args[0], x)) }
+            let idx = Array(0..<xs.count).sorted { keys[$0].compareMar(keys[$1]) < 0 }
+            return .list(idx.map { xs[$0] })
+        }
+        env.define("listSortBy",  .fn(listSortBy))
+        env.define("List.sortBy", .fn(listSortBy))
+
+        // listSortWith : (a -> a -> Order) -> List a -> List a
+        // Comparator returns LT/EQ/GT (a 3-way sum), not -1/0/1. The
+        // sort callback maps LT → "is less than", EQ/GT → "is not".
+        let listSortWith = MarFn.native(2) { args in
+            guard case .list(let xs) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
+            }
+            // Swift's sort doesn't support throwing comparators, so
+            // we materialize a side error via reference type.
+            final class SortError { var err: Error? }
+            let box = SortError()
+            let sorted = xs.sorted { a, b in
+                guard box.err == nil else { return false }
+                do {
+                    let partial = try Eval.apply(args[0], a)
+                    let v = try Eval.apply(partial, b)
+                    if case .ctor(let tag, _, _) = v {
+                        switch tag {
+                        case "LT": return true
+                        case "EQ", "GT": return false
+                        default:
+                            box.err = MarRuntimeError.message(
+                                "List.sortWith: comparator returned \(tag), expected LT/EQ/GT")
+                            return false
+                        }
+                    }
+                    box.err = MarRuntimeError.typeMismatch(expected: "Order", got: Eval.typeOf(v))
+                    return false
+                } catch {
+                    box.err = error
+                    return false
+                }
+            }
+            if let err = box.err { throw err }
+            return .list(sorted)
+        }
+        env.define("listSortWith",  .fn(listSortWith))
+        env.define("List.sortWith", .fn(listSortWith))
+
         // MARK: Maybe.withDefault
         let maybeWithDefault = MarFn.native(2) { args in
             if case .ctor(let tag, let cargs, _) = args[1], tag == "Just" {
@@ -406,6 +834,161 @@ enum MarBuiltins {
         }
         env.define("resultMapError",  .fn(resultMapError))
         env.define("Result.mapError", .fn(resultMapError))
+
+        // MARK: Result.withDefault / fromMaybe / toMaybe
+        let resultWithDefault = MarFn.native(2) { args in
+            if case .ctor(let tag, let cargs, _) = args[1], tag == "Ok", cargs.count == 1 {
+                return cargs[0]
+            }
+            return args[0]
+        }
+        env.define("resultWithDefault",  .fn(resultWithDefault))
+        env.define("Result.withDefault", .fn(resultWithDefault))
+
+        let resultFromMaybe = MarFn.native(2) { args in
+            if case .ctor(let tag, let cargs, _) = args[1], tag == "Just", cargs.count == 1 {
+                return .ctor(tag: "Ok", args: [cargs[0]], origin: nil)
+            }
+            return .ctor(tag: "Err", args: [args[0]], origin: nil)
+        }
+        env.define("resultFromMaybe",  .fn(resultFromMaybe))
+        env.define("Result.fromMaybe", .fn(resultFromMaybe))
+
+        let resultToMaybe = MarFn.native(1) { args in
+            if case .ctor(let tag, let cargs, _) = args[0], tag == "Ok", cargs.count == 1 {
+                return .ctor(tag: "Just", args: [cargs[0]], origin: nil)
+            }
+            return .ctor(tag: "Nothing", args: [], origin: nil)
+        }
+        env.define("resultToMaybe",  .fn(resultToMaybe))
+        env.define("Result.toMaybe", .fn(resultToMaybe))
+
+        // MARK: Maybe.map2 / map3 / andMap / filter
+        let maybeMap2 = MarFn.native(3) { args in
+            guard case .ctor(let ta, let aa, _) = args[1],
+                  case .ctor(let tb, let ab, _) = args[2],
+                  ta == "Just", tb == "Just", aa.count == 1, ab.count == 1 else {
+                return .ctor(tag: "Nothing", args: [], origin: nil)
+            }
+            let partial = try Eval.apply(args[0], aa[0])
+            let v = try Eval.apply(partial, ab[0])
+            return .ctor(tag: "Just", args: [v], origin: nil)
+        }
+        env.define("maybeMap2",  .fn(maybeMap2))
+        env.define("Maybe.map2", .fn(maybeMap2))
+
+        let maybeMap3 = MarFn.native(4) { args in
+            guard case .ctor(let ta, let aa, _) = args[1],
+                  case .ctor(let tb, let ab, _) = args[2],
+                  case .ctor(let tc, let ac, _) = args[3],
+                  ta == "Just", tb == "Just", tc == "Just",
+                  aa.count == 1, ab.count == 1, ac.count == 1 else {
+                return .ctor(tag: "Nothing", args: [], origin: nil)
+            }
+            let p1 = try Eval.apply(args[0], aa[0])
+            let p2 = try Eval.apply(p1, ab[0])
+            let v  = try Eval.apply(p2, ac[0])
+            return .ctor(tag: "Just", args: [v], origin: nil)
+        }
+        env.define("maybeMap3",  .fn(maybeMap3))
+        env.define("Maybe.map3", .fn(maybeMap3))
+
+        let maybeAndMap = MarFn.native(2) { args in
+            guard case .ctor(let tv, let va, _) = args[0],
+                  case .ctor(let tf, let fa, _) = args[1],
+                  tv == "Just", tf == "Just", va.count == 1, fa.count == 1 else {
+                return .ctor(tag: "Nothing", args: [], origin: nil)
+            }
+            let v = try Eval.apply(fa[0], va[0])
+            return .ctor(tag: "Just", args: [v], origin: nil)
+        }
+        env.define("maybeAndMap",  .fn(maybeAndMap))
+        env.define("Maybe.andMap", .fn(maybeAndMap))
+
+        let maybeFilter = MarFn.native(2) { args in
+            guard case .ctor(let tag, let cargs, _) = args[1],
+                  tag == "Just", cargs.count == 1 else {
+                return .ctor(tag: "Nothing", args: [], origin: nil)
+            }
+            if case .bool(true) = try Eval.apply(args[0], cargs[0]) {
+                return args[1]
+            }
+            return .ctor(tag: "Nothing", args: [], origin: nil)
+        }
+        env.define("maybeFilter",  .fn(maybeFilter))
+        env.define("Maybe.filter", .fn(maybeFilter))
+
+        // MARK: Tuple — 2-tuple helpers.
+        let tupleFirst = MarFn.native(1) { args in
+            guard case .tuple(let xs) = args[0], xs.count >= 2 else {
+                throw MarRuntimeError.typeMismatch(expected: "2-tuple", got: Eval.typeOf(args[0]))
+            }
+            return xs[0]
+        }
+        env.define("tupleFirst",  .fn(tupleFirst))
+        env.define("Tuple.first", .fn(tupleFirst))
+
+        let tupleSecond = MarFn.native(1) { args in
+            guard case .tuple(let xs) = args[0], xs.count >= 2 else {
+                throw MarRuntimeError.typeMismatch(expected: "2-tuple", got: Eval.typeOf(args[0]))
+            }
+            return xs[1]
+        }
+        env.define("tupleSecond",  .fn(tupleSecond))
+        env.define("Tuple.second", .fn(tupleSecond))
+
+        let tuplePair = MarFn.native(2) { args in
+            return .tuple([args[0], args[1]])
+        }
+        env.define("tuplePair",  .fn(tuplePair))
+        env.define("Tuple.pair", .fn(tuplePair))
+
+        let tupleMapFirst = MarFn.native(2) { args in
+            guard case .tuple(let xs) = args[1], xs.count >= 2 else {
+                throw MarRuntimeError.typeMismatch(expected: "2-tuple", got: Eval.typeOf(args[1]))
+            }
+            let v = try Eval.apply(args[0], xs[0])
+            return .tuple([v, xs[1]])
+        }
+        env.define("tupleMapFirst",  .fn(tupleMapFirst))
+        env.define("Tuple.mapFirst", .fn(tupleMapFirst))
+
+        let tupleMapSecond = MarFn.native(2) { args in
+            guard case .tuple(let xs) = args[1], xs.count >= 2 else {
+                throw MarRuntimeError.typeMismatch(expected: "2-tuple", got: Eval.typeOf(args[1]))
+            }
+            let v = try Eval.apply(args[0], xs[1])
+            return .tuple([xs[0], v])
+        }
+        env.define("tupleMapSecond",  .fn(tupleMapSecond))
+        env.define("Tuple.mapSecond", .fn(tupleMapSecond))
+
+        let tupleMapBoth = MarFn.native(3) { args in
+            guard case .tuple(let xs) = args[2], xs.count >= 2 else {
+                throw MarRuntimeError.typeMismatch(expected: "2-tuple", got: Eval.typeOf(args[2]))
+            }
+            let a = try Eval.apply(args[0], xs[0])
+            let b = try Eval.apply(args[1], xs[1])
+            return .tuple([a, b])
+        }
+        env.define("tupleMapBoth",  .fn(tupleMapBoth))
+        env.define("Tuple.mapBoth", .fn(tupleMapBoth))
+
+        // MARK: Dict / Set
+        //
+        // Lives in MarDict.swift (parallel to the Go side's
+        // internal/runtime/dict.go) to keep this file from growing
+        // unbounded. Same sorted-pairs invariant, same wire markers
+        // (`__dict` / `__set`).
+        MarDict.register(env)
+
+        // MARK: Char
+        //
+        // Char.* + String <-> [Char] bridges. Lives in MarChar.swift
+        // (parallel to internal/runtime/char.go on the server). The
+        // padLeft/padRight pair updated above to take a Char depends
+        // on this module being registered alongside.
+        MarChar.register(env)
 
         // MARK: View constructors
 
@@ -526,24 +1109,34 @@ enum MarBuiltins {
         env.define("navReplace",  .fn(navReplace))
         env.define("Nav.replace", .fn(navReplace))
 
-        // Nav.afterSignIn : Effect e msg
+        // Auth.completeSignIn : Effect e msg
         // Drains the framework-managed `pendingReturnPath` set when a
         // 401 redirected the user to sign-in; navigates there. Falls
         // back to "/" when no return target was captured (user landed
         // on sign-in directly, or this is the first cold start).
         // Resets the redirect-coalescer so the next genuine session
         // expiry triggers a fresh redirect.
-        let navAfterSignIn = MarEffect(tag: "navAfterSignIn") {
+        //
+        // Uses `invalidateUser: false` because Auth.verifyCode just
+        // populated AppContext.currentUser with the freshly-signed-in
+        // user, and the destination is almost always a Page.protected
+        // that would otherwise re-fetch Auth.me unnecessarily (and
+        // race against the just-set session cookie).
+        //
+        // Lives under Auth.* (not Nav.*) because it bundles auth-
+        // specific cleanup with the navigation step; Nav.* is kept
+        // focused on pure navigation primitives.
+        let authCompleteSignIn = MarEffect(tag: "authCompleteSignIn") {
             Task { @MainActor in
                 let target = AppContext.shared.pendingReturnPath ?? "/"
                 AppContext.shared.pendingReturnPath = nil
                 AppContext.shared.redirectingToSignIn = false
-                AppContext.shared.navigate(path: target, replace: true)
+                AppContext.shared.navigate(path: target, replace: true, invalidateUser: false)
             }
             return .unit
         }
-        env.define("navAfterSignIn",  .effect(navAfterSignIn))
-        env.define("Nav.afterSignIn", .effect(navAfterSignIn))
+        env.define("authCompleteSignIn",  .effect(authCompleteSignIn))
+        env.define("Auth.completeSignIn", .effect(authCompleteSignIn))
 
         // MARK: linkTo / Nav.pushTo / Nav.replaceTo
         //
@@ -1176,13 +1769,57 @@ enum MarBuiltins {
         env.define("Auth.verifyCode", .fn(authVerifyCode))
 
         // Auth.logout : (Result String () -> msg) -> Effect
+        //
+        // Optimistic logout: dispatches Ok(()) IMMEDIATELY and
+        // fires the server POST in the background fire-and-forget.
+        // See the JS counterpart for the full rationale; in short,
+        // operators reported "Sign out feels stuck on slow networks"
+        // because the previous flow waited for the server before
+        // any UI update. Production apps (Gmail / Slack / Twitter)
+        // all logout-then-navigate before the server responds.
+        //
+        // We post directly via URLSession rather than going through
+        // MarHTTP.fireAuth — that helper couples the request to the
+        // dispatch, which is exactly the coupling we want to break.
         let authLogout = MarFn.native(1) { args in
             let toMsg = args[0]
             return .effect(MarEffect(tag: "Auth.logout") {
-                MarHTTP.fireAuth(path: "/_auth/logout",
-                                  body: nil,
-                                  decode: .ackUnit,
-                                  toMsg: toMsg)
+                Task { @MainActor in
+                    if let url = MarDispatcher.shared.resolve(path: "/_auth/logout") {
+                        var req = URLRequest(url: url)
+                        req.httpMethod = "POST"
+                        // Carry the Bearer so the server can identify
+                        // which session row to delete. Without this,
+                        // the request would arrive anonymous and the
+                        // server couldn't revoke the right token —
+                        // session would linger until natural expiry.
+                        if let tok = MarKeychain.load(forKey: MarKeychain.sessionTokenKey) {
+                            req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
+                        }
+                        // Fire-and-forget. Server-side session
+                        // cleanup is best-effort; if it doesn't
+                        // arrive the local credential is gone anyway
+                        // (cleared below) so the user is locally
+                        // logged out either way.
+                        URLSession.shared.dataTask(with: req) { _, _, _ in }.resume()
+                    }
+                    // Drop the local credential first — covers the
+                    // network-failure case where the server POST
+                    // never lands. On the next request the absence
+                    // of a Bearer + the server having seen no logout
+                    // means a stale session row lingers until TTL,
+                    // but the user is locally signed out and any
+                    // subsequent call hits the 401 → sign-in path.
+                    MarHTTP.clearStoredToken()
+                    // Clear the cached user IMMEDIATELY so any
+                    // Page.protected gate re-evaluating right after
+                    // sees "no user" and bounces to sign-in.
+                    AppContext.shared.currentUser = .ctor(tag: "Nothing", args: [], origin: nil)
+                    // Dispatch Ok(()) so the mar update fires its
+                    // post-logout action (typically Auth.completeSignIn).
+                    let msg = (try? Eval.apply(toMsg, .ctor(tag: "Ok", args: [.unit], origin: nil))) ?? .unit
+                    MarDispatcher.shared.dispatch(msg)
+                }
                 return .unit
             })
         }
@@ -1307,10 +1944,12 @@ enum MarBuiltins {
         env.define("UI.navigationStack", .fn(container("navigationStack")))
         env.define("form",        .fn(contentOnlyContainer("form")))
         env.define("UI.form",     .fn(contentOnlyContainer("form")))
-        env.define("list",        .fn(contentOnlyContainer("uiList")))
-        env.define("UI.list",     .fn(contentOnlyContainer("uiList")))
+        env.define("list",        .fn(container("uiList")))
+        env.define("UI.list",     .fn(container("uiList")))
         env.define("uiSection",   .fn(container("uiSection")))
         env.define("UI.section",  .fn(container("uiSection")))
+        env.define("uiKeyedList", .fn(container("uiKeyedList")))
+        env.define("UI.keyedList", .fn(container("uiKeyedList")))
         env.define("hstack",      .fn(container("hstack")))
         env.define("UI.hstack",   .fn(container("hstack")))
         env.define("vstack",      .fn(container("vstack")))
@@ -1333,6 +1972,51 @@ enum MarBuiltins {
         }
         env.define("textField",    .fn(uiTextField))
         env.define("UI.textField", .fn(uiTextField))
+
+        // textArea : List Attr -> String placeholder -> String value -> (String -> msg) -> View msg
+        // Multi-line variant of textField. Same wire shape, just a
+        // different `tag` for MarRenderer to swap TextField for
+        // TextEditor (or any platform-native multi-line control).
+        let uiTextArea = MarFn.native(4) { args in
+            var attrs = collectAttrs(args[0])
+            attrs.append(MarView.Attr(name: "placeholder", value: args[1]))
+            let value: String
+            if case .string(let s) = args[2] { value = s } else { value = "" }
+            return .view(MarView(
+                tag: "textArea",
+                attrs: attrs,
+                children: [],
+                text: value,
+                msg: args[3],
+                key: nil
+            ))
+        }
+        env.define("textArea",    .fn(uiTextArea))
+        env.define("UI.textArea", .fn(uiTextArea))
+
+        // picker : List Attr -> a -> List a -> (a -> String) -> (a -> msg) -> View msg
+        // Single-selection field for enum-like inputs that have
+        // too many variants to render as a stack of toggles. The
+        // selected value, option list, and labeling function ride
+        // along as attrs so the renderer can rebuild the option
+        // list and resolve the picked value at dispatch time.
+        // iOS: SwiftUI Picker (menu / wheel). Web: <select>.
+        let uiPicker = MarFn.native(5) { args in
+            var attrs = collectAttrs(args[0])
+            attrs.append(MarView.Attr(name: "selected", value: args[1]))
+            attrs.append(MarView.Attr(name: "options", value: args[2]))
+            attrs.append(MarView.Attr(name: "toLabel", value: args[3]))
+            return .view(MarView(
+                tag: "picker",
+                attrs: attrs,
+                children: [],
+                text: "",
+                msg: args[4],
+                key: nil
+            ))
+        }
+        env.define("picker",    .fn(uiPicker))
+        env.define("UI.picker", .fn(uiPicker))
 
         // text / button — leaf views without attrs.
         let uiText = MarFn.native(1) { args in
@@ -1371,6 +2055,75 @@ enum MarBuiltins {
         env.define("uiDisabled",  .fn(uiDisabled))
         env.define("UI.disabled", .fn(uiDisabled))
 
+        // UI.keyed : String -> View msg -> KeyedView msg
+        // Wraps a regular View with a stable identity (the key
+        // string) so it can be a child of UI.keyedList. The
+        // distinction is compile-time only — at runtime we just
+        // append a `key` attr to the inner MarView. MarRenderer
+        // reads it back when feeding rows into SwiftUI's ForEach
+        // as the row\'s `.id`, so .onMove / .onDelete animate the
+        // correct row across mutations.
+        //
+        // Returns a copy with attrs extended so callers that hold
+        // a reference to the unwrapped view don\'t see side-effects.
+        let uiKeyed = MarFn.native(2) { args in
+            guard case .string(let keyStr) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
+            }
+            guard case .view(let view) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "View", got: Eval.typeOf(args[1]))
+            }
+            var attrs = view.attrs
+            attrs.append(MarView.Attr(name: "key", value: .string(keyStr)))
+            return .view(MarView(
+                tag: view.tag,
+                attrs: attrs,
+                children: view.children,
+                text: view.text,
+                msg: view.msg,
+                key: view.key
+            ))
+        }
+        env.define("uiKeyed",  .fn(uiKeyed))
+        env.define("UI.keyed", .fn(uiKeyed))
+
+        // UI.onMove : Bool -> (Int -> Int -> msg) -> Attr KeyedList
+        // Reorder gesture for `list`. Bool = "edit mode active"
+        // (rows show drag affordance), function = `(from, to) ->
+        // msg` callback. Bundled into one attr so the type system
+        // guarantees both are declared together.
+        //
+        // Stored as a record { editing, handler } so the renderer
+        // can pull both off in one place. On iOS this maps to
+        // `.onMove { ... }` + `editMode` environment.
+        let uiOnMove = MarFn.native(2) { args in
+            var fields: [String: MarValue] = [:]
+            fields["editing"] = args[0]
+            fields["handler"] = args[1]
+            return makeAttr("onMove", .record(fields: fields, order: ["editing", "handler"]))
+        }
+        env.define("uiOnMove",  .fn(uiOnMove))
+        env.define("UI.onMove", .fn(uiOnMove))
+
+        // UI.onDelete : Bool -> (Int -> msg) -> Attr Section
+        // Per-row delete affordance. Bool = "edit mode active"; when
+        // True, SwiftUI's edit-mode minus button shows on every row.
+        // When False, swipe-to-delete reveals the destructive action
+        // (the standard iOS Mail/Notes pattern).
+        //
+        // Same packing shape as onMove so both can be set on the same
+        // section without conflict. The Swift renderer wires this to
+        // SwiftUI's native `.onDelete` modifier on ForEach — which
+        // gives swipe + edit-mode + accessibility for free.
+        let uiOnDelete = MarFn.native(2) { args in
+            var fields: [String: MarValue] = [:]
+            fields["editing"] = args[0]
+            fields["handler"] = args[1]
+            return makeAttr("onDelete", .record(fields: fields, order: ["editing", "handler"]))
+        }
+        env.define("uiOnDelete",  .fn(uiOnDelete))
+        env.define("UI.onDelete", .fn(uiOnDelete))
+
         // title / subtitle — heading + secondary heading. Reuse the
         // existing "title" / "subtitle" tags so the renderer's
         // existing branches apply (.font(.title2) / .font(.headline)).
@@ -1390,30 +2143,144 @@ enum MarBuiltins {
         env.define("uiSubtitle",  .fn(uiSubtitle))
         env.define("UI.subtitle", .fn(uiSubtitle))
 
-        // link : Path r -> r -> String -> View msg
-        // Builds the URL via the same path-pattern machinery as
-        // linkTo, then emits a "link" view with `href` attr. iOS
-        // renderer turns this into a NavigationLink / tappable
-        // text that drives Nav.pushTo.
-        let uiLink = MarFn.native(3) { args in
-            guard case .string(let src) = args[0] else {
-                throw MarRuntimeError.typeMismatch(expected: "Path", got: Eval.typeOf(args[0]))
+        // errorText — destructive-intent message (red + semi-bold).
+        // Same leaf shape as text/title/subtitle; MarRenderer's
+        // "errorText" case applies the visual treatment.
+        let uiErrorText = MarFn.native(1) { args in
+            let s: String
+            if case .string(let str) = args[0] { s = str } else { s = "" }
+            return .view(MarView(tag: "errorText", attrs: [], children: [], text: s, msg: nil, key: nil))
+        }
+        env.define("uiErrorText",  .fn(uiErrorText))
+        env.define("UI.errorText", .fn(uiErrorText))
+
+        // paragraph : List (Inline msg) -> View msg
+        //
+        // STUB — iOS renderer for paragraph + inline atoms isn't wired
+        // yet (planned: AttributedString built from the children,
+        // shown via Text(attributedString)). For now we land a
+        // best-effort placeholder so iOS bundles compile and the
+        // drift test passes: each `span` child rendered as a plain
+        // `text` view, stacked. No styling, no links opened. Apps
+        // that target iOS shouldn\'t use paragraph yet.
+        let uiParagraph = MarFn.native(1) { args in
+            var children: [MarValue] = []
+            if case .list(let xs) = args[0] { children = xs }
+            return .view(MarView(
+                tag: "paragraph",
+                attrs: [],
+                children: children,
+                text: "",
+                msg: nil, key: nil))
+        }
+        env.define("uiParagraph",  .fn(uiParagraph))
+        env.define("UI.paragraph", .fn(uiParagraph))
+
+        // span : List (Attr Inline) -> String -> Inline msg
+        //
+        // STUB — same caveat as `paragraph` above. Returns a view
+        // with tag "span" carrying the inline attrs; MarRenderer
+        // can fall back to plain text on iOS until the
+        // AttributedString path lands.
+        let uiSpan = MarFn.native(2) { args in
+            let attrs = collectAttrs(args[0])
+            let s: String
+            if case .string(let str) = args[1] { s = str } else { s = "" }
+            return .view(MarView(
+                tag: "span",
+                attrs: attrs,
+                children: [],
+                text: s,
+                msg: nil, key: nil))
+        }
+        env.define("uiSpan",  .fn(uiSpan))
+        env.define("UI.span", .fn(uiSpan))
+
+        // Inline attrs. Bare markers (bold / italic / strikethrough /
+        // code) carry no payload; `link` carries the destination URL.
+        env.define("inlineBold",          flagAttr("inlineBold"))
+        env.define("UI.bold",             flagAttr("inlineBold"))
+        env.define("inlineItalic",        flagAttr("inlineItalic"))
+        env.define("UI.italic",           flagAttr("inlineItalic"))
+        env.define("inlineStrikethrough", flagAttr("inlineStrikethrough"))
+        env.define("UI.strikethrough",    flagAttr("inlineStrikethrough"))
+        env.define("inlineCode",          flagAttr("inlineCode"))
+        env.define("UI.code",             flagAttr("inlineCode"))
+        let inlineLink = MarFn.native(1) { args in makeAttr("inlineLink", args[0]) }
+        env.define("inlineLink",  .fn(inlineLink))
+        env.define("UI.link",     .fn(inlineLink))
+
+        // chars / lines — sizing units. Build a record with __unit
+        // and amount fields; the renderer dispatches on __unit to
+        // pick .frame(maxWidth:) (chars) or .frame(idealHeight:)
+        // (lines). Type-level the Mar code already prevents mixing
+        // dimensions (chars only flows into width, lines only into
+        // height), so the renderer just trusts the unit it sees.
+        let uiChars = MarFn.native(1) { args in
+            let n: Int
+            if case .int(let i) = args[0] { n = i } else { n = 0 }
+            return .record(
+                fields: ["__unit": .string("chars"), "amount": .int(n)],
+                order: ["__unit", "amount"]
+            )
+        }
+        env.define("uiChars", .fn(uiChars))
+        env.define("UI.chars", .fn(uiChars))
+        let uiLines = MarFn.native(1) { args in
+            let n: Int
+            if case .int(let i) = args[0] { n = i } else { n = 0 }
+            return .record(
+                fields: ["__unit": .string("lines"), "amount": .int(n)],
+                order: ["__unit", "amount"]
+            )
+        }
+        env.define("uiLines", .fn(uiLines))
+        env.define("UI.lines", .fn(uiLines))
+
+        // width / height — wrap the length value as an attr. The
+        // renderer reads the value via attrLength helpers and applies
+        // SwiftUI .frame modifiers when present.
+        let uiWidth = MarFn.native(1) { args in
+            return makeAttr("width", args[0])
+        }
+        env.define("uiWidth", .fn(uiWidth))
+        env.define("UI.width", .fn(uiWidth))
+        let uiHeight = MarFn.native(1) { args in
+            return makeAttr("height", args[0])
+        }
+        env.define("uiHeight", .fn(uiHeight))
+        env.define("UI.height", .fn(uiHeight))
+
+        // navigationLink : Path r -> r -> View msg -> View msg
+        // Mirror of SwiftUI's NavigationLink. The typed Path +
+        // record build the destination URL via the same
+        // path-pattern machinery as linkTo; the child View is the
+        // tappable label. The renderer wires this to
+        // `NavigationLink(value:){content}` which pushes onto the
+        // ambient NavigationStack — swipe-back and the chevron come
+        // for free.
+        let uiNavigationLink = MarFn.native(4) { args in
+            var attrs = collectAttrs(args[0])
+            guard case .string(let src) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "Path", got: Eval.typeOf(args[1]))
             }
             let pattern = MarPath.parse(src)
-            let url = try MarPath.build(pattern, params: args[1])
-            let label: String
-            if case .string(let s) = args[2] { label = s } else { label = "" }
+            let url = try MarPath.build(pattern, params: args[2])
+            guard case .view(let child) = args[3] else {
+                throw MarRuntimeError.typeMismatch(expected: "View", got: Eval.typeOf(args[3]))
+            }
+            attrs.append(MarView.Attr(name: "href", value: .string(url)))
             return .view(MarView(
-                tag: "link",
-                attrs: [MarView.Attr(name: "href", value: .string(url))],
-                children: [],
-                text: label,
+                tag: "navigationLink",
+                attrs: attrs,
+                children: [child],
+                text: "",
                 msg: nil,
                 key: nil
             ))
         }
-        env.define("uiLink",  .fn(uiLink))
-        env.define("UI.link", .fn(uiLink))
+        env.define("uiNavigationLink",  .fn(uiNavigationLink))
+        env.define("UI.navigationLink", .fn(uiNavigationLink))
 
         // empty : View msg — no-op placeholder (renders as
         // EmptyView / display:none).
@@ -1422,6 +2289,41 @@ enum MarBuiltins {
         ))
         env.define("uiEmpty",  uiEmptyView)
         env.define("UI.empty", uiEmptyView)
+
+        // spacer : View msg — SwiftUI's `Spacer()`. Expands along
+        // the containing stack's main axis to push siblings apart.
+        let uiSpacerView = MarValue.view(MarView(
+            tag: "spacer", attrs: [], children: [], text: "", msg: nil, key: nil
+        ))
+        env.define("uiSpacer",  uiSpacerView)
+        env.define("UI.spacer", uiSpacerView)
+
+        // toggle : List Attr -> String -> Bool -> (Bool -> msg) -> View msg
+        // Mirror of SwiftUI's Toggle. The current state lives in
+        // the `isOn` attr; the label sits in `text`; the
+        // `Bool -> msg` callback is the bound message. Renderer
+        // builds an actual SwiftUI Toggle whose binding dispatches
+        // `msg(newValue)` on flip. The leading attrs list carries
+        // `disabled` (and future modifiers) so the API matches
+        // every other interactive primitive.
+        let uiToggle = MarFn.native(4) { args in
+            var attrs = collectAttrs(args[0])
+            let label: String
+            if case .string(let s) = args[1] { label = s } else { label = "" }
+            let isOn: Bool
+            if case .bool(let b) = args[2] { isOn = b } else { isOn = false }
+            attrs.append(MarView.Attr(name: "isOn", value: .bool(isOn)))
+            return .view(MarView(
+                tag: "toggle",
+                attrs: attrs,
+                children: [],
+                text: label,
+                msg: args[3],
+                key: nil
+            ))
+        }
+        env.define("uiToggle",  .fn(uiToggle))
+        env.define("UI.toggle", .fn(uiToggle))
 
         // centered : View msg -> View msg
         // Wraps the child in a "centered" view tag — renderer maps
@@ -1443,19 +2345,93 @@ enum MarBuiltins {
         env.define("uiCentered",  .fn(uiCentered))
         env.define("UI.centered", .fn(uiCentered))
 
+        // sheet : { open, onDismiss, outlet } -> List (View msg) -> View msg
+        //
+        // iOS page-sheet modal. Mirrors SwiftUI's `.sheet(isPresented:)`.
+        // The renderer (MarRenderer.swift) reads the open/outlet attrs
+        // and the dismiss Msg, and applies `.sheet(isPresented:)` to
+        // the parent view with the sheet's children as content. Same
+        // semantic as web — parent owns open/closed state.
+        let uiSheet = MarFn.native(2) { args in
+            guard case .record(let fs, _) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "{ open, onDismiss, outlet }", got: Eval.typeOf(args[0]))
+            }
+            guard case .list(let kids) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List (View msg)", got: Eval.typeOf(args[1]))
+            }
+            let children: [MarView] = kids.compactMap { v in
+                if case .view(let mv) = v { return mv } else { return nil }
+            }
+            let attrs: [MarView.Attr] = [
+                MarView.Attr(name: "open",   value: fs["open"] ?? .bool(false)),
+                MarView.Attr(name: "outlet", value: fs["outlet"] ?? .string("")),
+            ]
+            return .view(MarView(
+                tag: "sheet",
+                attrs: attrs,
+                children: children,
+                text: "",
+                msg: fs["onDismiss"],   // dispatched on dismissal
+                key: nil
+            ))
+        }
+        env.define("uiSheet",  .fn(uiSheet))
+        env.define("UI.sheet", .fn(uiSheet))
+
+        // UI.confirm : { title, confirmLabel, destructive,
+        //                onConfirm, onCancel } -> View msg
+        //
+        // Modal destructive-action confirmation. iOS renderer maps
+        // this to SwiftUI's `.confirmationDialog(title:isPresented:)`
+        // modifier (which on iPhone slides up from the bottom, on
+        // iPad anchors centered). The role: .destructive button
+        // bubbles up the system red automatically.
+        //
+        // Both message handlers stashed as attrs because the view
+        // has two dispatch paths (confirm / cancel) and MarView's
+        // single `msg` slot can hold only one. The renderer reads
+        // both off attrs when wiring the dialog buttons.
+        let uiConfirm = MarFn.native(1) { args in
+            guard case .record(let fs, _) = args[0] else {
+                throw MarRuntimeError.typeMismatch(
+                    expected: "{ title, confirmLabel, destructive, onConfirm, onCancel }",
+                    got: Eval.typeOf(args[0]))
+            }
+            let attrs: [MarView.Attr] = [
+                MarView.Attr(name: "title",        value: fs["title"]        ?? .string("")),
+                MarView.Attr(name: "confirmLabel", value: fs["confirmLabel"] ?? .string("")),
+                MarView.Attr(name: "destructive",  value: fs["destructive"]  ?? .bool(false)),
+                MarView.Attr(name: "onConfirm",    value: fs["onConfirm"]    ?? .unit),
+                MarView.Attr(name: "onCancel",     value: fs["onCancel"]     ?? .unit),
+            ]
+            return .view(MarView(
+                tag: "confirmDialog",
+                attrs: attrs,
+                children: [],
+                text: "",
+                msg: nil,
+                key: nil
+            ))
+        }
+        env.define("uiConfirm",  .fn(uiConfirm))
+        env.define("UI.confirm", .fn(uiConfirm))
+
         // Modifier attrs — produce VAttr values consumed by the
         // matching container's renderer.
         let navTitleCtor = MarFn.native(1) { args in makeAttr("navigationTitle", args[0]) }
         env.define("navigationTitle",    .fn(navTitleCtor))
         env.define("UI.navigationTitle", .fn(navTitleCtor))
 
-        let trailingCtor = MarFn.native(1) { args in makeAttr("trailing", args[0]) }
-        env.define("trailing",    .fn(trailingCtor))
-        env.define("UI.trailing", .fn(trailingCtor))
+        // topBarTrailing / topBarLeading — toolbar items at the
+        // trailing / leading edge of the top bar. Match SwiftUI's
+        // `.topBarTrailing` / `.topBarLeading` placement (iOS 17+).
+        let topBarTrailingCtor = MarFn.native(1) { args in makeAttr("topBarTrailing", args[0]) }
+        env.define("uiTopBarTrailing", .fn(topBarTrailingCtor))
+        env.define("UI.topBarTrailing", .fn(topBarTrailingCtor))
 
-        let leadingCtor = MarFn.native(1) { args in makeAttr("leading", args[0]) }
-        env.define("leading",    .fn(leadingCtor))
-        env.define("UI.leading", .fn(leadingCtor))
+        let topBarLeadingCtor = MarFn.native(1) { args in makeAttr("topBarLeading", args[0]) }
+        env.define("uiTopBarLeading", .fn(topBarLeadingCtor))
+        env.define("UI.topBarLeading", .fn(topBarLeadingCtor))
 
         let headerCtor = MarFn.native(1) { args in makeAttr("header", args[0]) }
         env.define("header",    .fn(headerCtor))

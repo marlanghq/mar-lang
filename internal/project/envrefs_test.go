@@ -70,3 +70,31 @@ func TestEnvRefsFromBytes(t *testing.T) {
 		})
 	}
 }
+
+// TestSessionSecretEnvVar — extracts the env var name from
+// auth.sessionSecret when it's an env:VAR reference. Used by
+// `mar fly provision` to know which secret to auto-generate
+// (instead of prompting the operator for a value they wouldn't
+// know how to generate correctly).
+func TestSessionSecretEnvVar(t *testing.T) {
+	cases := []struct {
+		name string
+		m    *Manifest
+		want string
+	}{
+		{"nil manifest", nil, ""},
+		{"no auth block", &Manifest{}, ""},
+		{"no sessionSecret", &Manifest{Auth: &AuthConfig{}}, ""},
+		{"literal secret (dev mode)", &Manifest{Auth: &AuthConfig{SessionSecret: "literal-secret-12345"}}, ""},
+		{"env ref", &Manifest{Auth: &AuthConfig{SessionSecret: "env:SESSION_SECRET"}}, "SESSION_SECRET"},
+		{"env ref with custom name", &Manifest{Auth: &AuthConfig{SessionSecret: "env:MY_APP_SESSION_KEY"}}, "MY_APP_SESSION_KEY"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SessionSecretEnvVar(tc.m)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -57,6 +57,14 @@ func RegisterEnumType(typeName string, ctorNames []string, ctorArities map[strin
 	EnumTypes[typeName] = ctorNames
 }
 
+// ResetEnumTypes clears the registry. Called by the dev-server's
+// compile() on every hot reload — without this, types renamed or
+// removed between reloads keep ghost entries in the map. Companion
+// to ResetRegisteredEntities + ResetMigrationCache.
+func ResetEnumTypes() {
+	EnumTypes = map[string][]string{}
+}
+
 // VPath is a parsed URL pattern with typed params. Carries both the
 // raw source (for diagnostics) and the segment list (for matching +
 // link-building). Produced at typecheck time by coercing a String

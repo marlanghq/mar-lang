@@ -206,4 +206,3 @@ func Boot(db *sql.DB, desired []string, nowMs int64) (added, removed int, err er
 	}
 	return SyncAdmins(db, desired, nowMs)
 }
-

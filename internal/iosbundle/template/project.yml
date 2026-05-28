@@ -1,6 +1,14 @@
 name: __MAR_APP_NAME__
 options:
   minimumXcodeGenVersion: 2.38.0
+attributes:
+  # Marks the .pbxproj as "last validated against Xcode 16.x". Without
+  # this, Xcode 16+ shows the yellow "Update to recommended settings"
+  # warning every time the project opens. The value is a 4-digit
+  # encoding: 1600 = Xcode 16.0, 1620 = 16.2, 1700 = 17.0. We track
+  # a few versions behind cutting-edge — there's no harm in being
+  # conservative, and bumping it later is a one-line change.
+  LastUpgradeCheck: "1620"
 settings:
   base:
     # iOS 18 deployment target lets us use the Observation framework
@@ -18,8 +26,29 @@ settings:
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
     PRODUCT_BUNDLE_IDENTIFIER: __MAR_BUNDLE_ID__
-    MARKETING_VERSION: 0.1.0
-    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: __MAR_MARKETING_VERSION__
+    CURRENT_PROJECT_VERSION: __MAR_BUILD_NUMBER__
+
+    # Modern Xcode defaults that "Update to recommended settings"
+    # would otherwise want to add. Listing them explicitly here
+    # means the warning never fires in the first place. Each is the
+    # current Xcode default for a fresh project; nothing here changes
+    # the build's behavior beyond what Xcode would do anyway.
+    ENABLE_USER_SCRIPT_SANDBOXING: YES                          # Xcode 15+
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES                   # Xcode 15+
+    GCC_C_LANGUAGE_STANDARD: gnu17
+    CLANG_CXX_LANGUAGE_STANDARD: "gnu++20"
+    CLANG_ENABLE_OBJC_WEAK: YES
+    CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER: YES
+    CLANG_WARN_COMMA: YES
+    CLANG_WARN_NON_LITERAL_NULL_CONVERSION: YES
+    CLANG_WARN_RANGE_LOOP_ANALYSIS: YES
+    CLANG_WARN_STRICT_PROTOTYPES: YES
+    CLANG_WARN_SUSPICIOUS_MOVE: YES
+    CLANG_WARN_UNREACHABLE_CODE: YES
+    CLANG_WARN__DUPLICATE_METHOD_MATCH: YES
+    CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION: YES_AGGRESSIVE
+    CLANG_ANALYZER_NONNULL: YES
 targets:
   __MAR_APP_NAME__:
     type: application
@@ -30,10 +59,13 @@ targets:
       # Resources/program.json is the embedded snapshot of the user's
       # mar code (Approach C — instant cold-start). MarLoader reads
       # this synchronously at boot via Bundle.main; the network fetch
-      # then refreshes it in the background. Resources/ may be absent
-      # in older scaffolds (just regenerate via `mar build`).
+      # then refreshes it in the background.
+      #
+      # The template ships a stub program.json so xcodegen sees the
+      # folder at `make ios-template` time and wires it into the
+      # PBXResourcesBuildPhase. The user's `mar build --target ios`
+      # then overwrites it with the actual compiled program.
       - path: Resources
-        optional: true
         buildPhase: resources
     settings:
       base:
@@ -45,7 +77,18 @@ targets:
     info:
       path: Info.plist
       properties:
-        CFBundleDisplayName: __MAR_APP_NAME__
+        # CFBundleDisplayName is the home-screen / app-switcher label.
+        # Allowed to differ from the SwiftIdentifier target name —
+        # spaces and accents are fine here.
+        CFBundleDisplayName: __MAR_DISPLAY_NAME__
+        # CFBundleShortVersionString / CFBundleVersion are the
+        # user-facing version and internal build counter. Wired to
+        # the MARKETING_VERSION / CURRENT_PROJECT_VERSION build
+        # settings via $(...) so Xcode substitutes them at build
+        # time — operator only needs to bump the values once, in
+        # mar.json's ios.{marketingVersion,buildNumber}.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIApplicationSupportsIndirectInputEvents: true
@@ -59,10 +102,12 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
 
-        # MarBaseURL is the fallback when no Bonjour service is
-        # discovered and the user hasn't set one in Settings yet.
-        # Override at build time with `mar build --target ios
-        # --base-url <url>`, or live in the app's Settings tab.
+        # MarBaseURL is the backend the app talks to:
+        # - In RELEASE: always this URL (Bonjour is compiled out).
+        # - In DEBUG:   used as the fallback when no _mar._tcp
+        #               service is discovered on the LAN.
+        # Set `ios.serverUrl` in mar.json and run
+        # `mar build --target ios` to change it.
         MarBaseURL: __MAR_DEFAULT_BASE_URL__
 
         # Bonjour / mDNS discovery — the backend publishes

@@ -11,6 +11,15 @@ func NewEnv() *Env {
 	return &Env{bindings: map[string]Value{}}
 }
 
+// NewChildEnv returns a fresh empty environment whose parent is `parent`.
+// Used by the project loader to give each module its own frame for bare
+// names — values defined here shadow any same-named binding in `parent`
+// without overwriting it. Cross-module references then reach `parent`
+// (the shared rEnv) via the parent chain.
+func NewChildEnv(parent *Env) *Env {
+	return &Env{bindings: map[string]Value{}, parent: parent}
+}
+
 // Lookup finds name in this env or any parent. Returns the value and true if found.
 func (e *Env) Lookup(name string) (Value, bool) {
 	for cur := e; cur != nil; cur = cur.parent {

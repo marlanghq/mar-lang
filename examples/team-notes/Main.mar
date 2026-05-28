@@ -23,8 +23,7 @@ auth =
         , role       = \u -> u.role
         , signInPage = Frontend.SignIn.page
         , email      =
-            { from    = "noreply@team-notes.local"
-            , subject = "Sign in to Team Notes"
+            { subject = "Sign in to Team Notes"
             , body    = \code ttlMinutes ->
                 "Welcome to Team Notes!\n\n" ++
                 "Your one-time code is " ++ code ++ "\n\n" ++

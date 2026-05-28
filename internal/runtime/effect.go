@@ -183,4 +183,3 @@ func (e effectError) Error() string {
 func errEffect(msg string) error {
 	return effectError{value: VString{V: msg}}
 }
-

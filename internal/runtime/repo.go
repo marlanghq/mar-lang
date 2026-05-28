@@ -26,12 +26,12 @@ import (
 
 func repoBuiltins() map[string]Value {
 	return map[string]Value{
-		"repoAll":         nativeFn(1, repoAll),
-		"repoFindByID":    nativeFn(2, repoFindByID),
-		"repoFindBy":      nativeFn(2, repoFindBy),
-		"repoCreate":      nativeFn(2, repoCreate),
-		"repoUpdate":      nativeFn(3, repoUpdate),
-		"repoDeleteByID":  nativeFn(2, repoDeleteByID),
+		"repoAll":        nativeFn(1, repoAll),
+		"repoFindByID":   nativeFn(2, repoFindByID),
+		"repoFindBy":     nativeFn(2, repoFindBy),
+		"repoCreate":     nativeFn(2, repoCreate),
+		"repoUpdate":     nativeFn(3, repoUpdate),
+		"repoDeleteByID": nativeFn(2, repoDeleteByID),
 	}
 }
 
@@ -292,8 +292,8 @@ func ResetMigrationCache() {
 //     the boot-time registry (shouldn't happen, but the safety net is
 //     worth the trivial cost).
 //
-// The legacy `CREATE TABLE IF NOT EXISTS` path is gone — this calls
-// the proper migrator, so schema drift is detected here too.
+// Goes through the proper migrator (not a bare `CREATE TABLE IF
+// NOT EXISTS`), so schema drift is detected here too.
 func ensureMigrated(entity VEntity) (*sql.DB, error) {
 	db, err := getDB()
 	if err != nil {
@@ -341,6 +341,12 @@ func runSelectOne(db *sql.DB, entity VEntity, whereClause string, params []any) 
 	}
 	defer rows.Close()
 	if !rows.Next() {
+		// rows.Next() returns false for end-of-rows AND for iteration
+		// errors. Distinguish them so a transient DB failure doesn't
+		// masquerade as a successful "not found".
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("query iteration failed: %w", err)
+		}
 		return VCtor{Tag: "Nothing"}, nil
 	}
 	rec, err := scanRow(rows, entity)

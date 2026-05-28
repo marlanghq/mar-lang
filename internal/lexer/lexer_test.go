@@ -110,6 +110,50 @@ func TestStringUnterminated(t *testing.T) {
 	}
 }
 
+func TestChars(t *testing.T) {
+	cases := map[string]string{
+		`'a'`:         "a",
+		`'\n'`:        "\n",
+		`'\t'`:        "\t",
+		`'\\'`:        "\\",
+		`'\''`:        "'",
+		`'\"'`:        "\"",
+		`'\u{41}'`:    "A",
+		`'\u{1F600}'`: "😀",
+		`'é'`:         "é",
+	}
+	for src, want := range cases {
+		toks, err := Lex(src)
+		if err != nil {
+			t.Fatalf("lex error for %q: %v", src, err)
+		}
+		if toks[0].Kind != KindChar {
+			t.Fatalf("%q: got kind %v, want char", src, toks[0].Kind)
+		}
+		if toks[0].Value != want {
+			t.Fatalf("%q: got %q, want %q", src, toks[0].Value, want)
+		}
+	}
+}
+
+func TestCharErrors(t *testing.T) {
+	bad := []string{
+		`''`,           // empty
+		`'ab'`,         // two chars
+		`'\q'`,         // unknown escape
+		`'\u{}'`,       // empty hex
+		`'\u{D800}'`,   // surrogate
+		`'\u{110000}'`, // out of range
+		`'`,            // unterminated
+	}
+	for _, src := range bad {
+		_, err := Lex(src)
+		if err == nil {
+			t.Fatalf("expected error for %q, got none", src)
+		}
+	}
+}
+
 func TestIdentifiers(t *testing.T) {
 	src := "foo Foo foo_bar foo' Foo123"
 	toks, err := Lex(src)

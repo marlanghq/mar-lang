@@ -48,21 +48,32 @@ const smtpStartupTimeout = 5 * time.Second
 // runs STARTTLS, authenticates, and sends QUIT. Returns nil if
 // everything works; a structured FriendlyError otherwise.
 //
-// No-ops with nil error when Host is empty — matches `Send`'s
-// fallback to the stdout sink in dev. Production callers should
-// gate this behind their own "is SMTP configured?" check; the
-// no-op here is defensive only.
+// No-ops with nil error when the config is incomplete — same
+// condition as `Send`'s stdout-sink fallback (Host or Password
+// missing). This covers the `mar dev` case where the operator
+// hasn't exported `SMTP_PASSWORD`: the loader's dev tolerance
+// leaves Password empty, the runtime then prints auth codes to
+// stdout, and this preflight check skips trying to authenticate
+// against the provider with a blank password (which would always
+// fail and surface a misleading "535 Missing password" error).
+//
+// Production callers should gate this behind their own
+// "is SMTP configured?" check; the no-op here is defensive only.
 //
 // `Insecure` is forced false — there's no provider in our supported
 // list that requires plaintext SMTP, and silently allowing it would
 // hide misconfiguration (port 587 without STARTTLS is a "I forgot
 // to use the right port" tell).
 func VerifySMTPConfig(cfg SMTPConfig) error {
-	if cfg.Host == "" {
+	if cfg.Host == "" || cfg.Password == "" {
 		return nil
 	}
 
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	// net.JoinHostPort handles IPv6 bracketing — the previous
+	// `fmt.Sprintf("%s:%d", ...)` produced malformed addresses like
+	// `::1:587` instead of `[::1]:587`. We don't expect IPv6 SMTP
+	// hosts in practice, but the lint catches it generically.
+	addr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
 
 	conn, err := net.DialTimeout("tcp", addr, smtpStartupTimeout)
 	if err != nil {

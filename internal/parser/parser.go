@@ -9,6 +9,7 @@ package parser
 import (
 	"fmt"
 	"strconv"
+	"unicode/utf8"
 
 	"mar/internal/ast"
 	"mar/internal/lexer"
@@ -593,6 +594,10 @@ func (p *parser) parsePatternAtom() (ast.Pattern, error) {
 	case lexer.KindString:
 		p.advance()
 		return &ast.PString{Pos: posOf(t), Value: t.Value}, nil
+	case lexer.KindChar:
+		p.advance()
+		r, _ := utf8.DecodeRuneInString(t.Value)
+		return &ast.PChar{Pos: posOf(t), Value: r}, nil
 	case lexer.KindLParen:
 		return p.parsePatternParens()
 	case lexer.KindLBrace:
@@ -725,8 +730,8 @@ func (p *parser) parsePatternRecord() (ast.Pattern, error) {
 func isPatternAtomStart(t lexer.Token) bool {
 	switch t.Kind {
 	case lexer.KindLowerName, lexer.KindUpperName, lexer.KindUnderscore,
-		lexer.KindInt, lexer.KindString, lexer.KindLParen, lexer.KindLBrace,
-		lexer.KindLBracket:
+		lexer.KindInt, lexer.KindString, lexer.KindChar,
+		lexer.KindLParen, lexer.KindLBrace, lexer.KindLBracket:
 		return true
 	}
 	return false
@@ -896,6 +901,14 @@ func (p *parser) parseExprAtom() (ast.Expr, error) {
 	case lexer.KindString:
 		p.advance()
 		return &ast.EString{Pos: posOf(t), Value: t.Value}, nil
+	case lexer.KindChar:
+		p.advance()
+		// Token.Value carries the decoded character as a UTF-8 string
+		// (lexer.readChar emitted `string(r)`). Decode the single rune
+		// back; invalid encoding shouldn't happen here since the lexer
+		// validated.
+		r, _ := utf8.DecodeRuneInString(t.Value)
+		return &ast.EChar{Pos: posOf(t), Value: r}, nil
 	case lexer.KindLowerName:
 		p.advance()
 		return &ast.EVar{Pos: posOf(t), Name: t.Value}, nil
@@ -1251,7 +1264,7 @@ func (p *parser) parseLetBinding() (ast.LetBinding, error) {
 // (used to decide if function application should continue).
 func isExprAtomStart(t lexer.Token) bool {
 	switch t.Kind {
-	case lexer.KindInt, lexer.KindFloat, lexer.KindString,
+	case lexer.KindInt, lexer.KindFloat, lexer.KindString, lexer.KindChar,
 		lexer.KindLowerName, lexer.KindUpperName, lexer.KindFieldDot,
 		lexer.KindLParen, lexer.KindLBracket, lexer.KindLBrace:
 		return true

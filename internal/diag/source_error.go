@@ -5,11 +5,26 @@
 // the user — the CLI today, an LSP server later — we want to render those
 // positions as a code snippet with a caret pointing at the bad token,
 // Rust-style.
+//
+// Visual conventions follow docs/cli-style.md §1 (spacing) and §3 (color):
+//
+//   - Leading blank line so the block separates from preceding output
+//     (`fprintError`'s leading-blank rule, applied to source errors too).
+//   - The "Lex error:" / "Parse error:" / "Type error:" prefix is bold
+//     red, matching the role color for "Error:".
+//   - The file path is bold magenta (cli-style.md §3 "paths and config keys").
+//   - The line gutter and pipes are dim.
+//   - The caret is bold red so the eye lands on it.
+//
+// Colors auto-disable when stderr isn't a TTY and when NO_COLOR is set,
+// matching the rules in internal/jsserve/banner.go and cmd/mar/color.go.
 package diag
 
 import (
 	"fmt"
+	"os"
 	"strings"
+	"sync"
 
 	"mar/internal/lexer"
 	"mar/internal/parser"
@@ -53,7 +68,7 @@ func (e *SourceError) Format() string {
 	if !ok {
 		return e.Error()
 	}
-	return formatContext(e.Filename, e.Source, line, col, baseMessage(e.Inner))
+	return formatContext(e.Filename, e.Source, line, col, kindOf(e.Inner), bodyOf(e.Inner))
 }
 
 // Format formats any error: if it's a *SourceError, use its Format;
@@ -77,52 +92,103 @@ func positionOf(err error) (line, col int, ok bool) {
 		return e.Line, e.Column, true
 	case *typecheck.InferError:
 		return e.Pos.Line, e.Pos.Column, true
+	case *typecheck.ShapeIssue:
+		return e.Pos.Line, e.Pos.Column, true
 	}
 	return 0, 0, false
 }
 
-// baseMessage extracts the "what went wrong" part of a positioned error,
-// stripping the leading "kind error at L:C:" prefix the type's Error
-// method adds. Lets us format the position ourselves below the snippet.
-func baseMessage(err error) string {
+// kindOf returns the role label ("Lex error" / "Parse error" / "Type
+// error" / "Shape error") for the prefix at the start of the rendered
+// block. Kept separate from the body so the renderer can color it
+// independently.
+func kindOf(err error) string {
+	switch err.(type) {
+	case *lexer.Error:
+		return "Lex error"
+	case *parser.Error:
+		return "Parse error"
+	case *typecheck.InferError:
+		return "Type error"
+	case *typecheck.ShapeIssue:
+		return "Shape error"
+	}
+	return "Error"
+}
+
+// bodyOf returns the "what went wrong" half of a positioned error
+// (without the kind prefix or the position — those get rendered
+// separately by formatContext).
+func bodyOf(err error) string {
 	switch e := err.(type) {
 	case *lexer.Error:
-		return "lex error: " + e.Message
+		return e.Message
 	case *parser.Error:
-		return "parse error: " + e.Message
+		return e.Message
 	case *typecheck.InferError:
-		return "type error: " + e.Message
+		return e.Message
+	case *typecheck.ShapeIssue:
+		return e.Message
 	}
 	return err.Error()
 }
 
-// formatContext returns a multi-line error display:
+// formatContext returns a multi-line error display following the
+// cli-style.md §1 spacing rules and §3 color rules:
 //
-//	error: <message>
+//	<blank>
+//	Type error: <message>
 //	  --> <filename>:<line>:<col>
 //	   |
-//	 5 |     n.author
+//	97 |     n.author
 //	   |       ^
-func formatContext(filename, source string, line, col int, msg string) string {
+//
+// Leading blank separates the block from preceding output. "Type
+// error:" is bold red (same role as "Error:"). The file path is bold
+// magenta. The gutter / pipes are dim. The caret is bold red.
+func formatContext(filename, source string, line, col int, kind, msg string) string {
+	c := colors()
 	lines := strings.Split(source, "\n")
 	if line < 1 || line > len(lines) {
-		return fmt.Sprintf("%s:%d:%d: %s", filename, line, col, msg)
+		// Out-of-range line — drop the snippet but keep the styled
+		// prefix + path so the block still reads as a mar error.
+		return fmt.Sprintf("\n%s %s\n  --> %s:%d:%d\n",
+			c.boldRed(kind+":"),
+			msg,
+			c.boldMagenta(filename),
+			line, col,
+		)
 	}
 	var sb strings.Builder
+	// Leading blank — separates the block from preceding stderr output
+	// (boot logs, file-watcher noise on recompile, etc.).
+	sb.WriteString("\n")
+	sb.WriteString(c.boldRed(kind + ":"))
+	sb.WriteByte(' ')
 	sb.WriteString(msg)
 	sb.WriteString("\n  --> ")
-	sb.WriteString(filename)
+	sb.WriteString(c.boldMagenta(filename))
 	sb.WriteString(fmt.Sprintf(":%d:%d\n", line, col))
 	gutterW := len(fmt.Sprintf("%d", line))
 	if gutterW < 2 {
 		gutterW = 2
 	}
-	gutter := strings.Repeat(" ", gutterW)
-	sb.WriteString(gutter)
-	sb.WriteString(" |\n")
-	sb.WriteString(fmt.Sprintf("%*d | %s\n", gutterW, line, lines[line-1]))
-	sb.WriteString(gutter)
-	sb.WriteString(" | ")
+	emptyGutter := strings.Repeat(" ", gutterW)
+	pipe := c.dim("|")
+	sb.WriteString(emptyGutter)
+	sb.WriteByte(' ')
+	sb.WriteString(pipe)
+	sb.WriteByte('\n')
+	sb.WriteString(c.dim(fmt.Sprintf("%*d", gutterW, line)))
+	sb.WriteByte(' ')
+	sb.WriteString(pipe)
+	sb.WriteByte(' ')
+	sb.WriteString(lines[line-1])
+	sb.WriteByte('\n')
+	sb.WriteString(emptyGutter)
+	sb.WriteByte(' ')
+	sb.WriteString(pipe)
+	sb.WriteByte(' ')
 	// Indent caret to match the column. Tabs in the source are preserved
 	// so a tab in the snippet maps to a tab in the caret line, keeping
 	// alignment when the terminal renders the tab.
@@ -136,6 +202,61 @@ func formatContext(filename, source string, line, col int, msg string) string {
 			}
 		}
 	}
-	sb.WriteString("^\n")
+	sb.WriteString(c.boldRed("^"))
+	sb.WriteByte('\n')
 	return sb.String()
+}
+
+// colorSet bundles the helpers formatContext uses. Either real ANSI
+// wrappers (TTY + colors enabled) or identity functions (piped output,
+// NO_COLOR set). Resolved once per process via colorsOnce.
+type colorSet struct {
+	boldRed     func(string) string
+	boldMagenta func(string) string
+	dim         func(string) string
+}
+
+var (
+	colorsOnce sync.Once
+	colorsVal  colorSet
+)
+
+func colors() colorSet {
+	colorsOnce.Do(func() {
+		if !stderrTTY() {
+			id := func(s string) string { return s }
+			colorsVal = colorSet{boldRed: id, boldMagenta: id, dim: id}
+			return
+		}
+		// Same ANSI codes as cmd/mar/color.go — keep them in sync so
+		// the snippet renders the same shade as `Error:` / `Hint:`
+		// blocks from fprintError/fprintHint.
+		colorsVal = colorSet{
+			boldRed:     wrapANSI("\x1b[1;31m"),
+			boldMagenta: wrapANSI("\x1b[1;35m"),
+			// 256-color medium gray (xterm 245). Matches the dim
+			// used in cmd/mar/color.go and internal/jsserve/banner.go.
+			dim: wrapANSI("\x1b[38;5;245m"),
+		}
+	})
+	return colorsVal
+}
+
+func wrapANSI(prefix string) func(string) string {
+	return func(s string) string { return prefix + s + "\x1b[0m" }
+}
+
+// stderrTTY reports whether stderr is an interactive terminal AND the
+// user hasn't opted out via NO_COLOR. Errors print to stderr, so the
+// decision is on stderr (not stdout — those can have different
+// redirections, e.g. `mar dev > out.log` leaves stderr a TTY).
+func stderrTTY() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	fi, err := os.Stderr.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }

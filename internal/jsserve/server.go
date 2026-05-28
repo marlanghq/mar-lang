@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -55,7 +56,7 @@ func RuntimeJSProduction() (string, error) {
 func serveProgramJSON(lp *LiveProgram) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body := lp.ProgramJSON()
-		etag := `"` + programETag(body) + `"`
+		etag := `"` + lp.ProgramHash() + `"`
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
@@ -110,23 +111,49 @@ func programETag(body []byte) string {
 //
 // One `%s` substitution: <title>.
 //
-// The <link rel="preload"> for /_mar/program.json is the cold-start
-// optimization. Browsers see both the preload AND the runtime.js
-// script tag while parsing the head and kick off both downloads in
-// parallel — when runtime.js executes and calls fetch('/_mar/program
-// .json'), the preload cache resolves it instantly. Effective wait
+// Cold-start optimization: kick off program.json's download as soon
+// as the head parses, in parallel with runtime.js. Effective wait
 // drops from T_runtime + T_program to max(T_runtime, T_program).
 //
-// crossorigin="anonymous" matches what fetch() uses by default;
-// omitting it would split the preload entry from the actual request
-// and the browser would issue two separate fetches.
+// Implementation: inline `fetch()` from the head. The HTML parser
+// dispatches the request immediately — same parallel-load timing as
+// `<link rel="preload" as="fetch">` would offer, but Safari/WebKit
+// rejects that pairing (its preload-matcher treats `as="fetch"`
+// link entries as a different request kind from the actual fetch
+// call, so the preload orphans and a second round-trip fires). The
+// promise is stashed on `window.__marProgramPromise` so the
+// runtime's marBootstrap can await it instead of re-fetching.
 const pageHTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- viewport-fit=cover: extends the layout into iOS safe-area gutters
+     (notch / Dynamic Island / home indicator). Without this, iOS
+     auto-pads the viewport inconsistently and env(safe-area-inset-*)
+     returns 0 — the page renders too close to the status bar on
+     notched devices. With cover, we explicitly opt into the full
+     viewport and use env() to add appropriate padding ourselves. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- color-scheme: tells the browser the page supports both light and
+     dark color schemes. iOS Safari uses this BEFORE any CSS loads to
+     paint the initial canvas in the matching scheme — without it, a
+     dark-mode reload flashes white for the few hundred ms before
+     runtime.js gets a chance to inject the dark-mode CSS. Same hint
+     also propagates to form controls, scrollbars and the like. -->
+<meta name="color-scheme" content="light dark">
+<!-- theme-color: paints the iOS Safari status-bar / Chrome address-bar
+     to match the page. Two variants so it switches with the OS. The
+     dark hex matches the html background in the dark-mode branch of
+     the inline <style> below. -->
+<meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)">
 <title>%s</title>
-<link rel="preload" href="/_mar/program.json" as="fetch" crossorigin="anonymous">
+<script>
+  // Eager fetch — same effect as <link rel="preload"> but works
+  // uniformly across Chrome and Safari. The runtime reads
+  // window.__marProgramPromise instead of issuing its own fetch.
+  window.__marProgramPromise = fetch('/_mar/program.json').then(function (r) { return r.json(); });
+</script>
 <style>
   /* Reasonable defaults so the bare view DSL renders looking like a
      real app, not raw browser stock. The DSL itself stays sparse —
@@ -135,6 +162,12 @@ const pageHTML = `<!doctype html>
   *, *::before, *::after { box-sizing: border-box; }
 
   :root {
+    /* color-scheme at the CSS layer mirrors the <meta> tag above. The
+       meta tag is what controls the initial canvas paint before any
+       CSS arrives; this rule keeps form widgets / scrollbars happy
+       once CSS does load. */
+    color-scheme: light dark;
+
     --fg: #1a1a1a;
     --fg-muted: #666;
     --bg: #fafafa;
@@ -144,6 +177,27 @@ const pageHTML = `<!doctype html>
     --accent-fg: #fff;
     --radius: 6px;
     --gap: 0.5rem;
+  }
+
+  /* Dark-mode baseline. Lives inline (not in runtime.js) on purpose:
+     the runtime.js dark theme only attaches once the bundle parses,
+     leaving a window where reloads on iOS Safari flashed a white
+     page. By baking the dark background into the head <style>, the
+     very first paint already matches the user's OS. The hex values
+     here are the same anchors runtime.js's dark branch later targets
+     (#161618 for the html, #f5f5f7 for foreground), so there is no
+     visible re-styling when the full theme attaches. */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #f5f5f7;
+      --fg-muted: #86868b;
+      --bg: #161618;
+      --surface: #1c1c1e;
+      --border: rgba(255, 255, 255, 0.12);
+      --accent: #0a84ff;
+      --accent-fg: #ffffff;
+    }
+    html { background-color: #161618; }
   }
 
   html, body { margin: 0; padding: 0; }
@@ -183,9 +237,16 @@ const pageHTML = `<!doctype html>
   /* Inputs (UI.textField). Cover every text-shaped input type
      (text, email, password, search, tel, url, number) so
      UI.email / UI.password / UI.numeric stay visually consistent
-     with default text inputs. */
-  input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]),
-  textarea {
+     with default text inputs.
+
+     Wrapped in :where() so the selector contributes 0 specificity
+     — otherwise the :not() chain on input would beat .mar-textfield
+     (0,5,1 vs 0,1,0) and the runtime's dark-mode override would
+     never win on actual <input> elements. The behavior for stray
+     raw inputs (those without .mar-textfield) is unchanged because
+     no later rule competes there. */
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]),
+         textarea) {
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--fg);
@@ -195,13 +256,13 @@ const pageHTML = `<!doctype html>
     width: 100%%;
     max-width: 24rem;
   }
-  input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]):focus,
-  textarea:focus {
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]):focus,
+         textarea:focus) {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
   }
-  textarea { min-height: 4.5rem; resize: vertical; }
+  :where(textarea) { min-height: 4.5rem; resize: vertical; }
 
   /* Links (UI.link) */
   a { color: var(--accent); text-decoration: none; }
@@ -225,11 +286,19 @@ const pageHTML = `<!doctype html>
   /* Mount point: a flex column that fills the viewport height (minus
      body padding). Lets UI.centered actually center a top-level view
      on the page — without it, the column would have no inherent
-     height to center within. */
+     height to center within.
+
+     100dvh (dynamic viewport height) tracks the *current* visible area
+     in iOS Safari — when the URL bar collapses, dvh grows; when it
+     reappears, dvh shrinks. Plain 100vh always reports the fully-
+     expanded value, which made content overflow when the URL bar
+     was visible. 100vh stays as the fallback for older browsers
+     (declared first so dvh overrides on supporting ones). */
   #mar-root {
     display: flex;
     flex-direction: column;
     min-height: calc(100vh - 3rem);
+    min-height: calc(100dvh - 3rem);
   }
 </style>
 </head>
@@ -298,7 +367,13 @@ window.addEventListener('DOMContentLoaded', function () {
 // LiveProgram is updated on every reload but the mux registration here
 // is fixed — so ServeLive must be called after the initial compile so
 // HasFrontend/HasAPI reflect the program shape.
-func ServeLive(port int, lp *LiveProgram, hub *ReloadHub) error {
+//
+// `onReady` (optional) fires exactly once, after the TCP bind succeeds
+// and the banner has printed. The CLI uses this to open the user's
+// browser only when the server is actually serving — without it, a
+// polling opener would race against a stale `mar dev` already on the
+// port and launch a tab pointing at the wrong instance.
+func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error {
 	mux := http.NewServeMux()
 
 	hasFrontend := lp.HasFrontend()
@@ -326,9 +401,9 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub) error {
 	// surfaces the misconfiguration immediately.
 	//
 	// Skipped automatically when SMTP isn't configured (Host empty,
-	// dev's stdout sink path) and via MAR_SKIP_SMTP_CHECK=1 for
-	// edge cases like demos with auth disabled or restore-from-
-	// backup with partial infra.
+	// dev's stdout sink path). To boot without SMTP verification,
+	// omit the `mail.from` field from mar.json — there's no env-var
+	// escape hatch, by design.
 	if runtime.CurrentAuth() != nil && AuthSecret() != "" {
 		if err := maybeVerifySMTP(); err != nil {
 			return err
@@ -362,7 +437,26 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub) error {
 			_, _ = io.WriteString(w, runtimeJS)
 		}))
 		mux.HandleFunc("/_mar/program.json", withCompression(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Cache-Control", "no-store")
+			// `no-cache` (not `no-store`) so the browser CAN cache the
+			// response — but must revalidate with the strong ETag on
+			// every request. Two reasons we don\'t use `no-store`:
+			//
+			// 1. Safari\'s preload-matcher refuses to reuse a preload
+			//    entry whose response declared `no-store`. Result: the
+			//    `<link rel="preload">` in renderShell is wasted, the
+			//    runtime\'s `fetch()` issues a second network round-trip,
+			//    and the console fires the "preloaded but not used"
+			//    warning. Chrome silently tolerates this; Safari is
+			//    strict.
+			//
+			// 2. We already have ETag-based revalidation
+			//    (serveProgramJSON returns 304 when If-None-Match
+			//    matches), which is the canonical way to express
+			//    "cache OK but always check freshness". `no-store`
+			//    forbids caching entirely, which would render the
+			//    ETag plumbing pointless and double the bandwidth
+			//    on every hot-reload tick.
+			w.Header().Set("Cache-Control", "no-cache")
 			serveProgramJSON(lp)(w, r)
 		}))
 	}
@@ -374,16 +468,20 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub) error {
 		// prefix before matching (so user routes have paths like "/notes"),
 		// `/services/` matches the full path against routes whose path is
 		// already absolute (e.g. "/services/Backend.timelinePosts").
-		mux.HandleFunc("/api/", withCompression(func(w http.ResponseWriter, r *http.Request) {
+		//
+		// Rate limit wraps the request-handling routes (API + services)
+		// but not the HTML shell — a 429 on a page load would be a
+		// terrible UX, and the shell is cheap to serve.
+		mux.HandleFunc("/api/", rateLimit(withCompression(func(w http.ResponseWriter, r *http.Request) {
 			stripped := strings.TrimPrefix(r.URL.Path, "/api")
 			if stripped == "" {
 				stripped = "/"
 			}
 			dispatchBackend(lp.Routes(), stripped, w, r)
-		}))
-		mux.HandleFunc("/services/", withCompression(func(w http.ResponseWriter, r *http.Request) {
+		})))
+		mux.HandleFunc("/services/", rateLimit(withCompression(func(w http.ResponseWriter, r *http.Request) {
 			dispatchBackend(lp.Routes(), r.URL.Path, w, r)
-		}))
+		})))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			renderShell(w, lp)
 		})
@@ -396,12 +494,23 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub) error {
 		// Backend-only: user routes mount directly at /. The /_mar/reload
 		// path is registered above — ServeMux longest-prefix match keeps
 		// it from being shadowed by the catch-all here.
-		mux.HandleFunc("/", withCompression(func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/", rateLimit(withCompression(func(w http.ResponseWriter, r *http.Request) {
 			dispatchBackend(lp.Routes(), r.URL.Path, w, r)
-		}))
+		})))
 	}
 
 	addr := fmt.Sprintf(":%d", port)
+	// Bind FIRST — before any side effect that assumes the server
+	// will run. If the port is already in use, returning early here
+	// keeps the banner from printing, the Bonjour record from being
+	// advertised, and (crucially) the onReady callback — which the
+	// CLI uses to open the browser — from firing. Without this
+	// ordering, a stale `mar dev` on the same port would steal the
+	// browser tab launch even when the new instance refuses to boot.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
 	// Advertise on the LAN via mDNS whenever the server has an HTTP
 	// API to talk to (frontend or fullstack). Native iOS clients
 	// browse for `_mar._tcp` and auto-connect — no manual baseURL
@@ -412,13 +521,31 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub) error {
 		_, stop := publishBonjour(lp.AppName(), port)
 		defer stop()
 	}
-	printBanner(addr, hub, lp.AppName())
+	// mailToStdout is true when Auth.config is wired but SMTP isn't —
+	// auth.Send routes those emails to stdout. The banner surfaces
+	// this so the first sign-in attempt isn't a surprise log dump.
+	// Mirrors the skip logic in maybeVerifySMTP (Host or Password
+	// empty → stdout sink).
+	smtpCfg := SMTP()
+	mailToStdout := runtime.CurrentAuth() != nil && AuthSecret() != "" &&
+		(smtpCfg.Host == "" || smtpCfg.Password == "")
+	printBanner(addr, hub, lp.AppName(), mailToStdout)
 	noteServerBooted()
-	// Wrap mux with the admin's request-log instrumentation.
-	// Captures every request (method, path, status, duration, user
-	// email) into the in-memory ring buffer powering the admin
-	// panel's "recent requests" section. No-op when the buffer is
-	// not configured.
-	return http.ListenAndServe(addr, adminInstrument(mux))
+	if onReady != nil {
+		onReady()
+	}
+	// Wrap mux with two layers:
+	//   1. adminInstrument — captures every request (method, path,
+	//      status, duration, user email) into the in-memory ring
+	//      buffer powering the admin panel's "recent requests"
+	//      section. No-op when the buffer is not configured.
+	//   2. withVersionHeaders — stamps X-Mar-Runtime and
+	//      X-Mar-Program on every response so clients can detect
+	//      version drift and trigger OTA refresh / compat alerts.
+	//
+	// Order matters: the version headers should appear on EVERY
+	// response (including admin/internal paths that adminInstrument
+	// skips). Wrapping version-headers OUTSIDE means the headers are
+	// set first, then adminInstrument decides whether to log.
+	return http.Serve(ln, withVersionHeaders(lp, adminInstrument(mux)))
 }
-

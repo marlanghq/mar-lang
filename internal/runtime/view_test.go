@@ -8,9 +8,13 @@ import (
 func TestEntityDefine(t *testing.T) {
 	src := `module M exposing (..)
 ent =
-    Entity.define "users"
-        { id    = Entity.serial
-        , email = Entity.text Entity.notNull
+    Entity.define
+        { name = "users"
+        , columns =
+            { id    = Entity.serial
+            , email = Entity.text Entity.notNull
+            }
+        , uniques = []
         }
 `
 	got := runModule(t, src, "ent")

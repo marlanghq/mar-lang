@@ -8,6 +8,7 @@ package lexer
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -20,6 +21,11 @@ const (
 	KindInt    Kind = "int"
 	KindFloat  Kind = "float"
 	KindString Kind = "string"
+	// KindChar — single-quoted Unicode code point literal, e.g. 'a',
+	// '\n', '\u{1F600}'. The Value field carries the decoded
+	// single-character string (UTF-8 of the rune), so a parser can do
+	// utf8.DecodeRuneInString(tok.Value) to get the int code point.
+	KindChar Kind = "char"
 
 	// Identifiers
 	KindLowerName Kind = "lowerName" // lowercase: values, fields
@@ -44,16 +50,16 @@ const (
 	KindPort     Kind = "port"
 
 	// Punctuation
-	KindLParen    Kind = "("
-	KindRParen    Kind = ")"
-	KindLBracket  Kind = "["
-	KindRBracket  Kind = "]"
-	KindLBrace    Kind = "{"
-	KindRBrace    Kind = "}"
-	KindComma     Kind = ","
-	KindSemicolon Kind = ";"
+	KindLParen     Kind = "("
+	KindRParen     Kind = ")"
+	KindLBracket   Kind = "["
+	KindRBracket   Kind = "]"
+	KindLBrace     Kind = "{"
+	KindRBrace     Kind = "}"
+	KindComma      Kind = ","
+	KindSemicolon  Kind = ";"
 	KindUnderscore Kind = "_"
-	KindBackslash Kind = "\\"
+	KindBackslash  Kind = "\\"
 
 	// Operators
 	KindEquals    Kind = "="
@@ -271,6 +277,8 @@ func (l *lexer) readToken() error {
 		return l.readNumber()
 	case r == '"':
 		return l.readString()
+	case r == '\'':
+		return l.readChar()
 	case r == '.' && isLower(l.peekAt(1)) && l.hadWhitespace:
 		// .field with preceding whitespace = accessor function
 		return l.readFieldAccessor()
@@ -357,6 +365,102 @@ func (l *lexer) readString() error {
 		}
 	}
 	return l.errorf("unterminated string literal")
+}
+
+// readChar: single-quoted character literal — 'a', '\n', '\u{1F600}'.
+//
+// One Unicode code point per literal (rune in Go, Unicode.Scalar in
+// Swift, code point in JS). The contents are exactly ONE character —
+// `'ab'` is a lex error, not a two-char "string". Use a String for
+// that.
+//
+// Supported escapes mirror the string lexer plus `\u{HEX}` for
+// arbitrary code points up to U+10FFFF; surrogates (D800-DFFF) are
+// rejected here rather than letting an invalid value reach the
+// runtime (would explode on Swift's Unicode.Scalar init).
+func (l *lexer) readChar() error {
+	l.advance() // opening '
+	if l.eof() {
+		return l.errorf("unterminated char literal")
+	}
+	var r rune
+	switch l.peek() {
+	case '\'':
+		return l.errorf("empty char literal")
+	case '\n':
+		return l.errorf("unterminated char literal")
+	case '\\':
+		l.advance()
+		esc := l.peek()
+		switch esc {
+		case 'n':
+			r = '\n'
+			l.advance()
+		case 't':
+			r = '\t'
+			l.advance()
+		case 'r':
+			r = '\r'
+			l.advance()
+		case '\'':
+			r = '\''
+			l.advance()
+		case '"':
+			r = '"'
+			l.advance()
+		case '\\':
+			r = '\\'
+			l.advance()
+		case 'u':
+			// \u{HEX} — up to 6 hex digits, must be a valid scalar.
+			l.advance() // u
+			if l.peek() != '{' {
+				return l.errorf("expected '{' after \\u")
+			}
+			l.advance() // {
+			start := l.pos
+			for !l.eof() && l.peek() != '}' {
+				if !isHexDigit(l.peek()) {
+					return l.errorf("invalid hex digit in \\u escape")
+				}
+				l.advance()
+			}
+			if l.eof() {
+				return l.errorf("unterminated \\u escape")
+			}
+			hex := string(l.src[start:l.pos])
+			if hex == "" {
+				return l.errorf("empty \\u escape")
+			}
+			l.advance() // }
+			n, err := strconv.ParseInt(hex, 16, 32)
+			if err != nil {
+				return l.errorf("invalid \\u escape: %v", err)
+			}
+			if n < 0 || n > 0x10FFFF {
+				return l.errorf("\\u escape out of range: %x", n)
+			}
+			if n >= 0xD800 && n <= 0xDFFF {
+				return l.errorf("\\u escape is a surrogate (invalid scalar): %x", n)
+			}
+			r = rune(n)
+		default:
+			return l.errorf("unknown char escape: \\%c", esc)
+		}
+	default:
+		r = l.peek()
+		l.advance()
+	}
+	if l.eof() || l.peek() != '\'' {
+		return l.errorf("expected closing ' in char literal")
+	}
+	l.advance() // closing '
+	l.emit(KindChar, string(r))
+	return nil
+}
+
+func isHexDigit(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 }
 
 // readFieldAccessor: .foo

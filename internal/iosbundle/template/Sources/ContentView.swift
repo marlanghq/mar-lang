@@ -7,19 +7,22 @@
 //   - loading  → spinner
 //   - loaded   → user's Pages. Two render modes:
 //
-//     * Stack mode (any Page.protected present): a single active
-//       page driven by AppContext.currentPath, gated by Auth.me.
-//       Mirrors the web router model. Backwards-compatible Settings
-//       reachable via toolbar button.
+//     * Stack mode (any Page.protected present): SwiftUI
+//       NavigationStack driven by AppContext.navPath. Native
+//       swipe-back pops the top entry; Nav.push/Nav.replace
+//       append or rewrite the stack. Page.protected destinations
+//       gate on Auth.me.
 //
-//     * Tabs mode (legacy, all-public multi-page apps): TabView with
-//       one tab per page plus Settings — preserves the existing
-//       multi-screen.mar UX.
+//     * Tabs mode (all-public multi-page apps): TabView with one
+//       tab per page.
 //
-//   - failed   → error banner with retry + open settings.
+//   - failed   → error banner with retry.
 //
-// Settings is always reachable, so the user can switch baseURL when
-// the server isn't reachable.
+// Connectivity is handled invisibly: in DEBUG, Bonjour discovers
+// `_mar._tcp` services on the LAN (auto-finds `mar dev` running on
+// your laptop); in RELEASE, the baked-in `ios.serverUrl` from
+// mar.json is the only target. No user-facing "settings" UI — the
+// backend is configuration, not preference.
 
 import SwiftUI
 
@@ -71,7 +74,7 @@ private struct LoadedShell: View {
             // (each tab a fixed page).
             StackShell(pages: pages)
         } else {
-            // All-public multi-page → keep legacy tabs UX.
+            // All-public multi-page → tabs UX.
             TabView {
                 ForEach(pages) { page in
                     NavigationStack {
@@ -80,12 +83,6 @@ private struct LoadedShell: View {
                     .tabItem {
                         Label(page.displayTitle, systemImage: tabIcon(for: page))
                     }
-                }
-                NavigationStack {
-                    SettingsTab()
-                }
-                .tabItem {
-                    Label("Settings", systemImage: "gearshape")
                 }
             }
         }
@@ -100,129 +97,184 @@ private struct LoadedShell: View {
     }
 }
 
-/// Stack-mode renderer: one active page at a time, driven by
-/// `AppContext.currentPath`. Protected pages bootstrap Auth.me on
-/// first entry and either route to their `redirect` target (when
-/// no user) or mount with the User threaded through.
+/// Stack-mode renderer backed by SwiftUI's native NavigationStack.
+///
+/// `AppContext.navPath` is the source of truth for the navigation
+/// stack — it's a `[String]` where each entry is the path of a
+/// page on the stack (bottom-first). Bound directly into
+/// `NavigationStack(path:)` so:
+///
+///   - `Nav.push "/foo"`  → appends → SwiftUI pushes a new screen.
+///   - `Nav.replace "/x"` → replaces the whole array → SwiftUI
+///     drops the stack and lands on the new page.
+///   - Native swipe-back / nav-bar back → SwiftUI mutates the
+///     binding, which writes back to `navPath`, popping the top
+///     entry. Mar code doesn't need to know about the pop.
+///
+/// The "root" of NavigationStack is the first entry of `navPath`;
+/// the rest are pushed via `.navigationDestination(for: String.self)`.
+/// Keeping the first entry as the root (instead of an invisible
+/// placeholder) means swipe-back from the only entry has nothing to
+/// pop, which is the correct behavior — there's no "blank screen"
+/// the user could end up on.
 private struct StackShell: View {
     let pages: [DecodedPage]
 
     @State private var ctx = AppContext.shared
-    @State private var showSettings = false
 
     var body: some View {
-        NavigationStack {
-            content
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            showSettings = true
-                        } label: {
-                            Image(systemName: "gearshape")
-                        }
-                    }
+        // Custom binding so SwiftUI's pop gestures update the shared
+        // navPath. Get exposes everything after the root (the
+        // "pushed" portion); set rewrites that suffix while
+        // preserving the root entry. When the user swipes back the
+        // only pushed entry, set is called with [], leaving navPath
+        // with just the root — correct.
+        let pushedBinding = Binding<[String]>(
+            get: { Array(ctx.navPath.dropFirst()) },
+            set: { newPushed in
+                if let first = ctx.navPath.first {
+                    ctx.navPath = [first] + newPushed
+                } else {
+                    ctx.navPath = newPushed
+                }
+            }
+        )
+
+        // Cross-fade between root swaps. SwiftUI's NavigationStack
+        // animates push/pop internally with the standard slide-from-
+        // right; that's the right cue for "going deeper / coming back".
+        // But `Nav.replace` is destructive — the previous stack is
+        // discarded — and the slide animation would visually lie
+        // about that. We swap the entire NavigationStack identity on
+        // each replace (via `.id(rootGeneration)`), and the surrounding
+        // `.animation(_:value:)` triggers an opacity transition for
+        // the identity change. Net effect: push/pop = slide; replace
+        // = cross-fade.
+        //
+        // The opacity transition is applied with .animation rather
+        // than withAnimation at the call site because the call sites
+        // (Auth.completeSignIn, handleAuthExpired, Nav.replace) are
+        // scattered and we want the animation policy centralized
+        // here, in the view that owns the stack.
+        NavigationStack(path: pushedBinding) {
+            RouteView(path: rootPath, pages: pages)
+                .navigationDestination(for: String.self) { path in
+                    RouteView(path: path, pages: pages)
                 }
         }
-        .sheet(isPresented: $showSettings) {
-            NavigationStack {
-                SettingsTab()
-            }
-        }
-        .task(id: ctx.currentPath) {
-            // When entering a protected page, ensure we know the
-            // user. nil means we haven't checked yet; fetch now.
-            // Existing Just/Nothing answers are reused.
-            guard let match = currentMatch(), match.page.isProtected else { return }
-            if ctx.currentUser != nil { return }
-            ctx.authPending = true
-            let result = await MarHTTP.fetchAuthMe()
-            ctx.currentUser = result ?? .ctor(tag: "Nothing", args: [], origin: nil)
-            ctx.authPending = false
-        }
+        .id(ctx.rootGeneration)
+        .transition(.opacity)
+        .animation(.easeInOut(duration: 0.25), value: ctx.rootGeneration)
     }
 
-    @ViewBuilder
-    private var content: some View {
-        if let match = currentMatch() {
+    /// The path SwiftUI renders as the root view of NavigationStack.
+    /// In normal operation this is `navPath.first`; the empty-path
+    /// fallback covers the brief window during cold-start before
+    /// `seedRoot` runs in AppViewModel — falling back to the first
+    /// declared page keeps the renderer from blanking out.
+    private var rootPath: String {
+        ctx.navPath.first ?? pages.first?.path ?? "/"
+    }
+}
+
+/// Single-destination wrapper: matches `path` against the declared
+/// pages, applies the protected-page gate when needed, and mounts the
+/// PageHost. Lives outside StackShell so each entry on the
+/// NavigationStack gets its own scope — including its own `.task`
+/// that bootstraps Auth.me when first appearing.
+private struct RouteView: View {
+    let path: String
+    let pages: [DecodedPage]
+
+    var body: some View {
+        if let match = matchPath(path) {
             if match.page.isProtected {
-                protectedView(match)
+                ProtectedRoute(match: match)
             } else {
                 MarPageHost(runtime: PageRuntime(page: match.page,
                                                  user: nil,
                                                  params: match.page.isDynamic ? match.params : nil))
-                    // .id keys on the URL so two visits to the same
-                    // pattern (e.g. /notes/abc → /notes/xyz) rebuild
-                    // a fresh PageRuntime instead of reusing the
-                    // previous note's model.
-                    .id(ctx.currentPath)
             }
         } else {
             ContentUnavailableView(
                 "Page not found",
                 systemImage: "questionmark.folder",
-                description: Text("No page is registered at \(ctx.currentPath).")
+                description: Text("No page is registered at \(path).")
             )
         }
     }
 
-    @ViewBuilder
-    private func protectedView(_ match: PageMatch) -> some View {
-        let pg = match.page
-        if ctx.authPending || ctx.currentUser == nil {
-            ProgressView("Checking session…")
-        } else if let user = unwrapJustUser(ctx.currentUser) {
-            MarPageHost(runtime: PageRuntime(page: pg,
-                                             user: user,
-                                             params: pg.isDynamic ? match.params : nil))
-                .id(ctx.currentPath)
-        } else if !ctx.signInPath.isEmpty {
-            // No session — bounce to the sign-in path declared in
-            // Auth.config.signInPage. Wrap in a Color so the .task
-            // triggers; the redirect mutates currentPath which
-            // re-runs the parent .task(id:) and re-renders content.
-            Color.clear
-                .task {
-                    if ctx.signInPath != ctx.currentPath {
-                        ctx.currentPath = ctx.signInPath
-                    }
-                }
-        } else {
-            // Misconfiguration: Page.protected used without
-            // Auth.config { signInPage = ... }. Surface visibly
-            // instead of looping or going blank.
-            ContentUnavailableView(
-                "Sign-in page not configured",
-                systemImage: "lock.slash",
-                description: Text("This app uses Page.protected but no `signInPage` is declared in Auth.config. Add `signInPage = Frontend.SignIn.page` (or similar) so unauthed users have somewhere to land.")
-            )
-        }
-    }
-
-    /// Resolve the current path to a page + params. Static pages match
-    /// first (so a literal "/notes/new" beats the pattern
-    /// "/notes/{id:Int}"), then dynamic patterns are tried in
-    /// declaration order. Falls back to the first registered page when
-    /// nothing matches — keeps deep links to a stale URL from blanking
-    /// the screen.
-    private func currentMatch() -> PageMatch? {
-        let url = ctx.currentPath
-        // 1) literal match
+    /// Resolve `path` to a page + params. Static pages match first
+    /// (so a literal "/notes/new" beats the pattern "/notes/{id:Int}"),
+    /// then dynamic patterns are tried in declaration order. No
+    /// fallback — a missing match surfaces a "Page not found" view
+    /// instead of silently mounting the wrong page.
+    private func matchPath(_ url: String) -> PageMatch? {
         for pg in pages where !pg.isDynamic {
             if pg.path == url {
                 return PageMatch(page: pg, params: .record(fields: [:], order: []))
             }
         }
-        // 2) dynamic-pattern match
         for pg in pages where pg.isDynamic {
             if let params = pg.matchURL(url) {
                 return PageMatch(page: pg, params: params)
             }
         }
-        // 3) fallback (preserves prior behavior)
-        if let first = pages.first {
-            return PageMatch(page: first, params: .record(fields: [:], order: []))
-        }
         return nil
+    }
+}
+
+/// Gate that fronts every Page.protected destination with an Auth.me
+/// bootstrap. Encapsulates the three rendering states (checking,
+/// authed, unauthed) so each protected route owns its own auth check
+/// scoped to the SwiftUI lifecycle of that route.
+private struct ProtectedRoute: View {
+    let match: PageMatch
+
+    @State private var ctx = AppContext.shared
+
+    var body: some View {
+        Group {
+            if ctx.authPending || ctx.currentUser == nil {
+                ProgressView("Checking session…")
+            } else if let user = unwrapJustUser(ctx.currentUser) {
+                MarPageHost(runtime: PageRuntime(page: match.page,
+                                                 user: user,
+                                                 params: match.page.isDynamic ? match.params : nil))
+            } else if !ctx.signInPath.isEmpty {
+                // No session — replace the stack with [signInPath].
+                // navigate(replace:true) wipes the back-history so a
+                // post-login navigate can return the user to wherever
+                // they intended to land (via Auth.completeSignIn +
+                // pendingReturnPath).
+                Color.clear
+                    .task {
+                        if ctx.currentPath != ctx.signInPath {
+                            ctx.pendingReturnPath = ctx.currentPath
+                            ctx.navigate(path: ctx.signInPath, replace: true)
+                        }
+                    }
+            } else {
+                // Misconfiguration: Page.protected used without
+                // Auth.config { signInPage = ... }. Surface visibly
+                // instead of looping or going blank.
+                ContentUnavailableView(
+                    "Sign-in page not configured",
+                    systemImage: "lock.slash",
+                    description: Text("This app uses Page.protected but no `signInPage` is declared in Auth.config. Add `signInPage = Frontend.SignIn.page` (or similar) so unauthed users have somewhere to land.")
+                )
+            }
+        }
+        .task {
+            // Bootstrap Auth.me on first appearance. nil = never
+            // checked; reuse any prior Just/Nothing answer instead of
+            // hammering the server on every protected-page visit.
+            guard ctx.currentUser == nil else { return }
+            ctx.authPending = true
+            let result = await MarHTTP.fetchAuthMe()
+            ctx.currentUser = result ?? .ctor(tag: "Nothing", args: [], origin: nil)
+            ctx.authPending = false
+        }
     }
 
     private func unwrapJustUser(_ v: MarValue?) -> MarValue? {
@@ -243,29 +295,17 @@ private struct PageMatch {
 /// project). The iOS shell has nothing to render in that case.
 private struct BackendOnlyPlaceholder: View {
     var body: some View {
-        TabView {
-            ContentUnavailableView(
-                "No pages to render",
-                systemImage: "rectangle.stack.badge.minus",
-                description: Text("This mar app exposes a backend but no `Page` values. Use the Settings tab to switch backends.")
-            )
-            .tabItem {
-                Label("Home", systemImage: "house")
-            }
-            NavigationStack {
-                SettingsTab()
-            }
-            .tabItem {
-                Label("Settings", systemImage: "gearshape")
-            }
-        }
+        ContentUnavailableView(
+            "No pages to render",
+            systemImage: "rectangle.stack.badge.minus",
+            description: Text("This mar app exposes a backend but no `Page` values. Add at least one `Page.create` to `App.fullstack { pages = ... }`.")
+        )
     }
 }
 
 private struct FailedView: View {
     let message: String
     @Environment(AppViewModel.self) private var viewModel
-    @State private var showSettings = false
 
     var body: some View {
         ContentUnavailableView {
@@ -273,22 +313,10 @@ private struct FailedView: View {
         } description: {
             Text(message)
         } actions: {
-            HStack {
-                Button("Retry") {
-                    Task { await viewModel.loadAll() }
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button("Settings") {
-                    showSettings = true
-                }
-                .buttonStyle(.bordered)
+            Button("Retry") {
+                Task { await viewModel.loadAll() }
             }
-        }
-        .sheet(isPresented: $showSettings) {
-            NavigationStack {
-                SettingsTab()
-            }
+            .buttonStyle(.borderedProminent)
         }
     }
 }

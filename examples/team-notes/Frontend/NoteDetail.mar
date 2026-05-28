@@ -4,9 +4,9 @@ module Frontend.NoteDetail exposing (page)
 import Shared exposing (Role(..))
 import Frontend.Routes
 import UI exposing
-    ( navigationStack, navigationTitle, leading
+    ( navigationStack, navigationTitle
     , form, section
-    , text, button, centered
+    , text, centered
     )
 
 
@@ -35,7 +35,6 @@ type Model
 
 type Msg
     = NoteFetched (Result String (Maybe Shared.Note))
-    | BackClicked
 
 
 init : Shared.User -> { id : Int } -> () -> (Model, Effect String Msg)
@@ -57,18 +56,14 @@ update _ _ msg model =
         NoteFetched (Err _) ->
             ( NotFound, Effect.none )
 
-        BackClicked ->
-            -- Type-safe nav: Nav.pushTo Frontend.Routes.home {} returns
-            -- "/" without any string concatenation. Renaming `home`'s
-            -- pattern would surface here as a compile error.
-            ( model, Nav.pushTo Frontend.Routes.home {} )
 
-
+-- No explicit Back button: SwiftUI's NavigationStack provides the
+-- native back-arrow + edge-swipe gesture for free once you push a
+-- destination, so the page chrome stays minimal.
 view : Shared.User -> { id : Int } -> Model -> View Msg
 view _ params model =
     navigationStack
         [ navigationTitle ("Note #" ++ String.fromInt params.id)
-        , leading (button [] BackClicked "Back")
         ]
         [ case model of
             Loading ->

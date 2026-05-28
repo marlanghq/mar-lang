@@ -9,14 +9,21 @@
 //
 // Also holds the running navigation + auth state:
 //
-//   - currentPath  : which page is active (path-based router)
+//   - navPath      : the navigation stack (paths from bottom to top).
+//                    `navPath.last` is what the user is looking at;
+//                    earlier entries are the swipe-back history.
+//                    Bound directly into SwiftUI's `NavigationStack
+//                    (path:)` so the native swipe-back gesture works
+//                    out of the box.
+//   - currentPath  : convenience computed property — the active
+//                    page's path. Equal to `navPath.last` or `"/"`
+//                    when the stack is empty (cold start).
 //   - currentUser  : VCtor('Just', [user]) | VCtor('Nothing', []) | nil
-//                    nil = not yet bootstrapped; the LoadedShell
-//                    triggers Auth.me when the app first mounts a
-//                    Page.protected.
+//                    nil = not yet bootstrapped; the protected-page
+//                    gate triggers Auth.me on first mount.
 //
 // Navigation effects (Nav.push / Nav.replace) call `navigate(path:)`
-// which mutates currentPath and triggers a SwiftUI re-render.
+// which mutates navPath and triggers a SwiftUI re-render.
 
 import Foundation
 import Observation
@@ -34,9 +41,21 @@ final class AppContext {
     /// `decodedPages()` for the per-tag positional layout.
     private(set) var pages: [MarValue] = []
 
-    /// Active page path (drives the path-based router in stack mode).
-    /// Defaults to whatever the first decoded page's path is.
-    var currentPath: String = "/"
+    /// Navigation stack (bottom to top). Bound directly into
+    /// `NavigationStack(path:)` so native swipe-back pops the top
+    /// entry without any extra wiring. `Nav.push` appends, `Nav.replace`
+    /// resets to a single entry, `Auth.completeSignIn` resets to the
+    /// pendingReturnPath.
+    var navPath: [String] = []
+
+    /// The page the user is currently looking at. Computed from
+    /// `navPath` so there's a single source of truth for "where am I"
+    /// across the runtime (router matching, Auth.me-bootstrap key,
+    /// pendingReturnPath snapshot, etc.). Falls back to "/" on the
+    /// brief window between cold-start and the initial `seedRoot`.
+    var currentPath: String {
+        navPath.last ?? "/"
+    }
 
     /// Cached Auth.me result, loaded on demand the first time a
     /// Page.protected becomes the active page. nil = not yet fetched.
@@ -57,7 +76,7 @@ final class AppContext {
 
     /// Where to send the user after a successful sign-in. Set by
     /// `handleAuthExpired()` when a 401 from a Service.call hijacks
-    /// the user to the sign-in screen — `Nav.afterSignIn` consumes it.
+    /// the user to the sign-in screen — `Auth.completeSignIn` consumes it.
     /// Web uses a `?next=` URL parameter for the same purpose; on iOS
     /// we don't have a URL bar, so we keep it in memory. Lost on cold
     /// start (acceptable — there's no "where you were" anymore).
@@ -65,15 +84,26 @@ final class AppContext {
 
     /// Coalesces parallel Service.call 401s. Set true the moment the
     /// first 401 triggers a redirect; subsequent 401s during the same
-    /// redirect window are dropped. Reset by `Nav.afterSignIn` after
+    /// redirect window are dropped. Reset by `Auth.completeSignIn` after
     /// a successful login completes.
     var redirectingToSignIn: Bool = false
+
+    /// Monotonic counter bumped every time `navigate(replace: true)`
+    /// rewrites the stack. The `StackShell` view applies it as
+    /// SwiftUI `.id()` on the NavigationStack so a replace tears down
+    /// the old stack and mounts a new one — letting the wrapper
+    /// cross-fade between them instead of replaying the
+    /// slide-from-right push animation, which would visually lie
+    /// about a destructive operation. Push and pop don't bump this;
+    /// they animate inside the existing stack with SwiftUI's native
+    /// transitions.
+    var rootGeneration: Int = 0
 
     private init() {}
 
     func reset() {
         pages = []
-        currentPath = "/"
+        navPath = []
         currentUser = nil
         authPending = false
         signInPath = ""
@@ -81,8 +111,18 @@ final class AppContext {
         redirectingToSignIn = false
     }
 
+    /// Initial seed for the navigation stack — called once at app
+    /// startup with the path of the first registered page. Idempotent:
+    /// only sets when the stack is empty so a hot-reload or program
+    /// refresh doesn't bulldoze the user's current location.
+    func seedRoot(_ path: String) {
+        if navPath.isEmpty {
+            navPath = [path]
+        }
+    }
+
     /// Called by MarHTTP when a Service.call returns 401. Captures the
-    /// current path so Nav.afterSignIn can return there, then routes
+    /// current path so Auth.completeSignIn can return there, then routes
     /// to the sign-in screen. Idempotent across parallel 401s thanks
     /// to `redirectingToSignIn`. Returns true if it took over (caller
     /// should NOT dispatch the Err); false when there's no signInPath
@@ -103,16 +143,36 @@ final class AppContext {
         pages = xs
     }
 
-    /// Mutate the active path. `replace` is a hint that the caller
-    /// expects the previous URL not to be reachable via "back" — on
-    /// iOS we don't model browser history, so push/replace differ
-    /// only in that replace also invalidates the cached auth state
-    /// (logout / post-login flows).
-    func navigate(path: String, replace: Bool) {
+    /// Mutate the navigation stack. `replace` clears history and lands
+    /// the user on `path` as the only entry (logout, sign-in landing,
+    /// auth-expired redirect). `replace: false` appends, letting the
+    /// user swipe back to where they were.
+    ///
+    /// `invalidateUser` opts out of clearing `currentUser` on replace,
+    /// for the case where the caller has just installed a fresh user
+    /// value and a navigate(replace:true) follows immediately —
+    /// `Auth.completeSignIn` is the canonical example. Without this
+    /// escape hatch, the just-set user would be wiped before the
+    /// destination's protected-page gate could see it, forcing an
+    /// extra Auth.me round-trip that's racy against the freshly-set
+    /// session cookie.
+    func navigate(path: String, replace: Bool, invalidateUser: Bool = true) {
         if replace {
-            currentUser = nil
+            if invalidateUser {
+                currentUser = nil
+            }
+            // Bump the generation BEFORE mutating navPath so SwiftUI
+            // sees both observable changes in the same tick and treats
+            // the NavigationStack as identity-swapped — triggering the
+            // cross-fade transition instead of the default
+            // slide-from-right push animation. Order matters: if the
+            // path changed first, SwiftUI might already start animating
+            // a stack-pop before the identity change supersedes it.
+            rootGeneration += 1
+            navPath = [path]
+        } else {
+            navPath.append(path)
         }
-        currentPath = path
     }
 
     /// Decoded view of the captured pages, ready for the renderer

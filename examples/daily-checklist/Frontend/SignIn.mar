@@ -1,0 +1,139 @@
+module Frontend.SignIn exposing (page)
+
+
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, text, textField, button, errorText
+    , email, submit, empty, disabled
+    , width, chars
+    )
+
+
+-- Email-entry half of the sign-in flow. When the server accepts the
+-- email and dispatches a code, we push to /sign-in/verify/{email} —
+-- a separate page (Frontend.VerifyCode) for code entry.
+--
+-- Splitting the flow across two pages (instead of a local state
+-- machine) buys us the navigation-stack back button for free: a user
+-- who mistyped their email taps Back on the verify page and lands
+-- here with the email field blank, ready to try again. The framework
+-- preserves per-page model across navigations, so any in-flight
+-- request that completes after Back was tapped still updates this
+-- model harmlessly.
+
+
+type alias Model =
+    { draft : String
+    , error : Maybe String
+    , busy  : Bool
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeRequested (Result String ())
+
+
+init : () -> (Model, Effect String Msg)
+init _ =
+    ( { draft = "", error = Nothing, busy = False }, Effect.none )
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        -- Typing clears the previous error — once the user edits the
+        -- input, the old failure no longer reflects what's there.
+        DraftChanged value ->
+            ( { model | draft = value, error = Nothing }, Effect.none )
+
+        Submitted ->
+            -- Guard against re-entry: even with the disabled button,
+            -- a stray Enter-key submit or a racing tap could fire
+            -- Submitted again while a request is in flight. Drop the
+            -- duplicate so we don't issue two requestCode calls and
+            -- get rate-limited on our own attempt.
+            if model.busy then
+                ( model, Effect.none )
+            else
+                ( { model | busy = True, error = Nothing }
+                , Auth.requestCode { email = model.draft } CodeRequested
+                )
+
+        CodeRequested (Ok ()) ->
+            -- Hand off to the verify page. We carry the email as a
+            -- typed path segment so /sign-in/verify/<email> is the
+            -- canonical address of that step — bookmarkable, and the
+            -- browser's Back button gives the user a free retry.
+            ( { model | busy = False }
+            , Nav.pushTo Frontend.Routes.verifyCode { email = model.draft }
+            )
+
+        CodeRequested (Err why) ->
+            ( { model | busy = False, error = Just (explainError why) }
+            , Effect.none
+            )
+
+
+-- Translates the server's short error codes into human-readable
+-- text. Anything not in the table falls through to the raw code —
+-- safe in prod (codes are reasonably readable) and useful in dev
+-- (operator sees the exact server identifier).
+explainError : String -> String
+explainError code =
+    case code of
+        "invalid_email" ->
+            "That doesn't look like a valid email address."
+
+        "missing_email" ->
+            "Email is required."
+
+        "rate_limited" ->
+            "Too many attempts. Wait a moment before trying again."
+
+        _ ->
+            code
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Sign in" ]
+        [ form
+            [ section []
+                [ text "Enter your email and we'll send you a one-time code."
+                , textField
+                    -- `disabled model.busy`: while the request is
+                    -- in flight, freeze the field so the user can't
+                    -- start typing a different email and confuse
+                    -- themselves about which one we're sending to.
+                    [ email, submit Submitted, width (chars 30), disabled model.busy ]
+                    "Email" model.draft DraftChanged
+                , errorView model.error
+                ]
+            , section []
+                [ button [ disabled model.busy ] Submitted "Send me a code" ]
+            ]
+        ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            errorText msg
+
+
+page : Page
+page =
+    Page.create
+        { path   = "/sign-in"
+        , title  = "Sign in"
+        , init   = init
+        , update = update
+        , view   = view
+        }

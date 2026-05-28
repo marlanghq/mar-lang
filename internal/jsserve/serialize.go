@@ -80,6 +80,11 @@ func serializeExpr(e ast.Expr) any {
 		return map[string]any{"kind": "EFloat", "value": n.Value}
 	case *ast.EString:
 		return map[string]any{"kind": "EString", "value": n.Value}
+	case *ast.EChar:
+		// Ship the integer code point — the JS runtime reconstructs a
+		// VChar via VChar(value). Sending an int avoids any UTF-16
+		// surrogate weirdness on the way through JSON.
+		return map[string]any{"kind": "EChar", "value": int(n.Value)}
 	case *ast.EUnit:
 		return map[string]any{"kind": "EUnit"}
 	case *ast.EVar:
@@ -193,6 +198,8 @@ func serializePattern(p ast.Pattern) any {
 		return map[string]any{"kind": "PInt", "value": n.Value}
 	case *ast.PString:
 		return map[string]any{"kind": "PString", "value": n.Value}
+	case *ast.PChar:
+		return map[string]any{"kind": "PChar", "value": int(n.Value)}
 	case *ast.PUnit:
 		return map[string]any{"kind": "PUnit"}
 	case *ast.PCtor:
@@ -221,6 +228,17 @@ func serializePattern(p ast.Pattern) any {
 			"head": serializePattern(n.Head),
 			"tail": serializePattern(n.Tail),
 		}
+	case *ast.PRecord:
+		// Record destructuring pattern — list of field names to bind.
+		// The JS / iOS runtimes pull each field's value out of the
+		// matched VRecord and bind it under the same name in the
+		// branch's scope. Partial-match (Elm-style): extra fields on
+		// the value are silently ignored.
+		fields := make([]any, len(n.Fields))
+		for i, f := range n.Fields {
+			fields[i] = f
+		}
+		return map[string]any{"kind": "PRecord", "fields": fields}
 	}
 	return map[string]any{"kind": "Unknown"}
 }

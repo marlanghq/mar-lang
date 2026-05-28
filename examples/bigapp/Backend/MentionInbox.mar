@@ -1,0 +1,162 @@
+module Backend.MentionInbox exposing (services)
+
+
+import Backend.Mentions
+import Backend.Comments
+import Backend.Users
+import Backend.Issues
+import Backend.Projects
+import Shared exposing (Role(..))
+
+
+-- MentionInbox — read side of the @-mentions feature. Joins raw
+-- mention rows with the comment, the user who wrote it, and the
+-- issue/project the comment lives under, then serves the result to
+-- the Inbox page. Split into its own module so the entity + the
+-- emit path in Backend.Mentions stay on the dependency-graph leaf
+-- (no cycle with Backend.Comments, which calls
+-- `Backend.Mentions.parseAndStoreMentions` on every comment write).
+
+
+listMyMentions : Shared.ListMyMentions -> Shared.User -> Effect String (List Shared.MentionView)
+listMyMentions input user =
+    Repo.findBy Backend.Mentions.mentions { mentionedUserId = user.id }
+        |> Effect.andThen
+            (\rows ->
+                let
+                    filtered =
+                        if input.onlyUnseen then
+                            List.filter (\m -> if m.seen then False else True) rows
+                        else
+                            rows
+
+                    sorted =
+                        List.sortWith
+                            (\a b ->
+                                if Time.toMillis a.createdAt > Time.toMillis b.createdAt then
+                                    LT
+                                else if Time.toMillis a.createdAt < Time.toMillis b.createdAt then
+                                    GT
+                                else
+                                    EQ
+                            )
+                            filtered
+                in
+                Effect.sequence (List.map buildMentionView sorted)
+            )
+
+
+buildMentionView : Shared.Mention -> Effect String Shared.MentionView
+buildMentionView m =
+    Repo.findById Backend.Comments.comments m.commentId
+        |> Effect.andThen
+            (\maybeComment ->
+                Repo.findById Backend.Users.users m.authorId
+                    |> Effect.andThen
+                        (\maybeAuthor ->
+                            resolveIssueContext maybeComment
+                                |> Effect.map
+                                    (\ctx ->
+                                        { id              = m.id
+                                        , commentId       = m.commentId
+                                        , mentionedUserId = m.mentionedUserId
+                                        , authorId        = m.authorId
+                                        , authorName      =
+                                            case maybeAuthor of
+                                                Just u  -> u.name
+                                                Nothing -> "(deleted user)"
+                                        , issueId         = ctx.issueId
+                                        , issueNumber     = ctx.issueNumber
+                                        , issueTitle      = ctx.issueTitle
+                                        , projectSlug     = ctx.projectSlug
+                                        , bodyPreview     = bodyPreviewFor maybeComment
+                                        , createdAt       = m.createdAt
+                                        , seen            = m.seen
+                                        }
+                                    )
+                        )
+            )
+
+
+bodyPreviewFor : Maybe Shared.Comment -> String
+bodyPreviewFor maybeComment =
+    case maybeComment of
+        Just c ->
+            -- Truncate to ~140 chars so the inbox row stays compact.
+            -- String.left isn't in stdlib; we build the substring by
+            -- toList → List.take → fromList. Trade efficiency for
+            -- portability; comments aren't huge.
+            if String.length c.body > 140 then
+                let
+                    head =
+                        c.body
+                            |> String.toList
+                            |> List.take 140
+                            |> String.fromList
+                in
+                head ++ "…"
+            else
+                c.body
+
+        Nothing ->
+            "(comment removed)"
+
+
+resolveIssueContext : Maybe Shared.Comment -> Effect String { issueId : Int, issueNumber : Int, issueTitle : String, projectSlug : String }
+resolveIssueContext maybeComment =
+    case maybeComment of
+        Just c ->
+            Repo.findById Backend.Issues.issues c.issueId
+                |> Effect.andThen
+                    (\maybeIssue ->
+                        case maybeIssue of
+                            Just issue ->
+                                Repo.findById Backend.Projects.projects issue.projectId
+                                    |> Effect.map
+                                        (\maybeProject ->
+                                            { issueId     = issue.id
+                                            , issueNumber = issue.number
+                                            , issueTitle  = issue.title
+                                            , projectSlug =
+                                                case maybeProject of
+                                                    Just p  -> p.slug
+                                                    Nothing -> ""
+                                            }
+                                        )
+
+                            Nothing ->
+                                Effect.succeed { issueId = 0, issueNumber = 0, issueTitle = "", projectSlug = "" }
+                    )
+
+        Nothing ->
+            Effect.succeed { issueId = 0, issueNumber = 0, issueTitle = "", projectSlug = "" }
+
+
+markSeen : Shared.MarkMentionSeen -> Shared.User -> Effect String ()
+markSeen input _ =
+    Repo.update Backend.Mentions.mentions input.id
+        { seen = True
+        }
+        |> Effect.map (\_ -> ())
+
+
+-- ====================================================================
+-- AUTHORIZATION
+-- ====================================================================
+
+loadMentionByMark : Shared.MarkMentionSeen -> Shared.User -> Effect String (Maybe Shared.Mention)
+loadMentionByMark input _ =
+    Repo.findById Backend.Mentions.mentions input.id
+
+
+-- A user can only mark their own mentions as seen.
+isMineToMark : a -> Shared.User -> Shared.Mention -> Bool
+isMineToMark _ user mention =
+    mention.mentionedUserId == user.id
+
+
+services =
+    [ Auth.protect Shared.listMyMentions  listMyMentions
+    , Auth.protect Shared.markMentionSeen markSeen
+        |> Auth.authorize loadMentionByMark isMineToMark
+    ]

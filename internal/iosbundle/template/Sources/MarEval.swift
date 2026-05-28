@@ -17,6 +17,7 @@ enum Eval {
         case .int(let n):       return .int(n)
         case .float(let n):     return .float(n)
         case .string(let s):    return .string(s)
+        case .char(let c):      return .char(c)
         case .unit:             return .unit
 
         case .var(let name):
@@ -201,6 +202,9 @@ enum Eval {
         case .string(let s):
             if case .string(let str) = v, str == s { return true }
             return false
+        case .char(let c):
+            if case .char(let other) = v, other == c { return true }
+            return false
         case .unit:
             if case .unit = v { return true }
             return false
@@ -228,6 +232,18 @@ enum Eval {
             guard case .list(let xs) = v, !xs.isEmpty else { return false }
             if !matchInto(head, xs[0], &bag) { return false }
             return matchInto(tail, .list(Array(xs.dropFirst())), &bag)
+        case .record(let fields):
+            // `{ f1, f2 }` — bind each listed field's value. Partial
+            // match: extra fields on the value are silently ignored.
+            // Typecheck has already verified every listed field
+            // exists on the value's type, so a missing field here is
+            // a typechecker bug → return false rather than crashing.
+            guard case .record(let recFields, _) = v else { return false }
+            for fname in fields {
+                guard let fv = recFields[fname] else { return false }
+                bag[fname] = fv
+            }
+            return true
         }
     }
 
@@ -246,6 +262,9 @@ enum Eval {
         case .tuple: return "Tuple"
         case .record: return "Record"
         case .ctor(let tag, _, _): return "Ctor(\(tag))"
+        case .char: return "Char"
+        case .dict: return "Dict"
+        case .set: return "Set"
         case .fn: return "Function"
         case .view: return "View"
         case .effect: return "Effect"

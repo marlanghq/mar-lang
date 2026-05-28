@@ -91,7 +91,13 @@ final class PageRuntime {
     /// Called once when the page first appears on screen. Fires the
     /// init Effect and wires the dispatcher so async effects can
     /// post Msgs back into this runtime.
+    ///
+    /// `currentOwner` is stamped with this instance's identity so
+    /// `unmount` can tell whether the dispatcher slot is still
+    /// ours when SwiftUI eventually tears us down — see the
+    /// comment on MarDispatcher.currentOwner for why that matters.
     func mount() {
+        MarDispatcher.shared.currentOwner = ObjectIdentifier(self)
         MarDispatcher.shared.current = { [weak self] msg in
             self?.dispatch(msg)
         }
@@ -103,9 +109,16 @@ final class PageRuntime {
 
     /// Called when the page leaves the screen. Detaches the
     /// dispatcher so a stale closure can't dispatch into a torn-down
-    /// page.
+    /// page — but ONLY when the slot is still ours. After a
+    /// navigation, the incoming page's `mount` may have already
+    /// fired before our `unmount` runs (SwiftUI's lifecycle order
+    /// for `.id`-swap views is "onAppear new, then onDisappear
+    /// old"). Without this guard we'd wipe the incoming page's
+    /// freshly-set dispatcher, breaking every async msg that
+    /// page's init effect posted.
     func unmount() {
-        if MarDispatcher.shared.current != nil {
+        if MarDispatcher.shared.currentOwner == ObjectIdentifier(self) {
+            MarDispatcher.shared.currentOwner = nil
             MarDispatcher.shared.current = nil
         }
     }

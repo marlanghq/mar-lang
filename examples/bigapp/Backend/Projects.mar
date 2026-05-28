@@ -1,0 +1,140 @@
+module Backend.Projects exposing (projects, services)
+
+
+import Backend.Activities
+import Shared exposing (Role(..))
+
+
+-- Projects entity. Each project belongs to exactly one team; the
+-- frontend never sees projects from other teams (enforced by the
+-- `sameTeam` policy below). A slug is the human-readable URL
+-- segment ("api-v2" not "47"); used by ProjectDetail.mar to look
+-- up the project from a path param.
+projects : Entity Shared.Project
+projects =
+    Entity.define
+        { name = "projects"
+        , columns =
+            { id          = Entity.serial
+            , teamId      = Entity.int  Entity.notNull
+            , name        = Entity.text Entity.notNull
+            , slug        = Entity.text Entity.notNull
+            , description = Entity.text Entity.notNull
+            , createdAt   = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ====================================================================
+-- HANDLERS
+-- ====================================================================
+
+listMine : () -> Shared.User -> Effect String (List Shared.Project)
+listMine _ user =
+    Repo.findBy projects { teamId = user.teamId }
+
+
+getOne : Shared.GetProject -> Shared.User -> Effect String (Maybe Shared.Project)
+getOne input _ =
+    Repo.findById projects input.id
+
+
+create : Shared.NewProject -> Shared.User -> Effect String Shared.Project
+create input user =
+    Time.now
+        |> Effect.andThen
+            (\now ->
+                Repo.create projects
+                    { teamId      = user.teamId
+                    , name        = input.name
+                    , slug        = input.slug
+                    , description = input.description
+                    , createdAt   = now
+                    }
+                    |> Effect.andThen
+                        (\project ->
+                            Backend.Activities.emitProjectCreated user project
+                                |> Effect.map (\_ -> project)
+                        )
+            )
+
+
+edit : Shared.EditProject -> Shared.User -> Effect String (Maybe Shared.Project)
+edit input _ =
+    Repo.update projects input.id
+        { name        = input.name
+        , description = input.description
+        }
+
+
+remove : Shared.DeleteProject -> Shared.User -> Effect String ()
+remove input user =
+    Repo.findById projects input.id
+        |> Effect.andThen
+            (\maybeProject ->
+                Repo.deleteById projects input.id
+                    |> Effect.andThen
+                        (\_ ->
+                            case maybeProject of
+                                Just p ->
+                                    Backend.Activities.emitProjectDeleted user p.id p.name
+
+                                Nothing ->
+                                    Effect.succeed ()
+                        )
+            )
+
+
+-- ====================================================================
+-- AUTHORIZATION
+-- ====================================================================
+
+-- Loaders materialize the resource so the policy can inspect it
+-- before the handler runs.
+
+loadByGet : Shared.GetProject -> Shared.User -> Effect String (Maybe Shared.Project)
+loadByGet input _ =
+    Repo.findById projects input.id
+
+
+loadByEdit : Shared.EditProject -> Shared.User -> Effect String (Maybe Shared.Project)
+loadByEdit input _ =
+    Repo.findById projects input.id
+
+
+loadByDelete : Shared.DeleteProject -> Shared.User -> Effect String (Maybe Shared.Project)
+loadByDelete input _ =
+    Repo.findById projects input.id
+
+
+-- Policy: a user can act on a project iff the project is in their
+-- team. Admin checks live on top of this where relevant.
+sameTeam : a -> Shared.User -> Shared.Project -> Bool
+sameTeam _ user project =
+    project.teamId == user.teamId
+
+
+-- Service manifest. Reads top-to-bottom as the security policy of
+-- the projects subdomain:
+--
+--   listMine — any authed user, scoped to their team
+--   getOne   — any authed user, must be sameTeam
+--   create   — any authed user, scoped to their team via signup hook
+--   edit     — sameTeam, admin only
+--   remove   — sameTeam, admin only
+services =
+    [ Auth.protect Shared.listProjects  listMine
+    , Auth.protect Shared.createProject create
+
+    , Auth.protect Shared.getProject getOne
+        |> Auth.authorize loadByGet sameTeam
+
+    , Auth.protect Shared.editProject edit
+        |> Auth.authorize   loadByEdit sameTeam
+        |> Auth.requireRole Admin
+
+    , Auth.protect Shared.deleteProject remove
+        |> Auth.authorize   loadByDelete sameTeam
+        |> Auth.requireRole Admin
+    ]

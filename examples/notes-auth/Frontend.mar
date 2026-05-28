@@ -3,11 +3,11 @@ module Frontend exposing (page)
 
 import Shared
 import UI exposing
-    ( navigationStack, navigationTitle, trailing
+    ( navigationStack, navigationTitle, topBarTrailing
     , form, list, section, header
     , hstack
-    , title, subtitle, text, textField, button, link, centered, empty
-    , submit
+    , title, subtitle, text, textField, button, centered, empty, errorText
+    , submit, width, chars
     )
 
 
@@ -182,9 +182,9 @@ renderNote note =
     text note.body
 
 
--- View built from SwiftUI-style primitives. iOS renders each branch
+-- View built from declarative primitives. iOS renders each branch
 -- as a real NavigationStack / Form / List / Section; web gets
--- semantic HTML with iCloud-style card-list CSS. No pixel layout.
+-- semantic HTML with a card-list CSS layout. No pixel layout.
 view : Stage -> View Msg
 view stage =
     case stage of
@@ -196,7 +196,7 @@ view stage =
                 [ form
                     [ section []
                         [ text "Enter your email and we'll send a one-time code."
-                        , textField [ submit RequestCodeClicked ]
+                        , textField [ submit RequestCodeClicked, width (chars 30) ]
                             "Email" draft EmailDraftChanged
                         ]
                     , section []
@@ -208,7 +208,7 @@ view stage =
             navigationStack [ navigationTitle "Enter your code" ]
                 [ form
                     [ section []
-                        [ text ("We sent a 6-digit code to " ++ email ++ ". With no SMTP configured, it prints in the dev server's terminal.")
+                        [ text ("We sent a 6-digit code to " ++ email ++ ".")
                         , textField [ submit VerifyCodeClicked ]
                             "Code" codeDraft CodeDraftChanged
                         ]
@@ -223,9 +223,9 @@ view stage =
         LoggedIn user notes draft ->
             navigationStack
                 [ navigationTitle ("Hi, " ++ user.email)
-                , trailing (button [] SignOutClicked "Sign out")
+                , topBarTrailing (button [] SignOutClicked "Sign out")
                 ]
-                [ list
+                [ list []
                     [ section []
                         [ hstack []
                             [ textField [ submit AddNoteClicked ]
@@ -246,7 +246,7 @@ notesSection notes =
             section [] [ text "Loading…" ]
 
         NotesFailed why ->
-            section [] [ text ("Couldn't load notes: " ++ why) ]
+            section [] [ errorText ("Couldn't load notes: " ++ why) ]
 
         NotesLoaded items ->
             section [ header (String.fromInt (List.length items) ++ " notes") ]

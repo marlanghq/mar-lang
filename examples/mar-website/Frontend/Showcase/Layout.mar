@@ -1,0 +1,151 @@
+module Frontend.Showcase.Layout exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , hstack, vstack, centered
+    , title, subtitle, text, button, spacer
+    )
+
+
+-- Demo: how stacks compose.
+--
+--   hstack    : children in a horizontal row, flex-1 each
+--   vstack    : children stacked vertically, leading-aligned
+--   spacer    : flex filler — pushes siblings to opposite edges
+--   centered  : fills the available space and centers its child
+--
+-- The model is a tiny state machine that toggles between the
+-- normal demo layout and a full-screen `centered` view, so visitors
+-- can see the same code render two different ways without
+-- navigating away.
+
+
+type Mode
+    = Normal
+    | EmptyState
+
+
+type alias Model =
+    { mode : Mode
+    }
+
+
+type Msg
+    = ShowEmptyState
+    | HideEmptyState
+
+
+init : () -> (Model, Effect String Msg)
+init _ = ( { mode = Normal }, Effect.none )
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        ShowEmptyState ->
+            ( { model | mode = EmptyState }, Effect.none )
+
+        HideEmptyState ->
+            ( { model | mode = Normal }, Effect.none )
+
+
+-- Canonical `spacer` use: a row that pins one child to the leading
+-- edge and another to the trailing edge.
+labelWithAction : View Msg
+labelWithAction =
+    hstack []
+        [ text "Leading label"
+        , spacer
+        , button [] ShowEmptyState "Trailing action"
+        ]
+
+
+-- A row with three balanced columns — no spacer, flex-1 distributes
+-- the width evenly.
+evenColumns : View Msg
+evenColumns =
+    hstack []
+        [ text "Left"
+        , text "Middle"
+        , text "Right"
+        ]
+
+
+-- Two spacers around a single child centers it. SwiftUI uses the
+-- same pattern (`HStack { Spacer(); content; Spacer() }`) for
+-- inline centering. There's no dedicated `center` primitive in
+-- Mar because this idiom is short, declarative, and self-documents
+-- what's happening to the layout — adding sugar wouldn't make it
+-- much shorter.
+centeredAction : View Msg
+centeredAction =
+    hstack []
+        [ spacer
+        , button [] ShowEmptyState "Centered"
+        , spacer
+        ]
+
+
+view : Model -> View Msg
+view model =
+    case model.mode of
+        EmptyState ->
+            -- Full-screen centered child. Use this shape in real
+            -- apps for Loading, EmptyState, and Error views.
+            centered
+                (vstack []
+                    [ title "Centered title"
+                    , subtitle "This vstack is centered horizontally + vertically."
+                    , button [] HideEmptyState "Back to demo"
+                    ])
+
+        Normal ->
+            navigationStack [ navigationTitle "Layout & stacks" ]
+                [ list []
+                    [ section
+                        [ header "hstack"
+                        , footer "Children share the row, each flex-1 by default."
+                        ]
+                        [ evenColumns ]
+                    , section
+                        [ header "hstack + spacer"
+                        , footer "spacer expands to fill, pushing siblings apart."
+                        ]
+                        [ labelWithAction
+                        , subtitle "Label on the leading edge, action on the trailing edge."
+                        ]
+                    , section
+                        [ header "centering with two spacers"
+                        , footer "Wrap any child in [ spacer, x, spacer ] to center it horizontally."
+                        ]
+                        [ centeredAction ]
+                    , section
+                        [ header "vstack"
+                        , footer "Children stack top-to-bottom, leading-aligned."
+                        ]
+                        [ vstack []
+                            [ text "First"
+                            , text "Second"
+                            , text "Third"
+                            ]
+                        ]
+                    , section
+                        [ header "full-page centered"
+                        , footer "Fills the available space and centers its child on both axes. Use for full-screen Loading, EmptyState, and Error views."
+                        ]
+                        [ button [] ShowEmptyState "Show a full-page example" ]
+                    ]
+                ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/layout"
+        , title = "Layout"
+        , init = init
+        , update = update
+        , view = view
+        }

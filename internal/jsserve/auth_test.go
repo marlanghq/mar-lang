@@ -59,7 +59,6 @@ func authTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	runtime.RegisterAuth(runtime.VAuth{
 		Entity:          users,
 		Identify:        identify,
-		EmailFrom:       "test@notes.local",
 		EmailSubject:    "Sign in",
 		Signup:          signup,
 		SessionDuration: 3600,
@@ -137,6 +136,93 @@ func postJSON(t *testing.T, client *http.Client, url string, body any) (*http.Re
 	respBody, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	return resp, respBody
+}
+
+// TestRequestCode_RejectsInvalidEmailShape — malformed emails are
+// rejected upfront (400 + "invalid_email") before they can hit
+// EnsureUser and pollute the users table with garbage rows. Same
+// shape check used at compile time for admins / mail.from.
+func TestRequestCode_RejectsInvalidEmailShape(t *testing.T) {
+	server, cleanup := authTestServer(t)
+	defer cleanup()
+	client := server.Client()
+
+	bad := []string{
+		"not-an-email",
+		"missing-at.com",
+		"@nohost.com",
+		"newline@x.com\nBcc: attacker@evil.com",
+	}
+	for _, email := range bad {
+		t.Run(email, func(t *testing.T) {
+			resp, body := postJSON(t, client, server.URL+"/_auth/request-code",
+				map[string]string{"email": email})
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("email %q: status = %d (want 400), body = %s",
+					email, resp.StatusCode, body)
+			}
+			if !strings.Contains(string(body), "invalid_email") {
+				t.Errorf("email %q: body should mention invalid_email, got %s",
+					email, body)
+			}
+		})
+	}
+}
+
+// TestVerify_CookieSecureFromXForwardedProto — cookies set during
+// verify-code respect X-Forwarded-Proto: https so they get the
+// Secure flag even when this process is behind a TLS-terminating
+// proxy (Fly, Cloudflare, nginx). Without this, r.TLS is always
+// nil in prod and the Secure flag would always be false.
+func TestVerify_CookieSecureFromXForwardedProto(t *testing.T) {
+	server, cleanup := authTestServer(t)
+	defer cleanup()
+	client := server.Client()
+
+	// Request a code, fish it out of the stdout sink.
+	var code string
+	out := captureStdout(t, func() {
+		resp, _ := postJSON(t, client, server.URL+"/_auth/request-code",
+			map[string]string{"email": "alice@example.com"})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("request-code: %d", resp.StatusCode)
+		}
+	})
+	code = extractSinkCode(t, out)
+
+	// Verify with X-Forwarded-Proto: https — Secure flag should be true.
+	req, _ := http.NewRequest(http.MethodPost,
+		server.URL+"/_auth/verify-code",
+		bytes.NewReader(mustJSON(map[string]string{
+			"email": "alice@example.com", "code": code,
+		})))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("verify: status %d", resp.StatusCode)
+	}
+	var sawCookie bool
+	for _, c := range resp.Cookies() {
+		if c.Name == cookieName {
+			sawCookie = true
+			if !c.Secure {
+				t.Errorf("cookie Secure should be true under X-Forwarded-Proto: https")
+			}
+		}
+	}
+	if !sawCookie {
+		t.Fatal("session cookie not set")
+	}
+}
+
+func mustJSON(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 func TestRequestCodeAlwaysOK(t *testing.T) {
@@ -349,4 +435,174 @@ func newJar(t *testing.T) http.CookieJar {
 		t.Fatalf("cookie jar: %v", err)
 	}
 	return jar
+}
+
+// ---- Bearer-token transport (native runtimes) -----------------------
+//
+// Native runtimes (iOS, eventually Android/Windows) don't use cookies —
+// they read the session token from the X-Mar-Auth-Token response header
+// on verify-code, stash it in platform secure storage (Keychain etc.),
+// and attach `Authorization: Bearer …` on every subsequent request.
+// The tests below pin that contract end-to-end.
+
+// TestVerifyCodeEmitsBearerTokenHeader checks that the server returns
+// the freshly-minted session token in the X-Mar-Auth-Token response
+// header alongside the Set-Cookie. Native clients read this header;
+// web clients ignore it and rely on the cookie.
+func TestVerifyCodeEmitsBearerTokenHeader(t *testing.T) {
+	server, cleanup := authTestServer(t)
+	defer cleanup()
+	client := server.Client()
+
+	out := captureStdout(t, func() {
+		resp, _ := postJSON(t, client, server.URL+"/_auth/request-code",
+			map[string]string{"email": "alice@example.com"})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("request-code: %d", resp.StatusCode)
+		}
+	})
+	code := extractSinkCode(t, out)
+
+	resp, body := postJSON(t, client, server.URL+"/_auth/verify-code",
+		map[string]any{"email": "alice@example.com", "code": code})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("verify-code: %d, body: %s", resp.StatusCode, body)
+	}
+	bearer := resp.Header.Get(bearerTokenHeader)
+	if bearer == "" {
+		t.Fatalf("missing %s response header", bearerTokenHeader)
+	}
+	// Same value must also be in the Set-Cookie so the cookie and
+	// the bearer point at the same session row server-side.
+	setCookie := resp.Header.Get("Set-Cookie")
+	if !strings.Contains(setCookie, "mar_session="+bearer) {
+		t.Errorf("Set-Cookie %q does not carry the same token as %s = %q",
+			setCookie, bearerTokenHeader, bearer)
+	}
+}
+
+// TestWhoamiWithBearerAuthSucceeds: a cookieless request that carries
+// Authorization: Bearer <token> is authenticated as the cookie request
+// would have been. Mirrors the iOS app's request shape — no cookie jar,
+// just a header.
+func TestWhoamiWithBearerAuthSucceeds(t *testing.T) {
+	server, cleanup := authTestServer(t)
+	defer cleanup()
+	client := server.Client() // NO cookie jar — native shape.
+
+	out := captureStdout(t, func() {
+		_, _ = postJSON(t, client, server.URL+"/_auth/request-code",
+			map[string]string{"email": "alice@example.com"})
+	})
+	code := extractSinkCode(t, out)
+
+	resp, _ := postJSON(t, client, server.URL+"/_auth/verify-code",
+		map[string]any{"email": "alice@example.com", "code": code})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("verify-code: %d", resp.StatusCode)
+	}
+	tok := resp.Header.Get(bearerTokenHeader)
+	if tok == "" {
+		t.Fatalf("missing bearer token header")
+	}
+
+	// GET /whoami with no cookie + Authorization header — the only
+	// transport an iOS app needs.
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/_auth/whoami", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("whoami: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), `"email":"alice@example.com"`) {
+		t.Errorf("expected authed user JSON, got %s", body)
+	}
+}
+
+// TestBearerLogoutRevokesSession: native logout sends Authorization
+// instead of relying on a cookie. The server must delete the row keyed
+// off the bearer; a subsequent whoami with the same bearer returns
+// null.
+func TestBearerLogoutRevokesSession(t *testing.T) {
+	server, cleanup := authTestServer(t)
+	defer cleanup()
+	client := server.Client()
+
+	out := captureStdout(t, func() {
+		_, _ = postJSON(t, client, server.URL+"/_auth/request-code",
+			map[string]string{"email": "alice@example.com"})
+	})
+	code := extractSinkCode(t, out)
+	resp, _ := postJSON(t, client, server.URL+"/_auth/verify-code",
+		map[string]any{"email": "alice@example.com", "code": code})
+	tok := resp.Header.Get(bearerTokenHeader)
+	if tok == "" {
+		t.Fatalf("missing bearer header")
+	}
+
+	// Bearer-credentialed logout.
+	logoutReq, _ := http.NewRequest(http.MethodPost, server.URL+"/_auth/logout", nil)
+	logoutReq.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := client.Do(logoutReq)
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("logout: %d", resp.StatusCode)
+	}
+
+	// Same bearer is no longer accepted.
+	whoamiReq, _ := http.NewRequest(http.MethodGet, server.URL+"/_auth/whoami", nil)
+	whoamiReq.Header.Set("Authorization", "Bearer "+tok)
+	resp, err = client.Do(whoamiReq)
+	if err != nil {
+		t.Fatalf("whoami: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if strings.TrimSpace(string(body)) != "null" {
+		t.Errorf("after bearer logout, whoami should be null, got %s", body)
+	}
+}
+
+// TestExtractSessionTokenPrecedence exercises the precedence rule
+// directly: Bearer wins over cookie when both are present (sanity
+// check for a paranoid future where a stale cookie hangs around
+// alongside a fresh header).
+func TestExtractSessionTokenPrecedence(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		cookie string
+		want   string
+	}{
+		{"both", "Bearer bearer-tok", "cookie-tok", "bearer-tok"},
+		{"bearer only", "Bearer bearer-tok", "", "bearer-tok"},
+		{"cookie only", "", "cookie-tok", "cookie-tok"},
+		{"neither", "", "", ""},
+		{"case-insensitive scheme", "bearer lower-tok", "", "lower-tok"},
+		{"whitespace around token", "Bearer   spaced-tok  ", "", "spaced-tok"},
+		{"empty bearer scheme only", "Bearer ", "cookie-tok", "cookie-tok"},
+		{"non-bearer scheme falls through", "Basic abc==", "cookie-tok", "cookie-tok"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodGet, "/", nil)
+			if tc.header != "" {
+				req.Header.Set("Authorization", tc.header)
+			}
+			if tc.cookie != "" {
+				req.AddCookie(&http.Cookie{Name: cookieName, Value: tc.cookie})
+			}
+			if got := extractSessionToken(req); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

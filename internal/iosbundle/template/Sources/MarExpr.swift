@@ -8,6 +8,9 @@ indirect enum Expr {
     case int(Int)
     case float(Double)
     case string(String)
+    /// Single Unicode code point. Wire format from Go side: EChar
+    /// payload carries the int code point; we wrap it in Unicode.Scalar.
+    case char(Unicode.Scalar)
     case unit
 
     case `var`(String)
@@ -51,11 +54,16 @@ indirect enum Pat {
     case `var`(String)
     case int(Int)
     case string(String)
+    case char(Unicode.Scalar)
     case unit
     case ctor(name: String, args: [Pat])
     case tuple([Pat])
     case list([Pat])
     case cons(head: Pat, tail: Pat)
+    /// `{ f1, f2, ... }` — partial record destructure. Binds each
+    /// listed field name as a local. Extra fields on the matched
+    /// value are ignored (Elm-style row-poly partial match).
+    case record(fields: [String])
 }
 
 // MARK: - Module + declarations

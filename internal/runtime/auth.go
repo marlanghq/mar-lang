@@ -17,16 +17,26 @@ import (
 // (RegisteredAuth) so the dispatcher and the framework HTTP handlers
 // can find it without an explicit thread-through.
 type VAuth struct {
-	Entity          VEntity
-	Identify        Value // user -> String
-	EmailFrom       string
-	EmailSubject    string
+	Entity   VEntity
+	Identify Value // user -> String
+
+	// EmailSubject is the Subject: header for the sign-in code email.
+	// Required in Auth.config — gives each app a chance to brand it
+	// ("Sign in to Notes" vs the generic default).
+	//
+	// The From: header is NOT in this struct. It lives in mar.json's
+	// `mail.from` — the single source of truth for the address
+	// verified with the SMTP provider. Setting it in Mar source too
+	// would invite typos that silently shadow the manifest value
+	// and break delivery at the provider ("550 domain not verified").
+	EmailSubject string
+
 	// EmailBody is an optional `String -> Int -> String` function
 	// (code, ttlMinutes → body) provided in `Auth.config { email.body }`.
 	// nil means the framework's default body is used. Applied via
 	// Eval.apply at request-code time; failures fall back to the
 	// default so a typo in the user's body fn doesn't take down auth.
-	EmailBody Value
+	EmailBody       Value
 	Signup          Value // String -> userExceptId
 	SessionDuration int64 // seconds; <=0 means use the framework default
 
@@ -49,8 +59,8 @@ func (VAuth) isValue()        {}
 func (VAuth) Display() string { return "<auth>" }
 
 var (
-	regMu     sync.RWMutex
-	regAuth   *VAuth
+	regMu   sync.RWMutex
+	regAuth *VAuth
 )
 
 // RegisterAuth captures the most recent Auth.config result so the
@@ -159,11 +169,16 @@ func makeAuthConfig(args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("Auth.config: `email` must be a record")
 	}
-	from, _ := emailRec.Fields["from"].(VString)
-	subject, _ := emailRec.Fields["subject"].(VString)
-	if from.V == "" {
-		return nil, fmt.Errorf("Auth.config: email.from is required")
+	// `email.from` is intentionally NOT accepted here — it duplicates
+	// mar.json's `mail.from` (the address verified with the SMTP
+	// provider). Reject explicitly so a stale paste doesn't silently
+	// take over and trip "550 domain not verified" at the provider.
+	if _, ok := emailRec.Fields["from"]; ok {
+		return nil, fmt.Errorf(
+			"Auth.config: email.from is not accepted — set %q in %s instead",
+			"mail.from", "mar.json")
 	}
+	subject, _ := emailRec.Fields["subject"].(VString)
 	if subject.V == "" {
 		return nil, fmt.Errorf("Auth.config: email.subject is required")
 	}
@@ -177,15 +192,14 @@ func makeAuthConfig(args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("Auth.config: missing `signup`")
 	}
-	// `sessionDuration` is canonically a Duration (Time.days N etc.).
-	// We still accept a bare Int for backward-compat with code that
-	// hasn't migrated yet — interpreted as seconds.
+	// `sessionDuration` must be a Duration (e.g. `Time.days 30`).
+	// A bare Int is rejected: ambiguous units ("is 86400 seconds
+	// or minutes?") are the kind of subtle bug worth surfacing
+	// loudly. The compiler's type signature for Auth.config also
+	// expects Duration here, so this is just the runtime guard.
 	durationSecs := int64(0)
-	switch d := rec.Fields["sessionDuration"].(type) {
-	case VDuration:
+	if d, ok := rec.Fields["sessionDuration"].(VDuration); ok {
 		durationSecs = d.Seconds
-	case VInt:
-		durationSecs = d.V
 	}
 	// `role` is optional; only required when the app uses
 	// Auth.requireRole. We don't validate the field's type here — the
@@ -207,7 +221,6 @@ func makeAuthConfig(args []Value) (Value, error) {
 	cfg := VAuth{
 		Entity:          entity,
 		Identify:        identify,
-		EmailFrom:       from.V,
 		EmailSubject:    subject.V,
 		EmailBody:       emailBody,
 		Signup:          signup,
@@ -241,7 +254,8 @@ func makeAuthProtect(args []Value) (Value, error) {
 // `services = [...]` static and inspectable.
 
 // Auth.requireRole : role -> ExposedService -> ExposedService
-//   args = [role, exposed]
+//
+//	args = [role, exposed]
 func makeAuthRequireRole(args []Value) (Value, error) {
 	exposed, ok := args[1].(VExposedService)
 	if !ok {
@@ -252,7 +266,8 @@ func makeAuthRequireRole(args []Value) (Value, error) {
 }
 
 // Auth.authorize : (loader) -> (policy) -> ExposedService -> ExposedService
-//   args = [loader, policy, exposed]
+//
+//	args = [loader, policy, exposed]
 func makeAuthAuthorize(args []Value) (Value, error) {
 	exposed, ok := args[2].(VExposedService)
 	if !ok {
@@ -264,7 +279,8 @@ func makeAuthAuthorize(args []Value) (Value, error) {
 }
 
 // Auth.requireOwner : (loader) -> (selector) -> ExposedService -> ExposedService
-//   args = [loader, selector, exposed]
+//
+//	args = [loader, selector, exposed]
 //
 // Sugar for the common ABAC case "user owns this resource". Desugars
 // to Auth.authorize with a synthesized policy that compares
@@ -323,6 +339,14 @@ func EnsureUser(cfg VAuth, email string) (int64, error) {
 	if !ok {
 		return 0, fmt.Errorf("signup hook must return a record (got %T)", v)
 	}
+	// Auto-fill TIMESTAMP columns with the current server time.
+	// Signup hooks are synchronous (no Effect access), so they can't
+	// call Time.now themselves — the framework patches in `now` for
+	// any timestamp field the hook didn't already provide a valid
+	// VTime for. A common pattern is `createdAt = 0` in the hook
+	// record as a sentinel meaning "fill this in for me"; we treat
+	// any non-VTime value (including missing) as that signal.
+	rec = fillTimestampsForSignup(cfg.Entity, rec)
 	// Pipe through Repo.create. We can re-use the same code path users do.
 	created, err := repoCreateInner(cfg.Entity, rec)
 	if err != nil {
@@ -337,6 +361,44 @@ func EnsureUser(cfg VAuth, email string) (int64, error) {
 		return 0, fmt.Errorf("user id is not an Int")
 	}
 	return idInt.V, nil
+}
+
+// fillTimestampsForSignup overlays VTime{now} onto any TIMESTAMP
+// column whose value in the signup record isn't already a VTime.
+// Returns a copy with the Fields map cloned so the caller's record
+// isn't mutated. Field order is preserved; if the entity declares a
+// timestamp column the hook omitted, the column name is appended.
+func fillTimestampsForSignup(entity VEntity, rec VRecord) VRecord {
+	now := VTime{Millis: time.Now().UnixMilli()}
+	out := VRecord{
+		Fields: make(map[string]Value, len(rec.Fields)+1),
+		Order:  append([]string(nil), rec.Order...),
+	}
+	for k, v := range rec.Fields {
+		out.Fields[k] = v
+	}
+	for _, field := range entity.Fields {
+		if field.SQLType != "TIMESTAMP" {
+			continue
+		}
+		if _, isTime := out.Fields[field.Name].(VTime); isTime {
+			continue
+		}
+		out.Fields[field.Name] = now
+		// Keep Order in sync — append only if the hook didn't already
+		// list the field (e.g. as a non-Time sentinel).
+		present := false
+		for _, n := range out.Order {
+			if n == field.Name {
+				present = true
+				break
+			}
+		}
+		if !present {
+			out.Order = append(out.Order, field.Name)
+		}
+	}
+	return out
 }
 
 // LookupUserID returns the id of the user whose `identify` projection
@@ -521,16 +583,12 @@ func valueToAny(v Value) any {
 		}
 		return out
 	case VCtor:
-		// Maybe stays transparent on the wire (Nothing → null, Just x → x);
-		// every other ctor uses the marker convention shared with
-		// encodeValue + the JS runtime so it round-trips back to a
-		// VCtor on the other side.
-		if x.Tag == "Nothing" {
-			return nil
-		}
-		if x.Tag == "Just" && len(x.Args) == 1 {
-			return valueToAny(x.Args[0])
-		}
+		// Every ctor — Nothing and Just included — uses the
+		// `__ctor` marker convention shared with encodeValue + the JS
+		// / iOS runtimes. See the note in internal/runtime/json.go on
+		// why Nothing can't be transparent to null (collides with
+		// VUnit's encoding) and why Just can't be transparent either
+		// (breaks generic decoders on record payloads).
 		out := map[string]any{"__ctor": x.Tag}
 		if len(x.Args) > 0 {
 			args := make([]any, len(x.Args))

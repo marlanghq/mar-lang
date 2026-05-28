@@ -16,10 +16,11 @@ import (
 	"mar/internal/runtime"
 )
 
-// runRuntimeBackup is the CLI entry point. Today it produces a
-// snapshot at the path the caller provides; once we drop the legacy
-// `mar fly backup` shape, this becomes "force a snapshot into the
-// catalog directory" (auto-naming via NewCatalogID).
+// runRuntimeBackup is the CLI entry point. Produces a snapshot at
+// the path the caller provides. (A future refactor may switch this
+// to "force a snapshot into the catalog directory" with auto-naming
+// via NewCatalogID — for now the explicit path keeps the SSH-driven
+// flow in `mar fly database backup` straightforward.)
 func runRuntimeBackup(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprintln(os.Stderr, "usage: mar-runtime backup OUT_PATH")

@@ -37,7 +37,25 @@ func InferExpr(e ast.Expr, env *TypeEnv) (Type, error) {
 //
 // On success, returns the inferred type (with bindings recorded in s). On
 // failure, returns *InferError with source position.
+//
+// When s has expression tracking enabled (Subst.EnableExprTracking),
+// the inferred type of every successfully-checked expression gets
+// recorded in s.exprTypes for later extraction. Consumers (notably
+// the shape lint) read those types to validate non-literal record
+// values that the polymorphic framework signatures don't constrain.
 func Infer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
+	t, err := doInfer(e, env, s)
+	if err == nil && s.exprTypes != nil {
+		s.exprTypes[e] = t
+	}
+	return t, err
+}
+
+// doInfer is the dispatcher Infer wraps. Split out so Infer can
+// record types post-recursion without every case-branch having to
+// remember to do so. Returns the raw inferred type — Infer applies
+// the recording side-effect.
+func doInfer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 	switch n := e.(type) {
 	case *ast.EInt:
 		return TInt, nil
@@ -45,6 +63,8 @@ func Infer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 		return TFloat, nil
 	case *ast.EString:
 		return TString, nil
+	case *ast.EChar:
+		return TChar, nil
 	case *ast.EUnit:
 		return TUnit{}, nil
 	case *ast.EVar:
@@ -101,7 +121,7 @@ func Infer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 	case *ast.ECase:
 		return inferCase(n, env, s)
 	default:
-		return nil, errorf(e.Position(), "inference not yet implemented for %T", e)
+		return nil, errorf(e.Position(), "unsupported expression for inference: %T", e)
 	}
 }
 
@@ -131,6 +151,13 @@ func inferApp(n *ast.EApp, env *TypeEnv, s *Subst) (Type, error) {
 	}
 	tRet := FreshVar()
 	if err := Unify(tFn, TArrow{From: tArg, To: tRet}, s); err != nil {
+		// Kind violation (e.g. comparable key bound to a Record) —
+		// the UnifyError's Reason already names the problem in
+		// user-facing terms, so keep it instead of re-wrapping with
+		// the generic "argument has the wrong type" framing.
+		if ue, ok := err.(*UnifyError); ok && ue.KindMismatch {
+			return nil, errorf(n.Pos, "%s", ue.Reason)
+		}
 		// Specialize common cases for friendlier wording. By the time we
 		// land here, tFn's type has been resolved enough to inspect.
 		applied := s.Apply(tFn)
@@ -167,6 +194,14 @@ func inferBinop(n *ast.EBinop, env *TypeEnv, s *Subst) (Type, error) {
 	tRet := FreshVar()
 	expected := TArrow{From: tLeft, To: TArrow{From: tRight, To: tRet}}
 	if err := Unify(tOp, expected, s); err != nil {
+		// Kind violation — e.g. `record < record` tries to bind a
+		// Comparable TVar to a TRecord. The UnifyError's Reason
+		// already names the offending shape; surface it directly
+		// instead of wrapping with "operator < : cannot unify ..."
+		// which buries the actual problem.
+		if ue, ok := err.(*UnifyError); ok && ue.KindMismatch {
+			return nil, errorf(n.Pos, "operator %s: %s", n.Op, ue.Reason)
+		}
 		return nil, errorf(n.Pos, "operator %s: %v", n.Op, err)
 	}
 	return s.Apply(tRet), nil
@@ -225,9 +260,32 @@ func inferLet(n *ast.ELet, env *TypeEnv, s *Subst) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Generalize for let-polymorphism.
-		scheme := Generalize(cur, tBound, s)
-		cur = bindPattern(b.Pattern, scheme, cur)
+		// Simple variable / wildcard binders keep the let-polymorphism
+		// path: Generalize the bound type so the binding gets a forall
+		// over its free type vars.
+		//
+		// Complex binders (PRecord destructuring today; future: tuple
+		// destructuring in let, etc.) go through inferPattern + Unify
+		// so unknown-field errors and shape mismatches surface here at
+		// the let, not deferred to use sites with cryptic messages.
+		// Trade-off: complex binders don't get per-field
+		// generalization. In practice this rarely matters because
+		// records of polymorphic values are exotic.
+		switch b.Pattern.(type) {
+		case *ast.PVar, *ast.PWildcard:
+			scheme := Generalize(cur, tBound, s)
+			cur = bindPattern(b.Pattern, scheme, cur)
+		default:
+			tPat, newEnv, perr := inferPattern(b.Pattern, cur, s)
+			if perr != nil {
+				return nil, perr
+			}
+			if uerr := Unify(tBound, tPat, s); uerr != nil {
+				return nil, errorf(b.Pattern.Position(),
+					"let pattern doesn't match the bound value's type: %v", uerr)
+			}
+			cur = newEnv
+		}
 	}
 	return Infer(n.Body, cur, s)
 }
@@ -539,6 +597,8 @@ func inferPattern(p ast.Pattern, env *TypeEnv, s *Subst) (Type, *TypeEnv, error)
 		return TInt, env, nil
 	case *ast.PString:
 		return TString, env, nil
+	case *ast.PChar:
+		return TChar, env, nil
 	case *ast.PUnit:
 		return TUnit{}, env, nil
 	case *ast.PCtor:
@@ -614,18 +674,92 @@ func inferPattern(p ast.Pattern, env *TypeEnv, s *Subst) (Type, *TypeEnv, error)
 			return nil, env, errorf(pat.Pos, "cons tail must be a list: %v", err)
 		}
 		return s.Apply(listT), env2, nil
+	case *ast.PRecord:
+		// `{ field1, field2, ... }` — partial record pattern (Elm-style).
+		//
+		// Each listed field becomes a fresh type variable + a binding
+		// in the extended env. The pattern's overall type is an OPEN
+		// record (`{ field1 : t1, field2 : t2 | row }`), where the row
+		// variable absorbs whatever other fields the scrutinee has.
+		// Mar's row polymorphism lets `{ name }` pattern-match
+		// against any record that HAS a `name` field, regardless of
+		// what else is there.
+		//
+		// We don't unify here against any specific scrutinee type —
+		// that happens in the caller (inferCase / inferLet). We just
+		// return the pattern's own type + the new bindings.
+		//
+		// Duplicate field names in the pattern (e.g. `{ x, x }`) are
+		// rejected: they'd shadow each other and almost certainly
+		// indicate a typo, not intent.
+		seen := map[string]bool{}
+		curEnv := env
+		fields := map[string]Type{}
+		order := make([]string, 0, len(pat.Fields))
+		for _, fname := range pat.Fields {
+			if seen[fname] {
+				return nil, env, errorf(pat.Pos,
+					"record pattern lists field '%s' more than once", fname)
+			}
+			seen[fname] = true
+			fieldT := FreshVar()
+			fields[fname] = fieldT
+			order = append(order, fname)
+			curEnv = curEnv.Bind(fname, fieldT)
+		}
+		patType := TRecord{
+			Fields: fields,
+			Order:  order,
+			Tail:   FreshVar(),
+		}
+		return patType, curEnv, nil
 	default:
 		return nil, env, errorf(p.Position(), "pattern type not yet supported: %T", p)
 	}
 }
 
-// bindPattern adds bindings from a pattern. For now, only PVar is supported.
+// bindPattern adds bindings from a pattern in an irrefutable context
+// (`let` binders; not `case` branches). Today: PVar, PWildcard, and
+// PRecord. Refutable patterns (PCtor, PList, PCons, PInt …) are caught
+// at the `let`-checking layer above and never reach here.
+//
+// PRecord destructuring loses let-polymorphism for the bound field
+// names: the parent scheme is instantiated to extract field types, and
+// each field name is bound to its concrete field type rather than to a
+// per-field generalized scheme. The trade-off is acceptable because
+// the practical use of let-bound polymorphic records is exotic; the
+// common case (concrete `{ name : String, age : Int }` records) is
+// unaffected.
 func bindPattern(p ast.Pattern, t Type, env *TypeEnv) *TypeEnv {
 	switch pat := p.(type) {
 	case *ast.PVar:
 		return env.Bind(pat.Name, t)
 	case *ast.PWildcard:
 		return env
+	case *ast.PRecord:
+		// Strip any outer TForall so we can read the field types out
+		// of the concrete TRecord underneath. If the binding's type
+		// isn't a record at all (typechecker upstream would have
+		// caught this, but be defensive), fall through with no
+		// bindings — the user already got a type error elsewhere.
+		instantiated := t
+		if f, ok := instantiated.(TForall); ok {
+			instantiated = Instantiate(f)
+		}
+		rec, ok := instantiated.(TRecord)
+		if !ok {
+			return env
+		}
+		newEnv := env
+		for _, fname := range pat.Fields {
+			if fieldT, present := rec.Fields[fname]; present {
+				newEnv = newEnv.Bind(fname, fieldT)
+			}
+			// Missing fields would have been caught by Unify in the
+			// caller — silently skipping here keeps the binder loop
+			// robust if any future caller forgets to unify first.
+		}
+		return newEnv
 	}
 	return env
 }

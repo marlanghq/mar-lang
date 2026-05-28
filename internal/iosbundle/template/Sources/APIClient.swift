@@ -15,7 +15,7 @@ enum APIError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidURL:           return "Invalid base URL — check Settings."
+        case .invalidURL:           return "Invalid base URL — verify ios.serverUrl in mar.json."
         case .http(let code, let body):
             return "HTTP \(code): \(body.isEmpty ? "(empty body)" : body)"
         case .decoding(let err):    return "Decoding failed: \(err.localizedDescription)"

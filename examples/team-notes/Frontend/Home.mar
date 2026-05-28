@@ -4,10 +4,10 @@ module Frontend.Home exposing (page)
 import Shared exposing (Role(..))
 import Frontend.Routes
 import UI exposing
-    ( navigationStack, navigationTitle, trailing
+    ( navigationStack, navigationTitle, topBarTrailing
     , form, list, section, header
     , hstack, vstack
-    , text, textField, button, link, empty
+    , text, subtitle, textField, button, navigationLink, empty, errorText
     , submit
     )
 
@@ -110,16 +110,23 @@ update _ msg model =
 
 -- renderNote shows Delete only for Admins. The user's role is
 -- threaded through from Page.protected, so this is pure rendering
--- — no extra fetch. The note body is a `link` to /notes/{id} built
--- from the typed Path in Routes.mar — refactoring the URL pattern
--- breaks every callsite in compile time.
+-- — no extra fetch.
+--
+-- The body+timestamp area is a `navigationLink` (SwiftUI mirror
+-- name): the typed Path + record build the destination, the child
+-- view is the row label. On iOS this maps to NavigationLink
+-- wrapping a vstack — multi-line tappable area with the chevron
+-- vertically centered and the whole row as the tap target. The
+-- Delete button stays outside the link so admins can tap it
+-- without triggering navigation.
 renderNote : Shared.User -> Shared.Note -> View Msg
 renderNote user note =
     hstack []
-        [ vstack []
-            [ link Frontend.Routes.noteDetail { id = note.id } note.body
-            , text (Time.toIso note.createdAt)
-            ]
+        [ navigationLink [] Frontend.Routes.noteDetail { id = note.id }
+            (vstack []
+                [ text note.body
+                , subtitle (Time.toIso note.createdAt)
+                ])
         , case user.role of
             Admin  -> button [] (DeleteClicked note.id) "Delete"
             Member -> empty
@@ -130,9 +137,9 @@ view : Shared.User -> Model -> View Msg
 view user model =
     navigationStack
         [ navigationTitle ("Team " ++ String.fromInt user.teamId ++ " — " ++ user.email)
-        , trailing (button [] SignOutClicked "Sign out")
+        , topBarTrailing (button [] SignOutClicked "Sign out")
         ]
-        [ list
+        [ list []
             [ section []
                 [ hstack []
                     [ textField [ submit AddClicked ]
@@ -162,7 +169,7 @@ notesSection user notes =
             section [] [ text (prefix ++ "Loading…") ]
 
         Failed why ->
-            section [] [ text (prefix ++ "Couldn't load notes: " ++ why) ]
+            section [] [ errorText (prefix ++ "Couldn't load notes: " ++ why) ]
 
         Loaded items ->
             section [ header (prefix ++ String.fromInt (List.length items) ++ " notes") ]

@@ -27,11 +27,19 @@ type SMTPConfig struct {
 	Password string
 }
 
-// Send delivers the email — via SMTP if `cfg.Host` is set, otherwise
-// to stdout (so `mar dev` works without any SMTP setup; the developer
-// can grab the code from the terminal).
+// Send delivers the email — via SMTP if the config is complete,
+// otherwise to stdout (so `mar dev` works without any SMTP setup;
+// the developer can grab the code from the terminal).
+//
+// "Complete" means both Host AND Password are present. A bare Host
+// without a Password can't authenticate against the provider (Resend,
+// SendGrid, etc.) — providers reject anonymous SMTP. `mar dev` ends
+// up here when the operator uses an `env:SMTP_PASSWORD` ref but
+// hasn't exported the variable in their shell: the manifest loader's
+// dev-mode tolerance leaves Password empty, and we route to the
+// stdout sink instead of throwing a confusing auth error.
 func Send(cfg SMTPConfig, msg Email) error {
-	if cfg.Host == "" {
+	if cfg.Host == "" || cfg.Password == "" {
 		writeStdoutSink(msg)
 		return nil
 	}

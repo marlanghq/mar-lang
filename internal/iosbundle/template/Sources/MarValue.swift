@@ -31,9 +31,26 @@ indirect enum MarValue: @unchecked Sendable {
     /// Absolute moment, Unix milliseconds. Built via Time.now or
     /// Time.fromIso. Wire format is `{"__time": "ISO 8601"}`.
     case time(Int)
+    /// A single Unicode code point — Elm-style Char, NOT a grapheme
+    /// cluster. We use `Unicode.Scalar` (not Swift's default
+    /// `Character`) so semantics line up exactly with Go's `rune` and
+    /// JS code points: `String.toList "🇧🇷"` yields two Chars, not
+    /// one. Wire format: `{"__char": "x"}`.
+    case char(Unicode.Scalar)
     case list([MarValue])
     case tuple([MarValue])
     case record(fields: [String: MarValue], order: [String])
+
+    /// Ordered, polymorphic key-value map (Elm-style `Dict k v`). Pairs
+    /// are kept sorted ascending by key per compareMar; the invariant
+    /// is rebuilt on every insert / merge by Dict.swift's helpers.
+    /// Wire format: `{"__dict": [[k, v], ...]}` (see MarJSONCodec).
+    case dict([(MarValue, MarValue)])
+
+    /// Ordered set (Elm-style `Set k`). Same comparable-key constraint
+    /// and sorted-on-mutation invariant as `.dict`. Wire format:
+    /// `{"__set": [k, ...]}`.
+    case set([MarValue])
 
     /// Tagged union constructor. `origin` is non-nil for `__Service`
     /// values once they're stamped by `loadModule` so `Service.call`
@@ -172,6 +189,7 @@ extension MarValue {
         case (.int(let a),    .float(let b)):  return Double(a) == b
         case (.float(let a),  .int(let b)):    return a == Double(b)
         case (.string(let a), .string(let b)): return a == b
+        case (.char(let a),   .char(let b)):   return a == b
         case (.bool(let a),   .bool(let b)):   return a == b
         case (.unit, .unit):                   return true
         case (.list(let a),   .list(let b)),
@@ -188,6 +206,17 @@ extension MarValue {
             for k in fa.keys where !(fa[k]?.equalsMar(fb[k] ?? .unit) ?? false) {
                 return false
             }
+            return true
+        case (.dict(let a), .dict(let b)):
+            guard a.count == b.count else { return false }
+            for (pa, pb) in zip(a, b) {
+                if !pa.0.equalsMar(pb.0) { return false }
+                if !pa.1.equalsMar(pb.1) { return false }
+            }
+            return true
+        case (.set(let a), .set(let b)):
+            guard a.count == b.count else { return false }
+            for (x, y) in zip(a, b) where !x.equalsMar(y) { return false }
             return true
         default:
             return false
@@ -209,6 +238,8 @@ extension MarValue {
             if a < db { return -1 }; if a > db { return 1 }; return 0
         case (.string(let a), .string(let b)):
             return a < b ? -1 : (a > b ? 1 : 0)
+        case (.char(let a), .char(let b)):
+            return a.value < b.value ? -1 : (a.value > b.value ? 1 : 0)
         default:
             return 0
         }

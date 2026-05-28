@@ -1,0 +1,345 @@
+module Backend.Services exposing (services)
+
+
+import Shared
+import Backend.Users   exposing (users)
+import Backend.Tweets  exposing (tweets)
+import Backend.Follows exposing (follows)
+
+
+-- All backend handlers + the service list that wires them up.
+--
+-- The services list at the bottom reads top-to-bottom as the
+-- security policy of the app. Each line stacks decorators on top of
+-- `Auth.protect`:
+--
+--   Auth.protect contract handler
+--     |> Auth.authorize loadResource policy   -- ABAC
+--
+-- The handler signature is `input -> User -> Effect String result`
+-- — every protected handler receives the authenticated user. The
+-- decorators run BEFORE the handler; a denial short-circuits with
+-- 403 (or 404 if the loader returned Nothing).
+
+
+-- ---------- me ----------
+--
+-- Returns the current user. Useful for the frontend bootstrap:
+-- after sign-in, the home page calls `me` and routes to
+-- /setup-profile if the handle is empty.
+
+meHandler : () -> Shared.User -> Effect String Shared.User
+meHandler _ user =
+    Effect.succeed user
+
+
+-- ---------- compose / delete ----------
+--
+-- Compose: trim + cap at 280 chars (the policy lives here, not on
+-- the entity, so we can evolve without a schema migration). Empty
+-- body after trim → reject with a transport-level error string.
+
+composeTweet : Shared.NewTweet -> Shared.User -> Effect String Shared.Tweet
+composeTweet input user =
+    let
+        body = String.trim input.body
+    in
+    if body == "" then
+        Effect.fail "tweet body is empty"
+    else if String.length body > 280 then
+        Effect.fail "tweet body is too long (max 280 characters)"
+    else
+        Time.now
+            |> Effect.andThen (\now ->
+                Repo.create tweets
+                    { body      = body
+                    , authorId  = user.id
+                    , createdAt = now
+                    })
+
+
+deleteTweet : Shared.DeleteTweet -> Shared.User -> Effect String ()
+deleteTweet input _ =
+    Repo.deleteById tweets input.id
+
+
+-- The owner-check loader for Auth.authorize: returns the tweet so
+-- the policy can compare its authorId to the caller's id. Nothing
+-- → 404; mismatch → 403.
+
+loadTweetForOwner : Shared.DeleteTweet -> Shared.User -> Effect String (Maybe Shared.Tweet)
+loadTweetForOwner input _ =
+    Repo.findById tweets input.id
+
+
+tweetIsOwn : a -> Shared.User -> Shared.Tweet -> Bool
+tweetIsOwn _ user tweet =
+    tweet.authorId == user.id
+
+
+-- ---------- timeline ----------
+--
+-- The home timeline is the merge of:
+--   (a) tweets I authored
+--   (b) tweets whose author appears in my Follow rows
+--
+-- Implemented as two Repo lookups + an in-process merge to keep the
+-- queries simple — JOIN support is on the roadmap but not required
+-- here. For real Twitter you'd cap with cursor pagination; this
+-- example is unbounded and trusts the rate-limit middleware to
+-- prevent abuse.
+
+loadTimeline : () -> Shared.User -> Effect String (List Shared.TweetView)
+loadTimeline _ user =
+    -- Step 1: people I follow.
+    Repo.findBy follows { followerId = user.id }
+        |> Effect.andThen (\myFollows ->
+            let
+                followedIds = List.map (\f -> f.followedId) myFollows
+                -- Adding self surfaces my own tweets in the feed too.
+                visibleIds  = user.id :: followedIds
+                -- Build a list of Effects, one per author lookup,
+                -- then Effect.sequence runs them and collects the
+                -- results into a single Effect (List ...).
+                tweetFetches = List.map
+                    (\authorId -> Repo.findBy tweets { authorId = authorId })
+                    visibleIds
+            in
+            -- Step 2: collect every author's tweets, flatten,
+            -- then reverse so the newest serial-ids come first.
+            -- Each Repo.findBy returns rows in insertion order
+            -- (sqlite's implicit rowid order), so reversing the
+            -- concatenated list approximates "newest first" — good
+            -- enough for a demo. A real feed would cap with
+            -- cursor pagination and let the DB order via SQL.
+            Effect.sequence tweetFetches
+                |> Effect.andThen (\listOfLists ->
+                    let
+                        flat    = List.concat listOfLists
+                        ordered = List.reverse flat
+                        views   = List.map (toTweetView user) ordered
+                    in
+                    Effect.sequence views))
+
+
+toTweetView : Shared.User -> Shared.Tweet -> Effect String Shared.TweetView
+toTweetView viewer tweet =
+    Repo.findById users tweet.authorId
+        |> Effect.andThen (\maybeAuthor ->
+            case maybeAuthor of
+                Just author ->
+                    Effect.succeed
+                        { id           = tweet.id
+                        , body         = tweet.body
+                        , authorHandle = author.handle
+                        , authorName   = author.displayName
+                        , createdAt    = tweet.createdAt
+                        , isMine       = tweet.authorId == viewer.id
+                        }
+
+                Nothing ->
+                    -- Author was deleted (currently not possible in
+                    -- this example — users have no delete service).
+                    -- Defensive: surface a placeholder so the row
+                    -- doesn't disappear from the feed silently.
+                    Effect.succeed
+                        { id           = tweet.id
+                        , body         = tweet.body
+                        , authorHandle = "deleted"
+                        , authorName   = "Deleted account"
+                        , createdAt    = tweet.createdAt
+                        , isMine       = False
+                        })
+
+
+-- ---------- profile lookup ----------
+--
+-- The profile view shows a user's tweets + follower / following
+-- counts + whether the viewer follows them. Empty handle → not
+-- found (a fresh-signup user that hasn't completed setup yet
+-- shouldn't be reachable by handle).
+
+loadProfile : Shared.ProfileQuery -> Shared.User -> Effect String (Maybe Shared.ProfileView)
+loadProfile input viewer =
+    Repo.findBy users { handle = input.handle }
+        |> Effect.andThen (\matches ->
+            case matches of
+                [] ->
+                    Effect.succeed Nothing
+
+                target :: _ ->
+                    buildProfileView viewer target)
+
+
+buildProfileView : Shared.User -> Shared.User -> Effect String (Maybe Shared.ProfileView)
+buildProfileView viewer target =
+    Repo.findBy tweets { authorId = target.id }
+        |> Effect.andThen (\theirTweets ->
+            Repo.findBy follows { followedId = target.id }
+                |> Effect.andThen (\theirFollowers ->
+                    Repo.findBy follows { followerId = target.id }
+                        |> Effect.andThen (\theirFollowing ->
+                            Repo.findBy follows
+                                { followerId = viewer.id
+                                , followedId = target.id
+                                }
+                                |> Effect.andThen (\edges ->
+                                    let
+                                        -- Newest-first via reverse; same caveat as
+                                        -- the timeline (List.sortBy isn't available
+                                        -- in the current stdlib).
+                                        sortedTweets =
+                                            List.reverse theirTweets
+                                        viewFetches =
+                                            List.map (toTweetView viewer) sortedTweets
+                                    in
+                                    Effect.sequence viewFetches
+                                        |> Effect.andThen (\views ->
+                                            Effect.succeed
+                                                (Just
+                                                    { user       = target
+                                                    , tweetCount = List.length theirTweets
+                                                    , followers  = List.length theirFollowers
+                                                    , following  = List.length theirFollowing
+                                                    , isFollowed = List.length edges > 0
+                                                    , isMe       = target.id == viewer.id
+                                                    , tweets     = views
+                                                    }))))))
+
+
+-- ---------- follow / unfollow ----------
+
+followUser : Shared.FollowAction -> Shared.User -> Effect String ()
+followUser input user =
+    Repo.findBy users { handle = input.handle }
+        |> Effect.andThen (\matches ->
+            case matches of
+                [] ->
+                    Effect.fail "handle not found"
+
+                target :: _ ->
+                    if target.id == user.id then
+                        Effect.fail "you can't follow yourself"
+                    else
+                        Repo.findBy follows
+                            { followerId = user.id
+                            , followedId = target.id
+                            }
+                            |> Effect.andThen (\existing ->
+                                if List.length existing > 0 then
+                                    -- Already following — idempotent.
+                                    Effect.succeed ()
+                                else
+                                    Time.now
+                                        |> Effect.andThen (\now ->
+                                            Repo.create follows
+                                                { followerId = user.id
+                                                , followedId = target.id
+                                                , createdAt  = now
+                                                }
+                                                |> Effect.map (\_ -> ()))))
+
+
+unfollowUser : Shared.FollowAction -> Shared.User -> Effect String ()
+unfollowUser input user =
+    Repo.findBy users { handle = input.handle }
+        |> Effect.andThen (\matches ->
+            case matches of
+                [] ->
+                    Effect.fail "handle not found"
+
+                target :: _ ->
+                    Repo.findBy follows
+                        { followerId = user.id
+                        , followedId = target.id
+                        }
+                        |> Effect.andThen (\edges ->
+                            case edges of
+                                [] ->
+                                    -- Not following — idempotent.
+                                    Effect.succeed ()
+
+                                edge :: _ ->
+                                    Repo.deleteById follows edge.id))
+
+
+-- ---------- profile setup ----------
+--
+-- Called once: the SetupProfile page POSTs the user's chosen
+-- handle / display name. We validate the handle locally (alnum +
+-- underscore, 1–20 chars) and reject collisions.
+
+setupProfile : Shared.ProfileSetup -> Shared.User -> Effect String Shared.User
+setupProfile input user =
+    let
+        handle      = String.trim input.handle
+        displayName = String.trim input.displayName
+        bio         = String.trim input.bio
+    in
+    if handle == "" then
+        Effect.fail "handle is required"
+    else if String.length handle > 20 then
+        Effect.fail "handle: 20 characters max"
+    else if displayName == "" then
+        Effect.fail "display name is required"
+    else
+        Repo.findBy users { handle = handle }
+            |> Effect.andThen (\matches ->
+                case matches of
+                    [] ->
+                        applyProfileUpdate user.id handle displayName bio
+
+                    existing :: _ ->
+                        if existing.id == user.id then
+                            -- They picked the same handle they
+                            -- already have. Treat as no-op success.
+                            applyProfileUpdate user.id handle displayName bio
+                        else
+                            Effect.fail "handle is taken")
+
+
+applyProfileUpdate : Int -> String -> String -> String -> Effect String Shared.User
+applyProfileUpdate userId handle displayName bio =
+    Repo.update users userId
+        { handle      = handle
+        , displayName = displayName
+        , bio         = bio
+        }
+        |> Effect.andThen (\maybeUpdated ->
+            case maybeUpdated of
+                Just updated ->
+                    Effect.succeed updated
+
+                Nothing ->
+                    Effect.fail "user not found")
+
+
+-- ---------- service manifest ----------
+--
+-- Top-to-bottom reading order = security policy of the app:
+--
+--   me            : any authed user → returns their own record
+--   loadTimeline  : any authed user → personalized timeline
+--   composeTweet  : any authed user → posts as themselves (server
+--                                     stamps authorId from session)
+--   deleteTweet   : owner only       → Auth.authorize compares
+--                                     tweet.authorId to caller.id
+--   loadProfile   : any authed user → public profile view
+--   follow        : any authed user → creates a Follow row
+--   unfollow      : any authed user → deletes a Follow row
+--   setupProfile  : any authed user → fills in handle/display name
+--                                     on the row created at signup
+
+services =
+    [ Auth.protect Shared.me           meHandler
+    , Auth.protect Shared.loadTimeline loadTimeline
+    , Auth.protect Shared.composeTweet composeTweet
+
+    , Auth.protect Shared.deleteTweet  deleteTweet
+        |> Auth.authorize loadTweetForOwner tweetIsOwn
+
+    , Auth.protect Shared.loadProfile  loadProfile
+    , Auth.protect Shared.follow       followUser
+    , Auth.protect Shared.unfollow     unfollowUser
+    , Auth.protect Shared.setupProfile setupProfile
+    ]

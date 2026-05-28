@@ -5,6 +5,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
+    { "include": "#chars" },
     { "include": "#keywords" },
     { "include": "#types" },
     { "include": "#operators" },
@@ -36,6 +37,14 @@
         }
       ]
     },
+    "chars": {
+      "comment": "Char literal — 'a', '\\n', '\\u{1F600}'. Only matches when there's exactly one char/escape between the apostrophes, so identifiers ending in ' (Elm-style names like `foo'`) don't get mis-highlighted.",
+      "name": "string.quoted.single.mar",
+      "match": "'(\\\\u\\{[0-9a-fA-F]+\\}|\\\\.|[^'\\\\])'",
+      "captures": {
+        "0": { "name": "string.quoted.single.mar" }
+      }
+    },
     "keywords": {
       "patterns": [
         {
@@ -52,11 +61,11 @@
       "patterns": [
         {
           "name": "support.type.mar",
-          "match": "\\b(Int|Float|String|Bool|Char|List|Maybe|Result|Effect|View|Page|Attr|Service|ExposedService|Entity|Endpoint|Route|Auth|Column|Constraint)\\b"
+          "match": "\\b(Int|Float|String|Bool|Char|List|Maybe|Result|Effect|Duration|Time|Order|Dict|Set|View|Inline|Page|Attr|Service|ExposedService|Entity|Endpoint|Route|Auth|Column|Constraint|Path)\\b"
         },
         {
           "name": "constant.language.mar",
-          "match": "\\b(True|False|Nothing|Ok|Err|Just)\\b"
+          "match": "\\b(True|False|Nothing|Ok|Err|Just|LT|EQ|GT)\\b"
         },
         {
           "comment": "Capitalized identifier — type or constructor",

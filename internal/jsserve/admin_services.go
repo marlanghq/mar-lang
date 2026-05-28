@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	goruntime "runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -42,6 +43,17 @@ func SetAdminBuildInfo(version string) {
 	authMu.Lock()
 	defer authMu.Unlock()
 	marVersion = version
+}
+
+// MarVersion returns the build-time version string set by
+// SetAdminBuildInfo. Empty when the CLI didn't pass one (test paths,
+// rare). Used by the X-Mar-Runtime header middleware so each response
+// advertises the runtime that's serving it — clients compare against
+// their own embedded version to decide whether to apply OTA updates.
+func MarVersion() string {
+	authMu.Lock()
+	defer authMu.Unlock()
+	return marVersion
 }
 
 // noteServerBooted is called from ServeLive at the moment the
@@ -91,13 +103,13 @@ func adminRecord(entry admin.RequestLog) {
 // Skipped paths (no recording, no counter bump):
 //
 //   - /_mar/reload    — SSE channel; long-lived connections would
-//                       dominate the buffer and noise out the panel.
+//     dominate the buffer and noise out the panel.
 //   - /_mar/admin/*   — the admin panel polling itself (whoami every
-//                       boot, server-info / db-stats / recent-requests
-//                       on each refresh, static assets). Including
-//                       these makes the "recent requests" view show
-//                       the panel watching itself, drowning out the
-//                       actual app traffic the operator wants to see.
+//     boot, server-info / db-stats / recent-requests
+//     on each refresh, static assets). Including
+//     these makes the "recent requests" view show
+//     the panel watching itself, drowning out the
+//     actual app traffic the operator wants to see.
 //
 // Skipping from BOTH the ring buffer AND the counters keeps "requests
 // total" honest about real application traffic.
@@ -162,8 +174,8 @@ func (s *statusRecorder) WriteHeader(code int) {
 // fails the request, returns "" when the user is anonymous or
 // when anything goes wrong.
 func bestEffortUserEmail(r *http.Request) string {
-	c, err := r.Cookie(cookieName)
-	if err != nil || c.Value == "" {
+	tok := extractSessionToken(r)
+	if tok == "" {
 		return ""
 	}
 	secret := AuthSecret()
@@ -174,7 +186,7 @@ func bestEffortUserEmail(r *http.Request) string {
 	if err != nil {
 		return ""
 	}
-	uid, ok := sessionUserID(db, secret, c.Value)
+	uid, ok := sessionUserID(db, secret, tok)
 	if !ok {
 		return ""
 	}
@@ -312,7 +324,7 @@ func handleAdminEntityRows(w http.ResponseWriter, r *http.Request) {
 	// Whitelist against the live schema so an attacker can't pivot
 	// arbitrary SQL through the entity parameter.
 	allowed := listTables(db)
-	if !contains(allowed, entityName) {
+	if !slices.Contains(allowed, entityName) {
 		writeAuthError(w, http.StatusNotFound, "unknown_entity")
 		return
 	}
@@ -336,7 +348,7 @@ func handleAdminEntityRows(w http.ResponseWriter, r *http.Request) {
 	// uses (Entity.serial). Tables without an `id` column fall back
 	// to LIMIT/OFFSET; for v1 read-only browsing of framework tables
 	// this is acceptable.
-	hasID := contains(columns, "id")
+	hasID := slices.Contains(columns, "id")
 
 	var rows *sql.Rows
 	if hasID {
@@ -370,13 +382,18 @@ func handleAdminEntityRows(w http.ResponseWriter, r *http.Request) {
 			ptrs[i] = &dest[i]
 		}
 		if err := rows.Scan(ptrs...); err != nil {
-			break
+			writeAuthError(w, http.StatusInternalServerError, "scan")
+			return
 		}
 		row := make(map[string]any, len(columns))
 		for i, col := range columns {
 			row[col] = jsonable(dest[i])
 		}
 		items = append(items, row)
+	}
+	if err := rows.Err(); err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "iteration")
+		return
 	}
 
 	// Pagination: we asked for limit+1 to detect "more". If we got
@@ -427,6 +444,12 @@ func statSize(path string) int64 {
 
 // listTables returns the set of user + framework tables in the
 // SQLite database. Skips SQLite-internal tables (sqlite_*).
+//
+// On error (open or iteration) we return nil rather than propagating
+// — callers use the result as an allowlist for the entity browser,
+// and a nil allowlist correctly rejects every entity-name request
+// (slices.Contains(nil, x) is false). Iteration errors are still
+// checked so a partial result doesn't masquerade as the full list.
 func listTables(db *sql.DB) []string {
 	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
 	if err != nil {
@@ -437,9 +460,12 @@ func listTables(db *sql.DB) []string {
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			continue
+			return nil
 		}
 		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil
 	}
 	return out
 }
@@ -468,6 +494,9 @@ func tableColumns(db *sql.DB, name string) ([]string, error) {
 		}
 		cols = append(cols, cname)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return cols, nil
 }
 
@@ -477,15 +506,6 @@ func quotedColumns(cols []string) string {
 		parts[i] = `"` + c + `"`
 	}
 	return strings.Join(parts, ", ")
-}
-
-func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }
 
 // jsonable converts a SQL driver scan target value to something
@@ -501,4 +521,3 @@ func jsonable(v any) any {
 		return x
 	}
 }
-

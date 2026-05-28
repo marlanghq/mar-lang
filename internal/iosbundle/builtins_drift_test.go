@@ -52,20 +52,32 @@ func TestIOSBuiltinsCoverClientStdlib(t *testing.T) {
 }
 
 // readSwiftBuiltinNames extracts every `env.define("...")` first-arg
-// string literal from MarBuiltins.swift. Only the FIRST argument
-// matters — that's the registry key; the second is the value bound
-// to it.
+// string literal from the Sources/*.swift files. Only the FIRST
+// argument matters — that's the registry key; the second is the value
+// bound to it.
+//
+// Scans every Sources/*.swift file (MarBuiltins.swift, MarDict.swift,
+// MarChar.swift, …) so the drift detector covers builtins regardless
+// of which module they're registered in.
 func readSwiftBuiltinNames() (map[string]bool, error) {
-	path := filepath.Join("template", "Sources", "MarBuiltins.swift")
-	data, err := os.ReadFile(path)
+	dir := filepath.Join("template", "Sources")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 	re := regexp.MustCompile(`env\.define\(\s*"([^"]+)"`)
-	matches := re.FindAllSubmatch(data, -1)
-	out := make(map[string]bool, len(matches))
-	for _, m := range matches {
-		out[string(m[1])] = true
+	out := make(map[string]bool)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".swift") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range re.FindAllSubmatch(data, -1) {
+			out[string(m[1])] = true
+		}
 	}
 	return out, nil
 }

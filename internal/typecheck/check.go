@@ -14,13 +14,30 @@ type CheckResult struct {
 	// TypeDecls registered: alias name -> body, custom type name -> info.
 	TypeAliases map[string]TypeAlias
 	CustomTypes map[string]CustomType
+
+	// ExprTypes maps every expression node the inferencer visited to
+	// its post-substitution type. Populated when CheckModuleWith
+	// enables Subst.EnableExprTracking — used by the shape lint
+	// (shape_lint.go) to validate non-literal record values that the
+	// polymorphic framework signatures don't constrain.
+	ExprTypes map[ast.Expr]Type
 }
 
 // TypeAlias holds the registered form of a `type alias` declaration.
+//
+// `ParamIDs` is index-aligned with `Params`: `ParamIDs[i]` is the
+// TVar ID that occurrences of `Params[i]` were rewritten to when
+// `Body` was built. At alias-use time we substitute ParamIDs[i] →
+// user's i-th type argument, which makes parametric aliases like
+// `type alias Pair a b = (a, b)` resolve correctly. Without this,
+// the resolver couldn't reconstruct the param-name → TVar-ID
+// mapping after the fact and parametric alias inlining silently
+// dropped substitutions.
 type TypeAlias struct {
-	Name   string
-	Params []string
-	Body   Type
+	Name     string
+	Params   []string
+	ParamIDs []int
+	Body     Type
 }
 
 // CustomType holds the registered form of a `type X = A | B Int` declaration.
@@ -115,11 +132,30 @@ func CheckModuleWith(
 	for _, d := range mod.Decls {
 		switch n := d.(type) {
 		case *ast.TypeAliasDecl:
-			body, err := convertTypeExpr(n.Body, tEnv, n.Params)
+			// Build the param → TVar-ID scope first so we can both
+			// thread it into the body conversion AND record the
+			// per-position IDs on the alias for later substitution.
+			// `convertTypeExpr` would have built this internally and
+			// thrown the mapping away — by doing it here we keep
+			// both halves.
+			paramIDs := make([]int, len(n.Params))
+			scope := map[string]int{}
+			for i, p := range n.Params {
+				v := FreshVar()
+				paramIDs[i] = v.ID
+				scope[p] = v.ID
+			}
+			var body Type
+			var err error
+			if len(n.Params) == 0 {
+				body, err = convertTypeExprWithIDs(n.Body, tEnv, nil)
+			} else {
+				body, err = convertTypeExprWithIDs(n.Body, tEnv, scope)
+			}
 			if err != nil {
 				return nil, errorf(n.Pos, "in type alias %s: %v", n.Name, err)
 			}
-			alias := TypeAlias{Name: n.Name, Params: n.Params, Body: body}
+			alias := TypeAlias{Name: n.Name, Params: n.Params, ParamIDs: paramIDs, Body: body}
 			res.TypeAliases[n.Name] = alias
 			tEnv.aliases[n.Name] = alias
 
@@ -230,6 +266,12 @@ func CheckModuleWith(
 
 	// --- Pass 3: infer each value decl ---
 	s := NewSubst()
+	// Enable per-expression type recording so the shape lint
+	// (boundary-shape checks downstream of typecheck) can look up
+	// the inferred type of non-literal record values like
+	// `body = input.body`. The map is extracted into the
+	// CheckResult below.
+	s.EnableExprTracking()
 	for _, d := range mod.Decls {
 		v, ok := d.(*ast.ValueDecl)
 		if !ok {
@@ -318,14 +360,20 @@ func CheckModuleWith(
 		return nil, err
 	}
 
+	// Snapshot the post-substitution expression types so consumers
+	// (shape lint, future LSP hover) get concrete shapes instead of
+	// raw type variables. The substitution `s` would otherwise be
+	// dropped when this function returns.
+	res.ExprTypes = s.ExtractExprTypes()
+
 	return res, nil
 }
 
 // --- Type name environment for resolving type expressions ---
 
 type typeNameEnv struct {
-	aliases  map[string]TypeAlias
-	customs  map[string]CustomType
+	aliases map[string]TypeAlias
+	customs map[string]CustomType
 	// paramScopes: stack of currently-in-scope type parameter names -> var IDs
 	paramScopes []map[string]int
 }
@@ -347,20 +395,13 @@ func (e *typeNameEnv) lookupParam(name string) (int, bool) {
 	return 0, false
 }
 
-// convertTypeExpr converts an AST type expression to a Type, using tEnv for
-// looking up named types and the optional `params` slice as a fresh scope of
-// universally-quantified type variables.
-func convertTypeExpr(te ast.TypeExpr, tEnv *typeNameEnv, params []string) (Type, error) {
-	if len(params) == 0 {
-		return convertTypeExprWithIDs(te, tEnv, nil)
-	}
-	ids := make(map[string]int, len(params))
-	for _, p := range params {
-		ids[p] = FreshVar().ID
-	}
-	return convertTypeExprWithIDs(te, tEnv, ids)
-}
-
+// convertTypeExprWithIDs converts an AST type expression to a Type,
+// using tEnv for looking up named types and an optional paramIDs map
+// as a scope of named TVars (each TypeVar named `p` in the AST
+// resolves to TVar{ID: paramIDs[p]}). Callers that need to track
+// which TVar ID corresponds to which param name allocate the map
+// themselves (alias declarations, custom-type declarations); callers
+// without named params pass nil.
 func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[string]int) (Type, error) {
 	if paramIDs != nil {
 		tEnv.paramScopes = append(tEnv.paramScopes, paramIDs)
@@ -387,17 +428,22 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 			}
 			args[i] = at
 		}
-		// Resolve aliases (substitute params)
+		// Resolve aliases (substitute params). ParamIDs[i] is the
+		// TVar ID that occurrences of Params[i] were rewritten to
+		// when the alias was registered, so we can map directly
+		// without walking the body to discover IDs.
 		if alias, ok := tEnv.aliases[t.Name]; ok {
 			if len(args) != len(alias.Params) {
 				return nil, fmt.Errorf("type alias %s expects %d arguments, got %d", t.Name, len(alias.Params), len(args))
 			}
-			subst := map[int]Type{}
-			for i, p := range alias.Params {
-				// Find the parameter's TVar in alias.Body and substitute.
-				if id, ok := paramIDForName(alias.Body, p); ok {
-					subst[id] = args[i]
-				}
+			if len(alias.ParamIDs) == 0 {
+				// Non-parametric alias — nothing to substitute,
+				// just return the body as-is.
+				return alias.Body, nil
+			}
+			subst := make(map[int]Type, len(alias.ParamIDs))
+			for i, id := range alias.ParamIDs {
+				subst[id] = args[i]
 			}
 			return substituteVars(alias.Body, subst), nil
 		}
@@ -463,21 +509,6 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 		return TTuple{Members: members}, nil
 	}
 	return nil, fmt.Errorf("unsupported type expression: %T", te)
-}
-
-// paramIDForName finds the TVar ID inside body that corresponds to type param `name`.
-// This is a heuristic: alias body was built with a fresh paramID per param name.
-// Since we built it ourselves, the binding is in the alias body somewhere as the
-// only TVar with that ID. For now, walk the body looking for a TVar — since
-// we used fresh IDs per occurrence, this won't generally work for multiple
-// params; we record param IDs separately.
-//
-// TODO: store paramIDs alongside TypeAlias so we don't need this.
-func paramIDForName(body Type, name string) (int, bool) {
-	// Stub: a complete implementation would record param IDs at alias
-	// creation time so we could substitute them here. Until then,
-	// alias inlining stays incomplete.
-	return 0, false
 }
 
 // buildAnnotationScope walks an AST type expression collecting every named
