@@ -1,132 +1,79 @@
-# mar
+# Mar
 
-mar is a small, statically typed, **full-stack web** language. Inspired by Elm:
-same general syntax, Hindley-Milner type inference with row polymorphism, pure
-functions, effects as values.
+A friendly language for fullstack apps.
 
-## Focus
+Mar is a small, statically typed functional language for the whole stack:
+web, iOS, Android, and the backend. One codebase, four targets. The
+compiler emits the right output for each.
 
-mar exists to write web apps end to end — frontend, backend, or both. Every
-program exports
+→ [mar-lang.dev](https://mar-lang.dev)
 
-```elm
-main : Effect String ()
-```
+## What's in the box
 
-and chooses one of three topologies:
+- **Authentication, authorization, admin panel, migrations, database,
+  backups**: all built into the language.
+- **Native UI on iOS and Android, polished CSS on the web**: one UI
+  vocabulary (`list`, `sheet`, `navigationStack`, …), composed once,
+  rendered natively on each platform.
+- **Type-safe end-to-end**: Hindley–Milner inference applied across
+  pages, services, routes, and schemas.
+- **One small binary** that runs, types, formats, and ships your
+  project.
+- **Over-the-air updates**: deploy on the server, clients pick up the
+  new version without app store waits.
 
-| `main` calls           | What you get                                                    |
-|------------------------|-----------------------------------------------------------------|
-| `App.frontend pages`   | Browser MVU app (HTML shell + JS interpreter, hot reload).      |
-| `App.backend routes`   | HTTP server (server-rendered HTML, REST endpoints, or both).    |
-| `App.fullstack { api, pages }` | Unified server: API at `/api/*`, browser app at `/`.    |
+## Quick start
 
-The CLI enforces the signature: `mar dev` rejects `main` with any other type up
-front. There is no `mar run` for one-off scripts and no low-level `Server.serve`
-to drop down to — the topologies are the public API.
+The normal way: head to
+[mar-lang.dev/get-started](https://mar-lang.dev/get-started) for install
+instructions and a walkthrough.
 
-## Status
+### Building from source
 
-Working today, end to end:
-
-- Lexer, parser, type checker (full HM with row polymorphism, custom types,
-  cross-module type aliases). Cycle detection on non-function value
-  declarations.
-- Tree-walking interpreter with closures, currying, pattern matching
-  (including cons / list patterns), custom-type constructors, records.
-- Stdlib: `List`, `String`, `Maybe`, `Result`, `Effect`, `JSON`,
-  `Entity`, `Repo`, `View`, `App`, `Page`, `Endpoint`, `Response`, `Http`.
-- Multi-file projects with shared types and qualified names.
-- `mar.json` manifest with strict schema, `env:VAR` references, secret
-  enforcement.
-- SQLite via `Entity` (record-literal schema declaration) and `Repo`
-  (typed CRUD: `all`, `findById`, `findBy`, `create`, `update`,
-  `deleteById`). DB is opened lazily from `mar.json`'s `database.path`;
-  schemas auto-migrate on first use.
-- Server-side view rendering (`View.render` produces HTML) — see
-  `examples/view-page.mar`.
-- Browser MVU runtime: a JS interpreter that loads the parsed AST and runs
-  init / update / view client-side, with real DOM and event handlers. No page
-  reloads.
-- Hot-reload dev server (`mar dev`) with SSE-based reload events and an
-  in-browser banner for compile errors.
-- Strictly immutable REPL (`mar repl`) — rebinding is rejected; `:reset`
-  starts a fresh session.
-
-## Try it
+For the latest unreleased version, build the CLI yourself:
 
 ```bash
+# Build the CLI.
 go build -o mar ./cmd/mar
 
-# Browser-only counter (MVU).
-./mar dev examples/counter.mar
+# Scaffold a new project.
+./mar init hello
 
-# Server-rendered page (View.render → HTML).
-./mar dev examples/view-page.mar
-
-# Full-stack app: backend + frontend in one process.
-./mar dev examples/notes-fullstack
+# Run the dev server (hot reload, opens browser).
+./mar dev hello
 ```
+
+Open `hello/Main.mar` and start editing.
 
 ## Examples
 
-| File                          | Demonstrates                                                        |
-|-------------------------------|---------------------------------------------------------------------|
-| `examples/counter.mar`        | Browser MVU: init / update / view, the classic counter.             |
-| `examples/clock.mar`          | Browser MVU + `Http.get` to an external endpoint.                   |
-| `examples/todo-app.mar`       | MVU with form input, togglable list.                                |
-| `examples/tasks.mar`          | Larger MVU app exercising layout modifiers (padding, spacing, …).   |
-| `examples/multi-screen.mar`   | Multiple `Page`s at different paths, each with its own model.       |
-| `examples/view-page.mar`      | `App.backend` doing pure server-side rendering via `View.render`.   |
-| `examples/guestbook/`         | SSR + persistence via `Entity` + `Repo`; HTML form posts back to server, no JS in the browser. |
-| `examples/notes-fullstack/`   | `App.fullstack`: REST CRUD via `Endpoint.list` / `Endpoint.create` + `Repo.*`; SQLite backend; browser frontend. |
+Reference projects live in [`examples/`](examples/). A few highlights:
 
-## CLI
+- `examples/counter.mar`: smallest possible MVU app
+- `examples/todo-app.mar`: lists, filters, local state
+- `examples/hello-auth/`: passwordless email auth
+- `examples/daily-checklist/`: reorder, delete, undo, per-user storage
+- `examples/team-notes/`: multi-user, roles, reactions, mentions
+- `examples/mar-website/`: the [mar-lang.dev](https://mar-lang.dev) site
+  itself
 
-```
-mar dev [path]              Run the app in dev mode (hot reload, dev banner,
-                            browser-open). <path> is a .mar file or a project
-                            directory containing Main.mar; defaults to ".".
-                            Watches *.mar / *.json under the project dir; on
-                            change recompiles and swaps in the new program
-                            atomically. Compile errors show in a red banner
-                            in the browser; the previous good version keeps
-                            serving.
-mar build [dir] [distDir]   Compile a frontend project to a static dist/
-                            (HTML + runtime.js + program.json) — host
-                            anywhere static.
-mar init <name>             Scaffold a new project (Main.mar + mar.json).
-mar check <file>            Parse and type-check a file (no run).
-mar repl                    Interactive read-eval-print loop (immutable).
-mar format [--check] <f>... Reformat in place. With --check, exit 1 if any
-                            file would change.
-mar lsp                     Run the Language Server over stdio (consumed by
-                            the VSCode extension under vscode-mar/).
-mar config <dir>            Load and print mar.json from the given project.
-mar version                 Print the version.
-```
+## Status
 
-## Design
+Mar has no stable release yet. Language syntax and DB schema formats can
+change between versions. Use it for personal projects and prototypes;
+expect breaking changes.
 
-See `docs/mar.md` for the language reference and `docs/managed-effects.md`
-for the rationale behind the effect / MVU model.
+See [Why Mar](https://mar-lang.dev/why) for what it is, what it isn't,
+and the trade-offs.
 
-## Layout
+## Docs
 
-```
-cmd/mar/             CLI entry point
-internal/lexer/      tokenizer
-internal/parser/     parser
-internal/ast/        AST types
-internal/typecheck/  Hindley-Milner inference
-internal/runtime/    tree-walking interpreter, stdlib, db, view, ...
-internal/project/    multi-file loader, mar.json manifest
-internal/jsserve/    dev server, hot reload, browser-side runtime
-internal/lsp/        Language Server (used by editor extensions)
-docs/                language reference
-examples/            working programs
-```
+- Website: [mar-lang.dev](https://mar-lang.dev)
 
-## Note
+## License
+
+MIT. See [`LICENSE`](LICENSE).
+
+---
 
 Parts of this project were developed with the assistance of generative AI tools.
