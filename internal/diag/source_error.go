@@ -168,7 +168,7 @@ func formatContext(filename, source string, line, col int, kind, msg string) str
 	sb.WriteString(msg)
 	sb.WriteString("\n  --> ")
 	sb.WriteString(c.boldMagenta(filename))
-	sb.WriteString(fmt.Sprintf(":%d:%d\n", line, col))
+	fmt.Fprintf(&sb, ":%d:%d\n", line, col)
 	gutterW := len(fmt.Sprintf("%d", line))
 	if gutterW < 2 {
 		gutterW = 2

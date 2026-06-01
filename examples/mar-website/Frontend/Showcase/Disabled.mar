@@ -7,7 +7,7 @@ import UI exposing
     , form, section, header, footer
     , textField, textArea, picker, button, toggle, navigationLink
     , disabled
-    , title, subtitle, text
+    , text
     )
 
 
@@ -94,7 +94,7 @@ view model =
         [ form
             [ section
                 [ header "Master"
-                , footer "Flips every row below between enabled and disabled. The Master row itself is never disabled, otherwise you'd be stuck."
+                , footer "Flips every row below between enabled and disabled."
                 ]
                 [ toggle [] "Lock everything" model.locked LockedChanged
                 ]
@@ -142,17 +142,6 @@ view model =
                 [ navigationLink [ disabled model.locked ]
                     Frontend.Showcase.Routes.home {}
                     (text "Sample link (disabled when locked)")
-                ]
-            , section
-                [ header "Live state"
-                , footer "Quick sanity check that disabled really blocks dispatch."
-                ]
-                [ subtitle ("locked · " ++ (if model.locked then "True" else "False"))
-                , subtitle ("text · " ++ (if model.name == "" then "(empty)" else model.name))
-                , subtitle ("multi-line · " ++ String.fromInt (String.length model.bio) ++ " chars")
-                , subtitle ("flavor · " ++ flavorLabel model.flavor)
-                , subtitle ("toggle · " ++ (if model.agree then "on" else "off"))
-                , subtitle ("taps · " ++ String.fromInt model.taps)
                 ]
             ]
         ]

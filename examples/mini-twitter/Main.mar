@@ -63,12 +63,13 @@ auth =
 main : Effect String ()
 main =
     App.fullstack
-        { api      = []
-        , services = Backend.Services.services
+        { services = Backend.Services.services
         , pages    =
             [ Frontend.SignIn.page
             , Frontend.SetupProfile.page
             , Frontend.Home.page
             , Frontend.Profile.page
             ]
+        -- Usually api is empty, unless you need webhooks or custom REST routes.
+        , api      = []
         }

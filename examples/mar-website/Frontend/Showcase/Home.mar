@@ -2,10 +2,11 @@ module Frontend.Showcase.Home exposing (page)
 
 
 import UI exposing
-    ( navigationStack, navigationTitle, topBarTrailing, topBarLeading
+    ( navigationStack, navigationTitle
     , list, section, header
     , vstack
-    , title, subtitle, text, navigationLink, button
+    , subtitle, text, navigationLink
+    , paragraph, span, link
     )
 import Frontend.Showcase.Routes
 
@@ -31,19 +32,6 @@ update : Msg -> Model -> (Model, Effect String Msg)
 update _ _ = ((), Effect.none)
 
 
--- The leading/trailing nav-bar attrs accept an arbitrary view —
--- typically a `button` (as below) or an `hstack` with multiple
--- buttons. We use no-op buttons here so the slots are visible
--- without pretending the page does something it doesn't; on real
--- pages these would carry actions like Edit, Done, Save.
-navBarAttrs : List (Attr NavStack)
-navBarAttrs =
-    [ navigationTitle "Mar UI showcase"
-    , topBarLeading   (button [] NoOp "Leading")
-    , topBarTrailing (button [] NoOp "Trailing")
-    ]
-
-
 -- Each demo row is a `navigationLink` wrapping a vstack: a
 -- title-styled label and a muted subtitle. The whole row is
 -- tappable, the chevron lands flush right, and the multi-line
@@ -59,12 +47,10 @@ demoRow path name blurb =
 
 view : Model -> View Msg
 view _ =
-    navigationStack navBarAttrs
+    navigationStack [ navigationTitle "Mar UI showcase" ]
         [ list []
-            [ section [ header "About this showcase" ]
-                [ title "A tour of Mar's UI vocabulary"
-                , text "Each page below covers one category of primitives: layout, typography, forms, controls, lists. Use it as a reference while you build."
-                ]
+            [ section []
+                [ text "A live tour of every UI primitive Mar gives you out of the box. Each page below demos one group, so you can see how it looks and behaves before reaching for it." ]
             , section [ header "Demos" ]
                 [ demoRow Frontend.Showcase.Routes.layout
                     "Layout & stacks"
@@ -90,6 +76,16 @@ view _ =
                 , demoRow Frontend.Showcase.Routes.modals
                     "Modals"
                     "sheet, confirm"
+                , demoRow Frontend.Showcase.Routes.navbar
+                    "Nav bar"
+                    "navigationTitle, topBarLeading, topBarTrailing"
+                ]
+            , section [ header "Source" ]
+                [ paragraph
+                    [ span [] "Every page here is a small Mar program. Browse the source on "
+                    , span [link "https://github.com/marlanghq/mar-lang/tree/main/examples/mar-website/Frontend/Showcase"] "GitHub"
+                    , span [] "."
+                    ]
                 ]
             ]
         ]

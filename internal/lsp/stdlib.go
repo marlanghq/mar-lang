@@ -72,7 +72,7 @@ func buildStdlib() {
 			cs := Symbol{
 				Name:    ctorName,
 				Kind:    SymConstructor,
-				Type:    constructorTypeFromCustom(name, ct, ctorName),
+				Type:    constructorTypeFromCustom(ct, ctorName),
 				Summary: stdlibBuiltinTag,
 			}
 			stdlibCache = append(stdlibCache, cs)
@@ -119,7 +119,7 @@ func customSummaryFromBase(ct typecheck.CustomType) string {
 // constructorTypeFromCustom synthesizes a printable type for a
 // stdlib constructor — e.g. `Just : a -> Maybe a`. Falls back to a
 // bare name when the variant carries no args.
-func constructorTypeFromCustom(typeName string, ct typecheck.CustomType, ctorName string) string {
+func constructorTypeFromCustom(ct typecheck.CustomType, ctorName string) string {
 	c, ok := ct.Constructors[ctorName]
 	if !ok {
 		return ""

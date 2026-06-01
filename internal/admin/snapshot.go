@@ -151,12 +151,18 @@ func writeSnapshotTarGz(stageDir, outPath string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-
 	gz := gzip.NewWriter(out)
-	defer gz.Close()
 	tw := tar.NewWriter(gz)
-	defer tw.Close()
+	// Safety net for the early-return paths below. The happy path
+	// closes explicitly and checks the errors (see end of function);
+	// these deferred closes only fire when we bail mid-write, and
+	// their errors don't matter then because we're already returning
+	// the real failure.
+	defer func() {
+		_ = tw.Close()
+		_ = gz.Close()
+		_ = out.Close()
+	}()
 
 	entries, err := os.ReadDir(stageDir)
 	if err != nil {
@@ -189,6 +195,20 @@ func writeSnapshotTarGz(stageDir, outPath string) error {
 		if copyErr != nil {
 			return copyErr
 		}
+	}
+
+	// Explicit, ordered close: tar trailer → gzip footer → fsync+close
+	// the file. These flush buffered data; a failure here (e.g. disk
+	// full) would otherwise produce a truncated, corrupt backup that
+	// still reports success. Check each one.
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("close tar writer: %w", err)
+	}
+	if err := gz.Close(); err != nil {
+		return fmt.Errorf("close gzip writer: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close output file: %w", err)
 	}
 	return nil
 }

@@ -14,7 +14,7 @@ import UI exposing
 -- The "why Mar exists" page. Two passes: first the elevator pitch
 -- in plain prose, then a structured list of the design pillars, then
 -- a section that calls out trade-offs honestly. The static-page
--- shape — no Model state needed, just paragraphs of body text and a
+-- shape: no Model state needed, just paragraphs of body text and a
 -- few headers.
 
 
@@ -38,7 +38,7 @@ view _ =
     navigationStack [ navigationTitle "Why Mar" ]
         [ list []
             [ section
-                [ header "Foundation — Joinery, not glue"
+                [ header "Foundation: Joinery, not glue"
                 , footer "Sashimono: Japanese joinery without nails, screws, or glue."
                 ]
                 [ title "Built like sashimono"
@@ -48,25 +48,25 @@ view _ =
                     , span [] ", the Japanese joinery tradition where furniture stands because each piece is shaped to fit the others. No screws, no glue."
                     ]
                 , paragraph
-                    [ span [] "Traditional full-stack development is IKEA: generic boards held together by screws. JSON contracts, API clients drifting out of sync, ORMs, build pipelines. "
+                    [ span [] "Traditional full-stack development is IKEA: generic boards held together by screws. JSON contracts, API clients drifting out of sync, ORMs. "
                     , span [] "Every screw is a place where the thing can come loose."
                     ]
                 , paragraph
                     [ span [bold] "There's no glue to fail because there is no glue."
                     ]
                 ]
-            , section [ header "Pillar 1 — One language, four runtimes" ]
+            , section [ header "Pillar 1: One language, four runtimes" ]
                 [ title "One codebase, four targets."
                 , text "You write your app once. Mar's compiler produces every output you need: a web bundle, native iOS and Android apps, and a server binary."
                 ]
-            , section [ header "Pillar 2 — Batteries included" ]
+            , section [ header "Pillar 2: Batteries included" ]
                 [ title "Authentication, authorization, admin panel, migrations, database, backups, all in the box."
                 , text "Every full-stack app rebuilds the same scaffolding before it does anything new. Mar treats that scaffolding as part of the language: the layers every app needs are already chosen, already integrated, and already type-safe. You spend day one writing the part that's actually yours."
                 ]
-            , section [ header "Pillar 3 — One UI vocabulary, every platform" ]
+            , section [ header "Pillar 3: One UI vocabulary, every platform" ]
                 [ title "UI primitives, built into the language."
                 , paragraph
-                    [ span [] "Mar's UI vocabulary is built into the language — you don't write HTML, CSS, Swift, or Kotlin. You compose Mar primitives like "
+                    [ span [] "Mar's UI vocabulary is built into the language: you don't write HTML, CSS, Swift, or Kotlin. You compose Mar primitives like "
                     , span [code] "list"
                     , span [] ", "
                     , span [code] "sheet"
@@ -75,23 +75,23 @@ view _ =
                     , span [] ", and the compiler renders them natively on web, iOS, and Android. No drift."
                     ]
                 ]
-            , section [ header "Pillar 4 — Type-safe end-to-end" ]
-                [ title "Hindley–Milner inference, but for the whole stack."
-                , text "Paths are types. Rename a URL, the compiler finds every link to it. Services are types. Change the request shape, the compiler finds every caller. Schemas are types. Adding an entity field generates the migration. Roles are types. And so on."
-                , text "Mar is a small functional language: immutable data, algebraic data types, pattern matching, exhaustive case checking. You'll find the same shape as Elm or Haskell, with a standard library designed around values and Effects."
+            , section [ header "Pillar 4: Type-safe end-to-end" ]
+                [ title "The compiler has your back."
+                , text "Rename a page's URL and Mar points you to every link that needs updating. Change what a service expects and it points you to every place that calls it. Add a field to your data and it writes the database migration for you. Mistakes that other stacks only catch in production, Mar catches before you run it."
+                , text "You don't have to write types everywhere: Mar figures most of them out on its own. And you rarely think about it day to day. It's just there in the background, catching things before they break."
                 ]
-            , section [ header "Pillar 5 — Painless deploys" ]
-                [ title "From code to production in one step."
-                , text "No Dockerfile to hand-write. No deploy config to maintain. First deploy takes a couple of minutes; subsequent deploys take seconds."
+            , section [ header "Pillar 5: Painless deploys" ]
+                [ title "One binary, simple to deploy."
+                , text "Mar compiles your entire fullstack app into a single self-contained executable: your code, the runtime, a built-in SQLite engine, and all static assets, in one file. Drop it on any server and run it. No Dockerfile to write, no deploy config to maintain."
                 ]
             , section
                 [ header "Trade-offs"
-                , footer "If the trade-offs above don't fit your project, that's fair. Mar is opinionated, not universal."
+                , footer "These trade-offs work well for some projects and not others. We'd rather be honest about that up front."
                 ]
-                [ vstack []
-                    [ text "• Mar has no stable release yet. Language syntax and DB schema formats can change between versions."
-                    , text "• Storage is SQLite, embedded per app. Great for solo apps and small teams; not the right fit for multi-tenant SaaS at scale."
-                    , text "• The UI vocabulary is opinionated and constrained. You don't get the layout and styling freedom typical of web frameworks."
+                [ title "The honest caveats"
+                , vstack []
+                    [ text "• Storage is SQLite, embedded per app. Great for solo apps and small teams."
+                    , text "• The UI vocabulary is opinionated and constrained: less freedom than hand-building each platform's UI."
                     , text "• The language and its ecosystem are still limited (though expanding)."
                     ]
                 ]

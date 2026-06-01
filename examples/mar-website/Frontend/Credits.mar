@@ -44,7 +44,11 @@ view _ =
                 ]
             , section [ header "License" ]
                 [ subtitle "MIT"
-                , text "Mar (the compiler, runtime, CLI, and tooling) is released under the MIT license. Build commercial products, fork it, ship it inside your closed-source apps. The only requirement is that the LICENSE file travels with the source."
+                , paragraph
+                    [ span [] "Mar (the compiler, runtime, CLI, and tooling) is released under the "
+                    , span [link "https://github.com/marlanghq/mar-lang/blob/main/LICENSE"] "MIT license"
+                    , span [] ". Build commercial products, fork it, ship it inside your closed-source apps. The only requirement is that the LICENSE file travels with the source."
+                    ]
                 ]
             , section [ header "Inspirations" ]
                 [ vstack []

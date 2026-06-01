@@ -50,6 +50,6 @@ activate it.
 ```bash
 npm install
 npm run compile
-npm run package    # produces vscode-mar-X.Y.Z.vsix
-code --install-extension vscode-mar-0.1.0.vsix
+npm run package    # produces mar-language-support-X.Y.Z.vsix
+code --install-extension mar-language-support-0.0.6.vsix
 ```

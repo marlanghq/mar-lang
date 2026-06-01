@@ -728,14 +728,32 @@ func main() {
 			os.Exit(2)
 		}
 		name := os.Args[2]
-		if err := scaffold.Init(name); err != nil {
+		kind := promptInitKind()
+		if err := scaffold.Init(name, kind); err != nil {
 			fprintError("mar init: %v", err)
 			os.Exit(1)
 		}
+		// "Created <dir>" + a one-line summary of the scaffold +
+		// a Hint: block with the next command to run. Same visual
+		// shape used everywhere else in the CLI (yellow Hint:
+		// prefix, blank-line-coordinated via clio, `mar` in green
+		// per cli-style §3) so the user's eye already knows where
+		// to look.
 		fmt.Println()
 		fmt.Printf("Created %s\n", colorMagenta(name+"/"))
-		fmt.Printf("  %s\n", colorGreen("cd "+name+" && mar dev"))
-		fmt.Println()
+		if desc := scaffold.Description(kind); desc != "" {
+			fmt.Println(colorDim(desc))
+		}
+		// Hint header alone on its own line; command indented 6 spaces
+		// on the next line to align with the standard multi-line Hint
+		// continuation used elsewhere (cloudflarepages.go, etc.).
+		// `cd` and `mar` both treated as runnable verbs (green); the
+		// directory name and `dev` subcommand are arguments (bold).
+		fprintHint("\n      %s %s && %s %s",
+			colorGreen("cd"),
+			colorBold(name),
+			colorGreen("mar"),
+			colorBold("dev"))
 	case "build":
 		os.Exit(runBuild(os.Args[2:]))
 	case "migrate":
@@ -1086,11 +1104,13 @@ func runDev(path string, noOpen bool) int {
 	// the catalog grow alongside their app — same code path as
 	// production, no surprises at deploy time.
 	if dbPath != "" {
-		db, openErr := runtime.OpenDB()
-		if openErr == nil {
+		// The scheduler gets its OWN connection (not the app's
+		// single-connection pool) so VACUUM INTO runs concurrently
+		// under WAL without stalling request handlers.
+		if backupDB, openErr := runtime.OpenSnapshotDB(dbPath); openErr == nil {
 			admin.MaybeStartAutoBackup(
 				context.Background(),
-				db, manifest, projectDir, dbPath, version,
+				backupDB, manifest, projectDir, dbPath, version,
 			)
 		}
 		// Hold the DB advisory lock for the process lifetime.

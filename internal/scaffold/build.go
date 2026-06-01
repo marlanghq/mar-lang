@@ -223,7 +223,7 @@ func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err erro
 			env.Define("appBackend", be)
 			env.Define("App.backend", be)
 
-			fs := makeFullstackCapture(mods, bc)
+			fs := makeFullstackCapture(bc)
 			env.Define("appFullstack", fs)
 			env.Define("App.fullstack", fs)
 		})
@@ -374,8 +374,9 @@ func ValidateProductionConfig(projectDir string) error {
 //
 // program.json is embedded directly into the index.html so the browser
 // boots in a single round-trip — no waterfall fetch for the AST after
-// the runtime loads. runtime.js stays separate so it can be cached
-// independently across deploys (its content rarely changes).
+// the runtime loads. runtime.js stays separate but is revalidated on
+// every load (see the `_headers` file below) so a framework upgrade is
+// never masked by a stale cached copy.
 func buildFrontendDist(distDir string, bc *buildCtx) error {
 	if err := os.MkdirAll(distDir, 0o755); err != nil {
 		return err
@@ -397,6 +398,18 @@ func buildFrontendDist(distDir string, bc *buildCtx) error {
 	files := map[string][]byte{
 		"index.html": []byte(html),
 		"runtime.js": []byte(runtimeJS),
+		// Cloudflare Pages (and Netlify) read a `_headers` file to set
+		// response headers per path. Force revalidation on every asset:
+		// index.html carries the inlined program (a stale copy IS the
+		// whole old app), and runtime.js keeps a fixed name across
+		// deploys (a framework bump would otherwise be masked by a
+		// cached copy). `no-cache` still lets the browser STORE the
+		// response and send a conditional request — the host's ETag
+		// turns the common unchanged case into a cheap 304. This is
+		// what stops "I see the old version until I hard-refresh"
+		// without re-downloading everything on each load. Hosts that
+		// don't understand `_headers` simply ignore the extra file.
+		"_headers": []byte("/*\n  Cache-Control: no-cache\n"),
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(distDir, name), content, 0o644); err != nil {
@@ -562,7 +575,7 @@ func makeBackendCapture(bc *buildCtx) runtime.Value {
 	}
 }
 
-func makeFullstackCapture(mods []*ast.Module, bc *buildCtx) runtime.Value {
+func makeFullstackCapture(bc *buildCtx) runtime.Value {
 	return runtime.VFn{
 		Arity: 1,
 		Native: func(args []runtime.Value) (runtime.Value, error) {

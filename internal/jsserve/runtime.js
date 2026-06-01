@@ -3487,18 +3487,27 @@
           }
         };
 
-        // iOS Mail / Notes swipe-delete animation: the row's
-        // height collapses to zero (so the rows below slide up
-        // smoothly), padding + border-bottom go with it, and the
-        // row's contents fade + slide ~40px left. ~260ms with
-        // an ease-in curve — accelerates as it leaves, which
-        // matches "you removed this" gravity better than a
-        // linear or symmetric ease.
+        // iOS Mail / Notes swipe-delete animation, played in two
+        // beats so neither motion clips the other:
+        //
+        //   1. (0 -> 0.45) the row's contents fade out and slide
+        //      ~40px left while the row keeps its full height. The
+        //      horizontal motion gets to finish instead of being
+        //      cut short.
+        //   2. (0.45 -> 1) the now-empty row collapses its height,
+        //      padding, and border to zero, so the rows below slide
+        //      up to close the gap.
+        //
+        // Doing both at once is what made it feel truncated: with
+        // `overflow: hidden`, the collapsing height swallowed the
+        // leftward slide about halfway through, so the row appeared
+        // to just snap shut. Separating the beats (and giving the
+        // whole thing a touch more time) reads as one fluid motion.
         //
         // We hold the dispatch until the animation finishes so
         // the patcher doesn't yank the DOM node out from under
-        // us. Cost is a 260ms delay before the network round
-        // trip — acceptable for a destructive action where the
+        // us. Cost is a ~340ms delay before the network round
+        // trip, acceptable for a destructive action where the
         // visual confirmation is the primary feedback.
         //
         // Fallback path: if Element.animate isn't available
@@ -3528,15 +3537,33 @@
 
         try {
           await r.animate([
+            // Beat 1 start: full size, fully visible.
             {
+              offset: 0,
               height: h + 'px',
               opacity: 1,
               transform: 'translateX(0)',
               paddingTop: pt,
               paddingBottom: pb,
               borderBottomWidth: bb,
+              easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
             },
+            // Beat 1 end: content has slid left + faded, but the row
+            // still occupies its full height (so the slide isn't
+            // clipped by a shrinking box).
             {
+              offset: 0.45,
+              height: h + 'px',
+              opacity: 0,
+              transform: 'translateX(-40px)',
+              paddingTop: pt,
+              paddingBottom: pb,
+              borderBottomWidth: bb,
+              easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+            },
+            // Beat 2: the empty row collapses, closing the gap.
+            {
+              offset: 1,
               height: '0px',
               opacity: 0,
               transform: 'translateX(-40px)',
@@ -3545,8 +3572,7 @@
               borderBottomWidth: '0px',
             },
           ], {
-            duration: 260,
-            easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+            duration: 340,
             fill: 'forwards',
           }).finished;
         } catch (_) {
@@ -4640,7 +4666,7 @@
       '  width: 1px; height: 1px;',
       '  margin: -1px; padding: 0;',
       '  overflow: hidden;',
-      '  clip: rect(0, 0, 0, 0);',
+      '  clip-path: inset(50%);',  // modern replacement for the deprecated clip: rect()
       '  white-space: nowrap; border: 0;',
       '}',
       // Dark mode handle / grabbed adjustments.
@@ -4765,23 +4791,10 @@
       '  resize: vertical;',
       '  min-height: 80px;',
       '}',
-      // Inside a section card directly — horizontal margin so the
-      // input has breathing room from the card edges.
-      //
-      // Width is `calc(100% - 32px)` (not the more obvious `auto` or
-      // `100%`) because <input> and <textarea> are CSS-replaced
-      // elements: `width: auto` falls back to their *intrinsic*
-      // width (~20em ≈ 280px, derived from the default `size="20"`),
-      // not "fill parent". Plain `width: 100%` plus 32px of margin
-      // would overflow the card by 32px. Subtracting the margins
-      // explicitly is the simplest expression of "fill the card,
-      // minus the inset" that works for replaced elements.
       // Inside a section card: just a small vertical margin between
-      // rows. Horizontal inset comes from the parent's `padding-inline`
-      // (see `.mar-section-body` rule above), so the textfield's
-      // base `width: 100%` already fills correctly — no need for
-      // the calc() workaround that didn't survive whatever was
-      // shadowing it.
+      // rows. The horizontal inset comes from the parent's padding
+      // (see `.mar-section-body`), so the textfield's base
+      // `width: 100%` already fills the card — no per-row width math.
       '.mar-section-body > .mar-textfield {',
       '  margin: 8px 0;',
       '}',
@@ -4929,8 +4942,13 @@
       //                  link-blue TEXT instead of solid blue —
       //                  quiet-action treatment.
       '.mar-section-body > button {',
+      '  display: block;',
+      '  width: auto;',
+      '  margin: 8px 16px;',
+      '  padding: 10px 20px;',
       '  background: #0071e3; border: none; color: white;',
-      '  font-family: inherit; font-weight: 500;',
+      '  font-family: inherit; font-weight: 500; font-size: 15px;',
+      '  text-align: center;',
       '  border-radius: 980px;',
       '  cursor: pointer;',
       '  transition: background 200ms, opacity 200ms;',
@@ -4973,12 +4991,10 @@
       '  border-radius: 980px;',
       '  cursor: pointer;',
       '  transition: background 200ms, transform 150ms;',
-      '}',
-      // touch-action: manipulation on regular hstack buttons (Add,
-      // etc.). Same exclusions as above: drag handle needs
-      // touch-action: none for pointer-drag; delete button has its
-      // own rule below.
-      '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete) {',
+      // touch-action: manipulation skips iOS\'s 300ms double-tap delay.
+      // The :not() exclusions matter because the drag handle needs
+      // touch-action: none for pointer-drag, and the delete button
+      // has its own rule below.
       '  touch-action: manipulation;',
       '}',
       '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):hover { background: rgba(255, 255, 255, 0.88); }',
@@ -4990,15 +5006,6 @@
       '  box-shadow: none;',
       '}',
       '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):disabled:hover { background: rgba(0, 0, 0, 0.04); }',
-      // Section-card button — full row action (sign-in form CTA).
-      '.mar-section-body > button {',
-      '  display: block;',
-      '  margin: 8px 16px;',
-      '  padding: 10px 20px;',
-      '  font-size: 15px;',
-      '  width: auto;',
-      '  text-align: center;',
-      '}',
       // Inline pill (next to an input).
       '.mar-hstack > button {',
       '  flex: 0 0 auto;',
@@ -5194,6 +5201,12 @@
       '  width: 100%;',
       '  text-align: center;',
       '}',
+      // A centered region nested inside a section card (e.g. a
+      // showcase demo) shouldn\'t claim 60vh — that height is for
+      // full-page Loading / Empty / Error states. Scope it to a
+      // compact box when it sits as a section row, so it still shows
+      // both-axis centering without dominating the page.
+      '.mar-section-body > .mar-centered { min-height: 160px; }',
 
       // Spacer — SwiftUI Spacer(). Flex filler that pushes siblings
       // along the parent flex container\'s main axis. Inside an
@@ -5431,7 +5444,6 @@
       '}',
       '.mar-confirm-actions {',
       '  display: flex; gap: 8px;',
-      '  flex-direction: row;',
       '}',
       // Both buttons share the same chrome — pill shape, full
       // height. Cancel is system fill, Confirm has the accent color
@@ -5633,6 +5645,7 @@
       '  .mar-textfield {',
       '    border-color: rgba(255, 255, 255, 0.12);',
       '    background: rgba(255, 255, 255, 0.04);',
+      '    color: #f5f5f7;',
       '  }',
       '  .mar-textfield:focus {',
       '    background: rgba(255, 255, 255, 0.06);',

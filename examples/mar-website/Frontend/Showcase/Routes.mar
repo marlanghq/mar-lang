@@ -1,5 +1,5 @@
 module Frontend.Showcase.Routes exposing
-    ( home, layout, typography, forms, controls, lists, pickers, disabled, modals )
+    ( home, layout, typography, forms, controls, lists, pickers, disabled, modals, navbar )
 
 
 -- URL surface for the showcase sub-section. Lives under `/showcase`
@@ -42,3 +42,7 @@ disabled = "/showcase/disabled"
 
 modals : Path {}
 modals = "/showcase/modals"
+
+
+navbar : Path {}
+navbar = "/showcase/navbar"

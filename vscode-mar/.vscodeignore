@@ -4,7 +4,10 @@ src/**
 .gitignore
 .yarnrc
 tsconfig.json
-node_modules/**
+package-lock.json
 **/*.map
 **/*.ts
 !out/**/*.js
+# esbuild bundles every runtime dep into out/extension.js. node_modules
+# is dev-only at this point.
+node_modules/**

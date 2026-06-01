@@ -76,8 +76,7 @@ auth =
 main : Effect String ()
 main =
     App.fullstack
-        { api      = []
-        , services =
+        { services =
             List.concat
                 [ Backend.Teams.services
                 , Backend.Projects.services
@@ -103,4 +102,6 @@ main =
             , Frontend.Activity.page
             , Frontend.Inbox.page
             ]
+        -- Usually api is empty, unless you need webhooks or custom REST routes.
+        , api = []
         }

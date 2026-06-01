@@ -440,6 +440,17 @@ func loadManifestInternal(root string, resolveEnv bool, tolerateMissingEnv bool)
 		}
 		return nil, err
 	}
+	// Fold .env (if present) into the process environment BEFORE we
+	// resolve env:VAR references in mar.json. Shell-set vars win, so
+	// .env is a fallback for local dev / self-hosting. Skipped on the
+	// structure-only path (resolveEnv=false) because callers like
+	// `mar fly provision` already inspect literal env:VAR refs and
+	// shouldn't see them substituted out from under them.
+	if resolveEnv {
+		if _, err := LoadAndApplyDotenv(root); err != nil {
+			return nil, fmt.Errorf("read .env: %w", err)
+		}
+	}
 	// First decode strictly to catch unknown fields.
 	var probe map[string]json.RawMessage
 	dec := json.NewDecoder(strings.NewReader(string(raw)))

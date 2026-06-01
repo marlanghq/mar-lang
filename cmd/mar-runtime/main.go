@@ -394,10 +394,16 @@ func runFromPath(path string) error {
 		// Auto-backup scheduler — runs in the background for the
 		// process lifetime. No-op when disabled or no DB. The
 		// goroutine inherits this binary's stderr for status logs.
-		admin.MaybeStartAutoBackup(
-			context.Background(),
-			db, manifest, projectDir, dbPath, "dev",
-		)
+		//
+		// Gets its OWN connection (not the app's single-connection
+		// pool) so VACUUM INTO runs concurrently under WAL without
+		// stalling request handlers.
+		if backupDB, bErr := runtime.OpenSnapshotDB(dbPath); bErr == nil {
+			admin.MaybeStartAutoBackup(
+				context.Background(),
+				backupDB, manifest, projectDir, dbPath, "dev",
+			)
+		}
 	}
 
 	lp := &jsserve.LiveProgram{}

@@ -1,0 +1,71 @@
+module Frontend.Showcase.NavBar exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle, topBarLeading, topBarTrailing
+    , list, section, header, footer
+    , text, button
+    )
+
+
+-- Demo: the navigation bar's action slots.
+--
+--   navigationTitle : the large title at the top of the stack
+--   topBarLeading   : a view (usually a button) pinned to the
+--                     leading edge of the bar
+--   topBarTrailing  : same, on the trailing edge
+--
+-- Each slot takes any view; a button is the common case. On real
+-- pages these carry actions like Edit, Done, Save, or Add. Here each
+-- one updates a line in the body so you can see the tap land.
+
+
+type alias Model =
+    { lastAction : String }
+
+
+type Msg
+    = LeadingTapped
+    | TrailingTapped
+
+
+init : () -> (Model, Effect String Msg)
+init _ = ( { lastAction = "(none yet)" }, Effect.none )
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update msg model =
+    case msg of
+        LeadingTapped ->
+            ( { model | lastAction = "Leading" }, Effect.none )
+
+        TrailingTapped ->
+            ( { model | lastAction = "Trailing" }, Effect.none )
+
+
+view : Model -> View Msg
+view model =
+    navigationStack
+        [ navigationTitle "Nav bar"
+        , topBarLeading  (button [] LeadingTapped "Leading")
+        , topBarTrailing (button [] TrailingTapped "Trailing")
+        ]
+        [ list []
+            [ section
+                [ header "topBarLeading + topBarTrailing"
+                , footer "Each slot takes any view, usually a button. Tap one to see it land below."
+                ]
+                [ text ("Last tapped: " ++ model.lastAction) ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/navbar"
+        , title = "Nav bar"
+        , init = init
+        , update = update
+        , view = view
+        }

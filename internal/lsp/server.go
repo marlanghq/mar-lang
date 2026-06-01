@@ -911,7 +911,7 @@ func (s *Server) handleCodeAction(msg *message) {
 		if act := didYouMeanFix(msgText, p.TextDocument.URI, p.Range, d, idx); act != nil {
 			out = append(out, act)
 		}
-		if act := badFieldFix(msgText, p.TextDocument.URI, p.Range, d, idx); act != nil {
+		if act := badFieldFix(msgText, p.TextDocument.URI, p.Range, d); act != nil {
 			out = append(out, act)
 		}
 	}
@@ -981,7 +981,7 @@ func didYouMeanFix(msgText, uri string, _ lspRange, diag map[string]any, idx *Do
 
 // badFieldFix turns "record has no field 'X' (available: a, b, c)"
 // into a quickfix that replaces X with the closest available field.
-func badFieldFix(msgText, uri string, _ lspRange, diag map[string]any, idx *DocIndex) any {
+func badFieldFix(msgText, uri string, _ lspRange, diag map[string]any) any {
 	const prefix = "record has no field '"
 	idxQuote := strings.Index(msgText, prefix)
 	if idxQuote < 0 {

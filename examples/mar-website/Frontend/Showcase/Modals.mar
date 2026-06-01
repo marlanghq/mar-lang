@@ -5,7 +5,7 @@ import UI exposing
     ( navigationStack, navigationTitle
     , list, section, header, footer
     , vstack, hstack, spacer
-    , title, subtitle, text, button
+    , title, text, button
     , sheet, confirm, empty
     )
 
@@ -37,7 +37,6 @@ import UI exposing
 type alias Model =
     { showSheet      : Bool
     , confirmingItem : Maybe String
-    , lastAction     : String
     }
 
 
@@ -53,7 +52,6 @@ init : () -> (Model, Effect String Msg)
 init _ =
     ( { showSheet = False
       , confirmingItem = Nothing
-      , lastAction = "(nothing yet)"
       }
     , Effect.none
     )
@@ -71,30 +69,18 @@ update msg model =
             --   * the sheet's onDismiss (backdrop click, browser
             --     back, iOS swipe-down)
             -- Both paths funnel here so dismissal is uniform.
-            ( { model | showSheet = False, lastAction = "Sheet dismissed" }
-            , Effect.none
-            )
+            ( { model | showSheet = False }, Effect.none )
 
         OpenConfirmFor item ->
             ( { model | confirmingItem = Just item }, Effect.none )
 
         ConfirmYes ->
-            case model.confirmingItem of
-                Just item ->
-                    ( { model
-                        | confirmingItem = Nothing
-                        , lastAction = "Confirmed delete: " ++ item
-                      }
-                    , Effect.none
-                    )
-
-                Nothing ->
-                    ( model, Effect.none )
+            -- A real app performs the delete here (Service.call, then
+            -- update the model). The demo just closes the dialog.
+            ( { model | confirmingItem = Nothing }, Effect.none )
 
         ConfirmNo ->
-            ( { model | confirmingItem = Nothing, lastAction = "Cancelled" }
-            , Effect.none
-            )
+            ( { model | confirmingItem = Nothing }, Effect.none )
 
 
 -- ====================================================================
@@ -109,7 +95,6 @@ view model =
             [ aboutSection
             , sheetSection
             , confirmSection
-            , statusSection model
             ]
         -- The sheet anchors at this level (sibling of list inside
         -- the navigation stack). SwiftUI / web renderer routes the
@@ -141,7 +126,7 @@ aboutSection =
 
 sheetSection : View Msg
 sheetSection =
-    section [ header "UI.sheet", footer "Drag the handle down, tap the backdrop, or hit Close to dismiss." ]
+    section [ header "UI.sheet", footer "Tap the backdrop or hit Close to dismiss. On iOS, you can also drag the handle down." ]
         [ button [] OpenSheet "Open sheet"
         ]
 
@@ -151,13 +136,6 @@ confirmSection =
     section [ header "UI.confirm", footer "Try Cancel, the backdrop, and Escape; all dismiss without firing the destructive action." ]
         [ button [] (OpenConfirmFor "Item A") "Delete Item A"
         , button [] (OpenConfirmFor "Item B") "Delete Item B"
-        ]
-
-
-statusSection : Model -> View Msg
-statusSection model =
-    section [ header "Last action" ]
-        [ subtitle model.lastAction
         ]
 
 

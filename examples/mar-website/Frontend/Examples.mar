@@ -38,7 +38,7 @@ view _ =
                 [ title "Browse on GitHub"
                 , paragraph
                     [ span [] "Reference Mar projects live in the "
-                    , span [link "https://github.com/marlanghq/mar-lang/tree/main/examples"] "examples/"
+                    , span [link "https://github.com/marlanghq/mar-lang/tree/main/examples"] "examples"
                     , span [] " folder of the source repo. Open one alongside its README to see how a real Mar app is structured."
                     ]
                 ]

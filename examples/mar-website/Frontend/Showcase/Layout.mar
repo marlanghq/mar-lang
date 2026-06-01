@@ -11,44 +11,28 @@ import UI exposing
 
 -- Demo: how stacks compose.
 --
---   hstack    : children in a horizontal row, flex-1 each
+--   hstack    : children in a horizontal row, equal width each
 --   vstack    : children stacked vertically, leading-aligned
---   spacer    : flex filler — pushes siblings to opposite edges
+--   spacer    : expanding filler, pushes siblings to opposite edges
 --   centered  : fills the available space and centers its child
 --
--- The model is a tiny state machine that toggles between the
--- normal demo layout and a full-screen `centered` view, so visitors
--- can see the same code render two different ways without
--- navigating away.
+-- A static page: the buttons are layout demos, so they carry a
+-- NoOp and nothing reacts to them.
 
 
-type Mode
-    = Normal
-    | EmptyState
-
-
-type alias Model =
-    { mode : Mode
-    }
+type alias Model = ()
 
 
 type Msg
-    = ShowEmptyState
-    | HideEmptyState
+    = NoOp
 
 
 init : () -> (Model, Effect String Msg)
-init _ = ( { mode = Normal }, Effect.none )
+init _ = ((), Effect.none)
 
 
 update : Msg -> Model -> (Model, Effect String Msg)
-update msg model =
-    case msg of
-        ShowEmptyState ->
-            ( { model | mode = EmptyState }, Effect.none )
-
-        HideEmptyState ->
-            ( { model | mode = Normal }, Effect.none )
+update _ _ = ((), Effect.none)
 
 
 -- Canonical `spacer` use: a row that pins one child to the leading
@@ -58,12 +42,12 @@ labelWithAction =
     hstack []
         [ text "Leading label"
         , spacer
-        , button [] ShowEmptyState "Trailing action"
+        , button [] NoOp "Trailing action"
         ]
 
 
--- A row with three balanced columns — no spacer, flex-1 distributes
--- the width evenly.
+-- A row with three balanced columns. With no spacer, each child
+-- takes an equal share of the width.
 evenColumns : View Msg
 evenColumns =
     hstack []
@@ -83,61 +67,76 @@ centeredAction : View Msg
 centeredAction =
     hstack []
         [ spacer
-        , button [] ShowEmptyState "Centered"
+        , button [] NoOp "Centered"
         , spacer
         ]
 
 
-view : Model -> View Msg
-view model =
-    case model.mode of
-        EmptyState ->
-            -- Full-screen centered child. Use this shape in real
-            -- apps for Loading, EmptyState, and Error views.
-            centered
-                (vstack []
-                    [ title "Centered title"
-                    , subtitle "This vstack is centered horizontally + vertically."
-                    , button [] HideEmptyState "Back to demo"
-                    ])
+-- hstack and vstack nest: a horizontal row lays out two vertical
+-- blocks side by side, each stacking its own lines. Composing the
+-- two stacks is how most layouts get built.
+nestedStacks : View Msg
+nestedStacks =
+    hstack []
+        [ vstack []
+            [ text "Left"
+            , subtitle "stacked"
+            ]
+        , vstack []
+            [ text "Right"
+            , subtitle "stacked"
+            ]
+        ]
 
-        Normal ->
-            navigationStack [ navigationTitle "Layout & stacks" ]
-                [ list []
-                    [ section
-                        [ header "hstack"
-                        , footer "Children share the row, each flex-1 by default."
-                        ]
-                        [ evenColumns ]
-                    , section
-                        [ header "hstack + spacer"
-                        , footer "spacer expands to fill, pushing siblings apart."
-                        ]
-                        [ labelWithAction
-                        , subtitle "Label on the leading edge, action on the trailing edge."
-                        ]
-                    , section
-                        [ header "centering with two spacers"
-                        , footer "Wrap any child in [ spacer, x, spacer ] to center it horizontally."
-                        ]
-                        [ centeredAction ]
-                    , section
-                        [ header "vstack"
-                        , footer "Children stack top-to-bottom, leading-aligned."
-                        ]
-                        [ vstack []
-                            [ text "First"
-                            , text "Second"
-                            , text "Third"
-                            ]
-                        ]
-                    , section
-                        [ header "full-page centered"
-                        , footer "Fills the available space and centers its child on both axes. Use for full-screen Loading, EmptyState, and Error views."
-                        ]
-                        [ button [] ShowEmptyState "Show a full-page example" ]
+
+view : Model -> View Msg
+view _ =
+    navigationStack [ navigationTitle "Layout & stacks" ]
+        [ list []
+            [ section
+                [ header "hstack"
+                , footer "Children fill the row, each an equal share of the width by default."
+                ]
+                [ evenColumns ]
+            , section
+                [ header "vstack"
+                , footer "Children stack top-to-bottom, leading-aligned."
+                ]
+                [ vstack []
+                    [ text "First"
+                    , text "Second"
+                    , text "Third"
                     ]
                 ]
+            , section
+                [ header "hstack + vstack"
+                , footer "Nest them: an hstack lays two vstacks side by side, each stacking its own lines."
+                ]
+                [ nestedStacks ]
+            , section
+                [ header "hstack + spacer"
+                , footer "spacer expands to fill, pushing siblings apart."
+                ]
+                [ labelWithAction
+                , subtitle "Label on the leading edge, action on the trailing edge."
+                ]
+            , section
+                [ header "centering with two spacers"
+                , footer "Wrap any child in [ spacer, x, spacer ] to center it horizontally."
+                ]
+                [ centeredAction ]
+            , section
+                [ header "centered (primitive)"
+                , footer "Centers its child on both axes, no spacers needed."
+                ]
+                [ centered
+                    (vstack []
+                        [ title "Centered"
+                        , subtitle "Horizontally and vertically."
+                        ])
+                ]
+            ]
+        ]
 
 
 page : Page

@@ -401,14 +401,12 @@ func runFlyAdminList(path string) int {
 // "mar fly deploy".
 //
 // The hint shown for EnvVarNotSetError branches on the field path:
-// fields under deploy.fly.* get a Fly-secrets pointer (since that's
-// how production Fly deploys store env values); fields under
-// deploy.cloudflare-pages.* get a local-export pointer (CF Pages
-// doesn't store deploy-time secrets server-side — the operator's
-// env is the source of truth); mail.* / auth.* and other generic
-// fields fall through to the Fly hint, which is the right answer
-// when the operator IS running `mar fly *` and a useful pointer
-// in most other scenarios.
+// fields under deploy.cloudflare-pages.* get an .env pointer (CF
+// Pages doesn't store deploy-time secrets server-side, so the
+// operator's local machine is the source of truth and .env is the
+// canonical home for it); other fields (deploy.fly.*, mail.*, etc.)
+// get a hybrid hint that points to .env for local dev AND to the
+// production secret store for deploys.
 func printManifestError(prefix string, err error) {
 	var envErr *project.EnvVarNotSetError
 	if errors.As(err, &envErr) {
@@ -424,47 +422,52 @@ func printManifestError(prefix string, err error) {
 		switch {
 		case envErr.Field == "deploy.cloudflare-pages.apiToken":
 			// Most loaded case for missing-env: the operator wrote
-			// `apiToken: env:CF_API_TOKEN` in mar.json but didn't
-			// export the var. Tell them HOW to set it (the export
-			// snippet), then where to GET the token if they don't
-			// have one yet (dashboard link + permission scope).
+			// `apiToken: env:CF_API_TOKEN` in mar.json but doesn't
+			// have it set. Tell them where to put it (.env, the
+			// canonical home for CLI-only tokens), then where to
+			// GET the token if they don't have one yet (dashboard
+			// link + permission scope).
 			//
 			// Color scheme on the snippet follows cli-style.md:
-			// green for the binary (`export`), bold for literal
-			// args (the VAR_NAME= part the operator types), cyan
-			// for placeholder values (`<your-token>` the operator
+			// bold for literal args (the VAR_NAME= part), cyan for
+			// placeholder values (`<your-token>` the operator
 			// substitutes). colorizeCmdParts handles bold+cyan
 			// automatically based on the <...> regex.
 			fprintHint(
-				"export %s in your shell before re-running:\n"+
+				"add %s to your %s file (next to mar.json):\n"+
 					"\n"+
-					"        %s %s\n"+
+					"        %s\n"+
 					"\n"+
 					"      To create a token, visit\n"+
 					"      %s\n"+
 					"      with the %s permission.",
 				colorMagenta(envErr.VarName),
-				colorGreen("export"),
+				colorMagenta(".env"),
 				colorizeCmdParts(envErr.VarName+"=<your-token>"),
 				colorCyan("https://dash.cloudflare.com/profile/api-tokens"),
 				colorBold("Account.Cloudflare Pages: Edit"))
 		case strings.HasPrefix(envErr.Field, "deploy.cloudflare-pages."):
 			// Other CF fields (app, account) — env: is optional
 			// here, so hitting this branch means the operator
-			// chose env: voluntarily and forgot to export. Brief
-			// hint, no dashboard link (those fields aren't
-			// dashboard-discoverable in the same way).
+			// chose env: voluntarily and forgot to set it. Brief
+			// hint, no dashboard link.
 			fprintHint(
-				"export %s in your shell before re-running:\n"+
+				"add %s to your %s file (next to mar.json):\n"+
 					"\n"+
-					"        %s %s",
+					"        %s",
 				colorMagenta(envErr.VarName),
-				colorGreen("export"),
+				colorMagenta(".env"),
 				colorizeCmdParts(envErr.VarName+"=<value>"))
 		default:
+			// Generic fields: secrets like mail.smtpPassword,
+			// auth.sessionSecret, deploy.fly.app, etc. .env covers
+			// local dev. For production deploys to Fly, the
+			// platform's secret store is the source of truth.
 			fprintHint(
-				"set the env var locally before re-running, or set it as a\n"+
-					"      Fly secret with %s.",
+				"for local dev, add %s to your %s file (next to mar.json).\n"+
+					"      For production on Fly, set it with %s.",
+				colorMagenta(envErr.VarName),
+				colorMagenta(".env"),
 				cmdSuggest("fly secrets set "+envErr.VarName+"=..."))
 		}
 		return

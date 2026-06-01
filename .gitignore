@@ -10,6 +10,7 @@
 *.sqlite3-wal
 *.tar.gz
 .claude/
+.env
 # macOS Finder metadata
 .DS_Store
 **/.DS_Store

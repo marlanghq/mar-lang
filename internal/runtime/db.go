@@ -90,24 +90,27 @@ func getDB() (*sql.DB, error) {
 		dbOpenErr = fmt.Errorf("no database configured: set `database.path` in mar.json")
 		return nil, dbOpenErr
 	}
-	// DSN tweaks for concurrency:
-	//   - busy_timeout(5000): retry on SQLITE_BUSY for up to 5s
-	//     before erroring. Prevents intermittent failures when
-	//     parallel requests contend on the same writer.
-	//   - journal_mode(wal): writers don't block readers; readers
-	//     don't block writers. The default DELETE journal serializes
-	//     everything and turns 3-parallel admin GETs into a coin
-	//     flip on whether they all succeed.
-	//
-	// Both PRAGMAs are applied per-connection by modernc/sqlite when
-	// passed in the DSN. WAL mode persists in the DB file, so once
-	// set the first time, subsequent opens see WAL-mode storage.
-	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(wal)"
-	conn, err := sql.Open("sqlite", dsn)
+	conn, err := sql.Open("sqlite", appDSN(dbPath))
 	if err != nil {
 		dbOpenErr = err
 		return nil, err
 	}
+	// Serialize all access through a single connection.
+	//
+	// SQLite allows only one writer at a time. With database/sql's
+	// default unbounded pool, two request handlers writing through
+	// different connections race for the write lock — and the classic
+	// failure mode is unrecoverable: both grab a read lock, both try
+	// to upgrade to a write lock, and SQLite returns "database is
+	// locked" immediately (busy_timeout can't retry a read-lock-
+	// upgrade deadlock). One connection makes requests queue in Go
+	// instead of colliding in SQLite, so that error never happens.
+	//
+	// Reads serialize too. For Mar's target scale (solo apps, small
+	// teams) that's fine, and the one long-running recurring operation
+	// — the auto-backup's VACUUM INTO — runs on its own connection
+	// (OpenSnapshotDB) so it never stalls request handlers.
+	conn.SetMaxOpenConns(1)
 	if err := conn.Ping(); err != nil {
 		dbOpenErr = err
 		_ = conn.Close()
@@ -115,6 +118,53 @@ func getDB() (*sql.DB, error) {
 	}
 	dbHandle = conn
 	return dbHandle, nil
+}
+
+// appDSN builds the connection string for the app's request-serving
+// handle. PRAGMAs (applied per-connection by modernc/sqlite):
+//
+//   - busy_timeout(5000): wait up to 5s on a busy lock before
+//     erroring, instead of failing instantly.
+//   - journal_mode(wal): writers don't block readers and vice versa.
+//     Persists in the DB file once set, so reopens see WAL storage.
+//   - synchronous(normal): the WAL sweet spot. A crash or power loss
+//     can drop the last few committed transactions but never corrupts
+//     the database. Markedly faster writes than the default (full).
+//   - foreign_keys(on): SQLite ships with FK enforcement off for
+//     legacy reasons; turn it on so declared relations are enforced.
+func appDSN(path string) string {
+	return path +
+		"?_pragma=busy_timeout(5000)" +
+		"&_pragma=journal_mode(wal)" +
+		"&_pragma=synchronous(normal)" +
+		"&_pragma=foreign_keys(on)"
+}
+
+// OpenSnapshotDB opens an independent SQLite handle for read-only
+// snapshot work — specifically the auto-backup's VACUUM INTO. Kept
+// separate from the app's single-connection pool (getDB) so a
+// periodic backup runs concurrently under WAL without blocking
+// request handlers: VACUUM INTO reads a consistent snapshot of the
+// source (a reader, not a writer) and writes to a brand-new output
+// file, so it never contends for the source's write lock.
+//
+// The caller owns the returned handle. In practice it lives for the
+// process lifetime (the scheduler runs until shutdown) and is reaped
+// by the OS on exit, mirroring getDB's handle.
+func OpenSnapshotDB(path string) (*sql.DB, error) {
+	if path == "" {
+		return nil, fmt.Errorf("OpenSnapshotDB: empty database path")
+	}
+	conn, err := sql.Open("sqlite",
+		path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(wal)")
+	if err != nil {
+		return nil, err
+	}
+	if err := conn.Ping(); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
 }
 
 // goValueToScalar maps a single SQL value to a runtime Value, unwrapped

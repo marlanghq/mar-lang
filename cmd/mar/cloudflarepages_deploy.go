@@ -224,12 +224,14 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 	}
 	fmt.Println()
 
-	// Open the production URL in the operator's browser unless
-	// they passed --no-open or CI=true is set. Same gate as
-	// `mar fly deploy` and `mar dev` use, so the muscle memory
-	// (and the env-var-based CI suppression) carries across.
+	// Auto-open the per-DEPLOYMENT URL, not the production alias.
+	// The deployment URL (`<hash>.<app>.pages.dev`) is pinned to the
+	// bundle we just uploaded and serves it immediately; the
+	// production alias only flips to this deploy a few seconds later,
+	// so opening it right away tends to show the PREVIOUS version.
+	// Same --no-open / CI=true gate as `mar fly deploy` and `mar dev`.
 	if shouldOpenBrowser(noOpen) {
-		openURL(prodURL)
+		openURL(deployment.URL)
 	}
 	return 0
 }

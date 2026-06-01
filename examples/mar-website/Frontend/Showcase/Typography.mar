@@ -51,7 +51,7 @@ view _ =
         [ list []
             [ section [ header "title" ]
                 [ title "Sample title"
-                , subtitle "Large + bold. Use sparingly, one per section."
+                , text "Large + bold. Use sparingly, one per section."
                 ]
             , section [ header "subtitle" ]
                 [ subtitle "Subtitle text"
@@ -78,7 +78,7 @@ view _ =
                 ]
             , section
                 [ header "paragraph + inline atoms"
-                , footer "Use paragraph for flowing body text where multiple styles need to mix inline. Each span carries its own attrs."
+                , footer "Flowing body text where styles mix inline. Each span carries its own attrs."
                 ]
                 [ paragraph
                     [ span [] "The "
@@ -100,28 +100,45 @@ view _ =
                 ]
             , section
                 [ header "inline composition"
-                , footer "Attrs combine inside a single span. Order in the list doesn't matter; the renderer reads each flag independently."
+                , footer "Attrs stack inside a single span, in any order."
                 ]
                 [ paragraph
-                    [ span [bold, italic] "bold + italic"
-                    , span [] " for emphasis on emphasis. "
-                    , span [code, italic] "italic code"
-                    , span [] " for placeholder identifiers. "
-                    , span [bold, link "https://example.com"] "bold link"
-                    , span [] " for the primary action in a sentence. "
-                    , span [strikethrough, italic] "deprecated italic"
-                    , span [] " for old terminology you're replacing."
+                    [ span [] "One span can carry several attrs at once: "
+                    , span [bold, italic] "bold + italic"
+                    , span [] ", "
+                    , span [code, italic] "code + italic"
+                    , span [] ", "
+                    , span [bold, link "https://example.com"] "bold + link"
+                    , span [] ", or "
+                    , span [strikethrough, italic] "strikethrough + italic"
+                    , span [] ". Each renders the combined result."
                     ]
                 ]
             , section
                 [ header "links open in a new tab"
-                , footer "External links open with rel=\"noopener noreferrer\", so the host page can't be poked at by the destination."
+                , footer "External links open with rel=\"noopener noreferrer\", so the page that opens can't reach back and control the tab that launched it."
                 ]
                 [ paragraph
-                    [ span [] "Visit "
-                    , span [link "https://github.com/marlanghq/mar-lang"] "github.com/marlanghq/mar-lang"
-                    , span [] " or read the "
-                    , span [link "https://github.com/marlanghq/mar-lang/blob/main/docs/mar.md"] "language reference"
+                    [ span [] "Visit the "
+                    , span [link "https://github.com/marlanghq/mar-lang"] "Mar repository"
+                    , span [] " on GitHub."
+                    ]
+                ]
+            , section
+                [ header "spans in prose"
+                , footer "A realistic sentence: plain text with code, emphasis, and a link woven together."
+                ]
+                [ paragraph
+                    [ span [] "Run "
+                    , span [code] "mar dev"
+                    , span [] " to start a "
+                    , span [bold] "hot-reload"
+                    , span [] " server, edit any "
+                    , span [code] ".mar"
+                    , span [] " file, and the browser refreshes "
+                    , span [italic] "instantly"
+                    , span [] ". The full story lives on "
+                    , span [link "https://github.com/marlanghq/mar-lang"] "GitHub"
                     , span [] "."
                     ]
                 ]

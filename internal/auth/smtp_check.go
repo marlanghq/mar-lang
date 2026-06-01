@@ -145,7 +145,7 @@ func (e *FriendlyError) Error() string {
 		// diffable across runs.
 		keys := sortedKeys(e.Details)
 		for _, k := range keys {
-			b.WriteString(fmt.Sprintf("  %-9s %s\n", k+":", e.Details[k]))
+			fmt.Fprintf(&b, "  %-9s %s\n", k+":", e.Details[k])
 		}
 	}
 	if len(e.Hints) > 0 {

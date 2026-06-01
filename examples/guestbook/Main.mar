@@ -170,7 +170,8 @@ page =
 main : Effect String ()
 main =
     App.fullstack
-        { api      = []
-        , services = services
+        { services = services
         , pages    = [ page ]
+        -- Empty until the app needs custom HTTP routes (webhooks, public REST).
+        , api      = []
         }
