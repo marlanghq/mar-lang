@@ -2156,20 +2156,16 @@ enum MarBuiltins {
 
         // paragraph : List (Inline msg) -> View msg
         //
-        // STUB — iOS renderer for paragraph + inline atoms isn't wired
-        // yet (planned: AttributedString built from the children,
-        // shown via Text(attributedString)). For now we land a
-        // best-effort placeholder so iOS bundles compile and the
-        // drift test passes: each `span` child rendered as a plain
-        // `text` view, stacked. No styling, no links opened. Apps
-        // that target iOS shouldn\'t use paragraph yet.
+        // A flowing block of inline atoms. The `span` children carry
+        // their own inline attrs; MarRenderer's `paragraph` case folds
+        // them into one AttributedString (run styling + tappable
+        // links), mirroring the .mar-paragraph / .mar-inline-* CSS on
+        // web. `childrenList` unwraps the list of span views.
         let uiParagraph = MarFn.native(1) { args in
-            var children: [MarValue] = []
-            if case .list(let xs) = args[0] { children = xs }
             return .view(MarView(
                 tag: "paragraph",
                 attrs: [],
-                children: children,
+                children: childrenList(args[0]),
                 text: "",
                 msg: nil, key: nil))
         }
@@ -2178,10 +2174,10 @@ enum MarBuiltins {
 
         // span : List (Attr Inline) -> String -> Inline msg
         //
-        // STUB — same caveat as `paragraph` above. Returns a view
-        // with tag "span" carrying the inline attrs; MarRenderer
-        // can fall back to plain text on iOS until the
-        // AttributedString path lands.
+        // One styled run inside a paragraph: carries the inline attrs
+        // (bold / italic / strikethrough / code / link) plus its text.
+        // MarRenderer reads them when building the paragraph's
+        // AttributedString.
         let uiSpan = MarFn.native(2) { args in
             let attrs = collectAttrs(args[0])
             let s: String

@@ -242,6 +242,18 @@ struct MarRenderer: View {
             // view unmounts and the dialog dismisses.
             MarUIConfirmDialog(view: view, dispatch: dispatch)
 
+        case "paragraph":
+            // Flowing inline text. Each child is a `span` carrying its
+            // own inline attrs; we fold them into one AttributedString
+            // so SwiftUI renders the run styling — and, for link spans,
+            // a tappable link that opens via the system — as a single
+            // wrapping Text. Mirrors the .mar-paragraph / .mar-inline-*
+            // CSS on web.
+            Text(view.children.reduce(into: AttributedString()) { acc, span in
+                acc.append(attributedFromSpan(span))
+            })
+            .frame(maxWidth: .infinity, alignment: .leading)
+
         default:
             // Unknown tag — render children straight so we don't
             // lose content when the user adds something not yet
@@ -321,6 +333,44 @@ private func submitAttr(_ view: MarView) -> MarValue? {
         return attr.value
     }
     return nil
+}
+
+/// Builds the styled AttributedString fragment for one `span` inline
+/// atom. Reads the same flag attrs the JS renderer keys off —
+/// inlineBold / inlineItalic / inlineStrikethrough / inlineCode — plus
+/// inlineLink, which carries the destination URL. Attrs compose: a
+/// span tagged [code, italic] renders monospaced + italic; a link span
+/// becomes a tappable run that SwiftUI opens via the system.
+private func attributedFromSpan(_ span: MarView) -> AttributedString {
+    var s = AttributedString(span.text)
+    var isBold = false
+    var isItalic = false
+    var isCode = false
+    var isStrike = false
+    var linkURL: URL? = nil
+    for a in span.attrs {
+        switch a.name {
+        case "inlineBold":          isBold = true
+        case "inlineItalic":        isItalic = true
+        case "inlineStrikethrough": isStrike = true
+        case "inlineCode":          isCode = true
+        case "inlineLink":
+            if case .string(let u) = a.value { linkURL = URL(string: u) }
+        default:
+            break
+        }
+    }
+    var font: Font = isCode ? .system(.body, design: .monospaced) : .body
+    if isBold { font = font.bold() }
+    if isItalic { font = font.italic() }
+    s.font = font
+    if isStrike { s.strikethroughStyle = .single }
+    if let url = linkURL {
+        s.link = url
+        s.foregroundColor = .accentColor
+        s.underlineStyle = .single
+    }
+    return s
 }
 
 // MARK: - UI.* (SwiftUI-style declarative vocabulary)
