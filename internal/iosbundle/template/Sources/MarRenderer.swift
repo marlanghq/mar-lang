@@ -201,6 +201,12 @@ struct MarRenderer: View {
         case "textField":
             MarUITextField(view: view, dispatch: dispatch)
 
+        case "textArea":
+            MarUITextArea(view: view, dispatch: dispatch)
+
+        case "picker":
+            MarUIPicker(view: view, dispatch: dispatch)
+
         case "centered":
             // Wraps a single child in a frame that fills the
             // available space and centers it. Used for full-
@@ -808,6 +814,108 @@ private struct MarUITextField: View {
             }
         )
     }
+}
+
+/// Mar's UI.textArea — multi-line TextEditor mirroring textField's
+/// wiring (value binding, width / height sizing, disabled). TextEditor
+/// has no placeholder, so we overlay one while the value is empty.
+private struct MarUITextArea: View {
+    let view: MarView
+    let dispatch: (MarValue) -> Void
+
+    var body: some View {
+        let lines = heightInLines(view) ?? 4
+        ZStack(alignment: .topLeading) {
+            if view.text.isEmpty {
+                Text(placeholder)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 8)
+                    .padding(.leading, 5)
+                    .allowsHitTesting(false)
+            }
+            TextEditor(text: binding)
+                .frame(minHeight: CGFloat(lines) * 22)
+                .scrollContentBackground(.hidden)
+        }
+        .frame(maxWidth: widthInPoints(view))
+        .disabled(isDisabled(view))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    private var placeholder: String {
+        for a in view.attrs where a.name == "placeholder" {
+            if case .string(let s) = a.value { return s }
+        }
+        return ""
+    }
+
+    private var binding: Binding<String> {
+        Binding(
+            get: { view.text },
+            set: { newValue in
+                guard let onChange = view.msg else { return }
+                if let msg = try? Eval.apply(onChange, .string(newValue)) {
+                    dispatch(msg)
+                }
+            }
+        )
+    }
+}
+
+/// Mar's UI.picker — single-selection menu. The builtin stashes the
+/// selected value, the option list, and the `(a -> String)` label fn
+/// as attrs; the `(a -> msg)` onChange rides on `view.msg`. MarValue
+/// isn't Hashable, so we tag options by index and match the current
+/// selection by its rendered label (unique per option in a picker).
+private struct MarUIPicker: View {
+    let view: MarView
+    let dispatch: (MarValue) -> Void
+
+    var body: some View {
+        let options = pickerOptions(view)
+        let labels = options.map { pickerLabel(view, $0) }
+        let selected = labels.firstIndex(of: pickerLabel(view, attrValue(view, "selected") ?? .unit)) ?? 0
+        Picker("", selection: Binding<Int>(
+            get: { selected },
+            set: { i in
+                guard i >= 0, i < options.count, let onChange = view.msg else { return }
+                if let msg = try? Eval.apply(onChange, options[i]) {
+                    dispatch(msg)
+                }
+            }
+        )) {
+            ForEach(0..<labels.count, id: \.self) { i in
+                Text(labels[i]).tag(i)
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .disabled(isDisabled(view))
+    }
+}
+
+/// Reads the first attr named `name` off a view, or nil.
+private func attrValue(_ view: MarView, _ name: String) -> MarValue? {
+    for a in view.attrs where a.name == name { return a.value }
+    return nil
+}
+
+/// The option list packed onto a picker view by the builtin.
+private func pickerOptions(_ view: MarView) -> [MarValue] {
+    if case .list(let xs)? = attrValue(view, "options") { return xs }
+    return []
+}
+
+/// Applies the picker's `toLabel` function to one option value,
+/// returning the display string ("" if it isn't a function/string).
+private func pickerLabel(_ view: MarView, _ value: MarValue) -> String {
+    guard let fn = attrValue(view, "toLabel"),
+          let r = try? Eval.apply(fn, value),
+          case .string(let s) = r else { return "" }
+    return s
 }
 
 // isDisabled reads the `disabled` attr off a view. File-scope helper
