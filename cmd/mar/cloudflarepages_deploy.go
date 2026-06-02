@@ -19,6 +19,8 @@
 //   9. Upsert hashes to commit them to the project's keyspace.
 //  10. Create the deployment from the asset manifest.
 //  11. Print the deployment URL.
+//  12. Poll the per-deployment URL until it serves our exact bundle
+//      (content-hash match), then open the browser.
 //
 // The whole thing is idempotent: re-deploying the same dist/ is a
 // no-op for asset uploads (everything already in the store), so
@@ -30,10 +32,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"mar/internal/clio"
 	"mar/internal/project"
@@ -226,14 +231,116 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 
 	// Auto-open the per-DEPLOYMENT URL, not the production alias.
 	// The deployment URL (`<hash>.<app>.pages.dev`) is pinned to the
-	// bundle we just uploaded and serves it immediately; the
-	// production alias only flips to this deploy a few seconds later,
-	// so opening it right away tends to show the PREVIOUS version.
-	// Same --no-open / CI=true gate as `mar fly deploy` and `mar dev`.
-	if shouldOpenBrowser(noOpen) {
+	// bundle we just uploaded; the production alias only flips to this
+	// deploy a few seconds later. Same --no-open / CI=true gate as
+	// `mar fly deploy` and `mar dev`.
+	//
+	// Even the pinned deployment URL serves Cloudflare's "Nothing is
+	// here yet" placeholder for the first few seconds after the
+	// deployment is created, so we poll until it actually serves OUR
+	// bundle before opening — otherwise the operator lands on the
+	// placeholder and has to refresh by hand.
+	if shouldOpenBrowser(noOpen) && deployment != nil && deployment.URL != "" {
+		// The entry document's content hash is our version signal:
+		// index.html inlines program.json (see scaffold.buildFrontendDist),
+		// so any change to the app changes this hash. Frontend-only
+		// sites have no backend /version endpoint — this IS the check.
+		expectedIndexKey := ""
+		if a, ok := files["/index.html"]; ok {
+			expectedIndexKey = a.Key
+		}
+		live := true
+		if expectedIndexKey != "" {
+			err := progressStepErr("Waiting for the deployment to go live", func() error {
+				if waitForCloudflarePagesLive(deployment.URL, expectedIndexKey) {
+					return nil
+				}
+				return errCFDeployNotLive
+			})
+			live = err == nil
+		}
+		if !live {
+			// Best-effort: the deploy itself succeeded (URLs printed
+			// above). It's just still propagating, so open anyway and
+			// tell the operator a refresh may be needed.
+			fmt.Println()
+			fmt.Println(colorDim("  Still propagating — opening anyway. If you see a Cloudflare"))
+			fmt.Println(colorDim("  placeholder, refresh in a few seconds."))
+		}
+		// Trailing blank so the shell prompt doesn't butt up against
+		// the last line, matching the rest of the deploy output.
+		fmt.Println()
 		openURL(deployment.URL)
 	}
 	return 0
+}
+
+// errCFDeployNotLive signals that the freshly-created deployment did
+// not start serving our exact bundle within the poll window. It is NOT
+// a deploy failure (the upload already succeeded) — the caller treats
+// it as "open anyway, the page may briefly show a placeholder".
+var errCFDeployNotLive = errors.New("deployment not serving the new bundle yet")
+
+const (
+	// cfDeployReadyTimeout bounds how long we wait for a new deployment
+	// to start serving our bundle before opening the browser.
+	cfDeployReadyTimeout = 45 * time.Second
+	// cfDeployReadyInterval is the gap between readiness polls.
+	cfDeployReadyInterval = 1500 * time.Millisecond
+	// cfMaxIndexBytes caps how much of the served document we read
+	// before hashing — index.html inlines program.json, so it can be
+	// large, but never close to this ceiling.
+	cfMaxIndexBytes = 64 << 20 // 64 MiB
+)
+
+// waitForCloudflarePagesLive polls the per-deployment URL until it
+// serves the EXACT bundle we just uploaded, then returns true. It does
+// not merely distinguish our app from Cloudflare's placeholder: it
+// fetches the entry document and compares its blake3 content hash with
+// the index.html hash computed at upload time, so neither the
+// propagation placeholder nor a stale earlier deploy ever counts as
+// ready. Returns false if the deadline passes without a match.
+func waitForCloudflarePagesLive(deployURL, expectedIndexKey string) bool {
+	client := &http.Client{Timeout: 8 * time.Second}
+	deadline := time.Now().Add(cfDeployReadyTimeout)
+	for {
+		if cfServesIndexHash(client, deployURL, expectedIndexKey) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(cfDeployReadyInterval)
+	}
+}
+
+// cfServesIndexHash GETs the deployment root and reports whether the
+// served body is byte-for-byte the index.html we uploaded (same blake3
+// content key). Any transport error, non-200, or hash mismatch reads as
+// "not ready yet".
+func cfServesIndexHash(client *http.Client, deployURL, expectedIndexKey string) bool {
+	req, err := http.NewRequest(http.MethodGet, deployURL, nil)
+	if err != nil {
+		return false
+	}
+	// Defeat any intermediary cache so we observe the deployment's
+	// real current state, not a cached placeholder.
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, cfMaxIndexBytes))
+	if err != nil {
+		return false
+	}
+	// "html" must match the ext collectDistAssets keys index.html under.
+	return hashAssetKey(body, "html") == expectedIndexKey
 }
 
 // pagesAsset is the staging shape for one file: enough to build
