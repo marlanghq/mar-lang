@@ -49,8 +49,8 @@ Open `hello/Main.mar` and start editing.
 
 Reference projects live in [`examples/`](examples/). A few highlights:
 
-- `examples/counter.mar`: smallest possible MVU app
-- `examples/todo-app.mar`: lists, filters, local state
+- `examples/counter`: smallest possible MVU app
+- `examples/todo-app`: lists, filters, local state
 - `examples/hello-auth/`: passwordless email auth
 - `examples/daily-checklist/`: reorder, delete, undo, per-user storage
 - `examples/team-notes/`: multi-user, roles, reactions, mentions
