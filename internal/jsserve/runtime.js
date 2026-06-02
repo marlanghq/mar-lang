@@ -4441,6 +4441,12 @@
       '  font-size: 16px;',
       '}',
       '.mar-section-body > *:last-child { border-bottom: none; }',
+      // A section with an empty body (e.g. `section [ footer "..." ] []`,
+      // a footer- or header-only section) must not paint an empty glass
+      // card between its neighbors. Collapse the body so only the
+      // header/footer caption shows — matching iOS, where a footer-only
+      // section renders as a lone gray caption with no row card.
+      '.mar-section-body:empty { display: none; }',
       '.mar-section-footer {',
       '  font-size: 13px; color: #86868b;',
       '  padding: 0 4px; margin: 6px 0 0 0;',
@@ -8207,8 +8213,29 @@
 
     const es = new EventSource('/_mar/reload');
 
+    // Tracks whether we've ever had a live connection. The first onopen
+    // is the initial connect; any *later* onopen is a reconnect, which
+    // on localhost almost always means `mar dev` was restarted.
+    let everConnected = false;
+
     es.onopen = function () {
       clearDisconnectTimer();
+      if (everConnected) {
+        // The SSE stream dropped and came back — a server restart. Since
+        // runtime.js (and the CSS it injects via ensureUIStyles) is
+        // embedded in the `mar` binary, a rebuilt binary serves a new
+        // runtime.js, but the soft hot-reload path (marReload) only
+        // refetches program.json and would keep the STALE bundle + its
+        // injected styles running in this tab. That's exactly how a
+        // freshly-fixed CSS rule appears not to take effect until a
+        // manual refresh. A full reload refetches runtime.js so the new
+        // build actually lands. In-process .mar hot-reloads never drop
+        // the connection (the same process recompiles and broadcasts a
+        // `reload` event), so this only fires on a real restart.
+        location.reload();
+        return;
+      }
+      everConnected = true;
       dock.updatePanel('connection', { disconnected: false });
     };
 

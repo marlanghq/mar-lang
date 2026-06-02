@@ -165,10 +165,8 @@ view model =
                             "you@example.com" emailDraft DraftChanged
                         , errorBox model.error
                         ]
-                    , section []
-                        [ button [] Submitted "Send me a code" ]
                     , section [ footer "No password. New users are added automatically." ]
-                        []
+                        [ button [] Submitted "Send me a code" ]
                     ]
                 ]
 
