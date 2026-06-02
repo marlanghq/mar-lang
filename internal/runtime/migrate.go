@@ -31,6 +31,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"mar/internal/clio"
 )
 
 // BlockedMigrationError is the structured error type the migrator
@@ -176,23 +178,80 @@ func RunBootMigrations() error {
 	return nil
 }
 
-// printRunSummary writes the boot-time migration log lines. Format is
-// stable so tooling can grep:
+// printRunSummary writes the boot-time migration log.
 //
-//	[migrate] applied N change(s) in <duration>
-//	[migrate] +column notes.archived (TEXT)
-//	[migrate] table comments has no entity declaring it; ...
+// Two shapes, same as the dev banner (internal/jsserve/banner.go):
+//
+//   - Non-TTY (CI / piped logs): the grep-stable `[migrate] ...` lines,
+//     no colors or blanks, so tooling can match them.
+//
+//   - TTY (interactive `mar dev`): the house style from
+//     docs/cli-style.md §1/§3 — a leading blank to separate from prior
+//     output, a bold "Migrations" header with a dim summary, and dim,
+//     indented detail lines.
 func printRunSummary(s RunSummary) {
+	if !migrateStderrTTY() {
+		if len(s.Applied) > 0 {
+			fmt.Fprintf(os.Stderr, "[migrate] applied %d change(s) in %s\n",
+				len(s.Applied), s.Elapsed.Round(time.Millisecond))
+			for _, step := range s.Applied {
+				fmt.Fprintf(os.Stderr, "[migrate]   %s\n", step.Description)
+			}
+		}
+		for _, note := range s.Notes {
+			fmt.Fprintf(os.Stderr, "[migrate] %s\n", note)
+		}
+		return
+	}
+
+	dim := migrateWrapANSI("\x1b[38;5;245m")
+	bold := migrateWrapANSI("\x1b[1m")
+
+	// Leading blank — separates the block from preceding boot output,
+	// skipped if the previous block already ended with one.
+	if clio.WantLeadingBlank() {
+		fmt.Fprintln(os.Stderr)
+	}
 	if len(s.Applied) > 0 {
-		fmt.Fprintf(os.Stderr, "[migrate] applied %d change(s) in %s\n",
-			len(s.Applied), s.Elapsed.Round(time.Millisecond))
+		fmt.Fprintf(os.Stderr, "  %s  %s\n",
+			bold("Migrations"),
+			dim(fmt.Sprintf("applied %s in %s",
+				pluralizeChanges(len(s.Applied)),
+				s.Elapsed.Round(time.Millisecond))))
 		for _, step := range s.Applied {
-			fmt.Fprintf(os.Stderr, "[migrate]   %s\n", step.Description)
+			fmt.Fprintf(os.Stderr, "    %s %s\n", dim("•"), step.Description)
 		}
 	}
 	for _, note := range s.Notes {
-		fmt.Fprintf(os.Stderr, "[migrate] %s\n", note)
+		fmt.Fprintf(os.Stderr, "  %s\n", dim(note))
 	}
+	// Tight ending — let the next block (the dev banner) emit its own
+	// leading blank rather than us trailing one here.
+	clio.ClearTrailingBlank()
+}
+
+// pluralizeChanges renders "1 change" / "N changes".
+func pluralizeChanges(n int) string {
+	if n == 1 {
+		return "1 change"
+	}
+	return fmt.Sprintf("%d changes", n)
+}
+
+// migrateStderrTTY reports whether stderr is an interactive terminal
+// (so colors are safe). Honors NO_COLOR. Mirrors the stdout check in
+// internal/jsserve/banner.go.
+func migrateStderrTTY() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	fi, err := os.Stderr.Stat()
+	return err == nil && (fi.Mode()&os.ModeCharDevice) != 0
+}
+
+// migrateWrapANSI wraps a string in the given SGR prefix + reset.
+func migrateWrapANSI(prefix string) func(string) string {
+	return func(s string) string { return prefix + s + "\x1b[0m" }
 }
 
 // Run applies every pending migration. Returns a summary of applied
