@@ -310,7 +310,7 @@ The dev panel URL is http://localhost:3000/_mar/admin (or whatever port `mar dev
 ```
 
 Mechanics:
-- Reads `mar.json`, parses, **appends** the email to the `admins` array (deduplicated against existing entries, preserves the existing order — same surgical edit pattern `mar fly init` uses for `deploy/fly/fly.toml`). The CLI doesn't sort the list because the user may have intentional ordering; we just don't add duplicates.
+- Reads `mar.json`, parses, **appends** the email to the `admins` array (deduplicated against existing entries, preserves the existing order). The CLI doesn't sort the list because the user may have intentional ordering; we just don't add duplicates.
 - Validates email shape (basic `<local>@<domain>` regex; no DNS lookup).
 - If the project's running `mar dev` is up, the file watcher picks up the change and the dev server's `_mar_admins` is re-synced live.
 
@@ -541,6 +541,7 @@ What v1 actually shows, top-to-bottom on `/_mar/admin`:
    - Time, method, path, status, duration ms, user email
    - Color-coded status (2xx green / 4xx yellow / 5xx red)
    - **Excludes the panel's own polling** (`/_mar/admin/*`) and the SSE reload channel (`/_mar/reload`). Same exclusion applies to the `requestsTotal` / `requestsInFlight` counters.
+   - **Path sanitization at write time.** Before an entry lands in the ring buffer, the path goes through `admin.SanitizeForLog`: stray emails (e.g. `/api/users/alice@example.com/profile`), bearer tokens, sensitive query params (`token`, `api_key`, `access_token`, `password`, `secret`), `code:` / `code=` in plain text, and `"token" / "code" / "email"` JSON values get replaced with `<omitted>`. The `userEmail` column is deliberately NOT scrubbed — admins need to see who made the request, and that's the field for it. Patterns are hardcoded by design (a configurable allow/deny would let one operator turn off protection that another relied on).
 
 What v1 deliberately leaves out:
 - Auth tools (impersonate, force-logout)
@@ -584,7 +585,7 @@ To power `recentRequests` without writing every HTTP hit to disk, the runtime ke
 | Wrong type    | Boot fails with the standard manifest type-mismatch error |
 | Missing       | Default applied silently                                  |
 
-The range mirrors lispy's old `request_logs.go` (10/5000) — proven not-stupid. Lispy clamped silently when out of range; we reject on boot instead. Silent clamping creates "I set 99999 but the panel only shows 5000, why?" debugging mysteries; rejection forces the user to fix the config and removes the surprise.
+The 10–5000 range is roomy enough to fit any realistic operator need without inviting accidents (a 10M-entry buffer would chew memory for no operational gain). Out-of-range values fail-fast at boot; silent clamping creates "I set 99999 but the panel only shows 5000, why?" debugging mysteries that we'd rather avoid.
 
 This sets the template for every other knob the framework adds — see §11 below.
 
@@ -654,9 +655,9 @@ The split lets the strict-typed knobs (numbers, enums, ranges) fail at compile t
 
 Silent clamping prioritizes "the app boots no matter what" over "the user gets the behavior they configured." For dev productivity, the second is more valuable: bad config caught at compile time is a 5-second fix; bad config that boots but misbehaves is hours of confused debugging.
 
-### 11.4 Reference values inherited from lispy
+### 11.4 Reference values
 
-(Where lispy got it right; we revisit if usage data suggests otherwise.)
+(Defaults and bounds for all current knobs. Revisit if usage data suggests otherwise.)
 
 | Knob                               | Default | Range / values                         | Phase   |
 |------------------------------------|---------|----------------------------------------|---------|
@@ -664,6 +665,9 @@ Silent clamping prioritizes "the app boots no matter what" over "the user gets t
 | `database.autoBackup.enabled`      | `true`  | `true | false`                         | compile |
 | `database.autoBackup.intervalHours`| 6       | `1` … `168` (1h…1 week)                | compile |
 | `database.autoBackup.retentionCount` | 28    | `2` … `100`                            | compile |
+| `rateLimit.requestsPerMinute`      | 600     | `1` … `100000` (≈1/min … ~1667 req/s)  | compile |
+| `rateLimit.burst`                  | 30      | `1` … `10000`                          | compile |
+| `server.maxBodyBytes`              | 1048576 (1 MiB) | `1024` (1 KiB) … `33554432` (32 MiB)   | compile |
 | `ios.serverUrl`                    | —       | https:// URL (or http://localhost for QA) | compile |
 | `adminPanel.sessionDuration`       | 12 h    | `1 minute` … `7 days`                  | compile |
 | `system.sqlite.busyTimeoutMs`      | 5000    | `0` … `600000`                         | compile |

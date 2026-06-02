@@ -9,9 +9,8 @@ Estimated time: **~30 minutes**, plus deploy time for two builds.
 
 ## Prerequisites
 
-- [ ] A Fly app deployed via `mar fly init && mar fly provision &&
-      mar fly deploy` (any small project — even the scaffolded
-      starter works).
+- [ ] A Fly app deployed via `mar fly deploy` (any small project —
+      even the scaffolded starter works).
 - [ ] `mar.json` configured with at least one admin in `admins[]`
       (so you can log into the panel).
 - [ ] `mar.json` has the database block with auto-backup enabled

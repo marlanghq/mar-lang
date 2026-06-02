@@ -876,4 +876,4 @@ See `examples/`:
 
 - `personal-todo.mar` — minimal CRUD with ownership.
 - `pet-food-log.mar` — validation + ownership + custom query.
-- `mini-twitter.mar` — full-featured: 6 entities, validations, queries, 6 MVU screens with forms, auth, and follow/like flows.
+- `mini-twitter/` — full-featured: 3 entities (User / Tweet / Follow), passwordless email auth, handle-based profiles, follow graph, owner-only delete via `Auth.authorize`, typed routes, and an MVU page per screen. See `examples/mini-twitter/README.md` for a top-to-bottom reading order.

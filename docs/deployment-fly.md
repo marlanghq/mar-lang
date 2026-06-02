@@ -1,8 +1,8 @@
 # Deploying to Fly.io
 
-The `mar fly` subcommand wraps the full Fly.io deployment lifecycle.
-You don't have to invoke the `fly` CLI directly — every step is
-behind a `mar fly` command.
+`mar fly` wraps the full Fly.io deployment lifecycle behind a single
+command. You configure the app once in `mar.json`; every subsequent
+operation reads from there.
 
 Fly's edge proxy terminates TLS for free, so HTTPS is automatic. No
 reverse proxy or cert management to configure on your side.
@@ -10,13 +10,16 @@ reverse proxy or cert management to configure on your side.
 ## What you get out of the box
 
 - **HTTPS** with auto-renewing Let's Encrypt certs at the edge.
-- **Persistent SQLite** via a fly volume mounted at `/data` inside
-  the container; the runtime opens the DB from there via
-  `MAR_DATABASE_PATH`.
-- **Global anycast** routing — pick a primary region; fly handles
+- **Persistent SQLite** via a Fly volume mounted at `/data` inside
+  the container; the runtime opens the DB from there. (Fullstack
+  topologies only — frontend-only apps skip the volume.)
+- **Global anycast** routing — pick a primary region; Fly handles
   the rest.
 - **Auto-stop / auto-start** — your machine sleeps when idle and
   wakes on the next request. Cheap for low-traffic apps.
+- **No Docker knobs.** The Dockerfile + `fly.toml` are generated on
+  every deploy from the project's topology, deployed, and discarded.
+  Customization happens in `mar.json`, not in handwritten infra files.
 
 ## One-time setup
 
@@ -24,92 +27,93 @@ Install the `fly` CLI from <https://fly.io/docs/flyctl/install/>.
 That's it. `mar fly` triggers `fly auth login` for you the first
 time you run a command that needs authentication.
 
+## Configuring deploy.fly in mar.json
+
+Every `mar fly` command reads from the `deploy.fly` block:
+
+```json
+{
+  "name": "my-app",
+  "deploy": {
+    "fly": {
+      "app":    "my-app-name",
+      "region": "gru",
+      "memory": "256mb"
+    }
+  }
+}
+```
+
+All three fields are required:
+
+| Field    | What it is                                                                 |
+|----------|----------------------------------------------------------------------------|
+| `app`    | Globally unique on Fly; becomes `<app>.fly.dev`. Lowercase, hyphens only. |
+| `region` | One of Fly's region codes (`gru`, `iad`, `fra`, `nrt`, …). Pick close to your users. |
+| `memory` | Machine size — `256mb`, `512mb`, `1gb`, `2gb`, `4gb`, or `8gb`.            |
+
+If the block is missing or malformed, `mar fly deploy` (or any
+other `mar fly *`) prints a paste-ready snippet plus the full list
+of valid regions and memory sizes.
+
 ## First deploy
 
 From your project directory (the one containing `mar.json`):
 
 ```sh
-mar fly init        # scaffold deploy/fly/{Dockerfile,fly.toml}
-mar fly provision   # create the fly app + volume + secrets
-mar fly deploy      # build linux-amd64 binary and ship it
+mar fly deploy
 ```
 
-Three commands; nothing else. Each step prints what it's doing and
-the resource names involved.
+That's it. The single command:
 
-### What each does
+1. Validates the `deploy.fly` block.
+2. Detects topology (frontend / backend / fullstack) by running your
+   `main`.
+3. Logs into Fly if needed (`fly auth login` in your browser).
+4. Creates the Fly app if it doesn't exist yet.
+5. Creates the persistent volume (fullstack/backend only) on first
+   run.
+6. Prompts for any `env:VAR` secrets declared in `mar.json` that
+   aren't already set on the Fly app, and pushes them.
+7. Generates Dockerfile + `fly.toml` in `/tmp/mar-fly-*`.
+8. Builds the linux-amd64 binary (or static `dist/` for
+   frontend-only).
+9. Runs `fly deploy`.
+10. Polls the machine until it boots healthy, then opens the URL.
 
-**`mar fly init`** is interactive. It prompts for:
+On success the temp directory is deleted; on failure it's preserved
+so you can inspect what was generated.
 
-1. **Fly app name** — defaults to your `mar.json` `name` (slugified
-   to fly's lowercase-and-hyphens format). Press Enter to accept.
-2. **Region** — shows a continent-grouped table of supported fly
-   regions; type the code (e.g. `gru`, `iad`, `fra`).
-
-Then it generates two files:
-
-```
-deploy/fly/
-├── Dockerfile     # debian-slim + your linux-amd64 binary
-└── fly.toml       # app name, region, port, env vars, volume mount
-```
-
-Both go into git — they're per-project configuration.
-`shared-cpu-1x` + 256MB (the default in the template) is the
-cheapest tier; bump if your traffic warrants it.
-
-Re-running `mar fly init` against an existing `deploy/fly/` asks
-before overwriting.
-
-**CI / scripted init**: set `FLY_REGION=<code>` in the environment
-to skip the region prompt. The app name is taken from `mar.json`
-silently when stdin isn't a TTY.
-
-**`mar fly provision`** runs four steps after a confirmation:
-
-1. `fly auth whoami` — checks if you're logged in. If not, runs
-   `fly auth login` (browser-based OAuth flow).
-2. `fly apps create <name>` — creates the app on fly. **Fails if
-   the app name is already taken.** If you want to recreate, run
-   `mar fly destroy` first.
-3. `fly volumes create <name>_data --region <region> --size 1` —
-   creates the persistent SQLite volume. **Fails if the volume name
-   already exists** under the same app.
-4. **Secret prompts**. For each `env:VAR_NAME` reference in your
-   `mar.json`, the wrapper prompts for the value (echo off) and
-   pushes it via `fly secrets set`. Empty input skips that one.
-
-If your `mar.json` doesn't reference any env: secrets, step 4 is a
-no-op message.
-
-The "fail loudly on already-exists" behavior is deliberate:
-silently reusing whatever's already on fly tends to hide
-misconfiguration. If you're attaching to an existing fly app
-(rather than creating fresh), skip `mar fly provision` and edit
-`deploy/fly/fly.toml` by hand instead.
-
-**`mar fly deploy`** runs:
-
-1. `mar build --target linux-amd64 --out deploy/fly/dist` — produces
-   the self-contained Linux binary. The binary embeds every `.mar`
-   source + `mar.json`; the SQLite driver is statically linked.
-2. `fly deploy` from `deploy/fly/` — builds the Docker image and
-   ships it to your fly app.
-
-First deploy takes 1–2 minutes (Docker layer cache miss).
-Subsequent deploys are seconds.
+First deploy takes 1–2 minutes (Docker layer cache miss). Subsequent
+deploys are seconds.
 
 ## Subsequent deploys
-
-After the first deploy, the loop is:
 
 ```sh
 git pull          # or just edit
 mar fly deploy
 ```
 
-That's it. The volume + secrets persist across deploys; only the
-binary layer rebuilds.
+The volume + secrets persist across deploys; only the binary layer
+rebuilds.
+
+To skip the auto-open-in-browser step (CI / SSH / headless):
+
+```sh
+mar fly deploy --no-open
+```
+
+`CI=true` in the environment also disables the auto-open.
+
+## Previewing what'll be deployed
+
+```sh
+mar fly preview
+```
+
+Prints app name, region, memory, topology, target URL, volume, port,
+and which `env:VAR` secrets are declared — without contacting Fly.
+Useful for diffing config changes before running `deploy`.
 
 ## Operating the deployed app
 
@@ -118,9 +122,48 @@ mar fly logs       # tail logs from the running machine(s)
 mar fly status     # show machines, regions, deploy history
 ```
 
-Both pass through to the equivalent `fly logs` / `fly status`
-commands; the wrapper just resolves the app name from your project's
-`fly.toml` so you don't have to type `-a <name>` every time.
+Both resolve the app name from `mar.json` so you don't need
+`-a <name>`. `mar fly logs` shows machine lifecycle + runtime boot
+output; per-request data lives in the admin panel at `/_mar/admin`.
+
+## Managing secrets
+
+`mar fly deploy` handles bulk secret pushing automatically. For
+targeted rotation / inspection:
+
+```sh
+mar fly secrets list             # cross-reference mar.json vs Fly
+mar fly secrets set NAME=value   # push one (or NAME alone to prompt)
+mar fly secrets unset NAME       # remove one
+```
+
+These validate against `mar.json` — `list` shows missing declared
+refs and orphaned ones; `unset` warns if the name is still
+referenced. See `mar fly secrets --help` for details.
+
+## Database operations
+
+```sh
+mar fly database backup                  # force a snapshot now
+mar fly database backups                 # list the catalog
+mar fly database backup download <id>    # pull a snapshot locally
+```
+
+Backups land in the on-volume catalog at `/data/backups/<id>.tar.gz`
+— the same place the runtime's auto-backup scheduler writes to.
+Restore lives in the admin panel UI (`/_mar/admin`) — it needs a
+schema-match check + machine restart which is hard to express
+tersely in CLI output.
+
+## Admin inspection
+
+```sh
+mar fly admin list
+```
+
+Read-only view of production's `_mar_admins` table. Adding /
+removing admins happens via `mar.json` + `mar fly deploy` (the
+committed config is the source of truth).
 
 ## Migrations
 
@@ -135,34 +178,13 @@ entity field, the next `mar fly deploy` will:
 
 Blocked migrations (e.g. adding NOT NULL to a populated table) make
 the boot fail before the listener opens, so traffic continues
-hitting the previous version. Fix the entity declaration (make the
-field optional, or do a manual SQL backfill), redeploy.
+hitting the previous version. Fix the entity declaration, redeploy.
 
 To preview what a deploy will migrate:
 
 ```sh
-mar migrate plan        # against your local DB
+mar migrate plan
 ```
-
-## Updating secrets
-
-Rotate a key, change an SMTP password? Re-run provision:
-
-```sh
-mar fly provision
-```
-
-It walks the same prompts and `fly secrets set` is the same
-operation that pushes new values. The next deploy (or fly's automatic
-machine restart on secret change) picks them up.
-
-You can also push a single secret directly:
-
-```sh
-fly secrets set RESEND_API_KEY=re_xxx -a <your-app>
-```
-
-`mar fly provision` is just the bulk path.
 
 ## Custom domain
 
@@ -171,7 +193,7 @@ fly certs create yourdomain.com -a <your-app>
 ```
 
 Fly handles cert issuance + renewal. Then point a CNAME at
-`<your-app>.fly.dev` (or follow fly's docs for an apex-domain A
+`<your-app>.fly.dev` (or follow Fly's docs for an apex-domain A
 record).
 
 ## Removing the app
@@ -182,23 +204,31 @@ mar fly destroy
 
 Asks for confirmation twice — first a yes/no, then it makes you
 type the app name. Destroys both the app and its volume; data is
-lost.
+lost. The `deploy.fly` block in `mar.json` stays put; re-run
+`mar fly deploy` to recreate.
 
-After destroy, the deploy/fly/ files stay where they are. Run
-`mar fly provision` to recreate, or delete deploy/fly/ if you're
-walking away from fly entirely.
+## Frontend-only deploys
 
-## Customization
+A `mar.json` without a backend / fullstack `main` deploys via Caddy
+serving the static `dist/` output. No volume, no SQLite, no
+runtime. `mar fly preview` shows a note about CDN alternatives —
+the static bundle is portable to any of them, built with
+`mar build`.
 
-The generated `Dockerfile` and `fly.toml` are starting points. Edit
-freely — `mar fly init` won't overwrite without asking. Common
-tweaks:
+## Topology and Docker — under the hood
 
-- **More memory** — bump `[[vm]] memory = "512mb"` or higher.
-- **Multiple regions** — `fly.toml` supports a `primary_region` plus
-  fly handles overflow. For active-active multi-region SQLite you'd
-  need [LiteFS](https://fly.io/docs/litefs/) (out of scope for the
-  generated config).
-- **Health checks** — add `[[http_service.checks]] path = ...` to
-  fly.toml. The framework doesn't ship a `/health` endpoint yet
-  (BACKLOG item); `/_auth/whoami` is a workable proxy.
+Mar abstracts Docker entirely. Every `mar fly deploy` regenerates
+the Dockerfile + `fly.toml` in `/tmp/mar-fly-<random>/`, runs
+`fly deploy` from there, and deletes the temp dir on success
+(preserves on failure for debugging).
+
+The generated images:
+
+- **frontend-only** — `caddy:alpine` serving `dist/` as static files.
+- **backend / fullstack** — `debian:bookworm-slim` + your
+  linux-amd64 binary at `/app/<binary>`. SQLite is embedded;
+  `/data` is mounted from the Fly volume.
+
+If something the framework provides doesn't match what your app
+needs, that's a feature request — not a customization knob. There
+are no template files on disk to edit.

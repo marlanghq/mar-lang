@@ -59,7 +59,21 @@ This is what the rest of the rules reduce to. Why:
 | `mar dev` boot-time hint (followed by banner) | ✓ | ✗ |
 | `mar dev` startup banner (followed by stable runtime) | ✓ | ✓ (Press Ctrl+C output, etc.) |
 | `mar build` production warn (followed by build output) | ✓ | ✗ |
-| Single-line error (`Error: ...`) | ✗ | ✗ |
+| `Error:` / `Hint:` blocks (one-shot exit) | ✓ | ✓ (handled by `fprintError`/`fprintHint`) |
+
+### How the helpers enforce this
+
+`fprintError`/`fprintHint`/`fprintWarn` in `cmd/mar/color.go` add the
+leading AND trailing blank automatically — call sites don't have to
+remember. When two helpers chain (Error → Hint), the second one's
+leading blank is suppressed via a package-level state flag so the
+pair shows ONE blank between, not two.
+
+Multi-line hints (continuation text under the same `Hint:` block)
+go into the format string with `\n      ` separators — NOT into
+separate `fmt.Fprintf` calls. If you split them across raw stderr
+writes, the helper's trailing blank lands between the Hint header
+and the continuation, breaking the block visually.
 
 ```
 $ mar admin add me@example.com
@@ -154,10 +168,9 @@ Some pairs sit near each other; here's how to tell them apart:
 - **Bullet markers (`→`, `•`, `-`).** They're already visual; coloring
   them adds noise.
 - **The literal commands the framework prints to the user** (i.e. the
-  `mar fly init: deploy/fly already exists with content. Overwrite?`
-  prompts). Those should stay plain — coloring the framework's own
-  status lines competes for attention with the inline highlights they
-  contain.
+  `mar fly destroy: type the app name to confirm` prompts). Those
+  should stay plain — coloring the framework's own status lines
+  competes for attention with the inline highlights they contain.
 
 ### 3.3 Color failure modes to avoid
 
