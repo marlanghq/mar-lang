@@ -5,7 +5,6 @@ import UI exposing
     ( navigationStack, navigationTitle
     , form, section, header, footer
     , picker
-    , title, subtitle, text
     )
 
 
@@ -122,14 +121,6 @@ view model =
                     [ "Vanilla", "Chocolate", "Strawberry", "Mint", "Pistachio" ]
                     (\s -> s)
                     FlavorChanged
-                ]
-            , section
-                [ header "Live state"
-                , footer "Each picker dispatches its onChange immediately. No submit button needed."
-                ]
-                [ subtitle ("priority · " ++ priorityLabel model.priority)
-                , subtitle ("size · " ++ String.fromInt model.size)
-                , subtitle ("flavor · " ++ model.flavor)
                 ]
             ]
         ]

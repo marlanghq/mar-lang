@@ -5,7 +5,7 @@ import UI exposing
     ( navigationStack, navigationTitle
     , list, section, header
     , hstack
-    , title, subtitle, button, toggle, spacer
+    , title, button, toggle, spacer
     , disabled
     )
 
@@ -25,8 +25,8 @@ import UI exposing
 -- The page is split into two small demos: a +/- counter showing
 -- button + disabled, and a short row of unrelated toggles showing
 -- how the same primitive looks in different states. Nothing is
--- connected to any real preferences — flipping the toggles only
--- updates the live-state echo at the bottom.
+-- connected to any real preferences — the toggles just show the
+-- switch flipping.
 
 
 type alias Model =
@@ -142,18 +142,8 @@ view model =
                 , toggle [] "Toggle B" model.toggleB ToggleBChanged
                 , toggle [] "Toggle C" model.toggleC ToggleCChanged
                 ]
-            , section [ header "Live state" ]
-                [ subtitle ("toggle A · " ++ onOff model.toggleA)
-                , subtitle ("toggle B · " ++ onOff model.toggleB)
-                , subtitle ("toggle C · " ++ onOff model.toggleC)
-                ]
             ]
         ]
-
-
-onOff : Bool -> String
-onOff b =
-    if b then "on" else "off"
 
 
 page : Page

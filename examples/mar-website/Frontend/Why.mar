@@ -88,7 +88,7 @@ view _ =
                 [ header "Trade-offs"
                 , footer "These trade-offs work well for some projects and not others. We'd rather be honest about that up front."
                 ]
-                [ title "The honest caveats"
+                [ title "⚖️ The honest caveats"
                 , vstack []
                     [ text "• Storage is SQLite, embedded per app. Great for solo apps and small teams."
                     , text "• The UI vocabulary is opinionated and constrained: less freedom than hand-building each platform's UI."

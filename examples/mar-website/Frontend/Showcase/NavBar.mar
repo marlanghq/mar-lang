@@ -21,7 +21,7 @@ import UI exposing
 
 
 type alias Model =
-    { lastAction : String }
+    { tapped : Maybe String }
 
 
 type Msg
@@ -30,17 +30,24 @@ type Msg
 
 
 init : () -> (Model, Effect String Msg)
-init _ = ( { lastAction = "(none yet)" }, Effect.none )
+init _ = ( { tapped = Nothing }, Effect.none )
 
 
 update : Msg -> Model -> (Model, Effect String Msg)
 update msg model =
     case msg of
         LeadingTapped ->
-            ( { model | lastAction = "Leading" }, Effect.none )
+            ( { model | tapped = Just "Leading" }, Effect.none )
 
         TrailingTapped ->
-            ( { model | lastAction = "Trailing" }, Effect.none )
+            ( { model | tapped = Just "Trailing" }, Effect.none )
+
+
+tapMessage : Maybe String -> String
+tapMessage tapped =
+    case tapped of
+        Nothing      -> "Tap Leading or Trailing above."
+        Just which   -> "You tapped " ++ which ++ "."
 
 
 view : Model -> View Msg
@@ -55,7 +62,7 @@ view model =
                 [ header "topBarLeading + topBarTrailing"
                 , footer "Each slot takes any view, usually a button. Tap one to see it land below."
                 ]
-                [ text ("Last tapped: " ++ model.lastAction) ]
+                [ text (tapMessage model.tapped) ]
             ]
         ]
 

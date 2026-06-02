@@ -4,7 +4,7 @@ module Frontend.Credits exposing (page)
 import UI exposing
     ( navigationStack, navigationTitle
     , list, section, header, footer
-    , vstack
+    , vstack, hstack, spacer
     , title, subtitle, text
     , paragraph, span
     , link
@@ -109,7 +109,11 @@ view _ =
                     ]
                 ]
             , section [ header "Copyright" ]
-                [ text "Copyright © 2026 Marcio Frayze David. Released under the MIT license."
+                [ hstack []
+                    [ spacer
+                    , text "Copyright © 2026 Marcio Frayze David. Released under the MIT license."
+                    , spacer
+                    ]
                 ]
             ]
         ]

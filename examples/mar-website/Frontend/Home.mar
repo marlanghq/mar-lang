@@ -7,7 +7,7 @@ import UI exposing
     , vstack
     , title, subtitle, text, navigationLink
     , paragraph, span
-    , bold, italic, link
+    , bold
     )
 import Frontend.Routes
 
@@ -43,6 +43,17 @@ navRow path label blurb =
             ])
 
 
+-- One "What you get" row: emoji marker + bold name + description,
+-- all on one line.
+featureRow : String -> String -> String -> View Msg
+featureRow emoji name desc =
+    paragraph
+        [ span [] (emoji ++ "  ")
+        , span [bold] name
+        , span [] (" — " ++ desc)
+        ]
+
+
 view : Model -> View Msg
 view _ =
     navigationStack [ navigationTitle "Mar" ]
@@ -56,33 +67,16 @@ view _ =
                 , subtitle "One language for web, mobile, and the server."
                 ]
             , section [ header "What you get" ]
-                [ vstack []
-                    [ paragraph
-                        [ span [] "• "
-                        , span [italic] "Batteries included"
-                        , span [] ": authentication, authorization, admin panel, migrations, database, backups."
-                        ]
-                    , paragraph
-                        [ span [] "• "
-                        , span [italic] "One small binary"
-                        , span [] " that runs, types, formats, and ships your project."
-                        ]
-                    , paragraph
-                        [ span [] "• "
-                        , span [italic] "Opinionated UI toolkit"
-                        , span [] ": native components on iOS and Android, polished CSS on the web."
-                        ]
-                    , paragraph
-                        [ span [] "• "
-                        , span [italic] "Over-the-air updates"
-                        , span [] ": deploy on the server, every client picks up the new version without app store waits."
-                        ]
-                    , paragraph
-                        [ span [] "• "
-                        , span [italic] "Type-safe end-to-end"
-                        , span [] ": paths, services, routes, schemas, all checked at compile time."
-                        ]
-                    ]
+                [ featureRow "🔋" "Batteries included"
+                    "auth, admin panel, migrations, database, backups."
+                , featureRow "📦" "One small binary"
+                    "runs, types, formats, and ships your project."
+                , featureRow "🎨" "Opinionated UI toolkit"
+                    "native on iOS and Android, polished CSS on the web."
+                , featureRow "📡" "Over-the-air updates"
+                    "ship from the server, no app-store waits."
+                , featureRow "🔒" "Type-safe end-to-end"
+                    "paths, services, routes, schemas, checked at compile time."
                 ]
             , section [ header "Read more" ]
                 [ navRow Frontend.Routes.why
@@ -105,7 +99,7 @@ view _ =
                 [ header "Status"
                 , footer "Build small things first."
                 ]
-                [ text "Mar is early and evolving fast. Great for side projects; expect breaking changes between versions."
+                [ text "⚠️ Mar is early and evolving fast. Great for side projects; expect breaking changes between versions."
                 ]
             ]
         ]
