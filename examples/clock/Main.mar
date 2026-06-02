@@ -1,4 +1,4 @@
-module Clock exposing (main)
+module Main exposing (main)
 
 
 import UI exposing (navigationStack, navigationTitle, form, section, text, button, empty)
@@ -10,7 +10,7 @@ import UI exposing (navigationStack, navigationTitle, form, section, text, butto
 -- http://localhost:3010/time. To exercise it end-to-end, host that
 -- endpoint with `mar dev` against an App.backend module of your own.
 --
--- Open with: mar dev examples/clock.mar
+-- Open with: mar dev examples/clock
 
 
 type alias Model =

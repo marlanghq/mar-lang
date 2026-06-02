@@ -1,4 +1,4 @@
-module TodoApp exposing (main)
+module Main exposing (main)
 
 
 import UI exposing
@@ -10,7 +10,7 @@ import UI exposing
     )
 
 
--- A small interactive todo list. Open with `mar dev examples/todo-app.mar`.
+-- A small interactive todo list. Open with `mar dev examples/todo-app`.
 
 
 type alias Todo =

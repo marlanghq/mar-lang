@@ -1,4 +1,4 @@
-module Counter exposing (main)
+module Main exposing (main)
 
 
 -- The classic MVU counter. Open with `mar dev counter.mar`.

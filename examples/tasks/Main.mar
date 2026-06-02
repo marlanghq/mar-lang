@@ -1,4 +1,4 @@
-module Tasks exposing (main)
+module Main exposing (main)
 
 
 import UI exposing
@@ -13,7 +13,7 @@ import UI exposing
 -- A more polished task tracker, exercising the layout modifiers added
 -- in the elm-ui-style refresh of the view DSL.
 --
--- Open with: mar dev examples/tasks.mar
+-- Open with: mar dev examples/tasks
 
 
 type alias Task =

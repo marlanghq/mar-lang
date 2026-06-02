@@ -1,4 +1,4 @@
-module MultiScreen exposing (main)
+module Main exposing (main)
 
 
 import UI exposing
