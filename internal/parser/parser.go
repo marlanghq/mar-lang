@@ -589,7 +589,10 @@ func (p *parser) parsePatternAtom() (ast.Pattern, error) {
 		return &ast.PCtor{Pos: posOf(t), Module: mod, Name: name}, nil
 	case lexer.KindInt:
 		p.advance()
-		v, _ := strconv.ParseInt(t.Value, 10, 64)
+		v, err := strconv.ParseInt(t.Value, 10, 64)
+		if err != nil {
+			return nil, &Error{Line: t.Line, Column: t.Column, Message: fmt.Sprintf("integer literal %s is out of range for Int (64-bit signed)", t.Value)}
+		}
 		return &ast.PInt{Pos: posOf(t), Value: v}, nil
 	case lexer.KindString:
 		p.advance()
@@ -892,11 +895,17 @@ func (p *parser) parseExprAtom() (ast.Expr, error) {
 	switch t.Kind {
 	case lexer.KindInt:
 		p.advance()
-		v, _ := strconv.ParseInt(t.Value, 10, 64)
+		v, err := strconv.ParseInt(t.Value, 10, 64)
+		if err != nil {
+			return nil, &Error{Line: t.Line, Column: t.Column, Message: fmt.Sprintf("integer literal %s is out of range for Int (64-bit signed)", t.Value)}
+		}
 		return &ast.EInt{Pos: posOf(t), Value: v}, nil
 	case lexer.KindFloat:
 		p.advance()
-		v, _ := strconv.ParseFloat(t.Value, 64)
+		v, err := strconv.ParseFloat(t.Value, 64)
+		if err != nil {
+			return nil, &Error{Line: t.Line, Column: t.Column, Message: fmt.Sprintf("float literal %s is out of range for Float (64-bit)", t.Value)}
+		}
 		return &ast.EFloat{Pos: posOf(t), Value: v}, nil
 	case lexer.KindString:
 		p.advance()
