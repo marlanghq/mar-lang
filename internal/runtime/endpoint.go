@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"os"
 )
 
 // VEndpoint is the runtime representation of a typed HTTP endpoint
@@ -154,6 +155,25 @@ func makeResp(status int, body string) Value {
 	}
 }
 
+// serverErrorResponse maps a handler-side failure to a 500 Response without
+// leaking server internals to the client.
+//
+// A user-authored Effect.fail value carries an intentional, app-level message
+// (the `String` error channel of `Effect String resp`) and is surfaced as-is.
+// Any other error — a type mismatch, an encode failure, a database/SQL error —
+// is logged server-side and the client receives a generic body, so internal
+// detail (SQL text, Go type names, file paths) never reaches the wire.
+func serverErrorResponse(err error) Value {
+	// effectError is propagated unwrapped through the effect chain, so a
+	// direct type assertion catches a user-authored Effect.fail value; any
+	// other (wrapped or internal) error falls through to the sanitized path.
+	if _, ok := err.(effectError); ok {
+		return makeResp(500, err.Error())
+	}
+	fmt.Fprintf(os.Stderr, "[mar] handler error: %v\n", err)
+	return makeResp(500, "internal server error")
+}
+
 // jsonOfValue encodes a value as JSON for a response body. Returns the
 // fallback message and a non-nil error if encoding failed — callers turn
 // that into a 500 with a clear message.
@@ -230,11 +250,11 @@ func decodeBody(req Value) (Value, Value, bool) {
 func runUserEffect(v Value) (Value, Value, bool) {
 	eff, ok := v.(VEffect)
 	if !ok {
-		return nil, makeResp(500, fmt.Sprintf("handler did not produce an Effect (got %T)", v)), false
+		return nil, serverErrorResponse(fmt.Errorf("handler did not produce an Effect (got %T)", v)), false
 	}
 	out, err := eff.Run()
 	if err != nil {
-		return nil, makeResp(500, err.Error()), false
+		return nil, serverErrorResponse(err), false
 	}
 	return out, nil, true
 }
@@ -255,7 +275,7 @@ func wrapNoArgsHandler(userEffect Value, successStatus int) Value {
 					}
 					body, err := jsonOfValue(out)
 					if err != nil {
-						return makeResp(500, err.Error()), nil
+						return serverErrorResponse(err), nil
 					}
 					return makeResp(successStatus, body), nil
 				},
@@ -284,7 +304,7 @@ func wrapIDHandler(userHandler Value, successStatus int, maybeMode bool) Value {
 					}
 					eff, err := Apply(userHandler, VInt{V: id})
 					if err != nil {
-						return makeResp(500, err.Error()), nil
+						return serverErrorResponse(err), nil
 					}
 					out, errResp2, ok := runUserEffect(eff)
 					if !ok {
@@ -313,7 +333,7 @@ func wrapBodyHandler(userHandler Value, successStatus int, maybeMode bool) Value
 					}
 					eff, err := Apply(userHandler, body)
 					if err != nil {
-						return makeResp(500, err.Error()), nil
+						return serverErrorResponse(err), nil
 					}
 					out, errResp2, ok := runUserEffect(eff)
 					if !ok {
@@ -345,11 +365,11 @@ func wrapIDBodyHandler(userHandler Value, successStatus int, maybeMode bool) Val
 					}
 					partial, err := Apply(userHandler, VInt{V: id})
 					if err != nil {
-						return makeResp(500, err.Error()), nil
+						return serverErrorResponse(err), nil
 					}
 					eff, err := Apply(partial, body)
 					if err != nil {
-						return makeResp(500, err.Error()), nil
+						return serverErrorResponse(err), nil
 					}
 					out, errResp3, ok := runUserEffect(eff)
 					if !ok {
@@ -378,7 +398,7 @@ func wrapDeleteHandler(userHandler Value) Value {
 					}
 					eff, err := Apply(userHandler, VInt{V: id})
 					if err != nil {
-						return makeResp(500, err.Error()), nil
+						return serverErrorResponse(err), nil
 					}
 					_, errResp2, ok := runUserEffect(eff)
 					if !ok {
@@ -405,18 +425,18 @@ func shapeMaybeOrValueResponse(out Value, successStatus int, maybeMode bool) Val
 				if len(ctor.Args) == 1 {
 					body, err := jsonOfValue(ctor.Args[0])
 					if err != nil {
-						return makeResp(500, err.Error())
+						return serverErrorResponse(err)
 					}
 					return makeResp(successStatus, body)
 				}
 			}
 		}
 		// Maybe-shaped output that doesn't match Just/Nothing: surface as 500.
-		return makeResp(500, fmt.Sprintf("expected Maybe, got %T", out))
+		return serverErrorResponse(fmt.Errorf("expected Maybe, got %T", out))
 	}
 	body, err := jsonOfValue(out)
 	if err != nil {
-		return makeResp(500, err.Error())
+		return serverErrorResponse(err)
 	}
 	return makeResp(successStatus, body)
 }

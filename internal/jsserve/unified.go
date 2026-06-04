@@ -2,8 +2,10 @@ package jsserve
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 
@@ -92,7 +94,7 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 		handler := r.Fields["handler"]
 		effVal, err := runtime.Apply(handler, reqVal)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, err)
 			return
 		}
 		eff, ok := effVal.(runtime.VEffect)
@@ -102,7 +104,7 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 		}
 		result, err := eff.Run()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, err)
 			return
 		}
 		resp, ok := result.(runtime.VRecord)
@@ -117,6 +119,15 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 		return
 	}
 	http.NotFound(w, req)
+}
+
+// writeInternalError logs the underlying error server-side and sends the
+// client a generic 500 with no implementation detail (SQL text, Go type
+// names, file paths). Use it for server-fault paths; client-fault paths
+// (4xx) keep their descriptive messages.
+func writeInternalError(w http.ResponseWriter, err error) {
+	fmt.Fprintf(os.Stderr, "[mar] request error: %v\n", err)
+	http.Error(w, "internal server error", http.StatusInternalServerError)
 }
 
 // splitPath / matchPath / buildRequestValue duplicate small bits from

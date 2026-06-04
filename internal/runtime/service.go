@@ -168,17 +168,17 @@ func ExposedServiceToRoute(es VExposedService) Value {
 						// Curry: handler(input)(user).
 						partial, err := Apply(handler, input)
 						if err != nil {
-							return makeResp(500, err.Error()), nil
+							return serverErrorResponse(err), nil
 						}
 						eff, err := Apply(partial, userVal)
 						if err != nil {
-							return makeResp(500, err.Error()), nil
+							return serverErrorResponse(err), nil
 						}
 						return runHandlerEffect(eff)
 					}
 					eff, err := Apply(handler, input)
 					if err != nil {
-						return makeResp(500, err.Error()), nil
+						return serverErrorResponse(err), nil
 					}
 					return runHandlerEffect(eff)
 				},
@@ -207,7 +207,7 @@ func checkRoleGate(required, user Value) (Value, bool) {
 	}
 	userRole, err := Apply(cfg.Role, user)
 	if err != nil {
-		return makeResp(500, fmt.Sprintf("role getter failed: %v", err)), false
+		return serverErrorResponse(fmt.Errorf("role getter failed: %w", err)), false
 	}
 	if !equalValues(userRole, required) {
 		return makeResp(403, "forbidden"), false
@@ -221,11 +221,11 @@ func checkRoleGate(required, user Value) (Value, bool) {
 func checkABACGate(loader, policy Value, input, user Value) (Value, bool) {
 	loaderPartial, err := Apply(loader, input)
 	if err != nil {
-		return makeResp(500, fmt.Sprintf("authorize loader failed: %v", err)), false
+		return serverErrorResponse(fmt.Errorf("authorize loader failed: %w", err)), false
 	}
 	loadEff, err := Apply(loaderPartial, user)
 	if err != nil {
-		return makeResp(500, fmt.Sprintf("authorize loader failed: %v", err)), false
+		return serverErrorResponse(fmt.Errorf("authorize loader failed: %w", err)), false
 	}
 	veff, ok := loadEff.(VEffect)
 	if !ok {
@@ -233,7 +233,7 @@ func checkABACGate(loader, policy Value, input, user Value) (Value, bool) {
 	}
 	loaded, err := veff.Run()
 	if err != nil {
-		return makeResp(500, fmt.Sprintf("authorize loader failed: %v", err)), false
+		return serverErrorResponse(fmt.Errorf("authorize loader failed: %w", err)), false
 	}
 	maybeCtor, ok := loaded.(VCtor)
 	if !ok {
@@ -252,15 +252,15 @@ func checkABACGate(loader, policy Value, input, user Value) (Value, bool) {
 	// policy(input)(user)(resource)
 	p1, err := Apply(policy, input)
 	if err != nil {
-		return makeResp(500, fmt.Sprintf("authorize policy failed: %v", err)), false
+		return serverErrorResponse(fmt.Errorf("authorize policy failed: %w", err)), false
 	}
 	p2, err := Apply(p1, user)
 	if err != nil {
-		return makeResp(500, fmt.Sprintf("authorize policy failed: %v", err)), false
+		return serverErrorResponse(fmt.Errorf("authorize policy failed: %w", err)), false
 	}
 	verdict, err := Apply(p2, resource)
 	if err != nil {
-		return makeResp(500, fmt.Sprintf("authorize policy failed: %v", err)), false
+		return serverErrorResponse(fmt.Errorf("authorize policy failed: %w", err)), false
 	}
 	pass, ok := verdict.(VBool)
 	if !ok {
@@ -278,15 +278,15 @@ func checkABACGate(loader, policy Value, input, user Value) (Value, bool) {
 func runHandlerEffect(eff Value) (Value, error) {
 	veff, ok := eff.(VEffect)
 	if !ok {
-		return makeResp(500, fmt.Sprintf("Service handler did not produce an Effect (got %T)", eff)), nil
+		return serverErrorResponse(fmt.Errorf("Service handler did not produce an Effect (got %T)", eff)), nil
 	}
 	out, err := veff.Run()
 	if err != nil {
-		return makeResp(500, err.Error()), nil
+		return serverErrorResponse(err), nil
 	}
 	body, err := encodeValue(out)
 	if err != nil {
-		return makeResp(500, err.Error()), nil
+		return serverErrorResponse(err), nil
 	}
 	return makeResp(200, body), nil
 }
