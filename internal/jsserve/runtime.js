@@ -7060,14 +7060,6 @@
     // buildPathURL) live at the IIFE level so they're reachable from
     // both makeBuiltinEnv (linkTo / Nav.pushTo) and mountPages.
 
-    // Dynamic-page model preservation key. Static pages share state
-    // across renders by `path`; dynamic pages share by URL — switching
-    // from /notes/abc to /notes/xyz is a navigation, not a re-render,
-    // so each URL gets its own model slot.
-    function preservationKey(pg, urlPath) {
-      return pg.isDynamic ? urlPath : pg.path;
-    }
-
     function buildPageEntry(path, initFn, updateFn, viewFn, title, isProtected, isDynamic) {
       // For protected/dynamic pages init/update/view need extra args
       // threaded in (User, Params, or both). We can't init until those
@@ -7192,6 +7184,9 @@
       for (const dp of dynamicPages) {
         const params = matchPathPattern(urlPath, dp.pattern);
         if (params !== null) {
+          // Dynamic pages key model state by URL, not by path: navigating
+          // /notes/abc → /notes/xyz is a fresh model slot, not a re-render.
+          // (Static pages key by path — see the literal match above.)
           dp.page.activeKey = urlPath;
           dp.page.params = params;
           return dp.page;

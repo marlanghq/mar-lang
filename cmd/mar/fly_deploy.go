@@ -134,7 +134,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 			fmt.Println()
 		}
 
-		if err := createFlyApp(fly.App, fly.Region); err != nil {
+		if err := createFlyApp(fly.App); err != nil {
 			fprintError("mar fly deploy: %v", err)
 			return 1
 		}
@@ -758,12 +758,7 @@ func flyAppExistsOnAccount(appName string) bool {
 // are). The region we picked surfaces via the generated fly.toml's
 // `primary_region` field, which `fly deploy` reads when placing the
 // first machine.
-//
-// `region` is kept in the signature for symmetry (caller already
-// has it; future flyctl changes might bring region awareness back),
-// but it's currently unused.
-func createFlyApp(appName, region string) error {
-	_ = region
+func createFlyApp(appName string) error {
 	cmd := exec.Command("fly", "apps", "create", appName)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
