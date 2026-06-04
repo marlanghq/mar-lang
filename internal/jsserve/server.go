@@ -686,5 +686,10 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	// response (including admin/internal paths that adminInstrument
 	// skips). Wrapping version-headers OUTSIDE means the headers are
 	// set first, then adminInstrument decides whether to log.
-	return http.Serve(ln, withVersionHeaders(lp, adminInstrument(mux)))
+	//
+	// recoverPanic is the OUTERMOST layer so a panic anywhere in the
+	// chain (handler, version headers, instrumentation) becomes a clean
+	// 500 with the stack logged server-side — never a dropped connection
+	// or a stack trace leaked toward the client.
+	return http.Serve(ln, recoverPanic(withVersionHeaders(lp, adminInstrument(mux))))
 }

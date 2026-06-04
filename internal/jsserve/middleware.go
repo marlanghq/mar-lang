@@ -9,7 +9,11 @@ package jsserve
 // operator via mar.json["rateLimit"].
 
 import (
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"runtime/debug"
 	"strconv"
 	"sync"
 
@@ -44,6 +48,25 @@ func currentRateLimiter() *ratelimit.Limiter {
 	requestLimiterMu.RLock()
 	defer requestLimiterMu.RUnlock()
 	return requestLimiter
+}
+
+// recoverPanic wraps the whole handler chain so a panic in any handler
+// (an eval bug, a nil deref, a residual unchecked assertion) becomes a clean
+// 500 with the stack logged server-side, instead of a dropped connection and
+// a stack trace leaked toward the client. Installed as the outermost
+// middleware so it also covers the version-header and admin-instrument layers.
+func recoverPanic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				fmt.Fprintf(os.Stderr, "[mar] panic serving %s %s: %v\n%s\n",
+					r.Method, r.URL.Path, rec, debug.Stack())
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, "internal server error")
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // rateLimit wraps next with the gateway per-IP rate limiter. When the
