@@ -186,15 +186,16 @@ func joinMissingForPaste(missing []string) string {
 }
 
 // loadAndRunForBuild does the load + run-main step shared by Build
-// and Preflight. Returns the project directory + the populated
+// and Topology. Returns the project directory + the populated
 // buildCtx (which captures App.frontend/backend/fullstack calls)
 // so the caller can decide what to do next.
 //
 // Side effect that matters: running main also registers global
 // runtime state (Entity.define hits runtime.RegisteredEntities,
 // Auth.config sets runtime.CurrentAuth, etc.). ValidateProductionConfig
-// reads CurrentAuth to know whether the app needs mail config —
-// so Preflight callers MUST run this before validating.
+// reads CurrentAuth to know whether the app needs mail config, so it
+// only runs after main has: Build does so directly; `mar fly deploy`
+// validates after Topology has run main.
 func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err error) {
 	info, err := os.Stat(entry)
 	if err != nil {
@@ -243,22 +244,6 @@ func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err erro
 		return "", nil, err
 	}
 	return projectDir, bc, nil
-}
-
-// Preflight loads + runs the project's main (to register features
-// like Auth.config) and then validates mar.json against the result.
-// Produces no build artifacts. Used by deploy pre-flight so a
-// missing-config gap surfaces up front instead of after the app +
-// volume are already provisioned.
-//
-// Returns whatever ValidateProductionConfig would return:
-// *ProductionConfigError for missing fields (the CLI special-cases
-// it for nicer rendering), plain error for I/O or compile failures.
-func Preflight(projectDir string) error {
-	if _, _, err := loadAndRunForBuild(projectDir); err != nil {
-		return err
-	}
-	return ValidateProductionConfig(projectDir)
 }
 
 // Topology reports which App.* the project's main calls — "frontend",

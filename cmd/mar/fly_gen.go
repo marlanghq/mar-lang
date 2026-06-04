@@ -28,7 +28,7 @@ import (
 
 // flyTopology mirrors scaffold.buildCtx.kind without re-exporting the
 // unexported scaffold types. Callers detect topology via
-// scaffold.Preflight (which runs main and inspects which
+// scaffold.Topology (which runs main and inspects which
 // App.frontend/backend/fullstack was called) and pass the result here
 // as a string. Tiny coupling surface — only the topology matters for
 // generation, not the rest of buildCtx.

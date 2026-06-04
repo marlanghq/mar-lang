@@ -25,6 +25,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -69,6 +70,21 @@ func runFlyDeploy(path string, noOpen bool) int {
 		return 1
 	}
 	flyTopo := flyTopology(topo)
+
+	// === 2b. Pre-flight: for server topologies, mar.json must carry the
+	// production config the runtime needs at boot (auth + mail). Run it
+	// BEFORE the cloud steps below (app + volume creation, secret sync) so
+	// a missing-config gap surfaces up front instead of after Fly resources
+	// are already provisioned. main has already run (Topology). ===
+	if err := flyPreDeployValidate(projectDir, flyTopo); err != nil {
+		var pcErr *scaffold.ProductionConfigError
+		if errors.As(err, &pcErr) {
+			printProductionConfigError(pcErr)
+		} else {
+			printError("mar fly deploy", err)
+		}
+		return 1
+	}
 
 	// === 3. Banner ===
 	fmt.Println()
@@ -750,6 +766,20 @@ func flyAppExistsOnAccount(appName string) bool {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run() == nil
+}
+
+// flyPreDeployValidate runs the production-config check that must pass
+// BEFORE any Fly resource is created. main has already run (Topology), so
+// runtime.CurrentAuth etc. are populated and ValidateProductionConfig can
+// tell whether the app needs mail config. Frontend deploys carry no
+// server-side config, so they skip it. Failing here — rather than at the
+// build step, after the app + volume + secrets are already provisioned —
+// keeps a misconfigured project from leaving orphaned Fly resources.
+func flyPreDeployValidate(projectDir string, topo flyTopology) error {
+	if topo == flyTopologyFrontend {
+		return nil
+	}
+	return scaffold.ValidateProductionConfig(projectDir)
 }
 
 // createFlyApp runs `fly apps create <name>`. Region is intentionally
