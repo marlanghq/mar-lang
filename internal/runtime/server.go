@@ -21,27 +21,16 @@ func serverBuiltins() map[string]Value {
 			if !ok {
 				return nil, fmt.Errorf("Response.ok: expected String body")
 			}
-			return makeResponse(200, body.V), nil
+			return makeResp(200, body.V), nil
 		}),
-		"responseNotFound": makeResponse(404, "not found"),
+		"responseNotFound": makeResp(404, "not found"),
 		"responseStatus": nativeFn(2, func(args []Value) (Value, error) {
 			status, ok1 := args[0].(VInt)
 			body, ok2 := args[1].(VString)
 			if !ok1 || !ok2 {
 				return nil, fmt.Errorf("Response.status: expected Int and String")
 			}
-			return makeResponse(int(status.V), body.V), nil
+			return makeResp(int(status.V), body.V), nil
 		}),
-	}
-}
-
-// makeResponse builds a Response VRecord.
-func makeResponse(status int, body string) Value {
-	return VRecord{
-		Fields: map[string]Value{
-			"status": VInt{V: int64(status)},
-			"body":   VString{V: body},
-		},
-		Order: []string{"status", "body"},
 	}
 }

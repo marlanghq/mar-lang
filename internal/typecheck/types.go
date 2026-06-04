@@ -225,18 +225,10 @@ func FreshVar() TVar {
 
 // atomicNextVarID is a low-level helper for code that needs to mint
 // fresh IDs but build the TVar itself (e.g. Instantiate constructing
-// a constrained replacement). Most call sites should use FreshVar /
-// FreshComparableVar instead.
+// a constrained replacement). Most call sites should use FreshVar
+// instead.
 func atomicNextVarID() int64 {
 	return atomic.AddInt64(&nextVarID, 1)
-}
-
-// FreshComparableVar returns a fresh type variable constrained to
-// Comparable. Used by Dict / Set type schemes for the key position;
-// the unifier rejects any concrete type that's not comparable.
-func FreshComparableVar() TVar {
-	id := atomic.AddInt64(&nextVarID, 1)
-	return TVar{ID: int(id), Constraint: KindComparable}
 }
 
 // resetVarIDsForTesting resets the variable counter. Test-only helper.
@@ -436,10 +428,6 @@ func TAttrInlineHost() Type { return TCon{Name: "Inline"} }
 func TInline(msg Type) TCon {
 	return TCon{Name: "Inline", Args: []Type{msg}}
 }
-
-// TAttrAny builds `Attr a` for a quantified type variable a — the
-// right-hand side of a `forall a.` universal-attr type scheme.
-func TAttrAny(a Type) Type { return TAttr(a) }
 
 // TWidth / THeight — opaque sizing-value types. `chars : Int -> Width`,
 // `lines : Int -> Height`. Width and Height are intentionally separate

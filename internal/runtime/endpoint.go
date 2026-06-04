@@ -144,7 +144,9 @@ func makeRouteRecord(method, path string, handler Value) Value {
 	}
 }
 
-// makeResp constructs a Response record `{ status, body }`.
+// makeResp constructs a Response record `{ status, body }`. It's the one
+// place Response values are built — Response.ok / .notFound / .status
+// (server.go) and the endpoint/service handlers all go through it.
 func makeResp(status int, body string) Value {
 	return VRecord{
 		Fields: map[string]Value{

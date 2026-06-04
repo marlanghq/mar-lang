@@ -161,7 +161,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 					"mar fly deploy: %s missing on Fly app %s: %s",
 					pluralizeSecrets(len(missing)),
 					colorCyan(fly.App),
-					colorMagenta(joinComma(missing)))
+					colorMagenta(strings.Join(missing, ", ")))
 				fprintHint("set them before re-running, or run interactively.")
 				return 1
 			}
@@ -789,7 +789,7 @@ func ensureFlyVolume(appName, region string) error {
 	// "no volumes yet" depending on fly version).
 	cmd := exec.Command("fly", "volumes", "list", "-a", appName)
 	out, _ := cmd.Output()
-	if containsLine(string(out), volName) {
+	if strings.Contains(string(out), volName) {
 		return nil
 	}
 
@@ -804,38 +804,6 @@ func ensureFlyVolume(appName, region string) error {
 		return fmt.Errorf("fly volumes create: %v", err)
 	}
 	return nil
-}
-
-// containsLine reports whether `s` contains `needle` as a substring
-// on any line — used to find a volume name inside `fly volumes list`
-// output without trying to parse its tabular format.
-func containsLine(s, needle string) bool {
-	return indexOfSubstring(s, needle) >= 0
-}
-
-func indexOfSubstring(s, needle string) int {
-	// Tiny wrapper — stdlib strings.Contains/Index would do the same
-	// but importing strings just for this would bring it into a file
-	// that otherwise stays import-light.
-	for i := 0; i+len(needle) <= len(s); i++ {
-		if s[i:i+len(needle)] == needle {
-			return i
-		}
-	}
-	return -1
-}
-
-// joinComma joins string slices with ", " — small helper to avoid an
-// extra strings import in this file.
-func joinComma(parts []string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += ", "
-		}
-		out += p
-	}
-	return out
 }
 
 // manifestSessionSecretVar returns the env-var name behind
