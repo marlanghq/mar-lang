@@ -84,6 +84,9 @@ view _ =
                 , demoRow Frontend.Showcase.Routes.navbar
                     "Nav bar"
                     "navigationTitle, topBarLeading, topBarTrailing"
+                , demoRow Frontend.Showcase.Routes.images
+                    "Images"
+                    "image, sizing in px, fit / fill"
                 ]
             ]
         ]

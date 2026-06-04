@@ -1,0 +1,95 @@
+module Frontend.Showcase.Images exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, footer
+    , hstack, spacer
+    , image, px, size, fit, fill
+    )
+
+
+-- Demo: `image` — display an image from a URL (or an app path).
+--
+-- Signature:
+--   UI.image
+--     : List (Attr Image)
+--     -> { src : String, alt : String }   -- alt is REQUIRED
+--     -> View msg
+--
+-- `alt` is a record field, not an optional attr, so every image
+-- carries a text description: for screen readers, and for a future
+-- text/CLI renderer where alt IS the rendering. "" means decorative.
+--
+-- Attrs (all optional, Image-hosted):
+--   size (px w) (px h) — fixed dimensions in points (e.g. avatars)
+--   fit                — show the whole image, no crop (default)
+--   fill               — crop to fill the frame
+--
+-- Pixel sizing is scoped to images on purpose: `px` only builds an
+-- image size, and the input units (`chars` / `lines`) don't, so the
+-- "no arbitrary pixel layout" rule stays intact everywhere else.
+
+
+type alias Model = ()
+
+
+type Msg
+    = NoOp
+
+
+init : () -> (Model, Effect String Msg)
+init _ = ((), Effect.none)
+
+
+update : Msg -> Model -> (Model, Effect String Msg)
+update _ _ = ((), Effect.none)
+
+
+view : Model -> View Msg
+view _ =
+    navigationStack [ navigationTitle "Images" ]
+        [ form
+            [ section
+                [ header "Responsive (default)"
+                , footer "No size attr: fills the card width and keeps its aspect ratio."
+                ]
+                [ image []
+                    { src = "/mar-logo.png"
+                    , alt = "The Mar logo: a sun over stylized sea waves"
+                    }
+                ]
+            , section
+                [ header "Fixed size · fill"
+                , footer "size (px 72) (px 72) with fill: image cropped to fill the box, no empty space."
+                ]
+                [ hstack []
+                    [ image [ size (px 72) (px 72), fill ]
+                        { src = "/mar-logo.png"
+                        , alt = "The Mar logo: a sun over stylized sea waves"
+                        }
+                    , spacer
+                    ]
+                ]
+            , section
+                [ header "Fixed size · fit"
+                , footer "size (px 120) (px 80) with fit: whole image inside the box, no crop."
+                ]
+                [ image [ size (px 120) (px 80), fit ]
+                    { src = "/mar-logo.png"
+                    , alt = "The Mar logo: a sun over stylized sea waves"
+                    }
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/images"
+        , title = "Images"
+        , init = init
+        , update = update
+        , view = view
+        }

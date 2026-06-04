@@ -68,7 +68,7 @@ view _ =
                 ]
             , section [ header "What you get" ]
                 [ featureRow "🔋" "Batteries included"
-                    "auth, admin panel, migrations, database, backups."
+                    "auth, database, migrations, admin, backups, with rate limiting and safe defaults baked in."
                 , featureRow "📦" "One small binary"
                     "runs, types, formats, and ships your project."
                 , featureRow "🎨" "Opinionated UI toolkit"

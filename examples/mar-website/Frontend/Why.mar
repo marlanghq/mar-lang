@@ -60,7 +60,7 @@ view _ =
                 , text "You write your app once. Mar's compiler produces every output you need: a web bundle, native iOS and Android apps, and a server binary."
                 ]
             , section [ header "Pillar 2: Batteries included" ]
-                [ title "Authentication, authorization, admin panel, migrations, database, backups, all in the box."
+                [ title "Authentication, authorization, admin panel, migrations, database, backups, and rate limiting, all in the box."
                 , text "Every full-stack app rebuilds the same scaffolding before it does anything new. Mar treats that scaffolding as part of the language: the layers every app needs are already chosen, already integrated, and already type-safe. You spend day one writing the part that's actually yours."
                 ]
             , section [ header "Pillar 3: One UI vocabulary, every platform" ]

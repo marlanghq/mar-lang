@@ -20,6 +20,7 @@ import Frontend.Showcase.Pickers
 import Frontend.Showcase.Disabled
 import Frontend.Showcase.Modals
 import Frontend.Showcase.NavBar
+import Frontend.Showcase.Images
 
 
 -- Public site for the Mar language. Frontend-only (App.frontend) —
@@ -72,4 +73,5 @@ main =
         , Frontend.Showcase.Disabled.page
         , Frontend.Showcase.Modals.page
         , Frontend.Showcase.NavBar.page
+        , Frontend.Showcase.Images.page
         ]
