@@ -1,10 +1,9 @@
 // Manifest validation — see docs/admin-panel.md §11 for the design.
 //
-// Two-phase: compile-time runs in `mar build` / `mar dev` startup
-// against the structural manifest (env:VAR refs unresolved). Boot-time
-// runs in `mar-runtime` against the env-resolved manifest, re-applies
-// the compile rules, and adds checks that need real values
-// (sessionSecret length, SMTP connectivity is elsewhere).
+// Runs from `mar build` / `mar dev` startup against the structural
+// manifest and again from `mar-runtime` against the env-resolved
+// manifest; the rules are structural (range / enum / shape) and apply
+// identically either way.
 //
 // Hard rejection over silent clamping: every range/enum violation
 // returns an error naming the field + the violation, so the user can
@@ -21,22 +20,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-)
-
-// ValidationPhase distinguishes structural checks (no env resolution
-// needed) from runtime checks (env-resolved values, ready to use).
-type ValidationPhase int
-
-const (
-	// CompileTime fires from `mar build` and `mar dev` startup, against
-	// LoadManifestStructure output. Catches typos, range violations,
-	// and structural problems before any binary ships.
-	CompileTime ValidationPhase = iota
-
-	// BootTime fires from `mar-runtime` against LoadManifest output
-	// (env vars resolved). Re-applies CompileTime rules and adds
-	// checks that need real resolved values.
-	BootTime
 )
 
 // Defaults for adminPanel knobs. Documented in docs/admin-panel.md §11.4.
@@ -117,34 +100,33 @@ var localhostURLRegex = regexp.MustCompile(`^http://(localhost|127\.0\.0\.1)(:[0
 // docs/admin-panel.md §11. Returns the first violation as a
 // human-readable error with the field path included.
 //
-// Idempotent. Safe to call from multiple phases — each rule decides
-// whether it applies to the current phase.
-func Validate(m *Manifest, phase ValidationPhase) error {
+// Idempotent: the same structural rules apply at build and at boot.
+func Validate(m *Manifest) error {
 	if m == nil {
 		return nil
 	}
-	if err := validateAdmins(m, phase); err != nil {
+	if err := validateAdmins(m); err != nil {
 		return err
 	}
-	if err := validateAdminPanel(m, phase); err != nil {
+	if err := validateAdminPanel(m); err != nil {
 		return err
 	}
-	if err := validateDatabaseAutoBackup(m, phase); err != nil {
+	if err := validateDatabaseAutoBackup(m); err != nil {
 		return err
 	}
-	if err := validateIOS(m, phase); err != nil {
+	if err := validateIOS(m); err != nil {
 		return err
 	}
-	if err := validateMail(m, phase); err != nil {
+	if err := validateMail(m); err != nil {
 		return err
 	}
-	if err := validateRateLimit(m, phase); err != nil {
+	if err := validateRateLimit(m); err != nil {
 		return err
 	}
-	if err := validateServer(m, phase); err != nil {
+	if err := validateServer(m); err != nil {
 		return err
 	}
-	if err := validatePWA(m, phase); err != nil {
+	if err := validatePWA(m); err != nil {
 		return err
 	}
 	return nil
@@ -157,7 +139,7 @@ var hexColorRe = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 // lives in ValidatePWAIcon, which needs the project directory to
 // resolve the path and so runs from the CLI (dev + build), not from
 // this JSON-only validation.
-func validatePWA(m *Manifest, phase ValidationPhase) error {
+func validatePWA(m *Manifest) error {
 	if m.PWA == nil {
 		return nil
 	}
@@ -169,7 +151,6 @@ func validatePWA(m *Manifest, phase ValidationPhase) error {
 			return fmt.Errorf("mar.json: pwa.%s must be a hex color like \"#0071e3\" (got %q)", c.field, c.val)
 		}
 	}
-	_ = phase
 	return nil
 }
 
@@ -218,7 +199,7 @@ func ValidatePWAIcon(projectDir string, m *Manifest) error {
 // validateServer enforces bounds on the `server` block. Currently
 // just maxBodyBytes — port/host validation lives elsewhere because
 // those are network-shape concerns, not policy knobs.
-func validateServer(m *Manifest, phase ValidationPhase) error {
+func validateServer(m *Manifest) error {
 	if m.Server == nil {
 		return nil
 	}
@@ -230,7 +211,6 @@ func validateServer(m *Manifest, phase ValidationPhase) error {
 			)
 		}
 	}
-	_ = phase
 	return nil
 }
 
@@ -239,7 +219,7 @@ func validateServer(m *Manifest, phase ValidationPhase) error {
 // outside bounds — rate limit can't be effectively disabled (the
 // upper bound is high enough for legitimate high-throughput
 // apps but not infinite, by design).
-func validateRateLimit(m *Manifest, phase ValidationPhase) error {
+func validateRateLimit(m *Manifest) error {
 	if m.RateLimit == nil {
 		return nil
 	}
@@ -260,7 +240,6 @@ func validateRateLimit(m *Manifest, phase ValidationPhase) error {
 			)
 		}
 	}
-	_ = phase
 	return nil
 }
 
@@ -349,7 +328,7 @@ var hostnameRegex = regexp.MustCompile(
 // Required-ness of any of these is enforced separately at build
 // time (when Auth.config is in use). This validator only catches
 // malformed values when present.
-func validateMail(m *Manifest, phase ValidationPhase) error {
+func validateMail(m *Manifest) error {
 	if m.Mail == nil {
 		return nil
 	}
@@ -408,7 +387,6 @@ func validateMail(m *Manifest, phase ValidationPhase) error {
 				mail.SMTPPort)
 		}
 	}
-	_ = phase // shape rules apply to both phases
 	return nil
 }
 
@@ -416,7 +394,7 @@ func validateMail(m *Manifest, phase ValidationPhase) error {
 // of serverUrl depends on the build target — that gate lives in the
 // build path (scaffold.BuildIOS), not here. This validator only
 // catches malformed values when the field IS present.
-func validateIOS(m *Manifest, phase ValidationPhase) error {
+func validateIOS(m *Manifest) error {
 	if m.IOS == nil || m.IOS.ServerURL == "" {
 		return nil
 	}
@@ -430,7 +408,6 @@ func validateIOS(m *Manifest, phase ValidationPhase) error {
 	if localhostURLRegex.MatchString(url) {
 		return nil
 	}
-	_ = phase // shape check applies to both phases
 	return fmt.Errorf(
 		"mar.json: ios.serverUrl must be https:// (or http://localhost for local testing); got %q",
 		url,
@@ -439,7 +416,7 @@ func validateIOS(m *Manifest, phase ValidationPhase) error {
 
 // validateDatabaseAutoBackup enforces the bounds on the auto-backup
 // scheduler config. Hard rejection — same policy as adminPanel knobs.
-func validateDatabaseAutoBackup(m *Manifest, phase ValidationPhase) error {
+func validateDatabaseAutoBackup(m *Manifest) error {
 	if m.Database == nil || m.Database.AutoBackup == nil {
 		return nil
 	}
@@ -460,14 +437,13 @@ func validateDatabaseAutoBackup(m *Manifest, phase ValidationPhase) error {
 			)
 		}
 	}
-	_ = phase
 	return nil
 }
 
 // validateAdmins checks shape of every email in the admins list.
 // Compile-time only — boot-time re-runs the same shape check on the
 // same literals (admins are not env:VAR references).
-func validateAdmins(m *Manifest, phase ValidationPhase) error {
+func validateAdmins(m *Manifest) error {
 	for i, email := range m.Admins {
 		if email == "" {
 			return fmt.Errorf("mar.json: admins[%d] is empty", i)
@@ -485,12 +461,11 @@ func validateAdmins(m *Manifest, phase ValidationPhase) error {
 		}
 		seen[email] = i
 	}
-	_ = phase // shape check applies to both phases identically
 	return nil
 }
 
 // validateAdminPanel enforces ranges on adminPanel knobs.
-func validateAdminPanel(m *Manifest, phase ValidationPhase) error {
+func validateAdminPanel(m *Manifest) error {
 	if m.AdminPanel == nil {
 		return nil
 	}
@@ -506,7 +481,6 @@ func validateAdminPanel(m *Manifest, phase ValidationPhase) error {
 			)
 		}
 	}
-	_ = phase
 	return nil
 }
 

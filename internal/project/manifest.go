@@ -565,15 +565,8 @@ func loadManifestInternal(root string, resolveEnv bool, tolerateMissingEnv bool)
 			return nil, err
 		}
 	}
-	// Run schema validation against documented ranges/enums. Phase
-	// matches what loadManifestInternal was asked to do: compile-time
-	// rules apply to both phases; runtime-only rules (env-resolved
-	// secret length, etc) only run when env was resolved.
-	phase := CompileTime
-	if resolveEnv {
-		phase = BootTime
-	}
-	if err := Validate(&m, phase); err != nil {
+	// Run schema validation against documented ranges / enums.
+	if err := Validate(&m); err != nil {
 		return nil, err
 	}
 	return &m, nil

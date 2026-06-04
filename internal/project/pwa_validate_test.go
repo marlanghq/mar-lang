@@ -61,11 +61,11 @@ func TestValidatePWAIcon(t *testing.T) {
 
 func TestValidatePWAColors(t *testing.T) {
 	bad := &Manifest{Name: "X", PWA: &PWAConfig{ThemeColor: "blue"}}
-	if err := Validate(bad, CompileTime); err == nil {
+	if err := Validate(bad); err == nil {
 		t.Error("expected error for non-hex themeColor")
 	}
 	good := &Manifest{Name: "X", PWA: &PWAConfig{ThemeColor: "#0071e3", BackgroundColor: "#fff"}}
-	if err := Validate(good, CompileTime); err != nil {
+	if err := Validate(good); err != nil {
 		t.Errorf("valid hex colors rejected: %v", err)
 	}
 }

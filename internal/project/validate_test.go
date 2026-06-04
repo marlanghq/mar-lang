@@ -9,7 +9,7 @@ import (
 // TestValidate_NilManifest pins the no-op behavior. Useful because
 // LoadManifest returns nil for projects without mar.json.
 func TestValidate_NilManifest(t *testing.T) {
-	if err := Validate(nil, CompileTime); err != nil {
+	if err := Validate(nil); err != nil {
 		t.Fatalf("expected no error for nil manifest; got %v", err)
 	}
 }
@@ -20,7 +20,7 @@ func TestValidate_AdminsAcceptsValidEmails(t *testing.T) {
 	m := &Manifest{
 		Admins: []string{"me@example.com", "ops@team.io", "a.b+tag@domain.co.uk"},
 	}
-	if err := Validate(m, CompileTime); err != nil {
+	if err := Validate(m); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -42,7 +42,7 @@ func TestValidate_AdminsRejectsBadShape(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &Manifest{Admins: []string{tc.email}}
-			err := Validate(m, CompileTime)
+			err := Validate(m)
 			if err == nil {
 				t.Fatalf("expected error for %q; got nil", tc.email)
 			}
@@ -61,7 +61,7 @@ func TestValidate_AdminsRejectsDuplicates(t *testing.T) {
 	m := &Manifest{
 		Admins: []string{"me@x.com", "ops@x.com", "me@x.com"},
 	}
-	err := Validate(m, CompileTime)
+	err := Validate(m)
 	if err == nil {
 		t.Fatal("expected duplicate error; got nil")
 	}
@@ -77,7 +77,7 @@ func TestValidate_RecentRequestsSizeAcceptsRange(t *testing.T) {
 	cases := []int{0, 10, 200, 1000, 5000}
 	for _, v := range cases {
 		m := &Manifest{AdminPanel: &AdminPanelConfig{RecentRequestsSize: v}}
-		if err := Validate(m, CompileTime); err != nil {
+		if err := Validate(m); err != nil {
 			t.Errorf("recentRequestsSize=%d: unexpected error %v", v, err)
 		}
 	}
@@ -98,7 +98,7 @@ func TestValidate_RecentRequestsSizeRejectsOutOfRange(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &Manifest{AdminPanel: &AdminPanelConfig{RecentRequestsSize: tc.value}}
-			err := Validate(m, CompileTime)
+			err := Validate(m)
 			if err == nil {
 				t.Fatalf("expected error for value=%d; got nil", tc.value)
 			}
@@ -131,7 +131,7 @@ func TestValidate_AutoBackupAcceptsRange(t *testing.T) {
 					},
 				},
 			}
-			if err := Validate(m, CompileTime); err != nil {
+			if err := Validate(m); err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
 		})
@@ -164,7 +164,7 @@ func TestValidate_AutoBackupRejectsOutOfRange(t *testing.T) {
 					},
 				},
 			}
-			err := Validate(m, CompileTime)
+			err := Validate(m)
 			if tc.wantSub == "" {
 				if err != nil {
 					t.Errorf("expected no error; got %v", err)
@@ -229,7 +229,7 @@ func TestValidate_RateLimitAcceptsRange(t *testing.T) {
 					Burst:             tc.brst,
 				},
 			}
-			if err := Validate(m, CompileTime); err != nil {
+			if err := Validate(m); err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
 		})
@@ -261,7 +261,7 @@ func TestValidate_RateLimitRejectsOutOfRange(t *testing.T) {
 					Burst:             tc.brst,
 				},
 			}
-			err := Validate(m, CompileTime)
+			err := Validate(m)
 			if tc.wantSub == "" {
 				if err != nil {
 					t.Errorf("expected no error; got %v", err)
@@ -293,7 +293,7 @@ func TestValidate_MaxBodyBytesAcceptsRange(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &Manifest{Server: &ServerConfig{MaxBodyBytes: tc.value}}
-			if err := Validate(m, CompileTime); err != nil {
+			if err := Validate(m); err != nil {
 				t.Errorf("unexpected error for value=%d: %v", tc.value, err)
 			}
 		})
@@ -318,7 +318,7 @@ func TestValidate_MaxBodyBytesRejectsOutOfRange(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &Manifest{Server: &ServerConfig{MaxBodyBytes: tc.value}}
-			err := Validate(m, CompileTime)
+			err := Validate(m)
 			if err == nil {
 				t.Fatalf("expected error mentioning %q for value=%d; got nil", tc.wantSub, tc.value)
 			}
@@ -456,7 +456,7 @@ func TestValidate_Mail(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m := &Manifest{Mail: c.mail}
-			err := Validate(m, CompileTime)
+			err := Validate(m)
 			if c.wantSub == "" {
 				if err != nil {
 					t.Errorf("expected no error; got %v", err)
@@ -491,7 +491,7 @@ func TestValidate_MailPlaceholderIsTyped(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m := &Manifest{Mail: c.mail}
-			err := Validate(m, CompileTime)
+			err := Validate(m)
 			if err == nil {
 				t.Fatalf("expected error; got nil")
 			}
@@ -544,7 +544,7 @@ func TestValidate_MailRejectsFreeMailDomains(t *testing.T) {
 				SMTPHost:     "smtp.x.com",
 				SMTPUsername: "u",
 			}}
-			err := Validate(m, CompileTime)
+			err := Validate(m)
 			if tc.wantOK {
 				if err != nil {
 					t.Errorf("expected pass for %q; got %v", tc.from, err)
@@ -584,7 +584,7 @@ func TestValidate_IOSServerURL(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &Manifest{IOS: &IOSConfig{ServerURL: tc.url}}
-			err := Validate(m, CompileTime)
+			err := Validate(m)
 			if tc.wantErr && err == nil {
 				t.Errorf("expected error for %q; got nil", tc.url)
 			}
