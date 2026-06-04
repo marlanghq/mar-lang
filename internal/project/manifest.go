@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"mar/internal/auth"
+	"mar/internal/pwa"
 )
 
 // readSecure is a thin alias around crypto/rand.Read so the file's
@@ -132,6 +133,83 @@ type Manifest struct {
 	Admins     []string          `json:"admins,omitempty"`
 	AdminPanel *AdminPanelConfig `json:"adminPanel,omitempty"`
 	Deploy     *DeployConfig     `json:"deploy,omitempty"`
+	PWA        *PWAConfig        `json:"pwa,omitempty"`
+}
+
+// PWAConfig is the manifest's `pwa` block — Progressive Web App
+// install metadata. Every field (and the whole block) is optional:
+// the one mandatory manifest field, `name`, comes from the top-level
+// manifest, and the rest have defaults that always produce a valid,
+// installable PWA. PWA generation is always on for App.frontend; this
+// block only customizes it.
+type PWAConfig struct {
+	// ShortName is the label shown under the home-screen icon on
+	// narrow screens. Default: the manifest Name.
+	ShortName string `json:"shortName,omitempty"`
+
+	// Icon is a project-relative path to a master PNG (square,
+	// ≥ 512×512). Mar downscales it to every size the manifest +
+	// apple-touch-icon need. Default: a generated solid-color tile.
+	Icon string `json:"icon,omitempty"`
+
+	// ThemeColor tints the OS chrome (status bar) of the installed
+	// app. "#rrggbb" / "#rgb". Default "#ffffff".
+	ThemeColor string `json:"themeColor,omitempty"`
+
+	// BackgroundColor is the launch/splash background. "#rrggbb" /
+	// "#rgb". Default "#ffffff".
+	BackgroundColor string `json:"backgroundColor,omitempty"`
+}
+
+// ResolvedShortName returns the home-screen label, defaulting to the
+// app name when unset.
+func (p *PWAConfig) ResolvedShortName(name string) string {
+	if p == nil || p.ShortName == "" {
+		return name
+	}
+	return p.ShortName
+}
+
+// ResolvedThemeColor / ResolvedBackgroundColor return the configured
+// color or the white default.
+func (p *PWAConfig) ResolvedThemeColor() string {
+	if p == nil || p.ThemeColor == "" {
+		return "#ffffff"
+	}
+	return p.ThemeColor
+}
+
+func (p *PWAConfig) ResolvedBackgroundColor() string {
+	if p == nil || p.BackgroundColor == "" {
+		return "#ffffff"
+	}
+	return p.BackgroundColor
+}
+
+// ResolvePWA flattens the manifest's PWA settings (with defaults) into
+// a pwa.Config ready for the manifest + icon generators. Resolves the
+// icon path against projectDir. Safe on a nil manifest / nil PWA block.
+func (m *Manifest) ResolvePWA(projectDir string) pwa.Config {
+	var p *PWAConfig
+	name := ""
+	if m != nil {
+		p = m.PWA
+		name = m.Name
+	}
+	icon := ""
+	if p != nil && p.Icon != "" {
+		icon = p.Icon
+		if !filepath.IsAbs(icon) {
+			icon = filepath.Join(projectDir, icon)
+		}
+	}
+	return pwa.Config{
+		Name:            name,
+		ShortName:       p.ResolvedShortName(name),
+		ThemeColor:      p.ResolvedThemeColor(),
+		BackgroundColor: p.ResolvedBackgroundColor(),
+		IconPath:        icon,
+	}
 }
 
 // DeployConfig is the manifest's `deploy` block — per-target deploy
@@ -519,6 +597,7 @@ func checkUnknownTopFields(m map[string]json.RawMessage) error {
 		"admins":     true,
 		"adminPanel": true,
 		"deploy":     true,
+		"pwa":        true,
 	}
 	for k := range m {
 		if !known[k] {

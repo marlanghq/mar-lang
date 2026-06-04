@@ -353,6 +353,12 @@ func runFromPath(path string) error {
 		Burst: rateLimitCfg.ResolvedBurst(),
 	}))
 
+	// PWA manifest + icons for a fullstack frontend. No icon
+	// re-validation here: `mar build` already checked it. The
+	// generated-tile path needs no files; a custom icon must be in the
+	// deploy bundle (same caveat as public/).
+	jsserve.SetPWA(manifest.ResolvePWA(projectDir))
+
 	// Per-request body cap (see cmd/mar/main.go for the rationale).
 	var serverCfg *project.ServerConfig
 	if manifest != nil {

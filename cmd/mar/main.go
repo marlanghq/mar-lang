@@ -1089,6 +1089,22 @@ func runDev(path string, noOpen bool) int {
 		Burst: rateLimitCfg.ResolvedBurst(),
 	}))
 
+	// Static assets: files in the project's public/ folder are served
+	// verbatim at the site root (e.g. public/logo.svg → /logo.svg).
+	// `mar build` copies the same folder into dist/, so paths match in
+	// dev and in a deployed bundle. Set unconditionally — a missing
+	// folder just means no files match.
+	jsserve.SetPublicDir(filepath.Join(projectDir, "public"))
+
+	// PWA: validate the icon (fail fast on a bad master) and install
+	// the resolved config so /_mar/manifest.json + /_mar/icon-*.png
+	// serve. Always on for frontends — every app is installable.
+	if err := project.ValidatePWAIcon(projectDir, manifest); err != nil {
+		printError("mar dev", err)
+		return 1
+	}
+	jsserve.SetPWA(manifest.ResolvePWA(projectDir))
+
 	// Per-request body cap. validateServer already enforced bounds;
 	// the resolver returns the documented default for nil/zero.
 	var serverCfg *project.ServerConfig

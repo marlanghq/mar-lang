@@ -14,6 +14,7 @@ import (
 	"mar/internal/ast"
 	"mar/internal/jsserve"
 	"mar/internal/project"
+	"mar/internal/pwa"
 	"mar/internal/runtime"
 )
 
@@ -70,7 +71,7 @@ func Build(entry, distDir, target string) error {
 
 	switch bc.kind {
 	case kindFrontend:
-		return buildFrontendDist(distDir, bc)
+		return buildFrontendDist(projectDir, distDir, bc)
 	case kindBackend, kindFullstack:
 		return buildServerExecutable(projectDir, distDir, target, bc)
 	default:
@@ -377,7 +378,7 @@ func ValidateProductionConfig(projectDir string) error {
 // the runtime loads. runtime.js stays separate but is revalidated on
 // every load (see the `_headers` file below) so a framework upgrade is
 // never masked by a stale cached copy.
-func buildFrontendDist(distDir string, bc *buildCtx) error {
+func buildFrontendDist(projectDir, distDir string, bc *buildCtx) error {
 	if err := os.MkdirAll(distDir, 0o755); err != nil {
 		return err
 	}
@@ -416,8 +417,147 @@ func buildFrontendDist(distDir string, bc *buildCtx) error {
 			return err
 		}
 	}
-	fmt.Printf("[mar build] wrote %d files to %s\n", len(files), distDir)
+	// PWA: write the Web App Manifest + icons into dist/_mar/ so the
+	// deployed static bundle is installable (the HTML shell references
+	// /_mar/manifest.json + /_mar/icon-*.png). Mirrors what `mar dev`
+	// serves live from the same config. Always emitted — every Mar
+	// frontend is installable by default.
+	pwaCount, err := writePWAAssets(projectDir, distDir)
+	if err != nil {
+		return err
+	}
+
+	// Static assets: copy the project's public/ folder verbatim into
+	// dist/ (e.g. public/logo.svg → dist/logo.svg, served at /logo.svg).
+	// Matches what `mar dev` serves from the same folder, so a path
+	// works identically in dev and in the deployed bundle.
+	copied, err := copyPublicDir(filepath.Join(projectDir, "public"), distDir)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("[mar build] wrote %d files to %s\n", len(files)+pwaCount+copied, distDir)
 	return nil
+}
+
+// writePWAAssets validates the pwa.icon (if any) and writes the Web App
+// Manifest + every icon size into dist/_mar/. Returns the file count.
+// A bad icon fails the build (same check `mar dev` runs at boot).
+func writePWAAssets(projectDir, distDir string) (int, error) {
+	manifest, _ := project.LoadManifestDev(projectDir) // tolerant: nil is fine
+	if err := project.ValidatePWAIcon(projectDir, manifest); err != nil {
+		return 0, err
+	}
+	cfg := manifest.ResolvePWA(projectDir)
+	dir := filepath.Join(distDir, "_mar")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return 0, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), pwa.ManifestJSON(cfg), 0o644); err != nil {
+		return 0, err
+	}
+	count := 1
+	for _, size := range pwa.IconSizes {
+		b, err := pwa.IconPNG(cfg, size)
+		if err != nil {
+			return count, fmt.Errorf("generate icon-%d: %w", size, err)
+		}
+		name := fmt.Sprintf("icon-%d.png", size)
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
+			return count, err
+		}
+		count++
+	}
+	// /favicon.ico at the dist root — the path browsers request
+	// implicitly. PNG bytes (browsers accept PNG at .ico).
+	fav, err := pwa.IconPNG(cfg, pwa.FaviconSize)
+	if err != nil {
+		return count, fmt.Errorf("generate favicon: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(distDir, "favicon.ico"), fav, 0o644); err != nil {
+		return count, err
+	}
+	count++
+	return count, nil
+}
+
+// copyPublicDir copies every file under src into distDir, preserving
+// the relative tree (src/img/a.png → distDir/img/a.png). A missing src
+// is not an error — most projects have no public/ folder. Dotfiles are
+// skipped (e.g. .DS_Store). Returns the number of files copied.
+func copyPublicDir(src, distDir string) (int, error) {
+	info, err := os.Stat(src)
+	if err != nil || !info.IsDir() {
+		return 0, nil // no public/ folder — nothing to copy
+	}
+	count := 0
+	err = filepath.Walk(src, func(p string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if fi.IsDir() {
+			return nil
+		}
+		if strings.HasPrefix(fi.Name(), ".") {
+			return nil // skip .DS_Store and friends
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		// Refuse files that collide with Mar's reserved namespace —
+		// either a generated dist file we'd silently overwrite, or a
+		// server route prefix the runtime owns (so the asset would be
+		// shadowed in dev/fullstack and never served). Fail loud at
+		// build time instead of shipping a broken or invisible asset.
+		if reason := reservedPublicPath(rel); reason != "" {
+			return fmt.Errorf("public/%s conflicts with Mar's %s; rename it",
+				filepath.ToSlash(rel), reason)
+		}
+		dst := filepath.Join(distDir, rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		content, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, content, 0o644); err != nil {
+			return err
+		}
+		count++
+		return nil
+	})
+	return count, err
+}
+
+// reservedPublicPath reports whether a public/ relative path collides
+// with Mar's reserved namespace, returning a short human reason (or ""
+// when the path is fine). Two kinds of collision:
+//
+//   - generated dist files (index.html / runtime.js / program.json /
+//     _headers): a public/ copy would silently overwrite the real one
+//     and break the app.
+//   - server route prefixes (_mar / _auth / api / services): the
+//     runtime owns these paths, so an asset there is shadowed in dev
+//     and fullstack — it would never be served.
+//
+// Keep the route prefixes in sync with the handlers in
+// internal/jsserve/server.go (ServeLive).
+func reservedPublicPath(rel string) string {
+	slash := filepath.ToSlash(rel)
+	switch slash {
+	case "index.html", "runtime.js", "program.json", "_headers":
+		return "generated bundle file"
+	}
+	first := slash
+	if i := strings.IndexByte(slash, '/'); i >= 0 {
+		first = slash[:i]
+	}
+	switch first {
+	case "_mar", "_auth", "api", "services":
+		return "reserved route prefix /" + first + "/"
+	}
+	return ""
 }
 
 // buildServerExecutable produces a self-contained executable: a
@@ -629,7 +769,15 @@ const productionPageHTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- PWA: manifest + icons written into dist/ by mar build (see
+     buildFrontendDist). Makes the deployed app installable + fullscreen. -->
+<link rel="manifest" href="/_mar/manifest.json">
+<link rel="apple-touch-icon" href="/_mar/icon-180.png">
+<link rel="icon" type="image/png" href="/_mar/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>%s</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }

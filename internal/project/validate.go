@@ -15,6 +15,10 @@ package project
 
 import (
 	"fmt"
+	"image"
+	_ "image/png" // register PNG decoder for icon validation
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -139,6 +143,74 @@ func Validate(m *Manifest, phase ValidationPhase) error {
 	}
 	if err := validateServer(m, phase); err != nil {
 		return err
+	}
+	if err := validatePWA(m, phase); err != nil {
+		return err
+	}
+	return nil
+}
+
+var hexColorRe = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+
+// validatePWA checks the structural parts of the `pwa` block — the
+// colors must be valid hex. The icon FILE check (PNG / square / size)
+// lives in ValidatePWAIcon, which needs the project directory to
+// resolve the path and so runs from the CLI (dev + build), not from
+// this JSON-only validation.
+func validatePWA(m *Manifest, phase ValidationPhase) error {
+	if m.PWA == nil {
+		return nil
+	}
+	for _, c := range []struct{ field, val string }{
+		{"themeColor", m.PWA.ThemeColor},
+		{"backgroundColor", m.PWA.BackgroundColor},
+	} {
+		if c.val != "" && !hexColorRe.MatchString(c.val) {
+			return fmt.Errorf("mar.json: pwa.%s must be a hex color like \"#0071e3\" (got %q)", c.field, c.val)
+		}
+	}
+	_ = phase
+	return nil
+}
+
+// PWA icon requirements. 512 is the largest size the manifest
+// generates; below it the icon would be upscaled and look blurry.
+const minPWAIconSize = 512
+
+// ValidatePWAIcon checks the `pwa.icon` master image when one is set:
+// it must be a square PNG of at least 512×512 (Mar downscales it to
+// every size the manifest + apple-touch-icon need). Reads only the
+// image header (image.DecodeConfig) — no full decode. A nil PWA block
+// or empty icon path is fine (a tile is generated instead). Called from
+// `mar dev` (boot) and `mar build` so a bad icon fails fast.
+func ValidatePWAIcon(projectDir string, m *Manifest) error {
+	if m == nil || m.PWA == nil || m.PWA.Icon == "" {
+		return nil
+	}
+	path := m.PWA.Icon
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(projectDir, path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("mar.json: pwa.icon %s could not be opened: %w", m.PWA.Icon, err)
+	}
+	defer f.Close()
+	cfg, format, err := image.DecodeConfig(f)
+	if err != nil || format != "png" {
+		return fmt.Errorf("mar.json: pwa.icon %s must be a PNG\n"+
+			"      Hint: export a square PNG at least %d×%d; Mar generates every size from it.",
+			m.PWA.Icon, minPWAIconSize, minPWAIconSize)
+	}
+	if cfg.Width != cfg.Height {
+		return fmt.Errorf("mar.json: pwa.icon %s is %d×%d but must be square\n"+
+			"      Hint: app icons go in square/round slots; a non-square source gets distorted.",
+			m.PWA.Icon, cfg.Width, cfg.Height)
+	}
+	if cfg.Width < minPWAIconSize {
+		return fmt.Errorf("mar.json: pwa.icon %s is %d×%d but must be at least %d×%d\n"+
+			"      Hint: export a 1024×1024 PNG — Mar downscales it; upscaling a smaller one looks blurry.",
+			m.PWA.Icon, cfg.Width, cfg.Height, minPWAIconSize, minPWAIconSize)
 	}
 	return nil
 }

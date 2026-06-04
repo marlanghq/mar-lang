@@ -7,12 +7,103 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
 	"strings"
+	"sync"
 
 	esbuild "github.com/evanw/esbuild/pkg/api"
 
+	"mar/internal/pwa"
 	"mar/internal/runtime"
 )
+
+// pwaConfig is the resolved PWA config used by the manifest + icon
+// handlers. Set once at boot via SetPWA (defaults already applied by
+// the caller). The zero value still yields a valid manifest.
+var (
+	pwaMu     sync.RWMutex
+	pwaConfig pwa.Config
+)
+
+// SetPWA installs the PWA configuration for the manifest + icon
+// endpoints. Called once from the CLI before ServeLive.
+func SetPWA(c pwa.Config) {
+	pwaMu.Lock()
+	pwaConfig = c
+	pwaMu.Unlock()
+}
+
+func currentPWA() pwa.Config {
+	pwaMu.RLock()
+	defer pwaMu.RUnlock()
+	return pwaConfig
+}
+
+// publicDir is the project's `public/` folder, whose files are served
+// verbatim at the site root by `mar dev` (e.g. /logo.svg). Set once at
+// boot via SetPublicDir; empty disables static serving. `mar build`
+// copies the same folder into dist/ (see scaffold.buildFrontendDist),
+// so a path works identically in dev and in a deployed bundle.
+var (
+	publicDirMu sync.RWMutex
+	publicDir   string
+)
+
+// SetPublicDir installs the static-asset directory. Called once from
+// the CLI before ServeLive. Passing "" disables static serving.
+func SetPublicDir(dir string) {
+	publicDirMu.Lock()
+	publicDir = dir
+	publicDirMu.Unlock()
+}
+
+func currentPublicDir() string {
+	publicDirMu.RLock()
+	defer publicDirMu.RUnlock()
+	return publicDir
+}
+
+// serveStaticOrShell serves a file from the project's public/ dir when
+// the request path maps to a real file (e.g. /logo.svg), otherwise
+// renders the SPA shell so client-side routing keeps working. The path
+// is cleaned and confined to publicDir — `..` traversal and absolute
+// escapes can't reach outside the folder.
+func serveStaticOrShell(w http.ResponseWriter, r *http.Request, lp *LiveProgram) {
+	if dir := currentPublicDir(); dir != "" && r.URL.Path != "/" {
+		clean := path.Clean(r.URL.Path) // collapses .. and duplicate slashes
+		// Skip any path with a dotfile segment (.env, .git, .DS_Store…).
+		// Matches the build's copyPublicDir, which never ships them, so
+		// dev and a deployed bundle agree — and a stray secret dropped
+		// in public/ isn't served by accident.
+		if hasDotSegment(clean) {
+			renderShell(w, lp)
+			return
+		}
+		candidate := filepath.Join(dir, filepath.FromSlash(clean))
+		if rel, err := filepath.Rel(dir, candidate); err == nil &&
+			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+				http.ServeFile(w, r, candidate)
+				return
+			}
+		}
+	}
+	renderShell(w, lp)
+}
+
+// hasDotSegment reports whether any slash-separated segment of a
+// cleaned URL path starts with a dot (".env", ".git/config", …). The
+// leading "" segment from the leading slash is ignored.
+func hasDotSegment(cleanPath string) bool {
+	for _, seg := range strings.Split(cleanPath, "/") {
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+	}
+	return false
+}
 
 //go:embed runtime.js
 var runtimeJS string
@@ -147,6 +238,16 @@ const pageHTML = `<!doctype html>
      the inline <style> below. -->
 <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)">
+<!-- PWA: makes the app installable ("Add to Home Screen") and open
+     fullscreen. The manifest + icons are generated from mar.json's
+     pwa block (served at /_mar/* in dev, written into dist/ by
+     mar build). Always on for App.frontend. -->
+<link rel="manifest" href="/_mar/manifest.json">
+<link rel="apple-touch-icon" href="/_mar/icon-180.png">
+<link rel="icon" type="image/png" href="/_mar/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>%s</title>
 <script>
   // Eager fetch — same effect as <link rel="preload"> but works
@@ -459,6 +560,44 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 			w.Header().Set("Cache-Control", "no-cache")
 			serveProgramJSON(lp)(w, r)
 		}))
+
+		// PWA: Web App Manifest + icons, generated from the project's
+		// `pwa` block (defaults applied when absent). Always served for
+		// a frontend so every Mar app is installable. `mar build` writes
+		// the same files into dist/ for static deploys.
+		mux.HandleFunc("/_mar/manifest.json", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			_, _ = w.Write(pwa.ManifestJSON(currentPWA()))
+		})
+		for _, size := range pwa.IconSizes {
+			size := size // capture per iteration
+			mux.HandleFunc(fmt.Sprintf("/_mar/icon-%d.png", size), func(w http.ResponseWriter, r *http.Request) {
+				b, err := pwa.IconPNG(currentPWA(), size)
+				if err != nil {
+					http.Error(w, "icon generation failed", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "image/png")
+				w.Header().Set("Cache-Control", "public, max-age=3600")
+				_, _ = w.Write(b)
+			})
+		}
+		// /favicon.ico — browsers request this implicitly (tab, bookmark,
+		// address bar) regardless of <link rel="icon">. Serve the app
+		// icon as PNG bytes (browsers accept PNG at this path); without
+		// it the SPA catch-all returns HTML and the tab shows a generic
+		// icon. pwa.FaviconSize keeps it crisp at tab sizes.
+		mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+			b, err := pwa.IconPNG(currentPWA(), pwa.FaviconSize)
+			if err != nil {
+				http.Error(w, "icon generation failed", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			_, _ = w.Write(b)
+		})
 	}
 
 	switch {
@@ -483,12 +622,12 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 			dispatchBackend(lp.Routes(), r.URL.Path, w, r)
 		})))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			renderShell(w, lp)
+			serveStaticOrShell(w, r, lp)
 		})
 	case hasFrontend:
-		// Frontend-only: HTML at /.
+		// Frontend-only: HTML at /, with public/ files served verbatim.
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			renderShell(w, lp)
+			serveStaticOrShell(w, r, lp)
 		})
 	case hasAPI:
 		// Backend-only: user routes mount directly at /. The /_mar/reload
