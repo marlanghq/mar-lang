@@ -466,10 +466,16 @@ func addOp(args []Value) (Value, error) {
 func subOp(args []Value) (Value, error) {
 	switch a := args[0].(type) {
 	case VInt:
-		b := args[1].(VInt)
+		b, ok := args[1].(VInt)
+		if !ok {
+			return nil, fmt.Errorf("-: expected Int")
+		}
 		return VInt{V: a.V - b.V}, nil
 	case VFloat:
-		b := args[1].(VFloat)
+		b, ok := args[1].(VFloat)
+		if !ok {
+			return nil, fmt.Errorf("-: expected Float")
+		}
 		return VFloat{V: a.V - b.V}, nil
 	}
 	return nil, fmt.Errorf("-: unsupported")
@@ -478,10 +484,16 @@ func subOp(args []Value) (Value, error) {
 func mulOp(args []Value) (Value, error) {
 	switch a := args[0].(type) {
 	case VInt:
-		b := args[1].(VInt)
+		b, ok := args[1].(VInt)
+		if !ok {
+			return nil, fmt.Errorf("*: expected Int")
+		}
 		return VInt{V: a.V * b.V}, nil
 	case VFloat:
-		b := args[1].(VFloat)
+		b, ok := args[1].(VFloat)
+		if !ok {
+			return nil, fmt.Errorf("*: expected Float")
+		}
 		return VFloat{V: a.V * b.V}, nil
 	}
 	return nil, fmt.Errorf("*: unsupported")
@@ -490,13 +502,24 @@ func mulOp(args []Value) (Value, error) {
 func divOp(args []Value) (Value, error) {
 	switch a := args[0].(type) {
 	case VInt:
-		b := args[1].(VInt)
+		b, ok := args[1].(VInt)
+		if !ok {
+			return nil, fmt.Errorf("/: expected Int")
+		}
+		// Integer division is total: dividing by zero yields 0. This
+		// matches the web (runtime.js) and iOS runtimes (both return 0)
+		// and Elm's `//`. Erroring here would diverge by platform — the
+		// server would 500 while the client returns 0 — and there is no
+		// error channel in pure client-side eval.
 		if b.V == 0 {
-			return nil, fmt.Errorf("/: division by zero")
+			return VInt{V: 0}, nil
 		}
 		return VInt{V: a.V / b.V}, nil
 	case VFloat:
-		b := args[1].(VFloat)
+		b, ok := args[1].(VFloat)
+		if !ok {
+			return nil, fmt.Errorf("/: expected Float")
+		}
 		return VFloat{V: a.V / b.V}, nil
 	}
 	return nil, fmt.Errorf("/: unsupported")
@@ -616,7 +639,10 @@ func equalValues(a, b Value) bool {
 func compareValues(a, b Value) (int, error) {
 	switch av := a.(type) {
 	case VInt:
-		bv := b.(VInt)
+		bv, ok := b.(VInt)
+		if !ok {
+			return 0, fmt.Errorf("comparison: type mismatch")
+		}
 		switch {
 		case av.V < bv.V:
 			return -1, nil
@@ -625,7 +651,10 @@ func compareValues(a, b Value) (int, error) {
 		}
 		return 0, nil
 	case VFloat:
-		bv := b.(VFloat)
+		bv, ok := b.(VFloat)
+		if !ok {
+			return 0, fmt.Errorf("comparison: type mismatch")
+		}
 		switch {
 		case av.V < bv.V:
 			return -1, nil
@@ -634,7 +663,10 @@ func compareValues(a, b Value) (int, error) {
 		}
 		return 0, nil
 	case VString:
-		bv := b.(VString)
+		bv, ok := b.(VString)
+		if !ok {
+			return 0, fmt.Errorf("comparison: type mismatch")
+		}
 		switch {
 		case av.V < bv.V:
 			return -1, nil
@@ -643,7 +675,10 @@ func compareValues(a, b Value) (int, error) {
 		}
 		return 0, nil
 	case VChar:
-		bv := b.(VChar)
+		bv, ok := b.(VChar)
+		if !ok {
+			return 0, fmt.Errorf("comparison: type mismatch")
+		}
 		switch {
 		case av.V < bv.V:
 			return -1, nil
@@ -658,12 +693,20 @@ func compareValues(a, b Value) (int, error) {
 // --- logic / strings ---
 
 func andOp(args []Value) (Value, error) {
-	a, b := args[0].(VBool), args[1].(VBool)
+	a, ok := args[0].(VBool)
+	b, ok2 := args[1].(VBool)
+	if !ok || !ok2 {
+		return nil, fmt.Errorf("&&: expected Bool")
+	}
 	return VBool{V: a.V && b.V}, nil
 }
 
 func orOp(args []Value) (Value, error) {
-	a, b := args[0].(VBool), args[1].(VBool)
+	a, ok := args[0].(VBool)
+	b, ok2 := args[1].(VBool)
+	if !ok || !ok2 {
+		return nil, fmt.Errorf("||: expected Bool")
+	}
 	return VBool{V: a.V || b.V}, nil
 }
 
