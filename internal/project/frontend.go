@@ -19,9 +19,9 @@ import (
 // name ("Module.value"). `mar dev` uses this to enforce that
 // `Main.main : Effect String ()` before kicking off the server.
 //
-// Built-in stdlib modules (List, String, Maybe, Result, Effect, IO, JSON,
-// Server, Response, Db, Entity, View, App, Screen, Endpoint, Http) are
-// considered runtime-provided and are not loaded as files.
+// Built-in stdlib modules (List, String, UI, Dict, Time, etc.) are
+// runtime-provided and are not loaded as files; see isStdlib in project.go,
+// which derives the full set from the qualified builtin surface.
 func LoadForServeTyped(entry string) ([]*ast.Module, map[string]typecheck.Type, error) {
 	return LoadForServeTypedWithOverrides(entry, nil)
 }

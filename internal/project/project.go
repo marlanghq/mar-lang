@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"mar/internal/ast"
 	"mar/internal/diag"
@@ -458,19 +459,36 @@ func topoSort(parsed map[string]*ast.Module) ([]string, error) {
 	return order, nil
 }
 
-// isStdlib reports whether a module name refers to a built-in (e.g.
-// List, String). These don't have to exist as files; the runtime and
-// typecheck provide them. Keep the list in sync with frontend.go's
-// equivalent (today they're the same set).
+// isStdlib reports whether a module name refers to a built-in (e.g. List,
+// String, UI). These don't have to exist as files; the framework provides
+// them, so `import X` of one needs no corresponding .mar.
 func isStdlib(name string) bool {
-	switch name {
-	case "List", "String", "Maybe", "Result", "Effect",
-		"JSON", "Response", "Entity", "Repo", "View",
-		"UI",
-		"App", "Page", "Endpoint", "Http":
-		return true
-	}
-	return false
+	return stdlibModules()[name]
+}
+
+var (
+	stdlibModulesOnce sync.Once
+	stdlibModulesSet  map[string]bool
+)
+
+// stdlibModules is the set of built-in module names. It is derived from the
+// qualified builtin surface (typecheck.BaseQualifiedSymbols) so it can never
+// drift from what the language actually provides — adding a builtin under a
+// new module makes that module importable automatically. Computed once.
+func stdlibModules() map[string]bool {
+	stdlibModulesOnce.Do(func() {
+		// View is an ambient type module: UI.* build View values, so View
+		// has no qualified functions of its own and isn't in the qualified
+		// symbol map — but `import View` is still valid.
+		set := map[string]bool{"View": true}
+		for qualified := range typecheck.BaseQualifiedSymbols() {
+			if i := strings.IndexByte(qualified, '.'); i > 0 {
+				set[qualified[:i]] = true
+			}
+		}
+		stdlibModulesSet = set
+	})
+	return stdlibModulesSet
 }
 
 func joinName(parts []string) string {
