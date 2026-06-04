@@ -43,6 +43,11 @@ struct MarRenderer: View {
                 .foregroundStyle(.red)
                 .accessibilityAddTraits(.isStaticText)
 
+        case "image":
+            // AsyncImage from the src URL. Mirrors the JS renderer's
+            // <img class="mar-image"> + applyImageAttrs.
+            MarUIImage(view: view)
+
         case "button":
             Button(view.text) {
                 if let msg = view.msg {
@@ -916,6 +921,70 @@ private func pickerLabel(_ view: MarView, _ value: MarValue) -> String {
           let r = try? Eval.apply(fn, value),
           case .string(let s) = r else { return "" }
     return s
+}
+
+/// UI.image — AsyncImage with optional fixed size + content mode.
+/// Without a `size` attr the image fills its container width and keeps
+/// its aspect ratio; with one it pins width + height in points. fit
+/// (default) shows the whole image; fill crops to cover. alt is always
+/// present (required record field; "" = decorative).
+private struct MarUIImage: View {
+    let view: MarView
+
+    var body: some View {
+        let (w, h) = imageSize(view)
+        let fill = imagePresent(view, "contentModeFill")
+        AsyncImage(url: URL(string: imageAttrString(view, "src"))) { phase in
+            if let image = phase.image {
+                image
+                    .resizable()
+                    .aspectRatio(contentMode: fill ? .fill : .fit)
+            } else if phase.error != nil {
+                Color.gray.opacity(0.15)
+            } else {
+                Color.gray.opacity(0.08)
+            }
+        }
+        .frame(width: w, height: h)
+        .frame(maxWidth: w == nil ? .infinity : nil)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .accessibilityLabel(imageAttrString(view, "alt"))
+    }
+}
+
+/// Reads a String attr off an image view, "" if absent.
+private func imageAttrString(_ view: MarView, _ name: String) -> String {
+    for a in view.attrs where a.name == name {
+        if case .string(let s) = a.value { return s }
+    }
+    return ""
+}
+
+/// True when a flag attr (carrying .unit) is present.
+private func imagePresent(_ view: MarView, _ name: String) -> Bool {
+    for a in view.attrs where a.name == name { return true }
+    return false
+}
+
+/// Reads the `size` attr ({w, h} of px length-values) into
+/// (width?, height?) in points. nil when absent or malformed.
+private func imageSize(_ view: MarView) -> (CGFloat?, CGFloat?) {
+    for a in view.attrs where a.name == "size" {
+        if case .record(let fields, _) = a.value {
+            return (pxAmount(fields["w"]), pxAmount(fields["h"]))
+        }
+    }
+    return (nil, nil)
+}
+
+/// Unwraps a px length-value record ({__unit:"px", amount:N}) to N.
+private func pxAmount(_ v: MarValue?) -> CGFloat? {
+    if case .record(let fields, _)? = v,
+       case .int(let n)? = fields["amount"] {
+        return CGFloat(n)
+    }
+    return nil
 }
 
 // isDisabled reads the `disabled` attr off a view. File-scope helper

@@ -1354,6 +1354,23 @@ func stdlibBindings() map[string]Type {
 		"uiWidth":  TArrow{From: TWidth(), To: TAttr(TAttrInputHost())},
 		"uiHeight": TArrow{From: THeight(), To: TAttr(TAttrInputHost())},
 
+		// px : Int -> Pixels — pixel sizing unit for images. Separate
+		// from chars/lines so `px` only flows into image attrs and
+		// chars/lines only into input attrs (enforced by the type).
+		"uiPx": TArrow{From: TInt, To: TPixels()},
+
+		// size : Pixels -> Pixels -> Attr Image — fixed width + height
+		// for an image (e.g. a 64x64 avatar). Without it the image fills
+		// its container width and keeps its aspect ratio.
+		"uiSize": TArrow{From: TPixels(), To: TArrow{From: TPixels(), To: TAttr(TAttrImageHost())}},
+
+		// fit / fill : Attr Image — how the image fills its frame.
+		// fit (default) shows the whole image (letterboxed); fill crops
+		// to cover. Mirror CSS object-fit contain/cover and SwiftUI
+		// .aspectRatio(contentMode: .fit/.fill).
+		"uiFit":  TAttr(TAttrImageHost()),
+		"uiFill": TAttr(TAttrImageHost()),
+
 		// ---------- UI module: SwiftUI-style declarative vocabulary ----------
 		//
 		// Mirrors SwiftUI's container model so iOS gets `NavigationStack
@@ -1779,6 +1796,35 @@ func stdlibBindings() map[string]Type {
 		"uiErrorText": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{From: TString, To: TView(a)},
+		},
+
+		// UI.image : List (Attr Image) -> { src : String, alt : String } -> View msg
+		// Displays an image from a URL (remote) or app path (served from
+		// dist/ or the project's public/ folder). `alt` is REQUIRED (a
+		// record field, not an optional attr) so every image carries a
+		// text description — for screen readers and a future text/CLI
+		// renderer where alt IS the rendering. An empty alt ("") is the
+		// deliberate "decorative, ignore me" escape.
+		// Attrs (Image-hosted): `size (px w) (px h)`, `fit`, `fill`.
+		//
+		// RASTER ONLY: PNG / JPEG / WebP / GIF — the formats all three
+		// runtimes decode natively (web <img>, iOS UIImage/AsyncImage,
+		// Android). SVG is NOT supported: iOS and Android can't decode it
+		// without a third-party library, and "works on every runtime" is
+		// a hard rule. Vector art (icons/logos) belongs in a future
+		// `icon` primitive mapped to native symbol sets, not in `image`.
+		"uiImage": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TList(TAttr(TAttrImageHost())),
+				To: TArrow{
+					From: TRecord{
+						Fields: map[string]Type{"src": TString, "alt": TString},
+						Order:  []string{"src", "alt"},
+					},
+					To: TView(a),
+				},
+			},
 		},
 
 		// UI.navigationLink : List Attr -> Path r -> r -> View msg -> View msg
@@ -2626,6 +2672,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"UI.title":           "uiTitle",
 		"UI.subtitle":        "uiSubtitle",
 		"UI.errorText":       "uiErrorText",
+		"UI.image":           "uiImage",
 		"UI.paragraph":       "uiParagraph",
 		"UI.span":            "uiSpan",
 		"UI.bold":            "inlineBold",
@@ -2654,10 +2701,16 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		// via chars / lines. Type-safe units: `chars` only builds Width,
 		// `lines` only builds Height, so `height (chars 6)` is a type
 		// error caught by the typechecker.
-		"UI.chars":      "uiChars",
-		"UI.lines":      "uiLines",
-		"UI.width":      "uiWidth",
-		"UI.height":     "uiHeight",
+		"UI.chars":  "uiChars",
+		"UI.lines":  "uiLines",
+		"UI.width":  "uiWidth",
+		"UI.height": "uiHeight",
+		// Image sizing: px builds a Pixels value; size/fit/fill are
+		// Image-hosted attrs.
+		"UI.px":         "uiPx",
+		"UI.size":       "uiSize",
+		"UI.fit":        "uiFit",
+		"UI.fill":       "uiFill",
 		"App.frontend":  "appFrontend",
 		"App.backend":   "appBackend",
 		"App.fullstack": "appFullstack",

@@ -417,6 +417,7 @@ func TAttrToggleHost() Type    { return TCon{Name: "Toggle"} }
 func TAttrStackHost() Type     { return TCon{Name: "Stack"} }
 func TAttrListHost() Type      { return TCon{Name: "List"} }
 func TAttrKeyedListHost() Type { return TCon{Name: "KeyedList"} }
+func TAttrImageHost() Type     { return TCon{Name: "Image"} }
 
 // TAttrInlineHost is the host marker for inline-text attrs (bold,
 // italic, strikethrough, code, link). Used by `text [attrs] "..."`
@@ -445,6 +446,14 @@ func TAttrAny(a Type) Type { return TAttr(a) }
 // types so the typechecker rejects `width (lines 5)` / `height (chars 5)`.
 func TWidth() TCon  { return TCon{Name: "Width"} }
 func THeight() TCon { return TCon{Name: "Height"} }
+
+// TPixels — opaque pixel sizing unit for media. `px : Int -> Pixels`.
+// Deliberately distinct from Width / Height (the char/line units for
+// inputs) so pixel sizing stays scoped to images: `width (px 8)` on a
+// text field and `size (chars 8) ...` on an image are both rejected at
+// compile time. Keeps the "no arbitrary pixel layout" rule intact while
+// giving images the one place raw dimensions genuinely matter.
+func TPixels() TCon { return TCon{Name: "Pixels"} }
 
 // TPage returns the opaque "Page" type — a single MVU screen bound to a
 // URL path. Both single-screen and multi-screen apps are expressed as a

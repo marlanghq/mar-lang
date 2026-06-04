@@ -1967,6 +1967,20 @@
     const uiErrorTextCtor = native(1, ([s]) => VView('errorText', [], [], s.s));
     def('uiErrorText', uiErrorTextCtor); def('UI.errorText', uiErrorTextCtor);
 
+    // image : List (Attr Image) -> { src, alt } -> View msg
+    // Emits an "image" tag carrying src + alt (and any size/fit/fill
+    // attrs) so createDOM can build an <img>. Mirrors Go runtime's
+    // uiImage + iOS MarRenderer "image" case.
+    const uiImageCtor = native(2, ([attrsList, rec]) => {
+      const attrs = collectAttrs(attrsList);
+      const src = rec.fields.src ? rec.fields.src.s : '';
+      const alt = rec.fields.alt ? rec.fields.alt.s : '';
+      attrs.push({ name: 'src', value: VString(src) });
+      attrs.push({ name: 'alt', value: VString(alt) });
+      return VView('image', attrs, [], '');
+    });
+    def('uiImage', uiImageCtor); def('UI.image', uiImageCtor);
+
     // chars / lines — sizing units. Each wraps an Int in a record
     // tagged with __unit so the renderer can dispatch on what the
     // number means (horizontal characters vs vertical lines).
@@ -1986,6 +2000,20 @@
     def('uiWidth',  uiWidthCtor);  def('UI.width',  uiWidthCtor);
     const uiHeightCtor = native(1, ([v]) => makeAttr('height', v));
     def('uiHeight', uiHeightCtor); def('UI.height', uiHeightCtor);
+
+    // px — pixel sizing unit for images (mirrors chars/lines, tagged
+    // 'px'). size — fixed width+height attr for an image. fit/fill —
+    // content-mode flags. createDOM's 'image' case reads these.
+    const uiPxCtor = native(1, ([n]) =>
+      VRecord({ __unit: VString('px'), amount: VInt(n.n) }, ['__unit', 'amount']));
+    def('uiPx', uiPxCtor); def('UI.px', uiPxCtor);
+    const uiSizeCtor = native(2, ([w, h]) =>
+      makeAttr('size', VRecord({ w, h }, ['w', 'h'])));
+    def('uiSize', uiSizeCtor); def('UI.size', uiSizeCtor);
+    const fitAttr = flagAttr('contentModeFit');
+    def('uiFit', fitAttr); def('UI.fit', fitAttr);
+    const fillAttr = flagAttr('contentModeFill');
+    def('uiFill', fillAttr); def('UI.fill', fillAttr);
 
     // navigationLink : List Attr -> Path r -> r -> View msg -> View msg
     // Mirror of SwiftUI's NavigationLink. The Path + record build
@@ -3970,6 +3998,33 @@
     }
   }
 
+  // applyImageAttrs reads image-only attrs and applies them to an
+  // <img>: `size` (fixed width + height, each a px length-value built
+  // by UI.size (px w) (px h)) and the content-mode flags (fit/fill →
+  // object-fit contain/cover). All optional. Without `size` the image
+  // fills its container width and keeps its aspect ratio (the
+  // .mar-image CSS default). Default content mode is contain (no crop).
+  function applyImageAttrs(node, view) {
+    const sz = getAttrRaw(view, 'size');
+    if (sz && sz.k === 'R' && sz.fields) {
+      const w = readPxAmount(sz.fields.w);
+      const h = readPxAmount(sz.fields.h);
+      if (w != null) { node.style.width = w + 'px'; node.style.maxWidth = 'none'; }
+      if (h != null) node.style.height = h + 'px';
+    }
+    if (getAttrRaw(view, 'contentModeFill')) node.style.objectFit = 'cover';
+    else if (getAttrRaw(view, 'contentModeFit')) node.style.objectFit = 'contain';
+  }
+
+  // readPxAmount unwraps a px length-value record ({__unit:'px',
+  // amount:N}) to its integer N, or null if malformed.
+  function readPxAmount(v) {
+    if (v && v.k === 'R' && v.fields && v.fields.amount && v.fields.amount.k === 'I') {
+      return v.fields.amount.n;
+    }
+    return null;
+  }
+
   // readLengthAttr unwraps a sizing-attr value into { unit, amount }.
   // The Mar-side type system enforces that `width` carries a Width
   // (chars N) and `height` carries a Height (lines N), so the unit
@@ -5033,6 +5088,15 @@
       '  font-size: 17px; font-weight: 400; color: #86868b;',
       '  margin: 0; line-height: 1.35;',
       '}',
+      // image — UI.image. Default (no `size` attr): fills the
+      // container width and keeps aspect ratio. A `size` attr sets
+      // explicit width/height inline (see applyImageAttrs). Rounded
+      // corners match the section-card radius language; object-fit
+      // defaults to contain (no crop) and flips to cover under `fill`.
+      '.mar-image {',
+      '  display: block; max-width: 100%; height: auto;',
+      '  border-radius: 10px; object-fit: contain;',
+      '}',
       // errorText — red + semi-bold so "couldn't reach the server"
       // and similar destructive-state messages jump out from the
       // surrounding plain body text. The shade is iOS systemRed
@@ -5786,6 +5850,7 @@
       case 'title':           return 'h1';
       case 'subtitle':        return 'h2';
       case 'errorText':       return 'p';
+      case 'image':           return 'img';
       case 'paragraph':       return 'p';
       // span: <a> when an inlineLink attr is present, <span>
       // otherwise. createDOM handles the link case directly because
@@ -5900,6 +5965,18 @@
         e.className = 'mar-error-text';
         e.setAttribute('role', 'alert');
         e.textContent = view.text;
+        break;
+      case 'image':
+        // <img> from src + alt. alt is always present (required record
+        // field on the Mar side); "" is the decorative escape. lazy +
+        // async so off-screen images don't block first paint.
+        ensureUIStyles();
+        e.className = 'mar-image';
+        e.setAttribute('src', getAttr(view, 'src'));
+        e.setAttribute('alt', getAttr(view, 'alt'));
+        e.setAttribute('loading', 'lazy');
+        e.setAttribute('decoding', 'async');
+        applyImageAttrs(e, view);
         break;
       case 'button':
         e.textContent = view.text;
@@ -6495,6 +6572,19 @@
       case 'errorText':
         if (node.textContent !== newView.text) node.textContent = newView.text;
         break;
+      case 'image': {
+        const newSrc = getAttr(newView, 'src');
+        const newAlt = getAttr(newView, 'alt');
+        if (node.getAttribute('src') !== newSrc) node.setAttribute('src', newSrc);
+        if (node.getAttribute('alt') !== newAlt) node.setAttribute('alt', newAlt);
+        // Clear inline sizing/object-fit before re-applying so a model
+        // change that drops the size/contentMode attr doesn't leave a
+        // stale style behind.
+        node.style.width = ''; node.style.height = '';
+        node.style.maxWidth = ''; node.style.objectFit = '';
+        applyImageAttrs(node, newView);
+        break;
+      }
       case 'button':
         if (node.textContent !== newView.text) node.textContent = newView.text;
         applyDisabledAttr(node, newView);

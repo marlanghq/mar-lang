@@ -2154,6 +2154,25 @@ enum MarBuiltins {
         env.define("uiErrorText",  .fn(uiErrorText))
         env.define("UI.errorText", .fn(uiErrorText))
 
+        // image : List (Attr Image) -> { src, alt } -> View msg
+        // Carries src + alt (and any size/fit/fill attrs) on an "image"
+        // view; MarRenderer's "image" case renders an AsyncImage. alt is
+        // a required record field, never optional.
+        let uiImage = MarFn.native(2) { args in
+            var attrs = collectAttrs(args[0])
+            var src = ""
+            var alt = ""
+            if case .record(let fields, _) = args[1] {
+                if case .string(let s)? = fields["src"] { src = s }
+                if case .string(let a)? = fields["alt"] { alt = a }
+            }
+            attrs.append(MarView.Attr(name: "src", value: .string(src)))
+            attrs.append(MarView.Attr(name: "alt", value: .string(alt)))
+            return .view(MarView(tag: "image", attrs: attrs, children: [], text: "", msg: nil, key: nil))
+        }
+        env.define("uiImage",  .fn(uiImage))
+        env.define("UI.image", .fn(uiImage))
+
         // paragraph : List (Inline msg) -> View msg
         //
         // A flowing block of inline atoms. The `span` children carry
@@ -2246,6 +2265,30 @@ enum MarBuiltins {
         }
         env.define("uiHeight", .fn(uiHeight))
         env.define("UI.height", .fn(uiHeight))
+
+        // px — pixel sizing unit for images (mirrors chars/lines,
+        // tagged "px"). size — fixed width+height attr for an image.
+        // fit/fill — content-mode flags. MarRenderer's "image" case
+        // reads these.
+        let uiPx = MarFn.native(1) { args in
+            let n: Int
+            if case .int(let i) = args[0] { n = i } else { n = 0 }
+            return .record(
+                fields: ["__unit": .string("px"), "amount": .int(n)],
+                order: ["__unit", "amount"]
+            )
+        }
+        env.define("uiPx", .fn(uiPx))
+        env.define("UI.px", .fn(uiPx))
+        let uiSize = MarFn.native(2) { args in
+            return makeAttr("size", .record(fields: ["w": args[0], "h": args[1]], order: ["w", "h"]))
+        }
+        env.define("uiSize", .fn(uiSize))
+        env.define("UI.size", .fn(uiSize))
+        env.define("uiFit",  flagAttr("contentModeFit"))
+        env.define("UI.fit",  flagAttr("contentModeFit"))
+        env.define("uiFill", flagAttr("contentModeFill"))
+        env.define("UI.fill", flagAttr("contentModeFill"))
 
         // navigationLink : Path r -> r -> View msg -> View msg
         // Mirror of SwiftUI's NavigationLink. The typed Path +

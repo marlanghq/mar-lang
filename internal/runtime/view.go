@@ -312,6 +312,27 @@ func viewBuiltins() map[string]Value {
 		// (.foregroundStyle(.red).fontWeight(.semibold)).
 		"uiErrorText": textLeaf("errorText", "UI.errorText"),
 
+		// uiImage : List (Attr Image) -> { src, alt } -> View msg
+		// Emits an "image" tag carrying src + alt (and any size/fit/fill
+		// attrs). alt is a required record field, never optional.
+		"uiImage": nativeFn(2, func(args []Value) (Value, error) {
+			attrs, err := collectAttrs(args[0], "UI.image")
+			if err != nil {
+				return nil, err
+			}
+			rec, ok := args[1].(VRecord)
+			if !ok {
+				return nil, fmt.Errorf("UI.image: expected { src, alt } record (got %T)", args[1])
+			}
+			src, _ := rec.Fields["src"].(VString)
+			alt, _ := rec.Fields["alt"].(VString)
+			attrs = append(attrs,
+				VAttr{Name: "src", Value: src},
+				VAttr{Name: "alt", Value: alt},
+			)
+			return VView{Tag: "image", Attrs: attrs}, nil
+		}),
+
 		// uiParagraph : List (Inline msg) -> View msg
 		// Block of flowing inline text. Children are VViews with tag
 		// "span" produced by uiSpan; the renderer flows them into one
@@ -388,6 +409,27 @@ func viewBuiltins() map[string]Value {
 		"uiHeight": nativeFn(1, func(args []Value) (Value, error) {
 			return makeAttr("height", args[0]), nil
 		}),
+
+		// uiPx — pixel sizing unit for images. Same shape as uiChars/
+		// uiLines (a __unit-tagged length value), but tagged "px".
+		"uiPx": nativeFn(1, func(args []Value) (Value, error) {
+			n, ok := args[0].(VInt)
+			if !ok {
+				return nil, fmt.Errorf("UI.px: expected Int (got %T)", args[0])
+			}
+			return lengthValue("px", n.V), nil
+		}),
+		// uiSize — fixed width + height for an image. Packs both Pixels
+		// values into the attr payload; the renderer reads w/h.
+		"uiSize": nativeFn(2, func(args []Value) (Value, error) {
+			return makeAttr("size", VRecord{
+				Fields: map[string]Value{"w": args[0], "h": args[1]},
+				Order:  []string{"w", "h"},
+			}), nil
+		}),
+		// uiFit / uiFill — content-mode flags for images.
+		"uiFit":  flagAttr("contentModeFit"),
+		"uiFill": flagAttr("contentModeFill"),
 
 		// uiNavigationLink : List Attr -> Path r -> r -> View msg -> View msg
 		// Mirror of SwiftUI's `NavigationLink(value:){content}`.
