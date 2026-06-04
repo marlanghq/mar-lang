@@ -1094,7 +1094,16 @@ func runDev(path string, noOpen bool) int {
 	// `mar build` copies the same folder into dist/, so paths match in
 	// dev and in a deployed bundle. Set unconditionally — a missing
 	// folder just means no files match.
-	jsserve.SetPublicDir(filepath.Join(projectDir, "public"))
+	//
+	// First reject files that collide with Mar's reserved namespace — the
+	// same check `mar build` runs — so a colliding asset fails fast here
+	// instead of being silently shadowed in dev and only rejected at build.
+	publicDir := filepath.Join(projectDir, "public")
+	if err := jsserve.ValidatePublicDir(publicDir); err != nil {
+		printError("mar dev", err)
+		return 1
+	}
+	jsserve.SetPublicDir(publicDir)
 
 	// PWA: validate the icon (fail fast on a bad master) and install
 	// the resolved config so /_mar/manifest.json + /_mar/icon-*.png

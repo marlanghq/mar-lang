@@ -119,12 +119,13 @@ native symbol sets, not `image`.
   subfolders preserved) and copied into `dist/` by `mar build`. Dotfiles
   are skipped. The served file is fetched over HTTP like any other asset
   (same mechanism on web and iOS/AsyncImage) — it is NOT inlined into the
-  page or bundled into the native app binary. `mar build` **errors** if a
-  `public/` path collides with Mar's reserved namespace: the generated
-  files (`index.html`, `runtime.js`, `program.json`, `_headers`) or the
-  route prefixes `_mar/` `_auth/` `api/` `services/` (keep
-  `reservedPublicPath` in `build.go` in sync with the routes in
-  `jsserve/server.go`).
+  page or bundled into the native app binary. Both `mar dev` (at boot) and
+  `mar build` **error** if a `public/` path collides with Mar's reserved
+  namespace: the generated files (`index.html`, `runtime.js`,
+  `program.json`, `_headers`) or the route prefixes `_mar/` `_auth/`
+  `api/` `services/`. The check is `jsserve.ReservedPublicPath`, which
+  lives next to the route handlers it mirrors — keep it in sync when
+  adding a new top-level route.
 - **`mar cloudflare-pages deploy` auto-opens the per-deployment URL**, not
   the production alias (the alias lags a few seconds and would show the
   previous version).

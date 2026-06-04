@@ -6,38 +6,6 @@ import (
 	"testing"
 )
 
-func TestReservedPublicPath(t *testing.T) {
-	cases := []struct {
-		rel      string
-		reserved bool
-	}{
-		// Generated bundle files — would overwrite the real ones.
-		{"index.html", true},
-		{"runtime.js", true},
-		{"program.json", true},
-		{"_headers", true},
-		// Server route prefixes — owned by the runtime.
-		{"api/notes.json", true},
-		{"_mar/x", true},
-		{"_auth/logo.png", true},
-		{"services/y", true},
-		{filepath.Join("api", "deep", "z.txt"), true},
-		// Fine — ordinary assets.
-		{"logo.png", false},
-		{"showcase-sample.png", false},
-		{filepath.Join("img", "a.jpg"), false},
-		{"apiary.png", false},  // not the "api" segment
-		{"index.htmlx", false}, // not exactly index.html
-		{"_headersfoo", false}, // not exactly _headers
-	}
-	for _, tc := range cases {
-		got := reservedPublicPath(tc.rel) != ""
-		if got != tc.reserved {
-			t.Errorf("reservedPublicPath(%q) reserved=%v, want %v", tc.rel, got, tc.reserved)
-		}
-	}
-}
-
 func TestCopyPublicDirRejectsReserved(t *testing.T) {
 	src := t.TempDir()
 	dist := t.TempDir()

@@ -509,7 +509,7 @@ func copyPublicDir(src, distDir string) (int, error) {
 		// server route prefix the runtime owns (so the asset would be
 		// shadowed in dev/fullstack and never served). Fail loud at
 		// build time instead of shipping a broken or invisible asset.
-		if reason := reservedPublicPath(rel); reason != "" {
+		if reason := jsserve.ReservedPublicPath(rel); reason != "" {
 			return fmt.Errorf("public/%s conflicts with Mar's %s; rename it",
 				filepath.ToSlash(rel), reason)
 		}
@@ -528,36 +528,6 @@ func copyPublicDir(src, distDir string) (int, error) {
 		return nil
 	})
 	return count, err
-}
-
-// reservedPublicPath reports whether a public/ relative path collides
-// with Mar's reserved namespace, returning a short human reason (or ""
-// when the path is fine). Two kinds of collision:
-//
-//   - generated dist files (index.html / runtime.js / program.json /
-//     _headers): a public/ copy would silently overwrite the real one
-//     and break the app.
-//   - server route prefixes (_mar / _auth / api / services): the
-//     runtime owns these paths, so an asset there is shadowed in dev
-//     and fullstack — it would never be served.
-//
-// Keep the route prefixes in sync with the handlers in
-// internal/jsserve/server.go (ServeLive).
-func reservedPublicPath(rel string) string {
-	slash := filepath.ToSlash(rel)
-	switch slash {
-	case "index.html", "runtime.js", "program.json", "_headers":
-		return "generated bundle file"
-	}
-	first := slash
-	if i := strings.IndexByte(slash, '/'); i >= 0 {
-		first = slash[:i]
-	}
-	switch first {
-	case "_mar", "_auth", "api", "services":
-		return "reserved route prefix /" + first + "/"
-	}
-	return ""
 }
 
 // buildServerExecutable produces a self-contained executable: a
