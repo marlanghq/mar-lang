@@ -74,6 +74,16 @@ When adding a UI primitive: add the type scheme, the Go runtime builtin,
 the JS renderer case + CSS, and the iOS builtin + `MarRenderer` case —
 then run the drift/parity tests.
 
+**Parity is about behavior, not just builtins.** The drift/parity tests
+guard that every builtin/view-tag exists on every runtime, but they
+can't check *content/format* support. The same rule still applies: if a
+capability only works on web, either (1) limit the feature to the common
+denominator all runtimes support, or (2) implement it on every runtime.
+Example: `UI.image` is **raster only** (PNG/JPEG/WebP/GIF) because that's
+what web + iOS + Android decode natively; SVG is excluded (iOS/Android
+need a third-party decoder). Vector art is a future `icon` primitive over
+native symbol sets, not `image`.
+
 ## Gotchas an agent will hit
 
 - **`runtime.js` is embedded in the `mar` binary.** Editing it does
@@ -95,6 +105,26 @@ then run the drift/parity tests.
 - **Frontend deploys ship a `_headers` file** (`internal/scaffold/build.go`)
   with `Cache-Control: no-cache` so Cloudflare Pages revalidates instead
   of serving a stale bundle after a redeploy.
+- **PWA is web-target infra, generated from `mar.json`'s `pwa` block.**
+  `internal/pwa` builds the Web App Manifest + icons; `jsserve.SetPWA`
+  serves them at `/_mar/manifest.json` + `/_mar/icon-*.png` in dev, and
+  `mar build` writes them into `dist/_mar/`. Always on for `App.frontend`
+  (every app is installable); all `pwa` fields optional. A `pwa.icon`
+  must be a square PNG ≥ 512 — `ValidatePWAIcon` (in `internal/project`)
+  fails dev boot + build otherwise. No Mar language surface, no
+  drift/parity concern. Icon resize is a stdlib box-downscale (no
+  `x/image` dep).
+- **`public/` is the static-asset folder.** Files in a project's `public/`
+  are served at the site root by `mar dev` (`public/logo.png` → `/logo.png`,
+  subfolders preserved) and copied into `dist/` by `mar build`. Dotfiles
+  are skipped. The served file is fetched over HTTP like any other asset
+  (same mechanism on web and iOS/AsyncImage) — it is NOT inlined into the
+  page or bundled into the native app binary. `mar build` **errors** if a
+  `public/` path collides with Mar's reserved namespace: the generated
+  files (`index.html`, `runtime.js`, `program.json`, `_headers`) or the
+  route prefixes `_mar/` `_auth/` `api/` `services/` (keep
+  `reservedPublicPath` in `build.go` in sync with the routes in
+  `jsserve/server.go`).
 - **`mar cloudflare-pages deploy` auto-opens the per-deployment URL**, not
   the production alias (the alias lags a few seconds and would show the
   previous version).

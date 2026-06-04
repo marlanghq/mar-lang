@@ -135,6 +135,60 @@ Auto-derived from entity declarations on server startup. No hand-written migrati
   - Warning: lists extra columns or other notices
   - Error: refuses to start, suggests manual SQL
 
+### 2.5 Static assets (`public/`)
+
+Files in a project's `public/` folder are served at the site root and
+travel with the build:
+
+- `mar dev` serves them live (`public/logo.png` → `/logo.png`, subfolders
+  preserved).
+- `mar build` copies the whole tree into `dist/` so they ship with the
+  deployed bundle. Dotfiles (`.DS_Store`, `.env`, …) are skipped.
+- Reference them by absolute path, e.g. `image [] { src = "/logo.png", alt = "…" }`.
+
+The asset is fetched over HTTP like any other resource — the same on web
+and on iOS/Android (`AsyncImage` fetches from the app's server). It is
+**not** inlined into the page or bundled into the native app binary, so a
+reachable host must serve `public/` at runtime.
+
+Reserved: `mar build` refuses a `public/` path that collides with a
+generated file (`index.html`, `runtime.js`, `program.json`, `_headers`)
+or a runtime route prefix (`_mar/`, `_auth/`, `api/`, `services/`).
+
+### 2.6 PWA (installable web app)
+
+Every `App.frontend` app is an installable PWA out of the box — `mar dev`
+serves a Web App Manifest + icons and `mar build` writes them into
+`dist/`, so "Add to Home Screen" produces a real app icon that opens
+fullscreen on iOS, Android, and desktop. No per-app boilerplate.
+
+Customize it with an optional `pwa` block in `mar.json` (every field
+optional; the mandatory manifest `name` comes from the top-level
+`name`):
+
+```json
+{
+  "name": "Daily Checklist",
+  "pwa": {
+    "shortName": "Checklist",
+    "icon": "./icon.png",
+    "themeColor": "#0071e3",
+    "backgroundColor": "#ffffff"
+  }
+}
+```
+
+- **shortName** — home-screen label (default: `name`).
+- **icon** — project-relative master PNG. **Must be a square PNG, at
+  least 512×512** (`mar dev` / `mar build` fail fast otherwise); Mar
+  downscales it to every needed size. Default: a generated solid-color
+  tile, so a valid icon always exists.
+- **themeColor / backgroundColor** — hex, default `#ffffff`.
+
+Generated endpoints (served in dev, written to `dist/` by build):
+`/_mar/manifest.json`, `/_mar/icon-180.png`, `/_mar/icon-192.png`,
+`/_mar/icon-512.png`.
+
 ## 3. Basic Types
 
 ### 3.1 Syntax
