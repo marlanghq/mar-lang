@@ -60,44 +60,53 @@ the goroutine is failing silently. Check `fly logs` for
 "could not create catalog dir" — usually permissions or volume
 not mounted.
 
-## Phase 2 — restore via panel
+## Phase 2 — restore via CLI on the server
 
-**Goal**: confirm the atomic-swap + restart flow actually brings
-the machine back up cleanly with the restored DB.
+**Goal**: confirm `mar-runtime restore-db` swaps the DB on a real
+Fly volume and the machine comes back up with the restored state.
+(Restore is deliberately CLI-only — there is no panel button.)
 
-1. [ ] Open the admin panel: `https://YOUR-APP.fly.dev/_mar/admin`
-2. [ ] Log in with an admin email.
-3. [ ] Navigate to **Database backups** section.
-4. [ ] Note the live database state visible in the **Database** /
-       **Tables** sections — pick something specific to verify the
-       restore is real (e.g. count of rows in some table).
-5. [ ] Click **Restore** on a backup taken BEFORE you noted the
-       state.
-6. [ ] Confirm the dialog ("the current database will be moved to
-       a .bak file...").
+1. [ ] Open the admin panel and note the live database state in the
+       **Database** / **Tables** sections — pick something specific
+       to verify the restore is real (e.g. count of rows in some
+       table).
+2. [ ] SSH in: `fly ssh console --app YOUR_APP`
+3. [ ] Dry-run against a backup taken BEFORE the state you noted:
 
-   Expected: banner "Restore staged. The server is restarting...".
-   The page eventually reloads (~5-15s, depending on Fly machine
-   start time).
+       ```
+       mar-runtime restore-db /data /data/backups/<id>.tar.gz --dry-run
+       ```
 
-7. [ ] After reload, log back in (sessions are wiped on DB swap).
-8. [ ] Check the restored state matches what was in that backup
+   Expected: plan output (bundle metadata, fingerprints, swap
+   steps), no prompt, no changes.
+
+4. [ ] Run it for real. Because the server holds the DB flock, the
+       restore should first REFUSE with "a server is running" —
+       that's the lock check working. Stop the machine's server
+       process (or `fly machine stop` + start a console-only
+       machine, depending on your setup) and run again:
+
+       ```
+       mar-runtime restore-db /data /data/backups/<id>.tar.gz
+       ```
+
+5. [ ] At the prompt, type the literal word `restore`.
+6. [ ] Restart the machine (`fly machine restart`), reopen the
+       panel, log back in (sessions are wiped on DB swap).
+7. [ ] Check the restored state matches what was in that backup
        (the row counts you noted should be DIFFERENT now).
-9. [ ] Verify the `.bak` was preserved:
+8. [ ] Verify the `.bak` was preserved:
        `fly ssh console --app YOUR_APP -C "ls -la /data/mar.db*"`
 
    Expected: `mar.db` (the restored snapshot), `mar.db.bak-<TS>`
    (your pre-restore state).
 
 **Failure modes to watch for**:
-- Server doesn't come back up → Fly machine is stuck. Check
-  `fly status` and `fly logs`. The 60s polling timeout in the
-  panel should surface "Server did not come back within 60s".
-- Restore appeared to succeed but data didn't change → look at
-  whether the .bak was actually moved (means the swap rename
-  succeeded). The running process keeps the OLD inode open; if
-  the machine didn't restart, you'd see this. Check `fly status`
-  for restart count.
+- Restore runs while the server is up → the flock check failed;
+  that's a bug, file it. It must refuse.
+- Restore appeared to succeed but data didn't change → the machine
+  didn't restart, so the running process kept the OLD inode open.
+  Check `fly status` for restart count, restart, re-check.
 
 ## Phase 3 — schema mismatch refusal
 
@@ -117,11 +126,13 @@ backups instead of silently corrupting data.
        `mar fly deploy`
 
 3. [ ] Try to restore the older backup (taken BEFORE the new
-       entity) via the panel.
+       entity) with `mar-runtime restore-db` over SSH, as in
+       Phase 2.
 
-   Expected: 409 error banner with "Schema mismatch — this backup
-   was taken against a different schema (likely a migration ran
-   since)." The .bak is NOT created. Database state unchanged.
+   Expected: hard stop with the schema-mismatch message ("this
+   backup was taken against a different schema"). No prompt is
+   reached, the .bak is NOT created, database state unchanged.
+   There is no --force; that's by design.
 
 ## Phase 4 — download for cold storage
 

@@ -565,9 +565,9 @@ What v1 actually shows, top-to-bottom on `/_mar/admin`:
 
 3. **Database backups** (catalog of automatic snapshots — see §13)
    - Newest-first list of `<timestamp>.tar.gz` entries from `<dir-of-mar.db>/backups/`.
-   - Each row: timestamp, size, [Restore] [Download] buttons.
-   - **Restore** does an atomic-swap-and-restart: validates `schemaFingerprint` matches the live DB (refuses 409 on mismatch), renames live `mar.db` → `mar.db.bak-<TS>`, moves the bundle's `mar.db` into place, exits the process so Fly auto-restart picks up the new state. Operator sees a banner "Server restarting…" and the panel polls `/api/whoami` until the server is back up, then auto-reloads.
+   - Each row: timestamp, size, [Download] button.
    - **Download** streams the .tar.gz with `Content-Disposition: attachment` for cold-storage archival.
+   - **No Restore button — by design.** Restoring is rare, destructive, and deserves friction: it's CLI-only (`mar-runtime restore-db`, run on the server over SSH — see §12.4). A one-click restore in a browser tab is exactly the kind of affordance that turns a misclick into a data-loss incident.
 
 4. **Recent requests** (everything in the buffer — up to `adminPanel.recentRequestsSize`, default 200, manual refresh)
    - Time, method, path, status, duration ms, user email
@@ -736,10 +736,12 @@ fragment the workflow. The panel's Database section gets a sibling
 **Database backups** section, and the same auth gate covers both.
 
 The CLI (`mar fly database backup` / `backups` / `download`) is the
-complement for ops scripting. **Restore is panel-only** — the
-schema-mismatch refusal needs an interactive UI to surface clearly,
-and the post-swap "wait for restart" loop is friendlier in the
-browser than tied to a CLI session.
+complement for ops scripting. **Restore is deliberately NOT in the
+panel.** It's a rare, destructive operation, and the friction is the
+feature: you log into the server and run `mar-runtime restore-db` by
+hand (§12.4). An earlier draft had a one-click Restore button; it was
+removed — a browser tab is the wrong place for an action that swaps
+the production database.
 
 ### 12.2 Catalog layout
 
@@ -792,33 +794,49 @@ get checkpointed back after. Some IO contention is possible during
 the snapshot window (~seconds for typical DBs), but no requests are
 blocked.
 
-### 12.4 Restore flow
+### 12.4 Restore flow (CLI-only, on the server)
 
-Triggered from the panel's **Restore** button on any catalog entry:
+Restore is `mar-runtime restore-db`, run on the machine that holds
+the volume — over SSH on Fly:
 
-1. **Pre-flight schema check**. Bundle's `schemaFingerprint` is
-   compared with the live DB's. Mismatch → 409, no swap, no `.bak`,
-   error banner explaining "this backup was taken against a different
-   schema (likely a migration ran since)". Match → proceed.
+```
+$ fly ssh console
+# mar-runtime restore-db /data /data/backups/2026-05-08-060000.tar.gz --dry-run
+# mar-runtime restore-db /data /data/backups/2026-05-08-060000.tar.gz
+```
 
-2. **Atomic swap**. Rename `mar.db` → `mar.db.bak-<timestamp>`,
-   rename WAL/SHM sidecars to `.bak-restoring` siblings, move the
-   bundle's mar.db into place. All three operations are atomic on
-   the same filesystem.
+What the command enforces, in order:
 
-3. **Process exit**. `os.Exit(2)` after a 1.5s grace (so the HTTP
-   response lands first). Fly's `restart_policy = on-failure` brings
-   the machine back up; the new process opens the restored DB.
+1. **Server must be stopped.** The runtime holds an flock on the
+   live DB (`runtime.HoldDBLock`); if the lock can't be acquired the
+   restore refuses with "a server is running". No racing a live
+   process.
 
-4. **Client-side polling**. The panel's JS polls `/api/whoami` every
-   1.5s for up to 60s; first 200 response triggers
-   `window.location.reload()`. The user sees a banner during the
-   restart wait, then a fresh panel load.
+2. **Pre-flight schema check.** Bundle's `schemaFingerprint` is
+   compared with the live DB's. Mismatch is a hard stop — there is
+   deliberately no `--force` (an operator who truly wants to restore
+   an incompatible bundle can swap files by hand; the CLI exists to
+   be the safe path).
 
-If anything goes wrong post-swap (the new DB has data the binary
-doesn't expect, machine fails to come up), the `.bak` file is
-preserved on the volume. Manual recovery: `fly ssh console -C "mv
-/data/mar.db.bak-<TS> /data/mar.db && fly machine restart"`.
+3. **Typed confirmation.** The prompt asks for the literal word
+   `restore` — not "y", so a reflexive enter can't fall through.
+   `--dry-run` prints the plan (bundle metadata, fingerprints, swap
+   steps) with no side effects and no prompt.
+
+4. **Reversible swap.** The live `mar.db` is renamed to
+   `mar.db.bak-<timestamp>` next to itself, then the bundle's
+   snapshot moves into place. Restart the machine and the new
+   process opens the restored DB.
+
+Rollback is the same file in reverse: `fly ssh console -C "mv
+/data/mar.db.bak-<TS> /data/mar.db"` and restart.
+
+Why this much friction for a built-in feature: restores are rare
+(months apart, if ever), always follow an incident, and replace the
+production dataset. Logging into the server is proportionate
+ceremony — it guarantees a human with infrastructure access is
+present, and it keeps the panel free of any endpoint that can
+destroy data.
 
 ### 12.5 Schema mismatch policy
 
@@ -851,10 +869,12 @@ correct manual recovery (deploy old binary → restore → redeploy).
   RPO of `intervalHours`; Litestream gives RPO of seconds. Out of
   scope for v1; we document Fly Volume Snapshots as the stopgap
   for finer-grained recovery.
+- **Restore in the panel.** Removed by design (§12.1/§12.4) —
+  restore is CLI-only on the server.
 - **`mar fly restore <bundle.tar.gz>`** uploading a local file.
   Restore is from-catalog only, by design — uploads invite "I sent
-  you a file, restore it" workflows that don't carry the schema
-  context the panel can validate.
+  you a file, restore it" workflows that bypass the catalog's
+  metadata and schema fingerprint.
 
 See `docs/backup-smoke-test.md` for the manual production-smoke
 checklist.
