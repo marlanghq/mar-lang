@@ -68,7 +68,8 @@ func (e *SourceError) Format() string {
 	if !ok {
 		return e.Error()
 	}
-	return formatContext(e.Filename, e.Source, line, col, kindOf(e.Inner), bodyOf(e.Inner))
+	endLine, endCol, hasEnd := endOf(e.Inner)
+	return formatContext(e.Filename, e.Source, line, col, endLine, endCol, hasEnd, kindOf(e.Inner), bodyOf(e.Inner))
 }
 
 // Format formats any error: if it's a *SourceError, use its Format;
@@ -94,6 +95,19 @@ func positionOf(err error) (line, col int, ok bool) {
 		return e.Pos.Line, e.Pos.Column, true
 	case *typecheck.ShapeIssue:
 		return e.Pos.Line, e.Pos.Column, true
+	}
+	return 0, 0, false
+}
+
+// endOf extracts the exclusive end position of an error's source span,
+// when the error carries one (only typecheck.InferError does today).
+// The renderer underlines [start, end); without an end it falls back to
+// a single caret. Returns ok=false when there's no span or it's empty.
+func endOf(err error) (line, col int, ok bool) {
+	if e, isInfer := err.(*typecheck.InferError); isInfer {
+		if e.End != (e.Pos) && e.End.Line != 0 {
+			return e.End.Line, e.End.Column, true
+		}
 	}
 	return 0, 0, false
 }
@@ -146,7 +160,7 @@ func bodyOf(err error) string {
 // Leading blank separates the block from preceding output. "Type
 // error:" is bold red (same role as "Error:"). The file path is bold
 // magenta. The gutter / pipes are dim. The caret is bold red.
-func formatContext(filename, source string, line, col int, kind, msg string) string {
+func formatContext(filename, source string, line, col, endLine, endCol int, hasEnd bool, kind, msg string) string {
 	c := colors()
 	lines := strings.Split(source, "\n")
 	if line < 1 || line > len(lines) {
@@ -192,17 +206,33 @@ func formatContext(filename, source string, line, col int, kind, msg string) str
 	// Indent caret to match the column. Tabs in the source are preserved
 	// so a tab in the snippet maps to a tab in the caret line, keeping
 	// alignment when the terminal renders the tab.
+	srcRunes := []rune(lines[line-1])
 	if col >= 1 {
-		runes := []rune(lines[line-1])
-		for i := 0; i < col-1 && i < len(runes); i++ {
-			if runes[i] == '\t' {
+		for i := 0; i < col-1 && i < len(srcRunes); i++ {
+			if srcRunes[i] == '\t' {
 				sb.WriteRune('\t')
 			} else {
 				sb.WriteRune(' ')
 			}
 		}
 	}
-	sb.WriteString(c.boldRed("^"))
+	// Underline the whole [start, end) span when an end is known
+	// (endCol is exclusive). A same-line span gives endCol-col carets;
+	// a span that runs onto later lines is clamped to the end of this
+	// line. No end, or a zero-width span, falls back to a single caret.
+	caretN := 1
+	if hasEnd {
+		switch {
+		case endLine == line && endCol > col:
+			caretN = endCol - col
+		case endLine > line:
+			caretN = len(srcRunes) - (col - 1)
+		}
+		if caretN < 1 {
+			caretN = 1
+		}
+	}
+	sb.WriteString(c.boldRed(strings.Repeat("^", caretN)))
 	sb.WriteByte('\n')
 	return sb.String()
 }

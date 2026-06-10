@@ -8,9 +8,14 @@ import (
 	"mar/internal/ast"
 )
 
-// InferError carries position info for a type error.
+// InferError carries position info for a type error. Pos is the start
+// of the offending expression; End (when set) is its exclusive end, so
+// the renderer can underline the whole span rather than drop a single
+// caret. End == zero means "no span known" and the renderer falls back
+// to a one-character caret at Pos.
 type InferError struct {
 	Pos     ast.Pos
+	End     ast.Pos
 	Message string
 }
 
@@ -20,6 +25,19 @@ func (e *InferError) Error() string {
 
 func errorf(pos ast.Pos, format string, args ...any) *InferError {
 	return &InferError{Pos: pos, Message: fmt.Sprintf(format, args...)}
+}
+
+// errorfSpan is errorf with an explicit end position, so the caret
+// underlines the full [start, end) source span. Use it when the error
+// is about a specific sub-expression (e.g. a function argument) whose
+// extent is known.
+func errorfSpan(start, end ast.Pos, format string, args ...any) *InferError {
+	return &InferError{Pos: start, End: end, Message: fmt.Sprintf(format, args...)}
+}
+
+// errorfExpr is the common case: point at an expression's own span.
+func errorfExpr(e ast.Expr, format string, args ...any) *InferError {
+	return &InferError{Pos: e.Position(), End: ast.EndOf(e), Message: fmt.Sprintf(format, args...)}
 }
 
 // InferExpr is the convenience entry point: builds a fresh Subst, infers,
@@ -151,28 +169,102 @@ func inferApp(n *ast.EApp, env *TypeEnv, s *Subst) (Type, error) {
 	}
 	tRet := FreshVar()
 	if err := Unify(tFn, TArrow{From: tArg, To: tRet}, s); err != nil {
+		// Identify the callee + which argument this is, so the message
+		// can say "the 2nd argument to `text`" and point the caret at
+		// the argument itself rather than at the function head. For
+		// `f a b` (= EApp(EApp(f,a),b)) inferring the outer node, the
+		// head is `f` with 1 arg already applied, so this is arg #2.
+		head, appliedCount := appHead(n.Fn)
+		argIdx := appliedCount + 1
+		name := calleeName(head)
+		who := "this argument"
+		if name != "" {
+			who = fmt.Sprintf("the %s argument to `%s`", ordinalWord(argIdx), name)
+		}
+
 		// Kind violation (e.g. comparable key bound to a Record) —
 		// the UnifyError's Reason already names the problem in
 		// user-facing terms, so keep it instead of re-wrapping with
-		// the generic "argument has the wrong type" framing.
+		// the generic "argument has the wrong type" framing. Still
+		// point at the argument span.
 		if ue, ok := err.(*UnifyError); ok && ue.KindMismatch {
-			return nil, errorf(n.Pos, "%s", ue.Reason)
+			return nil, errorfExpr(n.Arg, "%s", ue.Reason)
 		}
-		// Specialize common cases for friendlier wording. By the time we
-		// land here, tFn's type has been resolved enough to inspect.
-		applied := s.Apply(tFn)
-		if _, isArrow := applied.(TArrow); !isArrow {
-			// Tried to call a non-function. Most often: too many arguments
-			// (the prefix `f a b` already returned a non-arrow result, then
-			// the user passed one more), or applying a literal.
-			return nil, errorf(n.Pos, "this expression is not a function — its type is %s, so it cannot be applied to arguments", Pretty(applied))
+		// By the time we land here, tFn's type has been resolved enough
+		// to inspect.
+		fnResolved := s.Apply(tFn)
+		if _, isArrow := fnResolved.(TArrow); !isArrow {
+			// The callee isn't a function (anymore). Almost always too
+			// many arguments: the prefix already consumed all the
+			// parameters and returned a non-arrow result, then this
+			// extra argument was applied. Point at the surplus argument.
+			if name != "" {
+				return nil, errorfExpr(n.Arg,
+					"`%s` is given too many arguments: it has no parameter for the %s one (the call so far has type %s)",
+					name, ordinalWord(argIdx), Pretty(fnResolved))
+			}
+			return nil, errorfExpr(n.Arg,
+				"too many arguments: the expression being called has type %s, which takes no further argument",
+				Pretty(fnResolved))
 		}
-		// It is a function but the argument doesn't match.
-		fnT := applied.(TArrow)
-		return nil, errorf(n.Pos, "argument has the wrong type: expected %s, got %s",
-			Pretty(fnT.From), Pretty(s.Apply(tArg)))
+		// It is a function but this argument's type doesn't match.
+		fnT := fnResolved.(TArrow)
+		return nil, errorfExpr(n.Arg, "%s has the wrong type: expected %s, got %s",
+			who, Pretty(fnT.From), Pretty(s.Apply(tArg)))
 	}
 	return s.Apply(tRet), nil
+}
+
+// appHead walks an application spine and returns the head expression
+// (the thing ultimately being called) plus how many arguments are
+// already applied to it. `f a b` parses as EApp(EApp(f, a), b); given
+// the inner Fn `EApp(f, a)` it returns (f, 1).
+func appHead(fn ast.Expr) (ast.Expr, int) {
+	depth := 0
+	for {
+		app, ok := fn.(*ast.EApp)
+		if !ok {
+			return fn, depth
+		}
+		fn = app.Fn
+		depth++
+	}
+}
+
+// calleeName renders a head expression as a backtick-able name for
+// error messages, or "" when the callee isn't a plain name (a lambda,
+// a parenthesized expression, etc.) and naming it would mislead.
+func calleeName(e ast.Expr) string {
+	switch h := e.(type) {
+	case *ast.EVar:
+		return h.Name
+	case *ast.EQualified:
+		return strings.Join(h.Module, ".") + "." + h.Name
+	case *ast.ECtor:
+		if len(h.Module) > 0 {
+			return strings.Join(h.Module, ".") + "." + h.Name
+		}
+		return h.Name
+	case *ast.EFieldAccessor:
+		return "." + h.Field
+	}
+	return ""
+}
+
+// ordinalWord renders 1->"1st", 2->"2nd", 3->"3rd", 4->"4th", ... for
+// argument positions. Functions never reach the teens-suffix edge
+// cases, so the simple rule suffices.
+func ordinalWord(n int) string {
+	switch n {
+	case 1:
+		return "1st"
+	case 2:
+		return "2nd"
+	case 3:
+		return "3rd"
+	default:
+		return fmt.Sprintf("%dth", n)
+	}
 }
 
 func inferBinop(n *ast.EBinop, env *TypeEnv, s *Subst) (Type, error) {

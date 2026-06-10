@@ -102,6 +102,27 @@ func posOf(t lexer.Token) ast.Pos {
 	return ast.Pos{Line: t.Line, Column: t.Column}
 }
 
+// prevEnd is the exclusive end position of the most recently consumed
+// token (the cursor just past its last character). Used to give an
+// expression its source-span end.
+func (p *parser) prevEnd() ast.Pos {
+	i := p.pos - 1
+	if i < 0 {
+		i = 0
+	}
+	t := p.tokens[i]
+	return ast.Pos{Line: t.EndLine, Column: t.EndColumn}
+}
+
+// withEnd stamps e's source-span end with the current prevEnd and
+// returns e, so expression-building functions can `return p.withEnd(e),
+// nil`. Each enclosing combinator re-stamps the node it returns, so the
+// end always reaches the last token actually consumed for that node.
+func (p *parser) withEnd(e ast.Expr) ast.Expr {
+	ast.SetEnd(e, p.prevEnd())
+	return e
+}
+
 // --- Module ---
 
 func (p *parser) parseModule() (*ast.Module, error) {
@@ -821,11 +842,11 @@ func (p *parser) parseBinop(minPrec int) (ast.Expr, error) {
 	for {
 		op, ok := tokenToOp(p.peek())
 		if !ok {
-			return left, nil
+			return p.withEnd(left), nil
 		}
 		info, known := opTable[op]
 		if !known || info.prec < minPrec {
-			return left, nil
+			return p.withEnd(left), nil
 		}
 		opTok := p.advance()
 		nextMin := info.prec + 1
@@ -853,7 +874,7 @@ func (p *parser) parseApp() (ast.Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &ast.ENegate{Pos: posOf(minusTok), Inner: inner}, nil
+		return p.withEnd(&ast.ENegate{Pos: posOf(minusTok), Inner: inner}), nil
 	}
 	first, err := p.parseAtomChain()
 	if err != nil {
@@ -870,7 +891,7 @@ func (p *parser) parseApp() (ast.Expr, error) {
 		}
 		first = &ast.EApp{Pos: first.Position(), Fn: first, Arg: arg}
 	}
-	return first, nil
+	return p.withEnd(first), nil
 }
 
 // parseAtomChain parses an atom followed by zero or more `.field` accesses.
@@ -885,12 +906,20 @@ func (p *parser) parseAtomChain() (ast.Expr, error) {
 		fieldTok := p.advance()
 		atom = &ast.EFieldAccess{Pos: posOf(fieldTok), Record: atom, Field: fieldTok.Value}
 	}
-	return atom, nil
+	return p.withEnd(atom), nil
 }
 
-// parseExprAtom: a single non-application expression. Field chains are
-// handled in parseApp, not here.
+// parseExprAtom parses a single non-application expression and stamps
+// its source-span end. Field chains are handled in parseApp, not here.
 func (p *parser) parseExprAtom() (ast.Expr, error) {
+	e, err := p.parseExprAtomCore()
+	if err != nil {
+		return nil, err
+	}
+	return p.withEnd(e), nil
+}
+
+func (p *parser) parseExprAtomCore() (ast.Expr, error) {
 	t := p.peek()
 	switch t.Kind {
 	case lexer.KindInt:

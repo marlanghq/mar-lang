@@ -304,9 +304,17 @@ type Expr interface {
 }
 
 // EInt is a literal expression (also covers EFloat / EString literals).
+//
+// Every expression node carries an unexported `end` position alongside
+// its start `Pos`, stamped by the parser. Read it with EndOf and the
+// pair (Position, EndOf) gives the node's full source span for precise
+// caret / underline rendering. The field is unexported so it never
+// leaks into AST serialization or reflection; the parser sets it via
+// SetEnd.
 type EInt struct {
 	Pos   Pos
 	Value int64
+	end   Pos
 }
 
 func (e *EInt) exprNode()     {}
@@ -315,6 +323,7 @@ func (e *EInt) Position() Pos { return e.Pos }
 type EFloat struct {
 	Pos   Pos
 	Value float64
+	end   Pos
 }
 
 func (e *EFloat) exprNode()     {}
@@ -323,6 +332,7 @@ func (e *EFloat) Position() Pos { return e.Pos }
 type EString struct {
 	Pos   Pos
 	Value string
+	end   Pos
 }
 
 func (e *EString) exprNode()     {}
@@ -336,6 +346,7 @@ func (e *EString) Position() Pos { return e.Pos }
 type EChar struct {
 	Pos   Pos
 	Value rune
+	end   Pos
 }
 
 func (e *EChar) exprNode()     {}
@@ -345,6 +356,7 @@ func (e *EChar) Position() Pos { return e.Pos }
 type EVar struct {
 	Pos  Pos
 	Name string
+	end  Pos
 }
 
 func (e *EVar) exprNode()     {}
@@ -355,6 +367,7 @@ type EQualified struct {
 	Pos    Pos
 	Module ModuleName
 	Name   string
+	end    Pos
 }
 
 func (e *EQualified) exprNode()     {}
@@ -365,6 +378,7 @@ type ECtor struct {
 	Pos    Pos
 	Module ModuleName
 	Name   string
+	end    Pos
 }
 
 func (e *ECtor) exprNode()     {}
@@ -374,6 +388,7 @@ func (e *ECtor) Position() Pos { return e.Pos }
 type EFieldAccessor struct {
 	Pos   Pos
 	Field string
+	end   Pos
 }
 
 func (e *EFieldAccessor) exprNode()     {}
@@ -384,6 +399,7 @@ type EFieldAccess struct {
 	Pos    Pos
 	Record Expr
 	Field  string
+	end    Pos
 }
 
 func (e *EFieldAccess) exprNode()     {}
@@ -394,6 +410,7 @@ type EApp struct {
 	Pos Pos
 	Fn  Expr
 	Arg Expr
+	end Pos
 }
 
 func (e *EApp) exprNode()     {}
@@ -405,6 +422,7 @@ type EBinop struct {
 	Op    string
 	Left  Expr
 	Right Expr
+	end   Pos
 }
 
 func (e *EBinop) exprNode()     {}
@@ -415,6 +433,7 @@ type ELambda struct {
 	Pos    Pos
 	Params []Pattern
 	Body   Expr
+	end    Pos
 }
 
 func (e *ELambda) exprNode()     {}
@@ -426,6 +445,7 @@ type EIf struct {
 	Cond Expr
 	Then Expr
 	Else Expr
+	end  Pos
 }
 
 func (e *EIf) exprNode()     {}
@@ -436,6 +456,7 @@ type ECase struct {
 	Pos      Pos
 	Subject  Expr
 	Branches []CaseBranch
+	end      Pos
 }
 
 type CaseBranch struct {
@@ -452,6 +473,7 @@ type ELet struct {
 	Pos      Pos
 	Bindings []LetBinding
 	Body     Expr
+	end      Pos
 }
 
 // LetBinding is either a value binding (=) or an effect bind (<-).
@@ -470,6 +492,7 @@ func (e *ELet) Position() Pos { return e.Pos }
 type ETuple struct {
 	Pos     Pos
 	Members []Expr
+	end     Pos
 }
 
 func (e *ETuple) exprNode()     {}
@@ -479,6 +502,7 @@ func (e *ETuple) Position() Pos { return e.Pos }
 type EList struct {
 	Pos      Pos
 	Elements []Expr
+	end      Pos
 }
 
 func (e *EList) exprNode()     {}
@@ -488,6 +512,7 @@ func (e *EList) Position() Pos { return e.Pos }
 type ERecord struct {
 	Pos    Pos
 	Fields []RecField
+	end    Pos
 }
 
 type RecField struct {
@@ -504,6 +529,7 @@ type ERecordUpdate struct {
 	Pos    Pos
 	Record Expr // typically EVar; could be field access too
 	Fields []RecField
+	end    Pos
 }
 
 func (e *ERecordUpdate) exprNode()     {}
@@ -512,6 +538,7 @@ func (e *ERecordUpdate) Position() Pos { return e.Pos }
 // EUnit — ()
 type EUnit struct {
 	Pos Pos
+	end Pos
 }
 
 func (e *EUnit) exprNode()     {}
@@ -521,7 +548,114 @@ func (e *EUnit) Position() Pos { return e.Pos }
 type ENegate struct {
 	Pos   Pos
 	Inner Expr
+	end   Pos
 }
 
 func (e *ENegate) exprNode()     {}
 func (e *ENegate) Position() Pos { return e.Pos }
+
+// SetEnd stamps an expression's source-span end (the position just past
+// its last token). The parser calls this as it finishes each node;
+// EndOf reads it back. Centralized here so the field can stay
+// unexported.
+func SetEnd(e Expr, end Pos) {
+	switch n := e.(type) {
+	case *EInt:
+		n.end = end
+	case *EFloat:
+		n.end = end
+	case *EString:
+		n.end = end
+	case *EChar:
+		n.end = end
+	case *EVar:
+		n.end = end
+	case *EQualified:
+		n.end = end
+	case *ECtor:
+		n.end = end
+	case *EFieldAccessor:
+		n.end = end
+	case *EFieldAccess:
+		n.end = end
+	case *EApp:
+		n.end = end
+	case *EBinop:
+		n.end = end
+	case *ELambda:
+		n.end = end
+	case *EIf:
+		n.end = end
+	case *ECase:
+		n.end = end
+	case *ELet:
+		n.end = end
+	case *ETuple:
+		n.end = end
+	case *EList:
+		n.end = end
+	case *ERecord:
+		n.end = end
+	case *ERecordUpdate:
+		n.end = end
+	case *EUnit:
+		n.end = end
+	case *ENegate:
+		n.end = end
+	}
+}
+
+// EndOf returns an expression's source-span end. Falls back to the
+// start position (a zero-width span, rendered as a single caret) for
+// nodes the parser didn't stamp.
+func EndOf(e Expr) Pos {
+	var end Pos
+	switch n := e.(type) {
+	case *EInt:
+		end = n.end
+	case *EFloat:
+		end = n.end
+	case *EString:
+		end = n.end
+	case *EChar:
+		end = n.end
+	case *EVar:
+		end = n.end
+	case *EQualified:
+		end = n.end
+	case *ECtor:
+		end = n.end
+	case *EFieldAccessor:
+		end = n.end
+	case *EFieldAccess:
+		end = n.end
+	case *EApp:
+		end = n.end
+	case *EBinop:
+		end = n.end
+	case *ELambda:
+		end = n.end
+	case *EIf:
+		end = n.end
+	case *ECase:
+		end = n.end
+	case *ELet:
+		end = n.end
+	case *ETuple:
+		end = n.end
+	case *EList:
+		end = n.end
+	case *ERecord:
+		end = n.end
+	case *ERecordUpdate:
+		end = n.end
+	case *EUnit:
+		end = n.end
+	case *ENegate:
+		end = n.end
+	}
+	if end == (Pos{}) {
+		return e.Position()
+	}
+	return end
+}

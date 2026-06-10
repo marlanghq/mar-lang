@@ -148,6 +148,50 @@ func TestLambdaApplication(t *testing.T) {
 	}
 }
 
+// A wrong-typed argument names the callee + the argument position and
+// points the caret at the ARGUMENT (with a real multi-column span),
+// not at the function head. This is the regression guard for the
+// "caret on `text`, message about the argument" mismatch.
+func TestApp_ArgErrorPointsAtArgument(t *testing.T) {
+	// `x = UI.text [] [ "oops" ]`: UI.text spans cols 5-11; the bad
+	// 2nd argument `[ "oops" ]` starts at col 16. UI.text wants a
+	// String there, gets a List.
+	_, err := inferExprSrc(t, `UI.text [] [ "oops" ]`)
+	ie, ok := err.(*InferError)
+	if !ok {
+		t.Fatalf("want *InferError, got %T: %v", err, err)
+	}
+	if !strings.Contains(ie.Message, "2nd argument to `UI.text`") {
+		t.Errorf("message should name the 2nd argument to UI.text; got %q", ie.Message)
+	}
+	if !strings.Contains(ie.Message, "expected String") {
+		t.Errorf("message should state the expected type; got %q", ie.Message)
+	}
+	if ie.Pos.Column <= 11 {
+		t.Errorf("caret should land on the argument (past `UI.text` at col 11), got col %d", ie.Pos.Column)
+	}
+	if ie.End.Line == 0 || ie.End.Column <= ie.Pos.Column {
+		t.Errorf("error should carry a multi-column span; Pos=%+v End=%+v", ie.Pos, ie.End)
+	}
+}
+
+// Applying a saturated function to an extra argument names the callee
+// and reports "too many arguments" rather than the cryptic "not a
+// function".
+func TestApp_TooManyArgumentsNamesCallee(t *testing.T) {
+	_, err := inferExprSrc(t, `String.length "hi" 5`)
+	ie, ok := err.(*InferError)
+	if !ok {
+		t.Fatalf("want *InferError, got %T: %v", err, err)
+	}
+	if !strings.Contains(ie.Message, "too many arguments") {
+		t.Errorf("message should say too many arguments; got %q", ie.Message)
+	}
+	if !strings.Contains(ie.Message, "String.length") {
+		t.Errorf("message should name the callee; got %q", ie.Message)
+	}
+}
+
 func TestLetSimple(t *testing.T) {
 	src := `let
         y = 1

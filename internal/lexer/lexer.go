@@ -96,6 +96,16 @@ type Token struct {
 	Value  string // raw lexeme (for literals/identifiers); for keywords/punct, equal to Kind
 	Line   int    // 1-indexed
 	Column int    // 1-indexed (rune column)
+
+	// EndLine / EndColumn point at the position JUST PAST the token's
+	// last character (exclusive end), so EndColumn - Column is the
+	// token's rune width on a single line. Used by the parser to give
+	// each expression a precise source span for caret/underline
+	// rendering. Exact even for strings with escapes, since the lexer
+	// tracks the real cursor rather than reconstructing width from the
+	// decoded Value.
+	EndLine   int
+	EndColumn int
 }
 
 func (t Token) String() string {
@@ -210,11 +220,15 @@ func (l *lexer) advance() rune {
 }
 
 func (l *lexer) emit(kind Kind, value string) {
+	// l.line / l.column are the cursor AFTER consuming the lexeme, i.e.
+	// exactly one past the token's last character — its exclusive end.
 	l.tokens = append(l.tokens, Token{
-		Kind:   kind,
-		Value:  value,
-		Line:   l.startLine,
-		Column: l.startColumn,
+		Kind:      kind,
+		Value:     value,
+		Line:      l.startLine,
+		Column:    l.startColumn,
+		EndLine:   l.line,
+		EndColumn: l.column,
 	})
 }
 
