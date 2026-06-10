@@ -128,9 +128,12 @@ func runAdminAdd(email string) int {
 	}
 
 	if !changed {
-		// Single-line confirmation — no surrounding blank lines per
-		// the CLI style guide (docs/cli-style.md §1).
+		// Padded like the happy path: leading blank separates from prior
+		// output / the shell prompt, trailing blank because this returns
+		// control to the shell (CLI style guide §1.1 + §1.2).
+		fmt.Println()
 		fmt.Printf("mar admin add: %s is already in admins\n", colorCyan(email))
+		fmt.Println()
 		return 0
 	}
 
@@ -195,8 +198,12 @@ func runAdminRemove(email string) int {
 	}
 
 	if !changed {
-		// Single-line confirmation — no surrounding blank lines.
+		// Padded like every other admin confirmation: leading blank to
+		// separate from prior output, trailing blank since it returns to
+		// the shell (CLI style guide §1.1 + §1.2).
+		fmt.Println()
 		fmt.Printf("mar admin remove: %s is not in admins (nothing to do)\n", colorCyan(email))
+		fmt.Println()
 		return 0
 	}
 

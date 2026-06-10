@@ -46,16 +46,20 @@ This is what the rest of the rules reduce to. Why:
    as a gap, not a separator. Only the FOLLOWING block adds its
    own leading blank; the preceding one stays tight.
 
-4. **No blank lines at all** for terse one-liners (single-line
-   errors, simple confirmations like `(no change)`). Reserve
-   the spacing budget for blocks that need visual separation.
+4. **No blank lines mid-pipeline** for terse one-liners that aren't
+   the final output — e.g. a single-line error that exits before any
+   following block would have printed. But a one-liner that's the LAST
+   thing a command prints still takes §1.1 + §1.2's blanks: it's
+   handing control back to the shell, so even a terse confirmation
+   (`already in admins`, `(no change)`) gets framed rather than
+   smashed against the prompt.
 
 ### Concrete mapping
 
 | Output type | Blank BEFORE | Blank AFTER |
 |---|---|---|
 | `mar admin add EMAIL` (happy path, one-shot) | ✓ | ✓ (returns to shell) |
-| `mar admin add EMAIL` (single-line "already in") | ✗ | ✗ |
+| `mar admin add EMAIL` (single-line "already in") | ✓ | ✓ (returns to shell) |
 | `mar dev` boot-time hint (followed by banner) | ✓ | ✗ |
 | `mar dev` startup banner (followed by stable runtime) | ✓ | ✓ (Press Ctrl+C output, etc.) |
 | `mar build` production warn (followed by build output) | ✓ | ✗ |
