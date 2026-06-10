@@ -1037,6 +1037,49 @@ enum MarBuiltins {
         env.define("pageProtected",  .fn(pageProtected))
         env.define("Page.protected", .fn(pageProtected))
 
+        // MARK: Page.adminProtected (web-only)
+        //
+        // The built-in admin panel is a web-target tool — there is no iOS
+        // admin app. We register the name so the builtin-coverage drift test
+        // passes, but it errors if ever invoked on iOS.
+        let pageAdminProtected = MarFn.native(1) { _ in
+            throw MarRuntimeError.message("Page.adminProtected is web-only; the admin panel has no iOS app")
+        }
+        env.define("pageAdminProtected",  .fn(pageAdminProtected))
+        env.define("Page.adminProtected", .fn(pageAdminProtected))
+
+        let pageDynamicAdminProtected = MarFn.native(1) { _ in
+            throw MarRuntimeError.message("Page.dynamicAdminProtected is web-only; the admin panel has no iOS app")
+        }
+        env.define("pageDynamicAdminProtected",  .fn(pageDynamicAdminProtected))
+        env.define("Page.dynamicAdminProtected", .fn(pageDynamicAdminProtected))
+
+        // Mar.Admin.* — privileged server-introspection for the web admin
+        // panel. No iOS admin app, so these are web-only: registered (each
+        // name spelled literally for the builtin-coverage drift test) but they
+        // error if ever invoked on iOS.
+        let marAdminWebOnly = MarFn.native(1) { _ in
+            throw MarRuntimeError.message("Mar.Admin.* is web-only; the admin panel has no iOS app")
+        }
+        env.define("marAdminServerInfo", .fn(marAdminWebOnly))
+        env.define("Mar.Admin.serverInfo", .fn(marAdminWebOnly))
+        env.define("marAdminDbStats", .fn(marAdminWebOnly))
+        env.define("Mar.Admin.dbStats", .fn(marAdminWebOnly))
+        env.define("marAdminRecentRequests", .fn(marAdminWebOnly))
+        env.define("Mar.Admin.recentRequests", .fn(marAdminWebOnly))
+        env.define("marAdminListEntities", .fn(marAdminWebOnly))
+        env.define("Mar.Admin.listEntities", .fn(marAdminWebOnly))
+        env.define("marAdminListEntityRows", .fn(marAdminWebOnly))
+        env.define("Mar.Admin.listEntityRows", .fn(marAdminWebOnly))
+        env.define("marAdminListBackups", .fn(marAdminWebOnly))
+        env.define("Mar.Admin.listBackups", .fn(marAdminWebOnly))
+        env.define("marAdminRequestCode", .fn(marAdminWebOnly))
+        env.define("Mar.Admin.requestCode", .fn(marAdminWebOnly))
+        env.define("marAdminVerifyCode", .fn(marAdminWebOnly))
+        env.define("Mar.Admin.verifyCode", .fn(marAdminWebOnly))
+        env.define("marAdminSignOut", .fn(marAdminWebOnly))
+        env.define("Mar.Admin.signOut", .fn(marAdminWebOnly))
+
         // MARK: Page.dynamic
         //
         // Pattern path with `:param` segments. Emits `__DynamicPage`
@@ -2383,6 +2426,26 @@ enum MarBuiltins {
         }
         env.define("uiCentered",  .fn(uiCentered))
         env.define("UI.centered", .fn(uiCentered))
+
+        // expand : View msg -> View msg
+        // Wraps the child in an "expand" view tag — renderer maps to
+        // .frame(maxWidth: .infinity) on iOS, flex:1 on web. The
+        // explicit "fill the main axis" modifier (equal-width columns).
+        let uiExpand = MarFn.native(1) { args in
+            guard case .view(let child) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "View", got: Eval.typeOf(args[0]))
+            }
+            return .view(MarView(
+                tag: "expand",
+                attrs: [],
+                children: [child],
+                text: "",
+                msg: nil,
+                key: nil
+            ))
+        }
+        env.define("uiExpand",  .fn(uiExpand))
+        env.define("UI.expand", .fn(uiExpand))
 
         // sheet : { open, onDismiss, outlet } -> List (View msg) -> View msg
         //

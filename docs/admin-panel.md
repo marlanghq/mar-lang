@@ -4,7 +4,39 @@ A specification for a built-in admin panel that ships with the `mar` framework �
 
 This document is a design proposal for the **MVP**, not an API reference. It establishes how the panel is hosted, authenticated, kept in sync with the project's deployment, and what features it ships with in v1.
 
-> **Status.** Specification only. None of the `_mar_admin_*` symbols, the `admins` field in `mar.json`, the `mar admin` CLI, or the embedded `.mar` panel sources exist yet. Everything they rely on (the Mar interpreter, the `UI` vocabulary, schema introspection, request logging, the `_auth/*` HTTP handlers, the `mar.json` loader) is already in the framework today.
+> **Status.** Implemented, and the panel is now written **entirely in Mar**.
+> The framework ships a working admin panel (passwordless sign-in via
+> `mar.json["admins"]`, schema browsing, entity row browser, request log, DB
+> stats, backup catalog + download) served at `/_mar/admin`. The **capability**
+> this doc proposed — an opaque `AdminSession`, `Page.adminProtected`, and the
+> privileged `Mar.Admin.*` namespace gated at compile time — is implemented, and
+> the panel (`internal/jsserve/admin_panel.mar`) is compiled at boot from that
+> capability and served at `/_mar/admin` as the sole admin UI. The sign-in flow
+> (email entry → code verification) is part of that same Mar program — no longer
+> pending. The `mar admin add/remove/list` CLI is also implemented.
+>
+> **The hand-written Go SPA is retired.** Earlier the panel was a Go-served
+> single-page app (`internal/admin/web/{index.html,admin.js,admin.css}` +
+> `internal/admin/embed.go`) reading plain-JSON endpoints
+> (`/_mar/admin/api/{whoami,server-info,db-stats,recent-requests,entity-rows}`).
+> Once the Mar-native panel reached rendering parity (verified in a browser),
+> the SPA assets, its `embed.go`, the `/static/` + `/legacy` routes, and the
+> plain-JSON handlers were deleted. The only admin surface now is the Mar panel
+> shell + its `/_mar/admin/api/mar/*` introspection transport. The server-side
+> introspection helpers (`listTables`, `tableColumns`, `dbFileSizes`, …) that
+> the SPA used to share are kept — they back the `Mar.Admin.*` bodies.
+>
+> **How the capability works.** `Mar.Admin.serverInfo / dbStats /
+> recentRequests / listEntities / listEntityRows / backups` each take an
+> `AdminSession` as their first argument and are shaped like `Service.call`
+> (`AdminSession -> (Result String resp -> msg) -> Effect String msg`). Only
+> `Page.adminProtected` ever mints an `AdminSession`, so normal app code calling
+> `Mar.Admin.*` is a compile error. At runtime the panel performs them as Cmds:
+> `runtime.js` fetches `/_mar/admin/api/mar/*` (admin-cookie gated), the server
+> runs the introspection body and serializes the Mar Value
+> (`runtime.EncodeValueJSON`), and `jsToMar` rebuilds it client-side. The
+> sign-in screens call the `/_mar/admin/auth/{request-code,verify-code,logout}`
+> endpoints (which set/clear the `mar_admin_session` cookie) the same way.
 
 ## 1. Goals & non-goals
 

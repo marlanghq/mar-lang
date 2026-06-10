@@ -91,7 +91,7 @@ func (lp *LiveProgram) Update(routes []runtime.Value, mods []*ast.Module, entry 
 	title := "mar app"
 	if len(mods) > 0 {
 		var err error
-		progJSON, err = makeProgramJSON(mods, entry, lp.devMode)
+		progJSON, err = makeProgramJSON(mods, entry, lp.devMode, true)
 		if err != nil {
 			return err
 		}
@@ -326,7 +326,12 @@ func stripANSI(s string) string {
 	return ansiCSI.ReplaceAllString(s, "")
 }
 
-func makeProgramJSON(mods []*ast.Module, entry string, devMode bool) ([]byte, error) {
+// bakeAuth controls whether the user app's resolved Auth.config (signInPath)
+// is threaded into the bundle. The user app needs it (Page.protected's expiry
+// redirect); the admin panel must NOT inherit it — it's a separate program
+// with its own (admin) auth, and inheriting the user signInPath makes a 401 on
+// a Mar.Admin.* call try to redirect to the user sign-in.
+func makeProgramJSON(mods []*ast.Module, entry string, devMode bool, bakeAuth bool) ([]byte, error) {
 	if len(mods) == 0 {
 		return nil, fmt.Errorf("no modules to serialize")
 	}
@@ -350,7 +355,7 @@ func makeProgramJSON(mods []*ast.Module, entry string, devMode bool) ([]byte, er
 	// browser bundle (only modules reachable from the page list are),
 	// so the client can't run `auth = Auth.config { ... }` itself —
 	// we hand the resolved values off via this side channel instead.
-	if cfg := runtime.CurrentAuth(); cfg != nil {
+	if cfg := runtime.CurrentAuth(); bakeAuth && cfg != nil {
 		auth := map[string]any{}
 		if cfg.SignInPath != "" {
 			auth["signInPath"] = cfg.SignInPath

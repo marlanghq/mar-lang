@@ -6,7 +6,7 @@ import Frontend.Routes
 import UI exposing
     ( navigationStack, navigationTitle, topBarTrailing
     , form, list, section, header
-    , hstack, vstack
+    , hstack, vstack, expand
     , text, subtitle, textField, button, navigationLink, empty, errorText
     , submit
     )
@@ -122,11 +122,13 @@ update _ msg model =
 renderNote : Shared.User -> Shared.Note -> View Msg
 renderNote user note =
     hstack []
-        [ navigationLink [] Frontend.Routes.noteDetail { id = note.id }
-            (vstack []
-                [ text note.body
-                , subtitle (Time.toIso note.createdAt)
-                ])
+        [ expand
+            (navigationLink [] Frontend.Routes.noteDetail { id = note.id }
+                (vstack []
+                    [ text note.body
+                    , subtitle (Time.toIso note.createdAt)
+                    ])
+            )
         , case user.role of
             Admin  -> button [] (DeleteClicked note.id) "Delete"
             Member -> empty

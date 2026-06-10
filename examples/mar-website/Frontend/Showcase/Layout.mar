@@ -5,16 +5,21 @@ import UI exposing
     ( navigationStack, navigationTitle
     , list, section, header, footer
     , hstack, vstack, centered
-    , title, subtitle, text, button, spacer
+    , title, subtitle, text, button, spacer, expand
     )
 
 
--- Demo: how stacks compose.
+-- Demo: how stacks compose (SwiftUI-style layout).
 --
---   hstack    : children in a horizontal row, equal width each
---   vstack    : children stacked vertically, leading-aligned
---   spacer    : expanding filler, pushes siblings to opposite edges
+--   hstack    : children in a horizontal row — each HUGS its content
+--               and sits at the leading edge (no stretching)
+--   vstack    : children stacked vertically, filling the width
+--   spacer    : expanding filler — pushes siblings to opposite edges
+--   expand    : makes a child claim free space — equal-width columns
 --   centered  : fills the available space and centers its child
+--
+-- Rule of thumb: rows hug, columns fill. To spread a row, reach for
+-- `spacer` (push apart) or `expand` (fill an equal share).
 --
 -- A static page: the buttons are layout demos, so they carry a
 -- NoOp and nothing reacts to them.
@@ -35,6 +40,28 @@ update : Msg -> Model -> (Model, Effect String Msg)
 update _ _ = ((), Effect.none)
 
 
+-- Default hstack: children hug their content and cluster at the
+-- leading edge. Nothing stretches.
+huggedRow : View Msg
+huggedRow =
+    hstack []
+        [ text "These"
+        , text "hug"
+        , text "left"
+        ]
+
+
+-- `expand` makes each child claim an equal share of the width — the
+-- way to get balanced columns now that the default is to hug.
+equalColumns : View Msg
+equalColumns =
+    hstack []
+        [ expand (text "Left")
+        , expand (text "Middle")
+        , expand (text "Right")
+        ]
+
+
 -- Canonical `spacer` use: a row that pins one child to the leading
 -- edge and another to the trailing edge.
 labelWithAction : View Msg
@@ -43,17 +70,6 @@ labelWithAction =
         [ text "Leading label"
         , spacer
         , button [] NoOp "Trailing action"
-        ]
-
-
--- A row with three balanced columns. With no spacer, each child
--- takes an equal share of the width.
-evenColumns : View Msg
-evenColumns =
-    hstack []
-        [ text "Left"
-        , text "Middle"
-        , text "Right"
         ]
 
 
@@ -72,20 +88,22 @@ centeredAction =
         ]
 
 
--- hstack and vstack nest: a horizontal row lays out two vertical
--- blocks side by side, each stacking its own lines. Composing the
--- two stacks is how most layouts get built.
+-- hstack and vstack nest. Wrap each column in `expand` so the two
+-- vertical blocks split the row evenly; without it they'd hug their
+-- own content at the leading edge.
 nestedStacks : View Msg
 nestedStacks =
     hstack []
-        [ vstack []
-            [ text "Left"
-            , subtitle "stacked"
-            ]
-        , vstack []
-            [ text "Right"
-            , subtitle "stacked"
-            ]
+        [ expand
+            (vstack []
+                [ text "Left"
+                , subtitle "stacked"
+                ])
+        , expand
+            (vstack []
+                [ text "Right"
+                , subtitle "stacked"
+                ])
         ]
 
 
@@ -95,12 +113,17 @@ view _ =
         [ list []
             [ section
                 [ header "hstack"
-                , footer "Children fill the row, each an equal share of the width by default."
+                , footer "Children hug their content and sit at the leading edge — no stretching."
                 ]
-                [ evenColumns ]
+                [ huggedRow ]
+            , section
+                [ header "hstack + expand"
+                , footer "Wrap children in expand for equal-width columns."
+                ]
+                [ equalColumns ]
             , section
                 [ header "vstack"
-                , footer "Children stack top-to-bottom, leading-aligned."
+                , footer "Children stack top-to-bottom, filling the width."
                 ]
                 [ vstack []
                     [ text "First"
@@ -110,7 +133,7 @@ view _ =
                 ]
             , section
                 [ header "hstack + vstack"
-                , footer "Nest them: an hstack lays two vstacks side by side, each stacking its own lines."
+                , footer "Nest them: an hstack lays two expand-ed vstacks side by side, each stacking its own lines."
                 ]
                 [ nestedStacks ]
             , section

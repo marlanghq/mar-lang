@@ -6,7 +6,7 @@ import Frontend.Routes
 import UI exposing
     ( navigationStack, navigationTitle, topBarTrailing
     , form, list, section, header
-    , hstack, vstack
+    , hstack, vstack, expand
     , text, textField, button, navigationLink, empty, errorText
     , submit
     )
@@ -121,14 +121,16 @@ update _ msg model =
 renderTweet : Shared.TweetView -> View Msg
 renderTweet t =
     hstack []
-        [ vstack []
-            [ hstack []
-                [ navigationLink [] Frontend.Routes.profile { handle = t.authorHandle } (text t.authorName)
-                , text ("@" ++ t.authorHandle)
+        [ expand
+            (vstack []
+                [ hstack []
+                    [ navigationLink [] Frontend.Routes.profile { handle = t.authorHandle } (text t.authorName)
+                    , text ("@" ++ t.authorHandle)
+                    ]
+                , text t.body
+                , text (Time.toIso t.createdAt)
                 ]
-            , text t.body
-            , text (Time.toIso t.createdAt)
-            ]
+            )
         , if t.isMine then
             button [] (DeleteClicked t.id) "Delete"
           else

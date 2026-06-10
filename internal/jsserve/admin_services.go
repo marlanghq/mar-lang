@@ -1,9 +1,12 @@
-// Admin panel services — JSON endpoints under /_mar/admin/api/*
-// consumed by the embedded SPA. Each handler reads from the
-// framework's runtime state (entity registry, request log buffer,
-// boot metadata) and serializes a small JSON shape.
+// Admin panel server-side infrastructure — request instrumentation
+// (counters + the recent-requests ring buffer), boot metadata, and the
+// SQLite introspection helpers (listTables, tableColumns, dbFileSizes,
+// …). These feed the Mar panel's Mar.Admin.* bodies (admin_mar.go),
+// which project the same data as Mar Values for the frontend.
 //
-// All endpoints are gated by requireAdminSession (Phase 3).
+// (The hand-written SPA that used to consume plain-JSON variants of
+// these — /_mar/admin/api/{server-info,db-stats,…} — was retired; the
+// Mar-native panel reads /_mar/admin/api/mar/* instead.)
 
 package jsserve
 
@@ -13,8 +16,6 @@ import (
 	"net/http"
 	"os"
 	goruntime "runtime"
-	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -30,9 +31,9 @@ var (
 )
 
 // SetAdminBuildInfo plumbs the mar version stamp into the framework
-// so /_mar/admin/api/server-info can show it. Called once from the
-// CLI before ServeLive. Empty values are tolerated and rendered as
-// "dev" by the handler.
+// so the admin panel can show it. Called once from the CLI before
+// ServeLive. Empty values are tolerated and rendered as "dev" by the
+// introspection body.
 //
 // Build target is intentionally NOT taken as a parameter — it's
 // always derived from runtime.GOOS/GOARCH at request time (see
@@ -61,6 +62,10 @@ func MarVersion() string {
 // multiple times (test hot-reload paths).
 func noteServerBooted() {
 	atomic.StoreInt64(&bootStartedAtMs, time.Now().UnixMilli())
+	// Wire the Mar.Admin.* runtime bodies now that server state (DB, request
+	// counters, log buffer) is live. Idempotent — just re-registers the same
+	// closures on hot reload.
+	registerAdminMarServices()
 }
 
 // Request counters — atomic so middleware can read without locking.
@@ -69,8 +74,8 @@ var (
 	requestsInFlight int64
 )
 
-// requestLogger holds the in-memory ring buffer powering
-// /_mar/admin/api/recent-requests. Initialized at ServeLive boot
+// requestLogger holds the in-memory ring buffer powering the admin
+// panel's "recent requests" view. Initialized at ServeLive boot
 // using the cap from manifest.adminPanel.recentRequestsSize.
 var requestLogger *admin.RequestLogger
 
@@ -104,12 +109,11 @@ func adminRecord(entry admin.RequestLog) {
 //
 //   - /_mar/reload    — SSE channel; long-lived connections would
 //     dominate the buffer and noise out the panel.
-//   - /_mar/admin/*   — the admin panel polling itself (whoami every
-//     boot, server-info / db-stats / recent-requests
-//     on each refresh, static assets). Including
-//     these makes the "recent requests" view show
-//     the panel watching itself, drowning out the
-//     actual app traffic the operator wants to see.
+//   - /_mar/admin/*   — the admin panel polling itself (the dashboard
+//     fetches server-info / db-stats / recent-requests on each
+//     refresh, plus the program/shell). Including these makes the
+//     "recent requests" view show the panel watching itself,
+//     drowning out the actual app traffic the operator wants to see.
 //
 // Skipping from BOTH the ring buffer AND the counters keeps "requests
 // total" honest about real application traffic.
@@ -204,216 +208,7 @@ func bestEffortUserEmail(r *http.Request) string {
 	return ""
 }
 
-// -- Service handlers --
-
-func handleAdminServerInfo(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if _, ok := gateAdminSession(w, r); !ok {
-		return
-	}
-	bootedMs := atomic.LoadInt64(&bootStartedAtMs)
-	resp := map[string]any{
-		"marVersion":       defaultStr(marVersion, "dev"),
-		"goVersion":        goruntime.Version(),
-		"buildTarget":      hostTarget(),
-		"bootedAtMs":       bootedMs,
-		"requestsTotal":    atomic.LoadInt64(&requestsTotal),
-		"requestsInFlight": atomic.LoadInt64(&requestsInFlight),
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func handleAdminDBStats(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if _, ok := gateAdminSession(w, r); !ok {
-		return
-	}
-	db, err := adminDB()
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"dbSizeBytes":  0,
-			"walSizeBytes": 0,
-			"entities":     []any{},
-		})
-		return
-	}
-
-	dbSize, walSize := dbFileSizes()
-
-	// Two buckets: user-defined entities (the business model) and
-	// framework-managed tables (auth, admin, schema migrations —
-	// everything under the reserved _mar_ prefix). The panel
-	// renders them as separate sub-groups so framework noise doesn't
-	// drown out the operator's own tables.
-	type stat struct {
-		Name     string `json:"name"`
-		RowCount int    `json:"rowCount"`
-	}
-	tables := listTables(db)
-	business := make([]stat, 0, len(tables))
-	framework := make([]stat, 0)
-	for _, t := range tables {
-		// Skip SQLite's internal tables (sqlite_*) entirely —
-		// never useful in the admin browser, just noise.
-		if strings.HasPrefix(t, "sqlite_") {
-			continue
-		}
-		var n int
-		// Quoting protects against unusual entity names; we already
-		// validated names came from the schema so injection isn't a
-		// concern, but quoting is the principled form.
-		if err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, t)).Scan(&n); err != nil {
-			continue
-		}
-		row := stat{Name: t, RowCount: n}
-		if strings.HasPrefix(t, "_mar_") {
-			framework = append(framework, row)
-		} else {
-			business = append(business, row)
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"dbSizeBytes":     dbSize,
-		"walSizeBytes":    walSize,
-		"entities":        business,
-		"frameworkTables": framework,
-	})
-}
-
-func handleAdminRecentRequests(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if _, ok := gateAdminSession(w, r); !ok {
-		return
-	}
-	if requestLogger == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"items": []any{}})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"items": requestLogger.Snapshot(),
-	})
-}
-
-func handleAdminEntityRows(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if _, ok := gateAdminSession(w, r); !ok {
-		return
-	}
-	entityName := r.URL.Query().Get("entity")
-	if entityName == "" {
-		writeAuthError(w, http.StatusBadRequest, "missing_entity")
-		return
-	}
-	db, err := adminDB()
-	if err != nil {
-		writeAuthError(w, http.StatusServiceUnavailable, "no_database")
-		return
-	}
-	// Whitelist against the live schema so an attacker can't pivot
-	// arbitrary SQL through the entity parameter.
-	allowed := listTables(db)
-	if !slices.Contains(allowed, entityName) {
-		writeAuthError(w, http.StatusNotFound, "unknown_entity")
-		return
-	}
-
-	limit := 50
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
-			limit = n
-		}
-	}
-	cursor := r.URL.Query().Get("cursor")
-
-	columns, err := tableColumns(db, entityName)
-	if err != nil {
-		writeAuthError(w, http.StatusInternalServerError, "introspect")
-		return
-	}
-
-	// Cursor-based pagination by primary id. We assume entities have
-	// an integer-keyed `id` column — the convention every Mar entity
-	// uses (Entity.serial). Tables without an `id` column fall back
-	// to LIMIT/OFFSET; for v1 read-only browsing of framework tables
-	// this is acceptable.
-	hasID := slices.Contains(columns, "id")
-
-	var rows *sql.Rows
-	if hasID {
-		// Quoting columns + table name to support entity names that
-		// happen to be SQL keywords or contain special characters.
-		query := fmt.Sprintf(`SELECT %s FROM "%s"`, quotedColumns(columns), entityName)
-		if cursor != "" {
-			query += ` WHERE id > ?`
-			query += ` ORDER BY id ASC LIMIT ?`
-			rows, err = db.Query(query, cursor, limit+1)
-		} else {
-			query += ` ORDER BY id ASC LIMIT ?`
-			rows, err = db.Query(query, limit+1)
-		}
-	} else {
-		query := fmt.Sprintf(`SELECT %s FROM "%s" LIMIT ?`,
-			quotedColumns(columns), entityName)
-		rows, err = db.Query(query, limit+1)
-	}
-	if err != nil {
-		writeAuthError(w, http.StatusInternalServerError, "query")
-		return
-	}
-	defer rows.Close()
-
-	items := make([]map[string]any, 0, limit)
-	for rows.Next() {
-		dest := make([]any, len(columns))
-		ptrs := make([]any, len(columns))
-		for i := range dest {
-			ptrs[i] = &dest[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			writeAuthError(w, http.StatusInternalServerError, "scan")
-			return
-		}
-		row := make(map[string]any, len(columns))
-		for i, col := range columns {
-			row[col] = jsonable(dest[i])
-		}
-		items = append(items, row)
-	}
-	if err := rows.Err(); err != nil {
-		writeAuthError(w, http.StatusInternalServerError, "iteration")
-		return
-	}
-
-	// Pagination: we asked for limit+1 to detect "more". If we got
-	// limit+1 rows, drop the last and return its id as nextCursor.
-	var nextCursor any
-	if len(items) > limit {
-		last := items[limit-1] // ← the last item we'll return
-		items = items[:limit]
-		if hasID {
-			nextCursor = last["id"]
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"columns":    columns,
-		"items":      items,
-		"nextCursor": nextCursor,
-	})
-}
-
-// -- Small helpers --
+// -- Introspection helpers (shared with the Mar.Admin.* bodies) --
 
 func defaultStr(s, fallback string) string {
 	if s == "" {
@@ -506,18 +301,4 @@ func quotedColumns(cols []string) string {
 		parts[i] = `"` + c + `"`
 	}
 	return strings.Join(parts, ", ")
-}
-
-// jsonable converts a SQL driver scan target value to something
-// json.Marshal can serialize. Bytes become strings (text columns
-// arrive as []byte sometimes), nil stays nil.
-func jsonable(v any) any {
-	switch x := v.(type) {
-	case []byte:
-		return string(x)
-	case nil:
-		return nil
-	default:
-		return x
-	}
 }

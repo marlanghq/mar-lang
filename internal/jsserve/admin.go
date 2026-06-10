@@ -15,7 +15,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"strings"
 	"time"
@@ -48,22 +47,18 @@ var adminIPLimiter = auth.NewLimiter(20, time.Hour)
 // Called from ServeLive once the admin schema is ready. Routes:
 //
 //	/_mar/admin/auth/{request-code, verify-code, logout}
-//	   — passwordless email-code flow (Phase 2)
+//	   — passwordless email-code flow (the Mar panel's login posts here)
 //
-//	/_mar/admin/static/{admin.css, admin.js}
-//	   — embedded UI assets
+//	/_mar/admin/api/mar/{server-info, db-stats, recent-requests,
+//	                     entities, entity-rows, backups}
+//	   — introspection in the frontend Mar wire format, consumed by the
+//	     panel's Mar.Admin.* effects.
 //
-//	/_mar/admin/api/whoami
-//	   — session probe; 200 OK with the session record OR null
-//	     (mirrors /_auth/whoami's shape).
+//	/_mar/admin/api/database-backup/<id>   — backup download (raw bytes)
 //
-//	/_mar/admin/api/{server-info, db-stats, recent-requests, entity-rows}
-//	   — JSON services consumed by the UI.
-//
-//	/_mar/admin/   (catch-all)
-//	   — serves index.html (the SPA shell). Login state is detected
-//	     client-side via /api/whoami so the same shell handles both
-//	     unauthenticated and authenticated views.
+//	/_mar/admin/program.json   — the compiled Mar panel program
+//	/_mar/admin[/...]          — the panel's HTML shell; client routes
+//	     (/login, /table/*) load on direct nav / reload.
 func mountAdminHandlers(mux *http.ServeMux) {
 	// All /_mar/admin/auth/* and /_mar/admin/api/* endpoints sit
 	// behind the gateway rate limiter (per-IP, mar.json["rateLimit"]).
@@ -73,80 +68,26 @@ func mountAdminHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/_mar/admin/auth/verify-code", rateLimit(handleAdminVerifyCode))
 	mux.HandleFunc("/_mar/admin/auth/logout", rateLimit(handleAdminLogout))
 
-	// Static assets — bypass the rate limiter. The admin panel SPA
-	// loads CSS/JS once per page open; 429ing those would brick the
-	// UI for a legitimately bursty admin (think: opening 3 tabs).
-	staticFS := http.FS(admin.WebFS())
-	mux.Handle("/_mar/admin/static/", http.StripPrefix("/_mar/admin/static/",
-		http.FileServer(staticFS)))
+	// /_mar/admin/api/mar/* — introspection serialized in the frontend Mar
+	// wire format (runtime.EncodeValueJSON ↔ jsToMar, so a typed Dict
+	// survives the round-trip), consumed by the panel's Mar.Admin.* effects.
+	// Gated by the admin session cookie, same as every /api/ route.
+	mux.HandleFunc("/_mar/admin/api/mar/server-info", rateLimit(handleAdminMarServerInfo))
+	mux.HandleFunc("/_mar/admin/api/mar/db-stats", rateLimit(handleAdminMarDBStats))
+	mux.HandleFunc("/_mar/admin/api/mar/recent-requests", rateLimit(handleAdminMarRecentRequests))
+	mux.HandleFunc("/_mar/admin/api/mar/entities", rateLimit(handleAdminMarEntities))
+	mux.HandleFunc("/_mar/admin/api/mar/entity-rows", rateLimit(handleAdminMarEntityRows))
+	mux.HandleFunc("/_mar/admin/api/mar/backups", rateLimit(handleAdminMarBackups))
 
-	// /api/* — services consumed by the embedded SPA.
-	//
-	// /api/whoami follows the same shape as /_auth/whoami: 200 OK
-	// with the session record when authenticated, 200 OK + null
-	// otherwise. SPA-friendly (no try/catch on 401), and matches
-	// the user-auth convention so future frontend code looks
-	// identical for both. Other /api/* endpoints (which expose
-	// data, not session probes) keep the 401-on-no-session pattern.
-	mux.HandleFunc("/_mar/admin/api/whoami", rateLimit(handleAdminWhoami))
-	mux.HandleFunc("/_mar/admin/api/server-info", rateLimit(handleAdminServerInfo))
-	mux.HandleFunc("/_mar/admin/api/db-stats", rateLimit(handleAdminDBStats))
-	mux.HandleFunc("/_mar/admin/api/recent-requests", rateLimit(handleAdminRecentRequests))
-	mux.HandleFunc("/_mar/admin/api/entity-rows", rateLimit(handleAdminEntityRows))
+	// The Mar-native admin panel — the default at /_mar/admin (login +
+	// dashboard + per-table browser, all in one Mar program compiled at boot).
+	// Subtree so its client routes (/login, /table/*) load on direct nav /
+	// reload; the exact program.json route wins over the subtree.
+	mux.HandleFunc("/_mar/admin/program.json", handleAdminMarProgram)
+	mux.HandleFunc("/_mar/admin", handleAdminMarShell)
+	mux.HandleFunc("/_mar/admin/", handleAdminMarShell)
+
 	mountAdminBackupHandlers(mux)
-
-	// Catch-all — serve the SPA shell. Path "/" matches "/_mar/admin"
-	// and any sub-route the JS router renders client-side. Must be
-	// registered last so the more-specific /api and /auth routes win.
-	// Not rate-limited: same reasoning as static assets — opening the
-	// page is a rare-but-bursty action.
-	mux.HandleFunc("/_mar/admin", handleAdminPage)
-	mux.HandleFunc("/_mar/admin/", handleAdminPage)
-}
-
-// handleAdminPage serves the SPA shell (index.html). The page itself
-// has no auth gate at the HTTP level — login state is determined by
-// the client calling /_mar/admin/api/whoami after load. This keeps
-// the page simple and ensures unauthenticated visitors see the
-// login screen rather than a 401 in DevTools.
-func handleAdminPage(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	indexHTML, err := fs.ReadFile(admin.WebFS(), "index.html")
-	if err != nil {
-		http.Error(w, "admin: index missing", http.StatusInternalServerError)
-		return
-	}
-	// no-store so the embedded SPA refreshes on every framework
-	// upgrade — the admin panel updates with `mar`, not on a separate
-	// cache lifetime.
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(indexHTML)
-}
-
-// handleAdminWhoami returns the active admin's session record, or
-// null if there's no valid session. Mirrors /_auth/whoami's shape
-// (always 200, body is null vs. record) so SPA code reads the
-// same on both auth tracks. Called by the embedded panel on load
-// to pick between the login screen and the dashboard.
-func handleAdminWhoami(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	// Whoami is the friendly probe — both ErrNoSession and DB errors
-	// resolve to "200 OK + null". The SPA boot path treats null as
-	// "not signed in" and routes to login; data endpoints distinguish
-	// 401 vs 503 separately.
-	email, err := requireAdminSession(r)
-	if err != nil {
-		writeJSON(w, http.StatusOK, nil)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"email": email})
 }
 
 // requireAdminSession is the per-request auth check used by every

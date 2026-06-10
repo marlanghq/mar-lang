@@ -450,6 +450,17 @@ func TPage() TCon {
 	return TCon{Name: "Page"}
 }
 
+// TAdminSession returns the opaque "AdminSession" type — the capability
+// token the framework threads into a Page.adminProtected page's
+// init/update/view. It has no user-facing constructor: only the admin
+// page provides it. Because the Mar.Admin.* functions require an
+// AdminSession as their first argument, they can only be called from
+// inside an admin page — a normal page has no AdminSession in scope, so
+// referencing Mar.Admin.* there is a compile error.
+func TAdminSession() TCon {
+	return TCon{Name: "AdminSession"}
+}
+
 // TEndpoint returns the opaque "Endpoint" type.
 func TEndpoint() TCon {
 	return TCon{Name: "Endpoint"}

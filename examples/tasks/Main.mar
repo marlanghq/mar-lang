@@ -4,7 +4,7 @@ module Main exposing (main)
 import UI exposing
     ( navigationStack, navigationTitle
     , form, list, section, header
-    , hstack, vstack
+    , hstack, vstack, expand
     , text, textField, button, empty
     , submit
     )
@@ -166,10 +166,12 @@ renderTask : Task -> View Msg
 renderTask t =
     hstack []
         [ button [] (ToggleTask t.id) (if t.done then "[x]" else "[ ]")
-        , vstack []
-            [ text t.title
-            , if t.notes == "" then empty else text t.notes
-            ]
+        , expand
+            (vstack []
+                [ text t.title
+                , if t.notes == "" then empty else text t.notes
+                ]
+            )
         , button [] (RemoveTask t.id) "Remove"
         ]
 

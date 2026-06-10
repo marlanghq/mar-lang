@@ -2073,6 +2073,14 @@
       VView('centered', [], [child], ''));
     def('uiCentered', uiCenteredCtor); def('UI.centered', uiCenteredCtor);
 
+    // expand : View msg -> View msg
+    // Wraps child in an "expand" view tag. The renderer (createDOM
+    // case 'expand' below) makes it grow to fill the parent stack's
+    // main axis — the explicit counterpart to spacer (equal columns).
+    const uiExpandCtor = native(1, ([child]) =>
+      VView('expand', [], [child], ''));
+    def('uiExpand', uiExpandCtor); def('UI.expand', uiExpandCtor);
+
     // sheet : { open, onDismiss, outlet } -> List (View msg) -> View msg
     //
     // iOS-style page sheet. Parent owns open/closed state; framework
@@ -2172,6 +2180,85 @@
     def('pageProtected', pageProtectedImpl);
     def('Page.protected', pageProtectedImpl);
 
+    // Page.adminProtected mints the opaque AdminSession capability and threads
+    // it into init/update/view as the leading argument. There's no separate
+    // client-side admin auth gate here: the admin session cookie authorizes the
+    // Mar.Admin.* fetches server-side (the /_mar/admin/api/mar/* routes 401
+    // without it). So we pre-apply a placeholder AdminSession and emit a plain
+    // __Page that mounts like any other — the page only ever passes that value
+    // to Mar.Admin.*, which ignore it. (Web-only; no iOS admin app.)
+    const pageAdminProtectedImpl = native(1, ([rec]) => {
+      const f = rec.fields;
+      const title = f.title || VString('');
+      const adminSession = VString('admin');
+      const init = native(1, ([unit]) => apply(apply(f.init, adminSession), unit));
+      const update = native(2, ([msg, model]) => apply(apply(apply(f.update, adminSession), msg), model));
+      const view = native(1, ([model]) => apply(apply(f.view, adminSession), model));
+      return VCtor('__Page', [f.path, init, update, view, title]);
+    });
+    def('pageAdminProtected', pageAdminProtectedImpl);
+    def('Page.adminProtected', pageAdminProtectedImpl);
+
+    // Mar.Admin.* — privileged server-introspection, shaped like Service.call
+    // (AdminSession -> (Result String resp -> msg) -> Effect String msg). The
+    // panel performs them as Cmds; the result arrives through toMsg. The
+    // AdminSession argument is the compile-time gate only — at runtime the
+    // admin session cookie (same-origin) authorizes the request and the server
+    // runs the real introspection body (internal/jsserve/admin_mar.go),
+    // returning the Mar Value as JSON which jsToMar rebuilds here.
+    const marAdminFetch = (path, toMsg) => VEffect(() => {
+      fetch(path, { method: 'GET', credentials: 'same-origin' })
+        .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
+        .then(r => {
+          if (r.status === 401) {
+            // Admin session missing/expired — send the operator to the panel's
+            // own sign-in page. Guarded so the panel's several concurrent
+            // fetches redirect once.
+            if (!globalThis.__marAdminRedirecting) {
+              globalThis.__marAdminRedirecting = true;
+              window.location.assign('/_mar/admin/login');
+            }
+            return;
+          }
+          if (!r.ok) {
+            if (currentDispatch) currentDispatch(apply(toMsg, VCtor('Err', [VString(decodeServerError(r.body) || ('HTTP ' + r.status))])));
+            return;
+          }
+          let parsed;
+          try { parsed = jsToMar(JSON.parse(r.body)); }
+          catch (e) {
+            if (currentDispatch) currentDispatch(apply(toMsg, VCtor('Err', [VString('decode failed: ' + (e && e.message || e))])));
+            return;
+          }
+          if (currentDispatch) currentDispatch(apply(toMsg, VCtor('Ok', [parsed])));
+        })
+        .catch(err => {
+          if (currentDispatch) currentDispatch(apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))])));
+        });
+      return VUnit();
+    }, 'marAdmin');
+
+    def('marAdminServerInfo', native(2, ([_s, toMsg]) => marAdminFetch('/_mar/admin/api/mar/server-info', toMsg)));
+    def('Mar.Admin.serverInfo', envLookup(env, 'marAdminServerInfo'));
+    def('marAdminDbStats', native(2, ([_s, toMsg]) => marAdminFetch('/_mar/admin/api/mar/db-stats', toMsg)));
+    def('Mar.Admin.dbStats', envLookup(env, 'marAdminDbStats'));
+    def('marAdminRecentRequests', native(2, ([_s, toMsg]) => marAdminFetch('/_mar/admin/api/mar/recent-requests', toMsg)));
+    def('Mar.Admin.recentRequests', envLookup(env, 'marAdminRecentRequests'));
+    def('marAdminListEntities', native(2, ([_s, toMsg]) => marAdminFetch('/_mar/admin/api/mar/entities', toMsg)));
+    def('Mar.Admin.listEntities', envLookup(env, 'marAdminListEntities'));
+    def('marAdminListEntityRows', native(3, ([_s, entity, toMsg]) => marAdminFetch('/_mar/admin/api/mar/entity-rows?entity=' + encodeURIComponent(entity.s), toMsg)));
+    def('Mar.Admin.listEntityRows', envLookup(env, 'marAdminListEntityRows'));
+    def('marAdminListBackups', native(2, ([_s, toMsg]) => marAdminFetch('/_mar/admin/api/mar/backups', toMsg)));
+    def('Mar.Admin.listBackups', envLookup(env, 'marAdminListBackups'));
+    // Admin sign-in flow — POST to the existing /_mar/admin/auth/* endpoints
+    // (reuses authPost, same as the user Auth.*). Pre-auth, so no AdminSession.
+    def('marAdminRequestCode', native(2, ([req, toMsg]) => authPost('/_mar/admin/auth/request-code', marToJs(req), toMsg, () => VUnit())));
+    def('Mar.Admin.requestCode', envLookup(env, 'marAdminRequestCode'));
+    def('marAdminVerifyCode', native(2, ([req, toMsg]) => authPost('/_mar/admin/auth/verify-code', marToJs(req), toMsg, (text) => jsToMar(JSON.parse(text)))));
+    def('Mar.Admin.verifyCode', envLookup(env, 'marAdminVerifyCode'));
+    def('marAdminSignOut', native(1, ([toMsg]) => authPost('/_mar/admin/auth/logout', null, toMsg, () => VUnit())));
+    def('Mar.Admin.signOut', envLookup(env, 'marAdminSignOut'));
+
     // Page.dynamic — pattern path with `:param` segments. The runtime
     // matches the URL against the pattern at navigation time, threading
     // a Params record through init/update/view as the leading argument.
@@ -2196,6 +2283,24 @@
     });
     def('pageDynamicProtected', pageDynamicProtectedImpl);
     def('Page.dynamicProtected', pageDynamicProtectedImpl);
+
+    // Page.dynamicAdminProtected — pattern path + admin session. Pre-applies a
+    // placeholder AdminSession (the admin cookie does the real auth on the
+    // Mar.Admin.* fetches) and emits a plain __DynamicPage, so the existing
+    // dynamic-page machinery threads Params in. Web-only (no iOS admin).
+    const pageDynamicAdminProtectedImpl = native(1, ([rec]) => {
+      const f = rec.fields;
+      const title = f.title || VString('');
+      const adminSession = VString('admin');
+      // Real sigs thread (AdminSession, Params, …); pre-apply the session,
+      // leaving (Params, …) — exactly __DynamicPage's shape.
+      const init = native(2, ([params, unit]) => apply(apply(apply(f.init, adminSession), params), unit));
+      const update = native(3, ([params, msg, model]) => apply(apply(apply(apply(f.update, adminSession), params), msg), model));
+      const view = native(2, ([params, model]) => apply(apply(apply(f.view, adminSession), params), model));
+      return VCtor('__DynamicPage', [f.path, init, update, view, title]);
+    });
+    def('pageDynamicAdminProtected', pageDynamicAdminProtectedImpl);
+    def('Page.dynamicAdminProtected', pageDynamicAdminProtectedImpl);
 
     // Nav.* — programmatic navigation. The actual implementations
     // live inside mountPages (where `pages`/`render` are in scope) and
@@ -4756,14 +4861,19 @@
       '  display: flex; flex-direction: row; align-items: center;',
       '  gap: 12px;',
       '}',
-      '.mar-hstack > * { flex: 1; min-width: 0; }',
+      // SwiftUI-style layout: hstack children HUG their content — they
+      // do NOT stretch to fill the row. To distribute, insert a
+      // `spacer` (pushes siblings apart) or wrap a child in `expand`
+      // (claims the free space). This is the single rule. The only
+      // children that stay greedy are the ones that are intrinsically
+      // flexible (textField / textArea, mirroring SwiftUI\'s TextField)
+      // or ARE the fill mechanism (spacer, expand) — each opts back in
+      // below. `flex: 0 1 auto` = hug, but shrink (truncate) rather
+      // than overflow on a narrow row.
+      '.mar-hstack > * { flex: 0 1 auto; min-width: 0; }',
+      // Buttons keep their intrinsic size and never compress — a
+      // clipped button label reads as broken.
       '.mar-hstack > button { flex: 0 0 auto; }',
-      // Title / subtitle leaves inside an hstack behave as natural-
-      // width labels (like SwiftUI Text), so wrapping one with
-      // spacers — `hstack [ button "-", spacer, title "0", spacer,
-      // button "+" ]` — actually centers it instead of having it
-      // compete with the spacers for flex space.
-      '.mar-hstack > .mar-title, .mar-hstack > .mar-subtitle { flex: 0 0 auto; }',
       '.mar-vstack {',
       '  display: flex; flex-direction: column; align-items: stretch;',
       // 6px is the SwiftUI-feel default — tight enough that a
@@ -5188,7 +5298,17 @@
       'a.mar-navigation-link::after {',
       '  content: "›";',
       '  color: #c7c7cc; font-size: 1.4em; line-height: 1;',
-      '  flex-shrink: 0;',
+      // The chevron is a decorative trailing ACCESSORY, so it must not
+      // shrink the link's content box. As a flex sibling (the old
+      // `flex-shrink: 0`) it consumed its own width + the 12px gap, so an
+      // `expand`-ed two-column child inside the link laid its columns out
+      // over (rowWidth - chevron - gap) — shifting a right-hand value
+      // column ~10px left of the same column in a plain (chevron-less)
+      // row. Taking it out of flow (absolute) gives the content the FULL
+      // row width, so a value/detail column lines up identically whether
+      // or not the row has a chevron. It still sits at the right edge,
+      // vertically centred, painted over the (empty) trailing margin.
+      '  position: absolute; right: 0; top: 50%; transform: translateY(-50%);',
       '}',
       // Hover background — paints full-bleed across the row including
       // the card's 16px horizontal padding. A naive
@@ -5282,6 +5402,14 @@
       // along the parent flex container\'s main axis. Inside an
       // hstack it expands horizontally; inside vstack, vertically.
       '.mar-spacer { flex: 1 1 auto; align-self: stretch; }',
+
+      // Expand — the explicit "fill the main axis" wrapper (SwiftUI\'s
+      // .frame(maxWidth: .infinity)). Where spacer pushes siblings
+      // apart, expand makes a child claim the free space. Grows as a
+      // flex item; its inner child stretches to fill the wrapper, so
+      // `hstack [ expand a, expand b ]` yields equal-width columns.
+      '.mar-expand { flex: 1 1 0; min-width: 0; display: flex; }',
+      '.mar-expand > * { flex: 1 1 auto; min-width: 0; }',
 
       // Toggle — mobile-style switch. The native checkbox is hidden
       // via appearance:none and re-drawn as a 51x31 pill with a 27px
@@ -6246,6 +6374,14 @@
         e.className = 'mar-centered';
         for (const c of view.children) e.appendChild(createDOM(c));
         break;
+      case 'expand':
+        // Grows to fill the parent stack's main axis; its child fills
+        // the wrapper. The explicit counterpart to spacer (equal
+        // columns). Mirrors SwiftUI's .frame(maxWidth: .infinity).
+        ensureUIStyles();
+        e.className = 'mar-expand';
+        for (const c of view.children) e.appendChild(createDOM(c));
+        break;
       case 'spacer':
         // Flex filler — the parent flex container (hstack / vstack
         // / section-body) absorbs it and pushes siblings apart.
@@ -7147,11 +7283,12 @@
       if (p.k !== 'C') continue;
       if (p.tag !== '__Page' && p.tag !== '__ProtectedPage' &&
           p.tag !== '__DynamicPage' && p.tag !== '__DynamicProtectedPage') continue;
-      // All four ctors share the same arg shape: [path, init, update,
-      // view, title]. __ProtectedPage / __DynamicProtectedPage trigger
-      // the auth gate (redirect resolved from globalThis.__marAuthSignInPath,
-      // set by the Auth.config builtin). __DynamicPage / __DynamicProtectedPage
-      // also enable URL-pattern matching with `:param` segments.
+      // These ctors share the same arg shape: [path, init, update, view,
+      // title]. __ProtectedPage / __DynamicProtectedPage trigger the auth
+      // gate (redirect resolved from globalThis.__marAuthSignInPath, set by
+      // the Auth.config builtin). __DynamicPage / __DynamicProtectedPage also
+      // enable URL-pattern matching with `:param` segments. (Page.adminProtected
+      // pre-applies its AdminSession and emits a plain __Page — see its builtin.)
       const [pathV, initFn, updateFn, viewFn, titleV] = p.args;
       const path = pathV.s;
       const title = (titleV && titleV.k === 'S') ? titleV.s : '';
@@ -7391,7 +7528,16 @@
         const shouldScrollTop = (dir === 'forward' || dir === 'fade');
         const swap = () => {
           while (root.firstChild) root.removeChild(root.firstChild);
-          mounted = createDOM(viewVal);
+          // Recompute from the CURRENT model, not the `viewVal` snapshot
+          // captured at render() entry. startViewTransition runs this
+          // callback ASYNCHRONOUSLY (next frame), so a fast init-effect
+          // fetch can resolve and advance pg.model BEFORE the swap fires.
+          // Mounting the stale snapshot would leave the old "Loading…"
+          // view on screen even though the data already arrived — the
+          // bug where a freshly-navigated page (e.g. a protected page's
+          // dashboard right after sign-in) stuck on "Loading…" until
+          // time-travel forced a fresh mount.
+          mounted = createDOM(viewWithUser(pg, pg.model));
           root.appendChild(mounted);
           mountedPath = pg.activeKey;
           if (shouldScrollTop) {
@@ -7818,8 +7964,16 @@
       slider.min = '-1';
       slider.max = String(total - 1);
       slider.value = String(cursor);
+      slider.className = 'mar-tt-slider';
       slider.style.flex = '1';
       slider.style.minWidth = '120px';
+      // Paint the blue "filled" portion of the track up to the cursor
+      // (webkit reads --tt-fill in the track gradient). value runs
+      // -1..total-1, so (value + 1) / total maps to 0..100%.
+      const setFill = (val) => {
+        slider.style.setProperty('--tt-fill', ((parseInt(val, 10) + 1) / total * 100) + '%');
+      };
+      setFill(slider.value);
 
       const status = document.createElement('span');
       status.textContent = (cursor + 1) + ' / ' + total;
@@ -7830,6 +7984,7 @@
       slider.oninput = () => {
         const idx = parseInt(slider.value, 10);
         status.textContent = (idx + 1) + ' / ' + total;
+        setFill(slider.value);
         jumpToFrame(idx, { skipPanelRefresh: true });
       };
       slider.onchange = () => {
@@ -8377,7 +8532,20 @@
         '.mar-dock-badge { padding: 4px 8px; border-radius: 4px; cursor: pointer; user-select: none; }' +
         '.mar-dock-badge:hover { background: #374151; }' +
         '.mar-dock-badge.active { background: #374151; }' +
-        '.mar-dock-badge.pulse { animation: mar-dock-pulse 1.2s ease-in-out infinite; }';
+        '.mar-dock-badge.pulse { animation: mar-dock-pulse 1.2s ease-in-out infinite; }' +
+        // Time-travel scrubber — custom range so the thumb reaches both
+        // ends (the native thumb insets by half its width, leaving a gap)
+        // and matches the dark dock. The track fills blue up to the
+        // cursor via the --tt-fill CSS var (set in renderTimeTravelPanel);
+        // Firefox gets the same fill from ::-moz-range-progress.
+        '.mar-tt-slider { -webkit-appearance: none; appearance: none; height: 16px; margin: 0; padding: 0; background: transparent; cursor: pointer; vertical-align: middle; }' +
+        '.mar-tt-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, #3b82f6 var(--tt-fill, 100%), #4b5563 var(--tt-fill, 100%)); }' +
+        '.mar-tt-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 10px; margin-top: -3px; border-radius: 5px; background: #f3f4f6; border: none; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }' +
+        '.mar-tt-slider::-moz-range-track { height: 4px; border-radius: 2px; background: #4b5563; }' +
+        '.mar-tt-slider::-moz-range-progress { height: 4px; border-radius: 2px; background: #3b82f6; }' +
+        '.mar-tt-slider::-moz-range-thumb { width: 16px; height: 10px; border: none; border-radius: 5px; background: #f3f4f6; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }' +
+        '.mar-tt-slider:focus { outline: none; }' +
+        '.mar-tt-slider:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5); }';
       document.head.appendChild(style);
     }
 

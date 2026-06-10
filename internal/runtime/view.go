@@ -568,6 +568,18 @@ func viewBuiltins() map[string]Value {
 			return VView{Tag: "centered", Children: []Value{child}}, nil
 		}),
 
+		// uiExpand : View msg -> View msg
+		// Wraps `child` so it grows to fill the parent stack's main
+		// axis (flex:1 on web, frame(maxWidth:.infinity) on iOS) — the
+		// explicit counterpart to spacer, for equal-width columns.
+		"uiExpand": nativeFn(1, func(args []Value) (Value, error) {
+			child, ok := args[0].(VView)
+			if !ok {
+				return nil, fmt.Errorf("UI.expand: expected View (got %T)", args[0])
+			}
+			return VView{Tag: "expand", Children: []Value{child}}, nil
+		}),
+
 		// uiConfirm : { title, confirmLabel, destructive, onConfirm,
 		//               onCancel } -> View msg
 		//

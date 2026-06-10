@@ -34,3 +34,16 @@ go = Effect.forEach (\_ -> Effect.succeed ()) xs
 		t.Fatalf("got %s", got)
 	}
 }
+
+// UI.expand wraps a view in an "expand"-tagged node — the Go-runtime
+// half of the SwiftUI-style layout model (the web renderer maps the
+// tag to flex:1, iOS to .frame(maxWidth: .infinity)). Pins the tag so
+// the serializer and both renderers keep agreeing on it.
+func TestUIExpandTag(t *testing.T) {
+	src := `module M exposing (..)
+v = UI.expand (UI.text "hi")
+`
+	if got := runModule(t, src, "v"); got != "<view:expand>" {
+		t.Fatalf("UI.expand should produce <view:expand>, got %s", got)
+	}
+}

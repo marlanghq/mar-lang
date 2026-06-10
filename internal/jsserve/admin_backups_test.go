@@ -270,3 +270,24 @@ func TestDownloadBackup_RequiresAuth(t *testing.T) {
 		t.Errorf("status: got %d, want 401", resp.StatusCode)
 	}
 }
+
+// slugifyName turns a project name into a filesystem-safe download
+// prefix; backupFilename uses it so a downloaded backup is identifiable
+// in a shared Downloads folder (e.g. "myapp-2026-05-08-100000.tar.gz").
+func TestSlugifyName(t *testing.T) {
+	cases := map[string]string{
+		"My App":     "my-app",
+		"Mar Admin":  "mar-admin",
+		"todo":       "todo",
+		"  Spaces  ": "spaces",
+		"a/b c":      "a-b-c",
+		"my-app":     "my-app",
+		"":           "",
+		"---":        "",
+	}
+	for in, want := range cases {
+		if got := slugifyName(in); got != want {
+			t.Errorf("slugifyName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

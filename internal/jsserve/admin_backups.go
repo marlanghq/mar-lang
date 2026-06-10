@@ -124,9 +124,39 @@ func serveBundleDownload(w http.ResponseWriter, bundlePath string) {
 	info, _ := f.Stat()
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition",
-		fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(bundlePath)))
+		fmt.Sprintf(`attachment; filename="%s"`, backupFilename(filepath.Base(bundlePath))))
 	if info != nil {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
 	}
 	_, _ = io.Copy(w, f)
+}
+
+// backupFilename prefixes the bundle's base name with a filesystem-safe
+// slug of the project name (mar.json "name"), so a download landing in a
+// shared Downloads folder is identifiable — e.g.
+// "myapp-2026-06-09-120000.tar.gz". Falls back to the bare base name when
+// no project name is configured.
+func backupFilename(base string) string {
+	if slug := slugifyName(currentPWA().Name); slug != "" {
+		return slug + "-" + base
+	}
+	return base
+}
+
+// slugifyName lowercases s and keeps only [a-z0-9._], collapsing every
+// other run of characters to a single dash. Returns "" when nothing
+// usable remains.
+func slugifyName(s string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' {
+			b.WriteRune(r)
+			dash = false
+		} else if b.Len() > 0 && !dash {
+			b.WriteByte('-')
+			dash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }

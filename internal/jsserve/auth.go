@@ -489,9 +489,8 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 // handleWhoami: GET /_auth/whoami
 //
 // Returns the current user as JSON, or null if there's no valid session.
-// Mirrors the unix `whoami` command's shape — Mar uses the same name on
-// the framework session-probe endpoints (this one + /_mar/admin/api/whoami)
-// for consistency.
+// Mirrors the unix `whoami` command's shape — the frontend session-probe
+// endpoint the client hits to learn who (if anyone) is logged in.
 func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

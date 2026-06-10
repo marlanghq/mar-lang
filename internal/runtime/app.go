@@ -30,6 +30,9 @@ type VPage struct {
 	IsProtected bool // duplicates `Redirect != ""` for clarity; future
 	//                  // protected variants without a redirect (eg. native
 	//                  // sheets) will still set this true.
+	IsAdmin bool // Page.adminProtected — gated by the framework admin
+	//             // session (mar.json["admins"]) instead of the app's user
+	//             // auth. Implies IsProtected.
 	PathPattern []PathSegment // populated for dynamic pages; parsed once at
 	//                          // builder time so the bundle emit + matchers
 	//                          // don't re-parse the source string.
@@ -176,6 +179,21 @@ func appBuiltins() map[string]Value {
 			}, nil
 		}),
 
+		// Page.adminProtected mirrors Page.protected but is gated by the
+		// framework admin session (mar.json["admins"]) rather than the
+		// app's user auth. Server-side it's just metadata; the JS runtime
+		// drives the admin-session bootstrap + redirect to the admin
+		// sign-in page.
+		"pageAdminProtected": nativeFn(1, func(args []Value) (Value, error) {
+			page, err := readPageRecord(args[0], "Page.adminProtected")
+			if err != nil {
+				return nil, err
+			}
+			page.IsProtected = true
+			page.IsAdmin = true
+			return page, nil
+		}),
+
 		// Page.dynamic — pattern path with typed `{name:Type}` segments.
 		// Same fields as Page.create; the path string gets parsed into
 		// the typed segments the JS / iOS runtimes need to match URLs
@@ -210,6 +228,24 @@ func appBuiltins() map[string]Value {
 			}
 			page.IsDynamic = true
 			page.IsProtected = true
+			page.PathPattern = parsed.Segments
+			return page, nil
+		}),
+
+		// Page.dynamicAdminProtected — pattern path + admin gate. Like
+		// pageDynamicProtected but threads AdminSession (not User) + Params.
+		"pageDynamicAdminProtected": nativeFn(1, func(args []Value) (Value, error) {
+			page, err := readPageRecord(args[0], "Page.dynamicAdminProtected")
+			if err != nil {
+				return nil, err
+			}
+			parsed, err := ParsePathPattern(page.Path)
+			if err != nil {
+				return nil, fmt.Errorf("Page.dynamicAdminProtected: %w", err)
+			}
+			page.IsDynamic = true
+			page.IsProtected = true
+			page.IsAdmin = true
 			page.PathPattern = parsed.Segments
 			return page, nil
 		}),

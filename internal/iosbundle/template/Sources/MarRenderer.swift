@@ -170,36 +170,33 @@ struct MarRenderer: View {
             MarUISection(view: view, dispatch: dispatch)
 
         case "hstack":
-            // Mirror the web's flex-layout convention for hstack
-            // children: text-like leaves fill leftover width (so a
-            // sibling button gets pushed to the trailing edge),
-            // titles/subtitles and buttons stay intrinsic. Without
-            // this, a row like `hstack [ text task.name, button
-            // "Delete" ]` renders with both views hugging at the
-            // leading edge instead of with Delete pinned to the
-            // right — exactly what the operator reported.
+            // SwiftUI-style: children HUG their content — no stretch.
+            // To distribute, insert a `spacer` (pushes siblings apart)
+            // or wrap a child in `expand` (claims the free space) —
+            // mirroring HStack + Spacer() + .frame(maxWidth: .infinity).
+            // textField stays greedy on its own (like SwiftUI's
+            // TextField), so `hstack [ textField, button ]` still works.
             //
-            // CSS counterparts (kept in lockstep):
-            //   .mar-hstack > *                 { flex: 1 }
-            //   .mar-hstack > button            { flex: 0 0 auto }
-            //   .mar-hstack > .mar-title,
-            //   .mar-hstack > .mar-subtitle     { flex: 0 0 auto }
+            // CSS counterpart (kept in lockstep):
+            //   .mar-hstack > *        { flex: 0 1 auto }   (hug)
+            //   .mar-hstack > button   { flex: 0 0 auto }
+            //   .mar-spacer / .mar-expand / textField  → greedy
             HStack(alignment: .center, spacing: 12) {
                 ForEach(0..<view.children.count, id: \.self) { i in
-                    let child = view.children[i]
-                    if child.tag == "text" || child.tag == "errorText" {
-                        MarRenderer(view: child, dispatch: dispatch)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        MarRenderer(view: child, dispatch: dispatch)
-                    }
+                    MarRenderer(view: view.children[i], dispatch: dispatch)
                 }
             }
 
         case "vstack":
+            // Children fill the column width (matching the web's
+            // `align-items: stretch`), left-aligned. This is the
+            // pragmatic deviation from SwiftUI's hug-width VStack:
+            // column-fill is what almost every layout wants, and it
+            // keeps web + iOS in lockstep.
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(0..<view.children.count, id: \.self) { i in
                     MarRenderer(view: view.children[i], dispatch: dispatch)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
@@ -226,6 +223,19 @@ struct MarRenderer: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+
+        case "expand":
+            // Grows to fill the parent stack's main axis — the
+            // explicit counterpart to Spacer (equal-width columns).
+            // Mirrors SwiftUI's .frame(maxWidth: .infinity).
+            Group {
+                if let child = view.children.first {
+                    MarRenderer(view: child, dispatch: dispatch)
+                } else {
+                    EmptyView()
+                }
+            }
+            .frame(maxWidth: .infinity)
 
         case "sheet":
             // iOS page sheet — same modal-from-bottom behavior we get

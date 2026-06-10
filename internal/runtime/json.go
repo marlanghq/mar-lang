@@ -225,6 +225,14 @@ func encodeValue(v Value) (string, error) {
 	return "", fmt.Errorf("JSON.encode: unsupported %T", v)
 }
 
+// EncodeValueJSON serializes a Mar Value into the JSON wire format the frontend
+// runtime decodes (jsToMar) — the same encoding Service responses use (see
+// service.go). Exposed so the server layer (internal/jsserve) can hand the
+// admin panel its Mar.Admin.* introspection results.
+func EncodeValueJSON(v Value) (string, error) {
+	return encodeValue(v)
+}
+
 // decodeJSON parses a JSON string into a generic Value.
 // Numbers become VInt (if integer) or VFloat. Objects become VRecord.
 // Arrays become VList. null becomes VUnit. Booleans become VBool.

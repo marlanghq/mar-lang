@@ -1954,6 +1954,19 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TView(a), To: TView(a)},
 		},
 
+		// UI.expand : View msg -> View msg
+		// Wraps a view so it GROWS to fill the available space along
+		// its parent stack's main axis — the explicit "fill" modifier
+		// (SwiftUI's .frame(maxWidth: .infinity)). The complement to
+		// spacer: where spacer pushes siblings apart, expand makes one
+		// child claim the slack. Use for equal-width columns, e.g.
+		// `hstack [ expand (button ...), expand (button ...) ]`.
+		// iOS: frame(maxWidth: .infinity). Web: flex: 1.
+		"uiExpand": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TView(a), To: TView(a)},
+		},
+
 		// UI.confirm : { title, confirmLabel, destructive,
 		//                onConfirm, onCancel } -> View msg
 		//
@@ -2063,6 +2076,164 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
+		// Page.adminProtected — like Page.protected, but gated by the
+		// framework's *admin* session (the operators in mar.json["admins"]),
+		// not the app's user auth. Threads an opaque AdminSession into
+		// init/update/view as the first argument. Because the Mar.Admin.*
+		// functions require an AdminSession, they're reachable only from an
+		// admin page — a normal page can't call them, caught at compile time.
+		//
+		//   { path  : String
+		//   , title : String                                       -- (optional)
+		//   , init  : AdminSession -> () -> (Model, Effect e Msg)
+		//   , update: AdminSession -> Msg -> Model -> (Model, Effect e Msg)
+		//   , view  : AdminSession -> Model -> View Msg
+		//   }
+		"pageAdminProtected": TForall{
+			Vars: []int{a.ID, b.ID, -26, -27},
+			Body: TArrow{
+				From: TRecord{
+					Fields: map[string]Type{
+						"path":   TString,
+						"init":   TArrow{From: TAdminSession(), To: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -26}, b)}}}},
+						"update": TArrow{From: TAdminSession(), To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -26}, b)}}}}},
+						"view":   TArrow{From: TAdminSession(), To: TArrow{From: a, To: TView(b)}},
+					},
+					Order: []string{"path", "init", "update", "view"},
+					Tail:  TVar{ID: -27},
+				},
+				To: TPage(),
+			},
+		},
+
+		// The Mar.Admin.* services are shaped EXACTLY like Service.call:
+		//
+		//   AdminSession -> (Result String resp -> msg) -> Effect String msg
+		//
+		// The AdminSession argument is the capability gate (see
+		// Page.adminProtected) — only an admin page can supply one, so a
+		// normal page can't call these (compile error). The trailing toMsg is
+		// because the panel performs them as frontend Cmds: a frontend effect
+		// delivers its result by dispatching a Msg (it can't return one
+		// synchronously), so the result type is threaded through toMsg, never
+		// returned directly. msg is the only free variable (the error channel
+		// is always String).
+
+		// Mar.Admin.serverInfo : AdminSession -> (Result String ServerInfo -> msg) -> Effect String msg
+		"marAdminServerInfo": TForall{
+			Vars: []int{-30},
+			Body: TArrow{
+				From: TAdminSession(),
+				To: TArrow{
+					From: TArrow{From: TResult(TString, TRecord{
+						Fields: map[string]Type{
+							"marVersion":       TString,
+							"goVersion":        TString,
+							"buildTarget":      TString,
+							"bootedAtMs":       TInt,
+							"requestsTotal":    TInt,
+							"requestsInFlight": TInt,
+						},
+						Order: []string{"marVersion", "goVersion", "buildTarget", "bootedAtMs", "requestsTotal", "requestsInFlight"},
+					}), To: TVar{ID: -30}},
+					To: TEffect(TString, TVar{ID: -30}),
+				},
+			},
+		},
+
+		// Mar.Admin.dbStats : AdminSession -> (Result String DbStats -> msg) -> Effect String msg
+		"marAdminDbStats": TForall{
+			Vars: []int{-31},
+			Body: TArrow{
+				From: TAdminSession(),
+				To: TArrow{
+					From: TArrow{From: TResult(TString, TRecord{
+						Fields: map[string]Type{
+							"dbSizeBytes":     TInt,
+							"walSizeBytes":    TInt,
+							"entities":        TList(TRecord{Fields: map[string]Type{"name": TString, "rowCount": TInt}, Order: []string{"name", "rowCount"}}),
+							"frameworkTables": TList(TRecord{Fields: map[string]Type{"name": TString, "rowCount": TInt}, Order: []string{"name", "rowCount"}}),
+						},
+						Order: []string{"dbSizeBytes", "walSizeBytes", "entities", "frameworkTables"},
+					}), To: TVar{ID: -31}},
+					To: TEffect(TString, TVar{ID: -31}),
+				},
+			},
+		},
+
+		// Mar.Admin.recentRequests : AdminSession -> (Result String (List Request) -> msg) -> Effect String msg
+		"marAdminRecentRequests": TForall{
+			Vars: []int{-32},
+			Body: TArrow{
+				From: TAdminSession(),
+				To: TArrow{
+					From: TArrow{From: TResult(TString, TList(TRecord{
+						Fields: map[string]Type{
+							"atMs":       TInt,
+							"method":     TString,
+							"path":       TString,
+							"status":     TInt,
+							"durationMs": TInt,
+							"userEmail":  TString,
+						},
+						Order: []string{"atMs", "method", "path", "status", "durationMs", "userEmail"},
+					})), To: TVar{ID: -32}},
+					To: TEffect(TString, TVar{ID: -32}),
+				},
+			},
+		},
+
+		// Mar.Admin.listEntities : AdminSession -> (Result String (List Entity) -> msg) -> Effect String msg
+		// Schema introspection — every table name + its columns.
+		"marAdminListEntities": TForall{
+			Vars: []int{-33},
+			Body: TArrow{
+				From: TAdminSession(),
+				To: TArrow{
+					From: TArrow{From: TResult(TString, TList(TRecord{
+						Fields: map[string]Type{"name": TString, "columns": TList(TString)},
+						Order:  []string{"name", "columns"},
+					})), To: TVar{ID: -33}},
+					To: TEffect(TString, TVar{ID: -33}),
+				},
+			},
+		},
+
+		// Mar.Admin.listBackups : AdminSession -> (Result String (List Backup) -> msg) -> Effect String msg
+		// Lists the database backup catalog. The panel renders each entry with
+		// a plain <a href> to /_mar/admin/api/database-backups/<id> — the
+		// download itself is a normal browser download, not a Mar.Admin.* call.
+		"marAdminListBackups": TForall{
+			Vars: []int{-35},
+			Body: TArrow{
+				From: TAdminSession(),
+				To: TArrow{
+					From: TArrow{From: TResult(TString, TList(TRecord{
+						Fields: map[string]Type{"id": TString, "sizeBytes": TInt, "createdAtMs": TInt},
+						Order:  []string{"id", "sizeBytes", "createdAtMs"},
+					})), To: TVar{ID: -35}},
+					To: TEffect(TString, TVar{ID: -35}),
+				},
+			},
+		},
+
+		// Mar.Admin.listEntityRows : AdminSession -> String -> (Result String (List (Dict String String)) -> msg) -> Effect String msg
+		// Generic row browser for ANY table. Cells are stringified
+		// server-side (v1) so a single Dict shape covers every column.
+		"marAdminListEntityRows": TForall{
+			Vars: []int{-34},
+			Body: TArrow{
+				From: TAdminSession(),
+				To: TArrow{
+					From: TString,
+					To: TArrow{
+						From: TArrow{From: TResult(TString, TList(TDict(TString, TString))), To: TVar{ID: -34}},
+						To:   TEffect(TString, TVar{ID: -34}),
+					},
+				},
+			},
+		},
+
 		// Page.dynamic — pattern path with typed `{name:Type}` params.
 		// The runtime matches the URL against the pattern and threads
 		// a Params record through init/update/view. The pattern's
@@ -2109,6 +2280,67 @@ func stdlibBindings() map[string]Type {
 					},
 					Order: []string{"path", "init", "update", "view"},
 					Tail:  TVar{ID: -25},
+				},
+				To: TPage(),
+			},
+		},
+
+		// Admin sign-in flow. Unlike the introspection functions above, these
+		// do NOT take an AdminSession — they're the bootstrap that PRODUCES the
+		// session (login can't require what it mints). They POST to the
+		// existing /_mar/admin/auth/* endpoints. Shaped like the user Auth.*.
+
+		// Mar.Admin.requestCode : { email : String } -> (Result String () -> msg) -> Effect e msg
+		"marAdminRequestCode": TForall{
+			Vars: []int{-50, -51},
+			Body: TArrow{
+				From: TRecord{Fields: map[string]Type{"email": TString}, Order: []string{"email"}},
+				To: TArrow{
+					From: TArrow{From: TResult(TString, TUnit{}), To: TVar{ID: -51}},
+					To:   TEffect(TVar{ID: -50}, TVar{ID: -51}),
+				},
+			},
+		},
+
+		// Mar.Admin.verifyCode : { email, code } -> (Result String { email : String } -> msg) -> Effect e msg
+		// On success the server sets the admin session cookie.
+		"marAdminVerifyCode": TForall{
+			Vars: []int{-52, -53},
+			Body: TArrow{
+				From: TRecord{Fields: map[string]Type{"email": TString, "code": TString}, Order: []string{"email", "code"}},
+				To: TArrow{
+					From: TArrow{From: TResult(TString, TRecord{Fields: map[string]Type{"email": TString}, Order: []string{"email"}}), To: TVar{ID: -53}},
+					To:   TEffect(TVar{ID: -52}, TVar{ID: -53}),
+				},
+			},
+		},
+
+		// Mar.Admin.signOut : (Result String () -> msg) -> Effect e msg
+		"marAdminSignOut": TForall{
+			Vars: []int{-54, -55},
+			Body: TArrow{
+				From: TArrow{From: TResult(TString, TUnit{}), To: TVar{ID: -55}},
+				To:   TEffect(TVar{ID: -54}, TVar{ID: -55}),
+			},
+		},
+
+		// Page.dynamicAdminProtected — like Page.dynamicProtected, but gated
+		// by the framework admin session (AdminSession) instead of the app's
+		// User. Threads AdminSession + Params (in that order) into
+		// init/update/view. Powers the admin panel's per-table drill-down
+		// sub-screen (path "/_mar/admin/mar/table/{name:String}").
+		"pageDynamicAdminProtected": TForall{
+			Vars: []int{a.ID, b.ID, -40, -41, -42},
+			Body: TArrow{
+				From: TRecord{
+					Fields: map[string]Type{
+						"path":   TPath(TVar{ID: -40}),
+						"init":   TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -41}, b)}}}}},
+						"update": TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -41}, b)}}}}}},
+						"view":   TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: a, To: TView(b)}}},
+					},
+					Order: []string{"path", "init", "update", "view"},
+					Tail:  TVar{ID: -42},
 				},
 				To: TPage(),
 			},
@@ -2687,6 +2919,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"UI.confirm":         "uiConfirm",
 		"UI.empty":           "uiEmpty",
 		"UI.centered":        "uiCentered",
+		"UI.expand":          "uiExpand",
 		// Re-expose a handful of View.* attrs under UI.* so user code
 		// that lives entirely in the SwiftUI-style vocabulary doesn't
 		// need a second `import View exposing (...)`. These are pure
@@ -2715,18 +2948,29 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"App.backend":   "appBackend",
 		"App.fullstack": "appFullstack",
 		// Service: typed RPC contracts.
-		"Service.declare":       "serviceDeclare",
-		"Service.implement":     "serviceImplement",
-		"Service.call":          "serviceCall",
-		"Page.create":           "pageCreate",
-		"Page.protected":        "pageProtected",
-		"Page.dynamic":          "pageDynamic",
-		"Page.dynamicProtected": "pageDynamicProtected",
-		"Nav.push":              "navPush",
-		"Nav.replace":           "navReplace",
-		"Auth.completeSignIn":   "authCompleteSignIn",
-		"Nav.pushTo":            "navPushTo",
-		"Nav.replaceTo":         "navReplaceTo",
+		"Service.declare":            "serviceDeclare",
+		"Service.implement":          "serviceImplement",
+		"Service.call":               "serviceCall",
+		"Page.create":                "pageCreate",
+		"Page.protected":             "pageProtected",
+		"Page.adminProtected":        "pageAdminProtected",
+		"Page.dynamic":               "pageDynamic",
+		"Page.dynamicProtected":      "pageDynamicProtected",
+		"Page.dynamicAdminProtected": "pageDynamicAdminProtected",
+		"Mar.Admin.serverInfo":       "marAdminServerInfo",
+		"Mar.Admin.dbStats":          "marAdminDbStats",
+		"Mar.Admin.recentRequests":   "marAdminRecentRequests",
+		"Mar.Admin.listEntities":     "marAdminListEntities",
+		"Mar.Admin.listEntityRows":   "marAdminListEntityRows",
+		"Mar.Admin.listBackups":      "marAdminListBackups",
+		"Mar.Admin.requestCode":      "marAdminRequestCode",
+		"Mar.Admin.verifyCode":       "marAdminVerifyCode",
+		"Mar.Admin.signOut":          "marAdminSignOut",
+		"Nav.push":                   "navPush",
+		"Nav.replace":                "navReplace",
+		"Auth.completeSignIn":        "authCompleteSignIn",
+		"Nav.pushTo":                 "navPushTo",
+		"Nav.replaceTo":              "navReplaceTo",
 		// linkTo is a top-level builtin (no qualifier) — same vibe as
 		// the standalone `text`, `column`, etc. that the View module
 		// exports without a prefix. It's the everyday way to build a

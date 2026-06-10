@@ -7,7 +7,7 @@ import UI exposing
     ( navigationStack, navigationTitle, topBarTrailing
     , form, list, section, header, footer
     , hstack, vstack
-    , title, subtitle, text, textField, textArea, picker, button, navigationLink, empty, spacer, toggle, errorText
+    , title, subtitle, text, textField, textArea, picker, button, navigationLink, empty, expand, spacer, toggle, errorText
     , submit
     )
 
@@ -400,10 +400,12 @@ renderComment : Shared.User -> Shared.CommentView -> View Msg
 renderComment user comment =
     vstack []
         [ hstack []
-            [ vstack []
-                [ text comment.body
-                , subtitle (comment.authorName ++ " · " ++ Time.toIso comment.createdAt)
-                ]
+            [ expand
+                (vstack []
+                    [ text comment.body
+                    , subtitle (comment.authorName ++ " · " ++ Time.toIso comment.createdAt)
+                    ]
+                )
             , if user.id == comment.authorId || user.role == Admin then
                 button [] (DeleteCommentClicked comment.id) "Delete"
               else
