@@ -39,6 +39,22 @@ import (
 //     the binary reads its own bytes, extracts the payload, and serves
 //     HTTP — no external mar toolchain required on the deploy host.
 func Build(entry, distDir, target string) error {
+	// Validate mar.json structure up front — before running any user
+	// code or writing output: unknown/misplaced keys + shape. Mirrors
+	// what `mar dev` enforces at load (same strict path), so a typo'd or
+	// misplaced config key fails the build here instead of being silently
+	// ignored — then only surfacing under `mar dev`, or worse, in
+	// production falling back to a default. Structure-only (no env
+	// resolution), so it never trips on unset prod secrets. `entry` may
+	// be a file or a directory.
+	manifestDir := entry
+	if info, err := os.Stat(entry); err == nil && !info.IsDir() {
+		manifestDir = filepath.Dir(entry)
+	}
+	if _, err := project.LoadManifestStructure(manifestDir); err != nil {
+		return err
+	}
+
 	projectDir, bc, err := loadAndRunForBuild(entry)
 	if err != nil {
 		return err

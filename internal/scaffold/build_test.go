@@ -51,6 +51,29 @@ func TestValidateProductionConfig_AuthRequiresMail(t *testing.T) {
 	}
 }
 
+// TestBuild_RejectsUnknownManifestField pins that `mar build` validates
+// mar.json structure for ANY target (not just production builds): a
+// typo'd or misplaced top-level key fails the build instead of being
+// silently ignored. Regression guard for the dev≠build gap — `mar dev`
+// always rejected this, but build + check used to wave it through.
+func TestBuild_RejectsUnknownManifestField(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "Main.mar"),
+		"module Main exposing (main)\n\nmain : Effect String ()\nmain = App.frontend []\n")
+	// "port" belongs under "server", not at the top level — the exact
+	// misplacement that used to build clean and silently fall back to
+	// the default port.
+	writeFile(t, filepath.Join(dir, "mar.json"), `{"name":"x","port":3011}`)
+
+	err := Build(dir, filepath.Join(dir, "dist"), "")
+	if err == nil {
+		t.Fatal(`expected Build to reject a misplaced top-level "port" key; got nil`)
+	}
+	if !strings.Contains(err.Error(), "unknown field") {
+		t.Errorf("Build error should flag the unknown field; got: %v", err)
+	}
+}
+
 // TestValidateProductionConfig_PartialMail catches the case where
 // the user added a mail block but forgot fields. Error should
 // enumerate exactly what's missing rather than telling them to

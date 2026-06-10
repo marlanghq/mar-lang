@@ -955,6 +955,20 @@ func runCheck(path string) int {
 			printError("", err)
 			return 1
 		}
+		// `project.Load` only loads the .mar modules — validate mar.json
+		// too, so a typo'd/misplaced config key (e.g. top-level "port"
+		// instead of "server"."port") is caught here, matching what
+		// `mar dev` and `mar build` enforce. Without this it passes
+		// `mar check` clean and silently does the wrong thing later.
+		if _, err := project.LoadManifestStructure(path); err != nil {
+			var syntaxErr *project.ManifestSyntaxError
+			if errors.As(err, &syntaxErr) {
+				printManifestSyntaxError(syntaxErr)
+			} else {
+				printError("mar check", err)
+			}
+			return 1
+		}
 		fmt.Printf("project %s — OK (%d modules)\n", path, len(proj.Modules))
 		for _, name := range proj.Order {
 			m := proj.Modules[name]
