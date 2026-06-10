@@ -141,7 +141,7 @@ view model =
                 ]
                 [ navigationLink [ disabled model.locked ]
                     Frontend.Showcase.Routes.home {}
-                    (text "Sample link (disabled when locked)")
+                    (text [] "Sample link (disabled when locked)")
                 ]
             ]
         ]

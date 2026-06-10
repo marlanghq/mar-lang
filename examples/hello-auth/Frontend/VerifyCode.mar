@@ -87,7 +87,7 @@ view params model =
     navigationStack [ navigationTitle "Enter your code" ]
         [ form
             [ section []
-                [ text ("We sent a 6-digit code to " ++ params.email ++ ".")
+                [ text [] ("We sent a 6-digit code to " ++ params.email ++ ".")
                 , textField
                     [ numericCode, submit Submitted, width (chars 6) ]
                     "Code" model.draft DraftChanged

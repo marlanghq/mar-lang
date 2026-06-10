@@ -35,15 +35,42 @@ go = Effect.forEach (\_ -> Effect.succeed ()) xs
 	}
 }
 
-// UI.expand wraps a view in an "expand"-tagged node — the Go-runtime
-// half of the SwiftUI-style layout model (the web renderer maps the
-// tag to flex:1, iOS to .frame(maxWidth: .infinity)). Pins the tag so
-// the serializer and both renderers keep agreeing on it.
-func TestUIExpandTag(t *testing.T) {
+// `width fill` is the explicit "claim the free space" sizing attr
+// that replaced the expand wrapper — `text [width fill]` is the
+// equal-columns idiom. Pins (a) text's leading attrs list and (b)
+// that the shape typechecks + evaluates against the real BaseEnv,
+// so the web/iOS renderers (flex classes / .frame(maxWidth:
+// .infinity)) keep receiving what they dispatch on.
+func TestUITextWidthFillAttr(t *testing.T) {
 	src := `module M exposing (..)
-v = UI.expand (UI.text "hi")
+v = UI.text [ UI.width UI.fill ] "hi"
 `
-	if got := runModule(t, src, "v"); got != "<view:expand>" {
-		t.Fatalf("UI.expand should produce <view:expand>, got %s", got)
+	if got := runModule(t, src, "v"); got != "<view:text>" {
+		t.Fatalf("UI.text with attrs should produce <view:text>, got %s", got)
+	}
+}
+
+// UI.fill is the axis-polymorphic Size value — same __unit-tagged
+// record shape as chars/lines so every renderer dispatches on one
+// field. Pins the tag.
+func TestUIFillValue(t *testing.T) {
+	src := `module M exposing (..)
+v = UI.fill
+`
+	got := runModule(t, src, "v")
+	if !strings.Contains(got, "fill") {
+		t.Fatalf("UI.fill should carry the fill unit tag, got %s", got)
+	}
+}
+
+// `align` is the cross-axis position attr for stacks (vstack:
+// leading/center/trailing). Pins that an aligned stack typechecks
+// against the real BaseEnv and still produces the stack tag.
+func TestUIAlignOnStack(t *testing.T) {
+	src := `module M exposing (..)
+v = UI.vstack [ UI.align UI.trailing ] [ UI.text [] "x" ]
+`
+	if got := runModule(t, src, "v"); got != "<view:vstack>" {
+		t.Fatalf("aligned vstack should produce <view:vstack>, got %s", got)
 	}
 }

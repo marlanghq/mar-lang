@@ -4,7 +4,7 @@ module Main exposing (main)
 import UI exposing
     ( navigationStack, navigationTitle
     , form, list, section, header
-    , hstack, vstack, expand
+    , hstack, vstack, width, fill
     , text, textField, button, empty
     , submit
     )
@@ -152,7 +152,7 @@ view model =
                 ]
             , case visible of
                 [] ->
-                    section [] [ text "No tasks. Add one above." ]
+                    section [] [ text [] "No tasks. Add one above." ]
 
                 _ ->
                     section [ header counts ] (List.map renderTask visible)
@@ -166,12 +166,10 @@ renderTask : Task -> View Msg
 renderTask t =
     hstack []
         [ button [] (ToggleTask t.id) (if t.done then "[x]" else "[ ]")
-        , expand
-            (vstack []
-                [ text t.title
-                , if t.notes == "" then empty else text t.notes
-                ]
-            )
+        , vstack [ width fill ]
+            [ text [] t.title
+            , if t.notes == "" then empty else text [] t.notes
+            ]
         , button [] (RemoveTask t.id) "Remove"
         ]
 

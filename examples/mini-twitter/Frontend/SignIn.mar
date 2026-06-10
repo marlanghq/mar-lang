@@ -123,7 +123,7 @@ view model =
                 [ form
                     [ section []
                         [ title "mini-twitter"
-                        , text "Enter your email and we'll send you a one-time code."
+                        , text [] "Enter your email and we'll send you a one-time code."
                         , textField [ email, submit Submitted, width (chars 30) ]
                             "you@example.com" draft DraftChanged
                         ]
@@ -137,7 +137,7 @@ view model =
             navigationStack [ navigationTitle "Enter your code" ]
                 [ form
                     [ section []
-                        [ text ("A 6-digit code is on its way to " ++ emailAddr ++ ".")
+                        [ text [] ("A 6-digit code is on its way to " ++ emailAddr ++ ".")
                         , textField [ numericCode, submit Submitted ]
                             "123456" draft DraftChanged
                         ]
@@ -150,7 +150,7 @@ view model =
         Submitting _ ->
             navigationStack [ navigationTitle "Sign in" ]
                 [ form
-                    [ section [] [ centered (text "Working…") ]
+                    [ section [] [ centered (text [] "Working…") ]
                     ]
                 ]
 

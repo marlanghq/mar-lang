@@ -1340,19 +1340,53 @@ func stdlibBindings() map[string]Type {
 		"viewNumeric":     TAttr(TAttrInputHost()),
 		"viewOneTimeCode": TAttr(TAttrInputHost()),
 
-		// chars / lines — sizing units for inputs. `chars 6` returns a
-		// `Width` (≈ 6 character columns at the current font); `lines 5`
-		// returns a `Height` (≈ 5 lines tall at the current line-height).
-		// Separate types so the typechecker rejects nonsense like
-		// `width (lines 5)` and `height (chars 5)` at compile time.
+		// chars / lines / fill — sizing values. `chars 6` returns a
+		// `Size Width` (≈ 6 character columns at the current font);
+		// `lines 5` a `Size Height` (≈ 5 lines at the current
+		// line-height); `fill` is polymorphic in the axis ("take the
+		// available space on whichever axis the attr names"). The
+		// phantom axis keeps `width (lines 5)` / `height (chars 5)`
+		// compile errors while one `fill` serves both attrs.
 		"uiChars": TArrow{From: TInt, To: TWidth()},
 		"uiLines": TArrow{From: TInt, To: THeight()},
+		"uiFill": TForall{
+			Vars: []int{a.ID},
+			Body: TSize(a),
+		},
 
-		// width  : Width  -> Attr Input — sets max width of an input.
-		// height : Height -> Attr Input — sets initial height of a
-		// textArea (no effect on textField/picker today).
-		"uiWidth":  TArrow{From: TWidth(), To: TAttr(TAttrInputHost())},
-		"uiHeight": TArrow{From: THeight(), To: TAttr(TAttrInputHost())},
+		// width / height : Size axis -> Attr a — the universal sizing
+		// attrs. Polymorphic in the host (like `disabled`), so any
+		// view's attr list accepts them. What each value means:
+		//   - chars n / lines n: content-box sizing (inputs keep their
+		//     historical max-width / rows behavior).
+		//   - fill: claim the free space on that axis. In an hstack,
+		//     `width fill` is the equal-columns workhorse; in a vstack,
+		//     `height fill` creates the slack that spacer / centered
+		//     distribute. Sizing is "how big"; where a non-filling
+		//     child SITS in the cross axis is `align` — a separate,
+		//     position-only attr.
+		"uiWidth": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: TWidth(), To: TAttr(a)},
+		},
+		"uiHeight": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{From: THeight(), To: TAttr(a)},
+		},
+
+		// align : Alignment -> Attr Stack — cross-axis alignment for a
+		// stack's hugging children. vstack: leading / center / trailing
+		// (horizontal placement); hstack: top / center / bottom
+		// (vertical placement). Wrong-axis values are ignored by the
+		// renderer rather than split into two host types. A child with
+		// `width fill` has no cross-axis slack, so align doesn't move
+		// it — alignment is position, fill is size.
+		"uiAlign":    TArrow{From: TAlignment(), To: TAttr(TAttrStackHost())},
+		"uiLeading":  TAlignment(),
+		"uiCenter":   TAlignment(),
+		"uiTrailing": TAlignment(),
+		"uiTop":      TAlignment(),
+		"uiBottom":   TAlignment(),
 
 		// px : Int -> Pixels — pixel sizing unit for images. Separate
 		// from chars/lines so `px` only flows into image attrs and
@@ -1364,12 +1398,14 @@ func stdlibBindings() map[string]Type {
 		// its container width and keeps its aspect ratio.
 		"uiSize": TArrow{From: TPixels(), To: TArrow{From: TPixels(), To: TAttr(TAttrImageHost())}},
 
-		// fit / fill : Attr Image — how the image fills its frame.
-		// fit (default) shows the whole image (letterboxed); fill crops
-		// to cover. Mirror CSS object-fit contain/cover and SwiftUI
-		// .aspectRatio(contentMode: .fit/.fill).
-		"uiFit":  TAttr(TAttrImageHost()),
-		"uiFill": TAttr(TAttrImageHost()),
+		// fit / cover : Attr Image — how the image fills its frame.
+		// fit (default) shows the whole image (letterboxed); cover
+		// crops to fill the frame. Named after CSS object-fit
+		// contain/cover — NOT "fill", which is the universal sizing
+		// value (`width fill`); reusing the word for a crop mode
+		// would overload it with a second, unrelated meaning.
+		"uiFit":   TAttr(TAttrImageHost()),
+		"uiCover": TAttr(TAttrImageHost()),
 
 		// ---------- UI module: SwiftUI-style declarative vocabulary ----------
 		//
@@ -1590,13 +1626,20 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TString, To: TAttr(a)},
 		},
 
-		// UI.text : String -> View msg
-		// Plain text. Like View.text but without the leading attrs
-		// list — UI vocabulary doesn't pass per-leaf style attrs
-		// (those live on the section / form parent).
+		// UI.text : List Attr -> String -> View msg
+		// Plain text leaf. The attrs list follows the same first-arg
+		// convention as every other view (button, textField, hstack);
+		// today only the universal layout attrs (width / height) are
+		// meaningful here — `text [ width fill ] "..."` claims the
+		// row's free space, the workhorse of the equal-columns idiom.
+		// No text-specific style attrs exist (per-leaf styling lives
+		// on the section / form parent).
 		"uiText": TForall{
 			Vars: []int{a.ID},
-			Body: TArrow{From: TString, To: TView(a)},
+			Body: TArrow{
+				From: TList(TAttr(TAttrTextHost())),
+				To:   TArrow{From: TString, To: TView(a)},
+			},
 		},
 
 		// UI.button : List Attr -> msg -> String -> View msg
@@ -1944,25 +1987,16 @@ func stdlibBindings() map[string]Type {
 		},
 
 		// UI.centered : View msg -> View msg
-		// Wraps a view in a container that fills the available space
-		// and centers its child both horizontally and vertically. Use
-		// for full-screen states (Loading, Empty, Error). iOS:
+		// Pure two-axis alignment: fills whatever space its PARENT
+		// provides (it never invents a size of its own) and centers
+		// the child in it. Sugar for the full-screen states (Loading,
+		// Empty, Error) — the decomposed spelling would be a vstack
+		// with `height fill` + `align center` + spacers. iOS:
 		// frame(maxWidth: .infinity, maxHeight: .infinity, alignment:
-		// .center). Web: flex container that fills + centers.
+		// .center). Web: flex: 1 in the page's height-propagating
+		// column. In a parent that hugs (a section card), it simply
+		// centers horizontally at content height.
 		"uiCentered": TForall{
-			Vars: []int{a.ID},
-			Body: TArrow{From: TView(a), To: TView(a)},
-		},
-
-		// UI.expand : View msg -> View msg
-		// Wraps a view so it GROWS to fill the available space along
-		// its parent stack's main axis — the explicit "fill" modifier
-		// (SwiftUI's .frame(maxWidth: .infinity)). The complement to
-		// spacer: where spacer pushes siblings apart, expand makes one
-		// child claim the slack. Use for equal-width columns, e.g.
-		// `hstack [ expand (button ...), expand (button ...) ]`.
-		// iOS: frame(maxWidth: .infinity). Web: flex: 1.
-		"uiExpand": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{From: TView(a), To: TView(a)},
 		},
@@ -2919,7 +2953,6 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"UI.confirm":         "uiConfirm",
 		"UI.empty":           "uiEmpty",
 		"UI.centered":        "uiCentered",
-		"UI.expand":          "uiExpand",
 		// Re-expose a handful of View.* attrs under UI.* so user code
 		// that lives entirely in the SwiftUI-style vocabulary doesn't
 		// need a second `import View exposing (...)`. These are pure
@@ -2930,20 +2963,28 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"UI.numeric":     "viewNumeric",
 		"UI.oneTimeCode": "viewOneTimeCode",
 		"UI.submit":      "viewSubmit",
-		// Sizing — width / height accept Width / Height values built
-		// via chars / lines. Type-safe units: `chars` only builds Width,
-		// `lines` only builds Height, so `height (chars 6)` is a type
-		// error caught by the typechecker.
-		"UI.chars":  "uiChars",
-		"UI.lines":  "uiLines",
-		"UI.width":  "uiWidth",
-		"UI.height": "uiHeight",
-		// Image sizing: px builds a Pixels value; size/fit/fill are
+		// Sizing — width / height accept Size values built via chars /
+		// lines / fill. Type-safe axes: `chars` only builds Size Width,
+		// `lines` only Size Height (`height (chars 6)` is a compile
+		// error); `fill` is axis-polymorphic so the one constant works
+		// in both. Alignment — cross-axis position for stack children.
+		"UI.chars":    "uiChars",
+		"UI.lines":    "uiLines",
+		"UI.fill":     "uiFill",
+		"UI.width":    "uiWidth",
+		"UI.height":   "uiHeight",
+		"UI.align":    "uiAlign",
+		"UI.leading":  "uiLeading",
+		"UI.center":   "uiCenter",
+		"UI.trailing": "uiTrailing",
+		"UI.top":      "uiTop",
+		"UI.bottom":   "uiBottom",
+		// Image sizing: px builds a Pixels value; size/fit/cover are
 		// Image-hosted attrs.
 		"UI.px":         "uiPx",
 		"UI.size":       "uiSize",
 		"UI.fit":        "uiFit",
-		"UI.fill":       "uiFill",
+		"UI.cover":      "uiCover",
 		"App.frontend":  "appFrontend",
 		"App.backend":   "appBackend",
 		"App.fullstack": "appFullstack",

@@ -63,7 +63,7 @@ projectRow : Shared.Project -> View Msg
 projectRow project =
     navigationLink [] Frontend.Routes.projectDetail { id = project.id }
         (vstack []
-            [ text project.name
+            [ text [] project.name
             , subtitle project.description
             ])
 
@@ -72,7 +72,7 @@ issueRow : Shared.IssueView -> View Msg
 issueRow issue =
     navigationLink [] Frontend.Routes.issueDetail { id = issue.id }
         (vstack []
-            [ text ("#" ++ String.fromInt issue.number ++ " — " ++ issue.title)
+            [ text [] ("#" ++ String.fromInt issue.number ++ " — " ++ issue.title)
             , subtitle
                 ( issue.projectName
                     ++ " · " ++ Shared.statusLabel issue.status
@@ -91,11 +91,11 @@ memberRow member =
     navigationLink [] Frontend.Routes.teamMembers {}
         (hstack []
             [ vstack []
-                [ text member.name
+                [ text [] member.name
                 , subtitle member.email
                 ]
             , spacer
-            , text (String.fromInt member.openIssues ++ " open")
+            , text [] (String.fromInt member.openIssues ++ " open")
             ])
 
 
@@ -164,20 +164,20 @@ renderBody : Shared.User -> Model -> List (View Msg)
 renderBody _ model =
     case model of
         Loading ->
-            [ section [] [ text "Loading dashboard…" ] ]
+            [ section [] [ text [] "Loading dashboard…" ] ]
 
         Failed why ->
             [ section [ header "Couldn't load" ] [ errorText why ] ]
 
         Loaded data ->
             [ section [ header "Jump to" ]
-                [ navigationLink [] Frontend.Routes.projects {} (text "All projects")
-                , navigationLink [] Frontend.Routes.myIssues {} (text "My issues")
-                , navigationLink [] Frontend.Routes.inbox    {} (text "Inbox")
-                , navigationLink [] Frontend.Routes.search   {} (text "Search issues")
-                , navigationLink [] Frontend.Routes.activity {} (text "Activity")
-                , navigationLink [] Frontend.Routes.teamMembers {} (text "Team members")
-                , navigationLink [] Frontend.Routes.settings {} (text "Settings")
+                [ navigationLink [] Frontend.Routes.projects {} (text [] "All projects")
+                , navigationLink [] Frontend.Routes.myIssues {} (text [] "My issues")
+                , navigationLink [] Frontend.Routes.inbox    {} (text [] "Inbox")
+                , navigationLink [] Frontend.Routes.search   {} (text [] "Search issues")
+                , navigationLink [] Frontend.Routes.activity {} (text [] "Activity")
+                , navigationLink [] Frontend.Routes.teamMembers {} (text [] "Team members")
+                , navigationLink [] Frontend.Routes.settings {} (text [] "Settings")
                 ]
             , projectsSection data.projects
             , myIssuesSection data.myOpenIssues

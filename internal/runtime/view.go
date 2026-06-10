@@ -187,9 +187,21 @@ func viewBuiltins() map[string]Value {
 		// type level (TAttr); the renderer expands it.
 		"numericCode": flagAttr("inputKindNumericCode"),
 
-		// uiText : String -> View msg
-		// Plain text leaf — no attrs.
-		"uiText": textLeaf("text", "UI.text"),
+		// uiText : List Attr -> String -> View msg
+		// Plain text leaf. The attrs list carries the universal layout
+		// attrs (width / height) — `text [width fill] "..."` is the
+		// equal-columns idiom. No text-specific attrs exist yet.
+		"uiText": nativeFn(2, func(args []Value) (Value, error) {
+			attrs, err := collectAttrs(args[0], "UI.text")
+			if err != nil {
+				return nil, err
+			}
+			s, ok := args[1].(VString)
+			if !ok {
+				return nil, fmt.Errorf("UI.text: expected String (got %T)", args[1])
+			}
+			return VView{Tag: "text", Attrs: attrs, Text: s.V}, nil
+		}),
 
 		// uiButton : List Attr -> msg -> String -> View msg
 		// Button that dispatches `msg` on tap. The attrs list carries
@@ -398,17 +410,35 @@ func viewBuiltins() map[string]Value {
 			return lengthValue("lines", n.V), nil
 		}),
 
-		// uiWidth / uiHeight — attribute builders. They take the Width
-		// / Height value (built via uiChars / uiLines) and wrap it as
+		// uiFill — the axis-polymorphic "take the available space"
+		// sizing value. Same __unit-tagged record shape as chars/lines
+		// so the renderers dispatch on one field; amount is unused.
+		"uiFill": lengthValue("fill", 0),
+
+		// uiWidth / uiHeight — attribute builders. They take a Size
+		// value (built via uiChars / uiLines / uiFill) and wrap it as
 		// an Attr. The renderer reads the unit + amount and applies
-		// the appropriate styling (max-width / min-height in CSS,
-		// .frame(maxWidth:idealHeight:) in SwiftUI).
+		// the appropriate styling (max-width / flex-grow in CSS,
+		// .frame(maxWidth:/idealHeight:) in SwiftUI).
 		"uiWidth": nativeFn(1, func(args []Value) (Value, error) {
 			return makeAttr("width", args[0]), nil
 		}),
 		"uiHeight": nativeFn(1, func(args []Value) (Value, error) {
 			return makeAttr("height", args[0]), nil
 		}),
+
+		// uiAlign — cross-axis alignment attr for stacks. The value is
+		// one of the five alignment constants below; renderers map it
+		// onto align-items (web) / the stack's alignment parameter
+		// (SwiftUI). Wrong-axis values (top in a vstack) are ignored.
+		"uiAlign": nativeFn(1, func(args []Value) (Value, error) {
+			return makeAttr("align", args[0]), nil
+		}),
+		"uiLeading":  VString{V: "leading"},
+		"uiCenter":   VString{V: "center"},
+		"uiTrailing": VString{V: "trailing"},
+		"uiTop":      VString{V: "top"},
+		"uiBottom":   VString{V: "bottom"},
 
 		// uiPx — pixel sizing unit for images. Same shape as uiChars/
 		// uiLines (a __unit-tagged length value), but tagged "px".
@@ -427,9 +457,11 @@ func viewBuiltins() map[string]Value {
 				Order:  []string{"w", "h"},
 			}), nil
 		}),
-		// uiFit / uiFill — content-mode flags for images.
-		"uiFit":  flagAttr("contentModeFit"),
-		"uiFill": flagAttr("contentModeFill"),
+		// uiFit / uiCover — content-mode flags for images (CSS
+		// object-fit contain / cover). "cover" and not "fill": the
+		// word fill is the universal sizing value (`width fill`).
+		"uiFit":   flagAttr("contentModeFit"),
+		"uiCover": flagAttr("contentModeCover"),
 
 		// uiNavigationLink : List Attr -> Path r -> r -> View msg -> View msg
 		// Mirror of SwiftUI's `NavigationLink(value:){content}`.
@@ -566,18 +598,6 @@ func viewBuiltins() map[string]Value {
 				return nil, fmt.Errorf("UI.centered: expected View (got %T)", args[0])
 			}
 			return VView{Tag: "centered", Children: []Value{child}}, nil
-		}),
-
-		// uiExpand : View msg -> View msg
-		// Wraps `child` so it grows to fill the parent stack's main
-		// axis (flex:1 on web, frame(maxWidth:.infinity) on iOS) — the
-		// explicit counterpart to spacer, for equal-width columns.
-		"uiExpand": nativeFn(1, func(args []Value) (Value, error) {
-			child, ok := args[0].(VView)
-			if !ok {
-				return nil, fmt.Errorf("UI.expand: expected View (got %T)", args[0])
-			}
-			return VView{Tag: "expand", Children: []Value{child}}, nil
 		}),
 
 		// uiConfirm : { title, confirmLabel, destructive, onConfirm,

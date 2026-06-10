@@ -112,14 +112,14 @@ activityRow a =
     if a.issueNumber > 0 then
         navigationLink [] Frontend.Routes.issueDetail { id = a.subjectId }
             (vstack []
-                [ text (verbCopy a)
+                [ text [] (verbCopy a)
                 , subtitle (Time.toIso a.createdAt)
                 ]
             )
     else
         -- Project events and tombstoned issues don't deep-link.
         vstack []
-            [ text (verbCopy a)
+            [ text [] (verbCopy a)
             , subtitle (Time.toIso a.createdAt)
             ]
 
@@ -139,7 +139,7 @@ renderBody model =
         Nothing ->
             case model.items of
                 Nothing ->
-                    [ section [] [ text "Loading recent activity…" ] ]
+                    [ section [] [ text [] "Loading recent activity…" ] ]
 
                 Just items ->
                     if List.isEmpty items then

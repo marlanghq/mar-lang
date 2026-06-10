@@ -51,19 +51,19 @@ view _ =
         [ list []
             [ section [ header "title" ]
                 [ title "Sample title"
-                , text "Large + bold. Use sparingly, one per section."
+                , text [] "Large + bold. Use sparingly, one per section."
                 ]
             , section [ header "subtitle" ]
                 [ subtitle "Subtitle text"
-                , text "Rendered smaller and dimmer than body text, so it recedes behind primary content without disappearing."
+                , text [] "Rendered smaller and dimmer than body text, so it recedes behind primary content without disappearing."
                 ]
             , section [ header "text" ]
-                [ text "Body text is the default leaf."
-                , text "Multiple text leaves stack vertically inside a section, each on its own line."
+                [ text [] "Body text is the default leaf."
+                , text [] "Multiple text leaves stack vertically inside a section, each on its own line."
                 ]
             , section [ header "errorText" ]
                 [ errorText "Couldn't reach the server."
-                , text "Red + semi-bold via the `errorText` leaf. Use for validation messages, failed network responses, anything destructive the user needs to see at a glance."
+                , text [] "Red + semi-bold via the `errorText` leaf. Use for validation messages, failed network responses, anything destructive the user needs to see at a glance."
                 ]
             , section
                 [ header "block hierarchy together"
@@ -72,7 +72,7 @@ view _ =
                 [ vstack []
                     [ title "Title"
                     , subtitle "Subtitle"
-                    , text "Body text paragraph for layout reference."
+                    , text [] "Body text paragraph for layout reference."
                     , errorText "Error message at the bottom."
                     ]
                 ]

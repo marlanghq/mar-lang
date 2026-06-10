@@ -147,7 +147,7 @@ notesSection : Notes -> View Msg
 notesSection notes =
     case notes of
         Loading ->
-            section [] [ text "Loading…" ]
+            section [] [ text [] "Loading…" ]
 
         Failed why ->
             section [] [ errorText ("Couldn't load notes: " ++ why) ]
@@ -162,7 +162,7 @@ notesSection notes =
 
 renderNote : Shared.Note -> View Msg
 renderNote note =
-    text note.body
+    text [] note.body
 
 
 page : Page

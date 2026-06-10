@@ -88,7 +88,7 @@ memberRow : Shared.User -> Shared.TeamMemberView -> View Msg
 memberRow caller member =
     hstack []
         [ vstack []
-            [ text member.name
+            [ text [] member.name
             , subtitle (member.email ++ " · " ++ String.fromInt member.openIssues ++ " open")
             ]
         , spacer
@@ -102,7 +102,7 @@ view user model =
         body =
             case model.members of
                 Nothing ->
-                    [ section [] [ text "Loading members…" ] ]
+                    [ section [] [ text [] "Loading members…" ] ]
 
                 Just items ->
                     if List.isEmpty items then
@@ -125,7 +125,7 @@ view user model =
         errorBlock =
             case model.error of
                 Just why ->
-                    section [ header "Couldn't update" ] [ text why ]
+                    section [ header "Couldn't update" ] [ text [] why ]
 
                 Nothing ->
                     empty

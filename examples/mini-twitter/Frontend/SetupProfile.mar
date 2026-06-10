@@ -100,7 +100,7 @@ view _ model =
         [ form
             [ section []
                 [ title "Pick your handle"
-                , text "This is how other people will find you on mini-twitter. Letters, digits, and underscores; up to 20 characters."
+                , text [] "This is how other people will find you on mini-twitter. Letters, digits, and underscores; up to 20 characters."
                 ]
             , section []
                 [ textField [ submit Submitted ]

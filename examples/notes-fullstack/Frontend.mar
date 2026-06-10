@@ -80,7 +80,7 @@ update msg model =
 
 renderNote : Shared.Note -> View Msg
 renderNote note =
-    text (String.fromInt note.id ++ ". " ++ note.body)
+    text [] (String.fromInt note.id ++ ". " ++ note.body)
 
 
 view : Model -> View Msg
@@ -103,7 +103,7 @@ notesSection : Notes -> View Msg
 notesSection notes =
     case notes of
         Loading ->
-            section [] [ text "Loading…" ]
+            section [] [ text [] "Loading…" ]
 
         Failed why ->
             section [] [ errorText ("Couldn't load notes: " ++ why) ]

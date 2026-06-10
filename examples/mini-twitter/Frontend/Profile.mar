@@ -87,8 +87,8 @@ update _ _ msg model =
 renderTweet : Shared.TweetView -> View Msg
 renderTweet t =
     section []
-        [ text t.body
-        , text (Time.toIso t.createdAt)
+        [ text [] t.body
+        , text [] (Time.toIso t.createdAt)
         ]
 
 
@@ -108,7 +108,7 @@ renderFound : Shared.ProfileView -> Bool -> View Msg
 renderFound view busy =
     let
         countLine =
-            text
+            text []
                 (   String.fromInt view.followers  ++ " followers · "
                  ++ String.fromInt view.following  ++ " following · "
                  ++ String.fromInt view.tweetCount ++ " tweets"
@@ -117,7 +117,7 @@ renderFound view busy =
     list []
         [ section []
             [ title (view.user.displayName ++ " · @" ++ view.user.handle)
-            , if view.user.bio == "" then empty else text view.user.bio
+            , if view.user.bio == "" then empty else text [] view.user.bio
             , countLine
             , followButton view busy
             ]
@@ -132,10 +132,10 @@ view _ _ model =
         body =
             case model.state of
                 Loading ->
-                    list [] [ section [] [ text "Loading…" ] ]
+                    list [] [ section [] [ text [] "Loading…" ] ]
 
                 NotFound ->
-                    list [] [ section [] [ text "No user with that handle." ] ]
+                    list [] [ section [] [ text [] "No user with that handle." ] ]
 
                 Failed why ->
                     list [] [ section [] [ errorText ("Couldn't load: " ++ why) ] ]

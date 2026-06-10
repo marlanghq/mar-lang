@@ -65,7 +65,7 @@ update msg model =
 
 renderTodo : Todo -> View Msg
 renderTodo t =
-    text (String.fromInt t.id ++ ": " ++ t.body)
+    text [] (String.fromInt t.id ++ ": " ++ t.body)
 
 
 view : Model -> View Msg

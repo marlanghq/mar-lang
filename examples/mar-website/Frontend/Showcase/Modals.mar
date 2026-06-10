@@ -119,8 +119,8 @@ aboutSection : View Msg
 aboutSection =
     section [ header "About modals" ]
         [ title "Two overlay patterns"
-        , text "UI.sheet slides up from the bottom. Use it for editing details, secondary tasks, or any context that benefits from focus without leaving the page."
-        , text "UI.confirm is a centered alert with Cancel + destructive action. Use it when the user is about to do something irreversible."
+        , text [] "UI.sheet slides up from the bottom. Use it for editing details, secondary tasks, or any context that benefits from focus without leaving the page."
+        , text [] "UI.confirm is a centered alert with Cancel + destructive action. Use it when the user is about to do something irreversible."
         ]
 
 
@@ -169,8 +169,8 @@ sheetContent _ =
           -- showcase.
           list []
             [ section [ header "About sheets" ]
-                [ text "Sheets slide up from the bottom and carry their own scroll. On iOS they have a native drag-to-dismiss gesture; on web the handle is decorative for now."
-                , text "Tap Cancel, Done, or the backdrop to dismiss."
+                [ text [] "Sheets slide up from the bottom and carry their own scroll. On iOS they have a native drag-to-dismiss gesture; on web the handle is decorative for now."
+                , text [] "Tap Cancel, Done, or the backdrop to dismiss."
                 ]
             ]
         ]

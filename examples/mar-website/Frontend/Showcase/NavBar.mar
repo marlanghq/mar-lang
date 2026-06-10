@@ -62,7 +62,7 @@ view model =
                 [ header "topBarLeading + topBarTrailing"
                 , footer "Each slot takes any view, usually a button. Tap one to see it land below."
                 ]
-                [ text (tapMessage model.tapped) ]
+                [ text [] (tapMessage model.tapped) ]
             ]
         ]
 

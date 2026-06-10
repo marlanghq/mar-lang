@@ -139,7 +139,7 @@ assigneeSection : Maybe (List Shared.TeamMemberView) -> Int -> View Msg
 assigneeSection state current =
     case state of
         Nothing ->
-            section [ header "Assignee" ] [ text "Loading team members…" ]
+            section [ header "Assignee" ] [ text [] "Loading team members…" ]
 
         Just members ->
             -- Picker selects by id (Int) — keeps the type simple and
@@ -165,7 +165,7 @@ milestoneSection : Maybe (List Shared.Milestone) -> Int -> View Msg
 milestoneSection state current =
     case state of
         Nothing ->
-            section [ header "Milestone" ] [ text "Loading milestones…" ]
+            section [ header "Milestone" ] [ text [] "Loading milestones…" ]
 
         Just milestones ->
             if List.isEmpty milestones then
@@ -200,7 +200,7 @@ view _ _ model =
         errorBlock =
             case model.error of
                 Just why ->
-                    section [ header "Couldn't create" ] [ text why ]
+                    section [ header "Couldn't create" ] [ text [] why ]
 
                 Nothing ->
                     section [] []

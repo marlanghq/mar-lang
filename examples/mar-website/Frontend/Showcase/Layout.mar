@@ -5,24 +5,37 @@ import UI exposing
     ( navigationStack, navigationTitle
     , list, section, header, footer
     , hstack, vstack, centered
-    , title, subtitle, text, button, spacer, expand
+    , title, subtitle, text, textField, button, spacer
+    , width, chars, fill, align, leading, center, trailing
     )
 
 
--- Demo: how stacks compose (SwiftUI-style layout).
+-- Demo: the layout model (SwiftUI-style).
 --
---   hstack    : children in a horizontal row — each HUGS its content
---               and sits at the leading edge (no stretching)
---   vstack    : children stacked vertically, filling the width
---   spacer    : expanding filler — pushes siblings to opposite edges
---   expand    : makes a child claim free space — equal-width columns
---   centered  : fills the available space and centers its child
+--   hstack      : children in a horizontal row — each stays its
+--                 content's width
+--   vstack      : children stacked vertically, filling the width
+--   width fill  : a child claims the free space on that axis — the
+--                 equal-columns workhorse (height fill is its vertical
+--                 twin)
+--   spacer      : flex filler — pushes siblings apart on the MAIN axis
+--   align       : positions the children that DON'T fill, on the CROSS
+--                 axis (vstack: leading / center / trailing)
+--   centered    : fills the space its parent provides and centers its
+--                 child — pure alignment, it never invents a size
 --
--- Rule of thumb: rows hug, columns fill. To spread a row, reach for
--- `spacer` (push apart) or `expand` (fill an equal share).
+-- Rule of thumb: columns fill the width, rows stay content-width.
+-- Size is `width` / `height`
+-- (chars / lines / fill); position is `align` (cross axis) and
+-- `spacer` (main axis). Fill and align never fight: a filling child
+-- has no cross-axis slack, so align simply doesn't apply to it.
 --
 -- A static page: the buttons are layout demos, so they carry a
--- NoOp and nothing reacts to them.
+-- NoOp, the field ignores its input, and nothing reacts to them.
+--
+-- The sections below build up: rows first (default, fill, spacer),
+-- then the column, then cross-axis position (align, centered), then
+-- two compositions.
 
 
 type alias Model = ()
@@ -30,6 +43,7 @@ type alias Model = ()
 
 type Msg
     = NoOp
+    | Typed String
 
 
 init : () -> (Model, Effect String Msg)
@@ -40,25 +54,27 @@ update : Msg -> Model -> (Model, Effect String Msg)
 update _ _ = ((), Effect.none)
 
 
--- Default hstack: children hug their content and cluster at the
--- leading edge. Nothing stretches.
-huggedRow : View Msg
-huggedRow =
+-- Default hstack: each child stays its content's width and clusters
+-- at the leading edge. Nothing stretches. Each cell shows the code
+-- that placed it — here a plain `text` with no sizing attr.
+defaultRow : View Msg
+defaultRow =
     hstack []
-        [ text "These"
-        , text "hug"
-        , text "left"
+        [ text [] "text"
+        , text [] "text"
+        , text [] "text"
         ]
 
 
--- `expand` makes each child claim an equal share of the width — the
--- way to get balanced columns now that the default is to hug.
+-- `width fill` makes each child claim an equal share of the row.
+-- Each cell is literally labelled with the attr it carries, so the
+-- label matches what you see it do.
 equalColumns : View Msg
 equalColumns =
     hstack []
-        [ expand (text "Left")
-        , expand (text "Middle")
-        , expand (text "Right")
+        [ text [ width fill ] "width fill"
+        , text [ width fill ] "width fill"
+        , text [ width fill ] "width fill"
         ]
 
 
@@ -67,43 +83,54 @@ equalColumns =
 labelWithAction : View Msg
 labelWithAction =
     hstack []
-        [ text "Leading label"
+        [ text [] "Leading label"
         , spacer
         , button [] NoOp "Trailing action"
         ]
 
 
--- Two spacers around a single child centers it. SwiftUI uses the
--- same pattern (`HStack { Spacer(); content; Spacer() }`) for
--- inline centering. There's no dedicated `center` primitive in
--- Mar because this idiom is short, declarative, and self-documents
--- what's happening to the layout — adding sugar wouldn't make it
--- much shorter.
-centeredAction : View Msg
-centeredAction =
+-- `align` positions the children that DON'T fill, on the cross axis.
+-- Three width-fill columns share the row; each aligns its own lines
+-- differently. Without the attr this was inexpressible — vstack
+-- children always stretched.
+alignedColumns : View Msg
+alignedColumns =
     hstack []
-        [ spacer
-        , button [] NoOp "Centered"
-        , spacer
+        [ vstack [ width fill, align leading ]
+            [ subtitle "leading", text [] "text", text [] "longer text" ]
+        , vstack [ width fill, align center ]
+            [ subtitle "center", text [] "text", text [] "longer text" ]
+        , vstack [ width fill, align trailing ]
+            [ subtitle "trailing", text [] "text", text [] "longer text" ]
         ]
 
 
--- hstack and vstack nest. Wrap each column in `expand` so the two
--- vertical blocks split the row evenly; without it they'd hug their
--- own content at the leading edge.
+-- hstack and vstack nest. `width fill` on each column splits the row
+-- evenly; without it each column would stay its content's width at the
+-- leading edge.
 nestedStacks : View Msg
 nestedStacks =
     hstack []
-        [ expand
-            (vstack []
-                [ text "Left"
-                , subtitle "stacked"
-                ])
-        , expand
-            (vstack []
-                [ text "Right"
-                , subtitle "stacked"
-                ])
+        [ vstack [ width fill ]
+            [ text [] "Left"
+            , subtitle "stacked"
+            ]
+        , vstack [ width fill ]
+            [ text [] "Right"
+            , subtitle "stacked"
+            ]
+        ]
+
+
+-- The centered-card pattern: `align center` sits the children in the
+-- middle (instead of stretching them); `width (chars 24)` bounds the
+-- field. Size comes from width, position from align — composed, not
+-- conflated.
+centeredForm : View Msg
+centeredForm =
+    vstack [ align center ]
+        [ textField [ width (chars 24) ] "Email" "" Typed
+        , button [] NoOp "Send code"
         ]
 
 
@@ -111,53 +138,62 @@ view : Model -> View Msg
 view _ =
     navigationStack [ navigationTitle "Layout & stacks" ]
         [ list []
+            -- Rows: default, then the two ways to distribute one.
             [ section
                 [ header "hstack"
-                , footer "Children hug their content and sit at the leading edge — no stretching."
+                , footer "No attributes (the default): each child keeps its content width, at the leading edge."
                 ]
-                [ huggedRow ]
+                [ defaultRow ]
             , section
-                [ header "hstack + expand"
-                , footer "Wrap children in expand for equal-width columns."
+                [ header "width fill"
+                , footer "Each child claims an equal share of the row; height fill does the same vertically."
                 ]
                 [ equalColumns ]
+            , section
+                [ header "hstack + spacer"
+                , footer "A spacer expands to fill, pushing siblings apart."
+                ]
+                [ labelWithAction
+                , subtitle "Label on the leading edge, action on the trailing edge."
+                ]
+            -- The column.
             , section
                 [ header "vstack"
                 , footer "Children stack top-to-bottom, filling the width."
                 ]
                 [ vstack []
-                    [ text "First"
-                    , text "Second"
-                    , text "Third"
+                    [ text [] "First"
+                    , text [] "Second"
+                    , text [] "Third"
                     ]
                 ]
+            -- Cross-axis position, then the both-axis primitive.
             , section
-                [ header "hstack + vstack"
-                , footer "Nest them: an hstack lays two expand-ed vstacks side by side, each stacking its own lines."
+                [ header "align"
+                , footer "Cross-axis placement for children that don't fill: leading, center, trailing."
                 ]
-                [ nestedStacks ]
-            , section
-                [ header "hstack + spacer"
-                , footer "spacer expands to fill, pushing siblings apart."
-                ]
-                [ labelWithAction
-                , subtitle "Label on the leading edge, action on the trailing edge."
-                ]
-            , section
-                [ header "centering with two spacers"
-                , footer "Wrap any child in [ spacer, x, spacer ] to center it horizontally."
-                ]
-                [ centeredAction ]
+                [ alignedColumns ]
             , section
                 [ header "centered (primitive)"
-                , footer "Centers its child on both axes, no spacers needed."
+                , footer "Fills its parent's space and centers both axes. For Loading and Empty states."
                 ]
                 [ centered
                     (vstack []
                         [ title "Centered"
-                        , subtitle "Horizontally and vertically."
+                        , subtitle "In the space the parent gives."
                         ])
                 ]
+            -- Compositions.
+            , section
+                [ header "hstack + vstack"
+                , footer "Two width fill columns side by side, each stacking its own lines."
+                ]
+                [ nestedStacks ]
+            , section
+                [ header "align center + width chars"
+                , footer "Position from align center, size from width."
+                ]
+                [ centeredForm ]
             ]
         ]
 

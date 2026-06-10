@@ -148,7 +148,7 @@ humanize code =
 errorBox : Maybe String -> View Msg
 errorBox maybeErr =
     case maybeErr of
-        Just msg -> text msg
+        Just msg -> text [] msg
         Nothing  -> empty
 
 
@@ -160,7 +160,7 @@ view model =
                 [ form
                     [ section [ header "Welcome to BigApp" ]
                         [ title "Sign in"
-                        , text "Enter your email and we'll send a one-time code."
+                        , text [] "Enter your email and we'll send a one-time code."
                         , textField [ email, submit Submitted, width (chars 30) ]
                             "you@example.com" emailDraft DraftChanged
                         , errorBox model.error
@@ -174,7 +174,7 @@ view model =
             navigationStack [ navigationTitle "Enter your code" ]
                 [ form
                     [ section [ header "Almost there" ]
-                        [ text ("We sent a 6-digit code to " ++ emailAddr ++ ".")
+                        [ text [] ("We sent a 6-digit code to " ++ emailAddr ++ ".")
                         , textField [ numericCode, submit Submitted ]
                             "Code" codeDraft DraftChanged
                         , errorBox model.error
@@ -188,7 +188,7 @@ view model =
             navigationStack [ navigationTitle "Working…" ]
                 [ form
                     [ section []
-                        [ text "Talking to the server…" ]
+                        [ text [] "Talking to the server…" ]
                     ]
                 ]
 

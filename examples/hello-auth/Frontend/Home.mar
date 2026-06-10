@@ -56,7 +56,7 @@ view user _ =
         ]
         [ form
             [ section []
-                [ text "You're signed in. This is the protected page." ]
+                [ text [] "You're signed in. This is the protected page." ]
             ]
         ]
 

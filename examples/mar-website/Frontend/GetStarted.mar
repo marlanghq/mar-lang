@@ -34,7 +34,7 @@ view : Model -> View Msg
 view _ =
     navigationStack [ navigationTitle "Get started" ]
         [ list []
-            [ section [ header "1 — Install" ]
+            [ section [ header "1. Install" ]
                 [ subtitle "Single binary, no package manager."
                 , paragraph
                     [ span [] "Download the "
@@ -49,7 +49,7 @@ view _ =
                     , span [] "."
                     ]
                 ]
-            , section [ header "2 — Scaffold a project" ]
+            , section [ header "2. Scaffold a project" ]
                 [ subtitle "mar init my-app"
                 , paragraph
                     [ span [] "Asks which starter you want (fullstack with auth, fullstack, frontend-only, backend-only, or minimum), then scaffolds a working "
@@ -63,7 +63,7 @@ view _ =
                     , span [] ", and whatever files the template needs. It runs as-is, so you start from something working and edit from there."
                     ]
                 ]
-            , section [ header "3 — Run it locally" ]
+            , section [ header "3. Run it locally" ]
                 [ subtitle "mar dev"
                 , paragraph
                     [ span [] "Boots a hot-reload dev server: edit a "
@@ -74,7 +74,7 @@ view _ =
                     ]
                 ]
             , section
-                [ header "4 — Deploy"
+                [ header "4. Deploy"
                 , footer "A fuller deployment guide is coming on its own page."
                 ]
                 [ paragraph

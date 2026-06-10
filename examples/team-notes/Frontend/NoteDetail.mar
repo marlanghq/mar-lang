@@ -67,18 +67,18 @@ view _ params model =
         ]
         [ case model of
             Loading ->
-                centered (text "Loading…")
+                centered (text [] "Loading…")
 
             Loaded note ->
                 form
                     [ section []
-                        [ text note.body
-                        , text (Time.toIso note.createdAt)
+                        [ text [] note.body
+                        , text [] (Time.toIso note.createdAt)
                         ]
                     ]
 
             NotFound ->
-                centered (text "This note does not exist or you don't have access to it.")
+                centered (text [] "This note does not exist or you don't have access to it.")
         ]
 
 

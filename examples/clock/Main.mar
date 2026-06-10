@@ -49,10 +49,10 @@ view model =
     navigationStack [ navigationTitle "Clock" ]
         [ form
             [ section []
-                [ text ("Server time: " ++ model.time)
+                [ text [] ("Server time: " ++ model.time)
                 , button [] Refresh "Refresh"
                 , case model.error of
-                    Just e -> text ("Error: " ++ e)
+                    Just e -> text [] ("Error: " ++ e)
                     Nothing -> empty
                 ]
             ]

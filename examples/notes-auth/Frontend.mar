@@ -179,7 +179,7 @@ update msg stage =
 
 renderNote : Shared.Note -> View Msg
 renderNote note =
-    text note.body
+    text [] note.body
 
 
 -- View built from declarative primitives. iOS renders each branch
@@ -189,13 +189,13 @@ view : Stage -> View Msg
 view stage =
     case stage of
         Loading ->
-            centered (text "Loading…")
+            centered (text [] "Loading…")
 
         LoggedOut (AskEmail draft) ->
             navigationStack [ navigationTitle "Sign in" ]
                 [ form
                     [ section []
-                        [ text "Enter your email and we'll send a one-time code."
+                        [ text [] "Enter your email and we'll send a one-time code."
                         , textField [ submit RequestCodeClicked, width (chars 30) ]
                             "Email" draft EmailDraftChanged
                         ]
@@ -208,7 +208,7 @@ view stage =
             navigationStack [ navigationTitle "Enter your code" ]
                 [ form
                     [ section []
-                        [ text ("We sent a 6-digit code to " ++ email ++ ".")
+                        [ text [] ("We sent a 6-digit code to " ++ email ++ ".")
                         , textField [ submit VerifyCodeClicked ]
                             "Code" codeDraft CodeDraftChanged
                         ]
@@ -218,7 +218,7 @@ view stage =
                 ]
 
         LoggedOut (Submitting _) ->
-            centered (text "Working…")
+            centered (text [] "Working…")
 
         LoggedIn user notes draft ->
             navigationStack
@@ -243,7 +243,7 @@ notesSection : Notes -> View Msg
 notesSection notes =
     case notes of
         NotesLoading ->
-            section [] [ text "Loading…" ]
+            section [] [ text [] "Loading…" ]
 
         NotesFailed why ->
             section [] [ errorText ("Couldn't load notes: " ++ why) ]

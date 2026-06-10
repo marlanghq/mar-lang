@@ -6,7 +6,7 @@ import Frontend.Routes
 import UI exposing
     ( navigationStack, navigationTitle, topBarTrailing
     , form, list, section, header
-    , hstack, vstack, expand
+    , hstack, vstack, width, fill
     , text, subtitle, textField, button, navigationLink, empty, errorText
     , submit
     )
@@ -122,13 +122,11 @@ update _ msg model =
 renderNote : Shared.User -> Shared.Note -> View Msg
 renderNote user note =
     hstack []
-        [ expand
-            (navigationLink [] Frontend.Routes.noteDetail { id = note.id }
-                (vstack []
-                    [ text note.body
-                    , subtitle (Time.toIso note.createdAt)
-                    ])
-            )
+        [ navigationLink [ width fill ] Frontend.Routes.noteDetail { id = note.id }
+            (vstack []
+                [ text [] note.body
+                , subtitle (Time.toIso note.createdAt)
+                ])
         , case user.role of
             Admin  -> button [] (DeleteClicked note.id) "Delete"
             Member -> empty
@@ -168,7 +166,7 @@ notesSection user notes =
     in
     case notes of
         Loading ->
-            section [] [ text (prefix ++ "Loading…") ]
+            section [] [ text [] (prefix ++ "Loading…") ]
 
         Failed why ->
             section [] [ errorText (prefix ++ "Couldn't load notes: " ++ why) ]

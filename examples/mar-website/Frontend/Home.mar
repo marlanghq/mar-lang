@@ -38,7 +38,7 @@ navRow : Path {} -> String -> String -> View Msg
 navRow path label blurb =
     navigationLink [] path {}
         (vstack []
-            [ text label
+            [ text [] label
             , subtitle blurb
             ])
 
@@ -50,7 +50,7 @@ featureRow emoji name desc =
     paragraph
         [ span [] (emoji ++ "  ")
         , span [bold] name
-        , span [] (" — " ++ desc)
+        , span [] (": " ++ desc)
         ]
 
 
@@ -99,7 +99,7 @@ view _ =
                 [ header "Status"
                 , footer "Build small things first."
                 ]
-                [ text "⚠️ Mar is early and evolving fast. Great for side projects; expect breaking changes between versions."
+                [ text [] "⚠️ Mar is early and evolving fast. Great for side projects; expect breaking changes between versions."
                 ]
             ]
         ]

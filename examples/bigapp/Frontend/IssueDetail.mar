@@ -7,7 +7,7 @@ import UI exposing
     ( navigationStack, navigationTitle, topBarTrailing
     , form, list, section, header, footer
     , hstack, vstack
-    , title, subtitle, text, textField, textArea, picker, button, navigationLink, empty, expand, spacer, toggle, errorText
+    , title, subtitle, text, textField, textArea, picker, button, navigationLink, empty, width, fill, spacer, toggle, errorText
     , submit
     )
 
@@ -283,7 +283,7 @@ metaSection editing issue draftTitle draftDesc =
                 )
             ]
             [ title issue.title
-            , text
+            , text []
                 ( if issue.description == "" then
                     "No description."
                   else
@@ -324,12 +324,12 @@ prioritySection : Shared.IssueView -> View Msg
 prioritySection issue =
     section
         [ header ("Priority · " ++ Shared.priorityLabel issue.priority) ]
-        [ text "Edit priority via the issue meta editor." ]
+        [ text [] "Edit priority via the issue meta editor." ]
 
 
 labelChip : Shared.Label -> View Msg
 labelChip lbl =
-    text (lbl.name ++ " · " ++ lbl.color)
+    text [] (lbl.name ++ " · " ++ lbl.color)
 
 
 labelsSection : Maybe (List Shared.Label) -> Maybe (List Shared.Label) -> View Msg
@@ -344,18 +344,18 @@ labelsSection attached projectLabels =
             case attached of
                 Just items ->
                     if List.isEmpty items then
-                        text "None attached."
+                        text [] "None attached."
                     else
                         vstack [] (List.map labelChip items)
 
                 Nothing ->
-                    text "Loading attached labels…"
+                    text [] "Loading attached labels…"
 
         availableBody =
             case projectLabels of
                 Just items ->
                     if List.isEmpty items then
-                        text "This project has no labels yet."
+                        text [] "This project has no labels yet."
                     else
                         let
                             unattached =
@@ -367,13 +367,13 @@ labelsSection attached projectLabels =
                                     items
                         in
                         if List.isEmpty unattached then
-                            text "All labels attached."
+                            text [] "All labels attached."
                         else
                             vstack []
                                 (List.map labelChip unattached)
 
                 Nothing ->
-                    text "Loading project labels…"
+                    text [] "Loading project labels…"
     in
     section
         [ header "Labels"
@@ -400,12 +400,10 @@ renderComment : Shared.User -> Shared.CommentView -> View Msg
 renderComment user comment =
     vstack []
         [ hstack []
-            [ expand
-                (vstack []
-                    [ text comment.body
-                    , subtitle (comment.authorName ++ " · " ++ Time.toIso comment.createdAt)
-                    ]
-                )
+            [ vstack [ width fill ]
+                [ text [] comment.body
+                , subtitle (comment.authorName ++ " · " ++ Time.toIso comment.createdAt)
+                ]
             , if user.id == comment.authorId || user.role == Admin then
                 button [] (DeleteCommentClicked comment.id) "Delete"
               else
@@ -460,7 +458,7 @@ commentsSection : Shared.User -> Maybe (List Shared.CommentView) -> View Msg
 commentsSection user state =
     case state of
         Nothing ->
-            section [ header "Comments" ] [ text "Loading…" ]
+            section [ header "Comments" ] [ text [] "Loading…" ]
 
         Just items ->
             if List.isEmpty items then
@@ -513,13 +511,13 @@ view user _ model =
                         [ if user.role == Admin then
                             button [] DeleteIssueClicked "Delete issue"
                           else
-                            text "Only admins can delete issues."
+                            text [] "Only admins can delete issues."
                         ]
                     ]
 
                 Nothing ->
                     [ errorBanner model.error
-                    , section [] [ text "Loading issue…" ]
+                    , section [] [ text [] "Loading issue…" ]
                     ]
     in
     navigationStack [ navigationTitle navTitle ]

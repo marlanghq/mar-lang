@@ -2061,12 +2061,15 @@ enum MarBuiltins {
         env.define("picker",    .fn(uiPicker))
         env.define("UI.picker", .fn(uiPicker))
 
-        // text / button — leaf views without attrs.
-        let uiText = MarFn.native(1) { args in
+        // text — plain text leaf. The attrs list carries the
+        // universal layout attrs (width / height); `text [width
+        // fill] "..."` is the equal-columns idiom.
+        let uiText = MarFn.native(2) { args in
+            let attrs = collectAttrs(args[0])
             let s: String
-            if case .string(let str) = args[0] { s = str } else { s = "" }
+            if case .string(let str) = args[1] { s = str } else { s = "" }
             return .view(MarView(
-                tag: "text", attrs: [], children: [], text: s, msg: nil, key: nil
+                tag: "text", attrs: attrs, children: [], text: s, msg: nil, key: nil
             ))
         }
         env.define("uiText",  .fn(uiText))
@@ -2295,9 +2298,20 @@ enum MarBuiltins {
         env.define("uiLines", .fn(uiLines))
         env.define("UI.lines", .fn(uiLines))
 
-        // width / height — wrap the length value as an attr. The
-        // renderer reads the value via attrLength helpers and applies
-        // SwiftUI .frame modifiers when present.
+        // fill — the axis-polymorphic "take the available space"
+        // sizing value. Same __unit-tagged shape as chars/lines so
+        // the renderer dispatches on one field; amount unused.
+        let uiFillVal: MarValue = .record(
+            fields: ["__unit": .string("fill"), "amount": .int(0)],
+            order: ["__unit", "amount"]
+        )
+        env.define("uiFill", uiFillVal)
+        env.define("UI.fill", uiFillVal)
+
+        // width / height — the universal sizing attrs. The renderer
+        // reads the Size value via attrLength helpers: chars/lines
+        // map to .frame sizes on inputs, fill to .frame(maxWidth/
+        // maxHeight: .infinity) on any view.
         let uiWidth = MarFn.native(1) { args in
             return makeAttr("width", args[0])
         }
@@ -2309,10 +2323,31 @@ enum MarBuiltins {
         env.define("uiHeight", .fn(uiHeight))
         env.define("UI.height", .fn(uiHeight))
 
+        // align — cross-axis alignment for a stack's hugging
+        // children. Value is a plain alignment-name string; the
+        // renderer maps it onto the VStack/HStack alignment
+        // parameter, honoring only the axis that matches the stack.
+        let uiAlign = MarFn.native(1) { args in
+            return makeAttr("align", args[0])
+        }
+        env.define("uiAlign", .fn(uiAlign))
+        env.define("UI.align", .fn(uiAlign))
+        env.define("uiLeading", .string("leading"))
+        env.define("UI.leading", .string("leading"))
+        env.define("uiCenter", .string("center"))
+        env.define("UI.center", .string("center"))
+        env.define("uiTrailing", .string("trailing"))
+        env.define("UI.trailing", .string("trailing"))
+        env.define("uiTop", .string("top"))
+        env.define("UI.top", .string("top"))
+        env.define("uiBottom", .string("bottom"))
+        env.define("UI.bottom", .string("bottom"))
+
         // px — pixel sizing unit for images (mirrors chars/lines,
         // tagged "px"). size — fixed width+height attr for an image.
-        // fit/fill — content-mode flags. MarRenderer's "image" case
-        // reads these.
+        // fit/cover — content-mode flags (CSS object-fit vocabulary;
+        // "cover", not "fill", which is the sizing value above).
+        // MarRenderer's "image" case reads these.
         let uiPx = MarFn.native(1) { args in
             let n: Int
             if case .int(let i) = args[0] { n = i } else { n = 0 }
@@ -2330,8 +2365,8 @@ enum MarBuiltins {
         env.define("UI.size", .fn(uiSize))
         env.define("uiFit",  flagAttr("contentModeFit"))
         env.define("UI.fit",  flagAttr("contentModeFit"))
-        env.define("uiFill", flagAttr("contentModeFill"))
-        env.define("UI.fill", flagAttr("contentModeFill"))
+        env.define("uiCover", flagAttr("contentModeCover"))
+        env.define("UI.cover", flagAttr("contentModeCover"))
 
         // navigationLink : Path r -> r -> View msg -> View msg
         // Mirror of SwiftUI's NavigationLink. The typed Path +
@@ -2426,26 +2461,6 @@ enum MarBuiltins {
         }
         env.define("uiCentered",  .fn(uiCentered))
         env.define("UI.centered", .fn(uiCentered))
-
-        // expand : View msg -> View msg
-        // Wraps the child in an "expand" view tag — renderer maps to
-        // .frame(maxWidth: .infinity) on iOS, flex:1 on web. The
-        // explicit "fill the main axis" modifier (equal-width columns).
-        let uiExpand = MarFn.native(1) { args in
-            guard case .view(let child) = args[0] else {
-                throw MarRuntimeError.typeMismatch(expected: "View", got: Eval.typeOf(args[0]))
-            }
-            return .view(MarView(
-                tag: "expand",
-                attrs: [],
-                children: [child],
-                text: "",
-                msg: nil,
-                key: nil
-            ))
-        }
-        env.define("uiExpand",  .fn(uiExpand))
-        env.define("UI.expand", .fn(uiExpand))
 
         // sheet : { open, onDismiss, outlet } -> List (View msg) -> View msg
         //

@@ -1,5 +1,6 @@
 {
   "name": "mar-website",
+  "server": { "port": 3007 },
   "pwa": {
     "shortName": "Mar",
     "icon": "public/mar-logo.png",

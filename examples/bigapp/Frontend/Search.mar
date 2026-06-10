@@ -75,7 +75,7 @@ resultRow : Shared.IssueView -> View Msg
 resultRow issue =
     navigationLink [] Frontend.Routes.issueDetail { id = issue.id }
         (vstack []
-            [ text (Shared.issueHandle issue)
+            [ text [] (Shared.issueHandle issue)
             , subtitle
                 ( Shared.statusLabel issue.status
                     ++ " · " ++ Shared.priorityLabel issue.priority
@@ -92,7 +92,7 @@ resultsSection model =
                 section [ header "Tip" ]
                     [ subtitle "Type a phrase and press Enter. Searches title + description across every project on your team." ]
             else
-                section [] [ text "Searching…" ]
+                section [] [ text [] "Searching…" ]
 
         Just items ->
             if List.isEmpty items then

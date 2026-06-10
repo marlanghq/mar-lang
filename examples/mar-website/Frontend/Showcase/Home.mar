@@ -40,7 +40,7 @@ demoRow : Path {} -> String -> String -> View Msg
 demoRow path name blurb =
     navigationLink [] path {}
         (vstack []
-            [ text name
+            [ text [] name
             , subtitle blurb
             ])
 

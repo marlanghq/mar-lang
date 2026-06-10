@@ -141,7 +141,7 @@ entriesSection : Entries -> View Msg
 entriesSection state =
     case state of
         Loading ->
-            section [] [ text "Loading…" ]
+            section [] [ text [] "Loading…" ]
 
         Failed why ->
             section [] [ errorText ("Couldn't load entries: " ++ why) ]
@@ -153,7 +153,7 @@ entriesSection state =
 
 renderEntry : Entry -> View Msg
 renderEntry entry =
-    text entry.name
+    text [] entry.name
 
 
 page : Page

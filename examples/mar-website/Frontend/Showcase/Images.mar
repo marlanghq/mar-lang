@@ -5,7 +5,7 @@ import UI exposing
     ( navigationStack, navigationTitle
     , form, section, header, footer
     , hstack, spacer
-    , image, px, size, fit, fill
+    , image, px, size, fit, cover
     )
 
 
@@ -24,7 +24,7 @@ import UI exposing
 -- Attrs (all optional, Image-hosted):
 --   size (px w) (px h) — fixed dimensions in points (e.g. avatars)
 --   fit                — show the whole image, no crop (default)
---   fill               — crop to fill the frame
+--   cover               — crop to fill the frame
 --
 -- Pixel sizing is scoped to images on purpose: `px` only builds an
 -- image size, and the input units (`chars` / `lines`) don't, so the
@@ -60,11 +60,11 @@ view _ =
                     }
                 ]
             , section
-                [ header "Fixed size · fill"
-                , footer "size (px 72) (px 72) with fill: image cropped to fill the box, no empty space."
+                [ header "Fixed size · cover"
+                , footer "With cover, the image is cropped to fill the box; no empty space."
                 ]
                 [ hstack []
-                    [ image [ size (px 72) (px 72), fill ]
+                    [ image [ size (px 72) (px 72), cover ]
                         { src = "/mar-logo.png"
                         , alt = "The Mar logo: a sun over stylized sea waves"
                         }
@@ -73,7 +73,7 @@ view _ =
                 ]
             , section
                 [ header "Fixed size · fit"
-                , footer "size (px 120) (px 80) with fit: whole image inside the box, no crop."
+                , footer "With fit, the whole image fits inside the box; no crop."
                 ]
                 [ image [ size (px 120) (px 80), fit ]
                     { src = "/mar-logo.png"

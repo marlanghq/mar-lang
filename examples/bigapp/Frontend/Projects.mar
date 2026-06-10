@@ -159,7 +159,7 @@ projectRow : Shared.Project -> View Msg
 projectRow project =
     navigationLink [] Frontend.Routes.projectDetail { id = project.id }
         (vstack []
-            [ text project.name
+            [ text [] project.name
             , subtitle
                 (if project.description == "" then
                     "/" ++ project.slug
@@ -173,7 +173,7 @@ projectsSection : Maybe (List Shared.Project) -> View Msg
 projectsSection state =
     case state of
         Nothing ->
-            section [] [ text "Loading projects…" ]
+            section [] [ text [] "Loading projects…" ]
 
         Just items ->
             if List.isEmpty items then

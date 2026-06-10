@@ -68,10 +68,16 @@ type Remote a
 -- Shared, polymorphic helpers (no Msg of their own).
 row : String -> String -> View msg
 row label value =
-    -- The classic label/value look: two equal columns. Each child in an
-    -- `expand` takes half the row, so the value sits near the midpoint —
-    -- closer to the label, not pinned to the far edge like a spacer would.
-    UI.hstack [] [ UI.expand (UI.text label), UI.expand (UI.text value) ]
+    -- The classic label/value look: two equal columns. `width fill` on
+    -- each text claims half the row, so the value sits near the
+    -- midpoint — closer to the label, not pinned to the far edge like a
+    -- spacer would. `width fill` on the hstack itself makes the row
+    -- stretch when it sits inside a flex parent (the navigationLink
+    -- table rows); in a plain section row it's inert (block context).
+    UI.hstack [ UI.width UI.fill ]
+        [ UI.text [ UI.width UI.fill ] label
+        , UI.text [ UI.width UI.fill ] value
+        ]
 
 
 -- Human-readable byte size. Mar's `/` is integer division, so we scale
@@ -204,7 +210,7 @@ loginView model =
             (case model.stage of
                 EmailEntry ->
                     [ UI.section []
-                        [ UI.text "Sign in with the email registered in mar.json[\"admins\"]."
+                        [ UI.text [] "Sign in with the email registered in mar.json[\"admins\"]."
                         , UI.textField [ UI.email, UI.submit SendCode, UI.width (UI.chars 30) ]
                             "Email" model.email EmailChanged
                         , maybeError model.error
@@ -215,7 +221,7 @@ loginView model =
 
                 CodeEntry ->
                     [ UI.section []
-                        [ UI.text ("Enter the code sent to " ++ model.email ++ ".")
+                        [ UI.text [] ("Enter the code sent to " ++ model.email ++ ".")
                         , UI.textField [ UI.numericCode, UI.submit DoVerify, UI.width (UI.chars 6) ]
                             "Code" model.code CodeChanged
                         , maybeError model.error
@@ -312,7 +318,7 @@ serverSection : Remote ServerInfo -> View Msg
 serverSection remote =
     case remote of
         Loading ->
-            UI.section [ UI.header "Server" ] [ UI.text "Loading…" ]
+            UI.section [ UI.header "Server" ] [ UI.text [] "Loading…" ]
 
         Failed why ->
             UI.section [ UI.header "Server" ] [ UI.errorText why ]
@@ -331,7 +337,7 @@ dbSizeSection : Remote DbStats -> View Msg
 dbSizeSection remote =
     case remote of
         Loading ->
-            UI.section [ UI.header "Database" ] [ UI.text "Loading…" ]
+            UI.section [ UI.header "Database" ] [ UI.text [] "Loading…" ]
 
         Failed why ->
             UI.section [ UI.header "Database" ] [ UI.errorText why ]
@@ -351,13 +357,12 @@ tablePath =
 tableLink : EntityStat -> View Msg
 tableLink stat =
     -- Same label/value layout as the section rows (two equal columns via
-    -- `row`), wrapped in `expand` so it grows to fill the link's width
-    -- instead of collapsing. The navigationLink is itself a space-between
-    -- flex row (content ↔ chevron); `expand` (flex-grow:1) is what gives
-    -- the inner row real width — without it the hstack collapses and the
-    -- two texts overlap, which is the bug this used to have.
+    -- `row`). The navigationLink is itself a flex row (content + absolute
+    -- chevron); `row`'s own `width fill` is what gives the inner hstack
+    -- real width there — without it the hstack hugs and the two texts
+    -- collapse together, which is the bug this used to have.
     UI.navigationLink [] tablePath { name = stat.name }
-        (UI.expand (row stat.name (String.fromInt stat.rowCount ++ " rows")))
+        (row stat.name (String.fromInt stat.rowCount ++ " rows"))
 
 
 tablesSection : String -> List EntityStat -> View Msg
@@ -386,7 +391,7 @@ requestsSection : Remote (List Request) -> View Msg
 requestsSection remote =
     case remote of
         Loading ->
-            UI.section [ UI.header "Recent requests" ] [ UI.text "Loading…" ]
+            UI.section [ UI.header "Recent requests" ] [ UI.text [] "Loading…" ]
 
         Failed why ->
             UI.section [ UI.header "Recent requests" ] [ UI.errorText why ]
@@ -408,7 +413,7 @@ backupsSection : Remote (List Backup) -> View Msg
 backupsSection remote =
     case remote of
         Loading ->
-            UI.section [ UI.header "Database backups" ] [ UI.text "Loading…" ]
+            UI.section [ UI.header "Database backups" ] [ UI.text [] "Loading…" ]
 
         Failed why ->
             UI.section [ UI.header "Database backups" ] [ UI.errorText why ]
@@ -495,7 +500,7 @@ tableView _ params model =
         [ UI.list []
             (case model.rows of
                 Loading ->
-                    [ UI.section [] [ UI.text "Loading…" ] ]
+                    [ UI.section [] [ UI.text [] "Loading…" ] ]
 
                 Failed why ->
                     [ UI.section [] [ UI.errorText why ] ]
@@ -503,7 +508,7 @@ tableView _ params model =
                 Loaded rs ->
                     case rs of
                         [] ->
-                            [ UI.section [] [ UI.text "This table has no rows." ] ]
+                            [ UI.section [] [ UI.text [] "This table has no rows." ] ]
 
                         _ ->
                             List.map rowCard rs

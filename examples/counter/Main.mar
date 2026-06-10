@@ -36,7 +36,7 @@ view model =
         [ centered
             (vstack []
                 [ button [] Increment "+"
-                , text (String.fromInt model)
+                , text [] (String.fromInt model)
                 , button [] Decrement "-"
                 ]
             )

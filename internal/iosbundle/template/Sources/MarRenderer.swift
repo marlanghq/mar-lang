@@ -25,6 +25,16 @@ struct MarRenderer: View {
     let dispatch: (MarValue) -> Void
 
     var body: some View {
+        // Universal layout pass — every view honors the `width fill`
+        // / `height fill` sizing attrs (the iOS mirror of the web's
+        // applyLayoutAttrs + .mar-w-fill / .mar-h-fill classes).
+        // Wrapped around the per-tag content so the attr composes
+        // with any tag, exactly like the web's shared createDOM tail.
+        content.modifier(MarFillSizing(view: view))
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch view.tag {
         case "title":
             Text(view.text)
@@ -171,32 +181,54 @@ struct MarRenderer: View {
 
         case "hstack":
             // SwiftUI-style: children HUG their content — no stretch.
-            // To distribute, insert a `spacer` (pushes siblings apart)
-            // or wrap a child in `expand` (claims the free space) —
-            // mirroring HStack + Spacer() + .frame(maxWidth: .infinity).
-            // textField stays greedy on its own (like SwiftUI's
-            // TextField), so `hstack [ textField, button ]` still works.
+            // To distribute, insert a `spacer` (pushes siblings
+            // apart) or give a child `width fill` (claims the free
+            // space) — mirroring HStack + Spacer() +
+            // .frame(maxWidth: .infinity). textField stays greedy on
+            // its own (like SwiftUI's TextField), so
+            // `hstack [ textField, button ]` still works.
             //
             // CSS counterpart (kept in lockstep):
-            //   .mar-hstack > *        { flex: 0 1 auto }   (hug)
-            //   .mar-hstack > button   { flex: 0 0 auto }
-            //   .mar-spacer / .mar-expand / textField  → greedy
-            HStack(alignment: .center, spacing: 12) {
+            //   .mar-hstack > *           { flex: 0 1 auto }   (hug)
+            //   .mar-hstack > button      { flex: 0 0 auto }
+            //   .mar-hstack > .mar-w-fill { flex: 1 1 0 }
+            //   .mar-spacer / textField   → greedy
+            //
+            // The `align` attr picks the cross-axis (vertical)
+            // alignment: top / center / bottom; default center.
+            HStack(alignment: hstackAlignment(), spacing: 12) {
                 ForEach(0..<view.children.count, id: \.self) { i in
                     MarRenderer(view: view.children[i], dispatch: dispatch)
                 }
             }
 
         case "vstack":
-            // Children fill the column width (matching the web's
-            // `align-items: stretch`), left-aligned. This is the
-            // pragmatic deviation from SwiftUI's hug-width VStack:
-            // column-fill is what almost every layout wants, and it
-            // keeps web + iOS in lockstep.
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(0..<view.children.count, id: \.self) { i in
-                    MarRenderer(view: view.children[i], dispatch: dispatch)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            // Two modes, mirroring the web's align-items handling:
+            //
+            //   - No `align` attr (default): children FILL the column
+            //     width (web's `align-items: stretch`), left-aligned.
+            //     The pragmatic deviation from SwiftUI's hug-width
+            //     VStack — column-fill is what almost every layout
+            //     wants, and it keeps web + iOS in lockstep.
+            //
+            //   - `align leading/center/trailing`: children HUG and
+            //     sit at that cross-axis position (web's align-items:
+            //     flex-start/center/flex-end). The stack itself still
+            //     spans the full width so the position is meaningful.
+            if let al = vstackAlignment() {
+                VStack(alignment: al, spacing: 8) {
+                    ForEach(0..<view.children.count, id: \.self) { i in
+                        MarRenderer(view: view.children[i], dispatch: dispatch)
+                    }
+                }
+                .frame(maxWidth: .infinity,
+                       alignment: Alignment(horizontal: al, vertical: .center))
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(0..<view.children.count, id: \.self) { i in
+                        MarRenderer(view: view.children[i], dispatch: dispatch)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
 
@@ -223,19 +255,6 @@ struct MarRenderer: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-
-        case "expand":
-            // Grows to fill the parent stack's main axis — the
-            // explicit counterpart to Spacer (equal-width columns).
-            // Mirrors SwiftUI's .frame(maxWidth: .infinity).
-            Group {
-                if let child = view.children.first {
-                    MarRenderer(view: child, dispatch: dispatch)
-                } else {
-                    EmptyView()
-                }
-            }
-            .frame(maxWidth: .infinity)
 
         case "sheet":
             // iOS page sheet — same modal-from-bottom behavior we get
@@ -297,6 +316,66 @@ struct MarRenderer: View {
     private func boolAttr(_ name: String) -> Bool {
         for a in view.attrs where a.name == name {
             if case .bool(let b) = a.value { return b }
+        }
+        return false
+    }
+
+    // Cross-axis alignment from the stack `align` attr. Each stack
+    // honors only its own axis's values plus center — vstack:
+    // leading/center/trailing, hstack: top/center/bottom; a
+    // wrong-axis value is ignored (falls back to the default), the
+    // same policy as the web renderer's applyAlignAttr.
+    private func vstackAlignment() -> HorizontalAlignment? {
+        switch attrString("align") {
+        case "leading":  return .leading
+        case "center":   return .center
+        case "trailing": return .trailing
+        default:         return nil
+        }
+    }
+
+    private func hstackAlignment() -> VerticalAlignment {
+        switch attrString("align") {
+        case "top":    return .top
+        case "bottom": return .bottom
+        default:       return .center
+        }
+    }
+}
+
+// MarFillSizing applies the universal `width fill` / `height fill`
+// sizing attrs (Size records with __unit == "fill") to any rendered
+// view — SwiftUI's .frame(maxWidth/maxHeight: .infinity), the iOS
+// mirror of the web's contextual .mar-w-fill / .mar-h-fill classes.
+// Alignment is leading/top so a filling text reads like a row cell
+// (web parity: a stretched child's text stays left-aligned, not
+// centered in its claimed space). chars / lines stay the inputs' own
+// concern (MarUITextField / MarUITextArea read them directly); fill
+// is the only Size unit that means something on arbitrary views.
+private struct MarFillSizing: ViewModifier {
+    let view: MarView
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch (hasFill("width"), hasFill("height")) {
+        case (false, false):
+            content
+        case (true, false):
+            content.frame(maxWidth: .infinity, alignment: .leading)
+        case (false, true):
+            content.frame(maxHeight: .infinity, alignment: .top)
+        case (true, true):
+            content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func hasFill(_ name: String) -> Bool {
+        for a in view.attrs where a.name == name {
+            if case .record(let fields, _) = a.value,
+               case .string(let unit) = fields["__unit"] ?? .unit,
+               unit == "fill" {
+                return true
+            }
         }
         return false
     }
@@ -943,12 +1022,12 @@ private struct MarUIImage: View {
 
     var body: some View {
         let (w, h) = imageSize(view)
-        let fill = imagePresent(view, "contentModeFill")
+        let cover = imagePresent(view, "contentModeCover")
         AsyncImage(url: URL(string: imageAttrString(view, "src"))) { phase in
             if let image = phase.image {
                 image
                     .resizable()
-                    .aspectRatio(contentMode: fill ? .fill : .fit)
+                    .aspectRatio(contentMode: cover ? .fill : .fit)
             } else if phase.error != nil {
                 Color.gray.opacity(0.15)
             } else {

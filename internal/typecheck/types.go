@@ -412,11 +412,17 @@ func TAttrKeyedListHost() Type { return TCon{Name: "KeyedList"} }
 func TAttrImageHost() Type     { return TCon{Name: "Image"} }
 
 // TAttrInlineHost is the host marker for inline-text attrs (bold,
-// italic, strikethrough, code, link). Used by `text [attrs] "..."`
+// italic, strikethrough, code, link). Used by `span [attrs] "..."`
 // inside `paragraph` to style or link individual text runs. Inline
-// attrs DON'T unify with other categories — a `width (chars 5)`
-// inside a paragraph's `text` is rejected at compile time.
+// attrs DON'T unify with other categories — `bold` in a block-level
+// `text [...]` list is rejected at compile time.
 func TAttrInlineHost() Type { return TCon{Name: "Inline"} }
+
+// TAttrTextHost is the host marker for the block-level text leaf,
+// `text [attrs] "..."`. No text-specific attrs exist yet — the list
+// exists for the universal layout attrs (width / height), which are
+// polymorphic in their host and so fit here like anywhere else.
+func TAttrTextHost() Type { return TCon{Name: "Text"} }
 
 // TInline returns the `Inline msg` type — a run of text inside a
 // paragraph. Distinct from `View msg` so `paragraph` can refuse
@@ -429,11 +435,33 @@ func TInline(msg Type) TCon {
 	return TCon{Name: "Inline", Args: []Type{msg}}
 }
 
-// TWidth / THeight — opaque sizing-value types. `chars : Int -> Width`,
-// `lines : Int -> Height`. Width and Height are intentionally separate
-// types so the typechecker rejects `width (lines 5)` / `height (chars 5)`.
-func TWidth() TCon  { return TCon{Name: "Width"} }
-func THeight() TCon { return TCon{Name: "Height"} }
+// TSize — the opaque sizing-value type, phantom-parameterized by axis:
+// `chars : Int -> Size Width`, `lines : Int -> Size Height`, and
+// `fill : Size axis` (polymorphic — fits either). The phantom keeps
+// `width (lines 5)` / `height (chars 5)` compile errors while letting
+// the single `fill` constant serve both attrs. TWidth / THeight are
+// the two concrete instantiations, kept as named helpers because
+// that's how every scheme reads ("width takes a TWidth()").
+func TSize(axis Type) TCon { return TCon{Name: "Size", Args: []Type{axis}} }
+
+// TWidthAxis / THeightAxis — the phantom axis markers. Never inhabited;
+// they exist so Size Width and Size Height are distinct types.
+func TWidthAxis() TCon  { return TCon{Name: "Width"} }
+func THeightAxis() TCon { return TCon{Name: "Height"} }
+
+func TWidth() TCon  { return TSize(TWidthAxis()) }
+func THeight() TCon { return TSize(THeightAxis()) }
+
+// TAlignment — cross-axis alignment for stack children. Values:
+// leading / center / trailing (vstack's horizontal cross axis) and
+// top / center / bottom (hstack's vertical cross axis). One type for
+// both axes — `center` is shared, and renderers ignore a wrong-axis
+// value (top in a vstack) rather than the type system splitting the
+// Stack host in two for it. Alignment is pure *position*: it places
+// hugging children in the leftover cross-axis space. "Fill" is not an
+// alignment — that's sizing, spelled `width fill` / `height fill` on
+// the child.
+func TAlignment() TCon { return TCon{Name: "Alignment"} }
 
 // TPixels — opaque pixel sizing unit for media. `px : Int -> Pixels`.
 // Deliberately distinct from Width / Height (the char/line units for

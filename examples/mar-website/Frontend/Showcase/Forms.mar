@@ -116,7 +116,7 @@ view model =
         [ form
             [ section
                 [ header "email"
-                , footer "type=email, autocomplete=email, iOS suggests addresses from Contacts."
+                , footer "Sets type=email and autocomplete=email; iOS suggests addresses from Contacts."
                 ]
                 [ textField [ email, submit SubmitClicked, width (chars 50) ]
                     "you@example.com" model.email EmailChanged
@@ -144,7 +144,7 @@ view model =
                 ]
             , section
                 [ header "oneTimeCode"
-                , footer "iOS surfaces the latest OTP from Messages above the keyboard."
+                , footer "On iOS, the latest code from Messages appears above the keyboard."
                 ]
                 [ textField [ oneTimeCode, submit SubmitClicked ]
                     "6-digit code" model.otp OtpChanged
@@ -158,14 +158,14 @@ view model =
                 ]
             , section
                 [ header "width (chars N)"
-                , footer "`width (chars 6)` sizes a field to about 6 columns. It caps the width, not how much you can type."
+                , footer "Sized to about 6 columns: width (chars 6) caps the width, not how much you can type."
                 ]
                 [ textField [ submit SubmitClicked, width (chars 6) ]
                     "Code" model.code CodeChanged
                 ]
             , section
                 [ header "textArea (width + height)"
-                , footer "Multi-line. `width (chars 40)` caps the width, `height (lines 4)` sets the visible rows. Enter inserts a newline; Cmd/Ctrl+Enter submits."
+                , footer "Multi-line: height (lines 4) sets the visible rows; Cmd/Ctrl+Enter submits."
                 ]
                 [ textArea [ submit SubmitClicked, width (chars 40), height (lines 4) ]
                     "Multi-line input" model.bio BioChanged
@@ -185,7 +185,7 @@ view model =
                 , if emailLooksWrong model.email then
                     errorText "Please enter a valid email address."
                   else
-                    text ""
+                    text [] ""
                 ]
             , section
                 [ header "actions"

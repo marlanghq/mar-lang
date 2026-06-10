@@ -94,7 +94,7 @@ view model =
         [ form
             [ section
                 [ header "Enum picker"
-                , footer "Each option is a custom-type constructor (Priority). Renders with the same right-aligned value + chevron iOS uses."
+                , footer "Each option is a custom-type constructor (Priority)."
                 ]
                 [ picker []
                     model.priority
@@ -104,7 +104,7 @@ view model =
                 ]
             , section
                 [ header "Int picker"
-                , footer "Options come from a List Int. `sizeLabel` turns each Int into a readable row label."
+                , footer "Options come from a List Int; sizeLabel turns each into a readable row label."
                 ]
                 [ picker []
                     model.size
@@ -114,7 +114,7 @@ view model =
                 ]
             , section
                 [ header "String picker"
-                , footer "Plain List String. Labels are the strings themselves, so the label fn is `identity` (here: `\\s -> s`)."
+                , footer "A plain List String: the strings are their own labels."
                 ]
                 [ picker []
                     model.flavor

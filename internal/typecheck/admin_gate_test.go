@@ -36,7 +36,7 @@ page =
         { path = "/"
         , init = \session -> ((), Mar.Admin.serverInfo session (\_ -> Done))
         , update = \_ model -> (model, Effect.none)
-        , view = \model -> UI.text "x"
+        , view = \model -> UI.text [] "x"
         }
 `
 	_, err := checkSource(t, src)
@@ -60,7 +60,7 @@ page =
         , title = "Admin"
         , init = \admin _ -> ((), Mar.Admin.serverInfo admin (\_ -> Ignored))
         , update = \_ _ model -> (model, Effect.none)
-        , view = \_ model -> UI.text "ok"
+        , view = \_ model -> UI.text [] "ok"
         }
 `
 	if _, err := checkSource(t, src); err != nil {

@@ -97,7 +97,7 @@ view params model =
     navigationStack [ navigationTitle "Enter your code" ]
         [ form
             [ section []
-                [ text ("We sent a 6-digit code to " ++ params.email ++ ".")
+                [ text [] ("We sent a 6-digit code to " ++ params.email ++ ".")
                 , textField
                     -- `disabled model.busy`: freeze the code input
                     -- during the verify request. Otherwise the user

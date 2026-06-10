@@ -6,7 +6,7 @@ import Frontend.Routes
 import UI exposing
     ( navigationStack, navigationTitle, topBarTrailing
     , form, list, section, header
-    , hstack, vstack, expand
+    , hstack, vstack, width, fill
     , text, textField, button, navigationLink, empty, errorText
     , submit
     )
@@ -121,16 +121,14 @@ update _ msg model =
 renderTweet : Shared.TweetView -> View Msg
 renderTweet t =
     hstack []
-        [ expand
-            (vstack []
-                [ hstack []
-                    [ navigationLink [] Frontend.Routes.profile { handle = t.authorHandle } (text t.authorName)
-                    , text ("@" ++ t.authorHandle)
-                    ]
-                , text t.body
-                , text (Time.toIso t.createdAt)
+        [ vstack [ width fill ]
+            [ hstack []
+                [ navigationLink [] Frontend.Routes.profile { handle = t.authorHandle } (text [] t.authorName)
+                , text [] ("@" ++ t.authorHandle)
                 ]
-            )
+            , text [] t.body
+            , text [] (Time.toIso t.createdAt)
+            ]
         , if t.isMine then
             button [] (DeleteClicked t.id) "Delete"
           else
@@ -160,14 +158,14 @@ timelineSection : Timeline -> View Msg
 timelineSection state =
     case state of
         Loading ->
-            section [] [ text "Loading…" ]
+            section [] [ text [] "Loading…" ]
 
         Failed why ->
             section [] [ errorText ("Couldn't load: " ++ why) ]
 
         Loaded [] ->
             section []
-                [ text "Your timeline is empty. Follow people from their profile to see their tweets here."
+                [ text [] "Your timeline is empty. Follow people from their profile to see their tweets here."
                 ]
 
         Loaded items ->

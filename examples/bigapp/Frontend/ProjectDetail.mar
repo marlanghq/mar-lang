@@ -140,7 +140,7 @@ issueRow : Shared.IssueView -> View Msg
 issueRow issue =
     navigationLink [] Frontend.Routes.issueDetail { id = issue.id }
         (vstack []
-            [ text ("#" ++ String.fromInt issue.number ++ " — " ++ issue.title)
+            [ text [] ("#" ++ String.fromInt issue.number ++ " — " ++ issue.title)
             , subtitle
                 ( Shared.statusLabel issue.status
                     ++ " · " ++ Shared.priorityLabel issue.priority
@@ -153,7 +153,7 @@ issuesSection : Maybe (List Shared.IssueView) -> View Msg
 issuesSection state =
     case state of
         Nothing ->
-            section [] [ text "Loading issues…" ]
+            section [] [ text [] "Loading issues…" ]
 
         Just items ->
             if List.isEmpty items then
@@ -171,7 +171,7 @@ headerSection maybeProject =
         Just project ->
             section [ header (project.slug ++ " · project") ]
                 [ title project.name
-                , text
+                , text []
                     ( if project.description == "" then
                         "No description yet."
                       else
@@ -180,7 +180,7 @@ headerSection maybeProject =
                 ]
 
         Nothing ->
-            section [] [ text "Loading project…" ]
+            section [] [ text [] "Loading project…" ]
 
 
 errorBanner : Maybe String -> View Msg
@@ -203,14 +203,14 @@ view user params model =
                 Admin ->
                     hstack []
                         [ navigationLink [] Frontend.Routes.newIssue { projectId = params.id }
-                            (text "New issue")
+                            (text [] "New issue")
                         , spacer
                         , button [] DeleteClicked "Delete"
                         ]
 
                 Member ->
                     navigationLink [] Frontend.Routes.newIssue { projectId = params.id }
-                        (text "New issue")
+                        (text [] "New issue")
     in
     navigationStack [ navigationTitle navTitle ]
         [ list []

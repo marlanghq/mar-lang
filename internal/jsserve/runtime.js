@@ -1852,8 +1852,11 @@
     def('picker', native(5, uiPicker));
     def('UI.picker', native(5, uiPicker));
 
-    // text — UI version takes no attrs.
-    const uiTextCtor = native(1, ([s]) => VView('text', [], [], s.s));
+    // text — plain text leaf. The attrs list carries the universal
+    // layout attrs (width / height); `text [width fill] "..."` is
+    // the equal-columns idiom.
+    const uiTextCtor = native(2, ([attrsList, s]) =>
+      VView('text', collectAttrs(attrsList), [], s.s));
     def('uiText', uiTextCtor); def('UI.text', uiTextCtor);
 
     // paragraph : List (Inline msg) -> View msg
@@ -1981,29 +1984,52 @@
     });
     def('uiImage', uiImageCtor); def('UI.image', uiImageCtor);
 
-    // chars / lines — sizing units. Each wraps an Int in a record
-    // tagged with __unit so the renderer can dispatch on what the
-    // number means (horizontal characters vs vertical lines).
-    // Mirrors Go runtime's lengthValue helper.
+    // chars / lines / fill — sizing values. chars/lines wrap an Int
+    // in a record tagged with __unit so the renderer can dispatch on
+    // what the number means (horizontal characters vs vertical
+    // lines); fill is the axis-polymorphic "take the available
+    // space" constant (same record shape, amount unused). Mirrors Go
+    // runtime's lengthValue helper.
     const uiCharsCtor = native(1, ([n]) =>
       VRecord({ __unit: VString('chars'), amount: VInt(n.n) }, ['__unit', 'amount']));
     def('uiChars', uiCharsCtor); def('UI.chars', uiCharsCtor);
     const uiLinesCtor = native(1, ([n]) =>
       VRecord({ __unit: VString('lines'), amount: VInt(n.n) }, ['__unit', 'amount']));
     def('uiLines', uiLinesCtor); def('UI.lines', uiLinesCtor);
+    const uiFillVal =
+      VRecord({ __unit: VString('fill'), amount: VInt(0) }, ['__unit', 'amount']);
+    def('uiFill', uiFillVal); def('UI.fill', uiFillVal);
 
-    // width / height — attribute builders. createDOM/patchDOM read
-    // the attr value (a Width or Height record), inspect __unit, and
-    // apply the right CSS (max-width: N ch + padding for chars,
-    // min-height: N lines for lines).
+    // width / height — the universal sizing attrs. applyLayoutAttrs
+    // reads the Size record's __unit: chars/lines size the content
+    // box (inputs keep their special-cased max-width / rows
+    // handling in applySizing), fill claims the free space on that
+    // axis via the contextual .mar-w-fill / .mar-h-fill classes.
     const uiWidthCtor  = native(1, ([v]) => makeAttr('width',  v));
     def('uiWidth',  uiWidthCtor);  def('UI.width',  uiWidthCtor);
     const uiHeightCtor = native(1, ([v]) => makeAttr('height', v));
     def('uiHeight', uiHeightCtor); def('UI.height', uiHeightCtor);
 
+    // align — cross-axis alignment for a stack's hugging children.
+    // The value is a plain alignment-name string; applyAlignAttr
+    // maps it onto align-items, honoring only the axis that matches
+    // the stack (vstack: leading/center/trailing; hstack:
+    // top/center/bottom). Children with the matching `fill` have no
+    // cross-axis slack, so align never moves them — align is
+    // position, fill is size.
+    const uiAlignCtor = native(1, ([v]) => makeAttr('align', v));
+    def('uiAlign', uiAlignCtor); def('UI.align', uiAlignCtor);
+    def('uiLeading', VString('leading'));   def('UI.leading', VString('leading'));
+    def('uiCenter', VString('center'));     def('UI.center', VString('center'));
+    def('uiTrailing', VString('trailing')); def('UI.trailing', VString('trailing'));
+    def('uiTop', VString('top'));           def('UI.top', VString('top'));
+    def('uiBottom', VString('bottom'));     def('UI.bottom', VString('bottom'));
+
     // px — pixel sizing unit for images (mirrors chars/lines, tagged
-    // 'px'). size — fixed width+height attr for an image. fit/fill —
-    // content-mode flags. createDOM's 'image' case reads these.
+    // 'px'). size — fixed width+height attr for an image. fit/cover —
+    // content-mode flags (CSS object-fit vocabulary; "cover", not
+    // "fill", which is the sizing value above). createDOM's 'image'
+    // case reads these.
     const uiPxCtor = native(1, ([n]) =>
       VRecord({ __unit: VString('px'), amount: VInt(n.n) }, ['__unit', 'amount']));
     def('uiPx', uiPxCtor); def('UI.px', uiPxCtor);
@@ -2012,8 +2038,8 @@
     def('uiSize', uiSizeCtor); def('UI.size', uiSizeCtor);
     const fitAttr = flagAttr('contentModeFit');
     def('uiFit', fitAttr); def('UI.fit', fitAttr);
-    const fillAttr = flagAttr('contentModeFill');
-    def('uiFill', fillAttr); def('UI.fill', fillAttr);
+    const coverAttr = flagAttr('contentModeCover');
+    def('uiCover', coverAttr); def('UI.cover', coverAttr);
 
     // navigationLink : List Attr -> Path r -> r -> View msg -> View msg
     // Mirror of SwiftUI's NavigationLink. The Path + record build
@@ -2066,20 +2092,12 @@
     def('UI.toggle', envLookup(env, 'uiToggle'));
 
     // centered : View msg -> View msg
-    // Wraps child in a "centered" view tag. The renderer (createDOM
-    // case 'centered' below) renders a flex container that fills
-    // available space and centers its child.
+    // Wraps child in a "centered" view tag — pure two-axis
+    // alignment. The renderer fills the space the PARENT provides
+    // (never inventing a size) and centers the child in it.
     const uiCenteredCtor = native(1, ([child]) =>
       VView('centered', [], [child], ''));
     def('uiCentered', uiCenteredCtor); def('UI.centered', uiCenteredCtor);
-
-    // expand : View msg -> View msg
-    // Wraps child in an "expand" view tag. The renderer (createDOM
-    // case 'expand' below) makes it grow to fill the parent stack's
-    // main axis — the explicit counterpart to spacer (equal columns).
-    const uiExpandCtor = native(1, ([child]) =>
-      VView('expand', [], [child], ''));
-    def('uiExpand', uiExpandCtor); def('UI.expand', uiExpandCtor);
 
     // sheet : { open, onDismiss, outlet } -> List (View msg) -> View msg
     //
@@ -4117,7 +4135,7 @@
       if (w != null) { node.style.width = w + 'px'; node.style.maxWidth = 'none'; }
       if (h != null) node.style.height = h + 'px';
     }
-    if (getAttrRaw(view, 'contentModeFill')) node.style.objectFit = 'cover';
+    if (getAttrRaw(view, 'contentModeCover')) node.style.objectFit = 'cover';
     else if (getAttrRaw(view, 'contentModeFit')) node.style.objectFit = 'contain';
   }
 
@@ -4130,10 +4148,57 @@
     return null;
   }
 
+  // applyLayoutAttrs applies the UNIVERSAL sizing attrs — width /
+  // height carrying chars / lines / fill Size values — to any view's
+  // node. Runs from createDOM's shared tail and the patch path, so
+  // swapping `width fill` ↔ `width (chars 12)` between renders stays
+  // in sync (classList.toggle + unconditional style writes make it
+  // idempotent).
+  //
+  // `fill` is contextual: the .mar-w-fill / .mar-h-fill classes
+  // resolve against the parent's flex direction (main axis → grow,
+  // cross axis → stretch), so the class IS the mechanism. chars /
+  // lines become inline styles.
+  //
+  // Tags with their own sizing pipelines opt out of the style half:
+  // inputs (textField / textArea / picker) keep applySizing's
+  // padding-aware max-width + rows semantics, images size via the
+  // px-based `size` attr. The fill classes still apply to them.
+  function applyLayoutAttrs(node, view) {
+    const w = readLengthAttr(view, 'width');
+    const h = readLengthAttr(view, 'height');
+    node.classList.toggle('mar-w-fill', !!(w && w.unit === 'fill'));
+    node.classList.toggle('mar-h-fill', !!(h && h.unit === 'fill'));
+    const ownSizing = view.tag === 'image' || view.tag === 'textField'
+      || view.tag === 'textArea' || view.tag === 'picker';
+    if (ownSizing) return;
+    node.style.width = (w && w.unit === 'chars') ? w.amount + 'ch' : '';
+    node.style.height = (h && h.unit === 'lines') ? h.amount + 'lh' : '';
+  }
+
+  // applyAlignAttr maps a stack's `align` attr onto its cross axis
+  // (align-items). Each stack honors only its own axis's values plus
+  // center — vstack: leading/center/trailing, hstack: top/center/
+  // bottom; a wrong-axis value is ignored rather than guessed. No
+  // attr → the base-class default (vstack stretch, hstack center).
+  // Align only places HUGGING children: a child with the matching
+  // fill has no cross-axis slack (the per-child .mar-*-fill stretch
+  // rule wins), so align is pure position, never size.
+  function applyAlignAttr(node, view) {
+    const wanted = getAttr(view, 'align');
+    const valid = view.tag === 'vstack'
+      ? ['leading', 'center', 'trailing']
+      : ['top', 'center', 'bottom'];
+    for (const v of ['leading', 'center', 'trailing', 'top', 'bottom']) {
+      node.classList.toggle('mar-align-' + v, wanted === v && valid.includes(v));
+    }
+  }
+
   // readLengthAttr unwraps a sizing-attr value into { unit, amount }.
-  // The Mar-side type system enforces that `width` carries a Width
-  // (chars N) and `height` carries a Height (lines N), so the unit
-  // check here is defensive — a malformed value just returns null.
+  // The Mar-side type system enforces the axis — `width` carries a
+  // Size Width (chars N / fill), `height` a Size Height (lines N /
+  // fill) — so the unit check here is defensive; a malformed value
+  // just returns null.
   function readLengthAttr(view, name) {
     if (!view.attrs) return null;
     for (const a of view.attrs) {
@@ -4544,6 +4609,15 @@
       '  list-style: none;',
       '  border: none;',
       '}',
+
+      // Height propagation. #mar-root is a min-100dvh flex column
+      // (see the shell CSS in server.go); the nav stack and its body
+      // pass that height down so a `height fill` child or a
+      // `centered` view has real space to claim — no magic
+      // min-heights anywhere in the chain. Content taller than the
+      // viewport still grows normally (flex-basis auto).
+      '.mar-nav-stack { flex: 1 1 auto; display: flex; flex-direction: column; }',
+      '.mar-nav-body { flex: 1 1 auto; }',
 
       // Section: small uppercase eyebrow header above a rounded
       // content card. Reset UA margin — some browsers give <section>
@@ -5382,34 +5456,55 @@
       '}',
       'a.mar-navigation-link .mar-vstack { gap: 2px; }',
 
-      // Centered — fills viewport and centers child both axes.
-      // Used for full-screen Loading / EmptyState / Error views.
+      // Centered — pure two-axis alignment. It claims whatever space
+      // its PARENT provides (flex: 1 inside the page\'s height-
+      // propagating column — #mar-root → .mar-nav-stack →
+      // .mar-nav-body all pass the viewport height down) and centers
+      // the child in it. No own height: in a parent that hugs (a
+      // section card) it simply centers horizontally at content
+      // height. Used for full-screen Loading / EmptyState / Error.
       '.mar-centered {',
       '  display: flex; flex-direction: column;',
       '  align-items: center; justify-content: center;',
-      '  min-height: 60vh;',
+      '  flex: 1 1 auto;',
+      '  align-self: stretch;',
       '  width: 100%;',
       '  text-align: center;',
       '}',
-      // A centered region nested inside a section card (e.g. a
-      // showcase demo) shouldn\'t claim 60vh — that height is for
-      // full-page Loading / Empty / Error states. Scope it to a
-      // compact box when it sits as a section row, so it still shows
-      // both-axis centering without dominating the page.
-      '.mar-section-body > .mar-centered { min-height: 160px; }',
 
       // Spacer — SwiftUI Spacer(). Flex filler that pushes siblings
       // along the parent flex container\'s main axis. Inside an
       // hstack it expands horizontally; inside vstack, vertically.
       '.mar-spacer { flex: 1 1 auto; align-self: stretch; }',
 
-      // Expand — the explicit "fill the main axis" wrapper (SwiftUI\'s
-      // .frame(maxWidth: .infinity)). Where spacer pushes siblings
-      // apart, expand makes a child claim the free space. Grows as a
-      // flex item; its inner child stretches to fill the wrapper, so
-      // `hstack [ expand a, expand b ]` yields equal-width columns.
-      '.mar-expand { flex: 1 1 0; min-width: 0; display: flex; }',
-      '.mar-expand > * { flex: 1 1 auto; min-width: 0; }',
+      // Universal sizing — the `width fill` / `height fill` attr
+      // classes (set by applyLayoutAttrs on any view). The rules are
+      // contextual because what "fill" means depends on the parent\'s
+      // flex direction: on the parent\'s MAIN axis the child grows as
+      // a flex item (min-size 0 so it truncates instead of
+      // overflowing); on the CROSS axis it stretches. So
+      // `hstack [] [ text [width fill] a, text [width fill] b ]`
+      // yields equal-width columns, and `height fill` in a vstack
+      // creates the slack that spacer / centered distribute.
+      '.mar-hstack > .mar-w-fill,',
+      'a.mar-navigation-link > .mar-w-fill { flex: 1 1 0; min-width: 0; }',
+      '.mar-vstack > .mar-w-fill { align-self: stretch; }',
+      '.mar-vstack > .mar-h-fill,',
+      '.mar-nav-body > .mar-h-fill { flex: 1 1 0; min-height: 0; }',
+      '.mar-hstack > .mar-h-fill { align-self: stretch; }',
+
+      // Cross-axis alignment — the stack `align` attr (classes set
+      // by applyAlignAttr). Positions HUGGING children in the
+      // cross-axis slack; a child with the matching fill has no
+      // slack (its stretch rule above wins), so align never resizes.
+      // vstack default stays stretch, hstack default stays center —
+      // these only fire when the attr is present.
+      '.mar-vstack.mar-align-leading  { align-items: flex-start; }',
+      '.mar-vstack.mar-align-center   { align-items: center; }',
+      '.mar-vstack.mar-align-trailing { align-items: flex-end; }',
+      '.mar-hstack.mar-align-top      { align-items: flex-start; }',
+      '.mar-hstack.mar-align-center   { align-items: center; }',
+      '.mar-hstack.mar-align-bottom   { align-items: flex-end; }',
 
       // Toggle — mobile-style switch. The native checkbox is hidden
       // via appearance:none and re-drawn as a 51x31 pill with a 27px
@@ -6368,18 +6463,12 @@
         break;
       }
       case 'centered':
-        // Flex container that fills available space + centers child.
-        // Used for full-screen states (Loading, EmptyState, etc.).
+        // Pure two-axis alignment: fills whatever space the PARENT
+        // provides (flex: 1 in the page's height-propagating column
+        // — it never invents a height of its own) and centers the
+        // child in it. Full-screen states (Loading, EmptyState, …).
         ensureUIStyles();
         e.className = 'mar-centered';
-        for (const c of view.children) e.appendChild(createDOM(c));
-        break;
-      case 'expand':
-        // Grows to fill the parent stack's main axis; its child fills
-        // the wrapper. The explicit counterpart to spacer (equal
-        // columns). Mirrors SwiftUI's .frame(maxWidth: .infinity).
-        ensureUIStyles();
-        e.className = 'mar-expand';
         for (const c of view.children) e.appendChild(createDOM(c));
         break;
       case 'spacer':
@@ -6502,6 +6591,12 @@
       default:
         for (const c of view.children) e.appendChild(createDOM(c));
     }
+    // Universal layout pass — every view honors width / height
+    // (chars / lines / fill), and stacks additionally honor `align`.
+    // Runs after the per-tag case so the classes compose with the
+    // tag's own className assignment.
+    applyLayoutAttrs(e, view);
+    if (view.tag === 'hstack' || view.tag === 'vstack') applyAlignAttr(e, view);
     return e;
   }
 
@@ -6700,6 +6795,13 @@
       return replacement;
     }
     setMarView(node, newView);
+    // Universal layout pass (mirror of createDOM's tail) — re-sync
+    // the width / height classes + styles and the stack `align`
+    // class on every patch, so dynamically swapped sizing attrs
+    // (`if compact then width (chars 12) else width fill`) track the
+    // model. Idempotent and cheap (classList.toggle + style writes).
+    applyLayoutAttrs(node, newView);
+    if (newView.tag === 'hstack' || newView.tag === 'vstack') applyAlignAttr(node, newView);
 
     switch (newView.tag) {
       case 'text':

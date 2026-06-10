@@ -446,7 +446,7 @@ sections : Model -> List (View Msg)
 sections model =
     case model.items of
         Nothing ->
-            [ section [] [ text "Loading…" ] ]
+            [ section [] [ text [] "Loading…" ] ]
 
         Just items ->
             List.concat
@@ -576,7 +576,7 @@ renderTaskRow model task =
             -- right on hover (or sits permanently on the left in
             -- edit mode, iOS-style). On iOS native swipe-to-delete
             -- + edit-mode minus circle do the same.
-            text task.name
+            text [] task.name
          else
             -- Default mode: just the toggle. Maximum tap target,
             -- zero visual noise.

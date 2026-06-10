@@ -52,7 +52,7 @@ issueRow : Shared.IssueView -> View Msg
 issueRow issue =
     navigationLink [] Frontend.Routes.issueDetail { id = issue.id }
         (vstack []
-            [ text (Shared.issueHandle issue)
+            [ text [] (Shared.issueHandle issue)
             , subtitle
                 ( Shared.statusLabel issue.status
                     ++ " · " ++ Shared.priorityLabel issue.priority
@@ -75,7 +75,7 @@ renderBody model =
         Nothing ->
             case model.items of
                 Nothing ->
-                    [ section [] [ text "Loading your issues…" ] ]
+                    [ section [] [ text [] "Loading your issues…" ] ]
 
                 Just items ->
                     if List.isEmpty items then

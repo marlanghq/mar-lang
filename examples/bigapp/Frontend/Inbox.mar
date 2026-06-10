@@ -101,14 +101,14 @@ mentionRow m =
     if m.issueId > 0 then
         navigationLink [] Frontend.Routes.issueDetail { id = m.issueId }
             (vstack []
-                [ text title
+                [ text [] title
                 , subtitle m.bodyPreview
                 ]
             )
     else
         -- Deleted issue: just the text, no link target.
         vstack []
-            [ text title
+            [ text [] title
             , subtitle m.bodyPreview
             ]
 
@@ -145,7 +145,7 @@ renderBody model =
         Nothing ->
             case model.items of
                 Nothing ->
-                    [ section [] [ text "Loading mentions…" ] ]
+                    [ section [] [ text [] "Loading mentions…" ] ]
 
                 Just items ->
                     if List.isEmpty items then

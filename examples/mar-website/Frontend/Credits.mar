@@ -86,10 +86,10 @@ view _ =
                 [ header "Helping out"
                 , footer "Pull requests are not accepted yet. The language and runtime are still moving too fast."
                 ]
-                [ text "The most useful things right now:"
-                , text "• Try Mar on a real side project and share what worked or didn't."
-                , text "• Report bugs and rough edges as you find them."
-                , text "• Help spread the word."
+                [ text [] "The most useful things right now:"
+                , text [] "• Try Mar on a real side project and share what worked or didn't."
+                , text [] "• Report bugs and rough edges as you find them."
+                , text [] "• Help spread the word."
                 , paragraph
                     [ span [] "Channels: "
                     , span [link "https://github.com/marlanghq/mar-lang/issues"] "GitHub issues"
@@ -111,7 +111,7 @@ view _ =
             , section [ header "Copyright" ]
                 [ hstack []
                     [ spacer
-                    , text "Copyright © 2026 Marcio Frayze David. Released under the MIT license."
+                    , text [] "Copyright © 2026 Marcio Frayze David. Released under the MIT license."
                     , spacer
                     ]
                 ]

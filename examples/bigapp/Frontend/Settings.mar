@@ -58,17 +58,17 @@ view user model =
             [ section [ header "Profile" ]
                 [ title user.name
                 , subtitle user.email
-                , text ("Role · " ++ Shared.roleLabel user.role)
-                , text ("Team #" ++ String.fromInt user.teamId)
+                , text [] ("Role · " ++ Shared.roleLabel user.role)
+                , text [] ("Team #" ++ String.fromInt user.teamId)
                 ]
             , section [ header "Team" ]
-                [ navigationLink [] Frontend.Routes.teamMembers {} (text "Members")
+                [ navigationLink [] Frontend.Routes.teamMembers {} (text [] "Members")
                 ]
             , section [ header "Navigation" ]
-                [ navigationLink [] Frontend.Routes.dashboard {}  (text "Dashboard")
-                , navigationLink [] Frontend.Routes.projects {}   (text "Projects")
-                , navigationLink [] Frontend.Routes.myIssues {}   (text "My issues")
-                , navigationLink [] Frontend.Routes.search {}     (text "Search")
+                [ navigationLink [] Frontend.Routes.dashboard {}  (text [] "Dashboard")
+                , navigationLink [] Frontend.Routes.projects {}   (text [] "Projects")
+                , navigationLink [] Frontend.Routes.myIssues {}   (text [] "My issues")
+                , navigationLink [] Frontend.Routes.search {}     (text [] "Search")
                 ]
             , section [ header "Session" ]
                 [ button [] SignOutClicked ctaLabel ]

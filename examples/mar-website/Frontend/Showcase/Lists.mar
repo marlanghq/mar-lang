@@ -111,7 +111,7 @@ removeAt n xs =
 -- the identity). Shared by both keyed sections.
 row : String -> KeyedView Msg
 row label =
-    keyed label (text label)
+    keyed label (text [] label)
 
 
 view : Model -> View Msg
@@ -133,7 +133,7 @@ view model =
             -- obvious).
             [ keyedList
                 [ header "Editable list"
-                , footer "Reorder and delete. Tap Edit (top right), then drag a handle to reorder a row or tap the red minus to remove it."
+                , footer "Tap Edit, then drag a handle to reorder or tap the red minus to delete."
                 , onMove   model.editing TaskMoved
                 , onDelete model.editing TaskDeleted
                 ]
@@ -154,10 +154,10 @@ view model =
                 [ header "Fixed list"
                 , footer "Not editable. Just read-only rows."
                 ]
-                [ text "iOS"
-                , text "Android"
-                , text "Web"
-                , text "Backend"
+                [ text [] "iOS"
+                , text [] "Android"
+                , text [] "Web"
+                , text [] "Backend"
                 ]
             ]
         ]

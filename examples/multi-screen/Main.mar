@@ -49,11 +49,11 @@ counterView n =
     navigationStack [ navigationTitle "Counter" ]
         [ form
             [ section []
-                [ text ("Value: " ++ String.fromInt n)
+                [ text [] ("Value: " ++ String.fromInt n)
                 , hstack [] [ button [] Inc "Inc", button [] Dec "Dec" ]
                 ]
             , section []
-                [ navigationLink [] todosPath {} (text "Go to todos →") ]
+                [ navigationLink [] todosPath {} (text [] "Go to todos →") ]
             ]
         ]
 
@@ -101,9 +101,9 @@ todoView model =
             , section []
                 [ button [] Clear "Clear all" ]
             , section [ header (String.fromInt (List.length model.items) ++ " items") ]
-                (List.map text model.items)
+                (List.map (text []) model.items)
             , section []
-                [ navigationLink [] counterPath {} (text "← Back to counter") ]
+                [ navigationLink [] counterPath {} (text [] "← Back to counter") ]
             ]
         ]
 

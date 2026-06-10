@@ -87,7 +87,7 @@ view model =
     navigationStack [ navigationTitle "Sign in" ]
         [ form
             [ section []
-                [ text "Enter your email and we'll send you a one-time code."
+                [ text [] "Enter your email and we'll send you a one-time code."
                 , textField
                     [ email, submit Submitted, width (chars 30) ]
                     "Email" model.draft DraftChanged
