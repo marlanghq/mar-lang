@@ -1345,6 +1345,29 @@ enum MarBuiltins {
         env.define("effectSequence",  .fn(effectSequence))
         env.define("Effect.sequence", .fn(effectSequence))
 
+        // Effect.batch : List (Effect e msg) -> Effect e msg
+        // Fire-and-forget fan-out (the Cmd.batch of Mar). Each child's
+        // run() starts its own work and delivers through its own toMsg
+        // (Service.call effects dispatch via MarDispatcher when their
+        // request resolves). The batch's own value is unit, the same
+        // dynamic shape Effect.none uses.
+        let effectBatch = MarFn.native(1) { args in
+            guard case .list(let xs) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
+            }
+            return .effect(MarEffect(tag: "batch") {
+                for x in xs {
+                    guard case .effect(let eff) = x else {
+                        throw MarRuntimeError.typeMismatch(expected: "Effect", got: Eval.typeOf(x))
+                    }
+                    _ = try eff.run()
+                }
+                return .unit
+            })
+        }
+        env.define("effectBatch",  .fn(effectBatch))
+        env.define("Effect.batch", .fn(effectBatch))
+
         let effectMap = MarFn.native(2) { args in
             guard case .effect(let inner) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "Effect", got: Eval.typeOf(args[1]))

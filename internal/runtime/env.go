@@ -1,5 +1,7 @@
 package runtime
 
+import "strings"
+
 // Env is a runtime environment: name -> value, lexically scoped via parent links.
 type Env struct {
 	bindings map[string]Value
@@ -28,6 +30,34 @@ func (e *Env) Lookup(name string) (Value, bool) {
 		}
 	}
 	return nil, false
+}
+
+// ExportsOf collects every binding that belongs to module `modName`:
+// keys of the form `modName.suffix` where suffix has no further dot
+// (so `Mar.Admin.x` exports from `Mar.Admin`, not from `Mar`). Powers
+// `import M exposing (..)` at eval time, mirroring the typechecker's
+// TypeEnv.ExportsOf. Walks frames outermost-first so inner bindings
+// win, matching Lookup's shadowing order.
+func (e *Env) ExportsOf(modName string) map[string]Value {
+	prefix := modName + "."
+	var frames []*Env
+	for cur := e; cur != nil; cur = cur.parent {
+		frames = append(frames, cur)
+	}
+	out := map[string]Value{}
+	for i := len(frames) - 1; i >= 0; i-- {
+		for name, v := range frames[i].bindings {
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			suffix := name[len(prefix):]
+			if suffix == "" || strings.Contains(suffix, ".") {
+				continue
+			}
+			out[suffix] = v
+		}
+	}
+	return out
 }
 
 // Bind returns a new env extending this with name -> v.

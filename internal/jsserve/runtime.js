@@ -399,6 +399,30 @@
     return undefined;
   }
 
+  // envExportsOf collects every binding that belongs to module
+  // `modName`: keys of the form `modName.suffix` where suffix has no
+  // further dot (so `Mar.Admin.x` exports from `Mar.Admin`, not from
+  // `Mar`). Powers `import M exposing (..)` at load time, mirroring
+  // the Go runtime's Env.ExportsOf. Walks frames outermost-first so
+  // inner bindings win, matching envLookup's shadowing order.
+  function envExportsOf(env, modName) {
+    const prefix = modName + '.';
+    const frames = [];
+    for (let cur = env; cur; cur = cur.parent) frames.push(cur);
+    const out = Object.create(null);
+    for (let i = frames.length - 1; i >= 0; i--) {
+      const b = frames[i].bindings;
+      if (!b) continue;
+      for (const name in b) {
+        if (!name.startsWith(prefix)) continue;
+        const suffix = name.slice(prefix.length);
+        if (suffix === '' || suffix.indexOf('.') !== -1) continue;
+        out[suffix] = b[name];
+      }
+    }
+    return out;
+  }
+
   // ---------- Native function helpers ----------
 
   function native(arity, fn) {
@@ -2209,7 +2233,12 @@
       const f = rec.fields;
       const title = f.title || VString('');
       const adminSession = VString('admin');
-      const init = native(1, ([unit]) => apply(apply(f.init, adminSession), unit));
+      // init : AdminSession -> (Model, Effect) — pre-applying the
+      // session yields the (model, effect) tuple a plain page's init
+      // now IS (no vestigial unit arg). The tuple is pure data and
+      // the effect inside is a lazy description, so evaluating here
+      // at page-construction time is equivalent to first mount.
+      const init = apply(f.init, adminSession);
       const update = native(2, ([msg, model]) => apply(apply(apply(f.update, adminSession), msg), model));
       const view = native(1, ([model]) => apply(apply(f.view, adminSession), model));
       return VCtor('__Page', [f.path, init, update, view, title]);
@@ -2312,7 +2341,7 @@
       const adminSession = VString('admin');
       // Real sigs thread (AdminSession, Params, …); pre-apply the session,
       // leaving (Params, …) — exactly __DynamicPage's shape.
-      const init = native(2, ([params, unit]) => apply(apply(apply(f.init, adminSession), params), unit));
+      const init = native(1, ([params]) => apply(apply(f.init, adminSession), params));
       const update = native(3, ([params, msg, model]) => apply(apply(apply(apply(f.update, adminSession), params), msg), model));
       const view = native(2, ([params, model]) => apply(apply(apply(f.view, adminSession), params), model));
       return VCtor('__DynamicPage', [f.path, init, update, view, title]);
@@ -2531,6 +2560,22 @@
     }, 'sequence'));
     def('effectSequence', effectSequenceImpl);
     def('Effect.sequence', effectSequenceImpl);
+
+    // Effect.batch : List (Effect e msg) -> Effect e msg
+    // Fire-and-forget fan-out (the Cmd.batch of Mar). Each child's
+    // run() kicks off its own work and delivers through its own
+    // toMsg dispatch (Service.call effects self-dispatch when their
+    // fetch resolves), so the children genuinely run concurrently.
+    // The batch's own value is unit, same dynamic shape as
+    // Effect.none.
+    const effectBatchImpl = native(1, ([list]) => VEffect(() => {
+      for (const e of list.xs) {
+        if (e && e.k === 'E' && typeof e.run === 'function') e.run();
+      }
+      return VUnit();
+    }, 'batch'));
+    def('effectBatch', effectBatchImpl);
+    def('Effect.batch', effectBatchImpl);
 
     def('effectNone', VEffect(() => VUnit(), 'none'));
     def('Effect.none', VEffect(() => VUnit(), 'none'));
@@ -7333,7 +7378,11 @@
             }
           }
         }
-        const initial = unwrapModelTuple(apply(initFnApplied, VUnit()));
+        // initFnApplied IS the (model, effect) tuple by now: plain
+        // pages declare init as the tuple value itself, and the
+        // protected/dynamic flavors became it once applyExtras fed
+        // them User/Params. No vestigial unit argument.
+        const initial = unwrapModelTuple(initFnApplied);
         models[key] = initial.model;
         initEffects[key] = initial.effect;
         preservedScreenModels[key] = initial.model;
@@ -8288,8 +8337,17 @@
     // "unbound name: column".
     if (mod.imports) {
       for (const imp of mod.imports) {
-        if (!imp.exposing || imp.exposing.length === 0) continue;
+        if ((!imp.exposing || imp.exposing.length === 0) && !imp.all) continue;
         const impName = (imp.module || []).join('.');
+        // `exposing (..)`: bind every export of the module bare —
+        // values and ctors registered as `impName.x` in the env chain
+        // (for builtin modules like UI, the whole vocabulary). Mirrors
+        // the typechecker's wildcard handling.
+        if (imp.all) {
+          const exports = envExportsOf(modEnv, impName);
+          for (const name in exports) envDefine(modEnv, name, exports[name]);
+        }
+        if (!imp.exposing) continue;
         for (const item of imp.exposing) {
           const qualified = impName + '.' + item.name;
           const v = envLookup(modEnv, qualified);

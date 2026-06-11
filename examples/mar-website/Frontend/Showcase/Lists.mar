@@ -45,8 +45,8 @@ type Msg
     | StepMoved Int Int
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ( { tasks =
           [ "Buy groceries"
           , "Walk the dog"

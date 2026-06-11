@@ -36,8 +36,8 @@ type Msg
     | CodeVerified (Result String Shared.User)
 
 
-init : { email : String } -> () -> (Model, Effect String Msg)
-init _ _ =
+init : { email : String } -> (Model, Effect String Msg)
+init _ =
     ( { draft = "", error = Nothing, busy = False }, Effect.none )
 
 

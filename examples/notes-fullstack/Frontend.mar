@@ -41,8 +41,8 @@ fetchAll =
     Service.call Shared.listAllNotes () NotesFetched
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ({ notes = Loading, draft = "" }, fetchAll)
 
 

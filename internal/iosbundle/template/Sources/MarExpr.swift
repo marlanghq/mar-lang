@@ -80,6 +80,10 @@ struct Import {
     /// Empty list = no exposed names (just qualified access through
     /// `M.x`).
     let exposing: [String]
+    /// `import M exposing (..)`: bring EVERY export of M into the
+    /// bare namespace. Resolved by MarLoader against the env's
+    /// `M.x` qualified bindings.
+    let all: Bool
 }
 
 enum Decl {

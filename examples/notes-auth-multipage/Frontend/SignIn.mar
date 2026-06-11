@@ -30,8 +30,8 @@ type Msg
     | CodeVerified (Result String Shared.User)
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ( AskEmail "" Nothing, Effect.none )
 
 

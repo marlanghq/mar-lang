@@ -64,8 +64,8 @@ type Msg
     | Tapped
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ( { locked = True
       , name   = ""
       , bio    = ""

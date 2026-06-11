@@ -218,6 +218,15 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByNa
 			continue
 		}
 		impName := joinName(imp.Module)
+		// `exposing (..)`: bind every export of the module bare —
+		// values and ctors registered as `impName.x` in the env chain
+		// (for builtin modules like UI, the whole vocabulary). Mirrors
+		// the typechecker's wildcard handling in CheckModuleWith.
+		if imp.Exposing.All {
+			for name, v := range modEnv.ExportsOf(impName) {
+				modEnv.Define(name, v)
+			}
+		}
 		for _, item := range imp.Exposing.Items {
 			if v, ok := modEnv.Lookup(impName + "." + item.Name); ok {
 				modEnv.Define(item.Name, v)

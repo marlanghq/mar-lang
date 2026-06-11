@@ -42,8 +42,8 @@ type Msg
     | ProjectDeleted (Result String ())
 
 
-init : Shared.User -> { id : Int } -> () -> (Model, Effect String Msg)
-init _ params _ =
+init : Shared.User -> { id : Int } -> (Model, Effect String Msg)
+init _ params =
     ( { project = Nothing
       , issues  = Nothing
       , filter  = ShowOpen

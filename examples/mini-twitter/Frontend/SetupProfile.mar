@@ -35,8 +35,8 @@ type Msg
     | Saved (Result String Shared.User)
 
 
-init : Shared.User -> () -> (Model, Effect String Msg)
-init user _ =
+init : Shared.User -> (Model, Effect String Msg)
+init user =
     ( { handle      = user.handle
       , displayName = user.displayName
       , bio         = user.bio

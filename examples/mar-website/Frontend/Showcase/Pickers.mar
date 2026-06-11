@@ -63,8 +63,8 @@ type Msg
     | FlavorChanged String
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ( { priority = Medium
       , size     = 3
       , flavor   = "Vanilla"

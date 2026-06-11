@@ -145,6 +145,33 @@ func effectBuiltins() map[string]Value {
 			Run: func() (Value, error) { return VUnit{}, nil },
 		},
 
+		// Effect.batch : List (Effect e msg) -> Effect e msg
+		// Fire-and-forget fan-out: runs every child effect; each child
+		// delivers through its own toMsg (frontend) or performs its
+		// side effects (backend). Produces unit as its own value, the
+		// same dynamic shape Effect.none uses for an `Effect e a`.
+		"effectBatch": nativeFn(1, func(args []Value) (Value, error) {
+			list, ok := args[0].(VList)
+			if !ok {
+				return nil, errEffect("effectBatch: not a list")
+			}
+			return VEffect{
+				Tag: "batch",
+				Run: func() (Value, error) {
+					for _, e := range list.Elements {
+						eff, ok := e.(VEffect)
+						if !ok {
+							return nil, errEffect("effectBatch: list element is not an Effect")
+						}
+						if _, err := eff.Run(); err != nil {
+							return nil, err
+						}
+					}
+					return VUnit{}, nil
+				},
+			}, nil
+		}),
+
 		// Effect.sequence : List (Effect e a) -> Effect e (List a)
 		"effectSequence": nativeFn(1, func(args []Value) (Value, error) {
 			list, ok := args[0].(VList)

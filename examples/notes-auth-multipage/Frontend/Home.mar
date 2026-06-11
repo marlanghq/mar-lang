@@ -46,8 +46,8 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : Shared.User -> () -> (Model, Effect String Msg)
-init _ _ =
+init : Shared.User -> (Model, Effect String Msg)
+init _ =
     ( { notes = Loading, draft = "" }
     , Service.call Shared.listMine () NotesLoaded
     )

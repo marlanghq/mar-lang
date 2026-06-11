@@ -50,8 +50,8 @@ type Msg
     | ToggleCChanged Bool
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ( { count = 0
       , canIncrement = True
       , canDecrement = True

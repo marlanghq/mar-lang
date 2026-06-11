@@ -29,8 +29,8 @@ type Msg
     | TrailingTapped
 
 
-init : () -> (Model, Effect String Msg)
-init _ = ( { tapped = Nothing }, Effect.none )
+init : (Model, Effect String Msg)
+init = ( { tapped = Nothing }, Effect.none )
 
 
 update : Msg -> Model -> (Model, Effect String Msg)

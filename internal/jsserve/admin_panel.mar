@@ -155,8 +155,8 @@ type LoginMsg
     | CodeVerified (Result String { email : String })
 
 
-loginInit : () -> ( LoginModel, Effect String LoginMsg )
-loginInit _ =
+loginInit : ( LoginModel, Effect String LoginMsg )
+loginInit =
     ( { email = "", code = "", stage = EmailEntry, error = Nothing, busy = False }
     , Effect.none
     )
@@ -266,8 +266,8 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : AdminSession -> () -> ( Model, Effect String Msg )
-init admin _ =
+init : AdminSession -> ( Model, Effect String Msg )
+init admin =
     ( { info = Loading, db = Loading, requests = Loading, backups = Loading }
     , Mar.Admin.serverInfo admin ServerInfoFetched
     )
@@ -468,8 +468,8 @@ type TableMsg
     = TableRowsFetched (Result String (List (Dict String String)))
 
 
-tableInit : AdminSession -> { name : String } -> () -> ( TableModel, Effect String TableMsg )
-tableInit admin params _ =
+tableInit : AdminSession -> { name : String } -> ( TableModel, Effect String TableMsg )
+tableInit admin params =
     ( { rows = Loading }
     , Mar.Admin.listEntityRows admin params.name TableRowsFetched
     )

@@ -15,8 +15,8 @@ type Msg
     | Decrement
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     (0, Effect.none)
 
 

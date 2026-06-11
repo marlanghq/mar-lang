@@ -176,6 +176,7 @@ func qualifiedAliasMapping() map[string]string {
 		"Effect.andThen":  "effectAndThen",
 		"Effect.forEach":  "effectForEach",
 		"Effect.sequence": "effectSequence",
+		"Effect.batch":    "effectBatch",
 		"Effect.none":     "effectNone",
 		"Time.seconds":    "timeSeconds",
 		"Time.minutes":    "timeMinutes",

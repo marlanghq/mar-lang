@@ -88,8 +88,8 @@ type Msg
     | EntrySigned (Result String Entry)
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ( { entries = Loading, draft = "" }
     , Service.call listEntries () EntriesFetched
     )

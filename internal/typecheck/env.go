@@ -65,6 +65,37 @@ func (e *TypeEnv) Bind(name string, t Type) *TypeEnv {
 	return &TypeEnv{bindings: frame, parent: e}
 }
 
+// ExportsOf collects every binding that belongs to module `modName`:
+// keys of the form `modName.suffix` where suffix itself contains no
+// further dot (so `Mar.Admin.x` is an export of `Mar.Admin`, not of
+// `Mar`). Powers `import M exposing (..)` — the returned map is the
+// full set of bare names the wildcard brings into scope. Walks frames
+// outermost-first so an inner (re)binding of the same qualified name
+// wins, matching Lookup's shadowing order.
+func (e *TypeEnv) ExportsOf(modName string) map[string]Type {
+	prefix := modName + "."
+	// Stack the frames so we can apply them root → leaf; later
+	// (inner) frames overwrite earlier ones, mirroring Lookup.
+	var frames []*TypeEnv
+	for cur := e; cur != nil; cur = cur.parent {
+		frames = append(frames, cur)
+	}
+	out := map[string]Type{}
+	for i := len(frames) - 1; i >= 0; i-- {
+		for name, t := range frames[i].bindings {
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			suffix := name[len(prefix):]
+			if suffix == "" || strings.Contains(suffix, ".") {
+				continue
+			}
+			out[suffix] = t
+		}
+	}
+	return out
+}
+
 // Define mutates the env's top frame with the given binding. Use only in
 // contexts (REPL, module setup) where state must persist across calls.
 func (e *TypeEnv) Define(name string, t Type) {
@@ -752,6 +783,21 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{
 				From: TList(TEffect(a, b)),
 				To:   TEffect(a, TList(b)),
+			},
+		},
+		// Effect.batch : List (Effect e msg) -> Effect e msg
+		// Fire-and-forget fan-out, the Cmd.batch of Mar: performs every
+		// effect in the list, each delivering through its own toMsg.
+		// The way to launch several independent Service.calls from one
+		// update without chaining them through Effect.andThen (which is
+		// sequential and forces `\_ ->` lambdas that discard results).
+		// Unlike Effect.sequence it produces no aggregate value — the
+		// children's messages ARE the output.
+		"effectBatch": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TArrow{
+				From: TList(TEffect(a, b)),
+				To:   TEffect(a, b),
 			},
 		},
 		"effectNone": TForall{
@@ -2051,7 +2097,7 @@ func stdlibBindings() map[string]Type {
 		//
 		//   { path   : String                              -- URL pattern (use "/" for single-page)
 		//   , title  : String                              -- (optional) browser tab / nav title
-		//   , init   : () -> (Model, Effect e Msg)
+		//   , init   : (Model, Effect e Msg)
 		//   , update : Msg -> Model -> (Model, Effect e Msg)
 		//   , view   : Model -> View Msg
 		//   }
@@ -2064,7 +2110,7 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TString,
-						"init":   TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -8}, b)}}},
+						"init":   TTuple{Members: []Type{a, TEffect(TVar{ID: -8}, b)}},
 						"update": TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -8}, b)}}}},
 						"view":   TArrow{From: a, To: TView(b)},
 					},
@@ -2083,7 +2129,7 @@ func stdlibBindings() map[string]Type {
 		//
 		//   { path     : String
 		//   , title    : String                              -- (optional)
-		//   , init     : User -> () -> (Model, Effect e Msg)
+		//   , init     : User -> (Model, Effect e Msg)
 		//   , update   : User -> Msg -> Model -> (Model, Effect e Msg)
 		//   , view     : User -> Model -> View Msg
 		//   }
@@ -2099,7 +2145,7 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TString,
-						"init":   TArrow{From: TVar{ID: -16}, To: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -17}, b)}}}},
+						"init":   TArrow{From: TVar{ID: -16}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -17}, b)}}},
 						"update": TArrow{From: TVar{ID: -16}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -17}, b)}}}}},
 						"view":   TArrow{From: TVar{ID: -16}, To: TArrow{From: a, To: TView(b)}},
 					},
@@ -2119,7 +2165,7 @@ func stdlibBindings() map[string]Type {
 		//
 		//   { path  : String
 		//   , title : String                                       -- (optional)
-		//   , init  : AdminSession -> () -> (Model, Effect e Msg)
+		//   , init  : AdminSession -> (Model, Effect e Msg)
 		//   , update: AdminSession -> Msg -> Model -> (Model, Effect e Msg)
 		//   , view  : AdminSession -> Model -> View Msg
 		//   }
@@ -2129,7 +2175,7 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TString,
-						"init":   TArrow{From: TAdminSession(), To: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -26}, b)}}}},
+						"init":   TArrow{From: TAdminSession(), To: TTuple{Members: []Type{a, TEffect(TVar{ID: -26}, b)}}},
 						"update": TArrow{From: TAdminSession(), To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -26}, b)}}}}},
 						"view":   TArrow{From: TAdminSession(), To: TArrow{From: a, To: TView(b)}},
 					},
@@ -2288,7 +2334,7 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TPath(TVar{ID: -19}),
-						"init":   TArrow{From: TVar{ID: -19}, To: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -20}, b)}}}},
+						"init":   TArrow{From: TVar{ID: -19}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -20}, b)}}},
 						"update": TArrow{From: TVar{ID: -19}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -20}, b)}}}}},
 						"view":   TArrow{From: TVar{ID: -19}, To: TArrow{From: a, To: TView(b)}},
 					},
@@ -2308,7 +2354,7 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TPath(TVar{ID: -22}),
-						"init":   TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -24}, b)}}}}},
+						"init":   TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -24}, b)}}}},
 						"update": TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -24}, b)}}}}}},
 						"view":   TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TArrow{From: a, To: TView(b)}}},
 					},
@@ -2369,7 +2415,7 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TPath(TVar{ID: -40}),
-						"init":   TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: TUnit{}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -41}, b)}}}}},
+						"init":   TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -41}, b)}}}},
 						"update": TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(TVar{ID: -41}, b)}}}}}},
 						"view":   TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: a, To: TView(b)}}},
 					},
@@ -2850,6 +2896,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Effect.andThen":     "effectAndThen",
 		"Effect.forEach":     "effectForEach",
 		"Effect.sequence":    "effectSequence",
+		"Effect.batch":       "effectBatch",
 		"Effect.none":        "effectNone",
 		"Time.seconds":       "timeSeconds",
 		"Time.minutes":       "timeMinutes",

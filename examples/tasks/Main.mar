@@ -49,8 +49,8 @@ type Msg
     | SetFilter Filter
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ( { tasks =
           [ { id = 1, title = "Try mar", notes = "", done = True }
           , { id = 2, title = "Compare layout to elm-ui and SwiftUI", notes = "Both default to shrink", done = False }

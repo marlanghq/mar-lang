@@ -29,8 +29,8 @@ type Msg
     | RoleUpdated (Result String (Maybe Shared.User))
 
 
-init : Shared.User -> () -> (Model, Effect String Msg)
-init _ _ =
+init : Shared.User -> (Model, Effect String Msg)
+init _ =
     ( { members = Nothing, error = Nothing, pending = 0 }
     , Service.call Shared.listTeamMembers () MembersFetched
     )

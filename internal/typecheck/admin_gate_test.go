@@ -26,15 +26,18 @@ broken = Mar.Admin.serverInfo "not an admin session"
 	}
 }
 
-// A NORMAL page (Page.create) gets `()` in init, not an AdminSession, so
-// trying to call Mar.Admin.* there is a compile error.
+// A NORMAL page (Page.create) is never handed an AdminSession: its init is
+// just the (model, effect) tuple, with no session binding in scope. The only
+// way to call Mar.Admin.* from one is to fabricate the capability, and that
+// is a compile error (AdminSession has no user-facing constructor, so
+// nothing the user can write unifies with it).
 func TestAdminGateRejectsInNormalPage(t *testing.T) {
 	src := `module M exposing (..)
 type Msg = Done
 page =
     Page.create
         { path = "/"
-        , init = \session -> ((), Mar.Admin.serverInfo session (\_ -> Done))
+        , init = ((), Mar.Admin.serverInfo "forged" (\_ -> Done))
         , update = \_ model -> (model, Effect.none)
         , view = \model -> UI.text [] "x"
         }
@@ -58,7 +61,7 @@ page =
     Page.adminProtected
         { path = "/_mar/admin"
         , title = "Admin"
-        , init = \admin _ -> ((), Mar.Admin.serverInfo admin (\_ -> Ignored))
+        , init = \admin -> ((), Mar.Admin.serverInfo admin (\_ -> Ignored))
         , update = \_ _ model -> (model, Effect.none)
         , view = \_ model -> UI.text [] "ok"
         }

@@ -62,13 +62,13 @@ final class PageRuntime {
         self.user = user
         self.params = params
 
-        // Run init: applyExtras(initFn)(unit) → tuple(Model, Effect).
-        // applyExtras threads User then Params depending on the page
-        // flavor; static public pages get neither and init takes only
-        // unit, matching Page.create's `init : () -> (Model, Effect)`.
+        // Run init: applyExtras threads User then Params depending on
+        // the page flavor, and the result IS the (Model, Effect)
+        // tuple. Static public pages get neither extra, matching
+        // Page.create's `init : (Model, Effect)` (init is a value;
+        // there is no vestigial unit argument).
         do {
-            let initFnApplied = try PageRuntime.applyExtras(initFn, user: user, params: params)
-            let initial = try Eval.apply(initFnApplied, .unit)
+            let initial = try PageRuntime.applyExtras(initFn, user: user, params: params)
             let (m, eff) = unwrapModelEffect(initial)
             self.model = m
             self.pendingInitEffect = eff

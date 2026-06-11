@@ -53,8 +53,8 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : Shared.User -> () -> (Model, Effect String Msg)
-init user _ =
+init : Shared.User -> (Model, Effect String Msg)
+init user =
     if user.handle == "" then
         ( { timeline = Loading, draft = "", posting = False }
         , Nav.replaceTo Frontend.Routes.setupProfile {}

@@ -34,8 +34,8 @@ type Msg
     | ClearAll
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ({ nextId = 1, items = [], draft = "" }, Effect.none)
 
 

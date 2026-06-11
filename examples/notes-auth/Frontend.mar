@@ -52,8 +52,8 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : () -> (Stage, Effect String Msg)
-init _ =
+init : (Stage, Effect String Msg)
+init =
     ( Loading, Auth.me MeResolved )
 
 

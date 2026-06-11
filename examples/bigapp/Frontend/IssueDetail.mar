@@ -61,8 +61,8 @@ type Msg
     | IssueDeleted (Result String ())
 
 
-init : Shared.User -> { id : Int } -> () -> (Model, Effect String Msg)
-init _ params _ =
+init : Shared.User -> { id : Int } -> (Model, Effect String Msg)
+init _ params =
     ( { issue        = Nothing
       , comments     = Nothing
       , labels       = Nothing
@@ -82,25 +82,20 @@ update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Effect String Ms
 update _ params msg model =
     case msg of
         IssueFetched (Ok (Just issue)) ->
-            -- When the issue lands, fan out three more parallel
-            -- fetches (comments + project labels + attached labels)
-            -- and seed the edit-mode drafts from the current values.
+            -- When the issue lands, fan out three more fetches
+            -- (comments + project labels + attached labels) and seed
+            -- the edit-mode drafts from the current values. Each call
+            -- delivers through its own Msg as it completes.
             ( { model
                 | issue      = Just issue
                 , draftTitle = issue.title
                 , draftDesc  = issue.description
               }
-            , Effect.andThen
-                (\_ ->
-                    Effect.andThen
-                        (\_ ->
-                            Service.call Shared.listIssueLabels { issueId = issue.id }
-                                AttachedFetched
-                        )
-                        (Service.call Shared.listProjectLabels { projectId = issue.projectId }
-                            LabelsFetched)
-                )
-                (Service.call Shared.listComments { issueId = issue.id } CommentsFetched)
+            , Effect.batch
+                [ Service.call Shared.listComments      { issueId = issue.id }        CommentsFetched
+                , Service.call Shared.listProjectLabels { projectId = issue.projectId } LabelsFetched
+                , Service.call Shared.listIssueLabels   { issueId = issue.id }        AttachedFetched
+                ]
             )
 
         IssueFetched (Ok Nothing) ->

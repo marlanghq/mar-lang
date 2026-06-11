@@ -20,6 +20,15 @@ enum MarLoader {
         // explodes at runtime with "unbound name: column".
         for imp in module.imports {
             let modName = imp.module.joined(separator: ".")
+            // `exposing (..)`: bind every export of the module bare,
+            // values and ctors registered as `modName.x` in the env
+            // chain (for builtin modules like UI, the whole
+            // vocabulary). Mirrors the typechecker's wildcard.
+            if imp.all {
+                for (name, v) in env.exportsOf(modName) {
+                    env.define(name, v)
+                }
+            }
             for item in imp.exposing {
                 let qualified = modName + "." + item
                 if let v = env.lookup(qualified) {

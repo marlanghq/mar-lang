@@ -59,8 +59,8 @@ emptyModel =
     }
 
 
-init : () -> (Model, Effect String Msg)
-init _ = ( emptyModel, Effect.none )
+init : (Model, Effect String Msg)
+init = ( emptyModel, Effect.none )
 
 
 update : Msg -> Model -> (Model, Effect String Msg)

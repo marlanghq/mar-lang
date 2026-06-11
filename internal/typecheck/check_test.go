@@ -820,3 +820,24 @@ result =
 		t.Fatalf("result: want String (from name field), got %s", got)
 	}
 }
+
+// `import UI exposing (..)` must bring the whole UI vocabulary into the
+// bare namespace. This used to parse without error and then silently
+// bind NOTHING, so the first bare name died with "unknown identifier" —
+// the worst kind of failure. Pins the wildcard against the builtin UI
+// module (user modules go through the same ExportsOf path).
+func TestImportExposingAllBindsModuleExports(t *testing.T) {
+	src := `module M exposing (..)
+
+import UI exposing (..)
+
+v = vstack [ width fill ] [ text [] "hi" ]
+`
+	res, err := checkSource(t, src)
+	if err != nil {
+		t.Fatalf("exposing (..) should bind UI's exports bare; got: %v", err)
+	}
+	if got := res.ValueTypes["v"].String(); !strings.Contains(got, "View") {
+		t.Fatalf("v should be a View, got %s", got)
+	}
+}

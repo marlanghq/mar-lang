@@ -48,8 +48,8 @@ type Msg
     | ConfirmNo
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ( { showSheet = False
       , confirmingItem = Nothing
       }

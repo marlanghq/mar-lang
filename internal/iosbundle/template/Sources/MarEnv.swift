@@ -34,4 +34,30 @@ final class Env {
         }
         return nil
     }
+
+    /// Every binding that belongs to module `modName`: keys of the
+    /// form `modName.suffix` where suffix has no further dot (so
+    /// `Mar.Admin.x` exports from `Mar.Admin`, not from `Mar`).
+    /// Powers `import M exposing (..)`, mirroring the Go runtime's
+    /// Env.ExportsOf. Frames are applied outermost-first so inner
+    /// bindings win, matching lookup's shadowing order.
+    func exportsOf(_ modName: String) -> [String: MarValue] {
+        let prefix = modName + "."
+        var frames: [Env] = []
+        var cur: Env? = self
+        while let e = cur {
+            frames.append(e)
+            cur = e.parent
+        }
+        var out: [String: MarValue] = [:]
+        for e in frames.reversed() {
+            for (name, v) in e.bindings {
+                guard name.hasPrefix(prefix) else { continue }
+                let suffix = String(name.dropFirst(prefix.count))
+                if suffix.isEmpty || suffix.contains(".") { continue }
+                out[suffix] = v
+            }
+        }
+        return out
+    }
 }

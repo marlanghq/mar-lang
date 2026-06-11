@@ -31,8 +31,8 @@ type Msg
     | CodeRequested (Result String ())
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ( { draft = "", error = Nothing, busy = False }, Effect.none )
 
 

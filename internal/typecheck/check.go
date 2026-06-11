@@ -100,11 +100,22 @@ func CheckModuleWith(
 	// listed name, bind the bare form so the user can write `foo`
 	// instead of `M.foo`. Items with `Open: true` (e.g. `Type(..)`)
 	// also expose all constructors of the type.
+	//
+	// `exposing (..)` binds EVERYTHING the module exports: every
+	// `M.name` already registered in the env (values, ctors, and for
+	// builtin modules like UI the whole vocabulary) comes in bare.
+	// Type names need no extra handling — imported aliases/customs
+	// are already visible unqualified (see the loops above).
 	for _, imp := range mod.Imports {
 		if len(imp.Exposing.Items) == 0 && !imp.Exposing.All {
 			continue
 		}
 		modName := strings.Join(imp.Module, ".")
+		if imp.Exposing.All {
+			for name, t := range valueEnv.ExportsOf(modName) {
+				valueEnv = valueEnv.Bind(name, t)
+			}
+		}
 		for _, item := range imp.Exposing.Items {
 			qual := modName + "." + item.Name
 			if t, ok := valueEnv.Lookup(qual); ok {

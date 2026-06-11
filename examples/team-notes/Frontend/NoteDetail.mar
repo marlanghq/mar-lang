@@ -37,8 +37,8 @@ type Msg
     = NoteFetched (Result String (Maybe Shared.Note))
 
 
-init : Shared.User -> { id : Int } -> () -> (Model, Effect String Msg)
-init _ params _ =
+init : Shared.User -> { id : Int } -> (Model, Effect String Msg)
+init _ params =
     ( Loading
     , Service.call Shared.getNote { id = params.id } NoteFetched
     )

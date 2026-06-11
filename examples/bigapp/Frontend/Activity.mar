@@ -34,8 +34,8 @@ type Msg
     = ActivityFetched (Result String (List Shared.ActivityView))
 
 
-init : Shared.User -> () -> (Model, Effect String Msg)
-init _ _ =
+init : Shared.User -> (Model, Effect String Msg)
+init _ =
     ( { items = Nothing, error = Nothing }
     , Service.call Shared.listRecentActivity { limit = 0 } ActivityFetched
     )

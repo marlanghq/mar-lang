@@ -41,8 +41,8 @@ type Msg
     | CodeVerified (Result String Shared.User)
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect String Msg)
+init =
     ( { step = AskEmail "", error = Nothing }, Effect.none )
 
 

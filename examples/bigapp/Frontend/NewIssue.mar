@@ -43,8 +43,8 @@ type Msg
     | IssueCreated (Result String Shared.Issue)
 
 
-init : Shared.User -> { projectId : Int } -> () -> (Model, Effect String Msg)
-init user params _ =
+init : Shared.User -> { projectId : Int } -> (Model, Effect String Msg)
+init user params =
     ( { title       = ""
       , description = ""
       , priority    = NoPriority

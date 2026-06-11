@@ -219,7 +219,8 @@ enum MarJSONCodec {
             if let dict = item as? [String: Any], let n = dict["name"] as? String { return n }
             return nil
         }
-        return Import(module: module, exposing: exposing)
+        let all = (any["all"] as? Bool) ?? false
+        return Import(module: module, exposing: exposing, all: all)
     }
 
     private static func decodeDecl(_ any: [String: Any]) throws -> Decl {
