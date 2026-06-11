@@ -4303,25 +4303,25 @@
     if (selectedIdx >= 0) select.value = String(selectedIdx);
   }
 
-  // buildNavigationBar pulls navigationTitle / trailing / leading
-  // attrs off a navigationStack view and returns a fresh <header>
-  // element. The header has up to two stacked rows:
+  // buildNavigationChrome pulls navigationTitle / trailing / leading
+  // attrs off a navigationStack view and returns the TWO chrome
+  // nodes that precede the nav body, in slot order:
   //
-  //   [toolbar-row]   ← optional — auto-back / leading on the left,
-  //                     trailing on the right. Both sides are glass
-  //                     pills floating over the page (iOS 26
-  //                     "Liquid Glass" toolbar pattern).
-  //   [title-row]     ← optional — the 32px bold large title.
+  //   [0] <div.mar-nav-toolbar-row>  ← the PINNED bar. Auto-back /
+  //       leading on the left, trailing on the right (glass pills,
+  //       iOS 26 "Liquid Glass" toolbar pattern), and the inline
+  //       title in the center, which fades in once the large title
+  //       scrolls out from under it.
+  //   [1] <header.mar-nav-bar>       ← the 32px bold large title.
   //
-  // This mirrors iOS 26 large-title NavigationBar: action buttons
-  // sit in a small bar of glass pills above the big page title, so
-  // the title gets its own row and the chrome doesn\'t compete with
-  // it for horizontal space. Both rows are emitted only when there
-  // is something to put in them — root pages with no trailing
-  // collapse to just the title.
-  function buildNavigationBar(view) {
-    const header = document.createElement('header');
-    header.className = 'mar-nav-bar';
+  // This mirrors iOS large-title navigation: the bar is pinned on
+  // screen (position: sticky in CSS — back button and actions never
+  // scroll away), while the large title is CONTENT and scrolls with
+  // the page. When the large title disappears under the bar, the
+  // bar's small centered title takes over — the same handoff iOS
+  // does. Both nodes are always returned (display:none when empty)
+  // so the create and patch paths can address slots positionally.
+  function buildNavigationChrome(view) {
     const titleAttr = view.attrs && view.attrs.find(a => a.name === 'navigationTitle');
     const trailingAttr = view.attrs && view.attrs.find(a => a.name === 'topBarTrailing');
     const leadingAttr  = view.attrs && view.attrs.find(a => a.name === 'topBarLeading');
@@ -4336,20 +4336,14 @@
     // ability to navigate back, which was the bug that motivated
     // this whole refactor.
     const autoBack = depth > 0;
-    if (!titleAttr && !trailingAttr && !leadingAttr && !autoBack) {
-      header.style.display = 'none';
-      return header;
-    }
+    const hasButtons = autoBack || !!leadingAttr || !!trailingAttr;
 
-    // Toolbar row — glass pills floating above the title. Left
-    // side holds the back chevron (if any) and the user's
-    // topBarLeading content (if any) IN THAT ORDER. Right side
-    // holds topBarTrailing. Only emitted if at least one slot has
-    // content.
-    if (autoBack || leadingAttr || trailingAttr) {
-      const toolbarRow = document.createElement('div');
-      toolbarRow.className = 'mar-nav-toolbar-row';
-
+    // Slot 0: pinned toolbar row.
+    const toolbarRow = document.createElement('div');
+    toolbarRow.className = 'mar-nav-toolbar-row';
+    if (!hasButtons && !titleAttr) {
+      toolbarRow.style.display = 'none';
+    } else {
       const left = document.createElement('div');
       left.className = 'mar-nav-side';
       // Order matters: back chevron first (closest to the leading
@@ -4364,15 +4358,39 @@
       }
       toolbarRow.appendChild(left);
 
+      // Inline title — hidden until the large title scrolls out
+      // (wireNavInlineTitle toggles .mar-nav-scrolled). The large
+      // title is the page's real heading; this is a visual echo,
+      // so hide it from the accessibility tree.
+      if (titleAttr) {
+        const inline = document.createElement('div');
+        inline.className = 'mar-nav-inline-title';
+        inline.textContent = titleAttr.value.s;
+        inline.setAttribute('aria-hidden', 'true');
+        toolbarRow.appendChild(inline);
+      }
+
       const right = document.createElement('div');
       right.className = 'mar-nav-side mar-nav-side-trailing';
       if (trailingAttr) right.appendChild(createDOM(trailingAttr.value));
       toolbarRow.appendChild(right);
 
-      header.appendChild(toolbarRow);
+      if (!hasButtons) {
+        // Title-only page: the bar reserves no space at rest, so
+        // the large title keeps its position; only the inline
+        // title floats in once the page scrolls.
+        toolbarRow.classList.add('mar-nav-toolbar-bare');
+      } else if (!titleAttr) {
+        // Buttons-only page: the row is the entire chrome, so it
+        // owns the 24px gap to the body that the large-title
+        // header normally provides.
+        toolbarRow.classList.add('mar-nav-toolbar-solo');
+      }
     }
 
-    // Title row — just the bold large title.
+    // Slot 1: large title. Scrolls away with the content, like iOS.
+    const header = document.createElement('header');
+    header.className = 'mar-nav-bar';
     if (titleAttr) {
       const titleRow = document.createElement('div');
       titleRow.className = 'mar-nav-title-row';
@@ -4381,9 +4399,39 @@
       titleEl.textContent = titleAttr.value.s;
       titleRow.appendChild(titleEl);
       header.appendChild(titleRow);
+    } else {
+      header.style.display = 'none';
     }
 
-    return header;
+    wireNavInlineTitle(toolbarRow, titleAttr ? header : null);
+    return [toolbarRow, header];
+  }
+
+  // wireNavInlineTitle drives the large-title → inline-title
+  // handoff: when the large-title header scrolls out of the strip
+  // the pinned bar occupies, the bar's centered title fades in;
+  // scroll back to the top and it fades out again. One observer per
+  // chrome build, stored on the row — the patch path disconnects
+  // the old row's observer explicitly, and rows dropped by full
+  // page navigation take theirs to the garbage collector.
+  function wireNavInlineTitle(toolbarRow, header) {
+    if (!header || typeof IntersectionObserver === 'undefined') return;
+    // Shrink the viewport's top by the strip the pinned bar
+    // occupies, so the title only counts as "gone" once it has
+    // fully slid under where the bar sits. The strip depends on
+    // the bar's resting geometry: with buttons the row is 36px
+    // tall below the stack's 24px top padding; on a bare
+    // (title-only) page the row is zero-height, the title rests
+    // at 24px, and using the larger strip would swallow the title
+    // at rest and show the inline pill before any scrolling.
+    const bare = toolbarRow.classList.contains('mar-nav-toolbar-bare');
+    const obs = new IntersectionObserver(([entry]) => {
+      toolbarRow.classList.toggle('mar-nav-scrolled', !entry.isIntersecting);
+    }, {
+      rootMargin: (bare ? '-28px' : '-64px') + ' 0px 0px 0px',
+    });
+    obs.observe(header);
+    toolbarRow._marNavObserver = obs;
   }
 
   // buildBackButton returns the iOS 26-style circular glass pill
@@ -4544,16 +4592,24 @@
       '  box-sizing: border-box;',
       '}',
 
-      // Title bar — up to two stacked rows: a toolbar row of glass
-      // pills (back + trailing), then the large-title row. Mirrors
-      // iOS 26 large-title NavigationBar.
+      // Large-title header — scrolls away with the content, exactly
+      // like iOS. Only the toolbar row below is pinned.
       '.mar-nav-bar {',
-      '  display: flex;',
-      '  flex-direction: column;',
-      '  gap: 16px;',
       '  margin-bottom: 24px;',
       '}',
+      // Pinned toolbar row — back/leading pills on the left, the
+      // inline title in the center, trailing pills on the right.
+      // `top` repeats the nav stack\'s padding-top formula on
+      // purpose: the row\'s resting position IS its pinned position,
+      // so the bar never visibly moves — it just stops following
+      // the scroll, which is the iOS navigation-bar behavior. The
+      // pills carry their own backdrop blur, so content scrolling
+      // under them blurs through the glass with no opaque bar strip
+      // (iOS 26 floating-toolbar model).
       '.mar-nav-toolbar-row {',
+      '  position: sticky;',
+      '  top: max(24px, calc(env(safe-area-inset-top) + 12px));',
+      '  z-index: 10;',  // above in-flow content; far below sheet (2000)
       '  display: flex;',
       '  align-items: center;',
       '  justify-content: space-between;',
@@ -4563,8 +4619,54 @@
       // iOS 26\'s floating toolbar.
       '  margin-left: -8px;',
       '  margin-right: -8px;',
+      '  margin-bottom: 16px;',
       '  min-height: 36px;',
       '}',
+      // Equal flexible sides keep the inline title truly centered
+      // regardless of how the left/right pill clusters differ.
+      '.mar-nav-toolbar-row > .mar-nav-side { flex: 1 1 0; }',
+      // Buttons-only page (no navigationTitle): the row is the
+      // entire chrome, so it owns the full 24px gap to the body.
+      '.mar-nav-toolbar-solo { margin-bottom: 24px; }',
+      // Title-only page (no buttons): the row reserves no space at
+      // rest — the large title keeps its position — and only the
+      // inline title floats in over the content once the page
+      // scrolls. pointer-events stays off so the empty strip never
+      // eats clicks meant for content (the pill is not interactive).
+      '.mar-nav-toolbar-bare {',
+      '  min-height: 0;',
+      '  height: 0;',
+      '  margin-bottom: 0;',
+      '  align-items: flex-start;',
+      '  pointer-events: none;',
+      '}',
+      // Inline title — the small centered glass pill that takes
+      // over when the large title scrolls out (.mar-nav-scrolled,
+      // toggled by wireNavInlineTitle). Same glass recipe as the
+      // nav pills.
+      '.mar-nav-inline-title {',
+      '  font-size: 14px;',
+      '  font-weight: 600;',
+      '  color: #1d1d1f;',
+      '  background: rgba(255, 255, 255, 0.62);',
+      '  -webkit-backdrop-filter: blur(20px) saturate(180%);',
+      '  backdrop-filter: blur(20px) saturate(180%);',
+      '  border: 0.5px solid rgba(0, 0, 0, 0.06);',
+      '  box-shadow:',
+      '    inset 0 0.5px 0 rgba(255, 255, 255, 0.8),',
+      '    0 2px 8px rgba(0, 0, 0, 0.05);',
+      '  border-radius: 980px;',
+      '  padding: 8px 18px;',
+      '  max-width: 50%;',
+      '  white-space: nowrap;',
+      '  overflow: hidden;',
+      '  text-overflow: ellipsis;',
+      '  opacity: 0;',
+      '  transform: translateY(-4px);',
+      '  transition: opacity 200ms ease, transform 200ms ease;',
+      '  pointer-events: none;',
+      '}',
+      '.mar-nav-scrolled .mar-nav-inline-title { opacity: 1; transform: none; }',
       '.mar-nav-title-row { display: block; }',
       '.mar-nav-title {',
       '  font-size: 32px;',
@@ -5932,6 +6034,7 @@
       '  ::view-transition-old(root), ::view-transition-new(root) {',
       '    animation: none !important;',
       '  }',
+      '  .mar-nav-inline-title { transition: none; }',
       '}',
 
       // Dark mode — iOS 26 "Liquid Glass" on a near-black graphite
@@ -5956,7 +6059,7 @@
       // Glass pills (back button, trailing nav buttons, inline
       // hstack actions) all share the same translucent white tint
       // — the backdrop blur picks up the page gradient behind.
-      '  .mar-nav-back, .mar-nav-side button {',
+      '  .mar-nav-back, .mar-nav-side button, .mar-nav-inline-title {',
       '    background: rgba(255, 255, 255, 0.08);',
       '    border: 0.5px solid rgba(255, 255, 255, 0.12);',
       '    box-shadow:',
@@ -5965,7 +6068,7 @@
       '  }',
       '  .mar-nav-back { color: #0a84ff; }',
       '  .mar-nav-back:hover { background: rgba(255, 255, 255, 0.14); }',
-      '  .mar-nav-side button { color: #f5f5f7; }',
+      '  .mar-nav-side button, .mar-nav-inline-title { color: #f5f5f7; }',
       '  .mar-nav-side button:hover { background: rgba(255, 255, 255, 0.14); }',
       // Section card in dark glass — translucent slate that lets
       // the gradient bleed through under the blur.
@@ -6294,12 +6397,13 @@
       // recreates the input, blurring it).
       case 'navigationStack':
         // <main>
-        //   <header.mar-nav-bar>     ← always present; hidden if no attrs
-        //   <div.mar-nav-body>       ← stable wrapper, children diffed
+        //   <div.mar-nav-toolbar-row> ← always present; pinned bar
+        //   <header.mar-nav-bar>      ← always present; large title
+        //   <div.mar-nav-body>        ← stable wrapper, children diffed
         // </main>
         ensureUIStyles();
         e.className = 'mar-nav-stack';
-        e.appendChild(buildNavigationBar(view));
+        for (const chromeEl of buildNavigationChrome(view)) e.appendChild(chromeEl);
         {
           const body = document.createElement('div');
           body.className = 'mar-nav-body';
@@ -7011,12 +7115,23 @@
       // the body wrapper stays the same DOM node so any focused input
       // inside keeps focus + cursor + selection.
       case 'navigationStack': {
-        // Slot 0: nav bar. Cheap to recreate (no interactive focus
-        // state on title/buttons that matters for typing).
-        const oldBar = node.firstChild;
-        const newBar = buildNavigationBar(newView);
-        node.replaceChild(newBar, oldBar);
-        // Slot 1: body wrapper. Diff its children — that's where
+        // Slots 0+1: pinned toolbar row + large-title header. Cheap
+        // to recreate (no interactive focus state on title/buttons
+        // that matters for typing). Two slot-specific fixups: kill
+        // the old row's title observer so it can't fight the new
+        // one, and carry the scrolled state over so the inline
+        // title doesn't blink off for a frame on every patch while
+        // the page is scrolled (the new observer re-confirms it
+        // asynchronously).
+        const oldRow = node.children[0];
+        const [newRow, newBar] = buildNavigationChrome(newView);
+        if (oldRow && oldRow._marNavObserver) oldRow._marNavObserver.disconnect();
+        if (oldRow && oldRow.classList.contains('mar-nav-scrolled')) {
+          newRow.classList.add('mar-nav-scrolled');
+        }
+        node.replaceChild(newRow, node.children[0]);
+        node.replaceChild(newBar, node.children[1]);
+        // Slot 2: body wrapper. Diff its children — that's where
         // form/list/etc live, possibly with a focused input below.
         const body = node.querySelector(':scope > .mar-nav-body');
         if (body) {
@@ -7787,7 +7902,7 @@
     // with the bookkeeping the nav chrome reads back later:
     //
     //   marDepth   — depth counter for the auto back button
-    //                (buildNavigationBar reads currentNavDepth())
+    //                (buildNavigationChrome reads currentNavDepth())
     //                and the view-transition direction detector
     //                (render() compares old vs new depth).
     //   prevTitle  — title of the page we\'re LEAVING, captured
