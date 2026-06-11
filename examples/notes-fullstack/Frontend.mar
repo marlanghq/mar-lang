@@ -30,30 +30,30 @@ type alias Model =
 
 
 type Msg
-    = NotesFetched (Result String (List Shared.Note))
+    = NotesFetched (Result Service.Error (List Shared.Note))
     | DraftChanged String
     | SubmitClicked
-    | NoteCreated  (Result String Shared.Note)
+    | NoteCreated  (Result Service.Error Shared.Note)
 
 
-fetchAll : Effect String Msg
+fetchAll : Effect Msg
 fetchAll =
     Service.call Shared.listAllNotes () NotesFetched
 
 
-init : (Model, Effect String Msg)
+init : (Model, Effect Msg)
 init =
     ({ notes = Loading, draft = "" }, fetchAll)
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update msg model =
     case msg of
         NotesFetched (Ok loaded) ->
             ({ model | notes = Loaded loaded }, Effect.none)
 
         NotesFetched (Err e) ->
-            ({ model | notes = Failed e }, Effect.none)
+            ({ model | notes = Failed (Service.errorToString e) }, Effect.none)
 
         DraftChanged value ->
             ({ model | draft = value }, Effect.none)

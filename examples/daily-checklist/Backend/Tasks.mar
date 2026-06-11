@@ -31,7 +31,7 @@ tasks =
 -- ===== Read =====
 
 
-listTasksImpl : () -> Shared.User -> Effect String (List Shared.Task)
+listTasksImpl : () -> Shared.User -> Effect (List Shared.Task)
 listTasksImpl _ user =
     Repo.findBy tasks { userId = user.id }
         |> Effect.map sortByPosition
@@ -59,7 +59,7 @@ sortByPosition items =
 -- ===== Create =====
 
 
-addTaskImpl : { name : String } -> Shared.User -> Effect String Shared.Task
+addTaskImpl : { name : String } -> Shared.User -> Effect Shared.Task
 addTaskImpl input user =
     -- Server-side gate: clients can disable the button but the
     -- backend is the only layer end-to-end. Reject empty /
@@ -135,7 +135,7 @@ frontPosition existing =
 -- whether the id exists at all.
 
 
-toggleTaskImpl : { id : Int, done : Bool } -> Shared.User -> Effect String (Maybe Shared.Task)
+toggleTaskImpl : { id : Int, done : Bool } -> Shared.User -> Effect (Maybe Shared.Task)
 toggleTaskImpl input user =
     Repo.findById tasks input.id
         |> Effect.andThen
@@ -152,7 +152,7 @@ toggleTaskImpl input user =
             )
 
 
-deleteTaskImpl : { id : Int } -> Shared.User -> Effect String ()
+deleteTaskImpl : { id : Int } -> Shared.User -> Effect ()
 deleteTaskImpl input user =
     Repo.findById tasks input.id
         |> Effect.andThen
@@ -176,7 +176,7 @@ deleteTaskImpl input user =
 -- shape "UPDATE tasks SET done = 0 WHERE userId = ?" would do it
 -- in one statement; today we don't expose raw SQL from user code,
 -- so the per-row Effect.sequence is the idiomatic option.
-resetAllImpl : () -> Shared.User -> Effect String ()
+resetAllImpl : () -> Shared.User -> Effect ()
 resetAllImpl _ user =
     Repo.findBy tasks { userId = user.id }
         |> Effect.andThen
@@ -210,7 +210,7 @@ resetAllImpl _ user =
 -- matches the user's full list — that'd reject legitimate cases
 -- where a row was deleted concurrently. Missing IDs just don't get
 -- updated (their position stays stale until the next reorder).
-reorderTasksImpl : { orderedIds : List Int } -> Shared.User -> Effect String ()
+reorderTasksImpl : { orderedIds : List Int } -> Shared.User -> Effect ()
 reorderTasksImpl input user =
     Effect.sequence
         (List.indexedMap

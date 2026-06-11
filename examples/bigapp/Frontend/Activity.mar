@@ -26,22 +26,22 @@ import UI exposing
 
 type alias Model =
     { items : Maybe (List Shared.ActivityView)
-    , error : Maybe String
+    , error : Maybe Service.Error
     }
 
 
 type Msg
-    = ActivityFetched (Result String (List Shared.ActivityView))
+    = ActivityFetched (Result Service.Error (List Shared.ActivityView))
 
 
-init : Shared.User -> (Model, Effect String Msg)
+init : Shared.User -> (Model, Effect Msg)
 init _ =
     ( { items = Nothing, error = Nothing }
     , Service.call Shared.listRecentActivity { limit = 0 } ActivityFetched
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
 update _ msg model =
     case msg of
         ActivityFetched (Ok items) ->
@@ -134,7 +134,7 @@ renderBody : Model -> List (View Msg)
 renderBody model =
     case model.error of
         Just why ->
-            [ section [ header "Couldn't load" ] [ errorText why ] ]
+            [ section [ header "Couldn't load" ] [ errorText (Service.errorToString why) ] ]
 
         Nothing ->
             case model.items of

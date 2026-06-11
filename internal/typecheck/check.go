@@ -413,6 +413,13 @@ func (e *typeNameEnv) lookupParam(name string) (int, bool) {
 // which TVar ID corresponds to which param name allocate the map
 // themselves (alias declarations, custom-type declarations); callers
 // without named params pass nil.
+// qualifiedBuiltinTypes are stdlib types whose canonical name carries a
+// dot. The parser splits a qualified upper name into Module + base name, so
+// these would otherwise lose their qualifier and collide on the bare tail.
+var qualifiedBuiltinTypes = map[string]bool{
+	"Service.Error": true,
+}
+
 func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[string]int) (Type, error) {
 	if paramIDs != nil {
 		tEnv.paramScopes = append(tEnv.paramScopes, paramIDs)
@@ -438,6 +445,16 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 				return nil, err
 			}
 			args[i] = at
+		}
+		// Stdlib types whose canonical name contains a dot (Service.Error)
+		// keep the qualifier: the parser split it into Module + base name,
+		// so without this it would resolve to a bare, collision-prone
+		// "Error" that wouldn't unify with the constructors' result type.
+		if len(t.Module) > 0 {
+			full := strings.Join([]string(t.Module), ".") + "." + t.Name
+			if qualifiedBuiltinTypes[full] {
+				return TCon{Name: full, Args: args}, nil
+			}
 		}
 		// Resolve aliases (substitute params). ParamIDs[i] is the
 		// TVar ID that occurrences of Params[i] were rewritten to

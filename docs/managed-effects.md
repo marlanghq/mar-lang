@@ -55,25 +55,28 @@ This means:
 The single effect type is:
 
 ```elm
-Effect e a
+Effect a
 ```
 
-For frontend MVU, the runtime expects `Effect Never Msg` — an effect that produces a `Msg` (and cannot fail in a way that bypasses the message stream; failures are encoded into `Msg` variants).
+One type parameter, like Elm's `Cmd`. For frontend MVU the runtime expects
+`Effect Msg` — an effect that produces a `Msg`. Effects don't carry an error
+type: failures are values, encoded into `Msg` variants (a `Result` in the
+payload), never a bypass of the message stream.
 
 The minimum effect family in `Navigation`:
 
 ```elm
-Navigation.push : NavigateTarget -> Effect Never Msg
-Navigation.back : Effect Never Msg
+Navigation.push : NavigateTarget -> Effect Msg
+Navigation.back : Effect Msg
 ```
 
-And for backend calls from the frontend:
+And for backend calls from the frontend (the failure rides in the `Result` the
+`toMsg` receives, as a `Service.Error` union):
 
 ```elm
-Endpoint.call    : Endpoint p i o tag -> p -> i -> Effect (ResponseError tag) o
-Effect.toMsg     : (Result e a -> msg) -> Effect e a -> Effect Never msg
-Effect.batch     : List (Effect Never msg) -> Effect Never msg
-Effect.none      : Effect Never msg
+Service.call : Service req resp -> req -> (Result Service.Error resp -> msg) -> Effect msg
+Effect.batch : List (Effect msg) -> Effect msg
+Effect.none  : Effect msg
 ```
 
 Example:

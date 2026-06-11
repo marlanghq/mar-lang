@@ -44,20 +44,20 @@ type Msg
     | CodeDraftChanged String
     | VerifyCodeClicked
     | CodeVerified (Result String Shared.User)
-    | NotesFetched (Result String (List Shared.Note))
+    | NotesFetched (Result Service.Error (List Shared.Note))
     | NoteDraftChanged String
     | AddNoteClicked
-    | NoteCreated (Result String Shared.Note)
+    | NoteCreated (Result Service.Error Shared.Note)
     | SignOutClicked
     | SignedOut (Result String ())
 
 
-init : (Stage, Effect String Msg)
+init : (Stage, Effect Msg)
 init =
     ( Loading, Auth.me MeResolved )
 
 
-update : Msg -> Stage -> (Stage, Effect String Msg)
+update : Msg -> Stage -> (Stage, Effect Msg)
 update msg stage =
     case msg of
         MeResolved (Ok (Just user)) ->
@@ -139,7 +139,7 @@ update msg stage =
         NotesFetched (Err why) ->
             case stage of
                 LoggedIn user _ draft ->
-                    ( LoggedIn user (NotesFailed why) draft, Effect.none )
+                    ( LoggedIn user (NotesFailed (Service.errorToString why)) draft, Effect.none )
 
                 _ ->
                     ( stage, Effect.none )

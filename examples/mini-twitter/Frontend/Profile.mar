@@ -37,20 +37,20 @@ type alias Model =
 
 
 type Msg
-    = Fetched (Result String (Maybe Shared.ProfileView))
+    = Fetched (Result Service.Error (Maybe Shared.ProfileView))
     | FollowClicked
     | UnfollowClicked
-    | FollowToggled (Result String ())
+    | FollowToggled (Result Service.Error ())
 
 
-init : Shared.User -> { handle : String } -> (Model, Effect String Msg)
+init : Shared.User -> { handle : String } -> (Model, Effect Msg)
 init _ params =
     ( { handle = params.handle, state = Loading, busy = False }
     , Service.call Shared.loadProfile { handle = params.handle } Fetched
     )
 
 
-update : Shared.User -> { handle : String } -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> { handle : String } -> Msg -> Model -> (Model, Effect Msg)
 update _ _ msg model =
     case msg of
         Fetched (Ok (Just view)) ->
@@ -60,7 +60,7 @@ update _ _ msg model =
             ( { model | state = NotFound }, Effect.none )
 
         Fetched (Err why) ->
-            ( { model | state = Failed why }, Effect.none )
+            ( { model | state = Failed (Service.errorToString why) }, Effect.none )
 
         FollowClicked ->
             ( { model | busy = True }

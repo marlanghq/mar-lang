@@ -31,11 +31,11 @@ type Msg
     = NoOp
 
 
-init : () -> (Model, Effect String Msg)
-init _ = ((), Effect.none)
+init : (Model, Effect Msg)
+init = ((), Effect.none)
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update _ _ = ((), Effect.none)
 
 
@@ -54,7 +54,7 @@ page =
         }
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.fullstack
         { services = []

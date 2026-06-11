@@ -59,7 +59,7 @@ enum MarHTTP {
     static func fireService(path: String, body: String, toMsg: MarValue) {
         Task { @MainActor in
             guard let url = MarDispatcher.shared.resolve(path: path) else {
-                dispatchErr(toMsg, message: "invalid service path: \(path)")
+                dispatchServiceErr(toMsg, message: "invalid service path: \(path)")
                 return
             }
             sendService(url: url, body: body, toMsg: toMsg)
@@ -106,16 +106,16 @@ enum MarHTTP {
                         return
                     }
                     // No signInPath configured — fall through and
-                    // surface the Err normally so the app at least
+                    // surface Err Unauthorized so the app at least
                     // sees something.
-                    let r = makeJSONResult(data: data, response: response, error: error)
-                    deliverMsg(result: r, toMsg: toMsg)
+                    let r = makeServiceResult(data: data, response: response, error: error)
+                    deliverServiceResult(r, toMsg: toMsg)
                 }
                 return
             }
-            let r = makeJSONResult(data: data, response: response, error: error)
+            let r = makeServiceResult(data: data, response: response, error: error)
             Task { @MainActor in
-                deliverMsg(result: r, toMsg: toMsg)
+                deliverServiceResult(r, toMsg: toMsg)
             }
         }.resume()
     }
@@ -366,6 +366,71 @@ enum MarHTTP {
             // diagnostic. There's nowhere good to dispatch this since
             // the failure is in the message-construction itself.
             print("[mar] toMsg failed: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: Service.call result (Service.Error union)
+    //
+    // A Service.call delivers `Result Service.Error resp`: the Err is a
+    // union (Offline / Unauthorized / ServerError String), not a string,
+    // so transport failure is a value the app cases on. Mirrors the JS
+    // runtime's serviceErrorFromResponse / serviceErrorOffline and the Go
+    // serviceErrorString.
+
+    static func serviceErrorOffline() -> MarValue {
+        .ctor(tag: "Offline", args: [], origin: nil)
+    }
+
+    static func serviceErrorFromResponse(status: Int, body: Data, fallbackBody: String) -> MarValue {
+        if status == 401 { return .ctor(tag: "Unauthorized", args: [], origin: nil) }
+        let msg = decodeServerError(body: body, fallbackBody: fallbackBody, status: status)
+        return .ctor(tag: "ServerError", args: [.string(msg)], origin: nil)
+    }
+
+    /// Builds the Result a Service.call delivers: Ok decoded-value, or Err
+    /// carrying a Service.Error. The String variant (makeJSONResult) stays
+    /// for Http.get/post and auth, whose Err is still a bare String.
+    private static func makeServiceResult(data: Data?, response: URLResponse?, error: Error?) -> MarValue {
+        if error != nil {
+            return .ctor(tag: "Err", args: [serviceErrorOffline()], origin: nil)
+        }
+        let bodyData = data ?? Data()
+        let bodyString = String(data: bodyData, encoding: .utf8) ?? ""
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let se = serviceErrorFromResponse(status: http.statusCode, body: bodyData, fallbackBody: bodyString)
+            return .ctor(tag: "Err", args: [se], origin: nil)
+        }
+        do {
+            let any = try JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])
+            return .ctor(tag: "Ok", args: [MarJSONCodec.jsonToMar(any)], origin: nil)
+        } catch {
+            let se: MarValue = .ctor(tag: "ServerError", args: [.string("decode failed: \(error.localizedDescription)")], origin: nil)
+            return .ctor(tag: "Err", args: [se], origin: nil)
+        }
+    }
+
+    @MainActor
+    private static func deliverServiceResult(_ resultValue: MarValue, toMsg: MarValue) {
+        do {
+            let msg = try Eval.apply(toMsg, resultValue)
+            MarDispatcher.shared.dispatch(msg)
+        } catch {
+            print("[mar] toMsg failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Service-path variant of dispatchErr: an internal failure (bad path)
+    /// surfaces as Err (ServerError msg) so the value matches the
+    /// Result Service.Error type user code expects.
+    private static func dispatchServiceErr(_ toMsg: MarValue, message: String) {
+        Task { @MainActor in
+            let se: MarValue = .ctor(tag: "ServerError", args: [.string(message)], origin: nil)
+            do {
+                let msg = try Eval.apply(toMsg, .ctor(tag: "Err", args: [se], origin: nil))
+                MarDispatcher.shared.dispatch(msg)
+            } catch {
+                print("[mar] error dispatch failed: \(error.localizedDescription)")
+            }
         }
     }
 

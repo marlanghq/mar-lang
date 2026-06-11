@@ -648,24 +648,20 @@ func lookupMainType(valueTypes map[string]typecheck.Type) typecheck.Type {
 	return nil
 }
 
-// checkMainSignature reports whether t is `Effect String ()`. Returns
-// an empty string when the signature is acceptable, else a short
-// human-readable message describing the mismatch. Wrapping in a
-// `forall` is fine — main can be polymorphic in unused variables.
+// checkMainSignature reports whether t is `Effect ()`. Returns an empty
+// string when the signature is acceptable, else a short human-readable
+// message describing the mismatch. Wrapping in a `forall` is fine — main
+// can be polymorphic in unused variables.
 func checkMainSignature(t typecheck.Type) string {
 	if f, ok := t.(typecheck.TForall); ok {
 		t = f.Body
 	}
 	con, ok := t.(typecheck.TCon)
-	if !ok || con.Name != "Effect" || len(con.Args) != 2 {
-		return fmt.Sprintf("main has type `%s`, expected `Effect String ()`", typecheck.Pretty(t))
+	if !ok || con.Name != "Effect" || len(con.Args) != 1 {
+		return fmt.Sprintf("main has type `%s`, expected `Effect ()`", typecheck.Pretty(t))
 	}
-	errCon, eOk := con.Args[0].(typecheck.TCon)
-	if !eOk || errCon.Name != "String" || len(errCon.Args) != 0 {
-		return fmt.Sprintf("main has type `%s`, expected `Effect String ()` (error channel must be String)", typecheck.Pretty(t))
-	}
-	if _, uOk := con.Args[1].(typecheck.TUnit); !uOk {
-		return fmt.Sprintf("main has type `%s`, expected `Effect String ()` (success value must be unit `()`)", typecheck.Pretty(t))
+	if _, uOk := con.Args[0].(typecheck.TUnit); !uOk {
+		return fmt.Sprintf("main has type `%s`, expected `Effect ()` (success value must be unit `()`)", typecheck.Pretty(t))
 	}
 	return ""
 }

@@ -29,7 +29,7 @@ import Home
 import About
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.frontend [ Home.page, About.page ]
 `
@@ -73,11 +73,11 @@ type Msg
     | Decrement
 
 
-init : () -> (Model, Effect String Msg)
-init _ = (0, Effect.none)
+init : (Model, Effect Msg)
+init = (0, Effect.none)
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update msg model =
     case msg of
         Increment -> (model + 1, Effect.none)
@@ -134,11 +134,11 @@ type Msg
     = NoOp
 
 
-init : () -> (Model, Effect String Msg)
-init _ = ((), Effect.none)
+init : (Model, Effect Msg)
+init = ((), Effect.none)
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update _ _ = ((), Effect.none)
 
 

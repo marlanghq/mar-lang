@@ -26,12 +26,12 @@ notes =
 --
 -- Impl names match the wire contract names from Shared on purpose:
 -- `Shared.listMine` is implemented by `listMine` (this module).
-listMine : () -> Shared.User -> Effect String (List Shared.Note)
+listMine : () -> Shared.User -> Effect (List Shared.Note)
 listMine _ user =
     Repo.findBy notes { authorId = user.id }
 
 
-createMine : { body : String } -> Shared.User -> Effect String Shared.Note
+createMine : { body : String } -> Shared.User -> Effect Shared.Note
 createMine input user =
     -- Server-side gate: clients can disable the button or guard the
     -- update, but the backend is the only layer we control end-to-end.

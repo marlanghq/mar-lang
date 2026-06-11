@@ -23,7 +23,7 @@ type alias Model =
     , displayName : String
     , bio         : String
     , submitting  : Bool
-    , error       : Maybe String
+    , error       : Maybe Service.Error
     }
 
 
@@ -32,10 +32,10 @@ type Msg
     | DisplayNameChanged String
     | BioChanged String
     | Submitted
-    | Saved (Result String Shared.User)
+    | Saved (Result Service.Error Shared.User)
 
 
-init : Shared.User -> (Model, Effect String Msg)
+init : Shared.User -> (Model, Effect Msg)
 init user =
     ( { handle      = user.handle
       , displayName = user.displayName
@@ -47,7 +47,7 @@ init user =
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
 update _ msg model =
     case msg of
         HandleChanged v ->
@@ -87,7 +87,7 @@ view _ model =
     let
         errorRow =
             case model.error of
-                Just why -> section [] [ errorText why ]
+                Just why -> section [] [ errorText (Service.errorToString why) ]
                 Nothing  -> empty
 
         cta =

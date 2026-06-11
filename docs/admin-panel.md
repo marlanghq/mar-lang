@@ -29,7 +29,7 @@ This document is a design proposal for the **MVP**, not an API reference. It est
 > **How the capability works.** `Mar.Admin.serverInfo / dbStats /
 > recentRequests / listEntities / listEntityRows / backups` each take an
 > `AdminSession` as their first argument and are shaped like `Service.call`
-> (`AdminSession -> (Result String resp -> msg) -> Effect String msg`). Only
+> (`AdminSession -> (Result String resp -> msg) -> Effect msg`). Only
 > `Page.adminProtected` ever mints an `AdminSession`, so normal app code calling
 > `Mar.Admin.*` is a compile error. At runtime the panel performs them as Cmds:
 > `runtime.js` fetches `/_mar/admin/api/mar/*` (admin-cookie gated), the server

@@ -28,12 +28,12 @@ milestones =
 -- HANDLERS
 -- ====================================================================
 
-listForProject : Shared.ListProjectMilestones -> Shared.User -> Effect String (List Shared.Milestone)
+listForProject : Shared.ListProjectMilestones -> Shared.User -> Effect (List Shared.Milestone)
 listForProject input _ =
     Repo.findBy milestones { projectId = input.projectId }
 
 
-create : Shared.NewMilestone -> Shared.User -> Effect String Shared.Milestone
+create : Shared.NewMilestone -> Shared.User -> Effect Shared.Milestone
 create input _ =
     Time.now
         |> Effect.andThen
@@ -48,12 +48,12 @@ create input _ =
             )
 
 
-close : Shared.CloseMilestone -> Shared.User -> Effect String (Maybe Shared.Milestone)
+close : Shared.CloseMilestone -> Shared.User -> Effect (Maybe Shared.Milestone)
 close input _ =
     Repo.update milestones input.id { status = MilestoneClosed }
 
 
-reopen : Shared.ReopenMilestone -> Shared.User -> Effect String (Maybe Shared.Milestone)
+reopen : Shared.ReopenMilestone -> Shared.User -> Effect (Maybe Shared.Milestone)
 reopen input _ =
     Repo.update milestones input.id { status = MilestoneOpen }
 
@@ -62,12 +62,12 @@ reopen input _ =
 -- AUTHORIZATION
 -- ====================================================================
 
-loadByClose : Shared.CloseMilestone -> Shared.User -> Effect String (Maybe Shared.Milestone)
+loadByClose : Shared.CloseMilestone -> Shared.User -> Effect (Maybe Shared.Milestone)
 loadByClose input _ =
     Repo.findById milestones input.id
 
 
-loadByReopen : Shared.ReopenMilestone -> Shared.User -> Effect String (Maybe Shared.Milestone)
+loadByReopen : Shared.ReopenMilestone -> Shared.User -> Effect (Maybe Shared.Milestone)
 loadByReopen input _ =
     Repo.findById milestones input.id
 

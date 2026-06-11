@@ -43,31 +43,31 @@ type alias Model =
 
 
 type Msg
-    = NotesFetched (Result String (List Shared.Note))
+    = NotesFetched (Result Service.Error (List Shared.Note))
     | DraftChanged String
     | AddClicked
-    | NoteCreated (Result String Shared.Note)
+    | NoteCreated (Result Service.Error Shared.Note)
     | DeleteClicked Int
-    | NoteDeleted (Result String ())
+    | NoteDeleted (Result Service.Error ())
     | SignOutClicked
     | SignedOut (Result String ())
 
 
-init : Shared.User -> (Model, Effect String Msg)
+init : Shared.User -> (Model, Effect Msg)
 init _ =
     ( { notes = Loading, draft = "" }
     , Service.call Shared.listTeamNotes () NotesFetched
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
 update _ msg model =
     case msg of
         NotesFetched (Ok loaded) ->
             ( { model | notes = Loaded loaded }, Effect.none )
 
         NotesFetched (Err why) ->
-            ( { model | notes = Failed why }, Effect.none )
+            ( { model | notes = Failed (Service.errorToString why) }, Effect.none )
 
         DraftChanged value ->
             ( { model | draft = value }, Effect.none )

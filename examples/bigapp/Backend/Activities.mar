@@ -80,7 +80,7 @@ activities =
 -- timestamping + Repo.create; the typed wrappers just shape the
 -- right ctor and extra string.
 --
--- Returns `Effect String ()` so callers can fold it into their
+-- Returns `Effect ()` so callers can fold it into their
 -- existing Effect pipeline via Effect.map / Effect.andThen without
 -- ceremony. Errors in the audit write should NOT roll back the
 -- primary write — callers can ignore the result with
@@ -95,7 +95,7 @@ emit
       , subjectId : Int
       , extra : String
       }
-    -> Effect String ()
+    -> Effect ()
 emit args =
     Time.now
         |> Effect.andThen
@@ -113,7 +113,7 @@ emit args =
             )
 
 
-emitIssueCreated : Shared.User -> Shared.Issue -> Effect String ()
+emitIssueCreated : Shared.User -> Shared.Issue -> Effect ()
 emitIssueCreated user issue =
     emit
         { teamId = user.teamId
@@ -125,7 +125,7 @@ emitIssueCreated user issue =
         }
 
 
-emitIssueStatusChanged : Shared.User -> Shared.Issue -> IssueStatus -> Effect String ()
+emitIssueStatusChanged : Shared.User -> Shared.Issue -> IssueStatus -> Effect ()
 emitIssueStatusChanged user issue newStatus =
     emit
         { teamId = user.teamId
@@ -137,7 +137,7 @@ emitIssueStatusChanged user issue newStatus =
         }
 
 
-emitIssueDeleted : Shared.User -> Int -> String -> Effect String ()
+emitIssueDeleted : Shared.User -> Int -> String -> Effect ()
 emitIssueDeleted user issueId title =
     emit
         { teamId = user.teamId
@@ -149,7 +149,7 @@ emitIssueDeleted user issueId title =
         }
 
 
-emitCommentCreated : Shared.User -> Shared.Comment -> Effect String ()
+emitCommentCreated : Shared.User -> Shared.Comment -> Effect ()
 emitCommentCreated user comment =
     emit
         { teamId = user.teamId
@@ -161,7 +161,7 @@ emitCommentCreated user comment =
         }
 
 
-emitCommentDeleted : Shared.User -> Int -> Int -> Effect String ()
+emitCommentDeleted : Shared.User -> Int -> Int -> Effect ()
 emitCommentDeleted user commentId issueId =
     emit
         { teamId = user.teamId
@@ -173,7 +173,7 @@ emitCommentDeleted user commentId issueId =
         }
 
 
-emitReactionAdded : Shared.User -> Int -> String -> Effect String ()
+emitReactionAdded : Shared.User -> Int -> String -> Effect ()
 emitReactionAdded user commentId emoji =
     emit
         { teamId = user.teamId
@@ -185,7 +185,7 @@ emitReactionAdded user commentId emoji =
         }
 
 
-emitProjectCreated : Shared.User -> Shared.Project -> Effect String ()
+emitProjectCreated : Shared.User -> Shared.Project -> Effect ()
 emitProjectCreated user project =
     emit
         { teamId = user.teamId
@@ -197,7 +197,7 @@ emitProjectCreated user project =
         }
 
 
-emitProjectDeleted : Shared.User -> Int -> String -> Effect String ()
+emitProjectDeleted : Shared.User -> Int -> String -> Effect ()
 emitProjectDeleted user projectId name =
     emit
         { teamId = user.teamId

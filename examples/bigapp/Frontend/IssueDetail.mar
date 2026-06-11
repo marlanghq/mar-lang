@@ -32,36 +32,36 @@ type alias Model =
     , draftTitle    : String
     , draftDesc     : String
     , editingMeta   : Bool
-    , error         : Maybe String
+    , error         : Maybe Service.Error
     , posting       : Bool
     }
 
 
 type Msg
-    = IssueFetched (Result String (Maybe Shared.IssueView))
-    | CommentsFetched (Result String (List Shared.CommentView))
-    | LabelsFetched (Result String (List Shared.Label))
-    | AttachedFetched (Result String (List Shared.Label))
+    = IssueFetched (Result Service.Error (Maybe Shared.IssueView))
+    | CommentsFetched (Result Service.Error (List Shared.CommentView))
+    | LabelsFetched (Result Service.Error (List Shared.Label))
+    | AttachedFetched (Result Service.Error (List Shared.Label))
     | DraftCommentChanged String
     | DraftTitleChanged String
     | DraftDescChanged String
     | AddCommentClicked
-    | CommentPosted (Result String Shared.Comment)
+    | CommentPosted (Result Service.Error Shared.Comment)
     | DeleteCommentClicked Int
-    | CommentDeleted (Result String ())
+    | CommentDeleted (Result Service.Error ())
     | ReactionToggled Int String
-    | ReactionResponse (Result String ())
+    | ReactionResponse (Result Service.Error ())
     | StatusButtonClicked IssueStatus
-    | StatusChanged (Result String (Maybe Shared.Issue))
+    | StatusChanged (Result Service.Error (Maybe Shared.Issue))
     | EditMetaClicked
     | SaveMetaClicked
     | CancelMetaClicked
-    | MetaSaved (Result String (Maybe Shared.Issue))
+    | MetaSaved (Result Service.Error (Maybe Shared.Issue))
     | DeleteIssueClicked
-    | IssueDeleted (Result String ())
+    | IssueDeleted (Result Service.Error ())
 
 
-init : Shared.User -> { id : Int } -> (Model, Effect String Msg)
+init : Shared.User -> { id : Int } -> (Model, Effect Msg)
 init _ params =
     ( { issue        = Nothing
       , comments     = Nothing
@@ -78,7 +78,7 @@ init _ params =
     )
 
 
-update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Effect Msg)
 update _ params msg model =
     case msg of
         IssueFetched (Ok (Just issue)) ->
@@ -99,7 +99,7 @@ update _ params msg model =
             )
 
         IssueFetched (Ok Nothing) ->
-            ( { model | error = Just "Issue not found." }, Effect.none )
+            ( { model | error = Just (ServerError "Issue not found.") }, Effect.none )
 
         IssueFetched (Err why) ->
             ( { model | error = Just why }, Effect.none )
@@ -477,10 +477,10 @@ composeSection model =
         ]
 
 
-errorBanner : Maybe String -> View Msg
+errorBanner : Maybe Service.Error -> View Msg
 errorBanner maybeErr =
     case maybeErr of
-        Just why -> section [ header "Heads up" ] [ errorText why ]
+        Just why -> section [ header "Heads up" ] [ errorText (Service.errorToString why) ]
         Nothing  -> empty
 
 

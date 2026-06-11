@@ -52,12 +52,12 @@ addEntry = Service.declare
 
 
 -- Backend handlers
-listEntriesImpl : () -> Effect String (List Entry)
+listEntriesImpl : () -> Effect (List Entry)
 listEntriesImpl _ =
     Repo.all entries
 
 
-addEntryImpl : { name : String } -> Effect String Entry
+addEntryImpl : { name : String } -> Effect Entry
 addEntryImpl input =
     Repo.create entries { name = input.name }
 
@@ -82,27 +82,27 @@ type alias Model =
 
 
 type Msg
-    = EntriesFetched (Result String (List Entry))
+    = EntriesFetched (Result Service.Error (List Entry))
     | DraftChanged String
     | SignClicked
-    | EntrySigned (Result String Entry)
+    | EntrySigned (Result Service.Error Entry)
 
 
-init : (Model, Effect String Msg)
+init : (Model, Effect Msg)
 init =
     ( { entries = Loading, draft = "" }
     , Service.call listEntries () EntriesFetched
     )
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update msg model =
     case msg of
         EntriesFetched (Ok loaded) ->
             ( { model | entries = Loaded loaded }, Effect.none )
 
         EntriesFetched (Err why) ->
-            ( { model | entries = Failed why }, Effect.none )
+            ( { model | entries = Failed (Service.errorToString why) }, Effect.none )
 
         DraftChanged value ->
             ( { model | draft = value }, Effect.none )
@@ -167,7 +167,7 @@ page =
         }
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.fullstack
         { services = services

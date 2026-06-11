@@ -18,7 +18,7 @@ import Shared exposing (Role(..))
 -- `Backend.Mentions.parseAndStoreMentions` on every comment write).
 
 
-listMyMentions : Shared.ListMyMentions -> Shared.User -> Effect String (List Shared.MentionView)
+listMyMentions : Shared.ListMyMentions -> Shared.User -> Effect (List Shared.MentionView)
 listMyMentions input user =
     Repo.findBy Backend.Mentions.mentions { mentionedUserId = user.id }
         |> Effect.andThen
@@ -46,7 +46,7 @@ listMyMentions input user =
             )
 
 
-buildMentionView : Shared.Mention -> Effect String Shared.MentionView
+buildMentionView : Shared.Mention -> Effect Shared.MentionView
 buildMentionView m =
     Repo.findById Backend.Comments.comments m.commentId
         |> Effect.andThen
@@ -102,7 +102,7 @@ bodyPreviewFor maybeComment =
             "(comment removed)"
 
 
-resolveIssueContext : Maybe Shared.Comment -> Effect String { issueId : Int, issueNumber : Int, issueTitle : String, projectSlug : String }
+resolveIssueContext : Maybe Shared.Comment -> Effect { issueId : Int, issueNumber : Int, issueTitle : String, projectSlug : String }
 resolveIssueContext maybeComment =
     case maybeComment of
         Just c ->
@@ -132,7 +132,7 @@ resolveIssueContext maybeComment =
             Effect.succeed { issueId = 0, issueNumber = 0, issueTitle = "", projectSlug = "" }
 
 
-markSeen : Shared.MarkMentionSeen -> Shared.User -> Effect String ()
+markSeen : Shared.MarkMentionSeen -> Shared.User -> Effect ()
 markSeen input _ =
     Repo.update Backend.Mentions.mentions input.id
         { seen = True
@@ -144,7 +144,7 @@ markSeen input _ =
 -- AUTHORIZATION
 -- ====================================================================
 
-loadMentionByMark : Shared.MarkMentionSeen -> Shared.User -> Effect String (Maybe Shared.Mention)
+loadMentionByMark : Shared.MarkMentionSeen -> Shared.User -> Effect (Maybe Shared.Mention)
 loadMentionByMark input _ =
     Repo.findById Backend.Mentions.mentions input.id
 

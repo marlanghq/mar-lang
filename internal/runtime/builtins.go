@@ -264,6 +264,7 @@ func qualifiedAliasMapping() map[string]string {
 		"Service.declare":            "serviceDeclare",
 		"Service.implement":          "serviceImplement",
 		"Service.call":               "serviceCall",
+		"Service.errorToString":      "serviceErrorToString",
 		// Auth (passwordless email-code authentication)
 		"Auth.config":       "authConfig",
 		"Auth.protect":      "authProtect",
@@ -414,6 +415,19 @@ func builtins() map[string]Value {
 		"LT": VCtor{Tag: "LT"},
 		"EQ": VCtor{Tag: "EQ"},
 		"GT": VCtor{Tag: "GT"},
+
+		// Service.Error constructors — the transport failure a Service.call
+		// delivers in its Err. The frontend builds these (JS/Swift HTTP
+		// clients); the Go runtime registers them so the values exist and
+		// Service.errorToString can fold them to a string.
+		"Offline":      VCtor{Tag: "Offline"},
+		"Unauthorized": VCtor{Tag: "Unauthorized"},
+		"ServerError": nativeFn(1, func(args []Value) (Value, error) {
+			return VCtor{Tag: "ServerError", Args: []Value{args[0]}}, nil
+		}),
+		"serviceErrorToString": nativeFn(1, func(args []Value) (Value, error) {
+			return VString{V: serviceErrorString(args[0])}, nil
+		}),
 
 		// Arithmetic
 		"+": nativeFn(2, addOp),

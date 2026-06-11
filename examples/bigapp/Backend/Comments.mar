@@ -51,7 +51,7 @@ reactions =
 -- HANDLERS
 -- ====================================================================
 
-listForIssue : Shared.ListComments -> Shared.User -> Effect String (List Shared.CommentView)
+listForIssue : Shared.ListComments -> Shared.User -> Effect (List Shared.CommentView)
 listForIssue input user =
     Repo.findBy comments { issueId = input.issueId }
         |> Effect.andThen
@@ -60,7 +60,7 @@ listForIssue input user =
             )
 
 
-create : Shared.NewComment -> Shared.User -> Effect String Shared.Comment
+create : Shared.NewComment -> Shared.User -> Effect Shared.Comment
 create input user =
     Time.now
         |> Effect.andThen
@@ -93,7 +93,7 @@ create input user =
             )
 
 
-remove : Shared.DeleteComment -> Shared.User -> Effect String ()
+remove : Shared.DeleteComment -> Shared.User -> Effect ()
 remove input user =
     Repo.findById comments input.id
         |> Effect.andThen
@@ -121,7 +121,7 @@ remove input user =
 -- Errors from `Repo.create` (e.g. concurrent racing toggle) bubble
 -- up as a service error; the frontend re-fetches the comment view
 -- and converges to the right state on the next render.
-toggleReaction : Shared.ToggleReaction -> Shared.User -> Effect String ()
+toggleReaction : Shared.ToggleReaction -> Shared.User -> Effect ()
 toggleReaction input user =
     Repo.findBy reactions
         { commentId = input.commentId
@@ -159,7 +159,7 @@ toggleReaction input user =
 -- countForIssue — cheap helper to fill `commentCount` on an
 -- IssueView. Exported so Backend.Issues can call it after
 -- materializing each row.
-countForIssue : Int -> Effect String Int
+countForIssue : Int -> Effect Int
 countForIssue issueId =
     Repo.findBy comments { issueId = issueId }
         |> Effect.map (\rows -> List.length rows)
@@ -178,7 +178,7 @@ countForIssue issueId =
 -- Takes the viewer's user id so the `mineToo` flag is correct for
 -- each call. (Reactions are global per-comment; the personalization
 -- is at view-build time.)
-buildCommentView : Int -> Shared.Comment -> Effect String Shared.CommentView
+buildCommentView : Int -> Shared.Comment -> Effect Shared.CommentView
 buildCommentView viewerId c =
     Repo.findById Backend.Users.users c.authorId
         |> Effect.andThen
@@ -253,7 +253,7 @@ summarizeReactions viewerId rows =
 
 -- Loader for delete: returns the comment so the policy can check
 -- whether the caller is the author OR an admin.
-loadCommentByDelete : Shared.DeleteComment -> Shared.User -> Effect String (Maybe Shared.Comment)
+loadCommentByDelete : Shared.DeleteComment -> Shared.User -> Effect (Maybe Shared.Comment)
 loadCommentByDelete input _ =
     Repo.findById comments input.id
 

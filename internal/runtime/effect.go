@@ -210,3 +210,28 @@ func (e effectError) Error() string {
 func errEffect(msg string) error {
 	return effectError{value: VString{V: msg}}
 }
+
+// serviceErrorString folds a Service.Error value to its default display
+// string: plain English for the framework-built cases, the server's own
+// message for ServerError. Apps that want different copy, or per-case
+// behavior (retry on Offline, redirect on Unauthorized), match the union.
+func serviceErrorString(v Value) string {
+	c, ok := v.(VCtor)
+	if !ok {
+		return v.Display()
+	}
+	switch c.Tag {
+	case "Offline":
+		return "Can't reach the server. Check your connection and try again."
+	case "Unauthorized":
+		return "Your session has expired. Please sign in again."
+	case "ServerError":
+		if len(c.Args) == 1 {
+			if s, ok := c.Args[0].(VString); ok {
+				return s.V
+			}
+			return c.Args[0].Display()
+		}
+	}
+	return c.Tag
+}

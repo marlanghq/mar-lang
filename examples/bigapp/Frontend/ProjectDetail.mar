@@ -30,19 +30,19 @@ type alias Model =
     { project : Maybe Shared.Project
     , issues  : Maybe (List Shared.IssueView)
     , filter  : StatusFilter
-    , error   : Maybe String
+    , error   : Maybe Service.Error
     }
 
 
 type Msg
-    = ProjectFetched (Result String (Maybe Shared.Project))
-    | IssuesFetched (Result String (List Shared.IssueView))
+    = ProjectFetched (Result Service.Error (Maybe Shared.Project))
+    | IssuesFetched (Result Service.Error (List Shared.IssueView))
     | FilterChanged StatusFilter
     | DeleteClicked
-    | ProjectDeleted (Result String ())
+    | ProjectDeleted (Result Service.Error ())
 
 
-init : Shared.User -> { id : Int } -> (Model, Effect String Msg)
+init : Shared.User -> { id : Int } -> (Model, Effect Msg)
 init _ params =
     ( { project = Nothing
       , issues  = Nothing
@@ -55,7 +55,7 @@ init _ params =
 
 -- Helper that re-issues a listProjectIssues fetch for the active
 -- filter. Stale-while-revalidate keeps the previous list on screen.
-fetchIssuesFor : Int -> StatusFilter -> Effect String Msg
+fetchIssuesFor : Int -> StatusFilter -> Effect Msg
 fetchIssuesFor projectId filter =
     let
         input =
@@ -69,7 +69,7 @@ fetchIssuesFor projectId filter =
     Service.call Shared.listProjectIssues input IssuesFetched
 
 
-update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Effect Msg)
 update _ params msg model =
     case msg of
         ProjectFetched (Ok maybe) ->
@@ -183,10 +183,10 @@ headerSection maybeProject =
             section [] [ text [] "Loading project…" ]
 
 
-errorBanner : Maybe String -> View Msg
+errorBanner : Maybe Service.Error -> View Msg
 errorBanner maybeErr =
     case maybeErr of
-        Just why -> section [ header "Couldn't load" ] [ errorText why ]
+        Just why -> section [ header "Couldn't load" ] [ errorText (Service.errorToString why) ]
         Nothing  -> empty
 
 

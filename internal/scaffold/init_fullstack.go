@@ -33,7 +33,7 @@ import Frontend.Home
 import Frontend.About
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.fullstack
         { services = Backend.services
@@ -96,12 +96,12 @@ entries =
 
 
 -- Service handlers.
-listEntriesImpl : () -> Effect String (List Shared.Entry)
+listEntriesImpl : () -> Effect (List Shared.Entry)
 listEntriesImpl _ =
     Repo.all entries
 
 
-addEntryImpl : Shared.NewEntry -> Effect String Shared.Entry
+addEntryImpl : Shared.NewEntry -> Effect Shared.Entry
 addEntryImpl input =
     Repo.create entries input
 
@@ -165,17 +165,17 @@ type Msg
     | EntryAdded (Result String Shared.Entry)
 
 
-fetchEntries : Effect String Msg
+fetchEntries : Effect Msg
 fetchEntries =
     Service.call Shared.listEntries () EntriesFetched
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect Msg)
+init =
     ( { entries = Loading, draft = "" }, fetchEntries )
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update msg model =
     case msg of
         EntriesFetched (Ok loaded) ->
@@ -271,11 +271,11 @@ type Msg
     = NoOp
 
 
-init : () -> (Model, Effect String Msg)
-init _ = ((), Effect.none)
+init : (Model, Effect Msg)
+init = ((), Effect.none)
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update _ _ = ((), Effect.none)
 
 

@@ -273,6 +273,12 @@ var (
 	// we refused to keep telling ourselves — the comparator returns
 	// an Order, period.
 	TOrder = TCon{Name: "Order"}
+	// TServiceError — the failure a Service.call delivers to the frontend,
+	// in the Err of its Result. A union (Offline / Unauthorized /
+	// ServerError String) so transport failure is a value you case on, the
+	// Elm way, instead of a stringly-typed match. Constructors registered
+	// in builtinCustomTypes and the value envs of all three runtimes.
+	TServiceError = TCon{Name: "Service.Error"}
 )
 
 // TList returns the type "List elem".
@@ -302,9 +308,11 @@ func TSet(k Type) TCon {
 	return TCon{Name: "Set", Args: []Type{k}}
 }
 
-// TEffect returns "Effect e a".
-func TEffect(e, a Type) TCon {
-	return TCon{Name: "Effect", Args: []Type{e, a}}
+// TEffect returns "Effect a" — Mar's Cmd. One type parameter (the msg the
+// command eventually delivers), like Elm's Cmd. Failure is a value (carried
+// in a Result), never a type index, so there is no error parameter.
+func TEffect(a Type) TCon {
+	return TCon{Name: "Effect", Args: []Type{a}}
 }
 
 // TEntity returns the parameterized "Entity a" type — an entity describing

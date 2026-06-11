@@ -63,7 +63,7 @@ type Msg
     | FlavorChanged String
 
 
-init : (Model, Effect String Msg)
+init : (Model, Effect Msg)
 init =
     ( { priority = Medium
       , size     = 3
@@ -73,7 +73,7 @@ init =
     )
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update msg model =
     case msg of
         PriorityChanged p -> ( { model | priority = p }, Effect.none )

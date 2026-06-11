@@ -768,6 +768,16 @@
     def('EQ', VCtor('EQ'));
     def('GT', VCtor('GT'));
 
+    // Service.Error constructors — the transport failure a Service.call
+    // delivers in its Err. serviceCall builds these directly (see
+    // serviceErrorFromResponse / serviceErrorOffline); exposed here so user
+    // code can construct and pattern-match them.
+    def('Offline', VCtor('Offline'));
+    def('Unauthorized', VCtor('Unauthorized'));
+    def('ServerError', native(1, args => VCtor('ServerError', [args[0]])));
+    def('serviceErrorToString', native(1, ([e]) => VString(serviceErrorToStringJS(e))));
+    def('Service.errorToString', envLookup(env, 'serviceErrorToString'));
+
     // Arithmetic
     def('+', native(2, ([a, b]) => VInt(a.n + b.n)));
     def('-', native(2, ([a, b]) => VInt(a.n - b.n)));
@@ -2880,7 +2890,7 @@
             // function across the app.
             if (r.status === 401 && handleAuthExpired()) return;
             if (!r.ok) {
-              const msg = apply(toMsg, VCtor('Err', [VString(decodeServerError(r.body) || ('HTTP ' + r.status))]));
+              const msg = apply(toMsg, VCtor('Err', [serviceErrorFromResponse(r.status, r.body)]));
               if (currentDispatch) currentDispatch(msg);
               return;
             }
@@ -2888,7 +2898,9 @@
             try {
               parsed = jsToMar(JSON.parse(r.body));
             } catch (e) {
-              const msg = apply(toMsg, VCtor('Err', [VString('decode failed: ' + (e && e.message || e))]));
+              // Response arrived but its body was not decodable: a server
+              // contract bug, surfaced as a ServerError so the app can show it.
+              const msg = apply(toMsg, VCtor('Err', [VCtor('ServerError', [VString('decode failed: ' + (e && e.message || e))])]));
               if (currentDispatch) currentDispatch(msg);
               return;
             }
@@ -2896,7 +2908,9 @@
             if (currentDispatch) currentDispatch(msg);
           })
           .catch(err => {
-            const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
+            // fetch() rejects only when the request never completed (offline,
+            // DNS, connection dropped): that is the Offline case.
+            const msg = apply(toMsg, VCtor('Err', [serviceErrorOffline()]));
             if (currentDispatch) currentDispatch(msg);
           });
         return VUnit();
@@ -3043,6 +3057,28 @@
         }
       } catch (_) { /* fall through to raw body */ }
       return body;
+    }
+
+    // serviceErrorFromResponse / serviceErrorOffline build the Service.Error
+    // union a Service.call delivers in its Err. Mirrors the Go runtime
+    // (serviceErrorString) and Swift. Offline = request never reached the
+    // server; Unauthorized = 401; ServerError = anything else, carrying the
+    // server's message (the operator's snake_case code, intact).
+    function serviceErrorOffline() { return VCtor('Offline'); }
+    function serviceErrorFromResponse(status, body) {
+      if (status === 401) return VCtor('Unauthorized');
+      return VCtor('ServerError', [VString(decodeServerError(body) || ('HTTP ' + (status || 0)))]);
+    }
+    // serviceErrorToStringJS folds a Service.Error to its default display
+    // string. Keep these messages identical to the Go and Swift runtimes.
+    function serviceErrorToStringJS(e) {
+      if (!e || e.tag === undefined) return '';
+      switch (e.tag) {
+        case 'Offline': return "Can't reach the server. Check your connection and try again.";
+        case 'Unauthorized': return 'Your session has expired. Please sign in again.';
+        case 'ServerError': return (e.args && e.args[0] && e.args[0].s) || '';
+        default: return e.tag;
+      }
     }
 
     def('authRequestCode', native(2, ([req, toMsg]) => {

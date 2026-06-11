@@ -8,7 +8,7 @@ The syntax is Elm-style. The semantics are pure functional with effects tracked 
 
 ### 1.1 Philosophy
 
-- **Pure by default.** Side effects are values (`Effect e a`) that the runtime executes. User code describes; runtime acts.
+- **Pure by default.** Side effects are values (`Effect a`) that the runtime executes. User code describes; runtime acts.
 - **Compile-time correctness over runtime checks.** Types catch as much as possible.
 - **No hidden magic in user code.** Magic is allowed only at the boundary (HTTP encode/decode, schema migrations, etc.) — never in the middle of business logic.
 - **High level by default.** Low-level escape hatches are added only when proven necessary.
@@ -215,30 +215,40 @@ type SlugId = SlugId String
 
 This prevents mixing IDs of different entities at compile time. Mar's auto-derived codecs encode them transparently (the wrapper disappears on the wire).
 
-### 3.3 Effect e a
+### 3.3 Effect a
 
-The single type for effectful computations:
+The single type for effectful computations, Mar's `Cmd`:
 
 ```elm
-type Effect e a
+type Effect a
 ```
 
-Read as: "a computation that, when executed, produces either an `e` (failure) or an `a` (success)."
+Read as: "a computation that, when executed, eventually produces an `a`." One
+type parameter, like Elm's `Cmd`. Errors are values, never a type index: a
+failure travels inside the `a` (a `Result`), not in the effect type. A
+`Service.call` delivers `Result Service.Error resp`, where `Service.Error` is a
+union (`Offline` / `Unauthorized` / `ServerError String`) the frontend cases on.
 
-Used for backend handlers, database operations, network calls, and frontend commands. The runtime executes; user code only describes.
+Used for backend handlers, database operations, network calls, and frontend
+commands. The runtime executes; user code only describes.
 
 API:
 
 ```elm
-Effect.succeed   : a -> Effect e a
-Effect.fail      : e -> Effect e a
-Effect.none      : Effect Never msg
-Effect.map       : (a -> b) -> Effect e a -> Effect e b
-Effect.andThen   : (a -> Effect e b) -> Effect e a -> Effect e b
-Effect.mapError  : (e -> e2) -> Effect e a -> Effect e2 a
-Effect.batch     : List (Effect Never msg) -> Effect Never msg
-Effect.toMsg     : (Result e a -> msg) -> Effect e a -> Effect Never msg
+Effect.succeed   : a -> Effect a
+Effect.fail      : String -> Effect a   -- abort a backend handler with a message
+Effect.none      : Effect a
+Effect.map       : (a -> b) -> Effect a -> Effect b
+Effect.andThen   : (a -> Effect b) -> Effect a -> Effect b
+Effect.batch     : List (Effect a) -> Effect a
+Effect.forEach   : (a -> Effect ()) -> List a -> Effect ()
+Effect.sequence  : List (Effect a) -> Effect (List a)
 ```
+
+A page's `init` and `update` return `(Model, Effect Msg)`. `Effect.fail` is the
+backend abort channel: its String becomes the `Err` the frontend receives, so
+reserve it for genuine failures and keep matchable domain errors in the
+service's response value (a typed union) instead.
 
 `Effect Never msg` is "an effect that cannot fail and produces a Msg" — used in MVU `init` and `update` returns.
 

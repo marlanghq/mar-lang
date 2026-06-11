@@ -64,7 +64,7 @@ type Msg
     | Tapped
 
 
-init : (Model, Effect String Msg)
+init : (Model, Effect Msg)
 init =
     ( { locked = True
       , name   = ""
@@ -77,7 +77,7 @@ init =
     )
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update msg model =
     case msg of
         LockedChanged v -> ( { model | locked = v }, Effect.none )

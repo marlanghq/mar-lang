@@ -25,7 +25,7 @@ import UI exposing
 
 type alias Model =
     { items     : Maybe (List Shared.Project)
-    , error     : Maybe String
+    , error     : Maybe Service.Error
     -- ↓ sheet state (controlled by parent, per SwiftUI convention)
     , sheetOpen : Bool
     , draftName : String
@@ -36,17 +36,17 @@ type alias Model =
 
 
 type Msg
-    = ProjectsFetched (Result String (List Shared.Project))
+    = ProjectsFetched (Result Service.Error (List Shared.Project))
     | OpenSheet
     | CloseSheet
     | NameChanged String
     | SlugChanged String
     | DescChanged String
     | CreateClicked
-    | ProjectCreated (Result String Shared.Project)
+    | ProjectCreated (Result Service.Error Shared.Project)
 
 
-init : Shared.User -> (Model, Effect String Msg)
+init : Shared.User -> (Model, Effect Msg)
 init _ =
     ( { items     = Nothing
       , error     = Nothing
@@ -60,7 +60,7 @@ init _ =
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
 update _ msg model =
     case msg of
         ProjectsFetched (Ok items) ->
@@ -97,7 +97,7 @@ update _ msg model =
 
         CreateClicked ->
             if model.draftName == "" || model.draftSlug == "" then
-                ( { model | error = Just "Name and slug are required." }, Effect.none )
+                ( { model | error = Just (ServerError "Name and slug are required.") }, Effect.none )
             else
                 ( { model | creating = True, error = Nothing }
                 , Service.call Shared.createProject
@@ -185,11 +185,11 @@ projectsSection state =
                     (List.map projectRow items)
 
 
-errorBanner : Maybe String -> View Msg
+errorBanner : Maybe Service.Error -> View Msg
 errorBanner maybeErr =
     case maybeErr of
         Just why ->
-            section [ header "Couldn't process" ] [ errorText why ]
+            section [ header "Couldn't process" ] [ errorText (Service.errorToString why) ]
 
         Nothing ->
             empty

@@ -47,7 +47,7 @@ mentions =
 --
 -- Self-mentions are dropped — no inbox entry for the author when
 -- they tag themselves. Misses (typo, ex-member) silently skip.
-parseAndStoreMentions : Shared.Comment -> Effect String ()
+parseAndStoreMentions : Shared.Comment -> Effect ()
 parseAndStoreMentions comment =
     let
         handles =
@@ -127,7 +127,7 @@ isHandleChar c =
 
 -- resolveHandles looks up each handle against every user, returning
 -- the matching ids. List.filterMap drops un-resolvable handles.
-resolveHandles : List String -> Effect String (List Int)
+resolveHandles : List String -> Effect (List Int)
 resolveHandles handles =
     Repo.all Backend.Users.users
         |> Effect.map
@@ -165,7 +165,7 @@ handleFor user =
 -- storeMention inserts a Mention row IF the (comment, user) pair
 -- isn't already present. The pre-check makes retries silent; the
 -- UNIQUE constraint at the schema layer is the backstop.
-storeMention : Shared.Comment -> Int -> Effect String ()
+storeMention : Shared.Comment -> Int -> Effect ()
 storeMention comment userId =
     Repo.findBy mentions
         { commentId       = comment.id

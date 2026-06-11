@@ -34,17 +34,17 @@ type Model
 
 
 type Msg
-    = NoteFetched (Result String (Maybe Shared.Note))
+    = NoteFetched (Result Service.Error (Maybe Shared.Note))
 
 
-init : Shared.User -> { id : Int } -> (Model, Effect String Msg)
+init : Shared.User -> { id : Int } -> (Model, Effect Msg)
 init _ params =
     ( Loading
     , Service.call Shared.getNote { id = params.id } NoteFetched
     )
 
 
-update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Effect Msg)
 update _ _ msg model =
     case msg of
         NoteFetched (Ok (Just note)) ->

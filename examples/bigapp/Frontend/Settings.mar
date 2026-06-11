@@ -27,12 +27,12 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : Shared.User -> (Model, Effect String Msg)
+init : Shared.User -> (Model, Effect Msg)
 init _ =
     ( { signingOut = False }, Effect.none )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
 update _ msg model =
     case msg of
         SignOutClicked ->

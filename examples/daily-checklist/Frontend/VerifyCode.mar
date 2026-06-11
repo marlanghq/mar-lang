@@ -36,12 +36,12 @@ type Msg
     | CodeVerified (Result String Shared.User)
 
 
-init : { email : String } -> (Model, Effect String Msg)
+init : { email : String } -> (Model, Effect Msg)
 init _ =
     ( { draft = "", error = Nothing, busy = False }, Effect.none )
 
 
-update : { email : String } -> Msg -> Model -> (Model, Effect String Msg)
+update : { email : String } -> Msg -> Model -> (Model, Effect Msg)
 update params msg model =
     case msg of
         -- Typing clears the previous error so a stale failure

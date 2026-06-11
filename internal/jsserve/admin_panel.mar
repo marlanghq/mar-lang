@@ -155,14 +155,14 @@ type LoginMsg
     | CodeVerified (Result String { email : String })
 
 
-loginInit : ( LoginModel, Effect String LoginMsg )
+loginInit : ( LoginModel, Effect LoginMsg )
 loginInit =
     ( { email = "", code = "", stage = EmailEntry, error = Nothing, busy = False }
     , Effect.none
     )
 
 
-loginUpdate : LoginMsg -> LoginModel -> ( LoginModel, Effect String LoginMsg )
+loginUpdate : LoginMsg -> LoginModel -> ( LoginModel, Effect LoginMsg )
 loginUpdate msg model =
     case msg of
         EmailChanged v ->
@@ -266,14 +266,14 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : AdminSession -> ( Model, Effect String Msg )
+init : AdminSession -> ( Model, Effect Msg )
 init admin =
     ( { info = Loading, db = Loading, requests = Loading, backups = Loading }
     , Mar.Admin.serverInfo admin ServerInfoFetched
     )
 
 
-update : AdminSession -> Msg -> Model -> ( Model, Effect String Msg )
+update : AdminSession -> Msg -> Model -> ( Model, Effect Msg )
 update admin msg model =
     case msg of
         ServerInfoFetched (Ok info) ->
@@ -468,14 +468,14 @@ type TableMsg
     = TableRowsFetched (Result String (List (Dict String String)))
 
 
-tableInit : AdminSession -> { name : String } -> ( TableModel, Effect String TableMsg )
+tableInit : AdminSession -> { name : String } -> ( TableModel, Effect TableMsg )
 tableInit admin params =
     ( { rows = Loading }
     , Mar.Admin.listEntityRows admin params.name TableRowsFetched
     )
 
 
-tableUpdate : AdminSession -> { name : String } -> TableMsg -> TableModel -> ( TableModel, Effect String TableMsg )
+tableUpdate : AdminSession -> { name : String } -> TableMsg -> TableModel -> ( TableModel, Effect TableMsg )
 tableUpdate _ _ msg model =
     case msg of
         TableRowsFetched (Ok rs) ->
@@ -527,6 +527,6 @@ tablePage =
         }
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.frontend [ loginPage, page, tablePage ]

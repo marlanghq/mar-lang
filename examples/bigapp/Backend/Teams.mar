@@ -32,7 +32,7 @@ teams =
 -- New Issue) a quick lookup of everyone in the caller's team. Each
 -- row carries an `openIssues` count so the page can show capacity
 -- at a glance without a second round-trip.
-listMembers : () -> Shared.User -> Effect String (List Shared.TeamMemberView)
+listMembers : () -> Shared.User -> Effect (List Shared.TeamMemberView)
 listMembers _ user =
     Repo.findBy Backend.Users.users { teamId = user.teamId }
         |> Effect.andThen
@@ -42,7 +42,7 @@ listMembers _ user =
             )
 
 
-annotateMember : Int -> Shared.User -> Effect String Shared.TeamMemberView
+annotateMember : Int -> Shared.User -> Effect Shared.TeamMemberView
 annotateMember _ member =
     Backend.Issues.countOpenForAssignee member.id
         |> Effect.map
@@ -60,7 +60,7 @@ annotateMember _ member =
 -- updateMemberRole flips a member's role. Admin-only — gated by the
 -- decorator stack in `services` below. Same-team check ensures an
 -- admin from team A can't bump a user in team B.
-updateMemberRole : Shared.UpdateMemberRole -> Shared.User -> Effect String (Maybe Shared.User)
+updateMemberRole : Shared.UpdateMemberRole -> Shared.User -> Effect (Maybe Shared.User)
 updateMemberRole input _ =
     Repo.update Backend.Users.users input.userId { role = input.role }
 
@@ -68,7 +68,7 @@ updateMemberRole input _ =
 -- Loader used by the ABAC authorize decorator. Returns Nothing when
 -- the userId doesn't exist (translated to 404); returns Just when it
 -- does (passed through to the policy).
-loadMemberByID : Shared.UpdateMemberRole -> Shared.User -> Effect String (Maybe Shared.User)
+loadMemberByID : Shared.UpdateMemberRole -> Shared.User -> Effect (Maybe Shared.User)
 loadMemberByID input _ =
     Repo.findById Backend.Users.users input.userId
 

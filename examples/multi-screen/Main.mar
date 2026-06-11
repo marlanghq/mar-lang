@@ -33,11 +33,11 @@ todosPath = "/todos"
 type CounterMsg = Inc | Dec
 
 
-counterInit : (Int, Effect String CounterMsg)
+counterInit : (Int, Effect CounterMsg)
 counterInit = (0, Effect.none)
 
 
-counterUpdate : CounterMsg -> Int -> (Int, Effect String CounterMsg)
+counterUpdate : CounterMsg -> Int -> (Int, Effect CounterMsg)
 counterUpdate msg model =
     case msg of
         Inc -> (model + 1, Effect.none)
@@ -75,11 +75,11 @@ type alias TodoModel = { items : List String, draft : String }
 type TodoMsg = DraftChanged String | AddItem | Clear
 
 
-todoInit : (TodoModel, Effect String TodoMsg)
+todoInit : (TodoModel, Effect TodoMsg)
 todoInit = ({ items = [], draft = "" }, Effect.none)
 
 
-todoUpdate : TodoMsg -> TodoModel -> (TodoModel, Effect String TodoMsg)
+todoUpdate : TodoMsg -> TodoModel -> (TodoModel, Effect TodoMsg)
 todoUpdate msg model =
     case msg of
         DraftChanged value -> ({ model | draft = value }, Effect.none)
@@ -119,6 +119,6 @@ todoPage =
         }
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.frontend [ counterPage, todoPage ]

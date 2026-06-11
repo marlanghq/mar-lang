@@ -13,7 +13,7 @@ import Shared
 -- the first paint feel slow.
 
 
-load : () -> Shared.User -> Effect String Shared.DashboardData
+load : () -> Shared.User -> Effect Shared.DashboardData
 load _ user =
     Repo.findBy Backend.Projects.projects { teamId = user.teamId }
         |> Effect.andThen

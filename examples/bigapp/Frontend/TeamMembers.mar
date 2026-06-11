@@ -18,25 +18,25 @@ import UI exposing
 
 type alias Model =
     { members : Maybe (List Shared.TeamMemberView)
-    , error   : Maybe String
+    , error   : Maybe Service.Error
     , pending : Int  -- userId currently mid-update (0 = none); disables their row
     }
 
 
 type Msg
-    = MembersFetched (Result String (List Shared.TeamMemberView))
+    = MembersFetched (Result Service.Error (List Shared.TeamMemberView))
     | RoleToggled Int Role
-    | RoleUpdated (Result String (Maybe Shared.User))
+    | RoleUpdated (Result Service.Error (Maybe Shared.User))
 
 
-init : Shared.User -> (Model, Effect String Msg)
+init : Shared.User -> (Model, Effect Msg)
 init _ =
     ( { members = Nothing, error = Nothing, pending = 0 }
     , Service.call Shared.listTeamMembers () MembersFetched
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
 update _ msg model =
     case msg of
         MembersFetched (Ok items) ->
@@ -125,7 +125,7 @@ view user model =
         errorBlock =
             case model.error of
                 Just why ->
-                    section [ header "Couldn't update" ] [ text [] why ]
+                    section [ header "Couldn't update" ] [ text [] (Service.errorToString why) ]
 
                 Nothing ->
                     empty

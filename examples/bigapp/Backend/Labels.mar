@@ -44,12 +44,12 @@ issueLabels =
 -- LABEL HANDLERS
 -- ====================================================================
 
-listForProject : Shared.ListProjectLabels -> Shared.User -> Effect String (List Shared.Label)
+listForProject : Shared.ListProjectLabels -> Shared.User -> Effect (List Shared.Label)
 listForProject input _ =
     Repo.findBy labels { projectId = input.projectId }
 
 
-createLabel : Shared.NewLabel -> Shared.User -> Effect String Shared.Label
+createLabel : Shared.NewLabel -> Shared.User -> Effect Shared.Label
 createLabel input _ =
     Time.now
         |> Effect.andThen
@@ -63,7 +63,7 @@ createLabel input _ =
             )
 
 
-removeLabel : Shared.DeleteLabel -> Shared.User -> Effect String ()
+removeLabel : Shared.DeleteLabel -> Shared.User -> Effect ()
 removeLabel input _ =
     Repo.deleteById labels input.id
 
@@ -72,7 +72,7 @@ removeLabel input _ =
 -- ATTACHMENT HANDLERS
 -- ====================================================================
 
-attach : Shared.AttachLabel -> Shared.User -> Effect String Shared.IssueLabel
+attach : Shared.AttachLabel -> Shared.User -> Effect Shared.IssueLabel
 attach input _ =
     Repo.create issueLabels
         { issueId = input.issueId
@@ -80,7 +80,7 @@ attach input _ =
         }
 
 
-detach : Shared.DetachLabel -> Shared.User -> Effect String ()
+detach : Shared.DetachLabel -> Shared.User -> Effect ()
 detach input _ =
     -- The simple Repo doesn't have a delete-by-where yet, so we
     -- fetch + filter + delete. For example-app traffic this is
@@ -95,7 +95,7 @@ detach input _ =
             )
 
 
-listForIssue : Shared.ListIssueLabels -> Shared.User -> Effect String (List Shared.Label)
+listForIssue : Shared.ListIssueLabels -> Shared.User -> Effect (List Shared.Label)
 listForIssue input _ =
     Repo.findBy issueLabels { issueId = input.issueId }
         |> Effect.andThen
@@ -123,7 +123,7 @@ listForIssue input _ =
 -- AUTHORIZATION
 -- ====================================================================
 
-loadLabelByDelete : Shared.DeleteLabel -> Shared.User -> Effect String (Maybe Shared.Label)
+loadLabelByDelete : Shared.DeleteLabel -> Shared.User -> Effect (Maybe Shared.Label)
 loadLabelByDelete input _ =
     Repo.findById labels input.id
 

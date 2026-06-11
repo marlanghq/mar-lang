@@ -34,12 +34,12 @@ type Msg
     | ClearAll
 
 
-init : (Model, Effect String Msg)
+init : (Model, Effect Msg)
 init =
     ({ nextId = 1, items = [], draft = "" }, Effect.none)
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update msg model =
     case msg of
         DraftChanged value ->
@@ -102,6 +102,6 @@ page =
         }
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.frontend [ page ]

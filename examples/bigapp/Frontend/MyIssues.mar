@@ -18,22 +18,22 @@ import UI exposing
 
 type alias Model =
     { items : Maybe (List Shared.IssueView)
-    , error : Maybe String
+    , error : Maybe Service.Error
     }
 
 
 type Msg
-    = IssuesFetched (Result String (List Shared.IssueView))
+    = IssuesFetched (Result Service.Error (List Shared.IssueView))
 
 
-init : Shared.User -> (Model, Effect String Msg)
+init : Shared.User -> (Model, Effect Msg)
 init _ =
     ( { items = Nothing, error = Nothing }
     , Service.call Shared.myOpenIssues () IssuesFetched
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
 update _ msg model =
     case msg of
         IssuesFetched (Ok items) ->
@@ -70,7 +70,7 @@ renderBody : Model -> List (View Msg)
 renderBody model =
     case model.error of
         Just why ->
-            [ section [ header "Couldn't load" ] [ errorText why ] ]
+            [ section [ header "Couldn't load" ] [ errorText (Service.errorToString why) ] ]
 
         Nothing ->
             case model.items of

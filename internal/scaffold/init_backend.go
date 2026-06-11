@@ -64,12 +64,12 @@ addEntry = Service.declare
 
 
 -- Service handlers.
-listEntriesImpl : () -> Effect String (List Entry)
+listEntriesImpl : () -> Effect (List Entry)
 listEntriesImpl _ =
     Repo.all entries
 
 
-addEntryImpl : NewEntry -> Effect String Entry
+addEntryImpl : NewEntry -> Effect Entry
 addEntryImpl input =
     Repo.create entries input
 
@@ -80,7 +80,7 @@ services =
     ]
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.backend
         { routes   = []

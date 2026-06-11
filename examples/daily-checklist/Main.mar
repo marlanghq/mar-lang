@@ -39,7 +39,7 @@ auth =
         }
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.fullstack
         { services = Backend.Tasks.services

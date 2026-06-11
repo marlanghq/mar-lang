@@ -48,7 +48,7 @@ auth =
         }
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.fullstack
         { services = Backend.services
@@ -131,12 +131,12 @@ entries =
 -- Service handlers. Each takes the authenticated User as its second
 -- arg. Auth.protect (below) injects it; missing/expired sessions
 -- return 401 before the handler runs.
-listMine : () -> Shared.User -> Effect String (List Shared.Entry)
+listMine : () -> Shared.User -> Effect (List Shared.Entry)
 listMine _ user =
     Repo.findBy entries { authorId = user.id }
 
 
-createMine : Shared.NewEntry -> Shared.User -> Effect String Shared.Entry
+createMine : Shared.NewEntry -> Shared.User -> Effect Shared.Entry
 createMine input user =
     Repo.create entries
         { body     = input.body
@@ -193,12 +193,12 @@ type Msg
     | CodeVerified (Result String Shared.User)
 
 
-init : () -> (Model, Effect String Msg)
-init _ =
+init : (Model, Effect Msg)
+init =
     ( AskEmail "" Nothing, Effect.none )
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update msg model =
     case msg of
         -- Typing clears any pending error.
@@ -363,14 +363,14 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : Shared.User -> () -> (Model, Effect String Msg)
-init _ _ =
+init : Shared.User -> (Model, Effect Msg)
+init =
     ( { entries = Loading, draft = "" }
     , Service.call Shared.listMine () EntriesLoaded
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
 update _ msg model =
     case msg of
         EntriesLoaded (Ok loaded) ->

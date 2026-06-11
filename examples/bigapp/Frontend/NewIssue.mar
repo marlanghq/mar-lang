@@ -26,7 +26,7 @@ type alias Model =
     , assigneeId  : Int
     , milestones  : Maybe (List Shared.Milestone)
     , milestoneId : Int
-    , error       : Maybe String
+    , error       : Maybe Service.Error
     , submitting  : Bool
     }
 
@@ -37,13 +37,13 @@ type Msg
     | PriorityChanged IssuePriority
     | AssigneeChanged Int
     | MilestoneChanged Int
-    | MembersFetched (Result String (List Shared.TeamMemberView))
-    | MilestonesFetched (Result String (List Shared.Milestone))
+    | MembersFetched (Result Service.Error (List Shared.TeamMemberView))
+    | MilestonesFetched (Result Service.Error (List Shared.Milestone))
     | SubmitClicked
-    | IssueCreated (Result String Shared.Issue)
+    | IssueCreated (Result Service.Error Shared.Issue)
 
 
-init : Shared.User -> { projectId : Int } -> (Model, Effect String Msg)
+init : Shared.User -> { projectId : Int } -> (Model, Effect Msg)
 init user params =
     ( { title       = ""
       , description = ""
@@ -64,7 +64,7 @@ init user params =
     )
 
 
-update : Shared.User -> { projectId : Int } -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> { projectId : Int } -> Msg -> Model -> (Model, Effect Msg)
 update _ params msg model =
     case msg of
         TitleChanged value ->
@@ -96,7 +96,7 @@ update _ params msg model =
 
         SubmitClicked ->
             if model.title == "" then
-                ( { model | error = Just "Title is required." }, Effect.none )
+                ( { model | error = Just (ServerError "Title is required.") }, Effect.none )
             else
                 ( { model | submitting = True, error = Nothing }
                 , Service.call Shared.createIssue
@@ -200,7 +200,7 @@ view _ _ model =
         errorBlock =
             case model.error of
                 Just why ->
-                    section [ header "Couldn't create" ] [ text [] why ]
+                    section [ header "Couldn't create" ] [ text [] (Service.errorToString why) ]
 
                 Nothing ->
                     section [] []

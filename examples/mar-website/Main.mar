@@ -55,7 +55,7 @@ import Frontend.Showcase.Images
 -- here, it's a gap in the framework, not in the content.
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.frontend
         [ Frontend.Home.page

@@ -21,7 +21,7 @@ import UI exposing
 type alias Model =
     { query    : String
     , results  : Maybe (List Shared.IssueView)
-    , error    : Maybe String
+    , error    : Maybe Service.Error
     , lastFired : String
     }
 
@@ -29,18 +29,18 @@ type alias Model =
 type Msg
     = QueryChanged String
     | SearchSubmitted
-    | ResultsFetched (Result String (List Shared.IssueView))
+    | ResultsFetched (Result Service.Error (List Shared.IssueView))
     | ClearClicked
 
 
-init : Shared.User -> (Model, Effect String Msg)
+init : Shared.User -> (Model, Effect Msg)
 init _ =
     ( { query = "", results = Nothing, error = Nothing, lastFired = "" }
     , Effect.none
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
 update _ msg model =
     case msg of
         QueryChanged value ->
@@ -48,7 +48,7 @@ update _ msg model =
 
         SearchSubmitted ->
             if model.query == "" then
-                ( { model | error = Just "Enter a search term." }, Effect.none )
+                ( { model | error = Just (ServerError "Enter a search term.") }, Effect.none )
             else
                 ( { model | error = Nothing, lastFired = model.query }
                 , Service.call Shared.searchIssues { query = model.query } ResultsFetched
@@ -124,7 +124,7 @@ view _ model =
                     ]
                 ]
             , case model.error of
-                Just why -> section [ header "Heads up" ] [ errorText why ]
+                Just why -> section [ header "Heads up" ] [ errorText (Service.errorToString why) ]
                 Nothing  -> empty
             , resultsSection model
             ]

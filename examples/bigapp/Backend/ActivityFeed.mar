@@ -21,7 +21,7 @@ import Shared exposing
 -- Issues / Projects.
 
 
-listRecent : Shared.ListRecentActivity -> Shared.User -> Effect String (List Shared.ActivityView)
+listRecent : Shared.ListRecentActivity -> Shared.User -> Effect (List Shared.ActivityView)
 listRecent input user =
     let
         cap =
@@ -58,7 +58,7 @@ listRecent input user =
             )
 
 
-buildActivityView : Shared.Activity -> Effect String Shared.ActivityView
+buildActivityView : Shared.Activity -> Effect Shared.ActivityView
 buildActivityView a =
     Repo.findById Backend.Users.users a.actorId
         |> Effect.andThen
@@ -91,7 +91,7 @@ buildActivityView a =
 -- the comment-flavored emitX helpers). For project activities,
 -- the context fields stay empty — the row itself has the project
 -- name in `extra`.
-resolveIssueContext : Shared.Activity -> Effect String { issueNumber : Int, issueTitle : String, projectSlug : String }
+resolveIssueContext : Shared.Activity -> Effect { issueNumber : Int, issueTitle : String, projectSlug : String }
 resolveIssueContext a =
     case a.subject of
         OnIssue ->
@@ -111,7 +111,7 @@ resolveIssueContext a =
             Effect.succeed { issueNumber = 0, issueTitle = "", projectSlug = "" }
 
 
-lookupIssueContext : Int -> Effect String { issueNumber : Int, issueTitle : String, projectSlug : String }
+lookupIssueContext : Int -> Effect { issueNumber : Int, issueTitle : String, projectSlug : String }
 lookupIssueContext issueId =
     Repo.findById Backend.Issues.issues issueId
         |> Effect.andThen

@@ -169,8 +169,15 @@ func serverErrorResponse(err error) Value {
 	// effectError is propagated unwrapped through the effect chain, so a
 	// direct type assertion catches a user-authored Effect.fail value; any
 	// other (wrapped or internal) error falls through to the sanitized path.
-	if _, ok := err.(effectError); ok {
-		return makeResp(500, err.Error())
+	// Send the raw message (e.g. "not_found"), not the Go-side "effect
+	// error: ..." prefix that err.Error() adds: the frontend wraps this
+	// body in ServerError, and the operator's snake_case codes must
+	// survive intact for matching.
+	if ee, ok := err.(effectError); ok {
+		if s, ok := ee.value.(VString); ok {
+			return makeResp(500, s.V)
+		}
+		return makeResp(500, ee.value.Display())
 	}
 	fmt.Fprintf(os.Stderr, "[mar] handler error: %v\n", err)
 	return makeResp(500, "internal server error")

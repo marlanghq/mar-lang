@@ -14,7 +14,7 @@ import Backend
 import Frontend
 
 
-main : Effect String ()
+main : Effect ()
 main =
     App.fullstack
         { services = Backend.services

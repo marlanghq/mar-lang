@@ -196,7 +196,7 @@ the user's role:
 
 ```mar
 Auth.authorize :
-    (input -> User -> Effect String resource)        -- how to load the resource
+    (input -> User -> Effect resource)        -- how to load the resource
     -> (input -> User -> resource -> Bool)           -- the policy
     -> ExposedService
     -> ExposedService
@@ -211,13 +211,13 @@ canEditNote _ user note =
     note.authorId == user.id
 
 
-loadNote : { id : Int, body : String } -> Shared.User -> Effect String Shared.Note
+loadNote : { id : Int, body : String } -> Shared.User -> Effect Shared.Note
 loadNote input _ =
     Repo.findOne notes { id = input.id }
         |> Effect.unwrap "note not found"
 
 
-editNote : { id : Int, body : String } -> Shared.User -> Effect String Shared.Note
+editNote : { id : Int, body : String } -> Shared.User -> Effect Shared.Note
 editNote input _ =
     Repo.update notes { id = input.id } { body = input.body }
 
@@ -243,7 +243,7 @@ it must equal `user.id`". Sugar for that:
 
 ```mar
 Auth.requireOwner :
-    (input -> User -> Effect String resource)
+    (input -> User -> Effect resource)
     -> (resource -> Int)                             -- ownerId field selector
     -> ExposedService
     -> ExposedService
@@ -481,7 +481,7 @@ type VService struct {
 
     // Authorization gates (this proposal).
     RequireRole  Value  // value compared against auth.role(user)
-    LoadResource Value  // input -> user -> Effect String (Maybe resource)
+    LoadResource Value  // input -> user -> Effect (Maybe resource)
     Policy       Value  // input -> user -> resource -> Bool
 }
 ```

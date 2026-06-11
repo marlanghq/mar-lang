@@ -30,17 +30,17 @@ projects =
 -- HANDLERS
 -- ====================================================================
 
-listMine : () -> Shared.User -> Effect String (List Shared.Project)
+listMine : () -> Shared.User -> Effect (List Shared.Project)
 listMine _ user =
     Repo.findBy projects { teamId = user.teamId }
 
 
-getOne : Shared.GetProject -> Shared.User -> Effect String (Maybe Shared.Project)
+getOne : Shared.GetProject -> Shared.User -> Effect (Maybe Shared.Project)
 getOne input _ =
     Repo.findById projects input.id
 
 
-create : Shared.NewProject -> Shared.User -> Effect String Shared.Project
+create : Shared.NewProject -> Shared.User -> Effect Shared.Project
 create input user =
     Time.now
         |> Effect.andThen
@@ -60,7 +60,7 @@ create input user =
             )
 
 
-edit : Shared.EditProject -> Shared.User -> Effect String (Maybe Shared.Project)
+edit : Shared.EditProject -> Shared.User -> Effect (Maybe Shared.Project)
 edit input _ =
     Repo.update projects input.id
         { name        = input.name
@@ -68,7 +68,7 @@ edit input _ =
         }
 
 
-remove : Shared.DeleteProject -> Shared.User -> Effect String ()
+remove : Shared.DeleteProject -> Shared.User -> Effect ()
 remove input user =
     Repo.findById projects input.id
         |> Effect.andThen
@@ -93,17 +93,17 @@ remove input user =
 -- Loaders materialize the resource so the policy can inspect it
 -- before the handler runs.
 
-loadByGet : Shared.GetProject -> Shared.User -> Effect String (Maybe Shared.Project)
+loadByGet : Shared.GetProject -> Shared.User -> Effect (Maybe Shared.Project)
 loadByGet input _ =
     Repo.findById projects input.id
 
 
-loadByEdit : Shared.EditProject -> Shared.User -> Effect String (Maybe Shared.Project)
+loadByEdit : Shared.EditProject -> Shared.User -> Effect (Maybe Shared.Project)
 loadByEdit input _ =
     Repo.findById projects input.id
 
 
-loadByDelete : Shared.DeleteProject -> Shared.User -> Effect String (Maybe Shared.Project)
+loadByDelete : Shared.DeleteProject -> Shared.User -> Effect (Maybe Shared.Project)
 loadByDelete input _ =
     Repo.findById projects input.id
 

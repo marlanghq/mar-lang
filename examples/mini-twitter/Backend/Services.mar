@@ -16,7 +16,7 @@ import Backend.Follows exposing (follows)
 --   Auth.protect contract handler
 --     |> Auth.authorize loadResource policy   -- ABAC
 --
--- The handler signature is `input -> User -> Effect String result`
+-- The handler signature is `input -> User -> Effect result`
 -- — every protected handler receives the authenticated user. The
 -- decorators run BEFORE the handler; a denial short-circuits with
 -- 403 (or 404 if the loader returned Nothing).
@@ -28,7 +28,7 @@ import Backend.Follows exposing (follows)
 -- after sign-in, the home page calls `me` and routes to
 -- /setup-profile if the handle is empty.
 
-meHandler : () -> Shared.User -> Effect String Shared.User
+meHandler : () -> Shared.User -> Effect Shared.User
 meHandler _ user =
     Effect.succeed user
 
@@ -39,7 +39,7 @@ meHandler _ user =
 -- the entity, so we can evolve without a schema migration). Empty
 -- body after trim → reject with a transport-level error string.
 
-composeTweet : Shared.NewTweet -> Shared.User -> Effect String Shared.Tweet
+composeTweet : Shared.NewTweet -> Shared.User -> Effect Shared.Tweet
 composeTweet input user =
     let
         body = String.trim input.body
@@ -58,7 +58,7 @@ composeTweet input user =
                     })
 
 
-deleteTweet : Shared.DeleteTweet -> Shared.User -> Effect String ()
+deleteTweet : Shared.DeleteTweet -> Shared.User -> Effect ()
 deleteTweet input _ =
     Repo.deleteById tweets input.id
 
@@ -67,7 +67,7 @@ deleteTweet input _ =
 -- the policy can compare its authorId to the caller's id. Nothing
 -- → 404; mismatch → 403.
 
-loadTweetForOwner : Shared.DeleteTweet -> Shared.User -> Effect String (Maybe Shared.Tweet)
+loadTweetForOwner : Shared.DeleteTweet -> Shared.User -> Effect (Maybe Shared.Tweet)
 loadTweetForOwner input _ =
     Repo.findById tweets input.id
 
@@ -89,7 +89,7 @@ tweetIsOwn _ user tweet =
 -- example is unbounded and trusts the rate-limit middleware to
 -- prevent abuse.
 
-loadTimeline : () -> Shared.User -> Effect String (List Shared.TweetView)
+loadTimeline : () -> Shared.User -> Effect (List Shared.TweetView)
 loadTimeline _ user =
     -- Step 1: people I follow.
     Repo.findBy follows { followerId = user.id }
@@ -122,7 +122,7 @@ loadTimeline _ user =
                     Effect.sequence views))
 
 
-toTweetView : Shared.User -> Shared.Tweet -> Effect String Shared.TweetView
+toTweetView : Shared.User -> Shared.Tweet -> Effect Shared.TweetView
 toTweetView viewer tweet =
     Repo.findById users tweet.authorId
         |> Effect.andThen (\maybeAuthor ->
@@ -159,7 +159,7 @@ toTweetView viewer tweet =
 -- found (a fresh-signup user that hasn't completed setup yet
 -- shouldn't be reachable by handle).
 
-loadProfile : Shared.ProfileQuery -> Shared.User -> Effect String (Maybe Shared.ProfileView)
+loadProfile : Shared.ProfileQuery -> Shared.User -> Effect (Maybe Shared.ProfileView)
 loadProfile input viewer =
     Repo.findBy users { handle = input.handle }
         |> Effect.andThen (\matches ->
@@ -171,7 +171,7 @@ loadProfile input viewer =
                     buildProfileView viewer target)
 
 
-buildProfileView : Shared.User -> Shared.User -> Effect String (Maybe Shared.ProfileView)
+buildProfileView : Shared.User -> Shared.User -> Effect (Maybe Shared.ProfileView)
 buildProfileView viewer target =
     Repo.findBy tweets { authorId = target.id }
         |> Effect.andThen (\theirTweets ->
@@ -209,7 +209,7 @@ buildProfileView viewer target =
 
 -- ---------- follow / unfollow ----------
 
-followUser : Shared.FollowAction -> Shared.User -> Effect String ()
+followUser : Shared.FollowAction -> Shared.User -> Effect ()
 followUser input user =
     Repo.findBy users { handle = input.handle }
         |> Effect.andThen (\matches ->
@@ -240,7 +240,7 @@ followUser input user =
                                                 |> Effect.map (\_ -> ()))))
 
 
-unfollowUser : Shared.FollowAction -> Shared.User -> Effect String ()
+unfollowUser : Shared.FollowAction -> Shared.User -> Effect ()
 unfollowUser input user =
     Repo.findBy users { handle = input.handle }
         |> Effect.andThen (\matches ->
@@ -269,7 +269,7 @@ unfollowUser input user =
 -- handle / display name. We validate the handle locally (alnum +
 -- underscore, 1–20 chars) and reject collisions.
 
-setupProfile : Shared.ProfileSetup -> Shared.User -> Effect String Shared.User
+setupProfile : Shared.ProfileSetup -> Shared.User -> Effect Shared.User
 setupProfile input user =
     let
         handle      = String.trim input.handle
@@ -298,7 +298,7 @@ setupProfile input user =
                             Effect.fail "handle is taken")
 
 
-applyProfileUpdate : Int -> String -> String -> String -> Effect String Shared.User
+applyProfileUpdate : Int -> String -> String -> String -> Effect Shared.User
 applyProfileUpdate userId handle displayName bio =
     Repo.update users userId
         { handle      = handle

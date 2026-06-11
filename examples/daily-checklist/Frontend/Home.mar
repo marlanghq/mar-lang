@@ -58,7 +58,7 @@ import UI exposing
 -- means the dialog is open and a Delete tap will remove that task.
 type alias Model =
     { items            : Maybe (List Shared.Task)
-    , error            : Maybe String
+    , error            : Maybe Service.Error
     , draft            : String
     , busy             : Bool
     , editing          : Bool
@@ -67,27 +67,27 @@ type alias Model =
 
 
 type Msg
-    = TasksFetched (Result String (List Shared.Task))
+    = TasksFetched (Result Service.Error (List Shared.Task))
     | DraftChanged String
     | AddClicked
-    | TaskAdded (Result String Shared.Task)
+    | TaskAdded (Result Service.Error Shared.Task)
     | ToggleChanged Int Bool
-    | TaskUpdated Int Bool (Result String (Maybe Shared.Task))
+    | TaskUpdated Int Bool (Result Service.Error (Maybe Shared.Task))
     | DeleteRowAt Int                          -- onDelete fires; opens confirm
     | DeleteConfirmed                          -- user tapped Delete on confirm
     | DeleteCancelled                          -- user tapped Cancel / backdrop / Esc
-    | TaskDeleted (Result String ())
+    | TaskDeleted (Result Service.Error ())
     | ResetAllClicked
-    | ResetDone (List Shared.Task) (Result String ())
+    | ResetDone (List Shared.Task) (Result Service.Error ())
     | EditClicked
     | DoneEditingClicked
     | TaskMoved Int Int
-    | TaskReordered (Result String ())
+    | TaskReordered (Result Service.Error ())
     | SignOutClicked
     | SignedOut (Result String ())
 
 
-init : Shared.User -> (Model, Effect String Msg)
+init : Shared.User -> (Model, Effect Msg)
 init _ =
     ( { items = Nothing
       , error = Nothing
@@ -100,7 +100,7 @@ init _ =
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect String Msg)
+update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
 update _ msg model =
     case msg of
         TasksFetched (Ok items) ->
@@ -461,7 +461,7 @@ errorSection : Model -> List (View Msg)
 errorSection model =
     case model.error of
         Just why ->
-            [ section [ header "Something went wrong" ] [ errorText why ] ]
+            [ section [ header "Something went wrong" ] [ errorText (Service.errorToString why) ] ]
 
         Nothing ->
             []

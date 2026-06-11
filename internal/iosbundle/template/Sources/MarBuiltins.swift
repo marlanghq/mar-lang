@@ -34,6 +34,27 @@ enum MarBuiltins {
         env.define("EQ",    .ctor(tag: "EQ", args: [], origin: nil))
         env.define("GT",    .ctor(tag: "GT", args: [], origin: nil))
 
+        // Service.Error constructors — the transport failure a Service.call
+        // delivers in its Err. MarHTTP builds these directly; exposed here so
+        // user code can construct and pattern-match them. Keep the
+        // errorToString messages identical to the Go and JS runtimes.
+        env.define("Offline", .ctor(tag: "Offline", args: [], origin: nil))
+        env.define("Unauthorized", .ctor(tag: "Unauthorized", args: [], origin: nil))
+        env.define("ServerError", .fn(MarFn.native(1) { .ctor(tag: "ServerError", args: $0, origin: nil) }))
+        let serviceErrorToString = MarFn.native(1) { args -> MarValue in
+            guard case let .ctor(tag, cargs, _) = args[0] else { return .string("") }
+            switch tag {
+            case "Offline": return .string("Can't reach the server. Check your connection and try again.")
+            case "Unauthorized": return .string("Your session has expired. Please sign in again.")
+            case "ServerError":
+                if case let .string(s)? = cargs.first { return .string(s) }
+                return .string("")
+            default: return .string(tag)
+            }
+        }
+        env.define("serviceErrorToString", .fn(serviceErrorToString))
+        env.define("Service.errorToString", .fn(serviceErrorToString))
+
         // MARK: Arithmetic (integer for now; matches runtime.js)
         env.define("+", .fn(MarFn.native(2) { args in .int(asInt(args[0]) + asInt(args[1])) }))
         env.define("-", .fn(MarFn.native(2) { args in .int(asInt(args[0]) - asInt(args[1])) }))

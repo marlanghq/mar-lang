@@ -24,11 +24,11 @@ type Msg
     = NoOp
 
 
-init : (Model, Effect String Msg)
+init : (Model, Effect Msg)
 init = ((), Effect.none)
 
 
-update : Msg -> Model -> (Model, Effect String Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update _ _ = ((), Effect.none)
 
 
