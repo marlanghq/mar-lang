@@ -372,7 +372,7 @@ labelsSection attached projectLabels =
     in
     section
         [ header "Labels"
-        , footer "Attaching/detaching coming soon — UI buttons land in a follow-up."
+        , footer "Attaching/detaching coming soon. UI buttons land in a follow-up."
         ]
         [ subtitle "Attached"
         , attachedBody

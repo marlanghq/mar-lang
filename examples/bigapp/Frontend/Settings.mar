@@ -72,7 +72,7 @@ view user model =
                 ]
             , section [ header "Session" ]
                 [ button [] SignOutClicked ctaLabel ]
-            , section [ footer "BigApp — built to stress-test mar over a real codebase." ] []
+            , section [ footer "BigApp, built to stress-test mar over a real codebase." ] []
             ]
         ]
 

@@ -170,7 +170,7 @@ milestoneSection state current =
         Just milestones ->
             if List.isEmpty milestones then
                 section [ header "Milestone" ]
-                    [ subtitle "No milestones yet — create one in project settings." ]
+                    [ subtitle "No milestones yet. Create one in project settings." ]
             else
                 section [ header "Milestone" ]
                     [ picker []

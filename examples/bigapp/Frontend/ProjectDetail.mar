@@ -140,7 +140,7 @@ issueRow : Shared.IssueView -> View Msg
 issueRow issue =
     navigationLink [] Frontend.Routes.issueDetail { id = issue.id }
         (vstack []
-            [ text [] ("#" ++ String.fromInt issue.number ++ " — " ++ issue.title)
+            [ text [] ("#" ++ String.fromInt issue.number ++ ": " ++ issue.title)
             , subtitle
                 ( Shared.statusLabel issue.status
                     ++ " · " ++ Shared.priorityLabel issue.priority

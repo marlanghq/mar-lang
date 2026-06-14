@@ -628,12 +628,10 @@ func checkExhaustivePatterns(subjectType Type, patterns []ast.Pattern, env *Type
 					argPats = append(argPats, row[argIdx])
 				}
 			}
-			// Substitute the constructor's type vars with the actual
-			// type-arguments from the subject's TCon. e.g. inside
-			// `LoadedNotes (Ok r)` matched on `Msg`, the constructor's
-			// arg type is `Result String String` (concrete) — the args
-			// of Result drive the recursion only if we descend further.
-			substituted := substituteCtorArg(argType, ct.Params, tc.Args)
+			// Specialize the constructor's declared arg type for the
+			// concrete subject so recursion descends into the right
+			// instantiated type rather than a bare type parameter.
+			substituted := instantiateCtorArg(argType, ctorInfo.Result, tc.Args)
 			if err := checkExhaustivePatterns(substituted, argPats, env, pos); err != nil {
 				return err
 			}
@@ -653,24 +651,41 @@ func isCatchAllPattern(p ast.Pattern) bool {
 	return false
 }
 
-// substituteCtorArg replaces type-variable references in the constructor's
-// declared arg type with the matching positional type-arg from the subject
-// type. Phase-1 implementation: only TCon and TVar (most common shapes);
-// TArrow / TRecord pass through structurally. Handles the common case
-// `Maybe a -> Just (Result String String)` where the constructor's arg
-// type is a TVar that needs to be bound to the subject's actual TArg.
-func substituteCtorArg(t Type, params []string, args []Type) Type {
-	if len(params) == 0 || len(args) == 0 {
-		return t
+// instantiateCtorArg specializes a constructor's declared argument type for
+// the concrete subject being matched, so exhaustiveness recursion descends
+// into the right instantiated type instead of a bare type parameter.
+//
+// Each constructor's Result is the owning type applied to its parameters in
+// declaration order (`Result e a` stores Ok with Result `TCon{"Result", [e,
+// a]}`), so it is positionally aligned with the subject's type arguments. We
+// map each parameter TVar's ID to the matching subject arg and substitute.
+//
+// Without this, a `case r of Ok (Auth.SignedIn u) -> ...; Ok Auth.WrongCode
+// -> ...; Err _ -> ...` over a `Result Service.Error (Auth.VerifyOutcome
+// User)` skipped its inner exhaustiveness check: Ok's arg stayed the
+// parameter `a` (a TVar, which recursion ignores), so a missing `Ok
+// Auth.TooManyAttempts` was silently accepted.
+func instantiateCtorArg(argType Type, ctorResult Type, subjectArgs []Type) Type {
+	rc, ok := ctorResult.(TCon)
+	if !ok || len(rc.Args) == 0 || len(subjectArgs) == 0 {
+		return argType
 	}
 	subst := map[int]Type{}
-	// CustomType.Params hold the type-variable NAMES; the matching TVars
-	// inside Constructors.Args are the same vars (built in builtinCustomTypes
-	// or registered during CheckModule). We don't have access to those IDs
-	// here directly, so we just walk t and replace TVar by name match
-	// against the params slice. A bit ad-hoc; sufficient for builtins.
-	_ = subst
-	return t // identity for now — recursion still works because outer-ctor names are matched, and inner exhaustiveness is checked against a generic Result/Maybe whose CtorOrder is name-only.
+	n := len(rc.Args)
+	if len(subjectArgs) < n {
+		n = len(subjectArgs)
+	}
+	for i := 0; i < n; i++ {
+		// rc.Args[i] is the parameter TVar; subjectArgs[i] is the concrete
+		// type it was instantiated to for this match.
+		if pv, ok := rc.Args[i].(TVar); ok {
+			subst[pv.ID] = subjectArgs[i]
+		}
+	}
+	if len(subst) == 0 {
+		return argType
+	}
+	return substituteVars(argType, subst)
 }
 
 // inferPattern returns the type the pattern matches and an extended env

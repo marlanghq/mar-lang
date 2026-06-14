@@ -136,7 +136,7 @@ renderNote user note =
 view : Shared.User -> Model -> View Msg
 view user model =
     navigationStack
-        [ navigationTitle ("Team " ++ String.fromInt user.teamId ++ " — " ++ user.email)
+        [ navigationTitle ("Team " ++ String.fromInt user.teamId ++ ": " ++ user.email)
         , topBarTrailing (button [] SignOutClicked "Sign out")
         ]
         [ list []

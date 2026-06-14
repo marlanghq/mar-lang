@@ -720,7 +720,7 @@ milestoneStatusLabel s =
         MilestoneClosed -> "Closed"
 
 
--- Pretty-printed issue handle: "ProjectName · #42 — Title"
+-- Pretty-printed issue handle: "ProjectName · #42: Title"
 issueHandle : IssueView -> String
 issueHandle i =
-    i.projectName ++ " · #" ++ String.fromInt i.number ++ " — " ++ i.title
+    i.projectName ++ " · #" ++ String.fromInt i.number ++ ": " ++ i.title
