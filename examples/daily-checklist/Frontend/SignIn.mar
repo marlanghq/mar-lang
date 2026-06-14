@@ -33,7 +33,7 @@ type alias Model =
 type Msg
     = DraftChanged String
     | Submitted
-    | CodeRequested (Result String ())
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
 
 
 init : (Model, Effect Msg)
@@ -62,7 +62,7 @@ update msg model =
                 , Auth.requestCode { email = model.draft } CodeRequested
                 )
 
-        CodeRequested (Ok ()) ->
+        CodeRequested (Ok Auth.CodeSent) ->
             -- Hand off to the verify page. We carry the email as a
             -- typed path segment so /sign-in/verify/<email> is the
             -- canonical address of that step — bookmarkable, and the
@@ -71,30 +71,20 @@ update msg model =
             , Nav.pushTo Frontend.Routes.verifyCode { email = model.draft }
             )
 
-        CodeRequested (Err why) ->
-            ( { model | busy = False, error = Just (explainError why) }
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( { model | busy = False, error = Just "That doesn't look like a valid email address." }
             , Effect.none
             )
 
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( { model | busy = False, error = Just "Too many attempts. Wait a moment before trying again." }
+            , Effect.none
+            )
 
--- Translates the server's short error codes into human-readable
--- text. Anything not in the table falls through to the raw code —
--- safe in prod (codes are reasonably readable) and useful in dev
--- (operator sees the exact server identifier).
-explainError : String -> String
-explainError code =
-    case code of
-        "invalid_email" ->
-            "That doesn't look like a valid email address."
-
-        "missing_email" ->
-            "Email is required."
-
-        "rate_limited" ->
-            "Too many attempts. Wait a moment before trying again."
-
-        _ ->
-            code
+        CodeRequested (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }
+            , Effect.none
+            )
 
 
 view : Model -> View Msg

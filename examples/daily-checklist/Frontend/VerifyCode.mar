@@ -33,7 +33,7 @@ type alias Model =
 type Msg
     = DraftChanged String
     | Submitted
-    | CodeVerified (Result String Shared.User)
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
 
 init : { email : String } -> (Model, Effect Msg)
@@ -62,34 +62,28 @@ update params msg model =
                     CodeVerified
                 )
 
-        CodeVerified (Ok _) ->
+        CodeVerified (Ok (Auth.SignedIn _)) ->
             -- Login worked. Auth.completeSignIn returns the user to where
             -- a 401 sent them from (or "/" by default), replacing
             -- history so Back doesn't return them to sign-in.
             ( { model | busy = False, draft = "" }, Auth.completeSignIn )
 
-        CodeVerified (Err why) ->
+        CodeVerified (Ok Auth.WrongCode) ->
             -- Clear the bad code so the user can re-type without
             -- first deleting the now-invalid attempt.
-            ( { model | busy = False, draft = "", error = Just (explainError why) }
+            ( { model | busy = False, draft = "", error = Just "That code didn't work. Check your email or request a new one." }
             , Effect.none
             )
 
+        CodeVerified (Ok Auth.TooManyAttempts) ->
+            ( { model | busy = False, draft = "", error = Just "Too many tries with this code. Request a new one." }
+            , Effect.none
+            )
 
-explainError : String -> String
-explainError code =
-    case code of
-        "invalid_code" ->
-            "That code didn't work. Check your email or request a new one."
-
-        "too_many_attempts" ->
-            "Too many tries with this code. Request a new one."
-
-        "rate_limited" ->
-            "Too many attempts. Wait a moment before trying again."
-
-        _ ->
-            code
+        CodeVerified (Err why) ->
+            ( { model | busy = False, draft = "", error = Just (Service.errorToString why) }
+            , Effect.none
+            )
 
 
 view : { email : String } -> Model -> View Msg

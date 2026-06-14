@@ -27,6 +27,14 @@ listMine =
     Service.declare
 
 
-createMine : Service NewNote Note
+-- The create outcome: the one domain rule (no empty bodies) is a
+-- typed case the frontend matches, not a string through the abort
+-- channel.
+type CreateOutcome
+    = Created Note
+    | BodyEmpty
+
+
+createMine : Service NewNote CreateOutcome
 createMine =
     Service.declare

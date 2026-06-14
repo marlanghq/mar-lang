@@ -58,7 +58,7 @@ import UI exposing
 -- means the dialog is open and a Delete tap will remove that task.
 type alias Model =
     { items            : Maybe (List Shared.Task)
-    , error            : Maybe Service.Error
+    , error            : Maybe String
     , draft            : String
     , busy             : Bool
     , editing          : Bool
@@ -70,7 +70,7 @@ type Msg
     = TasksFetched (Result Service.Error (List Shared.Task))
     | DraftChanged String
     | AddClicked
-    | TaskAdded (Result Service.Error Shared.Task)
+    | TaskAdded (Result Service.Error Shared.AddTaskOutcome)
     | ToggleChanged Int Bool
     | TaskUpdated Int Bool (Result Service.Error (Maybe Shared.Task))
     | DeleteRowAt Int                          -- onDelete fires; opens confirm
@@ -135,7 +135,7 @@ update _ msg model =
             )
 
         TasksFetched (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just (Service.errorToString why) }, Effect.none )
 
         DraftChanged value ->
             ( { model | draft = value }, Effect.none )
@@ -148,13 +148,19 @@ update _ msg model =
                 , Service.call Shared.addTask { name = model.draft } TaskAdded
                 )
 
-        TaskAdded (Ok _) ->
+        TaskAdded (Ok (Shared.Added _)) ->
             ( { model | draft = "", busy = False }
             , Service.call Shared.listTasks () TasksFetched
             )
 
+        TaskAdded (Ok Shared.NameEmpty) ->
+            -- AddClicked already no-ops on an empty draft, so reaching
+            -- this means a whitespace-only name slipped past the local
+            -- guard. The rule is a typed outcome; the copy is ours.
+            ( { model | busy = False, error = Just "A task needs a name." }, Effect.none )
+
         TaskAdded (Err why) ->
-            ( { model | busy = False, error = Just why }, Effect.none )
+            ( { model | busy = False, error = Just (Service.errorToString why) }, Effect.none )
 
         ToggleChanged id newValue ->
             -- Optimistic local update: flip the toggle in the UI
@@ -188,7 +194,7 @@ update _ msg model =
             in
             ( { model
                 | items = Maybe.map (updateLocalDone id original) model.items
-                , error = Just why
+                , error = Just (Service.errorToString why)
               }
             , Effect.none
             )
@@ -246,7 +252,7 @@ update _ msg model =
             -- and lost the cached task object (it lived only in
             -- `confirmingDelete`, which we cleared at the moment
             -- of dispatch). Refetch to recover the truth.
-            ( { model | error = Just why }
+            ( { model | error = Just (Service.errorToString why) }
             , Service.call Shared.listTasks () TasksFetched
             )
 
@@ -276,7 +282,7 @@ update _ msg model =
             -- somehow appeared between the click and the response.
             ( { model
                 | items = Just snapshot
-                , error = Just why
+                , error = Just (Service.errorToString why)
               }
             , Effect.none
             )
@@ -316,7 +322,7 @@ update _ msg model =
             -- show the error and let the user retry. Next listTasks
             -- (e.g. after adding a task) will reconcile from the
             -- server's view.
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just (Service.errorToString why) }, Effect.none )
 
         EditClicked ->
             -- Entering edit mode starts clean — no row armed.
@@ -461,7 +467,7 @@ errorSection : Model -> List (View Msg)
 errorSection model =
     case model.error of
         Just why ->
-            [ section [ header "Something went wrong" ] [ errorText (Service.errorToString why) ] ]
+            [ section [ header "Something went wrong" ] [ errorText why ] ]
 
         Nothing ->
             []

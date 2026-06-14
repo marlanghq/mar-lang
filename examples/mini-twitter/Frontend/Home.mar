@@ -46,7 +46,7 @@ type Msg
     = TimelineFetched (Result Service.Error (List Shared.TweetView))
     | DraftChanged String
     | PostClicked
-    | TweetPosted (Result Service.Error Shared.Tweet)
+    | TweetPosted (Result Service.Error Shared.ComposeOutcome)
     | DeleteClicked Int
     | TweetDeleted (Result Service.Error ())
     | SignOutClicked
@@ -86,9 +86,21 @@ update _ msg model =
             , Service.call Shared.composeTweet { body = model.draft } TweetPosted
             )
 
-        TweetPosted (Ok _) ->
+        TweetPosted (Ok (Shared.Posted _)) ->
             ( { model | posting = False }
             , Service.call Shared.loadTimeline () TimelineFetched
+            )
+
+        TweetPosted (Ok Shared.BodyEmpty) ->
+            -- The compose button guards locally; reaching this means a
+            -- whitespace-only body slipped past. The copy is the view's.
+            ( { model | posting = False, timeline = Failed "A tweet needs some text." }
+            , Effect.none
+            )
+
+        TweetPosted (Ok Shared.BodyTooLong) ->
+            ( { model | posting = False, timeline = Failed "Tweets are at most 280 characters." }
+            , Effect.none
             )
 
         TweetPosted (Err why) ->

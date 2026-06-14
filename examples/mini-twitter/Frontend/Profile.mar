@@ -40,7 +40,8 @@ type Msg
     = Fetched (Result Service.Error (Maybe Shared.ProfileView))
     | FollowClicked
     | UnfollowClicked
-    | FollowToggled (Result Service.Error ())
+    | FollowDone (Result Service.Error Shared.FollowOutcome)
+    | UnfollowDone (Result Service.Error ())
 
 
 init : Shared.User -> { handle : String } -> (Model, Effect Msg)
@@ -64,15 +65,15 @@ update _ _ msg model =
 
         FollowClicked ->
             ( { model | busy = True }
-            , Service.call Shared.follow { handle = model.handle } FollowToggled
+            , Service.call Shared.follow { handle = model.handle } FollowDone
             )
 
         UnfollowClicked ->
             ( { model | busy = True }
-            , Service.call Shared.unfollow { handle = model.handle } FollowToggled
+            , Service.call Shared.unfollow { handle = model.handle } UnfollowDone
             )
 
-        FollowToggled (Ok ()) ->
+        FollowDone (Ok Shared.Followed) ->
             -- Re-fetch the profile to pick up the flipped counters
             -- + isFollowed flag. Stale-while-revalidate: the old
             -- state stays visible until the re-fetch lands.
@@ -80,7 +81,28 @@ update _ _ msg model =
             , Service.call Shared.loadProfile { handle = model.handle } Fetched
             )
 
-        FollowToggled (Err _) ->
+        FollowDone (Ok Shared.HandleNotFound) ->
+            -- The account vanished while we were looking at it. The
+            -- re-fetch resolves to Nothing and the page shows its own
+            -- "User not found" state.
+            ( { model | busy = False }
+            , Service.call Shared.loadProfile { handle = model.handle } Fetched
+            )
+
+        FollowDone (Ok Shared.CantFollowSelf) ->
+            -- The view hides the button on your own profile, so this
+            -- only fires for a tampered request; nothing to do.
+            ( { model | busy = False }, Effect.none )
+
+        FollowDone (Err _) ->
+            ( { model | busy = False }, Effect.none )
+
+        UnfollowDone (Ok ()) ->
+            ( { model | busy = False }
+            , Service.call Shared.loadProfile { handle = model.handle } Fetched
+            )
+
+        UnfollowDone (Err _) ->
             ( { model | busy = False }, Effect.none )
 
 

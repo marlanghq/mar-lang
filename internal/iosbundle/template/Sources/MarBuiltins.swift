@@ -35,12 +35,22 @@ enum MarBuiltins {
         env.define("GT",    .ctor(tag: "GT", args: [], origin: nil))
 
         // Service.Error constructors — the transport failure a Service.call
-        // delivers in its Err. MarHTTP builds these directly; exposed here so
-        // user code can construct and pattern-match them. Keep the
-        // errorToString messages identical to the Go and JS runtimes.
-        env.define("Offline", .ctor(tag: "Offline", args: [], origin: nil))
-        env.define("Unauthorized", .ctor(tag: "Unauthorized", args: [], origin: nil))
-        env.define("ServerError", .fn(MarFn.native(1) { .ctor(tag: "ServerError", args: $0, origin: nil) }))
+        // delivers in its Err. MarHTTP builds these directly. Registered
+        // under their qualified names only, the Elm Http.Error model: user
+        // code writes `Service.Offline` to construct and to pattern-match,
+        // and the bare names stay free for user constructors. Tags stay
+        // bare. Keep the errorToString messages identical to Go and JS.
+        env.define("Service.Offline", .ctor(tag: "Offline", args: [], origin: nil))
+        env.define("Service.Unauthorized", .ctor(tag: "Unauthorized", args: [], origin: nil))
+        env.define("Service.ServerError", .fn(MarFn.native(1) { .ctor(tag: "ServerError", args: $0, origin: nil) }))
+
+        // Auth outcome constructors — qualified-only, like Service.Error.
+        env.define("Auth.CodeSent", .ctor(tag: "CodeSent", args: [], origin: nil))
+        env.define("Auth.InvalidEmail", .ctor(tag: "InvalidEmail", args: [], origin: nil))
+        env.define("Auth.RateLimited", .ctor(tag: "RateLimited", args: [], origin: nil))
+        env.define("Auth.WrongCode", .ctor(tag: "WrongCode", args: [], origin: nil))
+        env.define("Auth.TooManyAttempts", .ctor(tag: "TooManyAttempts", args: [], origin: nil))
+        env.define("Auth.SignedIn", .fn(MarFn.native(1) { .ctor(tag: "SignedIn", args: $0, origin: nil) }))
         let serviceErrorToString = MarFn.native(1) { args -> MarValue in
             guard case let .ctor(tag, cargs, _) = args[0] else { return .string("") }
             switch tag {
@@ -1825,30 +1835,47 @@ enum MarBuiltins {
         env.define("authRequireOwner",  .fn(authRequireOwner))
         env.define("Auth.requireOwner", .fn(authRequireOwner))
 
-        // Auth.requestCode : { email } -> (Result String () -> msg) -> Effect
+        // Auth.requestCode : { email } -> (Result Service.Error Auth.RequestOutcome -> msg) -> Effect
+        // Domain codes become typed outcomes in the Ok; transport is a
+        // Service.Error in the Err. CodeSent never reveals whether the
+        // email has an account.
         let authRequestCode = MarFn.native(2) { args in
             let req = args[0]
             let toMsg = args[1]
             return .effect(MarEffect(tag: "Auth.requestCode") {
-                MarHTTP.fireAuth(path: "/_auth/request-code",
-                                  body: req,
-                                  decode: .ackUnit,
-                                  toMsg: toMsg)
+                MarHTTP.fireAuthOutcome(path: "/_auth/request-code",
+                                        body: req,
+                                        okOutcome: { _ in .ctor(tag: "CodeSent", args: [], origin: nil) },
+                                        mapCode: { code in
+                                            switch code {
+                                            case "rate_limited": return .ctor(tag: "RateLimited", args: [], origin: nil)
+                                            case "invalid_email": return .ctor(tag: "InvalidEmail", args: [], origin: nil)
+                                            default: return nil
+                                            }
+                                        },
+                                        toMsg: toMsg)
                 return .unit
             })
         }
         env.define("authRequestCode",  .fn(authRequestCode))
         env.define("Auth.requestCode", .fn(authRequestCode))
 
-        // Auth.verifyCode : { email, code } -> (Result String User -> msg) -> Effect
+        // Auth.verifyCode : { email, code } -> (Result Service.Error (Auth.VerifyOutcome user) -> msg) -> Effect
         let authVerifyCode = MarFn.native(2) { args in
             let req = args[0]
             let toMsg = args[1]
             return .effect(MarEffect(tag: "Auth.verifyCode") {
-                MarHTTP.fireAuth(path: "/_auth/verify-code",
-                                  body: req,
-                                  decode: .userJSON,
-                                  toMsg: toMsg)
+                MarHTTP.fireAuthOutcome(path: "/_auth/verify-code",
+                                        body: req,
+                                        okOutcome: { user in .ctor(tag: "SignedIn", args: [user], origin: nil) },
+                                        mapCode: { code in
+                                            switch code {
+                                            case "invalid_code": return .ctor(tag: "WrongCode", args: [], origin: nil)
+                                            case "too_many_attempts": return .ctor(tag: "TooManyAttempts", args: [], origin: nil)
+                                            default: return nil
+                                            }
+                                        },
+                                        toMsg: toMsg)
                 return .unit
             })
         }

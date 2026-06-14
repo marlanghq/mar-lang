@@ -28,7 +28,7 @@ type alias Model =
 type Msg
     = DraftChanged String
     | Submitted
-    | CodeRequested (Result String ())
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
 
 
 init : (Model, Effect Msg)
@@ -55,31 +55,25 @@ update msg model =
                 , Auth.requestCode { email = model.draft } CodeRequested
                 )
 
-        CodeRequested (Ok ()) ->
+        CodeRequested (Ok Auth.CodeSent) ->
             ( { model | busy = False }
             , Nav.pushTo Frontend.Routes.verifyCode { email = model.draft }
             )
 
-        CodeRequested (Err why) ->
-            ( { model | busy = False, error = Just (explainError why) }
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( { model | busy = False, error = Just "That doesn't look like a valid email address." }
             , Effect.none
             )
 
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( { model | busy = False, error = Just "Too many attempts. Wait a moment before trying again." }
+            , Effect.none
+            )
 
-explainError : String -> String
-explainError code =
-    case code of
-        "invalid_email" ->
-            "That doesn't look like a valid email address."
-
-        "missing_email" ->
-            "Email is required."
-
-        "rate_limited" ->
-            "Too many attempts. Wait a moment before trying again."
-
-        _ ->
-            code
+        CodeRequested (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }
+            , Effect.none
+            )
 
 
 view : Model -> View Msg

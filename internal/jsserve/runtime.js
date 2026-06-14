@@ -770,11 +770,13 @@
 
     // Service.Error constructors — the transport failure a Service.call
     // delivers in its Err. serviceCall builds these directly (see
-    // serviceErrorFromResponse / serviceErrorOffline); exposed here so user
-    // code can construct and pattern-match them.
-    def('Offline', VCtor('Offline'));
-    def('Unauthorized', VCtor('Unauthorized'));
-    def('ServerError', native(1, args => VCtor('ServerError', [args[0]])));
+    // serviceErrorFromResponse / serviceErrorOffline). Registered under
+    // their qualified names only, the Elm Http.Error model: user code
+    // writes `Service.Offline` to construct and to pattern-match, and the
+    // bare names stay free for user constructors. Tags stay bare.
+    def('Service.Offline', VCtor('Offline'));
+    def('Service.Unauthorized', VCtor('Unauthorized'));
+    def('Service.ServerError', native(1, args => VCtor('ServerError', [args[0]])));
     def('serviceErrorToString', native(1, ([e]) => VString(serviceErrorToStringJS(e))));
     def('Service.errorToString', envLookup(env, 'serviceErrorToString'));
 
@@ -3081,15 +3083,71 @@
       }
     }
 
+    // authOutcomePost drives Auth.requestCode / Auth.verifyCode. Domain
+    // codes the endpoint is known to emit become typed outcome
+    // constructors in the Ok (the screen cases on them); everything else
+    // is transport and becomes a Service.Error in the Err, exactly like
+    // Service.call. `mapCode` returns the outcome VCtor for a known
+    // domain code or null. Mirrors the Swift MarHTTP boundary.
+    function authOutcomePost(path, body, toMsg, okOutcome, mapCode) {
+      return VEffect(() => {
+        fetch(path, {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: body == null ? null : JSON.stringify(body),
+          headers: body == null ? {} : { 'Content-Type': 'application/json' },
+        })
+          .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
+          .then(r => {
+            let result;
+            if (r.ok) {
+              try {
+                result = VCtor('Ok', [okOutcome(r.body)]);
+              } catch (e) {
+                result = VCtor('Err', [VCtor('ServerError', [VString('decode failed: ' + (e && e.message || e))])]);
+              }
+            } else {
+              const domain = mapCode(decodeServerError(r.body));
+              result = domain
+                ? VCtor('Ok', [domain])
+                : VCtor('Err', [serviceErrorFromResponse(r.status, r.body)]);
+            }
+            if (currentDispatch) currentDispatch(apply(toMsg, result));
+          })
+          .catch(() => {
+            if (currentDispatch) currentDispatch(apply(toMsg, VCtor('Err', [serviceErrorOffline()])));
+          });
+        return VUnit();
+      }, 'authPost');
+    }
+
     def('authRequestCode', native(2, ([req, toMsg]) => {
-      return authPost('/_auth/request-code', marToJs(req), toMsg, () => VUnit());
+      // CodeSent never reveals whether the email has an account: the
+      // server answers 200 for unknown emails on purpose.
+      return authOutcomePost('/_auth/request-code', marToJs(req), toMsg,
+        () => VCtor('CodeSent'),
+        code => code === 'rate_limited' ? VCtor('RateLimited')
+              : code === 'invalid_email' ? VCtor('InvalidEmail')
+              : null);
     }));
     def('Auth.requestCode', envLookup(env, 'authRequestCode'));
 
     def('authVerifyCode', native(2, ([req, toMsg]) => {
-      return authPost('/_auth/verify-code', marToJs(req), toMsg, (text) => jsToMar(JSON.parse(text)));
+      return authOutcomePost('/_auth/verify-code', marToJs(req), toMsg,
+        text => VCtor('SignedIn', [jsToMar(JSON.parse(text))]),
+        code => code === 'invalid_code' ? VCtor('WrongCode')
+              : code === 'too_many_attempts' ? VCtor('TooManyAttempts')
+              : null);
     }));
     def('Auth.verifyCode', envLookup(env, 'authVerifyCode'));
+
+    // Auth outcome constructors — qualified-only, like Service.Error.
+    def('Auth.CodeSent', VCtor('CodeSent'));
+    def('Auth.InvalidEmail', VCtor('InvalidEmail'));
+    def('Auth.RateLimited', VCtor('RateLimited'));
+    def('Auth.WrongCode', VCtor('WrongCode'));
+    def('Auth.TooManyAttempts', VCtor('TooManyAttempts'));
+    def('Auth.SignedIn', native(1, args => VCtor('SignedIn', [args[0]])));
 
     def('authLogout', native(1, ([toMsg]) => {
       // Optimistic logout: dispatch the result message IMMEDIATELY

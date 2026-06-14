@@ -37,8 +37,8 @@ type alias Model =
 type Msg
     = DraftChanged String
     | Submitted
-    | CodeRequested (Result String ())
-    | CodeVerified (Result String Shared.User)
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
 
 init : (Model, Effect Msg)
@@ -75,7 +75,7 @@ update msg model =
                 Submitting _ ->
                     ( model, Effect.none )
 
-        CodeRequested (Ok ()) ->
+        CodeRequested (Ok Auth.CodeSent) ->
             case model.step of
                 Submitting emailAddr ->
                     ( { model | step = AskCode emailAddr "" }, Effect.none )
@@ -83,30 +83,60 @@ update msg model =
                 _ ->
                     ( model, Effect.none )
 
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( requestFailed "That doesn't look like a valid email address." model
+            , Effect.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( requestFailed "Too many code requests. Wait a moment and try again." model
+            , Effect.none
+            )
+
         CodeRequested (Err why) ->
-            case model.step of
-                Submitting emailAddr ->
-                    ( { step = AskEmail emailAddr, error = Just why }
-                    , Effect.none
-                    )
+            ( requestFailed (Service.errorToString why) model
+            , Effect.none
+            )
 
-                _ ->
-                    ( model, Effect.none )
-
-        CodeVerified (Ok _) ->
+        CodeVerified (Ok (Auth.SignedIn _)) ->
             -- Login worked. Auth.completeSignIn returns the user to
             -- where a 401 sent them from (or "/" by default).
             ( { step = AskEmail "", error = Nothing }, Auth.completeSignIn )
 
-        CodeVerified (Err why) ->
-            case model.step of
-                Submitting emailAddr ->
-                    ( { step = AskCode emailAddr "", error = Just why }
-                    , Effect.none
-                    )
+        CodeVerified (Ok Auth.WrongCode) ->
+            ( verifyFailed "Wrong code. Try again or request a new one." model
+            , Effect.none
+            )
 
-                _ ->
-                    ( model, Effect.none )
+        CodeVerified (Ok Auth.TooManyAttempts) ->
+            ( verifyFailed "Too many tries with this code. Request a new one." model
+            , Effect.none
+            )
+
+        CodeVerified (Err why) ->
+            ( verifyFailed (Service.errorToString why) model
+            , Effect.none
+            )
+
+
+requestFailed : String -> Model -> Model
+requestFailed reason model =
+    case model.step of
+        Submitting emailAddr ->
+            { step = AskEmail emailAddr, error = Just reason }
+
+        _ ->
+            { model | error = Just reason }
+
+
+verifyFailed : String -> Model -> Model
+verifyFailed reason model =
+    case model.step of
+        Submitting emailAddr ->
+            { step = AskCode emailAddr "", error = Just reason }
+
+        _ ->
+            { model | error = Just reason }
 
 
 view : Model -> View Msg

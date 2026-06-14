@@ -48,7 +48,7 @@ update _ msg model =
 
         SearchSubmitted ->
             if model.query == "" then
-                ( { model | error = Just (ServerError "Enter a search term.") }, Effect.none )
+                ( { model | error = Just (Service.ServerError "Enter a search term.") }, Effect.none )
             else
                 ( { model | error = Nothing, lastFired = model.query }
                 , Service.call Shared.searchIssues { query = model.query } ResultsFetched

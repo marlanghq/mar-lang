@@ -39,15 +39,15 @@ meHandler _ user =
 -- the entity, so we can evolve without a schema migration). Empty
 -- body after trim → reject with a transport-level error string.
 
-composeTweet : Shared.NewTweet -> Shared.User -> Effect Shared.Tweet
+composeTweet : Shared.NewTweet -> Shared.User -> Effect Shared.ComposeOutcome
 composeTweet input user =
     let
         body = String.trim input.body
     in
     if body == "" then
-        Effect.fail "tweet body is empty"
+        Effect.succeed Shared.BodyEmpty
     else if String.length body > 280 then
-        Effect.fail "tweet body is too long (max 280 characters)"
+        Effect.succeed Shared.BodyTooLong
     else
         Time.now
             |> Effect.andThen (\now ->
@@ -56,6 +56,7 @@ composeTweet input user =
                     , authorId  = user.id
                     , createdAt = now
                     })
+            |> Effect.map Shared.Posted
 
 
 deleteTweet : Shared.DeleteTweet -> Shared.User -> Effect ()
@@ -209,17 +210,17 @@ buildProfileView viewer target =
 
 -- ---------- follow / unfollow ----------
 
-followUser : Shared.FollowAction -> Shared.User -> Effect ()
+followUser : Shared.FollowAction -> Shared.User -> Effect Shared.FollowOutcome
 followUser input user =
     Repo.findBy users { handle = input.handle }
         |> Effect.andThen (\matches ->
             case matches of
                 [] ->
-                    Effect.fail "handle not found"
+                    Effect.succeed Shared.HandleNotFound
 
                 target :: _ ->
                     if target.id == user.id then
-                        Effect.fail "you can't follow yourself"
+                        Effect.succeed Shared.CantFollowSelf
                     else
                         Repo.findBy follows
                             { followerId = user.id
@@ -228,7 +229,7 @@ followUser input user =
                             |> Effect.andThen (\existing ->
                                 if List.length existing > 0 then
                                     -- Already following — idempotent.
-                                    Effect.succeed ()
+                                    Effect.succeed Shared.Followed
                                 else
                                     Time.now
                                         |> Effect.andThen (\now ->
@@ -237,7 +238,7 @@ followUser input user =
                                                 , followedId = target.id
                                                 , createdAt  = now
                                                 }
-                                                |> Effect.map (\_ -> ()))))
+                                                |> Effect.map (\_ -> Shared.Followed))))
 
 
 unfollowUser : Shared.FollowAction -> Shared.User -> Effect ()
@@ -246,7 +247,9 @@ unfollowUser input user =
         |> Effect.andThen (\matches ->
             case matches of
                 [] ->
-                    Effect.fail "handle not found"
+                    -- Handle vanished: the goal state ("not following
+                    -- that account") already holds. Idempotent success.
+                    Effect.succeed ()
 
                 target :: _ ->
                     Repo.findBy follows
@@ -269,7 +272,7 @@ unfollowUser input user =
 -- handle / display name. We validate the handle locally (alnum +
 -- underscore, 1–20 chars) and reject collisions.
 
-setupProfile : Shared.ProfileSetup -> Shared.User -> Effect Shared.User
+setupProfile : Shared.ProfileSetup -> Shared.User -> Effect Shared.SetupOutcome
 setupProfile input user =
     let
         handle      = String.trim input.handle
@@ -277,25 +280,27 @@ setupProfile input user =
         bio         = String.trim input.bio
     in
     if handle == "" then
-        Effect.fail "handle is required"
+        Effect.succeed Shared.HandleRequired
     else if String.length handle > 20 then
-        Effect.fail "handle: 20 characters max"
+        Effect.succeed Shared.HandleTooLong
     else if displayName == "" then
-        Effect.fail "display name is required"
+        Effect.succeed Shared.DisplayNameRequired
     else
         Repo.findBy users { handle = handle }
             |> Effect.andThen (\matches ->
                 case matches of
                     [] ->
                         applyProfileUpdate user.id handle displayName bio
+                            |> Effect.map Shared.ProfileSaved
 
                     existing :: _ ->
                         if existing.id == user.id then
                             -- They picked the same handle they
                             -- already have. Treat as no-op success.
                             applyProfileUpdate user.id handle displayName bio
+                                |> Effect.map Shared.ProfileSaved
                         else
-                            Effect.fail "handle is taken")
+                            Effect.succeed Shared.HandleTaken)
 
 
 applyProfileUpdate : Int -> String -> String -> String -> Effect Shared.User
@@ -311,7 +316,12 @@ applyProfileUpdate userId handle displayName bio =
                     Effect.succeed updated
 
                 Nothing ->
-                    Effect.fail "user not found")
+                    -- The session's own user row vanished mid-update: a
+                    -- broken invariant, not a domain outcome the form
+                    -- should branch on. This is what Effect.fail is FOR
+                    -- (the abort channel); it surfaces to the client as
+                    -- a generic ServerError.
+                    Effect.fail "user row missing for session")
 
 
 -- ---------- service manifest ----------

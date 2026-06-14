@@ -40,10 +40,10 @@ type Msg
     = MeResolved (Result String (Maybe Shared.User))
     | EmailDraftChanged String
     | RequestCodeClicked
-    | CodeRequested (Result String ())
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
     | CodeDraftChanged String
     | VerifyCodeClicked
-    | CodeVerified (Result String Shared.User)
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
     | NotesFetched (Result Service.Error (List Shared.Note))
     | NoteDraftChanged String
     | AddNoteClicked
@@ -81,10 +81,21 @@ update msg stage =
                 _ ->
                     ( stage, Effect.none )
 
-        CodeRequested (Ok ()) ->
+        CodeRequested (Ok Auth.CodeSent) ->
             case stage of
                 LoggedOut (Submitting email) ->
                     ( LoggedOut (AskCode email ""), Effect.none )
+
+                _ ->
+                    ( stage, Effect.none )
+
+        CodeRequested (Ok _) ->
+            -- InvalidEmail / RateLimited. This minimal example shows no
+            -- error copy on purpose; back to the email step. See
+            -- daily-checklist for the per-outcome treatment.
+            case stage of
+                LoggedOut (Submitting email) ->
+                    ( LoggedOut (AskEmail email), Effect.none )
 
                 _ ->
                     ( stage, Effect.none )
@@ -115,10 +126,19 @@ update msg stage =
                 _ ->
                     ( stage, Effect.none )
 
-        CodeVerified (Ok user) ->
+        CodeVerified (Ok (Auth.SignedIn user)) ->
             ( LoggedIn user NotesLoading ""
             , Service.call Shared.listMine () NotesFetched
             )
+
+        CodeVerified (Ok _) ->
+            -- WrongCode / TooManyAttempts: back to the code prompt.
+            case stage of
+                LoggedOut (Submitting email) ->
+                    ( LoggedOut (AskCode email ""), Effect.none )
+
+                _ ->
+                    ( stage, Effect.none )
 
         CodeVerified (Err _) ->
             case stage of

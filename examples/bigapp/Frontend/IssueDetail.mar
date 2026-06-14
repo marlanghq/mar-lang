@@ -99,7 +99,7 @@ update _ params msg model =
             )
 
         IssueFetched (Ok Nothing) ->
-            ( { model | error = Just (ServerError "Issue not found.") }, Effect.none )
+            ( { model | error = Just (Service.ServerError "Issue not found.") }, Effect.none )
 
         IssueFetched (Err why) ->
             ( { model | error = Just why }, Effect.none )

@@ -242,6 +242,31 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"Offline", "Unauthorized", "ServerError"},
 		},
+		// Auth.RequestOutcome / Auth.VerifyOutcome — per-endpoint domain
+		// outcomes for the auth flow. Each endpoint declares only the
+		// branches it can produce (the email screen never sees WrongCode;
+		// the code screen never sees InvalidEmail), and the privacy rule
+		// holds: CodeSent never reveals whether the email has an account.
+		"Auth.RequestOutcome": {
+			Name:   "Auth.RequestOutcome",
+			Params: nil,
+			Constructors: map[string]CustomCtor{
+				"CodeSent":     {Result: TAuthRequestOutcome},
+				"InvalidEmail": {Result: TAuthRequestOutcome},
+				"RateLimited":  {Result: TAuthRequestOutcome},
+			},
+			CtorOrder: []string{"CodeSent", "InvalidEmail", "RateLimited"},
+		},
+		"Auth.VerifyOutcome": {
+			Name:   "Auth.VerifyOutcome",
+			Params: []string{"user"},
+			Constructors: map[string]CustomCtor{
+				"SignedIn":        {Args: []Type{tva}, Result: TAuthVerifyOutcome(tva)},
+				"WrongCode":       {Result: TAuthVerifyOutcome(tva)},
+				"TooManyAttempts": {Result: TAuthVerifyOutcome(tva)},
+			},
+			CtorOrder: []string{"SignedIn", "WrongCode", "TooManyAttempts"},
+		},
 	}
 }
 
@@ -303,10 +328,15 @@ func baseBindings() map[string]Type {
 	out["&&"] = TArrow{From: TBool, To: TArrow{From: TBool, To: TBool}}
 	out["||"] = TArrow{From: TBool, To: TArrow{From: TBool, To: TBool}}
 
-	// String/list append
+	// String/list append. `app` is Appendable-constrained — only
+	// String and List satisfy it — so `1 ++ 2` (or `True ++ False`)
+	// is rejected at the call site, matching Elm's `appendable`.
+	// Without the constraint this was `forall a. a -> a -> a`, which
+	// typechecked nonsense the runtime append could never honor.
+	app := TVar{ID: -24, Constraint: KindAppendable}
 	out["++"] = TForall{
-		Vars: []int{a.ID},
-		Body: TArrow{From: a, To: TArrow{From: a, To: a}},
+		Vars: []int{app.ID},
+		Body: TArrow{From: app, To: TArrow{From: app, To: app}},
 	}
 
 	// Cons: a -> List a -> List a
@@ -354,9 +384,18 @@ func baseBindings() map[string]Type {
 	// Service.Error constructors — the transport failure a Service.call
 	// delivers in its Err. Offline / Unauthorized are nullary; ServerError
 	// carries the server's message.
-	out["Offline"] = TServiceError
-	out["Unauthorized"] = TServiceError
-	out["ServerError"] = TArrow{From: TString, To: TServiceError}
+	out["Service.Offline"] = TServiceError
+	out["Service.Unauthorized"] = TServiceError
+	out["Service.ServerError"] = TArrow{From: TString, To: TServiceError}
+
+	// Auth outcome constructors — qualified-only, like Service.Error.
+	// SignedIn is polymorphic in the app's user record.
+	out["Auth.CodeSent"] = TAuthRequestOutcome
+	out["Auth.InvalidEmail"] = TAuthRequestOutcome
+	out["Auth.RateLimited"] = TAuthRequestOutcome
+	out["Auth.SignedIn"] = TForall{Vars: []int{a.ID}, Body: TArrow{From: a, To: TAuthVerifyOutcome(a)}}
+	out["Auth.WrongCode"] = TForall{Vars: []int{a.ID}, Body: TAuthVerifyOutcome(a)}
+	out["Auth.TooManyAttempts"] = TForall{Vars: []int{a.ID}, Body: TAuthVerifyOutcome(a)}
 
 	// --- stdlib (List, String, Maybe) ---
 	for k, v := range stdlibBindings() {
@@ -2757,27 +2796,34 @@ func stdlibBindings() map[string]Type {
 		},
 
 		// Auth.requestCode : { email : String } -> (Result String () -> msg) -> Effect e msg
+		// Auth.requestCode : { email } -> (Result Service.Error Auth.RequestOutcome -> msg) -> Effect msg
+		// Domain outcomes (CodeSent / InvalidEmail / RateLimited) ride in
+		// the Ok; the Err stays pure transport. CodeSent never reveals
+		// whether the email has an account.
 		"authRequestCode": TForall{
-			Vars: []int{-14, -15},
+			Vars: []int{-15},
 			Body: TArrow{
 				From: TRecord{Fields: map[string]Type{"email": TString}, Order: []string{"email"}},
 				To: TArrow{
-					From: TArrow{From: TResult(TString, TUnit{}), To: TVar{ID: -15}},
+					From: TArrow{From: TResult(TServiceError, TAuthRequestOutcome), To: TVar{ID: -15}},
 					To:   TEffect(TVar{ID: -15}),
 				},
 			},
 		},
 
-		// Auth.verifyCode : { email, code } -> (Result String user -> msg) -> Effect e msg
+		// Auth.verifyCode : { email, code } -> (Result Service.Error (Auth.VerifyOutcome user) -> msg) -> Effect msg
+		// SignedIn carries the app's own user record; WrongCode /
+		// TooManyAttempts are the only other outcomes this endpoint
+		// produces.
 		"authVerifyCode": TForall{
-			Vars: []int{a.ID, -16, -17},
+			Vars: []int{a.ID, -17},
 			Body: TArrow{
 				From: TRecord{
 					Fields: map[string]Type{"email": TString, "code": TString},
 					Order:  []string{"email", "code"},
 				},
 				To: TArrow{
-					From: TArrow{From: TResult(TString, a), To: TVar{ID: -17}},
+					From: TArrow{From: TResult(TServiceError, TAuthVerifyOutcome(a)), To: TVar{ID: -17}},
 					To:   TEffect(TVar{ID: -17}),
 				},
 			},

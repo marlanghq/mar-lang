@@ -59,14 +59,16 @@ sortByPosition items =
 -- ===== Create =====
 
 
-addTaskImpl : { name : String } -> Shared.User -> Effect Shared.Task
+addTaskImpl : { name : String } -> Shared.User -> Effect Shared.AddTaskOutcome
 addTaskImpl input user =
     -- Server-side gate: clients can disable the button but the
     -- backend is the only layer end-to-end. Reject empty /
     -- whitespace-only names regardless of how the call arrived
-    -- (curl, replayed request, scripted client).
+    -- (curl, replayed request, scripted client). The rejection is a
+    -- typed outcome in the contract, not an abort: the frontend
+    -- cases on Shared.NameEmpty instead of matching an error string.
     if String.trim input.name == "" then
-        Effect.fail "name_empty"
+        Effect.succeed Shared.NameEmpty
     else
         -- New tasks land at the FRONT of the list (position =
         -- min(existing) - 1). Rationale: a long list scrolled to
@@ -94,6 +96,7 @@ addTaskImpl input user =
                                     , userId    = user.id
                                     , position  = frontPosition existing
                                     }
+                                    |> Effect.map Shared.Added
                             )
                 )
 
@@ -129,10 +132,10 @@ frontPosition existing =
 --
 -- toggleTaskImpl + deleteTaskImpl share the same "find first, check
 -- ownership, then act" pattern: the Repo primitive operates by id
--- only, so we read the row to verify userId before mutating. If the
--- row is missing OR owned by someone else, both look identical
--- ("not_found") — the difference doesn't leak information about
--- whether the id exists at all.
+-- only, so we read the row to verify userId before mutating. A row
+-- that is missing OR owned by someone else looks identical from the
+-- outside (toggle answers Nothing, delete succeeds idempotently), so
+-- nothing leaks about whether the id exists at all.
 
 
 toggleTaskImpl : { id : Int, done : Bool } -> Shared.User -> Effect (Maybe Shared.Task)
@@ -145,10 +148,13 @@ toggleTaskImpl input user =
                         if task.userId == user.id then
                             Repo.update tasks input.id { done = input.done }
                         else
-                            Effect.fail "not_found"
+                            -- Someone else's row: answer exactly like a
+                            -- missing one. The Maybe in the contract
+                            -- already models absence; no abort needed.
+                            Effect.succeed Nothing
 
                     Nothing ->
-                        Effect.fail "not_found"
+                        Effect.succeed Nothing
             )
 
 
@@ -162,10 +168,17 @@ deleteTaskImpl input user =
                         if task.userId == user.id then
                             Repo.deleteById tasks input.id
                         else
-                            Effect.fail "not_found"
+                            -- Not yours: succeed without deleting. The
+                            -- goal state ("that row is not in YOUR
+                            -- list") already holds, and failing would
+                            -- leak that the id exists.
+                            Effect.succeed ()
 
                     Nothing ->
-                        Effect.fail "not_found"
+                        -- Already gone (another device deleted it
+                        -- first): delete is idempotent, so this is
+                        -- success, not an error.
+                        Effect.succeed ()
             )
 
 
@@ -224,10 +237,13 @@ reorderTasksImpl input user =
                                         Repo.update tasks id { position = idx }
                                             |> Effect.map (\_ -> ())
                                     else
-                                        Effect.fail "not_found"
+                                        -- Not yours: skip, as promised
+                                        -- above.
+                                        Effect.succeed ()
 
                                 Nothing ->
-                                    Effect.fail "not_found"
+                                    -- Deleted concurrently: skip.
+                                    Effect.succeed ()
                         )
             )
             input.orderedIds
@@ -237,7 +253,7 @@ reorderTasksImpl input user =
 
 -- ===== Service wiring =====
 --
--- Auth.protect : Service req resp -> (req -> User -> Effect e resp)
+-- Auth.protect : Service req resp -> (req -> User -> Effect resp)
 --                                 -> ExposedService
 -- It injects the logged User as the second argument and rejects
 -- the request with 401 if there's no session. The contract on the

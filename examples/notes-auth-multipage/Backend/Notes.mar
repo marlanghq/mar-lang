@@ -31,19 +31,21 @@ listMine _ user =
     Repo.findBy notes { authorId = user.id }
 
 
-createMine : { body : String } -> Shared.User -> Effect Shared.Note
+createMine : { body : String } -> Shared.User -> Effect Shared.CreateOutcome
 createMine input user =
     -- Server-side gate: clients can disable the button or guard the
     -- update, but the backend is the only layer we control end-to-end.
     -- Reject empty / whitespace-only bodies regardless of how the call
-    -- arrived (curl, tampered client, replayed request).
+    -- arrived (curl, tampered client, replayed request). The rejection
+    -- is a typed outcome in the contract, not an abort.
     if String.trim input.body == "" then
-        Effect.fail "body_empty"
+        Effect.succeed Shared.BodyEmpty
     else
         Repo.create notes
             { body     = input.body
             , authorId = user.id
             }
+            |> Effect.map Shared.Created
 
 
 -- Domain-local services list. Main.mar concatenates every domain's

@@ -369,6 +369,78 @@ enum MarHTTP {
         }
     }
 
+    // MARK: Auth outcome boundary (Auth.RequestOutcome / Auth.VerifyOutcome)
+
+    /// Drives Auth.requestCode / Auth.verifyCode: domain codes the endpoint
+    /// is known to emit become typed outcome constructors in the Ok (the
+    /// screen cases on them); everything else is transport and becomes a
+    /// Service.Error in the Err, exactly like Service.call. Mirrors the JS
+    /// runtime's authOutcomePost. Still captures the X-Mar-Auth-Token
+    /// header on success so the Bearer credential lands in the Keychain.
+    static func fireAuthOutcome(
+        path: String,
+        body: MarValue?,
+        okOutcome: @escaping (MarValue) -> MarValue,
+        mapCode: @escaping (String) -> MarValue?,
+        toMsg: MarValue
+    ) {
+        Task { @MainActor in
+            guard let url = MarDispatcher.shared.resolve(path: path) else {
+                dispatchServiceErr(toMsg, message: "invalid auth path: \(path)")
+                return
+            }
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            if let body {
+                let bodyAny = MarJSONCodec.marToJSON(body)
+                req.httpBody = try? JSONSerialization.data(
+                    withJSONObject: bodyAny,
+                    options: [.fragmentsAllowed]
+                )
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            }
+            attachBearer(&req)
+            URLSession.shared.dataTask(with: req) { data, response, error in
+                if let http = response as? HTTPURLResponse,
+                   (200..<300).contains(http.statusCode),
+                   let headerToken = http.value(forHTTPHeaderField: bearerTokenHeader),
+                   !headerToken.isEmpty {
+                    MarKeychain.save(headerToken, forKey: MarKeychain.sessionTokenKey)
+                }
+                let resultValue = makeAuthOutcomeResult(
+                    data: data, response: response, error: error,
+                    okOutcome: okOutcome, mapCode: mapCode
+                )
+                Task { @MainActor in
+                    deliverServiceResult(resultValue, toMsg: toMsg)
+                }
+            }.resume()
+        }
+    }
+
+    private static func makeAuthOutcomeResult(
+        data: Data?, response: URLResponse?, error: Error?,
+        okOutcome: (MarValue) -> MarValue,
+        mapCode: (String) -> MarValue?
+    ) -> MarValue {
+        if error != nil {
+            return .ctor(tag: "Err", args: [serviceErrorOffline()], origin: nil)
+        }
+        let bodyData = data ?? Data()
+        let bodyString = String(data: bodyData, encoding: .utf8) ?? ""
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let code = decodeServerError(body: bodyData, fallbackBody: bodyString, status: http.statusCode)
+            if let domain = mapCode(code) {
+                return .ctor(tag: "Ok", args: [domain], origin: nil)
+            }
+            let se = serviceErrorFromResponse(status: http.statusCode, body: bodyData, fallbackBody: bodyString)
+            return .ctor(tag: "Err", args: [se], origin: nil)
+        }
+        let any = (try? JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed]))
+        let decoded: MarValue = any.map { MarJSONCodec.jsonToMar($0) } ?? .unit
+        return .ctor(tag: "Ok", args: [okOutcome(decoded)], origin: nil)
+    }
+
     // MARK: Service.call result (Service.Error union)
     //
     // A Service.call delivers `Result Service.Error resp`: the Err is a

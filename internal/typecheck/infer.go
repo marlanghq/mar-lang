@@ -27,14 +27,6 @@ func errorf(pos ast.Pos, format string, args ...any) *InferError {
 	return &InferError{Pos: pos, Message: fmt.Sprintf(format, args...)}
 }
 
-// errorfSpan is errorf with an explicit end position, so the caret
-// underlines the full [start, end) source span. Use it when the error
-// is about a specific sub-expression (e.g. a function argument) whose
-// extent is known.
-func errorfSpan(start, end ast.Pos, format string, args ...any) *InferError {
-	return &InferError{Pos: start, End: end, Message: fmt.Sprintf(format, args...)}
-}
-
 // errorfExpr is the common case: point at an expression's own span.
 func errorfExpr(e ast.Expr, format string, args ...any) *InferError {
 	return &InferError{Pos: e.Position(), End: ast.EndOf(e), Message: fmt.Sprintf(format, args...)}
@@ -99,10 +91,15 @@ func doInfer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 		}
 		return nil, errorf(n.Pos, "unknown qualified name: %s", key)
 	case *ast.ECtor:
-		// For now, treat constructors like variables (looked up in env).
-		// Qualified constructors (Module.Foo) are not yet resolved.
+		// Constructors are looked up in env like variables. Qualified
+		// constructors (Shared.Created, Service.Offline) resolve through
+		// the dotted binding the loader registers for module exports and
+		// the env registers for dotted builtins. No bare fallback: a
+		// qualifier is an explicit claim about where the constructor
+		// lives, and silently binding a same-named local one would be
+		// exactly the confusion the qualifier exists to prevent.
 		if len(n.Module) > 0 {
-			return nil, errorf(n.Pos, "qualified names not yet supported: %s.%s", n.Module, n.Name)
+			return inferVar(joinName(n.Module, n.Name), n.Pos, env)
 		}
 		return inferVar(n.Name, n.Pos, env)
 	case *ast.ENegate:
@@ -695,12 +692,19 @@ func inferPattern(p ast.Pattern, env *TypeEnv, s *Subst) (Type, *TypeEnv, error)
 		return TUnit{}, env, nil
 	case *ast.PCtor:
 		// Look up the constructor in env. It's typically a forall scheme.
+		// Qualified patterns (Shared.Created x, Service.Offline) resolve
+		// through the dotted binding the loader registers for module
+		// exports (and the env registers for dotted builtins); the
+		// pattern's bare Name is what exhaustiveness and the runtimes'
+		// tag matching use, so the qualifier is purely a resolution
+		// concern here.
+		lookupName := pat.Name
 		if len(pat.Module) > 0 {
-			return nil, env, errorf(pat.Pos, "qualified constructor patterns not yet supported")
+			lookupName = strings.Join([]string(pat.Module), ".") + "." + pat.Name
 		}
-		ctorScheme, ok := env.Lookup(pat.Name)
+		ctorScheme, ok := env.Lookup(lookupName)
 		if !ok {
-			return nil, env, errorf(pat.Pos, "unknown constructor: %s", pat.Name)
+			return nil, env, errorf(pat.Pos, "unknown constructor: %s", lookupName)
 		}
 		ctorType := Instantiate(ctorScheme)
 		// The constructor has type "a1 -> a2 -> ... -> Result". We unify

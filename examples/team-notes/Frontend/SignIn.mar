@@ -41,8 +41,8 @@ type alias Model =
 type Msg
     = DraftChanged String
     | Submitted
-    | CodeRequested (Result String ())
-    | CodeVerified (Result String Shared.User)
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
 
 init : (Model, Effect Msg)
@@ -74,7 +74,7 @@ update msg model =
                 Submitting _ ->
                     ( model, Effect.none )
 
-        CodeRequested (Ok ()) ->
+        CodeRequested (Ok Auth.CodeSent) ->
             case model.step of
                 Submitting email ->
                     ( { model | step = AskCode email "", error = Nothing }, Effect.none )
@@ -82,34 +82,40 @@ update msg model =
                 _ ->
                     ( model, Effect.none )
 
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( requestFailed "That doesn't look like a valid email address." model
+            , Effect.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( requestFailed "Too many code requests. Wait a moment and try again." model
+            , Effect.none
+            )
+
         CodeRequested (Err why) ->
-            case model.step of
-                Submitting email ->
-                    ( { step = AskEmail email
-                      , error = Just ("Couldn't send the code: " ++ humanize why)
-                      }
-                    , Effect.none
-                    )
+            ( requestFailed ("Couldn't send the code: " ++ Service.errorToString why) model
+            , Effect.none
+            )
 
-                _ ->
-                    ( model, Effect.none )
-
-        CodeVerified (Ok _) ->
+        CodeVerified (Ok (Auth.SignedIn _)) ->
             -- Auth.completeSignIn returns the user to where a 401 sent them
             -- from (or the home page by default).
             ( model, Auth.completeSignIn )
 
-        CodeVerified (Err why) ->
-            case model.step of
-                Submitting email ->
-                    ( { step = AskCode email ""
-                      , error = Just ("Couldn't verify the code: " ++ humanize why)
-                      }
-                    , Effect.none
-                    )
+        CodeVerified (Ok Auth.WrongCode) ->
+            ( verifyFailed "Wrong code. Try again or request a new one." model
+            , Effect.none
+            )
 
-                _ ->
-                    ( model, Effect.none )
+        CodeVerified (Ok Auth.TooManyAttempts) ->
+            ( verifyFailed "Too many tries with this code. Request a new one." model
+            , Effect.none
+            )
+
+        CodeVerified (Err why) ->
+            ( verifyFailed ("Couldn't verify the code: " ++ Service.errorToString why) model
+            , Effect.none
+            )
 
 
 -- Step-local edit: the input field belongs to whatever step is
@@ -123,31 +129,30 @@ updateDraft value step =
         Submitting _    -> step
 
 
--- Map common error messages from the framework / network layer to
--- something a user can act on. Anything we don't recognize falls
--- through unchanged so the original message is at least visible.
-humanize : String -> String
-humanize raw =
-    if raw == "" then
-        "the server didn't respond. Check your connection and try again."
-    else if String.startsWith "TypeError" raw then
-        "the server didn't respond. Check your connection and try again."
-    else if String.startsWith "Failed to fetch" raw then
-        "the server didn't respond. Check your connection and try again."
-    else if raw == "invalid_code" then
-        "that code didn't match. Try again or request a new one."
-    else if raw == "invalid_email" then
-        "that doesn't look like a valid email address."
-    else if raw == "missing_email" then
-        "Email is required."
-    else if raw == "missing_fields" then
-        "Both fields are required."
-    else if raw == "too_many_attempts" then
-        "too many tries with this code. Request a new one."
-    else if raw == "rate_limited" then
-        "too many attempts. Wait a minute and try again."
-    else
-        raw
+-- requestFailed / verifyFailed place the failure copy on the step the
+-- user should retry from (mid-flight only; otherwise leave the model).
+-- The per-case copy lives on the typed outcome branches in update;
+-- transport failures arrive as Service.Error and fold via
+-- Service.errorToString, so there is no string-matching of wire codes
+-- or raw exception text anywhere on this page.
+requestFailed : String -> Model -> Model
+requestFailed reason model =
+    case model.step of
+        Submitting email ->
+            { step = AskEmail email, error = Just reason }
+
+        _ ->
+            model
+
+
+verifyFailed : String -> Model -> Model
+verifyFailed reason model =
+    case model.step of
+        Submitting email ->
+            { step = AskCode email "", error = Just reason }
+
+        _ ->
+            model
 
 
 view : Model -> View Msg

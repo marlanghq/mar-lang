@@ -841,3 +841,122 @@ v = vstack [ width fill ] [ text [] "hi" ]
 		t.Fatalf("v should be a View, got %s", got)
 	}
 }
+
+// A type declaration that uses a variable it never declared must be
+// rejected, not silently accepted with a fresh var. The silent FreshVar
+// this used to produce hid typos and the lowercase-variable vs
+// uppercase-concrete-type confusion; Elm rejects it ("unbound type
+// variable") and so does Mar.
+func TestUnboundTypeVarInCustomTypeRejected(t *testing.T) {
+	src := `module M exposing (..)
+type Outcome
+    = SignedIn user
+    | WrongCode
+`
+	_, err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("custom type with undeclared variable should be rejected")
+	}
+	if !strings.Contains(err.Error(), "unbound type variable `user`") {
+		t.Fatalf("error should name the unbound variable, got: %v", err)
+	}
+}
+
+func TestUnboundTypeVarInAliasRejected(t *testing.T) {
+	src := `module M exposing (..)
+type alias Box = { value : thing }
+`
+	_, err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("alias with undeclared variable should be rejected")
+	}
+	if !strings.Contains(err.Error(), "unbound type variable `thing`") {
+		t.Fatalf("error should name the unbound variable, got: %v", err)
+	}
+}
+
+// The flip side: DECLARED variables keep working in declarations, and
+// annotations keep their implicit forall (free vars there are
+// pre-collected into scope, never "unbound").
+func TestDeclaredTypeVarsAndAnnotationForallStillWork(t *testing.T) {
+	src := `module M exposing (..)
+
+type Outcome user
+    = SignedIn user
+    | WrongCode
+
+type alias Box a = { value : a }
+
+identity : a -> a
+identity x = x
+
+name : { r | name : String } -> String
+name rec = rec.name
+`
+	if _, err := checkSource(t, src); err != nil {
+		t.Fatalf("declared params and annotation foralls should still check, got: %v", err)
+	}
+}
+
+// Qualified constructor patterns and expressions (Shared.Created x) were a
+// "not yet supported" gate; they now resolve through the dotted binding the
+// loader registers per module export. The bare Name keeps driving runtime
+// tag matching and exhaustiveness, so the qualifier is resolution-only.
+func TestQualifiedConstructorPatternAndExpr(t *testing.T) {
+	resetVarIDsForTesting()
+	shared, err := parser.Parse(`module Shared exposing (Outcome(..))
+type Outcome = Created String | Rejected
+`)
+	if err != nil {
+		t.Fatalf("parse shared: %v", err)
+	}
+	sharedRes, err := CheckModule(shared)
+	if err != nil {
+		t.Fatalf("check shared: %v", err)
+	}
+	env := BaseEnv()
+	for name, ty := range sharedRes.ValueTypes {
+		env = env.Bind("Shared."+name, ty)
+	}
+	main, err := parser.Parse(`module Main exposing (..)
+describe : Shared.Outcome -> String
+describe o =
+    case o of
+        Shared.Created name -> name
+        Shared.Rejected -> "rejected"
+
+made : Shared.Outcome
+made = Shared.Created "x"
+`)
+	if err != nil {
+		t.Fatalf("parse main: %v", err)
+	}
+	if _, err := CheckModuleWith(main, env, nil, sharedRes.CustomTypes); err != nil {
+		t.Fatalf("qualified ctor pattern + expression should check, got: %v", err)
+	}
+}
+
+func TestQualifiedConstructorExhaustivenessStillEnforced(t *testing.T) {
+	resetVarIDsForTesting()
+	shared, _ := parser.Parse(`module Shared exposing (Outcome(..))
+type Outcome = Created String | Rejected
+`)
+	sharedRes, err := CheckModule(shared)
+	if err != nil {
+		t.Fatalf("check shared: %v", err)
+	}
+	env := BaseEnv()
+	for name, ty := range sharedRes.ValueTypes {
+		env = env.Bind("Shared."+name, ty)
+	}
+	main, _ := parser.Parse(`module Main exposing (..)
+describe : Shared.Outcome -> String
+describe o =
+    case o of
+        Shared.Created name -> name
+`)
+	_, err = CheckModuleWith(main, env, nil, sharedRes.CustomTypes)
+	if err == nil || !strings.Contains(err.Error(), "missing pattern for Rejected") {
+		t.Fatalf("qualified patterns must still participate in exhaustiveness, got: %v", err)
+	}
+}

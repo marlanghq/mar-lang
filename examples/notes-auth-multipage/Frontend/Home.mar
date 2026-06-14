@@ -41,7 +41,7 @@ type Msg
     = NotesLoaded (Result Service.Error (List Shared.Note))
     | DraftChanged String
     | AddClicked
-    | NoteCreated (Result Service.Error Shared.Note)
+    | NoteCreated (Result Service.Error Shared.CreateOutcome)
     | SignOutClicked
     | SignedOut (Result String ())
 
@@ -91,11 +91,17 @@ update _ msg model =
                 , Service.call Shared.createMine { body = model.draft } NoteCreated
                 )
 
-        NoteCreated (Ok _) ->
+        NoteCreated (Ok (Shared.Created _)) ->
             -- Server confirmed — now safe to clear the draft.
             ( { model | draft = "" }
             , Service.call Shared.listMine () NotesLoaded
             )
+
+        NoteCreated (Ok Shared.BodyEmpty) ->
+            -- AddClicked already guards locally (trimmed-empty drafts
+            -- never submit), so reaching this means a tampered or
+            -- replayed request; keep the draft, nothing to show.
+            ( model, Effect.none )
 
         NoteCreated (Err _) ->
             -- Non-401 failures land here (network, server bug, etc).

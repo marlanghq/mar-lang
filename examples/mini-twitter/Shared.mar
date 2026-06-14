@@ -111,7 +111,16 @@ type alias ProfileSetup =
 -- the pages). The protocol layer in between is the framework's job.
 
 
-composeTweet : Service NewTweet Tweet
+-- Compose outcome: the two domain rules (no empty tweets, 280 max)
+-- are typed cases the frontend matches; the backend can produce no
+-- other shapes.
+type ComposeOutcome
+    = Posted Tweet
+    | BodyEmpty
+    | BodyTooLong
+
+
+composeTweet : Service NewTweet ComposeOutcome
 composeTweet = Service.declare
 
 
@@ -132,7 +141,17 @@ loadProfile : Service ProfileQuery (Maybe ProfileView)
 loadProfile = Service.declare
 
 
-follow : Service FollowAction ()
+-- Follow outcome: each case is a distinct UX branch on the profile
+-- page. Unfollow has no domain outcomes (unfollowing someone you
+-- don't follow, or a vanished handle, is idempotent success), so it
+-- keeps the plain unit response below.
+type FollowOutcome
+    = Followed
+    | HandleNotFound
+    | CantFollowSelf
+
+
+follow : Service FollowAction FollowOutcome
 follow = Service.declare
 
 
@@ -144,7 +163,17 @@ unfollow = Service.declare
 -- still empty. Subsequent updates would go through a separate
 -- `editProfile` service (not in this minimal example — keeping the
 -- service list short so the security policy stays readable).
-setupProfile : Service ProfileSetup User
+-- Setup outcome: every validation the backend enforces is a case
+-- the form can point at the right field.
+type SetupOutcome
+    = ProfileSaved User
+    | HandleRequired
+    | HandleTooLong
+    | DisplayNameRequired
+    | HandleTaken
+
+
+setupProfile : Service ProfileSetup SetupOutcome
 setupProfile = Service.declare
 
 

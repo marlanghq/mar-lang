@@ -417,7 +417,9 @@ func (e *typeNameEnv) lookupParam(name string) (int, bool) {
 // dot. The parser splits a qualified upper name into Module + base name, so
 // these would otherwise lose their qualifier and collide on the bare tail.
 var qualifiedBuiltinTypes = map[string]bool{
-	"Service.Error": true,
+	"Service.Error":       true,
+	"Auth.RequestOutcome": true,
+	"Auth.VerifyOutcome":  true,
 }
 
 func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[string]int) (Type, error) {
@@ -431,8 +433,14 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 		if id, ok := tEnv.lookupParam(t.Name); ok {
 			return TVar{ID: id}, nil
 		}
-		// Free type var = fresh
-		return FreshVar(), nil
+		// Reached only from type DECLARATIONS (aliases and custom
+		// types): annotations pre-collect every variable name into
+		// the scope first (buildAnnotationScope), so an unbound name
+		// here means the declaration uses a variable it never
+		// declared. The silent FreshVar this used to produce hid
+		// typos and the variable-vs-concrete-type confusion; Elm
+		// rejects it ("unbound type variable") and so do we.
+		return nil, fmt.Errorf("unbound type variable `%s`: declare it as a parameter of the type (e.g. `type T %s = ...`) or use a concrete type", t.Name, t.Name)
 
 	case *ast.TypeCon:
 		// Qualified type names (Post.Post) are looked up by the base name.
@@ -517,7 +525,10 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 			if id, ok := tEnv.lookupParam(t.Extends); ok {
 				tail = TVar{ID: id}
 			} else {
-				tail = FreshVar()
+				// Same rule as the TypeVar case above: only
+				// declarations can reach this unbound, and an unbound
+				// extension row is a typo or an undeclared parameter.
+				return nil, fmt.Errorf("unbound type variable `%s` in record extension: declare it as a parameter of the type", t.Extends)
 			}
 		}
 		return TRecord{Fields: fields, Order: order, Tail: tail}, nil

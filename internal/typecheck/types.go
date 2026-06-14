@@ -48,12 +48,21 @@ const (
 	// a Dict on a Record or custom type gets a type error at the
 	// call site, not a runtime "comparison: unsupported types".
 	KindComparable Kind = 1
+
+	// KindAppendable — restricted to String / List. Used by `++` so
+	// `1 ++ 2` (or `True ++ False`) is a type error at the call site,
+	// matching Elm's `appendable` constrained variable. Elm folds
+	// comparable+appendable into `compappend`; we keep the two kinds
+	// disjoint and reject the overlap (see mergeKinds).
+	KindAppendable Kind = 2
 )
 
 func (k Kind) String() string {
 	switch k {
 	case KindComparable:
 		return "comparable"
+	case KindAppendable:
+		return "appendable"
 	default:
 		return ""
 	}
@@ -79,13 +88,14 @@ type TVar struct {
 
 func (TVar) isType() {}
 func (v TVar) String() string {
-	if v.Constraint == KindComparable {
-		// Render as `comparable<N>` so pretty-printed errors say
-		// what the user needs to see. The renamer in pretty.go
-		// gives polymorphic names ("a", "b") when there's no
-		// constraint; this name survives unchanged through that
-		// pass because the renamer only renames KindAny vars.
+	// Constrained vars render with their kind name ("comparable3",
+	// "appendable7") so raw debug output shows the restriction; the
+	// pretty-printer (pretty.go) renames unconstrained vars to letters.
+	switch v.Constraint {
+	case KindComparable:
 		return fmt.Sprintf("comparable%d", v.ID)
+	case KindAppendable:
+		return fmt.Sprintf("appendable%d", v.ID)
 	}
 	return fmt.Sprintf("t%d", v.ID)
 }
@@ -256,6 +266,29 @@ func IsComparableType(t Type) bool {
 	return false
 }
 
+// IsAppendableType reports whether t is a built-in appendable type —
+// the types `++` accepts. Mirrors Elm's `appendable`: String and List.
+// The runtime's append handles exactly these two (string concat and
+// list concat), so anything else was a latent runtime error before the
+// constraint turned it into a compile error.
+//
+// A free TVar is NOT appendable on its own — bindVar propagates the
+// constraint onto the var instead of calling this helper, same as
+// Comparable.
+func IsAppendableType(t Type) bool {
+	c, ok := t.(TCon)
+	if !ok {
+		return false
+	}
+	switch c.Name {
+	case "String":
+		return len(c.Args) == 0
+	case "List":
+		return len(c.Args) == 1
+	}
+	return false
+}
+
 // --- Built-in nullary types ---
 
 var (
@@ -279,7 +312,18 @@ var (
 	// Elm way, instead of a stringly-typed match. Constructors registered
 	// in builtinCustomTypes and the value envs of all three runtimes.
 	TServiceError = TCon{Name: "Service.Error"}
+	// TAuthRequestOutcome — the domain outcome of Auth.requestCode. Each
+	// endpoint gets its OWN outcome union (never a shared auth catch-all):
+	// the email screen branches on these three and nothing else.
+	TAuthRequestOutcome = TCon{Name: "Auth.RequestOutcome"}
 )
+
+// TAuthVerifyOutcome returns "Auth.VerifyOutcome user" — the domain outcome
+// of Auth.verifyCode, parameterized on the app's own user record (the
+// framework cannot name it; Auth.config's entity decides it).
+func TAuthVerifyOutcome(user Type) TCon {
+	return TCon{Name: "Auth.VerifyOutcome", Args: []Type{user}}
+}
 
 // TList returns the type "List elem".
 func TList(elem Type) TCon {

@@ -97,7 +97,7 @@ update _ msg model =
 
         CreateClicked ->
             if model.draftName == "" || model.draftSlug == "" then
-                ( { model | error = Just (ServerError "Name and slug are required.") }, Effect.none )
+                ( { model | error = Just (Service.ServerError "Name and slug are required.") }, Effect.none )
             else
                 ( { model | creating = True, error = Nothing }
                 , Service.call Shared.createProject

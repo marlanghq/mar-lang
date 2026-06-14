@@ -35,8 +35,8 @@ type alias Model =
 type Msg
     = DraftChanged String
     | Submitted
-    | CodeRequested (Result String ())
-    | CodeVerified (Result String Shared.User)
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
 
 init : (Model, Effect Msg)
@@ -71,7 +71,7 @@ update msg model =
                 Submitting _ ->
                     ( model, Effect.none )
 
-        CodeRequested (Ok ()) ->
+        CodeRequested (Ok Auth.CodeSent) ->
             case model.step of
                 Submitting emailAddr ->
                     ( { model | step = AskCode emailAddr "", error = Nothing }
@@ -81,17 +81,22 @@ update msg model =
                 _ ->
                     ( model, Effect.none )
 
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( requestFailed "That email doesn't look right." model
+            , Effect.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( requestFailed "Too many code requests. Try again in a moment." model
+            , Effect.none
+            )
+
         CodeRequested (Err why) ->
-            case model.step of
-                Submitting emailAddr ->
-                    ( { step = AskEmail emailAddr, error = Just (humanize why) }
-                    , Effect.none
-                    )
+            ( requestFailed (Service.errorToString why) model
+            , Effect.none
+            )
 
-                _ ->
-                    ( { model | error = Just (humanize why) }, Effect.none )
-
-        CodeVerified (Ok _) ->
+        CodeVerified (Ok (Auth.SignedIn _)) ->
             -- Verified — Mar's auth runtime stores the session and the
             -- next render will route the user to the configured
             -- post-signin destination. We don't need to navigate here
@@ -100,15 +105,20 @@ update msg model =
             , Auth.completeSignIn
             )
 
-        CodeVerified (Err why) ->
-            case model.step of
-                Submitting emailAddr ->
-                    ( { step = AskCode emailAddr "", error = Just (humanize why) }
-                    , Effect.none
-                    )
+        CodeVerified (Ok Auth.WrongCode) ->
+            ( verifyFailed "Wrong code. Try again or request a new one." model
+            , Effect.none
+            )
 
-                _ ->
-                    ( { model | error = Just (humanize why) }, Effect.none )
+        CodeVerified (Ok Auth.TooManyAttempts) ->
+            ( verifyFailed "Too many tries with this code. Request a new one." model
+            , Effect.none
+            )
+
+        CodeVerified (Err why) ->
+            ( verifyFailed (Service.errorToString why) model
+            , Effect.none
+            )
 
 
 updateDraft : String -> Step -> Step
@@ -124,20 +134,28 @@ updateDraft value step =
             Submitting emailAddr
 
 
--- Translate the framework's wire codes into human-readable
--- explanations. The default catches any unknown variant so future
--- backend errors land in the UI without crashing the case.
-humanize : String -> String
-humanize code =
-    case code of
-        "missing_email"           -> "Email is required."
-        "invalid email"           -> "That email doesn't look right."
-        "missing code"            -> "Code is required."
-        "invalid code"            -> "Wrong code. Try again or request a new one."
-        "expired code"            -> "Code expired. Request a new one."
-        "rate limited email"      -> "Too many code requests for this email. Try again later."
-        "rate limited ip"         -> "Too many code requests from this IP. Try again later."
-        other                     -> "Couldn't sign you in: " ++ other
+-- A failed code request lands the user back on the email step (when
+-- mid-flight) with the explanation; a failed verify keeps them on the
+-- code step. The copy comes from the typed outcome's case in update,
+-- never from matching wire strings.
+requestFailed : String -> Model -> Model
+requestFailed reason model =
+    case model.step of
+        Submitting emailAddr ->
+            { step = AskEmail emailAddr, error = Just reason }
+
+        _ ->
+            { model | error = Just reason }
+
+
+verifyFailed : String -> Model -> Model
+verifyFailed reason model =
+    case model.step of
+        Submitting emailAddr ->
+            { step = AskCode emailAddr "", error = Just reason }
+
+        _ ->
+            { model | error = Just reason }
 
 
 -- ====================================================================

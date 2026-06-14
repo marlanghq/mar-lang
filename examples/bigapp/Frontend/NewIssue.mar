@@ -96,7 +96,7 @@ update _ params msg model =
 
         SubmitClicked ->
             if model.title == "" then
-                ( { model | error = Just (ServerError "Title is required.") }, Effect.none )
+                ( { model | error = Just (Service.ServerError "Title is required.") }, Effect.none )
             else
                 ( { model | submitting = True, error = Nothing }
                 , Service.call Shared.createIssue

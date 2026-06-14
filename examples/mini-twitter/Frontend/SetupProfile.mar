@@ -23,7 +23,7 @@ type alias Model =
     , displayName : String
     , bio         : String
     , submitting  : Bool
-    , error       : Maybe Service.Error
+    , error       : Maybe String
     }
 
 
@@ -32,7 +32,7 @@ type Msg
     | DisplayNameChanged String
     | BioChanged String
     | Submitted
-    | Saved (Result Service.Error Shared.User)
+    | Saved (Result Service.Error Shared.SetupOutcome)
 
 
 init : Shared.User -> (Model, Effect Msg)
@@ -69,15 +69,35 @@ update _ msg model =
                 Saved
             )
 
-        Saved (Ok _) ->
+        Saved (Ok (Shared.ProfileSaved _)) ->
             -- Setup complete — push to home with a replace so the
             -- back button doesn't return here.
             ( { model | submitting = False }
             , Nav.replaceTo Frontend.Routes.home {}
             )
 
+        Saved (Ok Shared.HandleRequired) ->
+            ( { model | submitting = False, error = Just "Pick a handle." }
+            , Effect.none
+            )
+
+        Saved (Ok Shared.HandleTooLong) ->
+            ( { model | submitting = False, error = Just "Handles are at most 20 characters." }
+            , Effect.none
+            )
+
+        Saved (Ok Shared.DisplayNameRequired) ->
+            ( { model | submitting = False, error = Just "Add a display name." }
+            , Effect.none
+            )
+
+        Saved (Ok Shared.HandleTaken) ->
+            ( { model | submitting = False, error = Just "That handle is taken. Try another." }
+            , Effect.none
+            )
+
         Saved (Err why) ->
-            ( { model | submitting = False, error = Just why }
+            ( { model | submitting = False, error = Just (Service.errorToString why) }
             , Effect.none
             )
 
@@ -87,7 +107,7 @@ view _ model =
     let
         errorRow =
             case model.error of
-                Just why -> section [] [ errorText (Service.errorToString why) ]
+                Just why -> section [] [ errorText why ]
                 Nothing  -> empty
 
         cta =

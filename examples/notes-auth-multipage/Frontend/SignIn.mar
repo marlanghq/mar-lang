@@ -26,8 +26,8 @@ type Model
 type Msg
     = DraftChanged String
     | Submitted
-    | CodeRequested (Result String ())
-    | CodeVerified (Result String Shared.User)
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
 
 init : (Model, Effect Msg)
@@ -67,7 +67,7 @@ update msg model =
                 Submitting _ ->
                     ( model, Effect.none )
 
-        CodeRequested (Ok ()) ->
+        CodeRequested (Ok Auth.CodeSent) ->
             case model of
                 Submitting email ->
                     ( AskCode email "" Nothing, Effect.none )
@@ -75,19 +75,24 @@ update msg model =
                 _ ->
                     ( model, Effect.none )
 
-        -- requestCode failed (rate-limited, invalid email, etc.).
-        -- Park the explained error on AskEmail so the user sees what
-        -- went wrong and can retry without losing the email they
-        -- typed.
+        -- The request's domain outcomes park their explanation on
+        -- AskEmail so the user sees what went wrong and can retry
+        -- without losing the email they typed. Each outcome is a typed
+        -- case; the copy belongs to this screen.
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( requestFailed "That doesn't look like a valid email address." model
+            , Effect.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( requestFailed "Too many attempts. Wait a moment before trying again." model
+            , Effect.none
+            )
+
         CodeRequested (Err why) ->
-            case model of
-                Submitting email ->
-                    ( AskEmail email (Just (explainError why)), Effect.none )
+            ( requestFailed (Service.errorToString why) model, Effect.none )
 
-                _ ->
-                    ( model, Effect.none )
-
-        CodeVerified (Ok _) ->
+        CodeVerified (Ok (Auth.SignedIn _)) ->
             -- Login worked. Auth.completeSignIn returns the user to where
             -- a 401 sent them from (or "/" by default). Replaces history
             -- so back-button doesn't return to sign-in. Reset the state
@@ -96,46 +101,43 @@ update msg model =
             -- screen models across navigations to keep scroll/input state).
             ( AskEmail "" Nothing, Auth.completeSignIn )
 
-        -- verifyCode failed (wrong code, expired, too many tries).
-        -- Park the explained error on AskCode with the code field
-        -- cleared so the user can re-type without first deleting the
-        -- (now-invalid) previous attempt.
+        -- The verify outcomes park their explanation on AskCode with
+        -- the code field cleared so the user can re-type without first
+        -- deleting the (now-invalid) previous attempt.
+        CodeVerified (Ok Auth.WrongCode) ->
+            ( verifyFailed "That code didn't work. Check your email or request a new one." model
+            , Effect.none
+            )
+
+        CodeVerified (Ok Auth.TooManyAttempts) ->
+            ( verifyFailed "Too many tries with this code. Request a new one." model
+            , Effect.none
+            )
+
         CodeVerified (Err why) ->
-            case model of
-                Submitting email ->
-                    ( AskCode email "" (Just (explainError why)), Effect.none )
-
-                _ ->
-                    ( model, Effect.none )
+            ( verifyFailed (Service.errorToString why) model, Effect.none )
 
 
--- Translates the server's short error codes into human-readable
--- text. Anything not in the table falls through to the raw code —
--- useful during dev (operator sees the exact server identifier) and
--- safe in prod (codes are reasonably readable already).
-explainError : String -> String
-explainError code =
-    case code of
-        "invalid_code" ->
-            "That code didn't work. Check your email or request a new one."
-
-        "too_many_attempts" ->
-            "Too many tries with this code. Request a new one."
-
-        "rate_limited" ->
-            "Too many attempts. Wait a moment before trying again."
-
-        "invalid_email" ->
-            "That doesn't look like a valid email address."
-
-        "missing_email" ->
-            "Email is required."
-
-        "missing_fields" ->
-            "Both fields are required."
+-- requestFailed / verifyFailed place the failure copy on the step the
+-- user should retry from (mid-flight only; otherwise leave the model).
+requestFailed : String -> Model -> Model
+requestFailed reason model =
+    case model of
+        Submitting email ->
+            AskEmail email (Just reason)
 
         _ ->
-            code
+            model
+
+
+verifyFailed : String -> Model -> Model
+verifyFailed reason model =
+    case model of
+        Submitting email ->
+            AskCode email "" (Just reason)
+
+        _ ->
+            model
 
 
 -- View built from SwiftUI-style primitives. Each step renders as a

@@ -53,10 +53,17 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 		return nil, errorf(n.Pos, "unbound qualified name: %s", key)
 
 	case *ast.ECtor:
-		// Constructors are looked up like values (registered at module load).
-		v, ok := env.Lookup(n.Name)
+		// Constructors are looked up like values (registered at module
+		// load). Qualified ones (Shared.Created, Service.Offline) resolve
+		// through the dotted binding the loader registers per module
+		// export; no bare fallback, mirroring the typechecker.
+		ctorName := n.Name
+		if len(n.Module) > 0 {
+			ctorName = joinName(n.Module, n.Name)
+		}
+		v, ok := env.Lookup(ctorName)
 		if !ok {
-			return nil, errorf(n.Pos, "unbound constructor: %s", n.Name)
+			return nil, errorf(n.Pos, "unbound constructor: %s", ctorName)
 		}
 		return v, nil
 

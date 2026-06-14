@@ -44,7 +44,16 @@ listTasks : Service () (List Task)
 listTasks = Service.declare
 
 
-addTask : Service { name : String } Task
+-- The add outcome: the one domain rule (no empty names) is a typed
+-- case the frontend matches, not a string smuggled through the abort
+-- channel. The backend can only produce these two shapes, and the
+-- frontend's case is checked for exhaustiveness.
+type AddTaskOutcome
+    = Added Task
+    | NameEmpty
+
+
+addTask : Service { name : String } AddTaskOutcome
 addTask = Service.declare
 
 

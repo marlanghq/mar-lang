@@ -420,10 +420,22 @@ func builtins() map[string]Value {
 		// delivers in its Err. The frontend builds these (JS/Swift HTTP
 		// clients); the Go runtime registers them so the values exist and
 		// Service.errorToString can fold them to a string.
-		"Offline":      VCtor{Tag: "Offline"},
-		"Unauthorized": VCtor{Tag: "Unauthorized"},
-		"ServerError": nativeFn(1, func(args []Value) (Value, error) {
+		"Service.Offline":      VCtor{Tag: "Offline"},
+		"Service.Unauthorized": VCtor{Tag: "Unauthorized"},
+		"Service.ServerError": nativeFn(1, func(args []Value) (Value, error) {
 			return VCtor{Tag: "ServerError", Args: []Value{args[0]}}, nil
+		}),
+
+		// Auth outcome constructors — qualified-only, like Service.Error.
+		// The JS/Swift HTTP clients build these at the auth boundary; the
+		// Go runtime registers them so the values exist everywhere.
+		"Auth.CodeSent":        VCtor{Tag: "CodeSent"},
+		"Auth.InvalidEmail":    VCtor{Tag: "InvalidEmail"},
+		"Auth.RateLimited":     VCtor{Tag: "RateLimited"},
+		"Auth.WrongCode":       VCtor{Tag: "WrongCode"},
+		"Auth.TooManyAttempts": VCtor{Tag: "TooManyAttempts"},
+		"Auth.SignedIn": nativeFn(1, func(args []Value) (Value, error) {
+			return VCtor{Tag: "SignedIn", Args: []Value{args[0]}}, nil
 		}),
 		"serviceErrorToString": nativeFn(1, func(args []Value) (Value, error) {
 			return VString{V: serviceErrorString(args[0])}, nil
