@@ -39,14 +39,14 @@ func adminUsage() string {
 	path := func(s string) string { return colorMagenta(s) }
 	hdr := func(s string) string { return colorBold(s) }
 	run := func(rest string) string { return bin + " " + name(rest) }
-	return bin + " " + name("admin") + " — manage the admin panel access list\n" +
+	return bin + " " + name("admin") + ": manage the admin panel access list\n" +
 		"\n" +
 		hdr("Usage:") + "\n" +
 		"  " + run("admin add") + " " + name("EMAIL") + "       Add " + name("EMAIL") + " to " + path(`mar.json["admins"]`) + "\n" +
 		"  " + run("admin remove") + " " + name("EMAIL") + "    Remove " + name("EMAIL") + " from " + path(`mar.json["admins"]`) + "\n" +
 		"  " + run("admin list") + "            Print the current admins\n" +
 		"\n" +
-		"The admins list in " + path("mar.json") + " is the source of truth — the runtime\n" +
+		"The admins list in " + path("mar.json") + " is the source of truth. The runtime\n" +
 		"re-syncs production from this list on every boot.\n" +
 		"\n" +
 		"For production runtime inspection (last login, post-sync state),\n" +
@@ -523,7 +523,7 @@ func bootAdminPanel(manifest *project.Manifest) error {
 		// (otherwise its trailing blank would split the Hint from
 		// the "run ..." line).
 		fprintHint(
-			"no admins configured — the admin panel at %s is locked.\n"+
+			"no admins configured. The admin panel at %s is locked.\n"+
 				"      run %s to enable it.",
 			colorCyan("/_mar/admin"),
 			cmdSuggest("admin add <email>"))

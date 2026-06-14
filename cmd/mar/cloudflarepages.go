@@ -93,7 +93,7 @@ func cloudflarePagesUsage() string {
 		"    " + pth(`} }`) + "\n" +
 		"\n" +
 		hdr("Authentication:") + "\n" +
-		"  The API token is declared in " + pth("mar.json") + " as " + pth("env:VAR_NAME") + " —\n" +
+		"  The API token is declared in " + pth("mar.json") + " as " + pth("env:VAR_NAME") + ",\n" +
 		"  the operator picks the env var name. Create the token at\n" +
 		"  " + url("https://dash.cloudflare.com/profile/api-tokens") + " with the\n" +
 		"  " + name("Account.Cloudflare Pages: Edit") + " permission."
@@ -252,15 +252,15 @@ func printDeployCloudflarePagesError(err error) {
 		fmt.Fprintln(os.Stderr, "  }")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, colorBold("Hints:"))
-		fmt.Fprintf(os.Stderr, "  %s      — Pages project name; becomes %s. Auto-created on\n",
+		fmt.Fprintf(os.Stderr, "  %s      : Pages project name; becomes %s. Auto-created on\n",
 			colorMagenta("app"), colorCyan("<app>.pages.dev"))
 		fmt.Fprintf(os.Stderr, "             first deploy (with confirmation).\n")
-		fmt.Fprintf(os.Stderr, "  %s  — your Cloudflare account ID (32 hex chars; visible in\n",
+		fmt.Fprintf(os.Stderr, "  %s  : your Cloudflare account ID (32 hex chars; visible in\n",
 			colorMagenta("account"))
 		fmt.Fprintf(os.Stderr, "             the dashboard URL or via the API).\n")
-		fmt.Fprintf(os.Stderr, "  %s — API token with %s permission.\n",
+		fmt.Fprintf(os.Stderr, "  %s : API token with %s permission.\n",
 			colorMagenta("apiToken"), colorBold("Account.Cloudflare Pages: Edit"))
-		fmt.Fprintf(os.Stderr, "             Must be %s — committing a literal would leak\n",
+		fmt.Fprintf(os.Stderr, "             Must be %s, committing a literal would leak\n",
 			colorMagenta("env:VAR_NAME"))
 		fmt.Fprintf(os.Stderr, "             the credential. Create one at\n")
 		fmt.Fprintf(os.Stderr, "             %s.\n",
@@ -289,7 +289,7 @@ func printDeployCloudflarePagesError(err error) {
 		fprintError("mar cloudflare-pages deploy: %s = %q is not a valid Cloudflare\n      account ID (expected 32 hex characters).",
 			colorMagenta("deploy.cloudflare-pages.account"), de.BadValue)
 		fprintHint("Account IDs are 32 lowercase-hex chars. Find yours at\n"+
-			"      %s — the slug after %s in the URL\n"+
+			"      %s, the slug after %s in the URL\n"+
 			"      is the account ID.",
 			colorCyan("https://dash.cloudflare.com/"),
 			colorCyan("dash.cloudflare.com/"))
@@ -299,7 +299,7 @@ func printDeployCloudflarePagesError(err error) {
 		fprintHint("%s is the Cloudflare API token used for uploads. Required\n"+
 			"      permission: %s.\n"+
 			"\n"+
-			"      Declare it as %s in %s — the operator picks the\n"+
+			"      Declare it as %s in %s, the operator picks the\n"+
 			"      env var name. Example:\n"+
 			"\n"+
 			"        %s: %s\n"+
@@ -435,8 +435,8 @@ func printTopologyMismatch(e *topologyMismatchError) {
 	fprintError("mar cloudflare-pages deploy: this project is %s, not frontend-only.",
 		colorCyan(string(e.got)))
 	fprintHint("Cloudflare Pages only hosts static bundles. For projects with\n"+
-		"      a backend (database, services, auth), use %s instead\n"+
-		"      — it provisions a VM with SQLite, secrets, and the runtime\n"+
+		"      a backend (database, services, auth), use %s instead,\n"+
+		"      it provisions a VM with SQLite, secrets, and the runtime\n"+
 		"      that fullstack apps need.",
 		cmdSuggest("fly deploy"))
 }

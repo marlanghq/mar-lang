@@ -24,7 +24,7 @@ import (
 //
 // Commands: :quit / :q, :type EXPR / :t EXPR, :reset.
 func runRepl() int {
-	fmt.Println("mar repl — :quit, :type EXPR, :reset")
+	fmt.Println("mar repl. :quit, :type EXPR, :reset")
 	scanner := bufio.NewScanner(os.Stdin)
 
 	// Persistent envs that grow across lines. Track user-defined names

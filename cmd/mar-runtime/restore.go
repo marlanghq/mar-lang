@@ -205,7 +205,7 @@ func doRestore(o restoreOpts) int {
 	fmt.Fprintln(o.stdout)
 
 	if o.dryRun {
-		fmt.Fprintln(o.stdout, "(dry run — no changes made)")
+		fmt.Fprintln(o.stdout, "(dry run, no changes made)")
 		return 0
 	}
 

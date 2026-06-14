@@ -264,7 +264,7 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 			// above). It's just still propagating, so open anyway and
 			// tell the operator a refresh may be needed.
 			fmt.Println()
-			fmt.Println(colorDim("  Still propagating — opening anyway. If you see a Cloudflare"))
+			fmt.Println(colorDim("  Still propagating. Opening anyway. If you see a Cloudflare"))
 			fmt.Println(colorDim("  placeholder, refresh in a few seconds."))
 		}
 		// Trailing blank so the shell prompt doesn't butt up against

@@ -311,11 +311,11 @@ func printDeployFlyError(err error) {
 		fmt.Fprintln(os.Stderr, "  }")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, colorBold("Hints:"))
-		fmt.Fprintf(os.Stderr, "  %s     — globally unique on Fly (becomes %s)\n",
+		fmt.Fprintf(os.Stderr, "  %s     : globally unique on Fly (becomes %s)\n",
 			colorMagenta("app"), colorCyan("<app>.fly.dev"))
-		fmt.Fprintf(os.Stderr, "  %s  — pick a 3-letter code from the list below\n",
+		fmt.Fprintf(os.Stderr, "  %s  : pick a 3-letter code from the list below\n",
 			colorMagenta("region"))
-		fmt.Fprintf(os.Stderr, "  %s  — pick a machine size from the list below\n",
+		fmt.Fprintf(os.Stderr, "  %s  : pick a machine size from the list below\n",
 			colorMagenta("memory"))
 		fmt.Fprintln(os.Stderr)
 		// regionsBlock and formatMemoryHelp each end with a blank
@@ -350,7 +350,7 @@ func printDeployFlyError(err error) {
 		regionsBlock := formatRegionsBlock()
 		fprintError("mar fly deploy: %s is missing %s.",
 			colorMagenta("mar.json"), colorMagenta("deploy.fly.region"))
-		fprintHint("pick a Fly region close to your users — paste the 3-letter\n" +
+		fprintHint("pick a Fly region close to your users, paste the 3-letter\n" +
 			"      code into the manifest.")
 		// fprintHint already emits a trailing blank; the regions
 		// block (and formatMemoryHelp below) begin with content, so
@@ -396,13 +396,13 @@ func formatMemoryHelp() string {
 	var b strings.Builder
 	b.WriteString("        ")
 	b.WriteString(colorCyan("256mb"))
-	b.WriteString("  — light App.fullstack\n")
+	b.WriteString("  : light App.fullstack\n")
 	b.WriteString("        ")
 	b.WriteString(colorCyan("512mb"))
-	b.WriteString("  — typical App.fullstack\n")
+	b.WriteString("  : typical App.fullstack\n")
 	b.WriteString("        ")
 	b.WriteString(colorCyan("1gb"))
-	b.WriteString("    — heavier traffic, larger DB\n")
+	b.WriteString("    : heavier traffic, larger DB\n")
 	b.WriteString("\n")
 	b.WriteString(colorBold("Valid memory sizes:"))
 	b.WriteString("\n  ")

@@ -219,7 +219,7 @@ func printManifestSyntaxError(e *project.ManifestSyntaxError) {
 	// the main message so they read as one sentence — they ARE one
 	// sentence semantically (the location is part of the error), and
 	// a blank line between them adds visual noise without helping.
-	fprintError("%s is not valid JSON — %s\nat line %s, column %s:",
+	fprintError("%s is not valid JSON: %s\nat line %s, column %s:",
 		colorMagenta(e.Path),
 		e.HumanMessage,
 		colorCyan(fmt.Sprintf("%d", e.Line)),
@@ -265,7 +265,7 @@ func printFreeMailDomainError(prefix string, e *project.FreeMailDomainError) {
 			"      Free-mail domains aren't yours, so the provider will reject\n"+
 			"      every send.\n"+
 			"\n"+
-			"      Use a domain you own — e.g. %s — and verify it\n"+
+			"      Use a domain you own (e.g. %s) and verify it\n"+
 			"      in your provider's dashboard.",
 		colorCyan("notifications@my-app.com"))
 }
@@ -491,7 +491,7 @@ func printProductionConfigError(e *scaffold.ProductionConfigError) {
 		"Your project uses "+colorGreen("Auth.config")+
 			" which sends sign-in emails. The runtime")
 	fmt.Fprintln(os.Stderr,
-		"needs persistent secrets and a real SMTP provider in production —")
+		"needs persistent secrets and a real SMTP provider in production,")
 	fmt.Fprintln(os.Stderr,
 		"without them, every sign-in attempt would fail.")
 	fmt.Fprintln(os.Stderr)
@@ -519,7 +519,7 @@ func printProductionConfigError(e *scaffold.ProductionConfigError) {
 	fmt.Fprintf(os.Stderr, "  - %s is optional and defaults to %s (Resend, SendGrid,\n",
 		colorMagenta("smtpPort"), colorCyan("587"))
 	fmt.Fprintln(os.Stderr, "    Mailgun, AWS SES, Postmark, Brevo, Mailjet all use it).")
-	fmt.Fprintf(os.Stderr, "  - %s and %s MUST be %s — push\n",
+	fmt.Fprintf(os.Stderr, "  - %s and %s MUST be %s, push\n",
 		colorMagenta("sessionSecret"), colorMagenta("smtpPassword"),
 		colorMagenta("env:VAR_NAME"))
 	fmt.Fprintf(os.Stderr, "    the actual values reach Fly automatically on the next %s.\n",
@@ -554,7 +554,7 @@ func buildUsage() string {
 		"  Writes a self-contained executable to " + path("<dir>/<projectName>") + " by\n" +
 		"  concatenating the cross-compiled mar-runtime stub for " + name("<target>") + " with\n" +
 		"  a ZIP payload of the project sources + " + path("mar.json") + ". The resulting\n" +
-		"  binary needs no mar toolchain on the deploy host — just run it.\n" +
+		"  binary needs no mar toolchain on the deploy host, just run it.\n" +
 		"\n" +
 		hdr("For --target ios:") + "\n" +
 		"  Generates a disposable Xcode project under " + path("<dir>/<AppName>/") + ". The\n" +
@@ -564,7 +564,7 @@ func buildUsage() string {
 		"\n" +
 		"  In DEBUG (Xcode debug-build) the app uses Bonjour to find your\n" +
 		"  " + run("dev") + " server on the local network. In RELEASE (TestFlight /\n" +
-		"  App Store) it talks only to " + path("mar.json") + "'s " + path(`"ios.serverUrl"`) + " — edit the\n" +
+		"  App Store) it talks only to " + path("mar.json") + "'s " + path(`"ios.serverUrl"`) + ", edit the\n" +
 		"  manifest to point at a different backend.\n" +
 		"\n" +
 		hdr("Flags:") + "\n" +
@@ -965,7 +965,7 @@ func runCheck(path string) int {
 			}
 			return 1
 		}
-		fmt.Printf("project %s — OK (%d modules)\n", path, len(proj.Modules))
+		fmt.Printf("project %s: OK (%d modules)\n", path, len(proj.Modules))
 		for _, name := range proj.Order {
 			m := proj.Modules[name]
 			fmt.Printf("  %s\n", m.Name)
@@ -990,7 +990,7 @@ func runCheck(path string) int {
 		printError("", diag.Wrap(path, string(src), err))
 		return 1
 	}
-	fmt.Printf("module %s — OK\n", joinModuleName(mod.Name))
+	fmt.Printf("module %s: OK\n", joinModuleName(mod.Name))
 	if len(res.TypeAliases) > 0 {
 		fmt.Println("\nType aliases:")
 		for name := range res.TypeAliases {
@@ -1198,8 +1198,8 @@ func runDev(path string, noOpen bool) int {
 		if !ok {
 			return newHintedError(
 				"%s must export a `main` value",
-				"Add a top-level declaration: `main : Effect String ()`.\n"+
-					"It typically calls one of the topology builders — App.frontend / App.backend / App.fullstack.",
+				"Add a top-level declaration: `main : Effect ()`.\n"+
+					"It typically calls one of the topology builders: App.frontend / App.backend / App.fullstack.",
 				entryFile)
 		}
 		if mainType := lookupMainType(valueTypes); mainType != nil {
@@ -1250,7 +1250,7 @@ func runDev(path string, noOpen bool) int {
 	if lp.Port() == 0 {
 		// `main` didn't call any of the App.* overrides — nothing to host.
 		// Just exit; this isn't a server.
-		fprintError("mar dev: main returned without invoking App.serve / App.fullstack / App.serveScreens — nothing to host")
+		fprintError("mar dev: main returned without invoking App.serve / App.fullstack / App.serveScreens: nothing to host")
 		return 0
 	}
 

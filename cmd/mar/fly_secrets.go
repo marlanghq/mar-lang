@@ -96,7 +96,7 @@ func flySecretsUsage() string {
 		"                              against " + colorMagenta("mar.json") + " (missing vs orphaned).\n" +
 		"  " + name("unset") + " NAME [path]          Remove a secret from the Fly app. Confirms.\n" +
 		"\n" +
-		hdr("Note:") + " bulk pushing is handled by " + run("fly deploy") + " — it prompts\n" +
+		hdr("Note:") + " bulk pushing is handled by " + run("fly deploy") + ", it prompts\n" +
 		"for any " + colorMagenta("env:VAR") + " ref declared in " + colorMagenta("mar.json") + " that isn't yet set\n" +
 		"on the Fly app and pushes them in one shot. Use the commands\n" +
 		"above only for targeted rotation / inspection after the fact.\n" +
@@ -168,7 +168,7 @@ func runFlySecretsSet(args []string) int {
 	// source of "I set it but the app still says missing" confusion.
 	declared, _ := discoverManifestEnvRefs(filepath.Join(projectDir, "mar.json"))
 	if !containsString(declared, name) {
-		fprintWarn("%s is not declared as an env: ref in mar.json — setting it\n"+
+		fprintWarn("%s is not declared as an env: ref in mar.json, setting it\n"+
 			"      anyway, but no runtime code is reading it through the manifest.",
 			colorMagenta(name))
 	}
@@ -333,7 +333,7 @@ func runFlySecretsUnset(args []string) int {
 	// Heads-up if the secret is still declared.
 	declared, _ := discoverManifestEnvRefs(filepath.Join(projectDir, "mar.json"))
 	if containsString(declared, name) {
-		fprintWarn("%s is still referenced in mar.json — unsetting it will block\n"+
+		fprintWarn("%s is still referenced in mar.json, unsetting it will block\n"+
 			"      the next %s and break the running app on next restart.",
 			colorMagenta(name), cmdSuggest("fly deploy"))
 	}

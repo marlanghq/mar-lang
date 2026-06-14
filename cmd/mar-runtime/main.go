@@ -394,7 +394,7 @@ func runFromPath(path string) error {
 			fmt.Printf("[mar] admin panel: synced %d admins (+%d -%d)\n", len(desired), added, removed)
 		}
 		if len(desired) == 0 {
-			fmt.Fprintln(os.Stderr, "mar: admin panel locked (no admins in mar.json) — /_mar/admin will reject all logins.")
+			fmt.Fprintln(os.Stderr, "mar: admin panel locked (no admins in mar.json). /_mar/admin will reject all logins.")
 		}
 
 		// Auto-backup scheduler — runs in the background for the

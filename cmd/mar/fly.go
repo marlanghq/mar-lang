@@ -170,7 +170,7 @@ func runFlyPreview(path string) int {
 		fmt.Println("  Note: frontend-only projects deploy to Fly as a static bundle.")
 		fmt.Println("        For pure static files, dedicated static-hosting platforms")
 		fmt.Println("        have advantages (global CDN, generous free tiers). Mar's")
-		fmt.Println("        static bundle is portable to any of them — build with:")
+		fmt.Println("        static bundle is portable to any of them. Build with:")
 		fmt.Printf("          %s\n", cmdSuggest("build"))
 	}
 	fmt.Println()
@@ -669,7 +669,7 @@ func promptAndSetFlySecrets(appName string, envRefs []string, sessionVar string)
 			}
 			fmt.Printf("  %s %s\n",
 				colorMagenta(name),
-				colorDim("(auto-generated — used to sign session cookies)"))
+				colorDim("(auto-generated, used to sign session cookies)"))
 			pairs = append(pairs, name+"="+secret)
 			continue
 		}
@@ -701,7 +701,7 @@ func promptRequiredSecret(name string) (string, error) {
 		if val != "" {
 			return val, nil
 		}
-		fprintWarn("%s is required — the app won't boot without it.",
+		fprintWarn("%s is required. The app won't boot without it.",
 			colorMagenta(name))
 	}
 	return "", fmt.Errorf("%s: no value provided after %d attempts", name, maxAttempts)
