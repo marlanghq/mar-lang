@@ -1,4 +1,4 @@
-# Mar — Authorization Primitives
+# Mar, Authorization Primitives
 
 **Status**: **Implemented** (2026-05-05). Server-side enforcement live.
 **Author**: Claude (with Marcio).
@@ -71,10 +71,10 @@ not by hand-rolling checks inside handler bodies.
 
 Three primitives:
 
-1. **`Auth.requireRole`** — RBAC: gate a service by the logged user's role.
-2. **`Auth.authorize`** — ABAC: gate a service by an arbitrary policy
+1. **`Auth.requireRole`**: RBAC: gate a service by the logged user's role.
+2. **`Auth.authorize`**: ABAC: gate a service by an arbitrary policy
    over `(input, user, resource)`.
-3. **`Auth.requireOwner`** — ergonomic shortcut for the common
+3. **`Auth.requireOwner`**: ergonomic shortcut for the common
    "user owns this resource" case.
 
 All three compose with `Auth.protect` and `Service.implement` and
@@ -95,11 +95,11 @@ needs:
 
 | Real scenario | Why current setup fails |
 |---|---|
-| `editNote noteId body` | Need to fetch the note, check `note.authorId == user.id`, reject if not. No primitive — every handler reinvents this dance. |
+| `editNote noteId body` | Need to fetch the note, check `note.authorId == user.id`, reject if not. No primitive, every handler reinvents this dance. |
 | Admin-only operations (delete a user, view all orgs) | No notion of `user.role`. App authors hand-roll `if user.email in adminList then ...`. |
 | Multi-tenant apps (user belongs to org A, only sees org A data) | Tenant scoping is the same shape as ownership but with `orgId` instead of `userId`. Same hand-roll. |
 | Role hierarchies (editor < admin < owner) | No language support for ordered roles. |
-| Per-resource ACLs ("user X has read-only on doc Y") | Policy lives in a separate table — handlers query it manually. |
+| Per-resource ACLs ("user X has read-only on doc Y") | Policy lives in a separate table, handlers query it manually. |
 
 Without primitives, each app reinvents the wheel inconsistently. Some
 handlers forget the check entirely (security bug). Others reject
@@ -112,7 +112,7 @@ These shape every choice below:
 
 1. **Decorators, not redefinitions.** A protected+authorized service
    reads as `Auth.protect contract handler |> Auth.requireRole Admin`
-   — each layer adds one concern. No "smart constructor" that bundles
+  , each layer adds one concern. No "smart constructor" that bundles
    everything and hides the composition.
 2. **Policies are pure functions.** No DSL, no policy file. A policy
    is `(input, user, resource) -> Bool`. Makes them trivially
@@ -133,7 +133,7 @@ These shape every choice below:
 
 ## Proposed primitives
 
-### 1. Roles — user-defined custom type
+### 1. Roles, user-defined custom type
 
 The user defines what roles their app has:
 
@@ -162,7 +162,7 @@ auth =
 The `role` getter is **optional**. Apps without roles just omit it;
 `Auth.requireRole` then errors at compile time on those apps.
 
-### 2. `Auth.requireRole` — RBAC decorator
+### 2. `Auth.requireRole`, RBAC decorator
 
 ```mar
 Auth.requireRole : role -> ExposedService -> ExposedService
@@ -189,7 +189,7 @@ the logged user to have role Admin."
 Editor | Admin`, only those values are valid here. Misspell `Adimn`
 and you get a compile error, not a 500 at runtime.
 
-### 3. `Auth.authorize` — ABAC decorator
+### 3. `Auth.authorize`, ABAC decorator
 
 For policies that depend on the **resource** being acted on, not just
 the user's role:
@@ -236,7 +236,7 @@ the framework cache the resource once, and lets the policy be a pure
 function (no I/O, trivial unit tests). It also makes "load failed"
 distinct from "policy denied" in error messages.
 
-### 4. `Auth.requireOwner` — ergonomic shortcut
+### 4. `Auth.requireOwner`, ergonomic shortcut
 
 The most common ABAC case is "this resource has an owner field, and
 it must equal `user.id`". Sugar for that:
@@ -263,7 +263,7 @@ selector resource == user.id)`.
 
 ### 5. Combining gates
 
-Multiple decorators stack — each can reject independently:
+Multiple decorators stack, each can reject independently:
 
 ```mar
 services =
@@ -292,7 +292,7 @@ Auth.policy
 
 **Rejected** because:
 - Forces the user to think about all gates upfront, even when only one applies.
-- Doesn't compose — to add a 4th check later, the record schema grows.
+- Doesn't compose, to add a 4th check later, the record schema grows.
 - The `Maybe` ceremony for unused gates clutters the call site.
 
 ### Alternative B: Type-level role hierarchy (`Role` is a comparable enum)
@@ -331,7 +331,7 @@ policies = Policy.define
 ```
 
 **Rejected** because:
-- Couples policies to entity types globally — can't have "different
+- Couples policies to entity types globally, can't have "different
   policies for different services touching the same entity."
 - Hides the gate from the service definition site; reading
   `Backend.Notes.services` no longer tells you what's protected.
@@ -414,7 +414,7 @@ services =
     ]
 ```
 
-The wiring **reads as a security policy table** — anyone scanning
+The wiring **reads as a security policy table**: anyone scanning
 `services = [...]` knows exactly who can do what without reading
 handler bodies.
 
@@ -467,7 +467,7 @@ Add three forall-typed primitives:
 "role": TArrow{From: TVar{ID: user.ID}, To: TVar{ID: role.ID}},  // optional via row tail
 ```
 
-### Runtime — Go (server)
+### Runtime, Go (server)
 
 `VService` (in `internal/runtime/service.go`) gains three policy
 fields, each nil when the corresponding decorator wasn't applied:
@@ -492,24 +492,24 @@ type VService struct {
 The dispatcher (`ExposedServiceToRoute`) calls two helpers after
 loading the User but before invoking the handler:
 
-- `checkRoleGate(required, user)` — applies the registered role
+- `checkRoleGate(required, user)`, applies the registered role
   getter to extract the user's role; structural-equals against
   `required`. Mismatch → 403. Misconfiguration (decorator used but
   no `role` in Auth.config) → 500 with a clear message.
-- `checkABACGate(loader, policy, input, user)` — applies loader,
+- `checkABACGate(loader, policy, input, user)`, applies loader,
   runs its Effect; `Nothing` → 404; `Just resource` is fed through
   the policy; `False` → 403.
 
 For `Auth.requireOwner`, the runtime synthesizes a policy closure at
 decorator time: `\input user resource -> selector(resource) == user.id`
-(via Go's `equalValues`). No new types or new dispatcher branches —
+(via Go's `equalValues`). No new types or new dispatcher branches,
 it desugars cleanly onto the ABAC machinery.
 
-### Runtime — JS (browser) and iOS
+### Runtime, JS (browser) and iOS
 
 Authorization always runs server-side. Both client runtimes treat
 the decorators as pass-throughs: they exist in the env so calls
-evaluate, but no enforcement happens — the server's dispatcher is
+evaluate, but no enforcement happens, the server's dispatcher is
 the single source of truth. This matches how `Auth.protect` already
 behaves on the client.
 
@@ -530,7 +530,7 @@ services continue to work exactly as today. Authors opt in by
 appending `|> Auth.requireRole Admin` (etc.) to a wiring line.
 
 The current `notes-auth-multipage` example (no roles, single-user
-ownership via filter) stays identical — it's the simplest case the
+ownership via filter) stays identical, it's the simplest case the
 new primitives also support, just with no additional decorators.
 
 ## Known limitations
@@ -561,7 +561,7 @@ new primitives also support, just with no additional decorators.
   can pattern-match on it for conditional UI. Backend imports for
   the `Entity.enum` declaration and the gate.
 - **Where does the redirect target live?** Centralized in
-  `Auth.config { signInPage = ... }` — a `Page` reference, not a
+  `Auth.config { signInPage = ... }`, a `Page` reference, not a
   string. `Page.protected` carries no `redirect` field; the dispatcher
   reads from `Auth.config` at render time. Renaming the sign-in
   page's path propagates everywhere because `signInPage` references
@@ -570,13 +570,13 @@ new primitives also support, just with no additional decorators.
   and string-typed (typo-prone, no refactor support). Page reference
   + central config fixes both at once.
 - **`sessionDuration` is a `Duration` type**, not a raw `Int`.
-  Constructed via `Time.days N` / `Time.hours N` / etc. — no
+  Constructed via `Time.days N` / `Time.hours N` / etc., no
   ambiguity about units at the call site. The previous form
   (`sessionDuration = 2592000`) still works for back-compat but
   every example now uses `Time.days 30`.
 - **Error message granularity**: client sees a generic `"forbidden"`
   / `"not found"`. Server logs can be added later for debugging.
-- **Policy testability**: policies are already pure functions —
+- **Policy testability**: policies are already pure functions,
   testable via the existing test helpers, no new framework needed.
 
 ## Wire format note (for ADTs across the JSON boundary)

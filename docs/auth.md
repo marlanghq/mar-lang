@@ -1,20 +1,18 @@
 # Authentication & Authorization
 
-A specification for the first authentication mechanism Mar will ship: **passwordless email codes**. The user receives a one-time code by email, types it back, and gets a session.
+How authentication works in Mar: **passwordless email codes**. The user receives a one-time code by email, types it back, and gets a session.
 
-This document is a design document, not an API reference. It is meant to be detailed enough to be used as the implementation blueprint.
-
-> **Status.** Specification only. The `Auth.*` and `Routes.*` symbols referenced in the existing [`mar.md`](./mar.md) are aspirational — this document defines what they should mean and how they should behave.
+This is the reference for the `Auth.*` surface. For the language-level overview of services, pages, and the error model, see [`mar.md`](./mar.md).
 
 ## 1. Goals & non-goals
 
 ### Goals
 
 - **Passwordless by default.** Email + 6-digit code. No password storage, no password reset flow, no "forgot password" page.
-- **User owns the UI.** The framework provides handlers, not screens. Users compose their own login / verify / logged-in screens with the regular `Screen.with` MVU pattern. Mar must not ship a default login page.
+- **User owns the UI.** The framework provides handlers, not pages. Users compose their own sign-in / verify / logged-in pages with the regular `Page.*` MVU pattern. Mar must not ship a default login page.
 - **One configuration, two clients.** Same backend serves the browser frontend and the iOS app (the latter via Bearer tokens instead of cookies).
-- **Type-safe end to end.** The `User` record type is whatever the user defines; `Auth.requireUser` and the screen-init injection thread that exact type through to handlers and screens.
-- **Drop-in.** Adding auth to an existing project is one `Auth.config` call plus a `Routes.authenticated` group around protected routes.
+- **Type-safe end to end.** The `User` record type is whatever the user defines; `Auth.protect` and `Page.protected` thread that exact type through to handlers and pages.
+- **Drop-in.** Adding auth to an existing project is one `Auth.config` call plus `Auth.protect` around the services that need a signed-in user.
 - **Safe defaults.** Constant-time comparisons, hashed codes/tokens at rest, rate-limited request endpoints, no email enumeration through error messages, opaque session cookies (HttpOnly + SameSite + Secure when HTTPS).
 
 ### Non-goals (for v1)
@@ -38,12 +36,12 @@ This trades flexibility for cohesion:
 
 The model has four parts:
 
-1. **`Auth.config`** — declarative description of how authentication works for this app: which entity holds users, how to identify them (which field is the email), how long sessions live, how to deliver the code.
-2. **Auto-managed entities** — `auth_codes` and `auth_sessions`. Created and migrated by the runtime. The user never queries them directly.
-3. **Server primitives** — `Routes.authenticated`, `Routes.requireRole`, `Auth.endpoints`, plus `init`-signature-driven injection for screens.
-4. **Frontend primitives** — `Auth.requestCode`, `Auth.verifyCode`, `Auth.logout`, `Auth.me`. Plain `Effect` values the user wires into their `update` like any other backend call.
+1. **`Auth.config`**: declarative description of how authentication works for this app: which entity holds users, how to identify them (which field is the email), how long sessions live, how to deliver the code.
+2. **Auto-managed entities**: `auth_codes` and `auth_sessions`. Created and migrated by the runtime. The user never queries them directly.
+3. **Server primitives**: `Auth.protect` wraps a service's handler and injects the signed-in user; the `/_auth/*` endpoints are auto-registered; `Page.protected` gates a page.
+4. **Frontend primitives**: `Auth.requestCode`, `Auth.verifyCode`, `Auth.logout`, `Auth.me`. Plain `Effect` values the user wires into their `update` like any other backend call.
 
-The login screen is just a normal screen. The verify screen is just a normal screen. The two are the user's UX; the framework is what their messages talk to.
+The sign-in page is just a normal page. The verify page is just a normal page. They are the user's UX; the framework is what their messages talk to.
 
 ## 3. The login flow, end to end
 
@@ -70,7 +68,7 @@ To anchor the API design, here is the entire flow with no code, just labelled st
      │ 7. 200 OK { ok: true }                │                                  │
      │◀──────────────────────────────────────┤                                  │
      │                                       │                                  │
-     │ 8. user reads email, types 6-digit code into the user-built screen       │
+     │ 8. user reads email, types 6-digit code into the user-built page         │
      │                                       │                                  │
      │ 9. POST /_auth/verify-code            │                                  │
      │    { email, code }                    │                                  │
@@ -96,7 +94,7 @@ To anchor the API design, here is the entire flow with no code, just labelled st
 
 ### 4.1 `Auth.config`
 
-The single declaration that defines authentication for an app — five fields:
+The single declaration that defines authentication for an app, five fields:
 
 ```elm
 authConfig : Auth User
@@ -106,7 +104,7 @@ authConfig =
         , identify        = \u -> u.email
         , email           = { from = "noreply@example.com", subject = "Your sign-in code" }
         , signup          = \email -> { email = email, name = "", role = Member }
-        , sessionDuration = Duration.days 30
+        , sessionDuration = Time.days 30
         }
 ```
 
@@ -127,13 +125,13 @@ type Auth user   -- opaque
 
 Field by field:
 
-- **`entity`** — the user table. Row type must contain at least `{ id : a.id, email : String }` (Mar's row polymorphism enforces this; same pattern other `Endpoint.*` helpers use per [`mar.md` §4.7](./mar.md)).
-- **`identify`** — projects the email out of the user record. Always `user -> String`.
-- **`email`** — sender address and subject line of the code email. The body is fixed by the framework (see §4.2).
-- **`signup`** — called when `request-code` arrives for an email not in the table. Returns the user record minus `id` (which the entity assigns). The framework persists it via `Repo.create` and proceeds with the code flow. To refuse signups today, raise an error from inside this function (a dedicated `invitationOnly` policy may come back if the pattern is common).
-- **`sessionDuration`** — how long a session stays valid after a successful `verify-code`. Genuine product decision: 15 minutes for a banking app, 30 days for a consumer SaaS, 1 year for "remember me forever" social apps. Affects both the cookie's `Max-Age` and the server-side `auth_sessions.expires_at`. After the duration elapses the session is hard-expired (no refresh; the user signs in again).
+- **`entity`**: the user table. Row type must contain at least `{ id : a.id, email : String }` (Mar's row polymorphism enforces this; same pattern other `Endpoint.*` helpers use per [`mar.md` §4.7](./mar.md)).
+- **`identify`**: projects the email out of the user record. Always `user -> String`.
+- **`email`**: sender address and subject line of the code email. The body is fixed by the framework (see §4.2).
+- **`signup`**: called when `request-code` arrives for an email not in the table. Returns the user record minus `id` (which the entity assigns). The framework persists it via `Repo.create` and proceeds with the code flow. To refuse signups today, raise an error from inside this function (a dedicated `invitationOnly` policy may come back if the pattern is common).
+- **`sessionDuration`**: how long a session stays valid after a successful `verify-code`. Genuine product decision: 15 minutes for a banking app, 30 days for a consumer SaaS, 1 year for "remember me forever" social apps. Affects both the cookie's `Max-Age` and the server-side `auth_sessions.expires_at`. After the duration elapses the session is hard-expired (no refresh; the user signs in again).
 
-Everything else — cookie name, code length and TTL, retry attempts, rate limits, email body, SameSite — is fixed by safe defaults. See §15 for what would have to change to make any of them configurable.
+Everything else, cookie name, code length and TTL, retry attempts, rate limits, email body, SameSite, is fixed by safe defaults. See §15 for what would have to change to make any of them configurable.
 
 ### 4.2 The email body
 
@@ -153,8 +151,8 @@ The subject line carries the app's brand; the body is intentionally generic. If 
 
 `Auth.config` reads two things from the manifest:
 
-1. **SMTP credentials** — already documented as `mail.smtpHost` / `mail.smtpPort` / `mail.smtpUsername` / `mail.smtpPassword`. The auth runtime uses these to send codes; user code never touches the SMTP layer.
-2. **Session secret** — used to derive HMACs for stored code/token hashes. New manifest key:
+1. **SMTP credentials**: already documented as `mail.smtpHost` / `mail.smtpPort` / `mail.smtpUsername` / `mail.smtpPassword`. The auth runtime uses these to send codes; user code never touches the SMTP layer.
+2. **Session secret**: used to derive HMACs for stored code/token hashes. New manifest key:
    ```json
    {
      "auth": {
@@ -207,142 +205,104 @@ CREATE INDEX _mar_auth_sessions_user_idx ON _mar_auth_sessions(user_id);
 
 The token sent to the client is `<base64(random 32 bytes)>`. The DB stores its HMAC. A leaked DB does not expose live sessions. (HMAC instead of plain SHA256 so an attacker who steals the DB still needs the session secret to forge a token that matches a stored hash.)
 
-The `_mar_` prefix is reserved — user `Entity.define` calls with table names starting with `_mar_` are rejected at parse time by the existing manifest checker.
+The `_mar_` prefix is reserved, user `Entity.define` calls with table names starting with `_mar_` are rejected at parse time by the existing manifest checker.
 
 ### 5.3 The user entity
 
 The user's `users : Entity User` is what it always was; the framework does not touch its schema. The `User.id` field becomes the foreign key for `auth_sessions.user_id`, but the FK is logical (not enforced by SQLite) so that user-side deletes don't have to coordinate with framework tables.
 
-When the `signup` callback runs (because the email wasn't in the table), the framework's INSERT happens through normal `Repo.create users { ... }` — same code path as user code, so all `Entity` constraints (NOT NULL, etc.) apply.
+When the `signup` callback runs (because the email wasn't in the table), the framework's INSERT happens through normal `Repo.create users { ... }`, same code path as user code, so all `Entity` constraints (NOT NULL, etc.) apply.
 
 ## 6. Server primitives
 
 ### 6.1 Auto-registered endpoints
 
-```elm
-Auth.endpoints : Auth user -> List Route
-```
-
-Returns three routes that the user mounts in their `routes` list:
+When the app provides an `Auth.config` (section 4), the runtime auto-registers the auth endpoints. The app does not mount them; they exist as soon as auth is configured:
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| POST | `/_auth/request-code` | `{ email : String }` | `{ ok: true }` (always — see §8) |
-| POST | `/_auth/verify-code` | `{ email : String, code : String }` | `{ user : <User row> }` + `Set-Cookie` (or `{ user, sessionToken }` for non-cookie clients) |
-| POST | `/_auth/logout` | (empty) | `{ ok: true }` + `Set-Cookie` clearing the session |
+| POST | `/_auth/request-code` | `{ email : String }` | `{ ok: true }` (always, see section 8) |
+| POST | `/_auth/verify-code` | `{ email : String, code : String }` | `{ user : <User row> }` plus `Set-Cookie` (or `{ user, sessionToken }` for non-cookie clients) |
+| POST | `/_auth/logout` | (empty) | `{ ok: true }` plus a `Set-Cookie` clearing the session |
 | GET  | `/_auth/whoami` | (none) | `{ user: <User row> | null }` |
 
-These routes are part of `Auth.endpoints` and are NOT a separate group — the user composes them into their `routes` list:
+The `/_auth/*` prefix is reserved, like `/_mar/*`: a custom `api` endpoint at one of those paths is rejected at compile time. Frontend code never calls these paths directly; it goes through the `Auth.*` Effects in section 7.
+
+### 6.2 Protecting a service
+
+A service is made authenticated by wrapping its handler with `Auth.protect`:
 
 ```elm
-routes : List Route
-routes =
-    List.concat
-        [ Auth.endpoints authConfig
-        , Routes.public
-            [ ... ]
-        , Routes.authenticated authConfig
-            [ ... ]
-        ]
+Auth.protect : Service req resp -> (req -> User -> Effect resp) -> ExposedService
 ```
 
-The endpoints sit at well-known paths (`/_auth/*`). Like `/_mar/*`, the `_auth` prefix is reserved — user `Endpoint.create "/_auth/foo"` is rejected at type-check time by the existing reserved-path check (extended to include `_auth`).
-
-### 6.2 Route policies
-
-Existing primitives in [`mar.md` §4.8](./mar.md), unchanged in shape but now refer to the `Auth` value instead of an `Entity`:
+`Auth.protect` injects the signed-in `User` as the handler's second argument and rejects the request with `401` before the handler runs when there is no valid session. The frontend sees the same `Service` value either way:
 
 ```elm
-Routes.public        : List Route -> List Route
-Routes.authenticated : Auth user -> List Route -> List Route
-Routes.requireRole   : Auth user -> (user -> Bool) -> List Route -> List Route
-Routes.optional      : Auth user -> List Route -> List Route   -- handler sees Maybe user
-```
+listMyNotesImpl : () -> User -> Effect (List Note)
+listMyNotesImpl _ user =
+    Repo.findBy notes { authorId = user.id }
 
-`Routes.requireRole` takes a user-supplied predicate so role models stay in user code (no built-in role enum). Typical usage:
-
-```elm
-Routes.requireRole authConfig (\u -> u.role == Admin)
-    [ purgeAll |> Endpoint.implement createPurge
+services =
+    [ Auth.protect Shared.listMyNotes listMyNotesImpl
+    , Auth.protect Shared.createNote  createNoteImpl
     ]
 ```
 
-When a request hits a route inside `Routes.authenticated`:
+There is no built-in role enum or role group: a handler that needs a role check reads it off the injected `user` and returns the appropriate outcome (or `Effect.fail` for a hard refusal). Services that do not need a user use `Service.implement` instead of `Auth.protect` and receive no user.
 
-1. Middleware reads the session cookie (or `Authorization: Bearer …` header — see §7).
-2. Looks up `auth_sessions` by `HMAC(secret, token)`.
-3. If found and not expired: loads the user via `Repo.findById users session.user_id`. Updates `last_used_at`. Attaches user to the request. Calls handler.
-4. If not found / expired / missing: returns `401 Unauthorized` with `{"error":"not authenticated"}`. Handler is not called.
+On a protected request the runtime:
 
-### 6.3 Handler-level access
-
-When a route is inside `Routes.authenticated authConfig`, the handler signature receives the user as an extra positional argument:
-
-```elm
-listMyNotes : User -> Effect (ResponseError NoTag) (List Note)
-listMyNotes user =
-    Repo.all notes
-        |> Repo.where_ (\n -> Repo.eq n.authorId user.id)
-        |> Repo.allEffect
-
-myNotesRoute : Route
-myNotesRoute =
-    listEndpoint |> Endpoint.implement listMyNotes
-```
-
-For `Routes.optional`:
-
-```elm
-publicProfile : Maybe User -> ProfileId -> Effect (ResponseError NoTag) Profile
-publicProfile maybeUser profileId = ...
-```
-
-The user argument is the LAST positional parameter (after path args, body, etc.), to keep handlers without auth visually identical to handlers with auth.
-
-> **Mechanism.** This relies on the same arity-based injection used for screen `init` ([`mar.md` §5.2](./mar.md)): when `Endpoint.implement` connects a handler into a route inside `Routes.authenticated`, the type checker accepts handler types that take an additional `User` parameter and the runtime threads it in. If a handler omits the `User` parameter, that's also accepted (and the user simply isn't passed). This keeps the policy declaration where it belongs (the `Routes.authenticated` group) without forcing every handler to declare the parameter.
-
-### 6.4 Programmatic helpers (handler-internal)
-
-For the rare case where a handler inside a public group still wants to know if there's a session:
-
-```elm
-Auth.maybeUser : Auth user -> Effect (ResponseError NoTag) (Maybe user)
-```
-
-This Effect returns the user from the current request's session, or `Nothing` if there isn't one. Implemented by reading the request context the runtime threads into the handler — no extra DB hit beyond what `Routes.optional` would do.
+1. reads the session cookie (or the `Authorization: Bearer ...` header, see section 7),
+2. looks up `auth_sessions` by `HMAC(secret, token)`,
+3. if found and not expired, loads the user via `Repo.findById users session.user_id`, updates `last_used_at`, and calls the handler with that user,
+4. otherwise returns `401`, and the handler never runs.
 
 ## 7. Frontend primitives
 
-The frontend never calls `/_auth/*` directly. The Auth module exposes Effects that wrap those calls and decode their responses into mar values.
+The frontend never calls `/_auth/*` directly. The Auth module exposes Effects
+that wrap those calls and deliver typed outcomes, one outcome union per
+endpoint (a page only matches what can happen to it; there is no shared
+auth error catch-all). Transport failures arrive as `Service.Error` in the
+Err, exactly like a `Service.call`.
 
 ```elm
-type AuthError
-    = InvalidCode
-    | CodeExpired
+type Auth.RequestOutcome
+    = CodeSent          -- never reveals whether the email has an account
+    | InvalidEmail      -- malformed address (format only)
+    | RateLimited
+
+type Auth.VerifyOutcome user
+    = SignedIn user     -- the app's own user record
+    | WrongCode
     | TooManyAttempts
-    | RateLimited { retryAfter : Duration }
-    | EmailDeliveryFailed     -- only if mail.* not configured or SMTP rejected
-    | NotAuthenticated         -- /_auth/whoami returned no session
-    | Network NetworkError     -- transport failures, surfaced like any other Endpoint.call
 ```
 
 ```elm
-Auth.requestCode : { email : String } -> Effect AuthError ()
--- Always succeeds with () to avoid email enumeration. Errors are reserved for
--- transport failures and rate-limiting, never "user not found".
+Auth.requestCode : { email : String }
+    -> (Result Service.Error Auth.RequestOutcome -> msg) -> Effect msg
+-- CodeSent answers for unknown emails too, to avoid enumeration.
 
-Auth.verifyCode  : { email : String, code : String } -> Effect AuthError User
--- On success, the cookie/Bearer token is set automatically before the Effect
--- resolves. The User value is the complete row from the user entity, decoded
--- using whatever User type the app declared.
+Auth.verifyCode : { email : String, code : String }
+    -> (Result Service.Error (Auth.VerifyOutcome user) -> msg) -> Effect msg
+-- On Auth.SignedIn the cookie/Bearer token is already stored. The user value
+-- is the complete row from the user entity, in the app's own User type.
 
-Auth.logout      : Effect AuthError ()
--- Clears the cookie / forgets the Bearer token client-side, AND invalidates the
--- session row server-side. Idempotent.
+Auth.logout : (Result String () -> msg) -> Effect msg
+-- Clears the cookie / forgets the Bearer token client-side, AND invalidates
+-- the session row server-side. Idempotent.
 
-Auth.me          : Effect AuthError (Maybe User)
--- One-shot fetch of the current user. Resolves to Nothing if not authenticated;
--- only emits AuthError for transport problems.
+Auth.me : (Result String (Maybe user) -> msg) -> Effect msg
+-- One-shot fetch of the current user. Nothing when not authenticated.
+```
+
+The outcome constructors are matched qualified, like `Service.Error`'s:
+
+```elm
+CodeVerified (Ok (Auth.SignedIn user)) -> ...
+CodeVerified (Ok Auth.WrongCode)       -> ...
+CodeVerified (Ok Auth.TooManyAttempts) -> ...
+CodeVerified (Err why)                 -> ... -- transport; Service.errorToString
 ```
 
 Note that `Auth.verifyCode` resolves to a `User`, not a `Session`. Sessions are an implementation detail; user code never holds a token.
@@ -360,31 +320,33 @@ When the runtime fetches `/_mar/program.json` to boot a frontend, the server inl
 }
 ```
 
-This means screens that declare `init : User -> (Model, Effect Never Msg)` get the user **synchronously** on first mount. No flash of unauthenticated content, no extra request. After login (`Auth.verifyCode` resolves), the runtime updates this in-memory bootstrap so the next screen the user navigates to also sees the fresh user. For long-running sessions the user can call `Auth.me` to refresh.
+This means a `Page.protected` page gets its `User` **synchronously** on first mount: no flash of unauthenticated content and no extra request. After login (`Auth.verifyCode` resolves), the runtime refreshes this in-memory bootstrap so the next page also sees the current user. For long-running sessions a page can call `Auth.me` to re-fetch.
 
-### 7.2 Screen-level auth requirement (recap)
+### 7.2 Page-level auth requirement (recap)
 
-The init-signature inference described in [`mar.md` §5.2](./mar.md) is the screen-side companion to `Routes.authenticated`:
+A page chooses its auth posture through the `Page.*` combinator it is built from (see [`mar.md` section 5.2](./mar.md)):
 
-| `init` signature | What runtime does on navigation |
+| Combinator | Behavior on navigation |
 |---|---|
-| `(Model, Effect Never Msg)` | Mounts unconditionally (truly public) |
-| `User -> (Model, Effect Never Msg)` | If session exists, mounts with user. Otherwise, redirects to the screen registered as `Auth.loginScreen`. |
-| `Maybe User -> (Model, Effect Never Msg)` | Mounts unconditionally; passes `Nothing` if no session. |
+| `Page.create` / `Page.dynamic` | Mounts unconditionally (public). |
+| `Page.protected` / `Page.dynamicProtected` | Runs `Auth.me`; mounts with the `User` if there is a session, otherwise redirects to the sign-in page. |
 
-The redirect target is set by the user:
+The sign-in page is declared once, in `Auth.config`:
 
 ```elm
-main : Effect Never ()
-main =
-    App.fullstack
-        { api      = ...
-        , pages    = [ HomePage.screen, NotesPage.screen, LoginPage.screen ]
-        , auth     = Auth.frontend authConfig (Auth.loginScreen LoginPage.screen)
+auth : Auth { id : Int, email : String }
+auth =
+    Auth.config
+        { entity          = Backend.Users.users
+        , identify        = \u -> u.email
+        , signInPage      = Frontend.SignIn.page
+        , email           = { subject = "Your sign-in code" }
+        , signup          = \userEmail -> { email = userEmail }
+        , sessionDuration = Time.days 30
         }
 ```
 
-`Auth.frontend` builds a frontend-side configuration value with the routing wired in. `Auth.loginScreen` declares which screen handles the unauthenticated state. The screen passed there must have `init : Maybe NavTarget -> (Model, Effect Never Msg)` so the runtime can pass it the original target (so post-login the user lands where they were trying to go).
+`Page.protected` redirects there when there is no session. After a successful `Auth.verifyCode`, the sign-in page calls `Auth.completeSignIn`, which returns the user to wherever the redirect came from (or home).
 
 ## 8. Security considerations
 
@@ -410,12 +372,12 @@ The framework owns these concerns; the user does not need to think about them.
 
 ### 8.5 Session hygiene
 - **Token entropy:** 32 random bytes from `crypto/rand`, base64url-encoded.
-- **Cookie attributes:** `HttpOnly; SameSite=Lax; Path=/`. `Secure` is added automatically when the request was over HTTPS (or `server.publicUrl` starts with `https://`). `Lax` is fixed (not configurable) — it blocks classic CSRF on cross-site POSTs while still letting legitimate top-level navigations (clicking a link in an email pointing back to the app) carry the cookie. Apps that need `Strict` would have to opt into a more conservative posture explicitly; that knob isn't shipped in v1.
-- **Rotation:** on every login (verify-code), the token is fresh — even if the same user logs in twice in parallel, neither knows the other's token. There is no "token refresh"; sessions live for `session.duration` and then expire absolutely. `last_used_at` is purely informational (for an eventual "your active sessions" UI).
+- **Cookie attributes:** `HttpOnly; SameSite=Lax; Path=/`. `Secure` is added automatically when the request was over HTTPS (or `server.publicUrl` starts with `https://`). `Lax` is fixed (not configurable), it blocks classic CSRF on cross-site POSTs while still letting legitimate top-level navigations (clicking a link in an email pointing back to the app) carry the cookie. Apps that need `Strict` would have to opt into a more conservative posture explicitly; that knob isn't shipped in v1.
+- **Rotation:** on every login (verify-code), the token is fresh, even if the same user logs in twice in parallel, neither knows the other's token. There is no "token refresh"; sessions live for `session.duration` and then expire absolutely. `last_used_at` is purely informational (for an eventual "your active sessions" UI).
 - **Logout invalidation:** `auth_sessions` row is deleted server-side, so a stolen cookie stops working at the moment of logout. Cookie is also overwritten with `Max-Age=0` to clear the browser store.
 
 ### 8.6 What the framework does NOT do (intentionally)
-- **No CSRF token for `/_auth/*`:** verify-code requires knowing both the email and the unguessable code, which already serves as a per-request authenticator. logout is idempotent and reading-only side effects don't matter for auth state. (For non-auth routes the existing CSRF policy applies — see [`mar.md`](./mar.md).)
+- **No CSRF token for `/_auth/*`:** verify-code requires knowing both the email and the unguessable code, which already serves as a per-request authenticator. logout is idempotent and reading-only side effects don't matter for auth state. (For non-auth routes the existing CSRF policy applies, see [`mar.md`](./mar.md).)
 - **No password reset flow:** there are no passwords.
 - **No email-change confirmation:** out of scope for v1; user-facing apps can implement it on top of the user entity.
 
@@ -441,500 +403,165 @@ In production builds (`mar build`), this sink is unavailable; missing SMTP confi
 
 The same backend serves the iOS app. The differences:
 
-- **No cookies.** The auth response from `/_auth/verify-code` returns the session token in the JSON body when the request carries the header `X-Mar-Client: ios`. The iOS runtime sets this header automatically on every request originating from `Endpoint.call` / `Service.call`.
+- **No cookies.** The auth response from `/_auth/verify-code` returns the session token in the JSON body when the request carries the header `X-Mar-Client: ios`. The iOS runtime sets this header automatically on every request originating from `Service.call`.
 - **Token storage.** The Swift runtime (`MarRuntimeIOS`) provides a small Keychain wrapper. After `Auth.verifyCode` resolves on iOS, the runtime stores the returned token under `kSecAttrAccount = "mar.session"`. Subsequent requests read it back and add `Authorization: Bearer <token>`.
 - **Logout.** `Auth.logout` calls the same endpoint, then clears the Keychain entry.
 - **`Auth.me` semantics.** Identical: returns `Maybe User` based on the stored token's validity.
 
-User code in `LoginPage.mar` is **identical** between web and iOS — the differences live entirely in the runtime. The user writes one screen, both clients run it, both arrive at a logged-in state through the same `Auth.verifyCode |> Effect.toMsg` pipeline.
+User code is **identical** between web and iOS: the differences live entirely in the runtime. The app writes one sign-in page, both clients run it, and both reach a logged-in state through the same `Auth.verifyCode` call.
+
 
 ## 11. Sample app: complete login
 
-This is the full set of files the user writes. Nothing is hidden; the framework provides what's referenced.
+The runnable end-to-end versions live in the repo: `examples/hello-auth` (the smallest email-plus-code login with one protected page) and `examples/team-notes` (multi-page, with dynamic routes). The pieces, in brief:
 
-### `Main.mar`
+**Main.mar** wires the app and configures auth:
 
 ```elm
-module Main exposing (main)
-
-import App
-import Auth
-import Routes
-import Users exposing (users)
-import Endpoints
-import HomePage
-import LoginPage
-import VerifyPage
-
-authConfig : Auth Users.User
-authConfig =
+auth : Auth { id : Int, email : String }
+auth =
     Auth.config
-        { entity          = users
-        , identify        = .email
-        , email           = { from = "noreply@myapp.test", subject = "Sign in to MyApp" }
-        , signup          = \email -> { email = email, name = "", role = Member }
-        , sessionDuration = Duration.days 30
+        { entity          = Backend.Users.users
+        , identify        = \u -> u.email
+        , signInPage      = Frontend.SignIn.page
+        , email           = { subject = "Your sign-in code" }
+        , signup          = \userEmail -> { email = userEmail }
+        , sessionDuration = Time.days 30
         }
 
-main : Effect Never ()
+
+main : Effect ()
 main =
     App.fullstack
-        { api =
-            { routes = List.concat
-                [ Auth.endpoints authConfig
-                , Routes.public
-                    [ Endpoints.healthcheck
-                    ]
-                , Routes.authenticated authConfig
-                    [ Endpoints.listMyNotes
-                    , Endpoints.createNote
-                    ]
-                ]
-            , services = []
-            }
-        , pages = [ HomePage.screen, LoginPage.screen, VerifyPage.screen ]
-        , auth  = Auth.frontend authConfig (Auth.loginScreen LoginPage.screen)
+        { services = []
+        , pages    = [ Frontend.SignIn.page, Frontend.Home.page ]
+        , api      = []
         }
 ```
 
-### `Users.mar`
+**Backend/Users.mar** declares the user entity `Auth.config` points at:
 
 ```elm
-module Users exposing (User, Role, users)
-
-import Entity
-
-type Role = Member | Admin
-
-type alias User =
-    { id    : UserId
-    , email : String
-    , name  : String
-    , role  : Role
-    }
-
-users : Entity User
+users : Entity Shared.User
 users =
-    Entity.define "users"
-        { id    = Entity.serial
-        , email = Entity.text Entity.notNull
-        , name  = Entity.text Entity.notNull
-        , role  = Entity.enum [Member, Admin] Member
+    Entity.define
+        { name = "users"
+        , columns =
+            { id    = Entity.serial
+            , email = Entity.text Entity.notNull
+            }
+        , uniques = [["email"]]
         }
 ```
 
-### `LoginPage.mar` — user-built UI
+**Frontend/SignIn.mar** runs the two-step flow with typed outcomes (no error strings on the wire). The branches below are abbreviated; see the examples for full bodies:
 
 ```elm
-module LoginPage exposing (screen)
-
-import Auth
-import Effect
-import Navigation
-import Screen
-import View exposing (..)
-
-type alias Model =
-    { emailDraft  : String
-    , submitting  : Bool
-    , error       : Maybe String
-    , postLoginTo : Maybe Navigation.Target  -- where to send the user after success
-    }
-
 type Msg
-    = EmailChanged String
-    | SubmitClicked
-    | RequestSettled (Result AuthError ())
+    = DraftChanged String
+    | Submitted
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
-init : Maybe Navigation.Target -> (Model, Effect Never Msg)
-init target =
-    ( { emailDraft  = ""
-      , submitting  = False
-      , error       = Nothing
-      , postLoginTo = target
-      }
-    , Effect.none
-    )
 
-update : Msg -> Model -> (Model, Effect Never Msg)
+update : Msg -> Model -> (Model, Effect Msg)
 update msg model =
     case msg of
-        EmailChanged s ->
-            ({ model | emailDraft = s, error = Nothing }, Effect.none)
+        Submitted ->
+            case model.step of
+                AskEmail email ->
+                    ( model, Auth.requestCode { email = email } CodeRequested )
 
-        SubmitClicked ->
-            if String.isEmpty model.emailDraft then
-                ({ model | error = Just "Enter an email" }, Effect.none)
-            else
-                ( { model | submitting = True, error = Nothing }
-                , Auth.requestCode { email = model.emailDraft }
-                    |> Effect.toMsg RequestSettled
-                )
+                AskCode email code ->
+                    ( model, Auth.verifyCode { email = email, code = code } CodeVerified )
 
-        RequestSettled (Ok ()) ->
-            -- Hand off to VerifyPage with the email (and the original target).
-            ( model
-            , Navigation.push (VerifyPage.targetFor
-                { email = model.emailDraft, after = model.postLoginTo })
-            )
+                _ ->
+                    ( model, Effect.none )
 
-        RequestSettled (Err (RateLimited details)) ->
-            ( { model
-                | submitting = False
-                , error = Just ("Too many attempts. Try again in " ++ Duration.toHumanString details.retryAfter ++ ".")
-              }
-            , Effect.none
-            )
+        CodeRequested (Ok Auth.CodeSent)       -> -- move to the code page
+        CodeRequested (Ok Auth.InvalidEmail)   -> -- show "not a valid email"
+        CodeRequested (Ok Auth.RateLimited)    -> -- show "too many requests"
+        CodeRequested (Err why)                -> -- Service.errorToString why
 
-        RequestSettled (Err _) ->
-            ( { model | submitting = False, error = Just "Couldn't send the code. Try again." }
-            , Effect.none
-            )
+        CodeVerified (Ok (Auth.SignedIn _))    -> ( model, Auth.completeSignIn )
+        CodeVerified (Ok Auth.WrongCode)       -> -- show "wrong code"
+        CodeVerified (Ok Auth.TooManyAttempts) -> -- show "too many tries"
+        CodeVerified (Err why)                 -> -- Service.errorToString why
 
-view : Model -> View Msg
-view model =
-    section []
-        [ title "Sign in"
-        , text "We'll email you a one-time code."
-        , field
-            [ label "Email"
-            , value model.emailDraft
-            , onChange EmailChanged
-            , disabled model.submitting
-            , errorMessage model.error
-            ]
-        , button
-            [ onClick SubmitClicked
-            , intent Primary
-            , disabled (model.submitting || String.isEmpty model.emailDraft)
-            ]
-            [ text (if model.submitting then "Sending…" else "Send code") ]
-        ]
+        DraftChanged value ->
+            ( updateDraft value model, Effect.none )
 
-screen : Screen (Maybe Navigation.Target) Model Msg
-screen =
-    Screen.with
-        { path   = "/login"
-        , init   = init
-        , update = update
-        , view   = view
+
+page : Page
+page =
+    Page.create
+        { path = "/sign-in", title = "Sign in"
+        , init = init, update = update, view = view
         }
 ```
 
-### `VerifyPage.mar` — user-built UI
+`Auth.completeSignIn` sends the user back to wherever a 401 redirected them (or home).
+
+**Frontend/Home.mar** is protected, so `init` receives the `User` synchronously and there is no flash of unauthenticated content:
 
 ```elm
-module VerifyPage exposing (screen, targetFor)
-
-import Auth
-import Effect
-import Navigation
-import Screen
-import View exposing (..)
-
-type alias PathArgs =
-    { email : String
-    , after : Maybe Navigation.Target
-    }
-
-type alias Model =
-    { codeDraft   : String
-    , email       : String
-    , postLoginTo : Maybe Navigation.Target
-    , submitting  : Bool
-    , error       : Maybe String
-    }
-
-type Msg
-    = CodeChanged String
-    | SubmitClicked
-    | VerifySettled (Result AuthError User)
-
-init : PathArgs -> (Model, Effect Never Msg)
-init args =
-    ( { codeDraft = ""
-      , email = args.email
-      , postLoginTo = args.after
-      , submitting = False
-      , error = Nothing
-      }
-    , Effect.none
-    )
-
-update : Msg -> Model -> (Model, Effect Never Msg)
-update msg model =
-    case msg of
-        CodeChanged s ->
-            ({ model | codeDraft = String.trim s, error = Nothing }, Effect.none)
-
-        SubmitClicked ->
-            ( { model | submitting = True }
-            , Auth.verifyCode { email = model.email, code = model.codeDraft }
-                |> Effect.toMsg VerifySettled
-            )
-
-        VerifySettled (Ok _user) ->
-            ( model
-            , Navigation.push (Maybe.withDefault Navigation.home model.postLoginTo)
-            )
-
-        VerifySettled (Err InvalidCode) ->
-            ( { model | submitting = False, error = Just "That code didn't match. Try again." }
-            , Effect.none
-            )
-
-        VerifySettled (Err CodeExpired) ->
-            ( { model | submitting = False, error = Just "That code has expired. Request a new one." }
-            , Effect.none
-            )
-
-        VerifySettled (Err TooManyAttempts) ->
-            ( { model | submitting = False, error = Just "Too many wrong attempts. Request a new code." }
-            , Effect.none
-            )
-
-        VerifySettled (Err _) ->
-            ( { model | submitting = False, error = Just "Something went wrong. Try again." }
-            , Effect.none
-            )
-
-view : Model -> View Msg
-view model =
-    section []
-        [ title "Enter your code"
-        , text ("We sent a 6-digit code to " ++ model.email ++ ".")
-        , field
-            [ label "Code"
-            , value model.codeDraft
-            , onChange CodeChanged
-            , disabled model.submitting
-            , inputMode Numeric
-            , errorMessage model.error
-            ]
-        , button
-            [ onClick SubmitClicked
-            , intent Primary
-            , disabled (model.submitting || String.length model.codeDraft < 6)
-            ]
-            [ text (if model.submitting then "Verifying…" else "Verify") ]
-        ]
-
-screen : Screen PathArgs Model Msg
-screen =
-    Screen.with
-        { path   = "/login/verify/:email"
-        , init   = init
-        , update = update
-        , view   = view
-        }
-
-targetFor : { email : String, after : Maybe Navigation.Target } -> Navigation.Target
-targetFor args = ...
-```
-
-### `HomePage.mar` — protected, uses User injection
-
-```elm
-module HomePage exposing (screen)
-
-import Auth
-import Effect
-import Endpoints
-import Screen
-import Users exposing (User)
-import View exposing (..)
-
-type alias Model =
-    { user  : User
-    , notes : List Note
-    }
-
-type Msg
-    = NotesLoaded (Result NetworkError (List Note))
-    | LogoutClicked
-    | LoggedOut (Result AuthError ())
-
-init : User -> (Model, Effect Never Msg)
+init : Shared.User -> (Model, Effect Msg)
 init user =
-    ( { user = user, notes = [] }
-    , Endpoint.call Endpoints.listMyNotes ()
-        |> Effect.toMsg NotesLoaded
-    )
+    ( { user = user }, Effect.none )
 
-update : Msg -> Model -> (Model, Effect Never Msg)
-update msg model =
-    case msg of
-        NotesLoaded (Ok notes)  -> ({ model | notes = notes }, Effect.none)
-        NotesLoaded (Err _)     -> (model, Effect.none)
-        LogoutClicked           -> (model, Auth.logout |> Effect.toMsg LoggedOut)
-        LoggedOut _             -> (model, Navigation.push Navigation.home)
 
-view : Model -> View Msg
-view model =
-    section []
-        [ row [] [ text ("Hi, " ++ model.user.name), button [onClick LogoutClicked] [text "Sign out"] ]
-        , list (List.map renderNote model.notes)
-        ]
-
-screen : Screen () Model Msg
-screen =
-    Screen.with { path = "/", init = init, update = update, view = view }
+page : Page
+page =
+    Page.protected
+        { path = "/", title = "Home"
+        , init = init, update = update, view = view
+        }
 ```
-
-That's the entire user-facing surface — three small files for two screens plus a home page. The framework handles the rest.
 
 ## 12. Type signature reference
 
-### Module `Auth`
+The current `Auth` surface (sections 4, 6, and 7 cover each in context):
 
 ```elm
--- Configuration
-type Auth user   -- opaque
+-- Configuration (Main.mar, top level)
+Auth.config : { entity, identify, signInPage, email, signup, sessionDuration } -> Auth user
 
-config :
-    { entity          : Entity user
-    , identify        : user -> String
-    , email           : { from : String, subject : String }
-    , signup          : String -> userExceptId
-    , sessionDuration : Duration
-    }
-    -> Auth user
+-- Backend: protect a service handler; injects the signed-in user, 401s without a session
+Auth.protect : Service req resp -> (req -> User -> Effect resp) -> ExposedService
 
--- Server: route registration
-endpoints : Auth user -> List Route
+-- Frontend: the sign-in flow
+Auth.requestCode    : { email : String }
+    -> (Result Service.Error Auth.RequestOutcome -> msg) -> Effect msg
+Auth.verifyCode     : { email : String, code : String }
+    -> (Result Service.Error (Auth.VerifyOutcome user) -> msg) -> Effect msg
+Auth.completeSignIn : Effect msg
+Auth.me             : (Result String (Maybe user) -> msg) -> Effect msg
+Auth.logout         : (Result String () -> msg) -> Effect msg
+```
 
--- Server: handler-internal helpers
-maybeUser : Auth user -> Effect (ResponseError NoTag) (Maybe user)
+The outcome unions (constructors are qualified, like `Service.Error`'s):
 
--- Frontend: top-level wiring
-type Frontend user   -- opaque, passed to App.fullstack via `auth = ...`
+```elm
+type Auth.RequestOutcome
+    = CodeSent          -- never reveals whether the email has an account
+    | InvalidEmail
+    | RateLimited
 
-frontend    : Auth user -> LoginScreen -> Frontend user
-loginScreen : Screen (Maybe Navigation.Target) m msg -> LoginScreen
-
--- Frontend: Effects
-type AuthError
-    = InvalidCode
-    | CodeExpired
+type Auth.VerifyOutcome user
+    = SignedIn user
+    | WrongCode
     | TooManyAttempts
-    | RateLimited { retryAfter : Duration }
-    | EmailDeliveryFailed
-    | NotAuthenticated
-    | Network NetworkError
-
-requestCode : { email : String } -> Effect AuthError ()
-verifyCode  : { email : String, code : String } -> Effect AuthError User
-logout      : Effect AuthError ()
-me          : Effect AuthError (Maybe User)
 ```
 
-### Module `Routes` (additions to existing)
+A page chooses its auth posture with `Page.create` / `Page.protected` / `Page.dynamic` / `Page.dynamicProtected` (see [`mar.md` section 5.2](./mar.md)).
 
-```elm
-public        : List Route -> List Route
-authenticated : Auth user -> List Route -> List Route
-optional      : Auth user -> List Route -> List Route
-requireRole   : Auth user -> (user -> Bool) -> List Route -> List Route
-```
+## 13. Future additions
 
-### Module `App` (one new field)
+Not in v1, revisited when concrete need arises. None of these change the interface above:
 
-```elm
-fullstack :
-    { api      : { routes : List Route, services : List Service }
-    , pages    : List Page
-    , auth     : Maybe (Auth.Frontend user)   -- new; Nothing = no auth
-    }
-    -> Effect Never ()
-```
-
-## 13. Comparison with Phoenix
-
-| Concern | Phoenix `mix phx.gen.auth` | Mar `Auth.config` |
-|---|---|---|
-| Where the code lives | Generated into your project (you own ~2k LOC) | Library; you own ~30 LOC of declaration |
-| User entity | Phoenix generates `User` with hashed_password | You define `User`; Mar requires only `id` + `email` |
-| Login UI | Generated `.html.heex` templates you can edit | You write the `Screen` from scratch — no default UI shipped |
-| Route protection | `pipe_through [:require_authenticated_user]` — pipeline composition | `Routes.authenticated authConfig [...]` — list grouping |
-| Session storage | Cookie, signed with secret_key_base; or DB-backed via `Plug.Session` | Cookie holding opaque token; DB row in `_mar_auth_sessions` (always) |
-| Token primitives | `Phoenix.Token.sign` / `verify` (HMAC) | HMAC-SHA256 with `auth.sessionSecret` |
-| Password reset | Generated flow | N/A (no passwords) |
-| Magic link | Add-on (`magic_link` library, `Phoenix.LiveView.assign_user`) | First-class; only auth method in v1 |
-| Dev SMTP | `Swoosh.Adapters.Local` (preview at `/dev/mailbox`) | Dev dock "Mail" panel (same idea, in the existing dock) |
-| Test ergonomics | Conn helpers (`log_in_user`) | TBD — will land alongside Mar's test harness |
-
-The biggest divergence: Phoenix gives you a working starting point that you customize by editing generated files. Mar gives you a tight type-safe API surface with zero generated code. Phoenix wins on flexibility (tweak any line); Mar wins on cohesion (one config, no maintenance burden when the framework upgrades). For an Elm-style language, the latter fits — Elm itself never went the codegen route.
-
-## 14. Implementation plan (Go side)
-
-For when this is built. The work splits into seven independent tracks; track 1 unblocks the rest.
-
-1. **`internal/auth` package** — pure crypto + storage helpers:
-   - `Generate(length int) string` (digits via `crypto/rand`)
-   - `Hash(secret, value string) string` (HMAC-SHA256, base64url)
-   - `Compare(a, b string) bool` (`subtle.ConstantTimeCompare`)
-   - `RandomToken() string` (32 bytes, base64url)
-   - `MigrateSchema(*sql.DB) error` for the two `_mar_*` tables.
-
-2. **`internal/runtime` builtins** — register the runtime values:
-   - `authConfig` builtin — accepts the record, captures into a `*runtime.AuthRegistration` reference held on the runtime env.
-   - `authEndpoints` builtin — returns a `VList` of `VRoute` records pointing at internal handlers.
-   - `routesAuthenticated`, `routesPublic`, `routesOptional`, `routesRequireRole` — wrap `Route` values with policy metadata read by the dispatcher.
-
-3. **`internal/jsserve` dispatcher** — when serving an HTTP request:
-   - Read `Cookie: mar_session` (or `Authorization: Bearer …` for `X-Mar-Client: ios`).
-   - HMAC the token, look up `_mar_auth_sessions`, attach user to request context.
-   - For routes inside `authenticated` group: 401 if no user; otherwise call handler with user appended to args.
-
-4. **`internal/jsserve` `/_auth/*` handlers** — request-code, verify-code, me, logout. ~300 lines including rate limiting.
-
-5. **SMTP delivery** — net/smtp wrapper that reads `mar.json mail.*`, sends `text/plain` email. Probably ~80 lines. Dev sink as a flag.
-
-6. **Bootstrap injection** — `program.json` builder reads request session and adds `session: { user }` to payload. ~20 lines change in `internal/scaffold` / `internal/jsserve`.
-
-7. **iOS runtime** — `MarSession.swift` (Keychain helpers ~80 lines), `MarHTTP.swift` modification to add `X-Mar-Client: ios` and `Authorization: Bearer` headers conditionally (~20 lines).
-
-Type-checker work, in `internal/typecheck`:
-- Recognize the `Auth a` opaque type and propagate the `a` parameter through `Routes.authenticated` and the handler-injection rule.
-- Reserve the `_auth` path prefix (extend the existing `_mar` reservation).
-- Validate the `User` record against the `Auth.config`'s row constraints (must contain `id` and `email`; the `signup` callback's return type must match the user record minus `id`).
-
-The init-signature inference for screens is already implemented (per `mar.md` §5.2); the auth track only needs to extend the inference rule to cover `User` and `Maybe User` parameters and the redirect logic.
-
-## 15. Future work
-
-Items deliberately deferred from v1, listed so the v1 surface doesn't paint us into a corner. Each is purely additive — bringing any of them back doesn't change existing user code, just adds an optional field to `Auth.config` (or a new constructor / Effect / endpoint).
-
-### Configuration knobs intentionally fixed today
-
-These were considered for v1 and left out in favor of safe defaults. They're easy to bring back if real apps need them:
-
-- **Custom email body** — additional `body : { code, ttl } -> String` field on the `email` record. Default stays the framework template.
-- **Custom cookie name** — `cookieName : String` field. Useful only when running multiple Mar apps under the same parent domain.
-- **Code length / TTL** — `codeLength : Int`, `codeTTL : Duration`. 6 digits / 10 minutes are fine for nearly every app.
-- **Rate limits** — `requestRateLimit : { perEmail : Rate, perIP : Rate }`. Defaults are 3/hour per email and 20/hour per IP.
-- **Max attempts before lockout** — `maxAttempts : Int`. Default 5.
-- **`SameSite=Strict`** — for stricter CSRF posture; current default `Lax` works for typical apps.
-- **`invitationOnly` policy** — first-class refusal of unknown emails. Today the user achieves this by returning an error from `signup`.
-- **Lifecycle hooks** — `onCodeRequested`, `onCodeVerified`, `onLogout` for audit logging. Today the user wraps their own handlers.
-- **Test capture sink** — `Auth.captureToList ref` for writing assertions over sent emails. Will land alongside the Mar test harness.
-- **Sessions dev panel** — UI in the dev dock for inspecting and force-revoking active sessions.
-
-### New surfaces
-
-- **Password authentication.** A second authentication method via a new `method : Method` field on `Auth.config` (`Auth.emailCode {...}` becomes one variant; `Auth.password { hashAlgorithm = Argon2id, ... }` becomes another). Adds `/_auth/sign-in-password` endpoint.
-- **OAuth / SSO.** A third method family (`Auth.oauth { provider = Google, clientId = ..., redirectUri = ... }`). Adds `/_auth/oauth/<provider>/start` and `/_auth/oauth/<provider>/callback`.
-- **Multi-factor.** Once a second method exists, `Auth.config` gains `factors = [Auth.emailCode {...}, Auth.totp {...}]`. Verify endpoint takes a step parameter.
-- **Account linking.** Resolving the same human across multiple identification methods.
-- **Session list / revocation UI.** Endpoint + helper to render and revoke `auth_sessions` rows for the current user.
-- **Email change flow.** A confirm-the-new-email-then-update pattern.
-- **Audit log.** A built-in `_mar_auth_log` table opt-in via `Auth.config { ..., audit = True }`.
-- **Granular permissions.** Going from predicate-based `requireRole` to a capability/policy DSL.
-- **Refresh tokens.** Currently sessions live for `sessionDuration` and then hard-expire. A refresh model with shorter access tokens + longer refresh tokens is doable but adds complexity v1 doesn't need.
-- **Time-based code (TOTP) as a primary factor.** Same user-side shape as email code; just a different transport.
-
-### What makes additions non-breaking
-
-- `Auth user` is opaque; new fields can be added without changing user code that doesn't reference them.
-- `Routes.*` policy wrappers are stable.
-- The frontend Effects (`requestCode`, `verifyCode`, `logout`, `me`) are the universal interface; password / OAuth flows would add NEW Effects (`Auth.signInWithPassword`, `Auth.signInWithGoogle`) without changing these.
+- **Session list and revocation.** A service plus UI to render and revoke `auth_sessions` rows for the current user.
+- **Email change flow.** Confirm the new address, then update.
+- **Audit log.** An opt-in `_mar_auth_log` table.
+- **Granular permissions.** A capability or policy model beyond per-handler role checks.
+- **Refresh tokens.** Sessions currently live for `sessionDuration` and then hard-expire; a short access token plus a longer refresh token is doable but adds complexity v1 does not need.
+- **Password or OAuth sign-in.** These would add new `Auth.*` Effects (`Auth.signInWithPassword`, `Auth.signInWithGoogle`) without changing the email-code flow.

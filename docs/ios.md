@@ -2,7 +2,7 @@
 
 `mar build --target ios` produces a disposable Xcode project from
 your mar source. Open it in Xcode, sign, and ship to TestFlight or
-the App Store. The Swift code is regenerated on every build —
+the App Store. The Swift code is regenerated on every build,
 customizing your iOS app means changing your mar code, not the
 Swift scaffolding.
 
@@ -32,7 +32,7 @@ source. So:
 The second case should be rare; the first case is the everyday
 iteration cycle.
 
-## DEBUG vs RELEASE — the dev/prod split
+## DEBUG vs RELEASE, the dev/prod split
 
 Two compile-time variants of the same Xcode project:
 
@@ -46,20 +46,20 @@ Two compile-time variants of the same Xcode project:
 
 Why the split:
 
-1. **Bonjour on cellular finds nothing** — wasted boot time + code.
+1. **Bonjour on cellular finds nothing**: wasted boot time + code.
 2. **A hostile WiFi could spoof `_mar._tcp`** to route the release
    app to an attacker-controlled backend. Compiling the discovery
    code out of release closes this entirely.
 
 The split is enforced by `#if DEBUG` blocks in the Swift template,
 not by build-time substitution. One Xcode project, two build
-configurations — Xcode handles which one runs based on its scheme.
+configurations, Xcode handles which one runs based on its scheme.
 
 ## `ios.serverUrl` in `mar.json`
 
 Required for any release-build that needs a backend. Format:
 HTTPS, or `http://localhost`/`http://127.0.0.1` for local QA.
-Plain `http://example.com` is **rejected at compile time** — App
+Plain `http://example.com` is **rejected at compile time**: App
 Store ATS would reject it anyway, and refusing early prevents
 "why doesn't my app work in TestFlight" debugging cycles.
 
@@ -80,14 +80,14 @@ The URL gets stamped into `Info.plist` as `MarBaseURL`. The app's
 `mar build --target ios` compiles your mar source into a
 `program.json` snapshot and embeds it in the Xcode project at
 `Resources/program.json`. The Swift shell loads this synchronously
-at cold-start so **the first frame paints immediately** — no
+at cold-start so **the first frame paints immediately**: no
 waiting on the network.
 
 After the embedded snapshot renders, the app fetches
 `/_mar/program.json` from the configured backend in the background.
 If the fetched version differs (e.g. you deployed new pages since
 the .ipa was built), the UI re-renders with the fresher version.
-If the fetch fails (offline, server down), the embedded UI stays —
+If the fetch fails (offline, server down), the embedded UI stays,
 no error screen for transient network problems.
 
 The flow:
@@ -160,8 +160,8 @@ Useful for staging / QA without editing `mar.json`:
 mar build --target ios --base-url=https://staging.notes-app.fly.dev .
 ```
 
-Takes precedence over `ios.serverUrl`. Doesn't persist anywhere
-— just changes what gets baked into the Xcode project produced by
+Takes precedence over `ios.serverUrl`. Doesn't persist anywhere,
+just changes what gets baked into the Xcode project produced by
 this invocation.
 
 ## What deliberately ISN'T here

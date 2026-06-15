@@ -10,7 +10,7 @@ The syntax is Elm-style. The semantics are pure functional with effects tracked 
 
 - **Pure by default.** Side effects are values (`Effect a`) that the runtime executes. User code describes; runtime acts.
 - **Compile-time correctness over runtime checks.** Types catch as much as possible.
-- **No hidden magic in user code.** Magic is allowed only at the boundary (HTTP encode/decode, schema migrations, etc.) — never in the middle of business logic.
+- **No hidden magic in user code.** Magic is allowed only at the boundary (HTTP encode/decode, schema migrations, etc.), never in the middle of business logic.
 - **High level by default.** Low-level escape hatches are added only when proven necessary.
 - **Single source of truth.** A change in the backend is immediately visible to the frontend; no codegen step.
 
@@ -33,17 +33,18 @@ The syntax is Elm-style. The semantics are pure functional with effects tracked 
 ```
 project/
   mar.json              -- manifest + config
-  src/
-    Main.mar            -- entry point: App.application { routes, screens }
-    Posts.mar           -- backend module (entities + endpoints + handlers)
-    Comments.mar
-    Screens/
-      Home.mar          -- frontend screens (one per file)
-      Timeline.mar
-      ProfileDetail.mar
+  Main.mar              -- entry point: App.fullstack { services, pages, api }
+  Shared.mar            -- types + Service contracts shared by both halves
+  Backend/
+    Users.mar           -- entities + service handlers
+    Tasks.mar
+  Frontend/
+    Routes.mar          -- typed paths
+    SignIn.mar          -- one MVU page per file
+    Home.mar
 ```
 
-A module's path mirrors its name: `src/Screens/Home.mar` is `module Screens.Home`.
+A module's path mirrors its name: `Frontend/Home.mar` is `module Frontend.Home`.
 
 ### 2.2 mar.json
 
@@ -52,7 +53,7 @@ The project manifest. Pure JSON, no interpolation. Strict schema (unknown fields
 ```json
 {
   "name": "my-app",
-  "entry": "src/Main.mar",
+  "entry": "Main.mar",
 
   "server": {
     "port": 3000,
@@ -101,7 +102,7 @@ The runtime reads the env var at startup. If missing, the server fails to start 
 
 #### Secrets
 
-Some fields are marked as **secret** in Mar's internal schema (e.g., `mail.smtpPassword`). These **cannot** be literal values in `mar.json` — they must use the `env:` form. Compile error otherwise.
+Some fields are marked as **secret** in Mar's internal schema (e.g., `mail.smtpPassword`). These **cannot** be literal values in `mar.json`, they must use the `env:` form. Compile error otherwise.
 
 ### 2.3 Module system
 
@@ -146,7 +147,7 @@ travel with the build:
   deployed bundle. Dotfiles (`.DS_Store`, `.env`, …) are skipped.
 - Reference them by absolute path, e.g. `image [] { src = "/logo.png", alt = "…" }`.
 
-The asset is fetched over HTTP like any other resource — the same on web
+The asset is fetched over HTTP like any other resource, the same on web
 and on iOS/Android (`AsyncImage` fetches from the app's server). It is
 **not** inlined into the page or bundled into the native app binary, so a
 reachable host must serve `public/` at runtime.
@@ -157,7 +158,7 @@ or a runtime route prefix (`_mar/`, `_auth/`, `api/`, `services/`).
 
 ### 2.6 PWA (installable web app)
 
-Every `App.frontend` app is an installable PWA out of the box — `mar dev`
+Every `App.frontend` app is an installable PWA out of the box, `mar dev`
 serves a Web App Manifest + icons and `mar build` writes them into
 `dist/`, so "Add to Home Screen" produces a real app icon that opens
 fullscreen on iOS, Android, and desktop. No per-app boilerplate.
@@ -178,12 +179,12 @@ optional; the mandatory manifest `name` comes from the top-level
 }
 ```
 
-- **shortName** — home-screen label (default: `name`).
-- **icon** — project-relative master PNG. **Must be a square PNG, at
+- **shortName**: home-screen label (default: `name`).
+- **icon**: project-relative master PNG. **Must be a square PNG, at
   least 512×512** (`mar dev` / `mar build` fail fast otherwise); Mar
   downscales it to every needed size. Default: a generated solid-color
   tile, so a valid icon always exists.
-- **themeColor / backgroundColor** — hex, default `#ffffff`.
+- **themeColor / backgroundColor**: hex, default `#ffffff`.
 
 Generated endpoints (served in dev, written to `dist/` by build):
 `/_mar/manifest.json`, `/_mar/icon-180.png`, `/_mar/icon-192.png`,
@@ -250,84 +251,135 @@ backend abort channel: its String becomes the `Err` the frontend receives, so
 reserve it for genuine failures and keep matchable domain errors in the
 service's response value (a typed union) instead.
 
-`Effect Never msg` is "an effect that cannot fail and produces a Msg" — used in MVU `init` and `update` returns.
-
 ### 3.4 Effect chaining: `let <-`
 
-Sugar for `andThen`:
+Sugar for `andThen`. Each `<-` binds the result of one effect before the next runs:
 
 ```elm
-deletePost id user =
+toggle id =
     let
-        post <- Db.findOne posts id
+        found <- Repo.findById tasks id
     in
-    if post.author == user.id then
-        Db.delete posts id
-    else
-        Effect.fail (Forbidden "not your post")
+    case found of
+        Just task -> Repo.update tasks id { done = not task.done }
+        Nothing   -> Effect.succeed Nothing
 ```
 
-Equivalent to `Db.findOne posts id |> Effect.andThen (\post -> ...)`.
+Equivalent to `Repo.findById tasks id |> Effect.andThen (\found -> ...)`.
+
+### 3.5 Error handling
+
+Three kinds of failure, three homes. The rule of thumb: transport is a
+shared union, domain is a per-endpoint outcome in the response value, and
+`Effect.fail` is the abort channel for broken invariants only.
+
+**Transport** (offline, expired session, server failure): every call can hit
+these, so every `Service.call` delivers the same union in its `Err`:
+
+```elm
+type Service.Error
+    = Offline              -- request never reached the server
+    | Unauthorized         -- session gone (401)
+    | ServerError String   -- the server refused; carries its message
+```
+
+Match it qualified, or fold it for display:
+
+```elm
+Fetched (Err Service.Offline) -> -- show a retry
+Fetched (Err why)             -> -- Service.errorToString why
+```
+
+**Domain** (email taken, wrong code, body too long): specific to one
+endpoint, so it lives in that endpoint's response type as a union of the
+outcomes it can actually produce. Never a shared catch-all: a page should
+only have to match what can happen to it.
+
+```elm
+type SignupOutcome = Created User | EmailTaken | TeamFull
+
+signup : Service NewUser SignupOutcome
+```
+
+The handler is `NewUser -> Effect SignupOutcome`, so the backend can only
+produce declared outcomes, and the frontend's case is checked for
+exhaustiveness. Patterns nest flat:
+
+```elm
+Done (Ok (Created user)) -> ...
+Done (Ok EmailTaken)     -> ...
+Done (Ok TeamFull)       -> ...
+Done (Err why)           -> ...
+```
+
+The auth endpoints follow the same shape with framework-provided outcomes:
+`Auth.requestCode` delivers `Auth.RequestOutcome` (`Auth.CodeSent` /
+`Auth.InvalidEmail` / `Auth.RateLimited`) and `Auth.verifyCode` delivers
+`Auth.VerifyOutcome user` (`Auth.SignedIn user` / `Auth.WrongCode` /
+`Auth.TooManyAttempts`).
+
+**Abort** (`Effect.fail "..."`): for broken invariants in backend handlers,
+not for outcomes the frontend reacts to. The string surfaces to the client
+as `ServerError`, display-only. If a page needs to branch on a case, the
+case belongs in the response type.
+
+Error copy belongs to the view: the wire carries data (constructors), and
+each frontend chooses its own words for each case.
 
 ## 4. Backend
 
 ### 4.1 Entity API
 
-An entity is a database-backed record. It carries schema only — no API, no business logic.
+An entity is a database-backed record. It carries schema only, no API and no business logic. `Entity.define` takes the table name, a `columns` record whose field names and types mirror the record, and a `uniques` list:
 
 ```elm
-type alias Post =
-    { id : PostId
-    , author : UserId
-    , body : String
-    , createdAt : DateTime
-    , updatedAt : DateTime
+type alias Task =
+    { id        : Int
+    , name      : String
+    , done      : Bool
+    , createdAt : Time
+    , userId    : Int
+    , position  : Int
     }
 
-posts : Entity Post
-posts =
-    entity Post
-        |> primaryKey .id
-        |> foreignKey .author users
-        |> default .id Autoincrement
-        |> default .author CurrentUserRef
-        |> default .createdAt NowTimestamp
-        |> default .updatedAt AutoUpdateTimestamp
+tasks : Entity Task
+tasks =
+    Entity.define
+        { name = "tasks"
+        , columns =
+            { id        = Entity.serial
+            , name      = Entity.text Entity.notNull
+            , done      = Entity.bool Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            , userId    = Entity.int Entity.notNull
+            , position  = Entity.int Entity.notNull
+            }
+        , uniques = []
+        }
 ```
 
-#### Builder API
+#### Column builders
+
+Each column is one of:
+
+- `Entity.serial`: auto-incrementing integer primary key, filled by the runtime on insert.
+- `Entity.int Entity.notNull`
+- `Entity.text Entity.notNull`
+- `Entity.bool Entity.notNull`
+- `Entity.timestamp Entity.notNull`: a `Time` column.
+- `Entity.enum [Open, InProgress, Done] Entity.notNull`: a tags-only union, stored as a CHECKed text column so only those values can be written.
+
+`Entity.notNull` marks a column as required. Because `Entity.serial` is filled by the runtime, `Repo.create` takes the record without that field.
+
+#### Unique indexes
+
+`uniques` is a list of column-name groups; each inner list is one unique index, composite when it names more than one column:
 
 ```elm
-entity        : (a -> a) -> Entity a
-primaryKey    : (a -> id) -> Entity a -> Entity a
-foreignKey    : (a -> fk) -> Entity b -> Entity a -> Entity a
-nullable      : List (a -> field) -> Entity a -> Entity a   -- override (default is NOT NULL except Maybe)
-unique        : List (a -> field) -> Entity a -> Entity a
-uniqueGroup   : List (a -> field) -> Entity a -> Entity a   -- composite unique
-indexed       : (a -> field) -> Entity a -> Entity a
-indexedGroup  : List (a -> field) -> Entity a -> Entity a
-default       : (a -> field) -> DefaultValue field -> Entity a -> Entity a
-softDelete    : (a -> Maybe DateTime) -> Entity a -> Entity a
-onDelete      : (a -> fk) -> CascadeAction -> Entity a -> Entity a
+, uniques = [["commentId", "userId", "emoji"]]   -- one reaction per user per comment
 ```
 
-#### Default value tags
-
-Pure tags only. No user code in defaults.
-
-```elm
-type DefaultValue a
-    = StaticDefault a       -- literal value
-    | Autoincrement         -- Int / wrapped Int
-    | NowTimestamp          -- DateTime, set on insert only
-    | AutoUpdateTimestamp   -- DateTime, set on insert AND every update
-    | CurrentUserRef        -- UserId / wrapped, takes session user
-    | RandomUuid            -- UUID-like
-
-type CascadeAction = Cascade | SetNull | Restrict
-```
-
-Computed defaults (e.g., a slug from the title) belong in the handler, not the entity.
+Computed defaults (a slug from a title, a creation time) belong in the handler, not the entity: read `Time.now` and pass the value to `Repo.create`.
 
 ### 4.2 Codecs
 
@@ -339,605 +391,298 @@ Computed defaults (e.g., a slug from the title) belong in the handler, not the e
 - Sum types with payload → `{ "tag": "constructorName", ...payload }`.
 - `Maybe a` → value or `null`. Optional fields on decode.
 - `List a` → JSON array.
-- Primitives: `Int`, `Float`, `String`, `Bool`, `Date` (ISO 8601), `DateTime` (ISO 8601 UTC), `()`.
+- Primitives: `Int`, `Float`, `String`, `Bool`, `Char`, `Time` (ISO 8601 UTC), `()`.
 
 Mar uses these codecs at the HTTP boundary (request body, response body, path params, query params) and at the DB boundary. User code never sees JSON or constructs codecs manually.
 
 For external APIs (Stripe, etc.), an explicit `Codec` module may be added later.
 
-### 4.3 Effects and effect contexts
+### 4.3 Data access (Repo)
 
-`Db.*` operations and `Endpoint.call` return `Effect (ResponseError tag) a`. They cannot be called outside a handler context — the compiler enforces this.
-
-### 4.4 Queries
-
-Built as values, executed at the boundary.
-
-#### Construction
+`Repo.*` reads and writes entity rows. Every operation runs inside a backend handler and returns an `Effect`:
 
 ```elm
-Db.from    : Entity a -> Query a
-Db.where   : Predicate a -> Query a -> Query a
-Db.orderBy : (a -> field) -> Direction -> Query a -> Query a
-Db.limit   : Int -> Query a -> Query a
-
-type Direction = Asc | Desc
+Repo.all        : Entity a -> Effect (List a)
+Repo.findById   : Entity a -> Int -> Effect (Maybe a)
+Repo.findBy     : Entity a -> fields -> Effect (List a)
+Repo.create     : Entity a -> fields -> Effect a
+Repo.update     : Entity a -> Int -> fields -> Effect (Maybe a)
+Repo.deleteById : Entity a -> Int -> Effect ()
 ```
 
-#### Predicates (named combinators, no lambdas)
+`findBy` filters by example: pass a record of the columns to match, and it returns every row whose values equal them. `create` takes the full row minus the `serial` id. `update` takes the id and a record of just the columns to change, and answers `Nothing` when no row has that id. `deleteById` is idempotent.
 
 ```elm
-Db.eq, Db.neq, Db.lt, Db.gt, Db.lte, Db.gte
-    : (a -> field) -> field -> Predicate a
-
-Db.between : (a -> field) -> field -> field -> Predicate a
-Db.in_     : (a -> field) -> List field -> Predicate a
-
-Db.and  : List (Predicate a) -> Predicate a
-Db.or   : List (Predicate a) -> Predicate a
-Db.not_ : Predicate a -> Predicate a
-
-Db.contains   : (a -> String) -> String -> Predicate a
-Db.startsWith : (a -> String) -> String -> Predicate a
-Db.endsWith   : (a -> String) -> String -> Predicate a
-
-Db.isJust    : (a -> Maybe x) -> Predicate a
-Db.isNothing : (a -> Maybe x) -> Predicate a
+listTasksImpl : () -> Shared.User -> Effect (List Shared.Task)
+listTasksImpl _ user =
+    Repo.findBy tasks { userId = user.id }
+        |> Effect.map sortByPosition
 ```
 
-#### Extraction
+There is no query-builder, predicate, pagination, or relation API today. Compose with `Effect.andThen` and ordinary Mar (`List.filter`, `List.sortWith`, `List.map`) over the rows you read. Raw SQL is not exposed to app code.
+
+### 4.4 Services
+
+A `Service req resp` is a typed contract for one server call: `req` is what the client sends, `resp` what it gets back. The same value is shared by both halves, declared once in the shared module:
 
 ```elm
-Db.list   : Query a -> Effect (ResponseError tag) (List a)
-Db.first  : Query a -> Effect (ResponseError tag) (Maybe a)
-Db.count  : Query a -> Effect (ResponseError tag) Int
-Db.exists : Query a -> Effect (ResponseError tag) Bool
+listTasks : Service () (List Task)
+listTasks = Service.declare
+
+addTask : Service { name : String } AddTaskOutcome
+addTask = Service.declare
 ```
 
-#### Pagination (cursor-based)
+`Service.declare` is the same placeholder for every contract; the type annotation fixes `req` and `resp`. The backend pairs each contract with a handler, the frontend calls it:
 
 ```elm
-type Cursor   -- opaque, signed by the server
-
-type alias Page a =
-    { items : List a
-    , nextCursor : Maybe Cursor   -- Nothing = end
-    }
-
-Db.paginate
-    : { query : Query a, limit : Int, cursor : Maybe Cursor }
-    -> Effect (ResponseError tag) (Page a)
+Service.declare       : Service req resp
+Service.implement     : Service req resp -> (req -> Effect resp) -> ExposedService
+Service.call          : Service req resp -> req -> (Result Service.Error resp -> msg) -> Effect msg
+Service.errorToString : Service.Error -> String
 ```
 
-The query must have `orderBy`. Mar adds the primary key as automatic tiebreaker for stable cursors.
-
-#### Single-row operations by ID
+A handler is `req -> Effect resp`, so it can only produce the declared response. Most calls should be authenticated, which is what `Auth.protect` is for:
 
 ```elm
-Db.findOne : Entity a -> id -> Effect (ResponseError tag) a
-Db.insert  : Entity a -> a  -> Effect (ResponseError tag) a
-Db.update  : Entity a -> id -> List (Setter a) -> Effect (ResponseError tag) a
-Db.delete  : Entity a -> id -> Effect (ResponseError tag) ()
-
-Db.set : (a -> field) -> field -> Setter a
+Auth.protect : Service req resp -> (req -> User -> Effect resp) -> ExposedService
 ```
 
-`Db.update` returns the updated row.
-
-#### Bulk operations
+`Auth.protect` injects the signed-in `User` as the second argument and rejects the request with 401, before the handler runs, when there is no valid session. The frontend sees the same `Service` value either way and never knows whether a handler was wrapped.
 
 ```elm
-Db.deleteWhere : Entity a -> Predicate a -> Effect (ResponseError tag) Int
-Db.updateWhere : Entity a -> Predicate a -> List (Setter a) -> Effect (ResponseError tag) Int
+-- Backend.Tasks
+addTaskImpl : { name : String } -> Shared.User -> Effect Shared.AddTaskOutcome
+addTaskImpl input user =
+    if String.trim input.name == "" then
+        Effect.succeed Shared.NameEmpty
+    else
+        Repo.create tasks { name = input.name, done = False, {- ... -} }
+            |> Effect.map Shared.Added
+
+services =
+    [ Auth.protect Shared.listTasks listTasksImpl
+    , Auth.protect Shared.addTask   addTaskImpl
+    ]
 ```
 
-Both return the count of affected rows.
-
-#### Relations (preload, no joins)
-
-To avoid N+1 with related data, use `preload` (one-to-one or many-to-one) or `preloadMany` (one-to-many):
+On the frontend, `Service.call` turns a contract into an `Effect` that dispatches a `Msg`. The `Result` carries `Service.Error` in its `Err` (transport failure) and the declared `resp` in `Ok` (which holds the domain outcome). See section 3.5 for the full error model.
 
 ```elm
-Db.preload
-    : Entity related
-    -> (a -> id)
-    -> List a
-    -> Effect (ResponseError tag) (a -> related)
+update msg model =
+    case msg of
+        AddClicked ->
+            ( model, Service.call Shared.addTask { name = model.draft } Added )
 
-Db.preloadMany
-    : Entity related
-    -> (related -> id)   -- FK accessor on related
-    -> List a
-    -> (a -> id)         -- ID accessor on parent
-    -> Effect (ResponseError tag) (a -> List related)
+        Added (Ok (Shared.Added task)) -> -- ...
+        Added (Ok Shared.NameEmpty)    -> -- ...
+        Added (Err why)                -> -- Service.errorToString why
 ```
 
-Returns a function (a -> related) that the user applies. One query per `preload` call, regardless of list size.
+### 4.5 Wiring (`App.fullstack`)
+
+`Main.mar` is the only module that sees both halves. It builds the auth config, lists the services and pages, and hands them to `App.fullstack`:
 
 ```elm
-let
-    posts <- Db.list (Db.from posts |> Db.orderBy .createdAt Desc)
-    getAuthor <- Db.preload users .author posts
-    getTags <- Db.preloadMany tags .postId posts .id
-in
-Effect.succeed
-    (List.map (\p ->
-        { post = p
-        , author = getAuthor p
-        , tags = getTags p
+main : Effect ()
+main =
+    App.fullstack
+        { services = Backend.Tasks.services
+        , pages    =
+            [ Frontend.SignIn.page
+            , Frontend.Home.page
+            ]
+        , api      = []
         }
-    ) posts)
 ```
 
-### 4.5 Endpoints
+- `services` is the concatenation of each backend module's exposed services.
+- `pages` enumerates every frontend route; the runtime dispatches by `path`.
+- `api` holds custom REST endpoints (`Endpoint.*`) for webhooks or non-Mar clients. It is empty for almost every app: services cover normal client-server calls.
 
-An `Endpoint i o tag` is a typed contract for an HTTP route, used by both backend (`Endpoint.implement`) and frontend (`Endpoint.call`).
+### 4.6 Auth
+
+Mar ships passwordless auth: the user enters an email, receives a one-time code, and exchanges it for a session. The app brings its own `User` entity and registers it through `Auth.config`:
 
 ```elm
-type Endpoint pathArgs input output errorTag
+auth : Auth { id : Int, email : String }
+auth =
+    Auth.config
+        { entity          = Backend.Users.users
+        , identify        = \u -> u.email
+        , signInPage      = Frontend.SignIn.page
+        , email           = { subject = "Your sign-in code" }
+        , signup          = \userEmail -> { email = userEmail }
+        , sessionDuration = Time.days 30
+        }
 ```
 
-#### Aliases per HTTP verb
+Protect a service with `Auth.protect` (section 4.4) and a page with `Page.protected` (section 5). The sign-in flow runs through `Auth.requestCode` and `Auth.verifyCode`, which deliver the per-endpoint outcomes `Auth.RequestOutcome` and `Auth.VerifyOutcome user` (section 3.5). The full flow, every config field, and the SMTP and dev-code setup live in [auth.md](auth.md).
 
-```elm
-type alias Get path output         = Endpoint path () output ()
-type alias Post input output tag   = Endpoint () input output tag
-type alias Patch path input output tag = Endpoint path input output tag
-type alias Delete path             = Endpoint path () () ()
-```
+### 4.7 Errors
 
-GET and DELETE have no body and no validation, so their aliases drop those slots. POST and PATCH commonly have validation, so they keep the tag slot.
+Backend handlers return `Effect resp`; there is no error type parameter. The three kinds of failure, and where each one lives, are covered in full in section 3.5. In short:
 
-#### Constructors
-
-```elm
-Endpoint.get    : String -> Endpoint path () output ()
-Endpoint.post   : String -> Endpoint () input output ()
-Endpoint.patch  : String -> Endpoint path input output ()
-Endpoint.delete : String -> Endpoint path () () ()
-```
-
-#### Modifiers
-
-```elm
-Endpoint.requireAuth : Entity { a | id : UserId, email : String } -> Endpoint p i o tag -> Endpoint p i o tag
-Endpoint.public      : Endpoint p i o tag -> Endpoint p i o tag
-Endpoint.requireRole : Entity { a | role : role, ... } -> role -> Endpoint p i o tag -> Endpoint p i o tag
-
-Endpoint.validate
-    : (input -> Result (List (FieldError tag)) input)
-    -> Endpoint p i o ()
-    -> Endpoint p i o tag
-
-Endpoint.validateWithUser
-    : (User -> input -> Result (List (FieldError tag)) input)
-    -> Endpoint p i o ()
-    -> Endpoint p i o tag
-```
-
-#### Implementation (backend) and call (client)
-
-```elm
-Endpoint.implement : (handlerSignature) -> Endpoint p i o tag -> Route
-Endpoint.call      : Endpoint p i o tag -> p -> i -> Effect (ResponseError tag) o
-```
-
-The handler signature mirrors the Endpoint shape:
-- Path params first, then body, then runtime-injected (`User`).
-
-Example:
-
-```elm
-showPost : PostId -> Effect (ResponseError ()) Post
-showPost id = Db.findOne posts id
-
-createPost : PostInput -> User -> Effect (ResponseError PostField) Post
-createPost input user = Db.insert posts { input | author = user.id }
-
-updatePost : PostId -> PostInput -> User -> Effect (ResponseError PostField) Post
-updatePost id input user = ...
-```
-
-### 4.6 Validation
-
-Field tag types per entity, listing only fields with validation:
-
-```elm
-type PostField = Body
-
-validatePostInput : PostInput -> Result (List (FieldError PostField)) PostInput
-validatePostInput input =
-    if String.length input.body >= 1 then Ok input
-    else Err [ FieldError.new Body "post body cannot be empty" ]
-```
-
-For validation that needs user context:
-
-```elm
-validateFollowInput : User -> FollowInput -> Result (List (FieldError FollowField)) FollowInput
-validateFollowInput user input =
-    if user.id /= input.followed then Ok input
-    else Err [ FieldError.new Followed "you cannot follow yourself" ]
-```
-
-#### FieldError API
-
-```elm
-type alias FieldError tag =
-    { field : tag
-    , message : String
-    }
-
-FieldError.new       : tag -> String -> FieldError tag
-FieldError.firstFor  : tag -> List (FieldError tag) -> Maybe String
-FieldError.errorsFor : tag -> List (FieldError tag) -> List String
-FieldError.clear     : tag -> List (FieldError tag) -> List (FieldError tag)
-```
-
-Validation errors are caught at the Endpoint boundary, returned as HTTP 422 with structured body. The client receives them as `Validation (List (FieldError tag))` in `ResponseError` — already typed (no parsing needed).
-
-### 4.7 Auth
-
-Mar does not provide a fixed `User` entity. The app defines its own User record, including the fields Mar's auth helpers require:
-
-```elm
-type alias User =
-    { id : UserId         -- required
-    , email : String      -- required
-    , role : Role         -- optional, but enables requireRole
-    , displayName : Maybe String
-    , handle : Maybe String
-    , createdAt : DateTime
-    , updatedAt : DateTime
-    }
-
-users : Entity User
-users =
-    entity User
-        |> primaryKey .id
-        |> unique [ .email ]
-        |> ...
-```
-
-Auth helpers use row polymorphism:
-
-```elm
-Endpoint.requireAuth : Entity { a | id : UserId, email : String } -> ...
-Endpoint.requireRole : Entity { a | role : role, ... } -> role -> ...
-```
-
-If the User record is missing `email`, calling `requireAuth users` fails to compile with a clear error.
-
-The app registers its User entity with Mar's runtime via `Auth.config`:
-
-```elm
-authConfig : Auth.Config
-authConfig = Auth.config { userEntity = users }
-```
-
-This is referenced in `Main.mar` so the runtime knows which entity is the auth user.
-
-### 4.8 Routes
-
-Routes are organized into groups by access policy. Every route must declare its policy — there is no implicit default.
-
-```elm
-routes : List Route
-routes =
-    List.concat
-        [ Routes.public
-            [ list   |> Endpoint.implement (\_ -> listAll)
-            , show   |> Endpoint.implement getOne
-            ]
-
-        , Routes.authenticated users
-            [ create |> Endpoint.implement createOne
-            , update |> Endpoint.implement updateOne
-            , delete |> Endpoint.implement deleteOne
-            ]
-
-        , Routes.requireRole users Admin
-            [ purgeAll |> Endpoint.implement createPurge
-            ]
-        ]
-```
-
-Routes:
-
-```elm
-Routes.public        : List Route -> List Route
-Routes.authenticated : Entity { a | id : UserId, email : String } -> List Route -> List Route
-Routes.requireRole   : Entity { a | role : role, ... } -> role -> List Route -> List Route
-```
-
-Routes inside a group inherit the group's policy. Individual routes can add extra restrictions (e.g., extra validation) but cannot conflict with the group's policy.
-
-### 4.9 Errors
-
-`ResponseError tag` is the error type for any handler:
-
-```elm
-type ResponseError tag
-    = Db DbError
-    | Validation (List (FieldError tag))
-    | Forbidden String
-    | BadRequest String
-    | NotFoundResource String
-    | Conflict String
-    | Unauthorized String
-    | Custom Int String
-
-type DbError
-    = NotFound
-    | UniqueViolation { field : String }
-    | ForeignKeyViolation { field : String }
-```
-
-HTTP status mapping is automatic:
-
-| Variant | Status | Body |
-|---|---|---|
-| `Db NotFound` | 404 | `{"error":"not found"}` |
-| `Db (UniqueViolation {field})` | 409 | `{"error":"<field> already taken"}` |
-| `Db (ForeignKeyViolation {field})` | 422 | `{"error":"<field> does not exist"}` |
-| `Validation [...]` | 422 | `{"errors":[{"field":"...","message":"..."}, ...]}` |
-| `Forbidden msg` | 403 | `{"error": msg}` |
-| `BadRequest msg` | 400 | `{"error": msg}` |
-| `NotFoundResource msg` | 404 | `{"error": msg}` |
-| `Conflict msg` | 409 | `{"error": msg}` |
-| `Unauthorized msg` | 401 | `{"error": msg}` |
-| `Custom status msg` | status | `{"error": msg}` |
-
-Connection failures and other infra errors are intercepted by the runtime; they never reach the handler.
+- A handler returns its declared response. Domain outcomes are constructors of that response type, matched by the frontend.
+- `Effect.fail "message"` aborts the handler; the message reaches the client as `Service.ServerError` and is display-only.
+- Offline, expired-session (401), and server failures are turned into the `Service.Error` union by the runtime and delivered in the call's `Err`.
 
 ## 5. Frontend
 
 ### 5.1 MVU model
 
-Each screen is its own independent MVU loop with `Model`, `Msg`, `init`, `update`, and `view`.
+Each page is its own independent MVU loop with `Model`, `Msg`, `init`, `update`, and `view`. `init` and `update` return `(Model, Effect Msg)`:
 
 ```elm
-init : <pathArgs> -> [User] -> (Model, Effect Never Msg)
-update : Msg -> Model -> (Model, Effect Never Msg)
-view : Model -> View Msg
+init   : (Model, Effect Msg)
+update : Msg -> Model -> (Model, Effect Msg)
+view   : Model -> View Msg
 ```
 
-The runtime instantiates a screen on navigation, swaps it out when the user navigates away.
+The runtime instantiates a page on navigation and swaps it out when the user navigates away.
 
-### 5.2 Screen value
+### 5.2 Page value
 
-Each screen module exports a typed `Screen` value:
+Each page module exports a `page`, built with one of the `Page.*` combinators. They all take the same record, `{ path, title, init, update, view }`; the combinator decides what `init` / `update` / `view` receive:
 
 ```elm
-type Screen pathArgs model msg
+Page.create           -- public, static path; init : (Model, Effect Msg)
+Page.protected        -- runs Auth.me on entry, hands the User in; init : User -> (Model, Effect Msg)
+Page.dynamic          -- path carries typed args; init : args -> (Model, Effect Msg)
+Page.dynamicProtected -- both; init : User -> args -> (Model, Effect Msg)
+```
 
-screen : Screen PostId Model Msg
-screen =
-    Screen.with
-        { path = "/posts/:postId"
-        , init = init
+```elm
+page : Page
+page =
+    Page.protected
+        { path   = "/"
+        , title  = "Team Notes"
+        , init   = init
         , update = update
-        , view = view
+        , view   = view
         }
 ```
 
-The first type parameter (`pathArgs`) carries the URL-derived arguments. `User` (when injected by the runtime) is not in this type — it's part of `init`'s signature.
+`Page.protected` bootstraps the session: it runs `Auth.me`, redirects to the sign-in page when there is no valid session, and otherwise passes the `User` to `init`. (`Page.adminProtected` and `Page.dynamicAdminProtected` gate on the admin session instead.)
 
-The init function declares what it needs:
+A dynamic page's `path` is a typed route: a path string with `{name:Type}` placeholders, kept in a `Routes` module so links and pages agree on the shape:
 
-| Init signature | What runtime injects |
-|---|---|
-| `(Model, Effect Never Msg)` | Nothing (truly static) |
-| `path -> (Model, Effect Never Msg)` | URL path arg |
-| `User -> (Model, Effect Never Msg)` | Logged user (auth required) |
-| `Maybe User -> (Model, Effect Never Msg)` | Optional user (public screen) |
-| `path -> User -> (Model, Effect Never Msg)` | Both |
+```elm
+-- Frontend/Routes.mar
+home       = "/"
+verifyCode = "/sign-in/verify/{email:String}"
+```
 
-The runtime infers the auth requirement from whether `init` declares `User` or `Maybe User`.
+The placeholder values are parsed and delivered to `init` as a record (`{ email : String }`).
 
 ### 5.3 View vocabulary
 
-Views are abstract — no HTML, CSS, or SwiftUI in user code. Mar renders natively per platform (HTML/CSS for web, SwiftUI for iOS).
-
-Elements are semantic, not visual:
+Views are abstract: no HTML, CSS, or SwiftUI in user code. Mar renders natively per platform (HTML/CSS for web, SwiftUI for iOS). Every element takes a list of attributes as its first argument, even when empty (`text []`, `section []`), so adding an attribute never changes the call shape.
 
 ```elm
-section [] [ ... ]
-row [] [ ... ]
-column [] [ ... ]
-
-title "Heading"
-subtitle "Sub"
-text "Body"
-
-button [ onClick Save, intent Primary ] [ text "Save" ]
-
-field
-    [ label "Name"
-    , value model.name
-    , onChange NameChanged
-    , disabled model.saving
-    , errorMessage (FieldError.firstFor Name model.errors)
+navigationStack [ navigationTitle "Sign in" ]
+    [ form
+        [ section []
+            [ text [] "Enter your email and we'll send a code."
+            , textField [ email, submit Submitted ] "Email" draft DraftChanged
+            ]
+        , section []
+            [ button [] Submitted "Send me a code" ]
+        ]
     ]
-
-field
-    [ label "Bio"
-    , multiline True
-    , value model.bio
-    , onChange BioChanged
-    ]
-
-list (List.map renderItem model.items)
-banner [ intent Error ] [ text "Failed" ]
-empty
 ```
 
-### 5.4 Intent
+The building blocks: `navigationStack` / `navigationTitle`, `form` / `section`, `row` / `column` / `spacer`, `text` / `title` / `subtitle` / `paragraph`, `textField`, `button`, `link` / `navigationLink`, `list` / `keyedList`, `toggle`, `image`, `sheet` / `confirm`, `errorText`, `centered`, and `empty` (renders nothing). `button [] Submitted "Verify"` takes its message and label directly; `textField` takes its label, the current value, and an on-change message.
 
-Semantic styling tags. The theme maps each Intent to platform-appropriate visual styles.
+### 5.4 Navigation
 
-```elm
-type Intent
-    = Primary       -- main action
-    | Subtle        -- secondary
-    | Destructive   -- irreversible
-    | Error         -- something went wrong
-    | Warning       -- attention
-    | Success       -- confirmation
-    | Info          -- neutral message
-```
-
-Used as an attribute on buttons, banners, badges:
-
-```elm
-button [ intent Primary ]     [ text "Save" ]
-button [ intent Destructive ] [ text "Delete account" ]
-banner [ intent Error ]       [ text "Could not save" ]
-banner [ intent Success ]     [ text "Profile updated" ]
-```
-
-Theme is hardcoded in MVP (no customization in `mar.json` yet).
-
-### 5.5 Navigation
-
-The `Navigation` module provides view attributes for declarative navigation and effects for programmatic navigation.
-
-```elm
-import Navigation
-
-Navigation.target : NavigateTarget -> Attr msg              -- view attribute
-Navigation.push   : NavigateTarget -> Effect Never msg      -- effect
-Navigation.back   : Effect Never msg                         -- effect
-```
-
-#### Declarative (in view)
-
-```elm
-button [ Navigation.target (Screens.PostDetail.to post.id) ]
-    [ text "View post" ]
-
-row [ Navigation.target (Screens.ProfileDetail.to user.id) ]
-    [ text user.handle ]
-```
-
-#### Programmatic (in update)
+The `Nav` module drives navigation. In a view, `navigationLink` pushes a destination when tapped; in `update`, `Nav.pushTo` / `Nav.replaceTo` (and `Nav.push` / `Nav.replace`) return an `Effect` that navigates:
 
 ```elm
 update msg model =
     case msg of
-        PostCreated (Ok post) ->
-            ( { model | submitting = False }
-            , Navigation.push (Screens.PostDetail.to post.id)
-            )
+        Saved (Ok note) ->
+            ( model, Nav.replaceTo (Frontend.Routes.noteDetail note.id) )
 ```
 
-#### Screen.to
+`replace` swaps the current entry, so Back does not return to it; `push` adds one. After a successful sign-in, `Auth.completeSignIn` returns the user to wherever a 401 sent them (or home).
 
-Each screen module manually exports its `to` function:
+## 6. Client and server
 
-```elm
-to : PostId -> NavigateTarget
-to = Screen.to screen
-```
-
-Type-checked: `Screens.PostDetail.to "abc"` fails to compile (expects PostId).
-
-## 6. Client ↔ Server
-
-The same `Endpoint` value is used on both sides:
-
-- **Backend** uses `Endpoint.implement` to bind a handler.
-- **Frontend** uses `Endpoint.call` to invoke remotely.
+The same `Service` value (section 4.4) is the contract for both halves: declared once in the shared module, implemented on the backend (`Service.implement`, or `Auth.protect` for an authenticated call), and invoked from a page with `Service.call`. Renaming a service or changing its `req` / `resp` breaks both sides at compile time, with no code-generation step.
 
 ```elm
--- Shared (defined once):
-publishPost : Endpoint.Post PostInput Post PostField
-publishPost = Endpoint.post "/posts" |> Endpoint.validate validatePostInput
+-- Shared (declared once):
+addTask : Service { name : String } AddTaskOutcome
+addTask = Service.declare
 
--- Backend:
-Routes.authenticated users
-    [ publishPost |> Endpoint.implement createPost
-    ]
+-- Backend (Backend.Tasks.services):
+Auth.protect Shared.addTask addTaskImpl
 
--- Frontend:
+-- Frontend (in update):
 update msg model =
     case msg of
         SubmitClicked ->
             ( { model | submitting = True }
-            , Endpoint.call publishPost () { body = model.body }
-                |> Effect.toMsg PostCreated
+            , Service.call Shared.addTask { name = model.draft } Added
             )
 
-        PostCreated (Err (Validation errors)) ->
-            ( { model | fieldErrors = errors, submitting = False }
-            , Effect.none
-            )
+        Added (Ok (Shared.Added task)) -> -- ...
+        Added (Ok Shared.NameEmpty)    -> -- ...
+        Added (Err why)                -> -- Service.errorToString why
 ```
 
-Renaming an endpoint, changing its input type, or modifying its validation tag breaks both backend and frontend at compile time. No code generation step.
+The `Result` the page receives carries `Service.Error` in its `Err` (transport failure) and the declared response in `Ok`, which holds any domain outcome. See section 3.5 for the full error model.
 
 ## 7. Main.mar
 
-Entry point. A single `App.application { ... }` call:
+Entry point. A single `App.fullstack { ... }` call, returning `Effect ()`:
 
 ```elm
 module Main exposing (main)
 
-import App exposing (App)
-
-import Posts
-import Comments
-import Follows
-
-import Screens.Home
-import Screens.Timeline
-import Screens.Profiles
-import Screens.ProfileDetail
-import Screens.PostDetail
-import Screens.CommentDetail
+import Backend.Tasks
+import Backend.Users
+import Frontend.SignIn
+import Frontend.VerifyCode
+import Frontend.Home
 
 
-main : App
+main : Effect ()
 main =
-    App.application
-        { routes =
-            List.concat
-                [ Posts.routes
-                , Comments.routes
-                , Follows.routes
-                ]
-        , screens =
-            [ Screens.Home.screen
-            , Screens.Timeline.screen
-            , Screens.Profiles.screen
-            , Screens.ProfileDetail.screen
-            , Screens.PostDetail.screen
-            , Screens.CommentDetail.screen
+    App.fullstack
+        { services = Backend.Tasks.services
+        , pages    =
+            [ Frontend.SignIn.page
+            , Frontend.VerifyCode.page
+            , Frontend.Home.page
             ]
+        , api      = []
         }
 ```
 
-`routes` and `screens` are explicit lists. Mar does not auto-discover.
+`services`, `pages`, and `api` are explicit lists; Mar does not auto-discover (see section 4.5). Auth is configured by a top-level `auth = Auth.config { ... }` binding that the runtime picks up (section 4.6).
 
 ## 8. Deferred / Future Work
 
 The following are intentionally not in the MVP. They will be revisited when concrete need arises.
 
-- **Subscriptions** (timer, websocket, server-sent events) — Elm-style `Sub Msg`.
-- **Theme customization** — `mar.json` `theme` field for colors, typography.
-- **Escape hatches for platform-specific behavior** — haptic feedback, push notifications, file downloads.
-- **Custom HTTP clients** for external APIs (Stripe, etc.) — explicit `Codec` API.
-- **Crud scaffold helpers** (`Crud.scaffold entity`) — if examples become repetitive.
-- **Ownership helpers** (`Routes.requireOwner`) — same.
-- **State preservation across navigation** — currently screens are destroyed on navigate-away.
-- **Loading screen abstraction** — currently each screen handles its own loading state.
-- **Multiple environments in `mar.json`** — currently a single config; env vars handle differences.
-- **`responseErrorToString`** — built-in default messages for `ResponseError` variants.
+- **Subscriptions** (timer, websocket, server-sent events), Elm-style `Sub Msg`.
+- **Theme customization** via a `mar.json` `theme` field for colors and typography.
+- **Escape hatches for platform-specific behavior**: haptics, push notifications, file downloads.
+- **Custom HTTP clients** for external APIs (Stripe, etc.) via an explicit `Codec` API.
+- **Crud scaffold helpers** (`Crud.scaffold entity`) if examples become repetitive.
+- **Ownership helpers** for the read-then-check pattern, if it recurs.
+- **State preservation across navigation**: pages are currently rebuilt on navigate-away.
+- **Loading-state abstraction**: each page currently handles its own loading state.
+- **Multiple environments in `mar.json`**: currently a single config, env vars handle differences.
 
 ## 9. Examples
 
 See `examples/`:
 
-- `personal-todo.mar` — minimal CRUD with ownership.
-- `pet-food-log.mar` — validation + ownership + custom query.
-- `mini-twitter/` — full-featured: 3 entities (User / Tweet / Follow), passwordless email auth, handle-based profiles, follow graph, owner-only delete via `Auth.authorize`, typed routes, and an MVU page per screen. See `examples/mini-twitter/README.md` for a top-to-bottom reading order.
+- `hello-auth/` is the smallest end-to-end app: email plus one-time-code sign-in and a single protected page.
+- `daily-checklist/` is a per-user CRUD app: entities, `Repo`, `Service` contracts, `Auth.protect`, drag-to-reorder, and a typed domain outcome (`AddTaskOutcome`).
+- `team-notes/` adds multiple pages, dynamic routes (`Page.dynamic`), and a detail page.
+- `mini-twitter/` is the full-featured one: three entities (User / Tweet / Follow), passwordless email auth, handle-based profiles, a follow graph, typed routes, and an MVU page per route. See `examples/mini-twitter/README.md` for a reading order.

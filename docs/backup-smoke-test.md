@@ -1,4 +1,4 @@
-# Backup smoke test — production checklist
+# Backup smoke test, production checklist
 
 Manual verification to run **once**, against a real Fly deployment,
 before declaring auto-backup MVP-ready. The Go test suite covers the
@@ -9,12 +9,12 @@ Estimated time: **~30 minutes**, plus deploy time for two builds.
 
 ## Prerequisites
 
-- [ ] A Fly app deployed via `mar fly deploy` (any small project —
+- [ ] A Fly app deployed via `mar fly deploy` (any small project,
       even the scaffolded starter works).
 - [ ] `mar.json` configured with at least one admin in `admins[]`
       (so you can log into the panel).
 - [ ] `mar.json` has the database block with auto-backup enabled
-      (the default — no need to add anything; just confirm it's
+      (the default, no need to add anything; just confirm it's
       not disabled):
 
       ```json
@@ -28,7 +28,7 @@ Estimated time: **~30 minutes**, plus deploy time for two builds.
       For the smoke test, override `intervalHours: 1` so you don't
       have to wait 6 hours for the first auto-backup to fire.
 
-## Phase 1 — auto-backup runs in production
+## Phase 1, auto-backup runs in production
 
 **Goal**: confirm the goroutine actually starts on Fly and writes
 files to the volume.
@@ -57,17 +57,17 @@ files to the volume.
 
 **Failure mode**: if `/data/backups/` doesn't exist or is empty,
 the goroutine is failing silently. Check `fly logs` for
-"could not create catalog dir" — usually permissions or volume
+"could not create catalog dir", usually permissions or volume
 not mounted.
 
-## Phase 2 — restore via CLI on the server
+## Phase 2, restore via CLI on the server
 
 **Goal**: confirm `mar-runtime restore-db` swaps the DB on a real
 Fly volume and the machine comes back up with the restored state.
-(Restore is deliberately CLI-only — there is no panel button.)
+(Restore is deliberately CLI-only, there is no panel button.)
 
 1. [ ] Open the admin panel and note the live database state in the
-       **Database** / **Tables** sections — pick something specific
+       **Database** / **Tables** sections, pick something specific
        to verify the restore is real (e.g. count of rows in some
        table).
 2. [ ] SSH in: `fly ssh console --app YOUR_APP`
@@ -81,7 +81,7 @@ Fly volume and the machine comes back up with the restored state.
    steps), no prompt, no changes.
 
 4. [ ] Run it for real. Because the server holds the DB flock, the
-       restore should first REFUSE with "a server is running" —
+       restore should first REFUSE with "a server is running",
        that's the lock check working. Stop the machine's server
        process (or `fly machine stop` + start a console-only
        machine, depending on your setup) and run again:
@@ -108,7 +108,7 @@ Fly volume and the machine comes back up with the restored state.
   didn't restart, so the running process kept the OLD inode open.
   Check `fly status` for restart count, restart, re-check.
 
-## Phase 3 — schema mismatch refusal
+## Phase 3, schema mismatch refusal
 
 **Goal**: confirm the schema fingerprint check refuses incompatible
 backups instead of silently corrupting data.
@@ -134,7 +134,7 @@ backups instead of silently corrupting data.
    reached, the .bak is NOT created, database state unchanged.
    There is no --force; that's by design.
 
-## Phase 4 — download for cold storage
+## Phase 4, download for cold storage
 
 **Goal**: confirm the download flow works end-to-end.
 
@@ -166,11 +166,11 @@ When all four phases pass, the auto-backup MVP is ready. The
 remaining concerns I called out in the audit (`docs/admin-panel.md`
 near the backup section) are non-blocking polish:
 
-- **Multi-machine Fly setups** — the catalog is per-volume.
+- **Multi-machine Fly setups**: the catalog is per-volume.
   Single-machine apps work fully; horizontal scaling needs
   separate design before this is safe to use as a recovery
   strategy.
-- **Bundle versioning** — `metadata.json` doesn't yet carry a
+- **Bundle versioning**: `metadata.json` doesn't yet carry a
   format version. Adding one is cheap and prevents future
   format changes from silently breaking old backups.
 

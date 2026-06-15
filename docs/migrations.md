@@ -1,4 +1,4 @@
-# Schema Migrations — Spec
+# Schema Migrations, Spec
 
 **Status**: proposal, not implemented.
 **Replaces**: today's lazy `ensureMigrated` in `internal/runtime/repo.go`,
@@ -27,7 +27,7 @@ func ensureMigrated(entity VEntity) (*sql.DB, error) {
 This is naive in three dangerous ways:
 
 1. **`CREATE TABLE IF NOT EXISTS` silently does nothing** when the
-   table already exists — even if its schema doesn't match what the
+   table already exists, even if its schema doesn't match what the
    code expects. So `entity.define "notes" { ..., archived = Entity.bool ... }`
    on a table that already has all the previous fields but no
    `archived` column → user code reads `note.archived` → crash, or
@@ -59,7 +59,7 @@ forward.
 6. **Read-only inspection commands** for the operator: `mar migrate
    plan` shows what the next boot WILL apply, without touching the
    DB; `mar migrate status` shows the full history. These are
-   inspection tools, not control levers — boot always runs the same
+   inspection tools, not control levers, boot always runs the same
    single auto-mode.
 
 Non-goals:
@@ -80,9 +80,9 @@ carries every fact the migrator needs:
 
 - Table name
 - Field name, type, primary, auto, optional/notNull
-- Defaults (today partially supported — needs a small extension to
+- Defaults (today partially supported, needs a small extension to
   carry the parsed default value, see "Required changes" below)
-- Foreign keys (when relations land — the lispy version had
+- Foreign keys (when relations land, the lispy version had
   `belongs-to`; current mar has it implicitly via `Entity.int` plus
   user convention; needs a first-class `Entity.belongsTo` builtin
   before relation migrations can be modeled)
@@ -116,11 +116,11 @@ For each entity `E`:
      - **Optional or has default**: emit `ALTER TABLE ADD COLUMN` and
        record.
      - **Required, no default, table empty**: emit `ALTER TABLE ADD COLUMN`
-       (with `NOT NULL` is fine — SQLite accepts it on empty table).
+       (with `NOT NULL` is fine, SQLite accepts it on empty table).
      - **Required, no default, table has rows**: BLOCK with
        error message that suggests adding a default or making the
        field optional.
-     - **Primary or auto**: BLOCK — these can't be retrofitted.
+     - **Primary or auto**: BLOCK, these can't be retrofitted.
      - **Foreign key**: BLOCK with the manual-migration SQL pattern
        (CREATE TABLE _new + INSERT SELECT + DROP + RENAME). SQLite
        can't `ALTER TABLE ADD CONSTRAINT FOREIGN KEY`; you have to
@@ -192,7 +192,7 @@ Hint:
     COMMIT;
 ```
 
-Same shape for "required field added to non-empty table" — error
+Same shape for "required field added to non-empty table", error
 explains the situation and suggests `Entity.text Entity.notNull
 (Entity.default "")` or `Entity.text` (without notNull) as fixes.
 
@@ -216,14 +216,14 @@ The runtime carries the default through to:
 
 Today the entity field carries `Optional`, `Primary`, `Auto`,
 `NotNull`. Add `Default Value` (using the existing runtime `Value`
-type — supports String / Int / Bool / Float).
+type, supports String / Int / Bool / Float).
 
 ### 2. Entity.belongsTo (NEW)
 
 For relation migrations to be possible, the framework needs to model
 foreign keys explicitly. Today users encode them via
 `Entity.int Entity.notNull` and a naming convention (`authorId` →
-`Note.author`) — fine for queries via `findBy`, but the migrator
+`Note.author`), fine for queries via `findBy`, but the migrator
 can't see the FK.
 
 ```mar
@@ -269,7 +269,7 @@ collecting entities from the program but before binding the listener.
 Failure → `log.Fatalf` with the formatted error, no listener
 opens, no traffic served against a broken schema.
 
-### 5. CLI commands (new — inspection only)
+### 5. CLI commands (new, inspection only)
 
 ```
 mar migrate status [path]      # show history from _mar_schema_migrations
@@ -281,7 +281,7 @@ Both commands open the DB read-only and report. Useful in CI
 if anything would be blocked) and in operator workflows ("what
 changed last deploy?" via `status`).
 
-There's no `mar migrate apply` — application happens at boot, not
+There's no `mar migrate apply`, application happens at boot, not
 as a separate step.
 
 ---
@@ -346,7 +346,7 @@ This was already in the lispy version; keep it.
 ### Primary key changes → blocked with no automatic fix
 
 Changing a primary key forces a full table rebuild (CREATE NEW +
-COPY + DROP + RENAME) — too dangerous to automate. The error
+COPY + DROP + RENAME), too dangerous to automate. The error
 includes the manual SQL pattern, same as the FK case.
 
 ### Renaming columns: NOT supported
@@ -435,7 +435,7 @@ migrator per se, but spec it here for completeness.
 
 The largest single chunk is `Entity.belongsTo` (which is its own
 feature anyway) plus the test plan. Without `belongsTo`, the
-migrator can ship without FK support — relation migrations would
+migrator can ship without FK support, relation migrations would
 just be in the "blocked, here's manual SQL" bucket forever, which is
 acceptable for v1.
 
@@ -447,16 +447,16 @@ without `belongsTo` is realistically **~2 days**.
 These are in the spec above for completeness but **deferred** in
 v0 to keep scope tight:
 
-- **`Entity.default`** — without defaults, adding a NOT NULL
+- **`Entity.default`**: without defaults, adding a NOT NULL
   column to a non-empty table is blocked with an error pointing
   at "make optional or add a default" as the fix. Once
   `Entity.default` lands, the migrator auto-applies the ALTER
   with the default value backfilled.
-- **`Entity.belongsTo`** — without it, foreign keys are still
+- **`Entity.belongsTo`**: without it, foreign keys are still
   encoded as `<rel>Id : Int`. The migrator can't see the FK so
   it never tries to add one. Once `Entity.belongsTo` lands, the
   block-with-manual-SQL path activates for FK changes.
-- **`Entity.unique` / `Entity.uniqueOn`** — only the auth-email
+- **`Entity.unique` / `Entity.uniqueOn`**: only the auth-email
   unique index exists today (created by `auth.Migrate`). Once
   unique declarations land, the migrator generalizes the same
   pattern to user entities.
@@ -477,14 +477,14 @@ loop quiet:
 - Verbose, line-per-change when migrations actually apply
   (`[migrate] +column notes.archived`).
 - If a migration fails mid-reload, log the error and keep the
-  previous version of the program running — same policy as
+  previous version of the program running, same policy as
   typecheck failures during hot-reload.
 
 ### Concurrent boot
 
 When two mar processes touch the same SQLite file (typical during
 zero-downtime deploys), SQLite's `BEGIN IMMEDIATE` serializes the
-writers — no schema corruption is possible. The migrator handles
+writers, no schema corruption is possible. The migrator handles
 the resulting `SQLITE_BUSY` with three retries at exponential
 backoff (100ms, 500ms, 2s), then fails loudly:
 
@@ -510,7 +510,7 @@ Final failure (after 3 retries, ~6.5s total):
   exit 1
 ```
 
-The retry message is intentionally neutral about the cause —
+The retry message is intentionally neutral about the cause,
 SQLite doesn't tell us who holds the lock. The final message
 ranks possible causes by likelihood for a 6.5-second hold (a
 parallel mar instance bootstrapping should have finished by then;
@@ -519,7 +519,7 @@ if it hasn't, the migration is genuinely slow).
 ### Long-running migrations
 
 For v1, no progress reporting. SQLite `ALTER TABLE ADD COLUMN` is
-metadata-only (O(1)) — fast even on huge tables. `CREATE INDEX` is
+metadata-only (O(1)), fast even on huge tables. `CREATE INDEX` is
 O(n) but rare and the user controls when it happens.
 
 What we do: log total elapsed time on the boot summary
@@ -536,7 +536,7 @@ job, run out-of-band.
 iOS bundles are thin HTTP clients to the backend. No on-device
 database. The migrator does not run there and Entity declarations
 that reach iOS evaluation (via `Auth.config { entity = ... }`) are
-just opaque values — the iOS runtime never opens the schema.
+just opaque values, the iOS runtime never opens the schema.
 
 ### Removing an entity from user code
 
@@ -563,7 +563,7 @@ upgraded binary. Behavior:
   migrations are applied; the audit table stays empty for that
   entity.
 - If they DON'T match (latent drift that the old `IF NOT EXISTS`
-  silently masked), the migrator surfaces it now — as a safe
+  silently masked), the migrator surfaces it now, as a safe
   auto-fix or as a blocking error with a manual-SQL hint.
 
 The latter case is feature, not bug: the new migrator is detecting

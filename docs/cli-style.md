@@ -4,12 +4,12 @@ How `mar`'s command-line output should look. Two concerns: **spacing**
 (blank lines around message blocks) and **color** (a small palette
 applied consistently across every subcommand).
 
-> **Status.** Proposal — incomplete in places. Please review §3 (color
+> **Status.** Proposal, incomplete in places. Please review §3 (color
 > rules) and §4 (concrete examples) and tell me where the choices feel
 > wrong before we sweep the rest of the CLI to match.
 
 The goal is the same in both: when a user runs `mar foo`, the output
-should be **scannable** — they should see what changed, where to look
+should be **scannable**: they should see what changed, where to look
 next, and any warning at a glance, without parsing prose word by word.
 
 ## 1. Spacing
@@ -42,12 +42,12 @@ This is what the rest of the rules reduce to. Why:
 
 3. **No blank AFTER mid-process**: if another block follows in the
    SAME run (e.g. a boot-time hint followed by the dev banner),
-   adding blank-after-each gives TWO blanks between them — reads
+   adding blank-after-each gives TWO blanks between them, reads
    as a gap, not a separator. Only the FOLLOWING block adds its
    own leading blank; the preceding one stays tight.
 
 4. **No blank lines mid-pipeline** for terse one-liners that aren't
-   the final output — e.g. a single-line error that exits before any
+   the final output, e.g. a single-line error that exits before any
    following block would have printed. But a one-liner that's the LAST
    thing a command prints still takes §1.1 + §1.2's blanks: it's
    handing control back to the shell, so even a terse confirmation
@@ -68,13 +68,13 @@ This is what the rest of the rules reduce to. Why:
 ### How the helpers enforce this
 
 `fprintError`/`fprintHint`/`fprintWarn` in `cmd/mar/color.go` add the
-leading AND trailing blank automatically — call sites don't have to
+leading AND trailing blank automatically, call sites don't have to
 remember. When two helpers chain (Error → Hint), the second one's
 leading blank is suppressed via a package-level state flag so the
 pair shows ONE blank between, not two.
 
 Multi-line hints (continuation text under the same `Hint:` block)
-go into the format string with `\n      ` separators — NOT into
+go into the format string with `\n      ` separators, NOT into
 separate `fmt.Fprintf` calls. If you split them across raw stderr
 writes, the helper's trailing blank lands between the Hint header
 and the continuation, breaking the block visually.
@@ -101,7 +101,7 @@ mar admin add: me@example.com is already in admins
 $
 ```
 
-The second example stays one line — no surrounding blank lines because
+The second example stays one line, no surrounding blank lines because
 there's nothing visual to separate from.
 
 ## 2. Color principles
@@ -115,19 +115,19 @@ there's nothing visual to separate from.
 - **Keep the palette small.** Six semantic slots (red / green / yellow
   / cyan / magenta / bold). More than that and users stop noticing.
 
-## 3. Color rules — when to use which
+## 3. Color rules, when to use which
 
 **Each color has exactly one role.** When in doubt, leave it
 uncolored or dim. Reusing a color for "things that aren't quite
-its role" dilutes the signal — readers stop trusting the cue.
+its role" dilutes the signal, readers stop trusting the cue.
 
 | Color       | Role                                                                          | Examples                                                       |
 |-------------|-------------------------------------------------------------------------------|----------------------------------------------------------------|
 | **red**     | Errors, dangerous actions, destructive confirmations                          | `Error:`, `mar fly destroy` warnings, failed validation        |
-| **green**   | **Executables** — commands the user should run                                | `mar admin add YOUR_EMAIL`, `mar fly deploy`, `lsof -ti:3000`  |
+| **green**   | **Executables**: commands the user should run                                | `mar admin add YOUR_EMAIL`, `mar fly deploy`, `lsof -ti:3000`  |
 | **yellow**  | Hints, recoverable warnings, "did you mean" suggestions                       | `Hint:`, `Warn:`, missing-config nudges                        |
-| **cyan**    | **Links and addressable identifiers** — URLs, paths in URLs, emails, names    | `http://localhost:3000`, `/_mar/admin`, emails, app names, region codes |
-| **magenta** | **Paths and config keys** — file paths, env vars, db tables, config slots    | `mar.json`, `_mar_admins`, `env:SESSION_SECRET`, `mar.json["server"]["port"]` |
+| **cyan**    | **Links and addressable identifiers**: URLs, paths in URLs, emails, names    | `http://localhost:3000`, `/_mar/admin`, emails, app names, region codes |
+| **magenta** | **Paths and config keys**: file paths, env vars, db tables, config slots    | `mar.json`, `_mar_admins`, `env:SESSION_SECRET`, `mar.json["server"]["port"]` |
 | **bold**    | Section headers, key labels                                                   | `Fly app name`, `Next steps:`, `Press Enter to use:`           |
 | **dim**     | Auxiliary / status text that isn't itself a value                            | "Loading…", "Hot reload enabled.", `Local:` / `Admin:` labels |
 
@@ -141,9 +141,9 @@ Some pairs sit near each other; here's how to tell them apart:
   `http://localhost:3000/_mar/admin` is **cyan** (open it).
 
 - **cyan vs magenta**: cyan = the live, addressable surface (URLs,
-  emails, app names — things you act on or send messages to).
+  emails, app names, things you act on or send messages to).
   magenta = the configuration surface (filesystem paths inside the
-  project, env var names, framework table names — things you grep
+  project, env var names, framework table names, things you grep
   for or edit). Rule of thumb: if you'd paste it into a browser
   or send it to someone, cyan. If you'd grep your codebase for it,
   magenta.
@@ -156,11 +156,11 @@ Some pairs sit near each other; here's how to tell them apart:
 ### 3.1 Combining rules
 
 - **Error + path**: red prefix, magenta path.
-  `Error: failed to read mar.json` — `Error:` red, `mar.json` magenta.
+  `Error: failed to read mar.json`, `Error:` red, `mar.json` magenta.
 - **Hint + command**: yellow prefix, green command.
-  `Hint: try mar admin add me@example.com` — `Hint:` yellow, `mar admin add me@example.com` green.
+  `Hint: try mar admin add me@example.com`, `Hint:` yellow, `mar admin add me@example.com` green.
 - **Header + value**: bold header, cyan value.
-  `Press Enter to use: notes-app` — `Press Enter to use:` bold, `notes-app` cyan.
+  `Press Enter to use: notes-app`, `Press Enter to use:` bold, `notes-app` cyan.
 - **List of identifiers** (e.g. `mar admin list`): each email cyan, no
   prefix coloring.
 
@@ -173,7 +173,7 @@ Some pairs sit near each other; here's how to tell them apart:
   them adds noise.
 - **The literal commands the framework prints to the user** (i.e. the
   `mar fly destroy: type the app name to confirm` prompts). Those
-  should stay plain — coloring the framework's own status lines
+  should stay plain, coloring the framework's own status lines
   competes for attention with the inline highlights they contain.
 
 ### 3.3 Color failure modes to avoid
@@ -189,7 +189,7 @@ Some pairs sit near each other; here's how to tell them apart:
 
 ## 4. Concrete examples (after this guide is applied)
 
-### 4.1 `mar admin add EMAIL` — happy path
+### 4.1 `mar admin add EMAIL`, happy path
 
 ```
 
@@ -211,7 +211,7 @@ Coloring:
 - `_mar_admins` → **magenta** (DB table reference)
 - `http://localhost:3000/_mar/admin` → **green** (URL the user should click/copy)
 
-### 4.2 `mar admin list` — happy path
+### 4.2 `mar admin list`, happy path
 
 ```
 
@@ -225,7 +225,7 @@ Coloring:
 - `mar.json` → **magenta**
 - each email → **cyan**
 
-### 4.3 `mar admin list` — empty
+### 4.3 `mar admin list`, empty
 
 ```
 
@@ -238,10 +238,10 @@ Run mar admin add YOUR_EMAIL to enable the admin panel.
 
 Coloring:
 - `mar.json` → **magenta**
-- `(none)` → **yellow** (it's a soft warning — your panel is locked)
+- `(none)` → **yellow** (it's a soft warning, your panel is locked)
 - `mar admin add YOUR_EMAIL` → **green** (next-step command)
 
-### 4.4 `mar admin add EMAIL` — invalid email (single-line error)
+### 4.4 `mar admin add EMAIL`, invalid email (single-line error)
 
 ```
 Error: mar admin add: "notanemail" is not a valid email
@@ -253,7 +253,7 @@ Coloring:
 - `Error:` → **red**
 - `"notanemail"` → **cyan** (user input being rejected)
 
-### 4.5 `mar dev` — port already in use (multi-line error with hint)
+### 4.5 `mar dev`, port already in use (multi-line error with hint)
 
 Runtime errors that block the process from starting deserve an
 actionable hint, not just the raw Go error string. The structure
@@ -282,7 +282,7 @@ Go error strings are acceptable for genuinely unexpected failures
 (via `fprintError("mar dev: %v", err)`), but anything we can predict
 should be friendlier.
 
-### 4.5 `mar admin remove EMAIL` — happy path
+### 4.5 `mar admin remove EMAIL`, happy path
 
 ```
 
@@ -295,7 +295,7 @@ mar admin remove: ops@example.com removed from admins
 ```
 
 Coloring:
-- `ops@example.com` → **cyan** (twice — same identifier)
+- `ops@example.com` → **cyan** (twice, same identifier)
 - `mar.json` and `_mar_admins` → **magenta**
 
 ### 4.6 No-op (already in list / not in list)
@@ -346,12 +346,12 @@ fmt.Println()
 ## 6. Open questions
 
 **Q1.** Should we color the `→` bullet character?
-Tendency: no — it's already visually distinct, color would compete
+Tendency: no, it's already visually distinct, color would compete
 with the colored identifier inside the line.
 
 **Q2.** Should hints use a literal `Hint:` prefix or just yellow body
 text?
-Tendency: keep `Hint:` — the prefix is what makes the recoverability
+Tendency: keep `Hint:`, the prefix is what makes the recoverability
 explicit. Yellow body alone reads like a generic warning.
 
 **Q3.** Do we ever bold an inline word for emphasis (vs. only colors

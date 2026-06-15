@@ -12,10 +12,10 @@ reverse proxy or cert management to configure on your side.
 - **HTTPS** with auto-renewing Let's Encrypt certs at the edge.
 - **Persistent SQLite** via a Fly volume mounted at `/data` inside
   the container; the runtime opens the DB from there. (Fullstack
-  topologies only — frontend-only apps skip the volume.)
-- **Global anycast** routing — pick a primary region; Fly handles
+  topologies only, frontend-only apps skip the volume.)
+- **Global anycast** routing, pick a primary region; Fly handles
   the rest.
-- **Auto-stop / auto-start** — your machine sleeps when idle and
+- **Auto-stop / auto-start**: your machine sleeps when idle and
   wakes on the next request. Cheap for low-traffic apps.
 - **No Docker knobs.** The Dockerfile + `fly.toml` are generated on
   every deploy from the project's topology, deployed, and discarded.
@@ -50,7 +50,7 @@ All three fields are required:
 |----------|----------------------------------------------------------------------------|
 | `app`    | Globally unique on Fly; becomes `<app>.fly.dev`. Lowercase, hyphens only. |
 | `region` | One of Fly's region codes (`gru`, `iad`, `fra`, `nrt`, …). Pick close to your users. |
-| `memory` | Machine size — `256mb`, `512mb`, `1gb`, `2gb`, `4gb`, or `8gb`.            |
+| `memory` | Machine size, `256mb`, `512mb`, `1gb`, `2gb`, `4gb`, or `8gb`.            |
 
 If the block is missing or malformed, `mar fly deploy` (or any
 other `mar fly *`) prints a paste-ready snippet plus the full list
@@ -112,7 +112,7 @@ mar fly preview
 ```
 
 Prints app name, region, memory, topology, target URL, volume, port,
-and which `env:VAR` secrets are declared — without contacting Fly.
+and which `env:VAR` secrets are declared, without contacting Fly.
 Useful for diffing config changes before running `deploy`.
 
 ## Operating the deployed app
@@ -137,7 +137,7 @@ mar fly secrets set NAME=value   # push one (or NAME alone to prompt)
 mar fly secrets unset NAME       # remove one
 ```
 
-These validate against `mar.json` — `list` shows missing declared
+These validate against `mar.json`, `list` shows missing declared
 refs and orphaned ones; `unset` warns if the name is still
 referenced. See `mar fly secrets --help` for details.
 
@@ -149,9 +149,9 @@ mar fly database backups                 # list the catalog
 mar fly database backup download <id>    # pull a snapshot locally
 ```
 
-Backups land in the on-volume catalog at `/data/backups/<id>.tar.gz`
-— the same place the runtime's auto-backup scheduler writes to.
-Restore lives in the admin panel UI (`/_mar/admin`) — it needs a
+Backups land in the on-volume catalog at `/data/backups/<id>.tar.gz`,
+the same place the runtime's auto-backup scheduler writes to.
+Restore lives in the admin panel UI (`/_mar/admin`), it needs a
 schema-match check + machine restart which is hard to express
 tersely in CLI output.
 
@@ -202,7 +202,7 @@ record).
 mar fly destroy
 ```
 
-Asks for confirmation twice — first a yes/no, then it makes you
+Asks for confirmation twice, first a yes/no, then it makes you
 type the app name. Destroys both the app and its volume; data is
 lost. The `deploy.fly` block in `mar.json` stays put; re-run
 `mar fly deploy` to recreate.
@@ -211,11 +211,11 @@ lost. The `deploy.fly` block in `mar.json` stays put; re-run
 
 A `mar.json` without a backend / fullstack `main` deploys via Caddy
 serving the static `dist/` output. No volume, no SQLite, no
-runtime. `mar fly preview` shows a note about CDN alternatives —
+runtime. `mar fly preview` shows a note about CDN alternatives,
 the static bundle is portable to any of them, built with
 `mar build`.
 
-## Topology and Docker — under the hood
+## Topology and Docker, under the hood
 
 Mar abstracts Docker entirely. Every `mar fly deploy` regenerates
 the Dockerfile + `fly.toml` in `/tmp/mar-fly-<random>/`, runs
@@ -224,11 +224,11 @@ the Dockerfile + `fly.toml` in `/tmp/mar-fly-<random>/`, runs
 
 The generated images:
 
-- **frontend-only** — `caddy:alpine` serving `dist/` as static files.
-- **backend / fullstack** — `debian:bookworm-slim` + your
+- **frontend-only**: `caddy:alpine` serving `dist/` as static files.
+- **backend / fullstack**: `debian:bookworm-slim` + your
   linux-amd64 binary at `/app/<binary>`. SQLite is embedded;
   `/data` is mounted from the Fly volume.
 
 If something the framework provides doesn't match what your app
-needs, that's a feature request — not a customization knob. There
+needs, that's a feature request, not a customization knob. There
 are no template files on disk to edit.
