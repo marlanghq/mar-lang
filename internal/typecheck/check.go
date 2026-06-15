@@ -55,6 +55,33 @@ type CustomCtor struct {
 	Result Type
 }
 
+// bareBuiltinCtors maps each constructor Mar auto-exposes without a module
+// prefix (Elm's default-import set) to the type it belongs to. A user type
+// may not redefine one of these names: it would silently shadow the
+// built-in in that module and resolve `Ok` / `True` / etc. to the wrong
+// constructor. Elm rejects the same clash.
+var bareBuiltinCtors = map[string]string{
+	"Just": "Maybe", "Nothing": "Maybe",
+	"Ok": "Result", "Err": "Result",
+	"True": "Bool", "False": "Bool",
+	"LT": "Order", "EQ": "Order", "GT": "Order",
+}
+
+// reservedTypeNames are built-in type names a user `type` or `type alias`
+// may not reuse: doing so shadows the built-in for the whole module and
+// produces baffling unification errors (e.g. `Result` against `Result e a`).
+// The scope is the language vocabulary, not the internal view-host phantom
+// types (Section / Text / Input / ...), several of which are common domain
+// words app authors legitimately model.
+var reservedTypeNames = map[string]bool{
+	"Int": true, "Float": true, "String": true, "Bool": true, "Char": true,
+	"Time": true, "Duration": true, "Order": true,
+	"List": true, "Dict": true, "Set": true,
+	"Maybe": true, "Result": true,
+	"Effect": true, "View": true, "Service": true, "Entity": true,
+	"Auth": true, "Page": true,
+}
+
 // CheckModule runs the full type-check pass over a parsed module using the
 // default (BaseEnv) value environment.
 func CheckModule(mod *ast.Module) (*CheckResult, error) {
@@ -143,6 +170,9 @@ func CheckModuleWith(
 	for _, d := range mod.Decls {
 		switch n := d.(type) {
 		case *ast.TypeAliasDecl:
+			if reservedTypeNames[n.Name] {
+				return nil, errorf(n.Pos, "the name `%s` is reserved for a built-in type; rename your type alias (for example, `My%s`)", n.Name, n.Name)
+			}
 			// Build the param → TVar-ID scope first so we can both
 			// thread it into the body conversion AND record the
 			// per-position IDs on the alias for later substitution.
@@ -171,6 +201,9 @@ func CheckModuleWith(
 			tEnv.aliases[n.Name] = alias
 
 		case *ast.CustomTypeDecl:
+			if reservedTypeNames[n.Name] {
+				return nil, errorf(n.Pos, "the name `%s` is reserved for a built-in type; rename your type (for example, `My%s`)", n.Name, n.Name)
+			}
 			ct := CustomType{
 				Name:         n.Name,
 				Params:       n.Params,
@@ -191,6 +224,9 @@ func CheckModuleWith(
 			tEnv.paramScopes = append(tEnv.paramScopes, paramVarIDs)
 
 			for _, c := range n.Constructors {
+				if owner, ok := bareBuiltinCtors[c.Name]; ok {
+					return nil, errorf(c.Pos, "the name `%s` is reserved for a built-in constructor (from %s); rename it", c.Name, owner)
+				}
 				ctorArgs := make([]Type, len(c.Args))
 				for i, argExpr := range c.Args {
 					at, err := convertTypeExprWithIDs(argExpr, tEnv, paramVarIDs)
