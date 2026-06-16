@@ -1,7 +1,6 @@
 // Async HTTP for the runtime — fire-and-dispatch semantics. Mirrors
 // the JS pattern in runtime.js where `fetch().then(toMsg → dispatch)`
-// is the universal shape for Service.call / Endpoint.call /
-// Http.get / Http.post.
+// is the universal shape for Service.call / Http.get / Http.post.
 //
 // The Effect itself returns synchronously; the response (Ok body /
 // Err message) is wrapped in a Result and turned into a Msg by the
@@ -39,10 +38,10 @@ enum MarHTTP {
         MarKeychain.delete(forKey: MarKeychain.sessionTokenKey)
     }
 
-    /// Generic HTTP fire (used by Endpoint.call + Http.get/post).
-    /// `url` is treated as absolute; the caller is responsible for
-    /// concatenation. `body` is sent as-is (already JSON-encoded by
-    /// caller); when nil the request goes out without a body.
+    /// Generic HTTP fire (used by Http.get / Http.post). `url` is treated
+    /// as absolute; the caller is responsible for concatenation. `body` is
+    /// sent as-is (already JSON-encoded by caller); when nil the request
+    /// goes out without a body.
     static func fire(method: String, url: String, body: String?, toMsg: MarValue) {
         guard let u = URL(string: url) else {
             dispatchErr(toMsg, message: "invalid URL: \(url)")
@@ -51,18 +50,22 @@ enum MarHTTP {
         send(method: method, url: u, body: body, toMsg: toMsg)
     }
 
-    /// Service.call variant — `path` is relative to the discovered /
-    /// configured baseURL (resolved by MarDispatcher). Body is the
-    /// JSON-encoded request payload. Response is parsed as JSON
-    /// before being wrapped in `Ok` so user code gets a typed value
-    /// back instead of a raw string.
-    static func fireService(path: String, body: String, toMsg: MarValue) {
+    /// Service.call variant — `method` is the contract's HTTP verb and
+    /// `path` is the request URL (already built by buildServiceRequest:
+    /// typed path params substituted in, the rest in the `q` query param
+    /// for GET / DELETE). `path` is relative to the discovered /
+    /// configured baseURL (resolved by MarDispatcher). `body` is the
+    /// JSON-encoded payload for POST / PUT / PATCH, or nil when there's
+    /// nothing to send. Response is parsed as JSON before being wrapped
+    /// in `Ok` so user code gets a typed value back instead of a raw
+    /// string.
+    static func fireService(method: String, path: String, body: String?, toMsg: MarValue) {
         Task { @MainActor in
             guard let url = MarDispatcher.shared.resolve(path: path) else {
                 dispatchServiceErr(toMsg, message: "invalid service path: \(path)")
                 return
             }
-            sendService(url: url, body: body, toMsg: toMsg)
+            sendService(method: method, url: url, body: body, toMsg: toMsg)
         }
     }
 
@@ -82,11 +85,13 @@ enum MarHTTP {
         }.resume()
     }
 
-    private static func sendService(url: URL, body: String, toMsg: MarValue) {
+    private static func sendService(method: String, url: URL, body: String?, toMsg: MarValue) {
         var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.httpBody = body.data(using: .utf8)
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpMethod = method
+        if let body {
+            req.httpBody = body.data(using: .utf8)
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
         attachBearer(&req)
         URLSession.shared.dataTask(with: req) { data, response, error in
             // Auth-expiry interceptor: 401 from a Service.call means

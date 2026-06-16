@@ -24,7 +24,7 @@ type alias NewNote =
 
 listMine : Service () (List Note)
 listMine =
-    Service.declare
+    Service.declare GET "/notes"
 
 
 -- The create outcome: the one domain rule (no empty bodies) is a
@@ -37,4 +37,4 @@ type CreateOutcome
 
 createMine : Service NewNote CreateOutcome
 createMine =
-    Service.declare
+    Service.declare POST "/notes"

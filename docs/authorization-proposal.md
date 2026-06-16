@@ -365,16 +365,16 @@ type alias Note =
     }
 
 listTeamNotes : Service () (List Note)
-listTeamNotes = Service.declare
+listTeamNotes = Service.declare GET "/team-notes"
 
 createNote : Service { body : String } Note
-createNote = Service.declare
+createNote = Service.declare POST "/team-notes"
 
 editNote : Service { id : Int, body : String } Note
-editNote = Service.declare
+editNote = Service.declare PUT "/team-notes/{id:Int}"
 
 deleteNote : Service { id : Int } ()
-deleteNote = Service.declare
+deleteNote = Service.declare DELETE "/team-notes/{id:Int}"
 
 
 -- Backend/Notes.mar (sketch)

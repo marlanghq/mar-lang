@@ -25,7 +25,7 @@ type LiveProgram struct {
 	title       string
 	entry       string
 	appName     string // mar.json `name` — preferred over title for native clients
-	hasAPI      bool   // true when serving as full-stack (route /api/* through dispatchBackend)
+	hasAPI      bool   // true when there are service routes to dispatch
 	lastError   string // most recent compile error; "" when last compile succeeded
 	devMode     bool   // false = production stub: no SSE, no dev banner, no time-travel panel
 }

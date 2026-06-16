@@ -9,7 +9,7 @@ import "testing"
 func TestIsStdlibCoversBuiltinModules(t *testing.T) {
 	for _, m := range []string{
 		"List", "String", "Maybe", "Result", "Effect", "JSON",
-		"UI", "View", "App", "Page", "Endpoint", "Http", "Entity", "Repo", "Response",
+		"UI", "View", "App", "Page", "Http", "Entity", "Repo",
 		"Dict", "Set", "Time", "Tuple", "Char", "Auth", "Nav", "Service",
 	} {
 		if !isStdlib(m) {

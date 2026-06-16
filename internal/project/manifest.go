@@ -21,7 +21,7 @@ func readSecure(buf []byte) (int, error) {
 }
 
 // RateLimitConfig is the `rateLimit` block in mar.json. Tunes the
-// per-IP token-bucket rate limiter that wraps /api/*, /services/*,
+// per-IP token-bucket rate limiter that wraps the service routes,
 // /_mar/admin/api/*, /_auth/whoami, /_auth/logout. Rate limit is
 // always on — no opt-out — but the values can stretch from very
 // strict to very permissive within hard bounds.

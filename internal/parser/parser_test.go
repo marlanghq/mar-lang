@@ -493,7 +493,7 @@ func TestSmokeRealisticModule(t *testing.T) {
 	src := `module Posts exposing (..)
 
 import Db
-import Endpoint exposing (Endpoint)
+import Service exposing (Service)
 
 type PostId = PostId Int
 
@@ -514,9 +514,9 @@ validatePost input =
     else
         Ok input
 
-create : Endpoint PostInput Post PostField
+create : Service PostInput Post
 create =
-    Endpoint.post "/posts"
+    Service.declare POST "/posts"
 `
 	mod := mustParse(t, src)
 	if len(mod.Decls) < 5 {

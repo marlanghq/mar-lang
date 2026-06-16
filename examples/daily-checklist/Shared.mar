@@ -41,7 +41,7 @@ type alias Task =
 
 
 listTasks : Service () (List Task)
-listTasks = Service.declare
+listTasks = Service.declare GET "/tasks"
 
 
 -- The add outcome: the one domain rule (no empty names) is a typed
@@ -54,19 +54,19 @@ type AddTaskOutcome
 
 
 addTask : Service { name : String } AddTaskOutcome
-addTask = Service.declare
+addTask = Service.declare POST "/tasks"
 
 
 toggleTask : Service { id : Int, done : Bool } (Maybe Task)
-toggleTask = Service.declare
+toggleTask = Service.declare PATCH "/tasks/{id:Int}"
 
 
 deleteTask : Service { id : Int } ()
-deleteTask = Service.declare
+deleteTask = Service.declare DELETE "/tasks/{id:Int}"
 
 
 resetAll : Service () ()
-resetAll = Service.declare
+resetAll = Service.declare POST "/tasks/reset"
 
 
 -- Bulk position update from the reorder gesture. The frontend sends
@@ -76,4 +76,4 @@ resetAll = Service.declare
 -- items would want lexicographic ordering (one update per move
 -- instead of N) but that's overkill here.
 reorderTasks : Service { orderedIds : List Int } ()
-reorderTasks = Service.declare
+reorderTasks = Service.declare POST "/tasks/reorder"

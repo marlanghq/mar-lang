@@ -33,7 +33,7 @@ The syntax is Elm-style. The semantics are pure functional with effects tracked 
 ```
 project/
   mar.json              -- manifest + config
-  Main.mar              -- entry point: App.fullstack { services, pages, api }
+  Main.mar              -- entry point: App.fullstack { services, pages }
   Shared.mar            -- types + Service contracts shared by both halves
   Backend/
     Users.mar           -- entities + service handlers
@@ -109,19 +109,19 @@ Some fields are marked as **secret** in Mar's internal schema (e.g., `mail.smtpP
 Standard Elm conventions:
 
 ```elm
-module Posts exposing (Post, PostId, posts, routes)
+module Backend.Posts exposing (posts, services)
 
 import Entity exposing (..)
-import Default exposing (..)
-import Db
+import Repo
+import Shared
 ```
 
 Rules:
 
 - **No cycles.** If `A` imports `B`, `B` cannot import `A`.
-- **Path = module name.** `src/Posts/Entity.mar` is `module Posts.Entity`.
+- **Path = module name.** `Backend/Posts.mar` is `module Backend.Posts`.
 - **Private by default.** Only what's in `exposing (...)` is visible.
-- **`exposing (..)`** is recommended for builder DSLs (`Entity`, `Default`, `Routes`); qualified imports are recommended for `Db` and similar.
+- **`exposing (..)`** is recommended for builder DSLs (`Entity`, `Default`); qualified imports are recommended for `Repo` and similar.
 
 ### 2.4 Migrations
 
@@ -154,7 +154,7 @@ reachable host must serve `public/` at runtime.
 
 Reserved: `mar build` refuses a `public/` path that collides with a
 generated file (`index.html`, `runtime.js`, `program.json`, `_headers`)
-or a runtime route prefix (`_mar/`, `_auth/`, `api/`, `services/`).
+or a runtime route prefix (`_mar/`, `_auth/`).
 
 ### 2.6 PWA (installable web app)
 
@@ -291,7 +291,7 @@ Fetched (Err why)             -> -- Service.errorToString why
 ```
 
 **Domain** (email taken, wrong code, body too long): specific to one
-endpoint, so it lives in that endpoint's response type as a union of the
+service, so it lives in that service's response type as a union of the
 outcomes it can actually produce. Never a shared catch-all: a page should
 only have to match what can happen to it.
 
@@ -299,6 +299,7 @@ only have to match what can happen to it.
 type SignupOutcome = Created User | EmailTaken | TeamFull
 
 signup : Service NewUser SignupOutcome
+signup = Service.declare POST "/signup"
 ```
 
 The handler is `NewUser -> Effect SignupOutcome`, so the backend can only
@@ -312,7 +313,7 @@ Done (Ok TeamFull)       -> ...
 Done (Err why)           -> ...
 ```
 
-The auth endpoints follow the same shape with framework-provided outcomes:
+The auth flow follows the same shape with framework-provided outcomes:
 `Auth.requestCode` delivers `Auth.RequestOutcome` (`Auth.CodeSent` /
 `Auth.InvalidEmail` / `Auth.RateLimited`) and `Auth.verifyCode` delivers
 `Auth.VerifyOutcome user` (`Auth.SignedIn user` / `Auth.WrongCode` /
@@ -321,7 +322,7 @@ The auth endpoints follow the same shape with framework-provided outcomes:
 **Abort** (`Effect.fail "..."`): for broken invariants in backend handlers,
 not for outcomes the frontend reacts to. The string surfaces to the client
 as `ServerError`, display-only. If a page needs to branch on a case, the
-case belongs in the response type.
+case belongs in the service's response type.
 
 Error copy belongs to the view: the wire carries data (constructors), and
 each frontend chooses its own words for each case.
@@ -423,24 +424,32 @@ There is no query-builder, predicate, pagination, or relation API today. Compose
 
 ### 4.4 Services
 
-A `Service req resp` is a typed contract for one server call: `req` is what the client sends, `resp` what it gets back. The same value is shared by both halves, declared once in the shared module:
+A `Service req resp` is a typed contract for one server call: `req` is what the client sends, `resp` what it gets back. The same value is shared by both halves, declared once in the shared module with a verb and a path:
 
 ```elm
 listTasks : Service () (List Task)
-listTasks = Service.declare
+listTasks = Service.declare GET "/tasks"
+
+getTask : Service { id : Int } (Maybe Task)
+getTask = Service.declare GET "/tasks/{id:Int}"
 
 addTask : Service { name : String } AddTaskOutcome
-addTask = Service.declare
+addTask = Service.declare POST "/tasks"
 ```
 
-`Service.declare` is the same placeholder for every contract; the type annotation fixes `req` and `resp`. The backend pairs each contract with a handler, the frontend calls it:
+`Service.declare VERB "/path"` fixes the HTTP method (`GET` / `POST` / `PUT` / `PATCH` / `DELETE`) and the path; the type annotation fixes `req` and `resp`. A path may carry typed `{name:Type}` params that name fields of the request record: `getTask`'s `{id:Int}` binds `req.id` into the URL. The backend pairs each contract with a handler, the frontend calls it:
 
 ```elm
-Service.declare       : Service req resp
+Service.declare       : Method -> String -> Service req resp
 Service.implement     : Service req resp -> (req -> Effect resp) -> ExposedService
 Service.call          : Service req resp -> req -> (Result Service.Error resp -> msg) -> Effect msg
 Service.errorToString : Service.Error -> String
 ```
+
+The verb determines how the request travels and what the handler may do:
+
+- **Wire transport.** Path params fill their `{name:Type}` slots in the URL. For `GET` and `DELETE` the remaining request fields ride in a query param; for `POST`, `PUT`, and `PATCH` they ride in the JSON body. The response is always the JSON-encoded `resp`.
+- **`GET` is read-only.** The compiler rejects a `GET` whose handler reaches `Repo.create`, `Repo.update`, or `Repo.deleteById`. A call that mutates must be `POST` / `PUT` / `PATCH` / `DELETE`.
 
 A handler is `req -> Effect resp`, so it can only produce the declared response. Most calls should be authenticated, which is what `Auth.protect` is for:
 
@@ -492,13 +501,13 @@ main =
             [ Frontend.SignIn.page
             , Frontend.Home.page
             ]
-        , api      = []
         }
 ```
 
-- `services` is the concatenation of each backend module's exposed services.
+- `services` is the concatenation of each backend module's exposed services. Each one carries the verb and path it was declared with, so the runtime routes incoming requests to the right handler.
 - `pages` enumerates every frontend route; the runtime dispatches by `path`.
-- `api` holds custom REST endpoints (`Endpoint.*`) for webhooks or non-Mar clients. It is empty for almost every app: services cover normal client-server calls.
+
+`App.fullstack` takes exactly `{ services, pages }`. A backend-only app uses `App.backend { services }`; HTTP is exposed only through services.
 
 ### 4.6 Auth
 
@@ -517,7 +526,7 @@ auth =
         }
 ```
 
-Protect a service with `Auth.protect` (section 4.4) and a page with `Page.protected` (section 5). The sign-in flow runs through `Auth.requestCode` and `Auth.verifyCode`, which deliver the per-endpoint outcomes `Auth.RequestOutcome` and `Auth.VerifyOutcome user` (section 3.5). The full flow, every config field, and the SMTP and dev-code setup live in [auth.md](auth.md).
+Protect a service with `Auth.protect` (section 4.4) and a page with `Page.protected` (section 5). The sign-in flow runs through `Auth.requestCode` and `Auth.verifyCode`, which deliver the per-call outcomes `Auth.RequestOutcome` and `Auth.VerifyOutcome user` (section 3.5). The full flow, every config field, and the SMTP and dev-code setup live in [auth.md](auth.md).
 
 ### 4.7 Errors
 
@@ -610,12 +619,12 @@ update msg model =
 
 ## 6. Client and server
 
-The same `Service` value (section 4.4) is the contract for both halves: declared once in the shared module, implemented on the backend (`Service.implement`, or `Auth.protect` for an authenticated call), and invoked from a page with `Service.call`. Renaming a service or changing its `req` / `resp` breaks both sides at compile time, with no code-generation step.
+The same `Service` value (section 4.4) is the contract for both halves: declared once in the shared module with its verb and path, implemented on the backend (`Service.implement`, or `Auth.protect` for an authenticated call), and invoked from a page with `Service.call`. The verb and path are transparent to the caller: `Service.call` looks the same whatever method a service uses. Renaming a service or changing its `req` / `resp` breaks both sides at compile time, with no code-generation step.
 
 ```elm
 -- Shared (declared once):
 addTask : Service { name : String } AddTaskOutcome
-addTask = Service.declare
+addTask = Service.declare POST "/tasks"
 
 -- Backend (Backend.Tasks.services):
 Auth.protect Shared.addTask addTaskImpl
@@ -658,11 +667,10 @@ main =
             , Frontend.VerifyCode.page
             , Frontend.Home.page
             ]
-        , api      = []
         }
 ```
 
-`services`, `pages`, and `api` are explicit lists; Mar does not auto-discover (see section 4.5). Auth is configured by a top-level `auth = Auth.config { ... }` binding that the runtime picks up (section 4.6).
+`services` and `pages` are explicit lists; Mar does not auto-discover (see section 4.5). Auth is configured by a top-level `auth = Auth.config { ... }` binding that the runtime picks up (section 4.6).
 
 ## 8. Deferred / Future Work
 

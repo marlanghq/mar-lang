@@ -157,8 +157,7 @@
         // null and break generic decoders for record payloads, so
         // we tag uniformly. The Ok/Err shortcuts below stay
         // because the server-side decode for those tags is
-        // type-directed already (see runtime.Endpoint result
-        // handling).
+        // type-directed already.
         if (v.tag === 'Ok') return marToJs(v.args[0]);
         if (v.tag === 'Err') return { error: marToJs(v.args[0]) };
         if (!v.args || v.args.length === 0) return { __ctor: v.tag };
@@ -172,6 +171,52 @@
         return { __set: v.items.map(marToJs) };
       default: return null;
     }
+  }
+
+  // pathParamString renders a single value for a `{name:Type}` URL
+  // segment. Mirrors the Go encodePathSegment: String raw, Int/Bool as
+  // their literal, enum ctor lowercased.
+  function pathParamString(v) {
+    if (v && typeof v === 'object' && v.__ctor) return String(v.__ctor).toLowerCase();
+    if (typeof v === 'boolean') return v ? 'true' : 'false';
+    return String(v);
+  }
+
+  // buildServiceRequest turns a contract's verb + path pattern and the
+  // request value into a concrete URL and (optionally) a JSON body. Typed
+  // `{name:Type}` params are substituted into the URL; the remaining
+  // fields ride in the query (`q` JSON param, for GET / DELETE) or the
+  // JSON body (POST / PUT / PATCH). A `()` request yields no body.
+  function buildServiceRequest(verb, pattern, req) {
+    const obj = marToJs(req);
+    const isObj = obj && typeof obj === 'object' && !Array.isArray(obj);
+    const fields = isObj ? Object.assign({}, obj) : {};
+    let hadParam = false;
+    const segs = pattern.split('/').filter(s => s.length).map(s => {
+      const m = /^\{([^:}]+):[^}]*\}$/.exec(s);
+      if (!m) return s;
+      hadParam = true;
+      const name = m[1];
+      const enc = encodeURIComponent(pathParamString(fields[name]));
+      delete fields[name];
+      return enc;
+    });
+    const url = '/' + segs.join('/');
+    const restKeys = Object.keys(fields);
+    if (verb === 'GET' || verb === 'DELETE') {
+      if (restKeys.length > 0) {
+        return { url: url + '?q=' + encodeURIComponent(JSON.stringify(fields)), body: undefined };
+      }
+      return { url, body: undefined };
+    }
+    // POST / PUT / PATCH
+    if (!isObj) {
+      return { url, body: JSON.stringify(obj) };
+    }
+    if (restKeys.length === 0 && hadParam) {
+      return { url, body: undefined };
+    }
+    return { url, body: JSON.stringify(fields) };
   }
 
   // --- Dict / Set helpers (hoisted to IIFE level so jsToMar can use
@@ -767,6 +812,13 @@
     def('LT', VCtor('LT'));
     def('EQ', VCtor('EQ'));
     def('GT', VCtor('GT'));
+
+    // Method constructors — the HTTP verbs passed to Service.declare.
+    def('GET', VCtor('GET'));
+    def('POST', VCtor('POST'));
+    def('PUT', VCtor('PUT'));
+    def('PATCH', VCtor('PATCH'));
+    def('DELETE', VCtor('DELETE'));
 
     // Service.Error constructors — the transport failure a Service.call
     // delivers in its Err. serviceCall builds these directly (see
@@ -2768,56 +2820,19 @@
     def('repoDeleteById',  native(2, () => VEffect(() => { throw new Error('Repo.deleteById runs only server-side'); }, 'repoDeleteById')));
     def('Repo.deleteById', envLookup(env, 'repoDeleteById'));
 
-    // Endpoint.* — typed contract shared between backend and frontend.
-    // The runtime stores method+path; Endpoint.call uses fetch under the hood.
-    def('endpointGet',    native(1, ([p]) => VCtor('__Ep', [VString('GET'), p])));
-    def('Endpoint.get',    native(1, ([p]) => VCtor('__Ep', [VString('GET'), p])));
-    def('endpointPost',   native(1, ([p]) => VCtor('__Ep', [VString('POST'), p])));
-    def('Endpoint.post',   native(1, ([p]) => VCtor('__Ep', [VString('POST'), p])));
-    def('endpointPatch',  native(1, ([p]) => VCtor('__Ep', [VString('PATCH'), p])));
-    def('Endpoint.patch',  native(1, ([p]) => VCtor('__Ep', [VString('PATCH'), p])));
-    def('endpointDelete', native(1, ([p]) => VCtor('__Ep', [VString('DELETE'), p])));
-    def('Endpoint.delete', native(1, ([p]) => VCtor('__Ep', [VString('DELETE'), p])));
-    // Endpoint.call : String -> Endpoint -> String -> (Result String String -> msg) -> Effect e msg
-    //   base, endpoint, body, toMsg
-    def('endpointCall', native(4, ([base, ep, body, toMsg]) => {
-      const method = ep.args[0].s;
-      const path = ep.args[1].s;
-      const url = base.s + path;
-      return VEffect(() => {
-        const opts = { method };
-        if (method !== 'GET' && method !== 'DELETE') opts.body = body.s;
-        fetch(url, opts)
-          .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
-          .then(r => {
-            const result = r.ok
-              ? VCtor('Ok', [VString(r.body)])
-              : VCtor('Err', [VString(decodeServerError(r.body) || ('HTTP ' + r.status))]);
-            const msg = apply(toMsg, result);
-            if (currentDispatch) currentDispatch(msg);
-          })
-          .catch(err => {
-            const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
-            if (currentDispatch) currentDispatch(msg);
-          });
-        return VUnit();
-      }, 'endpointCall');
-    }));
-    def('Endpoint.call', envLookup(env, 'endpointCall'));
-
-    // Service (RPC over HTTP).
+    // Service (RPC over HTTP). Server-side wraps a handler; browser-side
+    // the handler is never invoked — the contract just carries the verb +
+    // path so Service.call can build the request.
     //
-    // Service ctor: server-side wraps a handler. Browser-side, the
-    // handler is never invoked — the constructor just returns an opaque
-    // "__Service" value so it survives loadModule. The binding name +
-    // module that the user wrote is stamped onto this value at load
-    // time (see loadModule below) so Service.call can route to the
-    // correct URL.
-    // Service.declare: a typed RPC contract with no handler. Each
-    // top-level binding gets its own instance via the loader's
-    // origin-stamping pass; the browser only needs the resulting
-    // value's identity to be passable through Service.call.
-    def('serviceDeclare', VCtor('__Service', []));
+    // Service.declare VERB "path": a typed RPC contract carrying the HTTP
+    // verb and URL pattern. The browser never runs the handler; it only
+    // needs the verb + path so Service.call can build the request.
+    def('serviceDeclare', native(2, ([method, path]) => {
+      const svc = VCtor('__Service', []);
+      svc.verb = (method && method.tag) || 'POST';
+      svc.path = (path && path.s) || '/';
+      return svc;
+    }));
     def('Service.declare', envLookup(env, 'serviceDeclare'));
 
     // Service.implement / Auth.protect: pair a contract with a
@@ -2864,23 +2879,21 @@
     }));
     def('Auth.config', envLookup(env, 'authConfig'));
 
-    // Service.call : Service req resp -> req -> (Result String resp -> msg) -> Effect e msg
-    //   - Encodes `req` as JSON, fetches /services/<module>.<name>, parses
-    //     the JSON response into a mar value, dispatches msg(Ok|Err).
-    //   - The path is derived from provenance stamped at load time
-    //     (svc.originModule + svc.originName).
+    // Service.call : Service req resp -> req -> (Result Service.Error resp -> msg) -> Effect msg
+    //   - Builds the request from the contract's verb + path: typed path
+    //     params go in the URL, the rest in the query (GET / DELETE) or
+    //     the JSON body (POST / PUT / PATCH). Parses the JSON response into
+    //     a mar value, dispatches msg(Ok | Err).
     def('serviceCall', native(3, ([svc, req, toMsg]) => {
       return VEffect(() => {
-        const name = svc.originName || '(anonymous)';
-        const mod  = svc.originModule ? svc.originModule + '.' : '';
-        const path = '/services/' + mod + name;
-        const body = JSON.stringify(marToJs(req));
-        fetch(path, {
-          method: 'POST',
-          body,
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-        })
+        const verb = svc.verb || 'POST';
+        const built = buildServiceRequest(verb, svc.path || '/', req);
+        const init = { method: verb, credentials: 'same-origin', headers: {} };
+        if (built.body != null) {
+          init.body = built.body;
+          init.headers['Content-Type'] = 'application/json';
+        }
+        fetch(built.url, init)
           .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
           .then(r => {
             // Auth-expiry interceptor: a 401 on a Service.call means
@@ -2936,7 +2949,7 @@
     // we're offline) and stash the raw text in the console for the
     // developer debugging the issue.
     //
-    // Used by every Service.call / Endpoint.call / Auth.* fetch
+    // Used by every Service.call / Auth.* fetch
     // .catch handler so apps consistently see clean error strings
     // in their `Result String _` channels.
     function friendlyFetchError(err) {
@@ -8630,12 +8643,6 @@
         body = { kind: 'ELambda', params: d.params, body };
       }
       let val = evalExpr(body, modEnv);
-      // Stamp Service values with their binding's name + module so
-      // Service.call can derive the URL. Mirrors how the Go runtime
-      // attaches OriginModule/OriginName via the project loader.
-      if (val && val.k === 'C' && val.tag === '__Service' && !val.originName) {
-        val = Object.assign({}, val, { originModule: modName, originName: d.name });
-      }
       envDefine(modEnv, d.name, val);
       if (modName) envDefine(env, modName + '.' + d.name, val);
     }

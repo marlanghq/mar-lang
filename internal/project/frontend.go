@@ -174,6 +174,15 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 		return nil, nil, diag.Wrap(modPath, modSrc, &issue)
 	}
 
+	// GET services must be read-only. Project-wide pass: a GET handler
+	// that reaches a database write (even through helpers) is rejected.
+	if issues := typecheck.RunGetReadOnlyCheck(out); len(issues) > 0 {
+		issue := issues[0]
+		modPath := paths[issue.Module]
+		modSrc := sources[issue.Module]
+		return nil, nil, diag.Wrap(modPath, modSrc, &issue)
+	}
+
 	return out, valueTypes, nil
 }
 

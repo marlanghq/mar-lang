@@ -3,7 +3,82 @@ package typecheck
 import (
 	"fmt"
 	"strings"
+
+	"mar/internal/ast"
 )
+
+// validateServicePath checks the `{name:Type}` params of a service's
+// declared path against the request type. Each path param must name a
+// field of req with a matching type. Returns nil for non-service decls,
+// non-literal paths (can't check statically), and paths with no params.
+func validateServicePath(v *ast.ValueDecl, annotType Type, tEnv *typeNameEnv, s *Subst) error {
+	sc, ok := annotType.(TCon)
+	if !ok || sc.Name != "Service" || len(sc.Args) != 2 {
+		return nil
+	}
+	path, pos, ok := serviceDeclarePathLiteral(v.Body)
+	if !ok {
+		return nil
+	}
+	row, err := elaboratePathLiteral(path, tEnv)
+	if err != nil {
+		return errorf(pos, "%s: %v", v.Name, err)
+	}
+	rowRec := row.(TRecord)
+	if len(rowRec.Order) == 0 {
+		return nil
+	}
+	req := resolveAliasToRecord(s.Apply(sc.Args[0]), tEnv)
+	reqRec, ok := req.(TRecord)
+	if !ok {
+		return errorf(pos, "%s: path %q has params %v, but the request type is not a record with those fields",
+			v.Name, path, rowRec.Order)
+	}
+	for _, name := range rowRec.Order {
+		field, has := reqRec.Fields[name]
+		if !has {
+			return errorf(pos, "%s: path param `{%s}` is not a field of the request type", v.Name, name)
+		}
+		if err := Unify(rowRec.Fields[name], field, s); err != nil {
+			return errorf(pos, "%s: path param `{%s}` type does not match the request field `%s`: %v",
+				v.Name, name, name, err)
+		}
+	}
+	return nil
+}
+
+// serviceDeclarePathLiteral recognises `Service.declare METHOD "path"`
+// and returns the path string literal. Anything else returns ok=false.
+func serviceDeclarePathLiteral(e ast.Expr) (string, ast.Pos, bool) {
+	head, args := flattenApp(e)
+	if !isQualified(head, "Service", "declare") || len(args) != 2 {
+		return "", ast.Pos{}, false
+	}
+	str, ok := args[1].(*ast.EString)
+	if !ok {
+		return "", ast.Pos{}, false
+	}
+	return str.Value, str.Pos, true
+}
+
+// resolveAliasToRecord expands a type alias to its body when the alias
+// names a record, so a request type written as a named alias (e.g.
+// `Service GetNote ...` with `type alias GetNote = { id : Int }`)
+// validates the same as an inline record.
+func resolveAliasToRecord(t Type, tEnv *typeNameEnv) Type {
+	for range 8 { // bounded to avoid cycles
+		c, ok := t.(TCon)
+		if !ok {
+			return t
+		}
+		alias, ok := tEnv.aliases[c.Name]
+		if !ok {
+			return t
+		}
+		t = alias.Body
+	}
+	return t
+}
 
 // pathRowOfAnnot returns the row component of `Path r` if `t` is a
 // Path type. Used by the value-decl bidirectional check to decide

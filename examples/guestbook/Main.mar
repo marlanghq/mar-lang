@@ -44,11 +44,11 @@ entries =
 
 -- Service contracts — shared between backend impl and frontend caller.
 listEntries : Service () (List Entry)
-listEntries = Service.declare
+listEntries = Service.declare GET "/entries"
 
 
 addEntry : Service { name : String } Entry
-addEntry = Service.declare
+addEntry = Service.declare POST "/entries"
 
 
 -- Backend handlers
@@ -172,6 +172,4 @@ main =
     App.fullstack
         { services = services
         , pages    = [ page ]
-        -- Empty until the app needs custom HTTP routes (webhooks, public REST).
-        , api      = []
         }

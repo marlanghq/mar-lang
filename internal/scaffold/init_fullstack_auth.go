@@ -56,8 +56,6 @@ main =
             [ Frontend.SignIn.page
             , Frontend.Home.page
             ]
-        -- Usually api is empty, unless you need webhooks or custom REST routes.
-        , api      = []
         }
 `
 	files["Shared.mar"] = `module Shared exposing (..)
@@ -88,13 +86,13 @@ type alias NewEntry =
 -- Two services. Backend.mar implements them, Frontend.Home calls them.
 -- Auth.protect (in Backend.mar) injects the signed-in User as the
 -- handler's second arg, so unauthenticated requests get 401 before
--- the handler runs.
+-- the handler runs. Each declares the HTTP verb and path it answers on.
 listMine : Service () (List Entry)
-listMine = Service.declare
+listMine = Service.declare GET "/entries"
 
 
 createMine : Service NewEntry Entry
-createMine = Service.declare
+createMine = Service.declare POST "/entries"
 `
 	files["Backend.mar"] = `module Backend exposing (users, services)
 
@@ -189,8 +187,8 @@ type Model
 type Msg
     = DraftChanged String
     | Submitted
-    | CodeRequested (Result String ())
-    | CodeVerified (Result String Shared.User)
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
 
 init : (Model, Effect Msg)
@@ -228,7 +226,8 @@ update msg model =
                 Submitting _ ->
                     ( model, Effect.none )
 
-        CodeRequested (Ok ()) ->
+        -- The code went out. Move to the code-entry screen.
+        CodeRequested (Ok Auth.CodeSent) ->
             case model of
                 Submitting email ->
                     ( AskCode email "" Nothing, Effect.none )
@@ -236,27 +235,64 @@ update msg model =
                 _ ->
                     ( model, Effect.none )
 
+        -- The request's domain outcomes park their explanation back on
+        -- the email screen so the user can retry without retyping. The
+        -- copy for each typed case belongs to this screen.
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( requestFailed "That doesn't look like a valid email address." model
+            , Effect.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( requestFailed "Too many attempts. Wait a moment before trying again." model
+            , Effect.none
+            )
+
         CodeRequested (Err why) ->
-            case model of
-                Submitting email ->
-                    ( AskEmail email (Just why), Effect.none )
+            ( requestFailed (Service.errorToString why) model, Effect.none )
 
-                _ ->
-                    ( model, Effect.none )
-
-        CodeVerified (Ok _) ->
+        CodeVerified (Ok (Auth.SignedIn _)) ->
             -- Auth.completeSignIn redirects to wherever a 401 sent
             -- the user from (or "/" by default), replacing history
             -- so back-button doesn't return to sign-in.
             ( AskEmail "" Nothing, Auth.completeSignIn )
 
-        CodeVerified (Err why) ->
-            case model of
-                Submitting email ->
-                    ( AskCode email "" (Just why), Effect.none )
+        -- The verify outcomes park their explanation on the code screen
+        -- with the field cleared so the user can re-type cleanly.
+        CodeVerified (Ok Auth.WrongCode) ->
+            ( verifyFailed "That code didn't work. Check your email or request a new one." model
+            , Effect.none
+            )
 
-                _ ->
-                    ( model, Effect.none )
+        CodeVerified (Ok Auth.TooManyAttempts) ->
+            ( verifyFailed "Too many tries with this code. Request a new one." model
+            , Effect.none
+            )
+
+        CodeVerified (Err why) ->
+            ( verifyFailed (Service.errorToString why) model, Effect.none )
+
+
+-- requestFailed / verifyFailed place the failure copy on the step the
+-- user should retry from (mid-flight only; otherwise leave the model).
+requestFailed : String -> Model -> Model
+requestFailed reason model =
+    case model of
+        Submitting email ->
+            AskEmail email (Just reason)
+
+        _ ->
+            model
+
+
+verifyFailed : String -> Model -> Model
+verifyFailed reason model =
+    case model of
+        Submitting email ->
+            AskCode email "" (Just reason)
+
+        _ ->
+            model
 
 
 view : Model -> View Msg
@@ -266,7 +302,7 @@ view model =
             navigationStack [ navigationTitle "Sign in" ]
                 [ form
                     [ section []
-                        [ text "Enter your email and we'll send a one-time code."
+                        [ text [] "Enter your email and we'll send a one-time code."
                         , textField [ email, submit Submitted, width (chars 30) ]
                             "Email" draft DraftChanged
                         , errorView maybeErr
@@ -280,7 +316,7 @@ view model =
             navigationStack [ navigationTitle "Enter your code" ]
                 [ form
                     [ section []
-                        [ text ("We sent a 6-digit code to " ++ emailAddr ++ ".")
+                        [ text [] ("We sent a 6-digit code to " ++ emailAddr ++ ".")
                         , textField [ numericCode, submit Submitted ]
                             "Code" draft DraftChanged
                         , errorView maybeErr
@@ -294,7 +330,7 @@ view model =
             navigationStack [ navigationTitle "Sign in" ]
                 [ form
                     [ section []
-                        [ text "Working…" ]
+                        [ text [] "Working…" ]
                     ]
                 ]
 
@@ -308,7 +344,7 @@ errorView maybeErr =
             empty
 
         Just msg ->
-            text msg
+            text [] msg
 
 
 page : Page
@@ -355,16 +391,16 @@ type alias Model =
 
 
 type Msg
-    = EntriesLoaded (Result String (List Shared.Entry))
+    = EntriesLoaded (Result Service.Error (List Shared.Entry))
     | DraftChanged String
     | AddClicked
-    | EntryCreated (Result String Shared.Entry)
+    | EntryCreated (Result Service.Error Shared.Entry)
     | SignOutClicked
     | SignedOut (Result String ())
 
 
 init : Shared.User -> (Model, Effect Msg)
-init =
+init _ =
     ( { entries = Loading, draft = "" }
     , Service.call Shared.listMine () EntriesLoaded
     )
@@ -377,7 +413,7 @@ update _ msg model =
             ( { model | entries = Loaded loaded }, Effect.none )
 
         EntriesLoaded (Err why) ->
-            ( { model | entries = Failed why }, Effect.none )
+            ( { model | entries = Failed (Service.errorToString why) }, Effect.none )
 
         DraftChanged value ->
             ( { model | draft = value }, Effect.none )
@@ -432,7 +468,7 @@ entriesSection : Entries -> View Msg
 entriesSection state =
     case state of
         Loading ->
-            section [] [ text "Loading…" ]
+            section [] [ text [] "Loading…" ]
 
         Failed why ->
             section [] [ errorText ("Couldn't load entries: " ++ why) ]
@@ -444,7 +480,7 @@ entriesSection state =
 
 renderEntry : Shared.Entry -> View Msg
 renderEntry entry =
-    text entry.body
+    text [] entry.body
 
 
 page : Page

@@ -459,11 +459,12 @@ window.addEventListener('DOMContentLoaded', function () {
 //
 //   - frontend-only (HasFrontend, !HasAPI): "/" serves the HTML shell;
 //     "/_mar/*" serves the JS runtime, program JSON, and SSE channel.
-//   - backend-only  (!HasFrontend, HasAPI): user routes mount directly
-//     at "/" — no "/api" prefix, no "/_mar/*" handlers (only the SSE
+//   - backend-only  (!HasFrontend, HasAPI): services mount at the verb +
+//     path they were declared with; no "/_mar/*" handlers (only the SSE
 //     channel for the dev banner). Use case: pure JSON API server.
-//   - fullstack     (HasFrontend, HasAPI):  "/" serves the HTML shell,
-//     "/api/*" dispatches to backend routes, "/_mar/*" for assets.
+//   - fullstack     (HasFrontend, HasAPI):  a request first tries the
+//     service routes (their declared verb + path); a miss serves the HTML
+//     shell. "/_mar/*" serves assets.
 //
 // LiveProgram is updated on every reload but the mux registration here
 // is fixed — so ServeLive must be called after the initial compile so
@@ -602,26 +603,23 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 
 	switch {
 	case hasFrontend && hasAPI:
-		// Fullstack: HTML at /, API under /api/*, RPC services under /services/*.
-		// Two prefixes share the same routes slice — `/api/` strips its
-		// prefix before matching (so user routes have paths like "/notes"),
-		// `/services/` matches the full path against routes whose path is
-		// already absolute (e.g. "/services/Backend.timelinePosts").
+		// Fullstack: services mount at the verb + path they were declared
+		// with (e.g. GET /notes/{id:Int}); the HTML shell answers
+		// everything else. Each request first tries the service routes; a
+		// miss falls through to the static/shell handler.
 		//
-		// Rate limit wraps the request-handling routes (API + services)
-		// but not the HTML shell — a 429 on a page load would be a
-		// terrible UX, and the shell is cheap to serve.
-		mux.HandleFunc("/api/", rateLimit(withCompression(func(w http.ResponseWriter, r *http.Request) {
-			stripped := strings.TrimPrefix(r.URL.Path, "/api")
-			if stripped == "" {
-				stripped = "/"
-			}
-			dispatchBackend(lp.Routes(), stripped, w, r)
-		})))
-		mux.HandleFunc("/services/", rateLimit(withCompression(func(w http.ResponseWriter, r *http.Request) {
+		// Rate limit + compression wrap only the service pipeline, not the
+		// HTML shell — a 429 on a page load would be terrible UX, and the
+		// shell is cheap to serve. We pre-check matchability (cheap, no
+		// body read) to pick the pipeline without rate-limiting the shell.
+		serviceDispatch := rateLimit(withCompression(func(w http.ResponseWriter, r *http.Request) {
 			dispatchBackend(lp.Routes(), r.URL.Path, w, r)
-		})))
+		}))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if anyServiceMatches(lp.Routes(), r.Method, r.URL.Path) {
+				serviceDispatch(w, r)
+				return
+			}
 			serveStaticOrShell(w, r, lp)
 		})
 	case hasFrontend:
@@ -630,11 +628,14 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 			serveStaticOrShell(w, r, lp)
 		})
 	case hasAPI:
-		// Backend-only: user routes mount directly at /. The /_mar/reload
-		// path is registered above — ServeMux longest-prefix match keeps
-		// it from being shadowed by the catch-all here.
+		// Backend-only: services mount directly at their declared paths.
+		// The /_mar/reload path is registered above — ServeMux
+		// longest-prefix match keeps it from being shadowed by this
+		// catch-all. An unmatched request is a 404.
 		mux.HandleFunc("/", rateLimit(withCompression(func(w http.ResponseWriter, r *http.Request) {
-			dispatchBackend(lp.Routes(), r.URL.Path, w, r)
+			if !dispatchBackend(lp.Routes(), r.URL.Path, w, r) {
+				http.NotFound(w, r)
+			}
 		})))
 	}
 

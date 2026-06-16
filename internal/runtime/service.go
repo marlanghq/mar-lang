@@ -1,19 +1,31 @@
 package runtime
 
-import "fmt"
+import (
+	"fmt"
+	"net/url"
+	"os"
+	"strings"
+)
 
-// VService is the typed RPC contract. `Service.declare` produces one
-// with no handler; `Service.implement` and `Auth.protect` produce
-// VExposedService values whose embedded Service has Handler set (and
-// RequiresUser flagged in the auth case).
+// VService is the typed RPC contract. `Service.declare VERB "path"`
+// produces one with no handler; `Service.implement` and `Auth.protect`
+// produce VExposedService values whose embedded Service has Handler set
+// (and RequiresUser flagged in the auth case).
+//
+// Verb / Path are the HTTP verb and URL pattern the contract was
+// declared with. The server mounts the service there; the browser's
+// Service.call hits the same verb and path. The path may carry typed
+// `{name:Type}` params (parsed with the same machinery as frontend
+// routes), which the handler receives merged into its request.
 //
 // OriginModule / OriginName are stamped by the project loader (see
 // internal/project/project.go) when the contract is bound at the top
-// level. Implementations inherit the contract's origin so the URL
-// path stays tied to the contract — frontend's Service.call always
-// resolves the same way regardless of where the impl is bound.
+// level. They identify the contract for diagnostics; the URL comes from
+// Path, not from the binding name.
 type VService struct {
 	Handler      Value // nil on a bare contract; set by implement/protect
+	Verb         string
+	Path         string
 	OriginModule string
 	OriginName   string
 
@@ -62,17 +74,26 @@ func (e VExposedService) Display() string {
 
 // serviceBuiltins exposes the contract / implement / call surface.
 //
-//	Service.declare   : Service req resp
-//	Service.implement : Service req resp -> (req -> Effect String resp) -> ExposedService
-//	Service.call      : Service req resp -> req -> (Result String resp -> msg) -> Effect e msg
+//	Service.declare   : Method -> String -> Service req resp
+//	Service.implement : Service req resp -> (req -> Effect resp) -> ExposedService
+//	Service.call      : Service req resp -> req -> (Result Service.Error resp -> msg) -> Effect msg
 //
-// Service.declare is a singleton VService — each top-level binding
-// gets its own stamped copy via the loader's value-semantics path.
-// Service.call on the Go side errors out — the server dispatches
-// locally; the JS runtime re-implements call with fetch.
+// Service.declare records the verb and path on the contract. Service.call
+// on the Go side errors out — the server dispatches locally; the JS
+// runtime re-implements call with fetch.
 func serviceBuiltins() map[string]Value {
 	return map[string]Value{
-		"serviceDeclare": VService{},
+		"serviceDeclare": nativeFn(2, func(args []Value) (Value, error) {
+			verb, ok := args[0].(VCtor)
+			if !ok {
+				return nil, fmt.Errorf("Service.declare: expected an HTTP method (got %T)", args[0])
+			}
+			path, ok := args[1].(VString)
+			if !ok {
+				return nil, fmt.Errorf("Service.declare: expected a path String (got %T)", args[1])
+			}
+			return VService{Verb: verb.Tag, Path: path.V}, nil
+		}),
 
 		"serviceImplement": nativeFn(2, func(args []Value) (Value, error) {
 			contract, ok := args[0].(VService)
@@ -95,29 +116,20 @@ func serviceBuiltins() map[string]Value {
 	}
 }
 
-// ServicePath returns the URL where a service is mounted. Convention:
-// `/services/<OriginModule>.<OriginName>`. Both ends (server mount,
-// browser fetch) compute it the same way so they always agree.
-func ServicePath(svc VService) string {
-	if svc.OriginModule != "" {
-		return "/services/" + svc.OriginModule + "." + svc.OriginName
-	}
-	return "/services/" + svc.OriginName
-}
-
 // ExposedServiceToRoute turns a service-list element (VExposedService)
-// into the same Route record shape the dispatcher already consumes for
-// HTTP endpoints. The wrapped handler decodes the request body as JSON,
-// calls the user's typed handler, JSON-encodes the result.
+// into the internal Route record the dispatcher consumes: the declared
+// verb and path pattern, plus a handler that reconstructs the typed
+// request from the URL path params, the query string (GET / DELETE) or
+// the JSON body (POST / PUT / PATCH), calls the user's handler, and
+// JSON-encodes the result.
 //
-// Method is POST (RPC-style) and the body carries the full input payload.
 // Errors at any stage become 4xx/5xx without crashing the server.
 //
-// When the service was created via `Auth.protect`, the wrapped
-// handler additionally pulls the current User from the dispatcher's
-// per-request context (set up by jsserve before calling Apply) and
-// curries it in as the second argument. A missing/expired session
-// short-circuits with 401 before any user code runs.
+// When the service was created via `Auth.protect`, the wrapped handler
+// additionally pulls the current User from the dispatcher's per-request
+// context (set up by jsserve before calling Apply) and curries it in as
+// the second argument. A missing/expired session short-circuits with 401
+// before any user code runs.
 func ExposedServiceToRoute(es VExposedService) Value {
 	svc := es.Service
 	wrapped := VFn{
@@ -130,13 +142,12 @@ func ExposedServiceToRoute(es VExposedService) Value {
 			return VEffect{
 				Tag: "serviceHandler",
 				Run: func() (Value, error) {
-					bodyV, ok := req.Fields["body"].(VString)
-					if !ok {
-						return makeResp(400, "missing request body"), nil
-					}
-					input, err := decodeJSON(bodyV.V)
+					reqPath := stringField(req, "path")
+					query := stringField(req, "query")
+					body := stringField(req, "body")
+					input, err := assembleServiceInput(svc, reqPath, query, body)
 					if err != nil {
-						return makeResp(422, fmt.Sprintf("invalid JSON: %v", err)), nil
+						return makeResp(422, fmt.Sprintf("invalid request: %v", err)), nil
 					}
 					handler := svc.Handler
 					if svc.RequiresUser {
@@ -187,13 +198,127 @@ func ExposedServiceToRoute(es VExposedService) Value {
 	}
 	return VRecord{
 		Fields: map[string]Value{
-			"method":       VString{V: "POST"},
-			"path":         VString{V: ServicePath(svc)},
+			"method":       VString{V: svc.Verb},
+			"path":         VString{V: svc.Path},
 			"handler":      wrapped,
 			"requiresUser": VBool{V: svc.RequiresUser},
 		},
 		Order: []string{"method", "path", "handler", "requiresUser"},
 	}
+}
+
+// stringField reads a String field off a request record, "" when absent.
+func stringField(rec VRecord, name string) string {
+	if s, ok := rec.Fields[name].(VString); ok {
+		return s.V
+	}
+	return ""
+}
+
+// assembleServiceInput reconstructs a service handler's typed request
+// value from the wire. Typed `{name:Type}` path params come from the URL
+// path; the remaining fields come from the query string (`q` JSON param,
+// for GET / DELETE) or the JSON body (POST / PUT / PATCH). An empty result
+// is Unit, so a `Service () resp` handler receives `()`.
+func assembleServiceInput(svc VService, reqPath, query, body string) (Value, error) {
+	fields := map[string]Value{}
+	order := []string{}
+	merge := func(v Value) {
+		rec, ok := v.(VRecord)
+		if !ok {
+			return
+		}
+		for _, k := range rec.Order {
+			if _, seen := fields[k]; !seen {
+				order = append(order, k)
+			}
+			fields[k] = rec.Fields[k]
+		}
+	}
+
+	if strings.Contains(svc.Path, "{") {
+		vpath, err := ParsePathPattern(svc.Path)
+		if err != nil {
+			return nil, err
+		}
+		matched := vpath.MatchURL(reqPath)
+		if matched == nil {
+			return nil, fmt.Errorf("path %q does not match %q", reqPath, svc.Path)
+		}
+		merge(matched)
+	}
+
+	switch svc.Verb {
+	case "GET", "DELETE":
+		if q := queryValue(query); q != "" {
+			v, err := decodeJSON(q)
+			if err != nil {
+				return nil, err
+			}
+			merge(v)
+		}
+	default: // POST, PUT, PATCH
+		trimmed := strings.TrimSpace(body)
+		if trimmed != "" && trimmed != "null" {
+			v, err := decodeJSON(body)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := v.(VRecord); ok {
+				merge(v)
+			} else if len(order) == 0 {
+				// A non-record body with no path params is the request
+				// value itself (rare; services normally use records or ()).
+				return v, nil
+			}
+		}
+	}
+
+	if len(order) == 0 {
+		return VUnit{}, nil
+	}
+	return VRecord{Fields: fields, Order: order}, nil
+}
+
+// queryValue pulls the single `q` parameter (a JSON blob of the non-path
+// request fields) out of a raw query string.
+func queryValue(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	vals, err := url.ParseQuery(raw)
+	if err != nil {
+		return ""
+	}
+	return vals.Get("q")
+}
+
+// makeResp builds a Response record { status, body }. Every place a
+// response is constructed goes through it.
+func makeResp(status int, body string) Value {
+	return VRecord{
+		Fields: map[string]Value{
+			"status": VInt{V: int64(status)},
+			"body":   VString{V: body},
+		},
+		Order: []string{"status", "body"},
+	}
+}
+
+// serverErrorResponse maps a handler-side failure to a 500 Response
+// without leaking server internals. A user-authored Effect.fail value
+// carries an intentional app-level message and is surfaced as-is; any
+// other error is logged server-side and the client gets a generic body,
+// so SQL text, Go type names, and file paths never reach the wire.
+func serverErrorResponse(err error) Value {
+	if ee, ok := err.(effectError); ok {
+		if s, ok := ee.value.(VString); ok {
+			return makeResp(500, s.V)
+		}
+		return makeResp(500, ee.value.Display())
+	}
+	fmt.Fprintf(os.Stderr, "[mar] handler error: %v\n", err)
+	return makeResp(500, "internal server error")
 }
 
 // checkRoleGate applies the registered role getter (from Auth.config)

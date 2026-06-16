@@ -41,7 +41,7 @@ update _ _ = ((), Effect.none)
 
 view : Model -> View Msg
 view _ =
-    text ""
+    text [] ""
 
 
 page : Page
@@ -59,8 +59,6 @@ main =
     App.fullstack
         { services = []
         , pages    = [ page ]
-        -- Usually api is empty, unless you need webhooks or custom REST routes.
-        , api      = []
         }
 `
 	return files

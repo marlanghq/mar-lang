@@ -24,9 +24,9 @@ type alias NewNote =
 
 listMine : Service () (List Note)
 listMine =
-    Service.declare
+    Service.declare GET "/notes"
 
 
 createMine : Service NewNote Note
 createMine =
-    Service.declare
+    Service.declare POST "/notes"

@@ -65,6 +65,8 @@ var bareBuiltinCtors = map[string]string{
 	"Ok": "Result", "Err": "Result",
 	"True": "Bool", "False": "Bool",
 	"LT": "Order", "EQ": "Order", "GT": "Order",
+	"GET": "Method", "POST": "Method", "PUT": "Method",
+	"PATCH": "Method", "DELETE": "Method",
 }
 
 // reservedTypeNames are built-in type names a user `type` or `type alias`
@@ -79,7 +81,7 @@ var reservedTypeNames = map[string]bool{
 	"List": true, "Dict": true, "Set": true,
 	"Maybe": true, "Result": true,
 	"Effect": true, "View": true, "Service": true, "Entity": true,
-	"Auth": true, "Page": true,
+	"Auth": true, "Page": true, "Method": true,
 }
 
 // CheckModule runs the full type-check pass over a parsed module using the
@@ -361,9 +363,15 @@ func CheckModuleWith(
 		// If annotation, unify with the annotation BODY (instantiated).
 		// We use the body, not the TForall, because TForall isn't directly
 		// unifiable. The body's vars are the named ones, fresh per-decl.
-		if body, has := annotationBodies[v.Name]; has {
-			if err := Unify(tInferred, body, s); err != nil {
+		if annot, has := annotationBodies[v.Name]; has {
+			if err := Unify(tInferred, annot, s); err != nil {
 				return nil, errorf(v.Pos, "%s: %v", v.Name, err)
+			}
+			// Service.declare's path literal carries typed `{name:Type}`
+			// params that must name fields of the request type. Validate
+			// them here, where the annotation has fixed req/resp.
+			if err := validateServicePath(v, s.Apply(annot), tEnv, s); err != nil {
+				return nil, err
 			}
 		} else {
 			// No annotation: unify with the placeholder so recursive references resolve.

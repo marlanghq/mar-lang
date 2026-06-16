@@ -37,21 +37,17 @@ curl -X POST localhost:3000/_auth/verify-code \
   -b /tmp/alice.cookie -c /tmp/alice.cookie
 
 # 2. Create a note (200, allowed).
-curl -X POST localhost:3000/services/Shared.createNote \
+curl -X POST localhost:3000/team-notes \
   -H 'Content-Type: application/json' \
   -d '{"body":"hello"}' -b /tmp/alice.cookie
 
 # 3. Try to delete it as alice — 403, members can't delete.
-curl -X POST localhost:3000/services/Shared.deleteNote \
-  -H 'Content-Type: application/json' \
-  -d '{"id":1}' -b /tmp/alice.cookie
+curl -X DELETE localhost:3000/team-notes/1 -b /tmp/alice.cookie
 
 # 4. Promote alice to admin and retry — 200.
 sqlite3 examples/team-notes/team-notes.db \
   "UPDATE users SET role='Admin' WHERE email='alice@team.com';"
-curl -X POST localhost:3000/services/Shared.deleteNote \
-  -H 'Content-Type: application/json' \
-  -d '{"id":1}' -b /tmp/alice.cookie
+curl -X DELETE localhost:3000/team-notes/1 -b /tmp/alice.cookie
 
 # 5. Try to write a bogus role directly via SQL — DB rejects.
 sqlite3 examples/team-notes/team-notes.db \
@@ -90,7 +86,7 @@ read a single handler body.
 
 ## How the gates work
 
-When a request hits `/services/Shared.deleteNote`, the dispatcher
+When a request hits `DELETE /team-notes/1`, the dispatcher
 runs three gates in order:
 
 1. **`Auth.protect`** — validates the session cookie. No session →

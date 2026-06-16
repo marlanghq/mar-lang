@@ -65,19 +65,18 @@ func MakeFrontendBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) 
 	}
 }
 
-// MakeBackendBuiltin overrides `App.backend : { routes, services } -> Effect String ()`.
-// Routes are low-level Endpoint mounts; services are typed RPC services
-// (Service.expose'd) — both flatten into the same Route slice the
-// dispatcher reads.
+// MakeBackendBuiltin overrides `App.backend : { services } -> Effect String ()`.
+// Services are typed RPC services, each mounted at the verb and path it
+// was declared with.
 func MakeBackendBuiltin(port int, lp *jsserve.LiveProgram) runtime.Value {
 	return runtime.VFn{
 		Arity: 1,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
 			rec, ok := args[0].(runtime.VRecord)
 			if !ok {
-				return nil, fmt.Errorf("App.backend: expected { routes, services } record (got %T)", args[0])
+				return nil, fmt.Errorf("App.backend: expected { services } record (got %T)", args[0])
 			}
-			routes, err := ExtractRoutesAndServices(rec, "App.backend")
+			routes, err := ExtractServices(rec, "App.backend")
 			if err != nil {
 				return nil, err
 			}
@@ -90,16 +89,16 @@ func MakeBackendBuiltin(port int, lp *jsserve.LiveProgram) runtime.Value {
 	}
 }
 
-// MakeFullstackBuiltin overrides `App.fullstack : { api, services, pages } -> Effect String ()`.
-// `api` is mounted under /api/*, `services` under /services/*, `pages`
-// shipped to the browser via the LiveProgram.
+// MakeFullstackBuiltin overrides `App.fullstack : { services, pages } -> Effect String ()`.
+// `services` mount at the verb + path each was declared with; `pages`
+// ship to the browser via the LiveProgram.
 func MakeFullstackBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
 	return runtime.VFn{
 		Arity: 1,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
 			rec, ok := args[0].(runtime.VRecord)
 			if !ok {
-				return nil, fmt.Errorf("App.fullstack: expected { api, services, pages } record (got %T)", args[0])
+				return nil, fmt.Errorf("App.fullstack: expected { services, pages } record (got %T)", args[0])
 			}
 			pagesV, ok := rec.Fields["pages"]
 			if !ok {
@@ -109,18 +108,7 @@ func MakeFullstackBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram)
 			if !ok {
 				return nil, fmt.Errorf("App.fullstack: `pages` is not a list (got %T)", pagesV)
 			}
-			apiRec := runtime.VRecord{Fields: map[string]runtime.Value{}}
-			if v, ok := rec.Fields["api"]; ok {
-				apiRec.Fields["routes"] = v
-			} else {
-				apiRec.Fields["routes"] = runtime.VList{}
-			}
-			if v, ok := rec.Fields["services"]; ok {
-				apiRec.Fields["services"] = v
-			} else {
-				apiRec.Fields["services"] = runtime.VList{}
-			}
-			routes, err := ExtractRoutesAndServices(apiRec, "App.fullstack")
+			routes, err := ExtractServices(rec, "App.fullstack")
 			if err != nil {
 				return nil, err
 			}
@@ -188,19 +176,11 @@ func PickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, er
 	return merged, nil
 }
 
-// ExtractRoutesAndServices reads `routes` (List Route) and `services`
-// (List ExposedService) fields from a record and produces the unified
-// slice the HTTP dispatcher consumes. Each ExposedService becomes a
-// POST route at `/services/<module>.<name>`.
-func ExtractRoutesAndServices(rec runtime.VRecord, who string) ([]runtime.Value, error) {
+// ExtractServices reads the `services` field (List ExposedService) and
+// turns each entry into the internal route record the HTTP dispatcher
+// consumes — mounted at the verb + path the service was declared with.
+func ExtractServices(rec runtime.VRecord, who string) ([]runtime.Value, error) {
 	var out []runtime.Value
-	if v, ok := rec.Fields["routes"]; ok {
-		list, isList := v.(runtime.VList)
-		if !isList {
-			return nil, fmt.Errorf("%s: `routes` is not a list (got %T)", who, v)
-		}
-		out = append(out, list.Elements...)
-	}
 	if v, ok := rec.Fields["services"]; ok {
 		list, isList := v.(runtime.VList)
 		if !isList {

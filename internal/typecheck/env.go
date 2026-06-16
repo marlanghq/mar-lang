@@ -143,9 +143,8 @@ func BaseQualifiedSymbols() map[string]Type {
 //
 // Covers server topology (App.fullstack), persistence (Repo, Entity,
 // Db), auth wiring evaluated at server boot (Auth.config / .protect /
-// .authorize / .requireRole / .requireOwner), service declaration on
-// the server side (Service.declare / .implement), and HTTP endpoint
-// registration (Endpoint.* / Response.*).
+// .authorize / .requireRole / .requireOwner), and service declaration
+// on the server side (Service.declare / .implement).
 //
 // Adding a new entry here is a deliberate statement: "this builtin
 // runs server-only; clients don't need to implement it." Don't add a
@@ -153,12 +152,10 @@ func BaseQualifiedSymbols() map[string]Type {
 // can't reach it.
 func IsBackendOnlyBuiltin(name string) bool {
 	for _, prefix := range []string{
-		"Repo.",     // SQLite repository
-		"Entity.",   // schema-defining helpers
-		"Db.",       // raw query escape hatch
-		"Server.",   // HTTP server config
-		"Endpoint.", // REST endpoint registration
-		"Response.", // server-side response building
+		"Repo.",   // SQLite repository
+		"Entity.", // schema-defining helpers
+		"Db.",     // raw query escape hatch
+		"Server.", // HTTP server config
 	} {
 		if strings.HasPrefix(name, prefix) {
 			return true
@@ -227,6 +224,21 @@ func builtinCustomTypes() map[string]CustomType {
 				"GT": {Result: TOrder},
 			},
 			CtorOrder: []string{"LT", "EQ", "GT"},
+		},
+		// Method — the HTTP verb a service answers on. The first argument
+		// to Service.declare. Registered as a built-in custom type so a
+		// `case method of GET -> ...` matches exhaustively.
+		"Method": {
+			Name:   "Method",
+			Params: nil,
+			Constructors: map[string]CustomCtor{
+				"GET":    {Result: TMethod},
+				"POST":   {Result: TMethod},
+				"PUT":    {Result: TMethod},
+				"PATCH":  {Result: TMethod},
+				"DELETE": {Result: TMethod},
+			},
+			CtorOrder: []string{"GET", "POST", "PUT", "PATCH", "DELETE"},
 		},
 		// Service.Error — the failure a Service.call delivers in its Err.
 		// A union so the frontend cases on it (Offline shows a retry,
@@ -380,6 +392,15 @@ func baseBindings() map[string]Type {
 	out["LT"] = TOrder
 	out["EQ"] = TOrder
 	out["GT"] = TOrder
+
+	// Method constructors — the HTTP verbs, nullary and monomorphic.
+	// Bare-exposed (like LT/EQ/GT) so a service reads `Service.declare
+	// GET "/path"`.
+	out["GET"] = TMethod
+	out["POST"] = TMethod
+	out["PUT"] = TMethod
+	out["PATCH"] = TMethod
+	out["DELETE"] = TMethod
 
 	// Service.Error constructors — the transport failure a Service.call
 	// delivers in its Err. Offline / Unauthorized are nullary; ServerError
@@ -1192,117 +1213,6 @@ func stdlibBindings() map[string]Type {
 					To: TArrow{
 						From: TArrow{From: TResult(TString, TString), To: b},
 						To:   TEffect(b),
-					},
-				},
-			},
-		},
-
-		// HTTP responses (records used directly).
-		// Response : { status : Int, body : String }
-		// Route    : { method : String, path : String, handler : Request -> Effect String Response }
-		// (Server.serve / Server.get etc. were removed when mar narrowed to
-		// full-stack — apps host themselves through App.frontend / App.backend
-		// / App.fullstack. Endpoint.implement is the typed builder that
-		// produces routes today.)
-		"responseOk":       TArrow{From: TString, To: serverResponseType()},
-		"responseNotFound": serverResponseType(),
-		"responseStatus":   TArrow{From: TInt, To: TArrow{From: TString, To: serverResponseType()}},
-
-		// Endpoint: typed contract shared between backend and frontend.
-		//
-		// Two layers coexist:
-		//
-		//  - Low-level (Endpoint.get / .post + Endpoint.implement): used for
-		//    custom paths or non-CRUD shapes (action endpoints like /sign
-		//    or /login). Handler is `Request -> Effect e Response` and
-		//    constructs the Response by hand.
-		//
-		//  - REST sugar (Endpoint.list / .show / .create / .update / .delete):
-		//    each function constrains the handler shape and the runtime fills
-		//    in path-param parsing, body decode, status code, and JSON encode
-		//    of the response. Saves boilerplate for the common 5 REST verbs.
-		"endpointGet":  TArrow{From: TString, To: TEndpoint()},
-		"endpointPost": TArrow{From: TString, To: TEndpoint()},
-		"endpointImplement": TArrow{
-			From: TArrow{From: serverRequestType(), To: TEffect(serverResponseType())},
-			To: TArrow{
-				From: TEndpoint(),
-				To:   serverRouteType(),
-			},
-		},
-
-		// Endpoint.list : String -> Effect String (List a) -> Route
-		"endpointList": TForall{
-			Vars: []int{a.ID},
-			Body: TArrow{
-				From: TString,
-				To: TArrow{
-					From: TEffect(TList(a)),
-					To:   serverRouteType(),
-				},
-			},
-		},
-		// Endpoint.show : String -> (Int -> Effect String (Maybe a)) -> Route
-		"endpointShow": TForall{
-			Vars: []int{a.ID},
-			Body: TArrow{
-				From: TString,
-				To: TArrow{
-					From: TArrow{From: TInt, To: TEffect(TMaybe(a))},
-					To:   serverRouteType(),
-				},
-			},
-		},
-		// Endpoint.create : String -> (b -> Effect String a) -> Route
-		"endpointCreate": TForall{
-			Vars: []int{a.ID, b.ID},
-			Body: TArrow{
-				From: TString,
-				To: TArrow{
-					From: TArrow{From: b, To: TEffect(a)},
-					To:   serverRouteType(),
-				},
-			},
-		},
-		// Endpoint.update : String -> (Int -> b -> Effect String (Maybe a)) -> Route
-		"endpointUpdate": TForall{
-			Vars: []int{a.ID, b.ID},
-			Body: TArrow{
-				From: TString,
-				To: TArrow{
-					From: TArrow{
-						From: TInt,
-						To:   TArrow{From: b, To: TEffect(TMaybe(a))},
-					},
-					To: serverRouteType(),
-				},
-			},
-		},
-		// Endpoint.delete : String -> (Int -> Effect String ()) -> Route
-		"endpointDelete": TForall{
-			Vars: []int{a.ID},
-			Body: TArrow{
-				From: TString,
-				To: TArrow{
-					From: TArrow{From: TInt, To: TEffect(TUnit{})},
-					To:   serverRouteType(),
-				},
-			},
-		},
-		// Endpoint.call : String -> Endpoint -> String -> (Result String String -> msg) -> Effect e msg
-		//                 base    endpoint   body     toMsg
-		"endpointCall": TForall{
-			Vars: []int{a.ID, b.ID},
-			Body: TArrow{
-				From: TString,
-				To: TArrow{
-					From: TEndpoint(),
-					To: TArrow{
-						From: TString,
-						To: TArrow{
-							From: TArrow{From: TResult(TString, TString), To: b},
-							To:   TEffect(b),
-						},
 					},
 				},
 			},
@@ -2571,46 +2481,53 @@ func stdlibBindings() map[string]Type {
 		// Port comes from <projectDir>/mar.json (server.port, default 3000).
 		"appFrontend": TArrow{From: TList(TPage()), To: TEffect(TUnit{})},
 
-		// App.backend : { routes, services } -> Effect String ()
-		// Pure API server. `routes` exposes low-level Endpoint.* — for custom
-		// paths, SSR, webhooks. `services` exposes typed RPC services with
-		// auto-derived URLs (Service / Service.expose / Service.call).
+		// App.backend : { services } -> Effect String ()
+		// Headless API server: `services` exposes typed RPC services, each
+		// mounted at the verb and path it was declared with. Port from
+		// mar.json (server.port, default 3000).
 		"appBackend": TArrow{
 			From: TRecord{
 				Fields: map[string]Type{
-					"routes":   TList(serverRouteType()),
 					"services": TList(TExposedService()),
 				},
-				Order: []string{"routes", "services"},
+				Order: []string{"services"},
 			},
 			To: TEffect(TUnit{}),
 		},
 
-		// App.fullstack : { api, services, pages } -> Effect String ()
-		// Unified server. `api` mounts low-level routes under /api/*.
-		// `services` mounts typed RPC services under /services/*. `pages`
-		// ships browser MVU. Port from mar.json.
+		// App.fullstack : { services, pages } -> Effect String ()
+		// Unified server. `services` mounts typed RPC services at the verb
+		// and path each was declared with; `pages` ships the browser MVU
+		// app. Port from mar.json.
 		"appFullstack": TArrow{
 			From: TRecord{
 				Fields: map[string]Type{
-					"api":      TList(serverRouteType()),
 					"services": TList(TExposedService()),
 					"pages":    TList(TPage()),
 				},
-				Order: []string{"api", "services", "pages"},
+				Order: []string{"services", "pages"},
 			},
 			To: TEffect(TUnit{}),
 		},
 
-		// Service.declare : Service req resp
+		// Service.declare : Method -> String -> Service req resp
 		//
-		// A typed RPC contract with no handler attached. Bound at the
-		// top level in the shared module so frontend can pass it to
-		// Service.call; backend pairs it with a handler via
-		// Service.implement (or Auth.protect).
+		// A typed RPC contract: an HTTP verb and a URL path, with no
+		// handler attached. Bound at the top level in the shared module
+		// so the frontend can pass it to Service.call; the backend pairs
+		// it with a handler via Service.implement (or Auth.protect).
+		//
+		//   getNote : Service { id : Int } (Maybe Note)
+		//   getNote = Service.declare GET "/notes/{id:Int}"
+		//
+		// The path may carry typed `{name:Type}` params, which must name
+		// fields of req. GET handlers are held to read-only by the
+		// compiler; the verb also drives where req travels on the wire
+		// (path params in the URL, the rest in the query for GET/DELETE
+		// or the JSON body for POST/PUT/PATCH).
 		"serviceDeclare": TForall{
 			Vars: []int{a.ID, b.ID},
-			Body: TService(a, b),
+			Body: TArrow{From: TMethod, To: TArrow{From: TString, To: TService(a, b)}},
 		},
 
 		// Service.implement : Service req resp -> (req -> Effect String resp) -> ExposedService
@@ -2849,42 +2766,6 @@ func stdlibBindings() map[string]Type {
 	}
 }
 
-func serverRequestType() Type {
-	// params is `String -> Maybe String`: lookup by name. We use a function
-	// rather than a row record because routes with different param shapes
-	// must coexist in `List Route`, which requires uniform Route type.
-	return TRecord{
-		Fields: map[string]Type{
-			"url":    TString,
-			"method": TString,
-			"body":   TString,
-			"params": TArrow{From: TString, To: TMaybe(TString)},
-		},
-		Order: []string{"url", "method", "body", "params"},
-	}
-}
-
-func serverResponseType() Type {
-	return TRecord{
-		Fields: map[string]Type{
-			"status": TInt,
-			"body":   TString,
-		},
-		Order: []string{"status", "body"},
-	}
-}
-
-func serverRouteType() Type {
-	return TRecord{
-		Fields: map[string]Type{
-			"method":  TString,
-			"path":    TString,
-			"handler": TArrow{From: serverRequestType(), To: TEffect(serverResponseType())},
-		},
-		Order: []string{"method", "path", "handler"},
-	}
-}
-
 // qualifiedAliases returns Module.name aliases for stdlib (so `List.map`
 // works just like `listMap`).
 func qualifiedAliases(flat map[string]Type) map[string]Type {
@@ -3009,22 +2890,6 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Http.post":          "httpPost",
 		"JSON.encode":        "jsonEncode",
 		"JSON.decode":        "jsonDecode",
-		// Low-level endpoint builders (paired with Endpoint.implement) — for
-		// custom paths like `/sign`, SSR routes, etc.
-		"Endpoint.get":       "endpointGet",
-		"Endpoint.post":      "endpointPost",
-		"Endpoint.implement": "endpointImplement",
-		"Endpoint.call":      "endpointCall",
-		// REST sugar — common shapes with auto path-param parse, JSON
-		// decode/encode, and method-derived status code.
-		"Endpoint.list":     "endpointList",
-		"Endpoint.show":     "endpointShow",
-		"Endpoint.create":   "endpointCreate",
-		"Endpoint.update":   "endpointUpdate",
-		"Endpoint.delete":   "endpointDelete",
-		"Response.ok":       "responseOk",
-		"Response.notFound": "responseNotFound",
-		"Response.status":   "responseStatus",
 		// Entity (record-literal form)
 		"Entity.define":    "entityDefine",
 		"Entity.serial":    "entitySerial",

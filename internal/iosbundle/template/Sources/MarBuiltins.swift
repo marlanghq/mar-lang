@@ -34,6 +34,16 @@ enum MarBuiltins {
         env.define("EQ",    .ctor(tag: "EQ", args: [], origin: nil))
         env.define("GT",    .ctor(tag: "GT", args: [], origin: nil))
 
+        // HTTP Method constructors — the verbs passed to Service.declare.
+        // Bare nullary ctors like LT/EQ/GT; Service.declare reads the tag
+        // off the chosen one to record the contract's verb. Mirrors the
+        // Go runtime (Method ctors) and JS (`def('GET', VCtor('GET'))`).
+        env.define("GET",    .ctor(tag: "GET",    args: [], origin: nil))
+        env.define("POST",   .ctor(tag: "POST",   args: [], origin: nil))
+        env.define("PUT",    .ctor(tag: "PUT",    args: [], origin: nil))
+        env.define("PATCH",  .ctor(tag: "PATCH",  args: [], origin: nil))
+        env.define("DELETE", .ctor(tag: "DELETE", args: [], origin: nil))
+
         // Service.Error constructors — the transport failure a Service.call
         // delivers in its Err. MarHTTP builds these directly. Registered
         // under their qualified names only, the Elm Http.Error model: user
@@ -1650,7 +1660,7 @@ enum MarBuiltins {
         }))
         env.define("JSON.encode", env.lookup("jsonEncode")!)
 
-        // MARK: Entity / Repo / Endpoint stubs
+        // MARK: Entity / Repo stubs
         //
         // These exist server-side; the client never invokes them, but
         // shared modules may still mention them at top level. We give
@@ -1691,75 +1701,54 @@ enum MarBuiltins {
         }))
         env.define("Repo.create",      env.lookup("repoCreate")!)
 
-        // Endpoint.* — typed handle for routes; Endpoint.call uses fetch.
-        let endpointGet    = MarFn.native(1) { args in .ctor(tag: "__Ep", args: [.string("GET"),    args[0]], origin: nil) }
-        let endpointPost   = MarFn.native(1) { args in .ctor(tag: "__Ep", args: [.string("POST"),   args[0]], origin: nil) }
-        let endpointPatch  = MarFn.native(1) { args in .ctor(tag: "__Ep", args: [.string("PATCH"),  args[0]], origin: nil) }
-        let endpointDelete = MarFn.native(1) { args in .ctor(tag: "__Ep", args: [.string("DELETE"), args[0]], origin: nil) }
-        env.define("endpointGet",     .fn(endpointGet));    env.define("Endpoint.get",    .fn(endpointGet))
-        env.define("endpointPost",    .fn(endpointPost));   env.define("Endpoint.post",   .fn(endpointPost))
-        env.define("endpointPatch",   .fn(endpointPatch));  env.define("Endpoint.patch",  .fn(endpointPatch))
-        env.define("endpointDelete",  .fn(endpointDelete)); env.define("Endpoint.delete", .fn(endpointDelete))
-
-        // Endpoint.call : String -> Endpoint -> String -> (Result -> msg) -> Effect
-        let endpointCall = MarFn.native(4) { args in
-            let base = asString(args[0])
-            guard case .ctor(_, let epArgs, _) = args[1],
-                  epArgs.count == 2,
-                  case .string(let method) = epArgs[0],
-                  case .string(let path) = epArgs[1] else {
-                throw MarRuntimeError.typeMismatch(expected: "Endpoint", got: Eval.typeOf(args[1]))
-            }
-            let body = asString(args[2])
-            let toMsg = args[3]
-            return .effect(MarEffect(tag: "endpointCall") {
-                MarHTTP.fire(
-                    method: method,
-                    url: base + path,
-                    body: (method == "GET" || method == "DELETE") ? nil : body,
-                    toMsg: toMsg
-                )
-                return .unit
-            })
-        }
-        env.define("endpointCall",  .fn(endpointCall))
-        env.define("Endpoint.call", .fn(endpointCall))
-
         // MARK: Service — RPC over HTTP
 
-        // Service.declare : Service req resp — typed contract with no
-        // handler. Each top-level binding gets its own stamped copy
-        // via the loader's value-semantics path. The opaque __Service
-        // ctor carries provenance so Service.call can derive the URL.
-        let serviceDeclareValue: MarValue = .ctor(tag: "__Service", args: [], origin: nil)
-        env.define("serviceDeclare",  serviceDeclareValue)
-        env.define("Service.declare", serviceDeclareValue)
+        // Service.declare VERB "path" : a typed RPC contract carrying the
+        // HTTP verb and URL pattern. The client never runs the handler; it
+        // only needs the verb + path so Service.call can build the request.
+        // The verb is the chosen Method ctor's tag (GET/POST/…); the path
+        // is the pattern, which may carry typed `{name:Type}` params.
+        // Mirrors the JS runtime's `serviceDeclare` (verb + path on the
+        // __Service ctor) and the Go VService{Verb, Path}.
+        let serviceDeclare = MarFn.native(2) { args in
+            guard case .ctor(let verb, _, _) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "HTTP method", got: Eval.typeOf(args[0]))
+            }
+            let path = asString(args[1])
+            return .ctor(tag: "__Service", args: [.string(verb), .string(path)], origin: nil)
+        }
+        env.define("serviceDeclare",  .fn(serviceDeclare))
+        env.define("Service.declare", .fn(serviceDeclare))
 
-        // Service.implement : Service req resp -> (req -> Effect String resp) -> ExposedService
+        // Service.implement : Service req resp -> (req -> Effect resp) -> ExposedService
         // Browser/iOS-side, the handler never runs — service handlers
         // live on the server. We just return the contract back so the
-        // value evaluates and Service.call still finds the origin.
+        // value evaluates and Service.call still sees the verb + path.
         let serviceImplement = MarFn.native(2) { args in args[0] }
         env.define("serviceImplement",  .fn(serviceImplement))
         env.define("Service.implement", .fn(serviceImplement))
 
-        // Service.call : Service req resp -> req -> (Result -> msg) -> Effect
+        // Service.call : Service req resp -> req -> (Result Service.Error resp -> msg) -> Effect
+        //
+        // Builds the request from the contract's verb + path, mirroring
+        // buildServiceRequest in internal/jsserve/runtime.js: typed
+        // `{name:Type}` path params are substituted into the URL from the
+        // request record's fields; the remaining fields ride in a single
+        // query param `q` = JSON of those fields (GET / DELETE) or in the
+        // JSON body (POST / PUT / PATCH). A `()` request sends no body.
         let serviceCall = MarFn.native(3) { args in
             let svc = args[0]
             let req = args[1]
             let toMsg = args[2]
             return .effect(MarEffect(tag: "serviceCall") {
-                guard case .ctor(_, _, let origin?) = svc else {
-                    throw MarRuntimeError.message("Service.call: anonymous service has no path")
+                guard case .ctor("__Service", let svcArgs, _) = svc,
+                      svcArgs.count == 2,
+                      case .string(let verb) = svcArgs[0],
+                      case .string(let pattern) = svcArgs[1] else {
+                    throw MarRuntimeError.message("Service.call: not a service contract")
                 }
-                let path = "/services/\(origin.module).\(origin.name)"
-                let bodyAny = MarJSONCodec.marToJSON(req)
-                let bodyData = try? JSONSerialization.data(
-                    withJSONObject: bodyAny,
-                    options: [.fragmentsAllowed]
-                )
-                let bodyString = bodyData.flatMap { String(data: $0, encoding: .utf8) } ?? "null"
-                MarHTTP.fireService(path: path, body: bodyString, toMsg: toMsg)
+                let built = buildServiceRequest(verb: verb, pattern: pattern, req: req)
+                MarHTTP.fireService(method: verb, path: built.url, body: built.body, toMsg: toMsg)
                 return .unit
             })
         }
@@ -2646,6 +2635,119 @@ enum MarBuiltins {
     }
 
     // MARK: - Coercion helpers
+
+    // MARK: Service request building
+    //
+    // Mirrors buildServiceRequest in internal/jsserve/runtime.js. Turns a
+    // contract's verb + path pattern and the request value into a concrete
+    // URL and (optionally) a JSON body. Typed `{name:Type}` params are
+    // substituted into the URL; the remaining fields ride in the query
+    // (`q` JSON param, for GET / DELETE) or the JSON body (POST / PUT /
+    // PATCH). A `()` request yields no body.
+
+    struct ServiceRequest {
+        let url: String
+        let body: String?
+    }
+
+    static func buildServiceRequest(verb: String, pattern: String, req: MarValue) -> ServiceRequest {
+        // Working copy of the record's fields (empty for a `()` request).
+        var fields: [String: MarValue] = [:]
+        var isObj = false
+        if case .record(let fs, _) = req {
+            fields = fs
+            isObj = true
+        }
+
+        // Substitute `{name:Type}` segments out of the path and drop the
+        // consumed fields. Bare segments pass through verbatim.
+        var hadParam = false
+        let segs: [String] = pattern.split(separator: "/", omittingEmptySubsequences: true).map { seg in
+            let s = String(seg)
+            guard s.hasPrefix("{"), s.hasSuffix("}") else { return s }
+            let inner = s.dropFirst().dropLast()
+            guard let colon = inner.firstIndex(of: ":") else { return s }
+            let name = String(inner[inner.startIndex..<colon])
+            hadParam = true
+            let enc = percentEncodePathComponent(pathParamString(fields[name]))
+            fields.removeValue(forKey: name)
+            return enc
+        }
+        let url = "/" + segs.joined(separator: "/")
+
+        let restEmpty = fields.isEmpty
+        if verb == "GET" || verb == "DELETE" {
+            if !restEmpty {
+                let json = jsonString(forFields: fields, from: req)
+                return ServiceRequest(url: url + "?q=" + percentEncodeQueryValue(json), body: nil)
+            }
+            return ServiceRequest(url: url, body: nil)
+        }
+        // POST / PUT / PATCH
+        if !isObj {
+            // A non-record request value (rare): the whole value is the body.
+            return ServiceRequest(url: url, body: jsonStringWhole(req))
+        }
+        if restEmpty && hadParam {
+            return ServiceRequest(url: url, body: nil)
+        }
+        return ServiceRequest(url: url, body: jsonString(forFields: fields, from: req))
+    }
+
+    /// Renders a single value for a `{name:Type}` URL segment. Mirrors the
+    /// JS pathParamString / Go encodePathSegment: String raw, Int/Bool as
+    /// their literal, enum ctor lowercased; absent field → "".
+    private static func pathParamString(_ v: MarValue?) -> String {
+        guard let v else { return "" }
+        switch v {
+        case .string(let s): return s
+        case .int(let n):    return String(n)
+        case .bool(let b):   return b ? "true" : "false"
+        case .ctor(let tag, _, _): return tag.lowercased()
+        default:             return ""
+        }
+    }
+
+    /// JSON-encode the surviving fields, preserving the original record's
+    /// declaration order minus the consumed path params.
+    private static func jsonString(forFields fields: [String: MarValue], from req: MarValue) -> String {
+        var order: [String] = []
+        if case .record(_, let ord) = req {
+            order = ord.filter { fields[$0] != nil }
+        }
+        if order.isEmpty { order = Array(fields.keys) }
+        let rec = MarValue.record(fields: fields, order: order)
+        return jsonStringWhole(rec)
+    }
+
+    private static func jsonStringWhole(_ v: MarValue) -> String {
+        let any = MarJSONCodec.marToJSON(v)
+        guard let data = try? JSONSerialization.data(withJSONObject: any, options: [.fragmentsAllowed]),
+              let s = String(data: data, encoding: .utf8) else {
+            return "null"
+        }
+        return s
+    }
+
+    /// encodeURIComponent for a path segment. URLComponents would
+    /// re-interpret reserved characters, so we percent-encode against an
+    /// explicit allowed set that matches JS encodeURIComponent.
+    private static func percentEncodePathComponent(_ s: String) -> String {
+        s.addingPercentEncoding(withAllowedCharacters: uriComponentAllowed) ?? s
+    }
+
+    private static func percentEncodeQueryValue(_ s: String) -> String {
+        s.addingPercentEncoding(withAllowedCharacters: uriComponentAllowed) ?? s
+    }
+
+    /// Characters JS encodeURIComponent leaves untouched: unreserved set
+    /// A-Z a-z 0-9 - _ . ! ~ * ' ( ). Everything else is percent-encoded.
+    private static let uriComponentAllowed: CharacterSet = {
+        var set = CharacterSet()
+        set.formUnion(.alphanumerics)
+        set.insert(charactersIn: "-_.!~*'()")
+        return set
+    }()
 
     static func asInt(_ v: MarValue) -> Int {
         switch v {

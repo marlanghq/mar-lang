@@ -2,12 +2,6 @@ module Main exposing (main)
 
 
 -- Entry point for the full-stack notes app.
---
--- The previous version mounted REST endpoints under /api/* and the
--- frontend made `Endpoint.call` requests with hand-rolled JSON
--- encoding. This version uses typed `Service` values (declared in
--- Shared.mar) — the frontend calls them by binding identity, the
--- runtime resolves the URL.
 
 
 import Backend
@@ -19,6 +13,4 @@ main =
     App.fullstack
         { services = Backend.services
         , pages    = [ Frontend.page ]
-        -- Usually api is empty, unless you need webhooks or custom REST routes.
-        , api      = []
         }

@@ -125,7 +125,7 @@ type Auth user   -- opaque
 
 Field by field:
 
-- **`entity`**: the user table. Row type must contain at least `{ id : a.id, email : String }` (Mar's row polymorphism enforces this; same pattern other `Endpoint.*` helpers use per [`mar.md` §4.7](./mar.md)).
+- **`entity`**: the user table. Row type must contain at least `{ id : a.id, email : String }` (Mar's row polymorphism enforces this).
 - **`identify`**: projects the email out of the user record. Always `user -> String`.
 - **`email`**: sender address and subject line of the code email. The body is fixed by the framework (see §4.2).
 - **`signup`**: called when `request-code` arrives for an email not in the table. Returns the user record minus `id` (which the entity assigns). The framework persists it via `Repo.create` and proceeds with the code flow. To refuse signups today, raise an error from inside this function (a dedicated `invitationOnly` policy may come back if the pattern is common).
@@ -226,7 +226,7 @@ When the app provides an `Auth.config` (section 4), the runtime auto-registers t
 | POST | `/_auth/logout` | (empty) | `{ ok: true }` plus a `Set-Cookie` clearing the session |
 | GET  | `/_auth/whoami` | (none) | `{ user: <User row> | null }` |
 
-The `/_auth/*` prefix is reserved, like `/_mar/*`: a custom `api` endpoint at one of those paths is rejected at compile time. Frontend code never calls these paths directly; it goes through the `Auth.*` Effects in section 7.
+The `/_auth/*` prefix is reserved, like `/_mar/*`: a service declared at one of those paths is rejected at compile time. Frontend code never calls these paths directly; it goes through the `Auth.*` Effects in section 7.
 
 ### 6.2 Protecting a service
 
@@ -377,7 +377,7 @@ The framework owns these concerns; the user does not need to think about them.
 - **Logout invalidation:** `auth_sessions` row is deleted server-side, so a stolen cookie stops working at the moment of logout. Cookie is also overwritten with `Max-Age=0` to clear the browser store.
 
 ### 8.6 What the framework does NOT do (intentionally)
-- **No CSRF token for `/_auth/*`:** verify-code requires knowing both the email and the unguessable code, which already serves as a per-request authenticator. logout is idempotent and reading-only side effects don't matter for auth state. (For non-auth routes the existing CSRF policy applies, see [`mar.md`](./mar.md).)
+- **No CSRF token for `/_auth/*`:** verify-code requires knowing both the email and the unguessable code, which already serves as a per-request authenticator. logout is idempotent and reading-only side effects don't matter for auth state. (For ordinary service calls the existing CSRF policy applies, see [`mar.md`](./mar.md).)
 - **No password reset flow:** there are no passwords.
 - **No email-change confirmation:** out of scope for v1; user-facing apps can implement it on top of the user entity.
 
@@ -435,7 +435,6 @@ main =
     App.fullstack
         { services = []
         , pages    = [ Frontend.SignIn.page, Frontend.Home.page ]
-        , api      = []
         }
 ```
 

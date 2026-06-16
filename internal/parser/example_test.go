@@ -13,7 +13,7 @@ func TestParsePersonalTodoBackend(t *testing.T) {
 
 import Entity exposing (..)
 import Default exposing (..)
-import Endpoint exposing (Endpoint)
+import Service exposing (Service)
 import Effect exposing (Effect)
 import Db
 
@@ -38,8 +38,8 @@ todos =
     entity Todo
 
 
-list : Endpoint () (List Todo)
-list = Endpoint.get "/todos"
+list : Service () (List Todo)
+list = Service.declare GET "/todos"
 `
 	mod, err := Parse(src)
 	if err != nil {
@@ -53,7 +53,7 @@ list = Endpoint.get "/todos"
 func TestParseTimelineScreen(t *testing.T) {
 	src := `module Screens.Timeline exposing (..)
 
-import Endpoint
+import Service
 import Effect exposing (Effect)
 
 
@@ -115,10 +115,10 @@ deletePost id user =
 func TestParsePipeline(t *testing.T) {
 	src := `module Foo exposing (..)
 
-routes =
-    Endpoint.post "/posts"
-        |> Endpoint.requireAuth users
-        |> Endpoint.validate validatePost
+services =
+    Service.implement Shared.createPost createPost
+        |> Auth.authorize loadPost ownsPost
+        |> Auth.requireRole Admin
 `
 	_, err := Parse(src)
 	if err != nil {

@@ -121,24 +121,24 @@ type ComposeOutcome
 
 
 composeTweet : Service NewTweet ComposeOutcome
-composeTweet = Service.declare
+composeTweet = Service.declare POST "/tweets"
 
 
 deleteTweet : Service DeleteTweet ()
-deleteTweet = Service.declare
+deleteTweet = Service.declare DELETE "/tweets/{id:Int}"
 
 
 -- The home timeline: tweets from people I follow + my own, newest
 -- first. Returns enough denormalized info that the home page can
 -- render rows without further fetches.
 loadTimeline : Service () (List TweetView)
-loadTimeline = Service.declare
+loadTimeline = Service.declare GET "/timeline"
 
 
 -- Public profile lookup by handle. Returns Nothing for unknown
 -- handles, which the frontend renders as "User not found".
 loadProfile : Service ProfileQuery (Maybe ProfileView)
-loadProfile = Service.declare
+loadProfile = Service.declare GET "/profiles/{handle:String}"
 
 
 -- Follow outcome: each case is a distinct UX branch on the profile
@@ -152,11 +152,11 @@ type FollowOutcome
 
 
 follow : Service FollowAction FollowOutcome
-follow = Service.declare
+follow = Service.declare POST "/follow"
 
 
 unfollow : Service FollowAction ()
-unfollow = Service.declare
+unfollow = Service.declare POST "/unfollow"
 
 
 -- Profile setup: called once after sign-in if the user's handle is
@@ -174,11 +174,11 @@ type SetupOutcome
 
 
 setupProfile : Service ProfileSetup SetupOutcome
-setupProfile = Service.declare
+setupProfile = Service.declare PUT "/profile"
 
 
 -- `me` returns the current user. The auth cookie identifies who;
 -- the frontend uses this to decide whether to redirect a new user
 -- to /setup-profile before showing the timeline.
 me : Service () User
-me = Service.declare
+me = Service.declare GET "/me"

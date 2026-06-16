@@ -2,9 +2,9 @@
 // registers ctor functions for custom types, then evaluates each
 // value declaration. Direct port of `loadModule` in runtime.js.
 //
-// The provenance stamp on `__Service` values happens here (mirrors
-// what the Go side does via internal/project/project.go) so
-// Service.call can derive the wire path from the binding name.
+// Service contracts carry their own verb + path (stamped by
+// Service.declare), so the loader treats them like any other value —
+// no provenance stamping needed.
 
 import Foundation
 
@@ -112,17 +112,7 @@ enum MarLoader {
                 bodyExpr = .lambda(params: params, body: body)
             }
 
-            var val = try Eval.eval(bodyExpr, env)
-
-            // Stamp Service values with provenance so Service.call
-            // can build the wire path. Mirror the JS equivalent.
-            if case .ctor(let tag, let args, let origin) = val,
-               tag == "__Service",
-               origin == nil {
-                val = .ctor(tag: tag,
-                            args: args,
-                            origin: ServiceOrigin(module: modName, name: name))
-            }
+            let val = try Eval.eval(bodyExpr, env)
 
             env.define(name, val)
             if !modName.isEmpty {

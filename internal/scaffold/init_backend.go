@@ -17,11 +17,11 @@ func backendFiles(name string) map[string]string {
 
 
 -- A backend-only mar app: one Entity, two Services, no UI. App.backend
--- mounts every Service.implement at its auto-derived URL. From the
--- shell:
+-- mounts every Service.implement at the verb + path its contract
+-- declares. From the shell:
 --
---     curl http://localhost:3000/services/Main.listEntries -d '{}'
---     curl http://localhost:3000/services/Main.addEntry    -d '{"name":"hello"}'
+--     curl http://localhost:3000/entries
+--     curl http://localhost:3000/entries -d '{"name":"hello"}'
 --
 -- The same contracts can be called by a Mar frontend (App.frontend),
 -- an iOS app, or anything that speaks JSON over HTTP.
@@ -52,15 +52,15 @@ entries =
         }
 
 
--- RPC contracts. The binding name + module become the URL path
--- (` + "`/services/Main.listEntries`" + ` etc.). Service.declare is the
--- contract; Service.implement attaches the handler below.
+-- RPC contracts. Each declares the HTTP verb and path it answers on.
+-- Service.declare is the contract; Service.implement attaches the
+-- handler below.
 listEntries : Service () (List Entry)
-listEntries = Service.declare
+listEntries = Service.declare GET "/entries"
 
 
 addEntry : Service NewEntry Entry
-addEntry = Service.declare
+addEntry = Service.declare POST "/entries"
 
 
 -- Service handlers.
@@ -83,8 +83,7 @@ services =
 main : Effect ()
 main =
     App.backend
-        { routes   = []
-        , services = services
+        { services = services
         }
 `
 	return files

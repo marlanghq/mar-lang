@@ -106,14 +106,14 @@ The key claim:
 
 Backend access is explicit and typed. A `Service req resp` is the contract; a handler turns a request into an effect that produces the response.
 
-**Contracts** are declared once, in the shared module:
+**Contracts** are declared once, in the shared module, each with a verb and a path:
 
 ```elm
 addTask : Service { name : String } AddTaskOutcome
-addTask = Service.declare
+addTask = Service.declare POST "/tasks"
 ```
 
-The contract names the request and response types. Both backend (`Service.implement`, or `Auth.protect` when the call needs a signed-in user) and frontend (`Service.call`) reference the same value, so a contract change breaks both sides at compile time.
+The contract names the request and response types, and `Service.declare VERB "/path"` fixes the HTTP method and route (a path may carry typed `{name:Type}` params naming fields of the request). Both backend (`Service.implement`, or `Auth.protect` when the call needs a signed-in user) and frontend (`Service.call`) reference the same value, so a contract change breaks both sides at compile time. The verb and path are transparent to the caller: `Service.call` is identical whatever method a service uses.
 
 **Handlers** are effectful functions the runtime invokes per request:
 
@@ -128,6 +128,8 @@ addTaskImpl input user =
 ```
 
 The handler is pure to call: it returns a description. The runtime executes the resulting effect, reading and writing rows through `Repo.*`. A handler returns its declared response, so the outcomes it can produce are fixed by the type and the frontend's `case` over them is checked for exhaustiveness. There is no separate query language: composition is ordinary Mar over the rows `Repo.*` returns.
+
+The verb a service was declared with constrains its handler: a `GET` is read-only, and the compiler rejects one whose handler reaches `Repo.create`, `Repo.update`, or `Repo.deleteById`. A call that mutates is declared `POST`, `PUT`, `PATCH`, or `DELETE` (`addTask` above is a `POST`, so it may write).
 
 Frontend code reaches backend capabilities only through `Service.call`, never by embedding database behavior in a view.
 

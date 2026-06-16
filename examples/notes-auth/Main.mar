@@ -23,6 +23,4 @@ main =
     App.fullstack
         { services = Backend.services
         , pages    = [ Frontend.page ]
-        -- Usually api is empty, unless you need webhooks or custom REST routes.
-        , api      = []
         }

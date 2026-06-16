@@ -57,23 +57,24 @@ type alias GetNote =
     }
 
 
--- Service contracts. The backend will implement each with a per-line
--- decorator stack that reads as the security policy of the app.
+-- Service contracts. Each declares the HTTP verb and URL it answers on;
+-- the backend implements each with a per-line decorator stack that reads
+-- as the security policy of the app.
 listTeamNotes : Service () (List Note)
-listTeamNotes = Service.declare
+listTeamNotes = Service.declare GET "/team-notes"
 
 
 getNote : Service GetNote (Maybe Note)
-getNote = Service.declare
+getNote = Service.declare GET "/team-notes/{id:Int}"
 
 
 createNote : Service NewNote Note
-createNote = Service.declare
+createNote = Service.declare POST "/team-notes"
 
 
 editNote : Service EditNote (Maybe Note)
-editNote = Service.declare
+editNote = Service.declare PUT "/team-notes/{id:Int}"
 
 
 deleteNote : Service DeleteNote ()
-deleteNote = Service.declare
+deleteNote = Service.declare DELETE "/team-notes/{id:Int}"

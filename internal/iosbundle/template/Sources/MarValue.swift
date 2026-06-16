@@ -52,9 +52,10 @@ indirect enum MarValue: @unchecked Sendable {
     /// `{"__set": [k, ...]}`.
     case set([MarValue])
 
-    /// Tagged union constructor. `origin` is non-nil for `__Service`
-    /// values once they're stamped by `loadModule` so `Service.call`
-    /// can derive the wire path.
+    /// Tagged union constructor. `origin` is a vestigial provenance slot
+    /// kept on the value shape so the many `.ctor(..., origin: nil)` call
+    /// sites stay uniform; it is always nil now that Service contracts
+    /// carry their own verb + path directly.
     case ctor(tag: String, args: [MarValue], origin: ServiceOrigin?)
 
     case fn(MarFn)

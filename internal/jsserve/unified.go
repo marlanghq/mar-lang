@@ -12,8 +12,8 @@ import (
 	"mar/internal/runtime"
 )
 
-// maxBodyBytes is the per-request body cap applied to /api/* and
-// /services/*. Loaded from mar.json["server"]["maxBodyBytes"] at
+// maxBodyBytes is the per-request body cap applied to service requests.
+// Loaded from mar.json["server"]["maxBodyBytes"] at
 // startup via SetMaxBodyBytes. The default (1 MiB, project.DefaultMaxBodyBytes)
 // is set here so the package is safe to use even if the CLI didn't
 // install one (test paths). Atomic so we don't need a mutex on the
@@ -47,10 +47,15 @@ func SetMaxBodyBytes(n int64) {
 // by method + path (with :name params), invokes the handler, runs the
 // resulting Effect, writes the Response.
 //
-// Used by ServeLive's /api/* handler. The routes slice is read from the
-// LiveProgram on every request, so a hot-reload swap takes effect on the
-// next call.
-func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWriter, req *http.Request) {
+// Used by ServeLive's service-dispatch handler. The routes slice is read
+// from the LiveProgram on every request, so a hot-reload swap takes
+// effect on the next call.
+// dispatchBackend matches the request against the mounted service routes
+// (by verb + path pattern), runs the matched handler, and writes its
+// response. Returns true when a route matched, false otherwise — the
+// caller decides what an unmatched request means (404 for a backend-only
+// server, the frontend shell for a fullstack one).
+func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWriter, req *http.Request) bool {
 	reqSegs := splitPath(urlPath)
 	for _, rv := range routes {
 		r, ok := rv.(runtime.VRecord)
@@ -62,8 +67,7 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 		if method.V != req.Method {
 			continue
 		}
-		params, ok := matchPath(splitPath(path.V), reqSegs)
-		if !ok {
+		if !matchPath(splitPath(path.V), reqSegs) {
 			continue
 		}
 		// Cap the body. http.MaxBytesReader returns *http.MaxBytesError
@@ -78,13 +82,13 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 			var mbe *http.MaxBytesError
 			if errors.As(err, &mbe) {
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-				return
+				return true
 			}
 			http.Error(w, "read request body", http.StatusBadRequest)
-			return
+			return true
 		}
-		reqVal := buildRequestValue(req, body, params)
-		// If the route was produced by Auth.protected, attach the loaded
+		reqVal := buildRequestValue(req, body)
+		// If the route was produced by Auth.protect, attach the loaded
 		// user (or Nothing) under the well-known `__user` field so the
 		// service wrapper can curry it in. The wrapper short-circuits to
 		// 401 if Nothing.
@@ -95,30 +99,50 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 		effVal, err := runtime.Apply(handler, reqVal)
 		if err != nil {
 			writeInternalError(w, err)
-			return
+			return true
 		}
 		eff, ok := effVal.(runtime.VEffect)
 		if !ok {
 			http.Error(w, "handler did not return an Effect", http.StatusInternalServerError)
-			return
+			return true
 		}
 		result, err := eff.Run()
 		if err != nil {
 			writeInternalError(w, err)
-			return
+			return true
 		}
 		resp, ok := result.(runtime.VRecord)
 		if !ok {
 			http.Error(w, "handler effect did not produce a Response record", http.StatusInternalServerError)
-			return
+			return true
 		}
 		status, _ := resp.Fields["status"].(runtime.VInt)
 		rbody, _ := resp.Fields["body"].(runtime.VString)
 		w.WriteHeader(int(status.V))
 		_, _ = io.WriteString(w, rbody.V)
-		return
+		return true
 	}
-	http.NotFound(w, req)
+	return false
+}
+
+// anyServiceMatches reports whether some mounted route answers this
+// verb + path, without running it or reading the body. Used by the
+// fullstack handler to decide between the service pipeline (rate-limited,
+// compressed) and the frontend shell.
+func anyServiceMatches(routes []runtime.Value, method, urlPath string) bool {
+	reqSegs := splitPath(urlPath)
+	for _, rv := range routes {
+		r, ok := rv.(runtime.VRecord)
+		if !ok {
+			continue
+		}
+		m, _ := r.Fields["method"].(runtime.VString)
+		p, _ := r.Fields["path"].(runtime.VString)
+		if m.V == method && matchPath(splitPath(p.V), reqSegs) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeInternalError logs the underlying error server-side and sends the
@@ -141,21 +165,22 @@ func splitPath(p string) []string {
 	return strings.Split(p, "/")
 }
 
-func matchPath(routeSegs, reqSegs []string) (map[string]string, bool) {
+// matchPath aligns a route's path pattern against the request segments.
+// A `{name:Type}` segment matches any single segment; the typed value is
+// decoded later, by the service wrapper, via runtime.VPath.MatchURL.
+func matchPath(routeSegs, reqSegs []string) bool {
 	if len(routeSegs) != len(reqSegs) {
-		return nil, false
+		return false
 	}
-	params := map[string]string{}
 	for i, rs := range routeSegs {
-		if strings.HasPrefix(rs, ":") {
-			params[rs[1:]] = reqSegs[i]
+		if strings.HasPrefix(rs, "{") && strings.HasSuffix(rs, "}") {
 			continue
 		}
 		if rs != reqSegs[i] {
-			return nil, false
+			return false
 		}
 	}
-	return params, true
+	return true
 }
 
 // requiresUser checks the route record's `requiresUser` flag (set by
@@ -206,31 +231,18 @@ func withUser(reqVal runtime.VRecord, user runtime.Value) runtime.VRecord {
 	return runtime.VRecord{Fields: fields, Order: order}
 }
 
-func buildRequestValue(req *http.Request, body []byte, params map[string]string) runtime.VRecord {
-	paramsCopy := make(map[string]string, len(params))
-	for k, v := range params {
-		paramsCopy[k] = v
-	}
-	paramsLookup := runtime.VFn{
-		Arity: 1,
-		Native: func(args []runtime.Value) (runtime.Value, error) {
-			name, ok := args[0].(runtime.VString)
-			if !ok {
-				return runtime.VCtor{Tag: "Nothing"}, nil
-			}
-			if v, ok := paramsCopy[name.V]; ok {
-				return runtime.VCtor{Tag: "Just", Args: []runtime.Value{runtime.VString{V: v}}}, nil
-			}
-			return runtime.VCtor{Tag: "Nothing"}, nil
-		},
-	}
+// buildRequestValue is the raw request a service wrapper consumes: the
+// URL path (for typed path-param extraction), the raw query string (for
+// GET / DELETE non-path fields), and the body (for POST / PUT / PATCH).
+// The wrapper in runtime.ExposedServiceToRoute turns these into the
+// handler's typed request value.
+func buildRequestValue(req *http.Request, body []byte) runtime.VRecord {
 	return runtime.VRecord{
 		Fields: map[string]runtime.Value{
-			"url":    runtime.VString{V: req.URL.String()},
-			"method": runtime.VString{V: req.Method},
-			"body":   runtime.VString{V: string(body)},
-			"params": paramsLookup,
+			"path":  runtime.VString{V: req.URL.Path},
+			"query": runtime.VString{V: req.URL.RawQuery},
+			"body":  runtime.VString{V: string(body)},
 		},
-		Order: []string{"url", "method", "body", "params"},
+		Order: []string{"path", "query", "body"},
 	}
 }

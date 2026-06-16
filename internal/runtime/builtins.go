@@ -17,16 +17,10 @@ func BaseEnv() *Env {
 	for name, v := range jsonBuiltins() {
 		env.Define(name, v)
 	}
-	for name, v := range serverBuiltins() {
-		env.Define(name, v)
-	}
 	for name, v := range entityBuiltins() {
 		env.Define(name, v)
 	}
 	for name, v := range repoBuiltins() {
-		env.Define(name, v)
-	}
-	for name, v := range endpointBuiltins() {
 		env.Define(name, v)
 	}
 	for name, v := range serviceBuiltins() {
@@ -207,20 +201,6 @@ func qualifiedAliasMapping() map[string]string {
 		"Http.post":       "httpPost",
 		"JSON.encode":     "jsonEncode",
 		"JSON.decode":     "jsonDecode",
-		// Low-level endpoint builders + Endpoint.implement.
-		"Endpoint.get":       "endpointGet",
-		"Endpoint.post":      "endpointPost",
-		"Endpoint.implement": "endpointImplement",
-		"Endpoint.call":      "endpointCall",
-		// REST sugar.
-		"Endpoint.list":     "endpointList",
-		"Endpoint.show":     "endpointShow",
-		"Endpoint.create":   "endpointCreate",
-		"Endpoint.update":   "endpointUpdate",
-		"Endpoint.delete":   "endpointDelete",
-		"Response.ok":       "responseOk",
-		"Response.notFound": "responseNotFound",
-		"Response.status":   "responseStatus",
 		// Entity (record-literal form)
 		"Entity.define":    "entityDefine",
 		"Entity.serial":    "entitySerial",
@@ -415,6 +395,15 @@ func builtins() map[string]Value {
 		"LT": VCtor{Tag: "LT"},
 		"EQ": VCtor{Tag: "EQ"},
 		"GT": VCtor{Tag: "GT"},
+
+		// Method constructors — the HTTP verbs, nullary. The first
+		// argument to Service.declare; stored on the contract so the
+		// server mounts and the client calls on the right verb.
+		"GET":    VCtor{Tag: "GET"},
+		"POST":   VCtor{Tag: "POST"},
+		"PUT":    VCtor{Tag: "PUT"},
+		"PATCH":  VCtor{Tag: "PATCH"},
+		"DELETE": VCtor{Tag: "DELETE"},
 
 		// Service.Error constructors — the transport failure a Service.call
 		// delivers in its Err. The frontend builds these (JS/Swift HTTP

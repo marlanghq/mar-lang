@@ -41,8 +41,6 @@ main =
             [ Frontend.Home.page
             , Frontend.About.page
             ]
-        -- Usually api is empty, unless you need webhooks or custom REST routes.
-        , api      = []
         }
 `
 	files["Shared.mar"] = `module Shared exposing (..)
@@ -68,12 +66,13 @@ type alias NewEntry =
 -- Two services. Backend.mar implements them, the Frontend pages
 -- call them. Putting the declarations here means both sides see
 -- the same signature, so the typechecker catches any mismatch.
+-- Each declares the HTTP verb and path it answers on.
 listEntries : Service () (List Entry)
-listEntries = Service.declare
+listEntries = Service.declare GET "/entries"
 
 
 addEntry : Service NewEntry Entry
-addEntry = Service.declare
+addEntry = Service.declare POST "/entries"
 `
 	files["Backend.mar"] = `module Backend exposing (services)
 
@@ -159,10 +158,10 @@ type alias Model =
 
 
 type Msg
-    = EntriesFetched (Result String (List Shared.Entry))
+    = EntriesFetched (Result Service.Error (List Shared.Entry))
     | DraftChanged String
     | AddClicked
-    | EntryAdded (Result String Shared.Entry)
+    | EntryAdded (Result Service.Error Shared.Entry)
 
 
 fetchEntries : Effect Msg
@@ -182,7 +181,7 @@ update msg model =
             ( { model | entries = Loaded loaded }, Effect.none )
 
         EntriesFetched (Err why) ->
-            ( { model | entries = Failed why }, Effect.none )
+            ( { model | entries = Failed (Service.errorToString why) }, Effect.none )
 
         DraftChanged value ->
             ( { model | draft = value }, Effect.none )
@@ -215,7 +214,7 @@ view model =
             , entriesSection model.entries
             , section []
                 [ navigationLink [] Frontend.Routes.about {}
-                    (text "About this app")
+                    (text [] "About this app")
                 ]
             ]
         ]
@@ -225,7 +224,7 @@ entriesSection : Entries -> View Msg
 entriesSection state =
     case state of
         Loading ->
-            section [] [ text "Loading…" ]
+            section [] [ text [] "Loading…" ]
 
         Failed why ->
             section [] [ errorText ("Couldn't load entries: " ++ why) ]
@@ -237,7 +236,7 @@ entriesSection state =
 
 renderEntry : Shared.Entry -> View Msg
 renderEntry entry =
-    text entry.name
+    text [] entry.name
 
 
 page : Page
@@ -290,9 +289,9 @@ view _ =
                     ]
                 ]
             , section [ header "Next steps" ]
-                [ text "Edit Frontend/Home.mar to change the home page."
-                , text "Edit Backend.mar to add services or entities."
-                , text "Edit Shared.mar to add new types or services."
+                [ text [] "Edit Frontend/Home.mar to change the home page."
+                , text [] "Edit Backend.mar to add services or entities."
+                , text [] "Edit Shared.mar to add new types or services."
                 ]
             ]
         ]

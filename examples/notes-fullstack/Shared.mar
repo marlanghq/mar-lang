@@ -17,13 +17,12 @@ type alias NewNote =
     }
 
 
--- RPC contracts. The binding name + module become the URL path
--- (`/services/Shared.listAllNotes` etc.).
+-- RPC contracts. Each declares its HTTP method and path.
 listAllNotes : Service () (List Note)
 listAllNotes =
-    Service.declare
+    Service.declare GET "/notes"
 
 
 createNote : Service NewNote Note
 createNote =
-    Service.declare
+    Service.declare POST "/notes"

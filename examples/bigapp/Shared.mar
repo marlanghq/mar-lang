@@ -562,122 +562,122 @@ type alias DashboardData =
 
 -- Projects
 listProjects : Service () (List Project)
-listProjects = Service.declare
+listProjects = Service.declare GET "/projects"
 
 getProject : Service GetProject (Maybe Project)
-getProject = Service.declare
+getProject = Service.declare GET "/projects/{id:Int}"
 
 createProject : Service NewProject Project
-createProject = Service.declare
+createProject = Service.declare POST "/projects"
 
 editProject : Service EditProject (Maybe Project)
-editProject = Service.declare
+editProject = Service.declare PUT "/projects/{id:Int}"
 
 deleteProject : Service DeleteProject ()
-deleteProject = Service.declare
+deleteProject = Service.declare DELETE "/projects/{id:Int}"
 
 
 -- Issues
 listProjectIssues : Service ListProjectIssues (List IssueView)
-listProjectIssues = Service.declare
+listProjectIssues = Service.declare GET "/projects/{projectId:Int}/issues"
 
 getIssue : Service GetIssue (Maybe IssueView)
-getIssue = Service.declare
+getIssue = Service.declare GET "/issues/{id:Int}"
 
 createIssue : Service NewIssue Issue
-createIssue = Service.declare
+createIssue = Service.declare POST "/issues"
 
 editIssue : Service EditIssue (Maybe Issue)
-editIssue = Service.declare
+editIssue = Service.declare PUT "/issues/{id:Int}"
 
 changeIssueStatus : Service ChangeStatus (Maybe Issue)
-changeIssueStatus = Service.declare
+changeIssueStatus = Service.declare PATCH "/issues/{id:Int}/status"
 
 deleteIssue : Service DeleteIssue ()
-deleteIssue = Service.declare
+deleteIssue = Service.declare DELETE "/issues/{id:Int}"
 
 myOpenIssues : Service () (List IssueView)
-myOpenIssues = Service.declare
+myOpenIssues = Service.declare GET "/issues/my-open"
 
 searchIssues : Service SearchIssues (List IssueView)
-searchIssues = Service.declare
+searchIssues = Service.declare GET "/issues/search"
 
 
 -- Comments
 listComments : Service ListComments (List CommentView)
-listComments = Service.declare
+listComments = Service.declare GET "/issues/{issueId:Int}/comments"
 
 createComment : Service NewComment Comment
-createComment = Service.declare
+createComment = Service.declare POST "/comments"
 
 deleteComment : Service DeleteComment ()
-deleteComment = Service.declare
+deleteComment = Service.declare DELETE "/comments/{id:Int}"
 
 -- Toggle a reaction: insert when absent, remove when present.
 -- Idempotent UX-wise; backend enforces uniqueness via
 -- Entity.unique [["commentId","userId","emoji"]].
 toggleReaction : Service ToggleReaction ()
-toggleReaction = Service.declare
+toggleReaction = Service.declare POST "/comments/{commentId:Int}/reactions"
 
 
 -- Labels
 listProjectLabels : Service ListProjectLabels (List Label)
-listProjectLabels = Service.declare
+listProjectLabels = Service.declare GET "/projects/{projectId:Int}/labels"
 
 createLabel : Service NewLabel Label
-createLabel = Service.declare
+createLabel = Service.declare POST "/labels"
 
 deleteLabel : Service DeleteLabel ()
-deleteLabel = Service.declare
+deleteLabel = Service.declare DELETE "/labels/{id:Int}"
 
 attachLabel : Service AttachLabel IssueLabel
-attachLabel = Service.declare
+attachLabel = Service.declare POST "/issues/{issueId:Int}/labels"
 
 detachLabel : Service DetachLabel ()
-detachLabel = Service.declare
+detachLabel = Service.declare DELETE "/issues/{issueId:Int}/labels/{labelId:Int}"
 
 listIssueLabels : Service ListIssueLabels (List Label)
-listIssueLabels = Service.declare
+listIssueLabels = Service.declare GET "/issues/{issueId:Int}/labels"
 
 
 -- Milestones
 listProjectMilestones : Service ListProjectMilestones (List Milestone)
-listProjectMilestones = Service.declare
+listProjectMilestones = Service.declare GET "/projects/{projectId:Int}/milestones"
 
 createMilestone : Service NewMilestone Milestone
-createMilestone = Service.declare
+createMilestone = Service.declare POST "/milestones"
 
 closeMilestone : Service CloseMilestone (Maybe Milestone)
-closeMilestone = Service.declare
+closeMilestone = Service.declare PATCH "/milestones/{id:Int}/close"
 
 reopenMilestone : Service ReopenMilestone (Maybe Milestone)
-reopenMilestone = Service.declare
+reopenMilestone = Service.declare PATCH "/milestones/{id:Int}/reopen"
 
 
 -- Team
 listTeamMembers : Service () (List TeamMemberView)
-listTeamMembers = Service.declare
+listTeamMembers = Service.declare GET "/team/members"
 
 updateMemberRole : Service UpdateMemberRole (Maybe User)
-updateMemberRole = Service.declare
+updateMemberRole = Service.declare PATCH "/team/members/{userId:Int}/role"
 
 
 -- Dashboard
 loadDashboard : Service () DashboardData
-loadDashboard = Service.declare
+loadDashboard = Service.declare GET "/dashboard"
 
 
 -- Activity feed
 listRecentActivity : Service ListRecentActivity (List ActivityView)
-listRecentActivity = Service.declare
+listRecentActivity = Service.declare GET "/activity"
 
 
 -- Mentions / Inbox
 listMyMentions : Service ListMyMentions (List MentionView)
-listMyMentions = Service.declare
+listMyMentions = Service.declare GET "/mentions"
 
 markMentionSeen : Service MarkMentionSeen ()
-markMentionSeen = Service.declare
+markMentionSeen = Service.declare PATCH "/mentions/{id:Int}/seen"
 
 
 -- ====================================================================

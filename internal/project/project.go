@@ -176,6 +176,10 @@ func Load(root string) (*Project, error) {
 		issue := issues[0]
 		return nil, diag.Wrap(paths[issue.Module], sources[issue.Module], &issue)
 	}
+	if issues := typecheck.RunGetReadOnlyCheck(orderedMods); len(issues) > 0 {
+		issue := issues[0]
+		return nil, diag.Wrap(paths[issue.Module], sources[issue.Module], &issue)
+	}
 
 	return &Project{
 		Root:    root,
@@ -314,8 +318,8 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByNa
 			page.OriginName = v.Name
 			val = page
 		}
-		// Same for Services: stamping powers URL resolution at runtime
-		// (the URL is `/services/<module>.<name>`).
+		// Same for Services: stamping records the binding's name for
+		// diagnostics. The mounted URL comes from the declared path.
 		if svc, ok := val.(runtime.VService); ok && svc.OriginName == "" {
 			svc.OriginModule = modName
 			svc.OriginName = v.Name

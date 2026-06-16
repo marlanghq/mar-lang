@@ -306,6 +306,12 @@ var (
 	// we refused to keep telling ourselves — the comparator returns
 	// an Order, period.
 	TOrder = TCon{Name: "Order"}
+	// TMethod — the HTTP verb a Service is declared with. Inhabited by
+	// GET, POST, PUT, PATCH, DELETE (constructors registered in
+	// builtinCustomTypes and the value envs of all three runtimes). The
+	// first argument to Service.declare: it fixes the verb a service
+	// answers on, and the compiler holds GET handlers to read-only.
+	TMethod = TCon{Name: "Method"}
 	// TServiceError — the failure a Service.call delivers to the frontend,
 	// in the Err of its Result. A union (Offline / Unauthorized /
 	// ServerError String) so transport failure is a value you case on, the
@@ -539,11 +545,6 @@ func TPage() TCon {
 // referencing Mar.Admin.* there is a compile error.
 func TAdminSession() TCon {
 	return TCon{Name: "AdminSession"}
-}
-
-// TEndpoint returns the opaque "Endpoint" type.
-func TEndpoint() TCon {
-	return TCon{Name: "Endpoint"}
 }
 
 // TPath returns the parameterized "Path r" type — a URL pattern with

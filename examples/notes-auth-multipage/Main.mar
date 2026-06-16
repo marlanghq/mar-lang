@@ -34,6 +34,4 @@ main =
             [ Frontend.SignIn.page
             , Frontend.Home.page
             ]
-        -- Usually api is empty, unless you need webhooks or custom REST routes.
-        , api      = []
         }
