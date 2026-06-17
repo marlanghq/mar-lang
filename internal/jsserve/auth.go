@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -172,14 +173,37 @@ func writeAuthError(w http.ResponseWriter, status int, code string) {
 	writeJSON(w, status, map[string]string{"error": code})
 }
 
+// clientIP returns the address used as the per-IP rate-limit key. The
+// X-Forwarded-For header is honored only when the connecting peer is a
+// trusted proxy (isTrustedProxy); otherwise a caller could spoof the
+// header and rotate their own key, defeating every per-IP limiter. When
+// honored, the list is walked right-to-left to the first non-trusted
+// hop — the real client even if a malicious upstream prepended a forged
+// entry at the head.
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
+	peer := hostOnly(r.RemoteAddr)
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff == "" || !isTrustedProxy(net.ParseIP(peer)) {
+		return peer
 	}
-	return r.RemoteAddr
+	parts := strings.Split(xff, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		hop := strings.TrimSpace(parts[i])
+		ip := net.ParseIP(hop)
+		if ip == nil {
+			continue
+		}
+		if !isTrustedProxy(ip) {
+			return hop
+		}
+	}
+	// Every named hop is itself a trusted proxy (a fully-internal
+	// chain): the leftmost entry is the furthest-upstream client we can
+	// name.
+	if first := strings.TrimSpace(parts[0]); first != "" {
+		return first
+	}
+	return peer
 }
 
 // isHTTPS reports whether the original client connected over TLS.
@@ -197,9 +221,13 @@ func isHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	// Fly + most reverse proxies set this; case-insensitive header
-	// lookup is built into net/http.
-	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+	// X-Forwarded-Proto is honored only from a trusted proxy (same
+	// gating as clientIP); otherwise a direct plaintext caller could
+	// claim HTTPS and earn the Secure cookie flag. Fly and most reverse
+	// proxies set this header and sit in a private/loopback network, so
+	// the default trust policy covers them.
+	if isTrustedProxy(net.ParseIP(hostOnly(r.RemoteAddr))) &&
+		strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
 		return true
 	}
 	return false

@@ -337,8 +337,8 @@ type ServerConfig struct {
 	Host      string `json:"host,omitempty"`
 	PublicURL string `json:"publicUrl,omitempty"`
 
-	// MaxBodyBytes caps the size of incoming request bodies on /api/*
-	// and /services/* routes. Default 1 MiB. Bounded [1 KiB, 32 MiB].
+	// MaxBodyBytes caps the size of incoming request bodies on the
+	// service routes. Default 1 MiB. Bounded [1 KiB, 32 MiB].
 	// Zero means "use default" (consistent with the other bounded
 	// knobs); there's no opt-out — a missing cap is a DoS vector and
 	// the policy is "seguro por default" across the framework.
@@ -349,6 +349,24 @@ type ServerConfig struct {
 	// cap. /_auth/* and /_mar/admin/* have their own tighter caps in
 	// their handlers and aren't affected by this value.
 	MaxBodyBytes int64 `json:"maxBodyBytes,omitempty"`
+
+	// TrustedProxies controls when the X-Forwarded-For and
+	// X-Forwarded-Proto headers are believed, which decides the per-IP
+	// rate-limit key and the cookie Secure flag. Spoofable headers from
+	// an untrusted peer must not set them.
+	//
+	//   - omitted (nil): trust the headers only when the connecting peer
+	//     (RemoteAddr) is loopback or a private address (RFC1918 /
+	//     RFC4193) — covers reverse-proxy-on-host, sidecar, Docker
+	//     bridge, and private cloud networks.
+	//   - [] (present but empty): never trust the headers (paranoid mode,
+	//     for a listener exposed directly to the internet).
+	//   - [cidrs]: trust the headers only when RemoteAddr is in one of
+	//     the given CIDRs (replaces the private-range default).
+	//
+	// nil vs [] is distinguished at decode time, so the JSON shape
+	// carries intent.
+	TrustedProxies []string `json:"trustedProxies,omitempty"`
 }
 
 // ResolvedMaxBodyBytes returns the effective per-request body cap.
@@ -359,6 +377,17 @@ func (s *ServerConfig) ResolvedMaxBodyBytes() int64 {
 		return DefaultMaxBodyBytes
 	}
 	return s.MaxBodyBytes
+}
+
+// ResolvedTrustedProxies returns the configured trusted-proxy CIDRs.
+// nil (the nil receiver included) means "unset" — the runtime applies
+// its loopback + private-range default. A non-nil empty slice means
+// "trust nothing" and is preserved distinct from nil.
+func (s *ServerConfig) ResolvedTrustedProxies() []string {
+	if s == nil {
+		return nil
+	}
+	return s.TrustedProxies
 }
 
 type DatabaseConfig struct {

@@ -138,10 +138,11 @@ func TestDispatchBackend_AllowsUnderLimit(t *testing.T) {
 
 // TestIsHTTPS — the helper used to set the Secure cookie flag must
 // recognize both direct TLS connections and the X-Forwarded-Proto
-// header (the standard proxy hint). Without the header path, the
-// flag is always false in production deploys behind a TLS-
-// terminating proxy.
+// header (the standard proxy hint). The header is honored only from a
+// trusted proxy (see TestIsHTTPS_ForwardedProtoGatedByTrust); these
+// cases pin the header parsing itself with a trusted (private) peer.
 func TestIsHTTPS(t *testing.T) {
+	withTrustedProxies(t, nil) // default: private peer below is trusted
 	type tc struct {
 		name  string
 		setup func(*http.Request)
@@ -168,6 +169,7 @@ func TestIsHTTPS(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/x", nil)
+			req.RemoteAddr = "10.0.0.1:1234" // trusted (private) peer
 			c.setup(req)
 			if got := isHTTPS(req); got != c.want {
 				t.Errorf("got %v, want %v", got, c.want)

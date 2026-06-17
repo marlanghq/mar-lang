@@ -1131,6 +1131,7 @@ func runDev(path string, noOpen bool) int {
 		serverCfg = manifest.Server
 	}
 	jsserve.SetMaxBodyBytes(serverCfg.ResolvedMaxBodyBytes())
+	jsserve.SetTrustedProxies(serverCfg.ResolvedTrustedProxies())
 
 	// Auto-backup scheduler — periodic VACUUM INTO into a catalog
 	// directory alongside mar.db. No-op when the manifest disables

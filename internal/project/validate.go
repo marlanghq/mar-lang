@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"image"
 	_ "image/png" // register PNG decoder for icon validation
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -208,6 +209,14 @@ func validateServer(m *Manifest) error {
 			return fmt.Errorf(
 				"mar.json: server.maxBodyBytes must be between %d and %d (got %d)",
 				MinMaxBodyBytes, MaxMaxBodyBytes, m.Server.MaxBodyBytes,
+			)
+		}
+	}
+	for _, cidr := range m.Server.TrustedProxies {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf(
+				"mar.json: server.trustedProxies entry %q is not a valid CIDR (e.g. \"10.0.0.0/8\" or \"203.0.113.4/32\")",
+				cidr,
 			)
 		}
 	}

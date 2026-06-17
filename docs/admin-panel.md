@@ -700,6 +700,7 @@ Silent clamping prioritizes "the app boots no matter what" over "the user gets t
 | `rateLimit.requestsPerMinute`      | 600     | `1` … `100000` (≈1/min … ~1667 req/s)  | compile |
 | `rateLimit.burst`                  | 30      | `1` … `10000`                          | compile |
 | `server.maxBodyBytes`              | 1048576 (1 MiB) | `1024` (1 KiB) … `33554432` (32 MiB)   | compile |
+| `server.trustedProxies`            | loopback + private ranges | list of CIDRs (`[]` = trust none) | compile |
 | `ios.serverUrl`                    |,       | https:// URL (or http://localhost for QA) | compile |
 | `adminPanel.sessionDuration`       | 12 h    | `1 minute` … `7 days`                  | compile |
 | `system.sqlite.busyTimeoutMs`      | 5000    | `0` … `600000`                         | compile |

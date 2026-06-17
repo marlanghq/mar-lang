@@ -365,6 +365,7 @@ func runFromPath(path string) error {
 		serverCfg = manifest.Server
 	}
 	jsserve.SetMaxBodyBytes(serverCfg.ResolvedMaxBodyBytes())
+	jsserve.SetTrustedProxies(serverCfg.ResolvedTrustedProxies())
 
 	// Admin panel boot — schema + sync from mar.json["admins"]. Same
 	// DB the user-auth uses; the _mar_admin_* tables coexist with
