@@ -152,6 +152,37 @@ func TestIsProductionTarget(t *testing.T) {
 	}
 }
 
+// TestFlyDeployEvalSequence_NoDuplicateEntity guards the `mar fly deploy`
+// double-evaluation bug. The deploy runs main twice in one process —
+// Topology() to pick the Dockerfile shape, then Build() to compile — and
+// both go through loadAndRunForBuild. That helper must reset the global
+// entity registry before evaluating; without it, the second eval
+// re-registers every Entity.define and the build dies with
+// "Entity.define: name ... declared more than once in this build".
+// guestbook is a minimal App.fullstack with one entity ("entries") and
+// no production config, so it exercises the registry without secrets.
+func TestFlyDeployEvalSequence_NoDuplicateEntity(t *testing.T) {
+	t.Cleanup(runtime.ResetForReload)
+
+	dir, err := filepath.Abs(filepath.Join("..", "..", "examples", "guestbook"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Main.mar")); err != nil {
+		t.Skipf("guestbook fixture missing: %v", err)
+	}
+
+	// Eval #1 — the same call mar fly deploy makes to detect topology.
+	if _, err := Topology(dir); err != nil {
+		t.Fatalf("Topology (eval #1) failed: %v", err)
+	}
+	// Eval #2 — the compile step. Pre-fix this tripped the duplicate-
+	// entity guard because the registry still held eval #1's entities.
+	if err := Build(dir, t.TempDir(), ""); err != nil {
+		t.Fatalf("Build after Topology must not trip the duplicate-entity guard: %v", err)
+	}
+}
+
 // ---- helpers ----
 
 func writeFile(t *testing.T, path, content string) {

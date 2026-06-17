@@ -228,6 +228,14 @@ func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err erro
 		projectDir = filepath.Dir(entry)
 	}
 
+	// Clear per-load global runtime state (entity registry, Path enum
+	// types, etc.) before evaluating — exactly as `mar dev` and
+	// `mar migrate` do before their own loads. Without it, a caller
+	// that evaluates twice in one process trips a false "declared more
+	// than once" guard: `mar fly deploy` runs Topology (eval #1) then
+	// Build (eval #2), and the second re-registers every Entity.define.
+	runtime.ResetForReload()
+
 	// Same load + override pattern as `mar dev`, but the overrides
 	// capture into a build context instead of a live server.
 	bc = &buildCtx{}

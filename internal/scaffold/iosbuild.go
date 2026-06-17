@@ -263,6 +263,12 @@ func compileIOSProgram(entry string) ([]byte, error) {
 		}
 	}
 
+	// Clear per-load global runtime state before evaluating, mirroring
+	// Build / Topology and `mar dev`. Keeps a second in-process
+	// evaluation from tripping the "Entity.define declared more than
+	// once" guard.
+	runtime.ResetForReload()
+
 	bc := &buildCtx{}
 	rEnv, allMods, _, err := project.LoadIntoEnvWithModulesAndHook(mainFile,
 		func(env *runtime.Env, mods []*ast.Module) {
