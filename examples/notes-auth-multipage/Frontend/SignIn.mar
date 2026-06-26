@@ -30,12 +30,12 @@ type Msg
     | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
-    ( AskEmail "" Nothing, Effect.none )
+    ( AskEmail "" Nothing, Cmd.none )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         -- Typing clears any pending error — once the user edits the
@@ -44,13 +44,13 @@ update msg model =
         DraftChanged value ->
             case model of
                 AskEmail _ _ ->
-                    ( AskEmail value Nothing, Effect.none )
+                    ( AskEmail value Nothing, Cmd.none )
 
                 AskCode email _ _ ->
-                    ( AskCode email value Nothing, Effect.none )
+                    ( AskCode email value Nothing, Cmd.none )
 
                 Submitting _ ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         Submitted ->
             case model of
@@ -65,15 +65,15 @@ update msg model =
                     )
 
                 Submitting _ ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         CodeRequested (Ok Auth.CodeSent) ->
             case model of
                 Submitting email ->
-                    ( AskCode email "" Nothing, Effect.none )
+                    ( AskCode email "" Nothing, Cmd.none )
 
                 _ ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         -- The request's domain outcomes park their explanation on
         -- AskEmail so the user sees what went wrong and can retry
@@ -81,16 +81,16 @@ update msg model =
         -- case; the copy belongs to this screen.
         CodeRequested (Ok Auth.InvalidEmail) ->
             ( requestFailed "That doesn't look like a valid email address." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeRequested (Ok Auth.RateLimited) ->
             ( requestFailed "Too many attempts. Wait a moment before trying again." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeRequested (Err why) ->
-            ( requestFailed (Service.errorToString why) model, Effect.none )
+            ( requestFailed (Service.errorToString why) model, Cmd.none )
 
         CodeVerified (Ok (Auth.SignedIn _)) ->
             -- Login worked. Auth.completeSignIn returns the user to where
@@ -106,16 +106,16 @@ update msg model =
         -- deleting the (now-invalid) previous attempt.
         CodeVerified (Ok Auth.WrongCode) ->
             ( verifyFailed "That code didn't work. Check your email or request a new one." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeVerified (Ok Auth.TooManyAttempts) ->
             ( verifyFailed "Too many tries with this code. Request a new one." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeVerified (Err why) ->
-            ( verifyFailed (Service.errorToString why) model, Effect.none )
+            ( verifyFailed (Service.errorToString why) model, Cmd.none )
 
 
 -- requestFailed / verifyFailed place the failure copy on the step the

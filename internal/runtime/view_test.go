@@ -26,7 +26,7 @@ ent =
 func TestEffectForEach(t *testing.T) {
 	src := `module M exposing (..)
 xs = [1, 2, 3]
-go = Effect.forEach (\_ -> Effect.succeed ()) xs
+go = Task.forEach (\_ -> Task.succeed ()) xs
 `
 	got := runModule(t, src, "go")
 	// go is an Effect, just confirm the value exists.

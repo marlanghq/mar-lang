@@ -57,37 +57,42 @@ import UI exposing
 -- on the modal dialog. Nothing means no modal showing; Just task
 -- means the dialog is open and a Delete tap will remove that task.
 type alias Model =
-    { items            : Maybe (List Shared.Task)
-    , error            : Maybe String
-    , draft            : String
-    , busy             : Bool
-    , editing          : Bool
-    , confirmingDelete : Maybe Shared.Task
+    { items                   : Maybe (List Shared.TodoItem)
+    , error                   : Maybe String
+    , draft                   : String
+    , busy                    : Bool
+    , editing                 : Bool
+    , confirmingDelete        : Maybe Shared.TodoItem
+    , confirmingAccountDelete : Bool
     }
 
 
 type Msg
-    = TasksFetched (Result Service.Error (List Shared.Task))
+    = TasksFetched (Result Service.Error (List Shared.TodoItem))
     | DraftChanged String
     | AddClicked
     | TaskAdded (Result Service.Error Shared.AddTaskOutcome)
     | ToggleChanged Int Bool
-    | TaskUpdated Int Bool (Result Service.Error (Maybe Shared.Task))
+    | TaskUpdated Int Bool (Result Service.Error (Maybe Shared.TodoItem))
     | DeleteRowAt Int                          -- onDelete fires; opens confirm
     | DeleteConfirmed                          -- user tapped Delete on confirm
     | DeleteCancelled                          -- user tapped Cancel / backdrop / Esc
     | TaskDeleted (Result Service.Error ())
     | ResetAllClicked
-    | ResetDone (List Shared.Task) (Result Service.Error ())
+    | ResetDone (List Shared.TodoItem) (Result Service.Error ())
     | EditClicked
     | DoneEditingClicked
     | TaskMoved Int Int
     | TaskReordered (Result Service.Error ())
     | SignOutClicked
     | SignedOut (Result String ())
+    | DeleteAccountClicked                      -- opens the account-delete confirm
+    | DeleteAccountConfirmed                     -- user tapped Delete account
+    | DeleteAccountCancelled                     -- user backed out
+    | AccountDeleted (Result Service.Error ())
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init _ =
     ( { items = Nothing
       , error = Nothing
@@ -95,12 +100,13 @@ init _ =
       , busy = False
       , editing = False
       , confirmingDelete = Nothing
+      , confirmingAccountDelete = False
       }
     , Service.call Shared.listTasks () TasksFetched
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         TasksFetched (Ok items) ->
@@ -131,18 +137,18 @@ update _ msg model =
                 , error = Nothing
                 , editing = if startInEdit then True else model.editing
               }
-            , Effect.none
+            , Cmd.none
             )
 
         TasksFetched (Err why) ->
-            ( { model | error = Just (Service.errorToString why) }, Effect.none )
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
 
         DraftChanged value ->
-            ( { model | draft = value }, Effect.none )
+            ( { model | draft = value }, Cmd.none )
 
         AddClicked ->
             if model.draft == "" then
-                ( model, Effect.none )
+                ( model, Cmd.none )
             else
                 ( { model | busy = True }
                 , Service.call Shared.addTask { name = model.draft } TaskAdded
@@ -157,10 +163,10 @@ update _ msg model =
             -- AddClicked already no-ops on an empty draft, so reaching
             -- this means a whitespace-only name slipped past the local
             -- guard. The rule is a typed outcome; the copy is ours.
-            ( { model | busy = False, error = Just "A task needs a name." }, Effect.none )
+            ( { model | busy = False, error = Just "A task needs a name." }, Cmd.none )
 
         TaskAdded (Err why) ->
-            ( { model | busy = False, error = Just (Service.errorToString why) }, Effect.none )
+            ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
 
         ToggleChanged id newValue ->
             -- Optimistic local update: flip the toggle in the UI
@@ -179,7 +185,7 @@ update _ msg model =
             )
 
         TaskUpdated _ _ (Ok _) ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         TaskUpdated id attempted (Err why) ->
             -- Server rejected the toggle. Revert the optimistic flip
@@ -196,7 +202,7 @@ update _ msg model =
                 | items = Maybe.map (updateLocalDone id original) model.items
                 , error = Just (Service.errorToString why)
               }
-            , Effect.none
+            , Cmd.none
             )
 
         DeleteRowAt idx ->
@@ -210,14 +216,14 @@ update _ msg model =
                     case nth idx items of
                         Just task ->
                             ( { model | confirmingDelete = Just task }
-                            , Effect.none
+                            , Cmd.none
                             )
 
                         Nothing ->
-                            ( model, Effect.none )
+                            ( model, Cmd.none )
 
                 Nothing ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         DeleteConfirmed ->
             -- User tapped Delete on the modal. Optimistically
@@ -235,17 +241,17 @@ update _ msg model =
                     )
 
                 Nothing ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         DeleteCancelled ->
             -- User tapped Cancel / backdrop / Escape. Close the
             -- modal, no other state changes.
-            ( { model | confirmingDelete = Nothing }, Effect.none )
+            ( { model | confirmingDelete = Nothing }, Cmd.none )
 
         TaskDeleted (Ok ()) ->
             -- Server confirmed. The optimistic removal already
             -- happened, nothing else to do.
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         TaskDeleted (Err why) ->
             -- Server rejected. We already removed the row locally
@@ -271,10 +277,10 @@ update _ msg model =
                     )
 
                 Nothing ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         ResetDone _ (Ok _) ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         ResetDone snapshot (Err why) ->
             -- Restore the pre-reset state locally. The Maybe wrapping
@@ -284,7 +290,7 @@ update _ msg model =
                 | items = Just snapshot
                 , error = Just (Service.errorToString why)
               }
-            , Effect.none
+            , Cmd.none
             )
 
         TaskMoved from to ->
@@ -309,12 +315,12 @@ update _ msg model =
                     )
 
                 Nothing ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         TaskReordered (Ok ()) ->
             -- Server confirmed the reorder. No local state to change
             -- (we updated optimistically above).
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         TaskReordered (Err why) ->
             -- Persistence failed. We could roll back the optimistic
@@ -322,19 +328,19 @@ update _ msg model =
             -- show the error and let the user retry. Next listTasks
             -- (e.g. after adding a task) will reconcile from the
             -- server's view.
-            ( { model | error = Just (Service.errorToString why) }, Effect.none )
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
 
         EditClicked ->
             -- Entering edit mode starts clean — no row armed.
             ( { model | editing = True }
-            , Effect.none
+            , Cmd.none
             )
 
         DoneEditingClicked ->
             -- Leaving edit mode: clear draft + any armed delete (the
             -- Delete buttons won't even render once `editing = False`).
             ( { model | editing = False, draft = "", confirmingDelete = Nothing }
-            , Effect.none
+            , Cmd.none
             )
 
         SignOutClicked ->
@@ -348,10 +354,43 @@ update _ msg model =
             -- action.
             ( model, Auth.completeSignIn )
 
+        DeleteAccountClicked ->
+            -- Arm the account-deletion confirm. Clear any armed row
+            -- delete so only one modal is ever live at a time.
+            ( { model | confirmingAccountDelete = True, confirmingDelete = Nothing }
+            , Cmd.none
+            )
+
+        DeleteAccountCancelled ->
+            ( { model | confirmingAccountDelete = False }, Cmd.none )
+
+        DeleteAccountConfirmed ->
+            -- Commit: wipe the account + its tasks server-side, then
+            -- (on success) sign out. `busy` blocks a double-fire while
+            -- the request is in flight; we're navigating away on Ok so
+            -- it never needs resetting on the happy path.
+            ( { model | confirmingAccountDelete = False, busy = True }
+            , Service.call Shared.deleteAccount () AccountDeleted
+            )
+
+        AccountDeleted (Ok ()) ->
+            -- Account + data are gone. Drop the local session and land
+            -- on /sign-in — same logout path the Sign out button uses
+            -- (Auth.logout clears the cookie, SignedOut then navigates).
+            ( model, Auth.logout SignedOut )
+
+        AccountDeleted (Err why) ->
+            -- Nothing was signed out; surface the error and let the user
+            -- retry. (Deletion is best-effort idempotent server-side, so
+            -- a retry after a partial failure still converges.)
+            ( { model | busy = False, error = Just (Service.errorToString why) }
+            , Cmd.none
+            )
+
 
 -- Apply a toggle's new state to one task in the local list. Used
 -- by the optimistic-update path above.
-updateLocalDone : Int -> Bool -> List Shared.Task -> List Shared.Task
+updateLocalDone : Int -> Bool -> List Shared.TodoItem -> List Shared.TodoItem
 updateLocalDone id newValue items =
     List.map
         (\t -> if t.id == id then { t | done = newValue } else t)
@@ -379,6 +418,7 @@ view user model =
     navigationStack (navigationBarAttrs user model)
         [ list [] (sections model)
         , confirmDialog model
+        , accountConfirmDialog model
         ]
 
 
@@ -403,6 +443,26 @@ confirmDialog model =
 
         Nothing ->
             empty
+
+
+-- accountConfirmDialog is the second destructive modal: the account
+-- wipe. Same pattern as confirmDialog — `empty` when not armed, a
+-- `UI.confirm` (destructive = red confirm button) when it is. The
+-- update logic never arms both at once, so at most one modal is ever
+-- non-empty.
+accountConfirmDialog : Model -> View Msg
+accountConfirmDialog model =
+    if model.confirmingAccountDelete then
+        confirm
+            { title        = "Delete your account?"
+            , confirmLabel = "Delete account"
+            , destructive  = True
+            , onConfirm    = DeleteAccountConfirmed
+            , onCancel     = DeleteAccountCancelled
+            }
+
+    else
+        empty
 
 
 -- The top bar shows the title plus a mode-aware right-side action.
@@ -460,6 +520,7 @@ sections model =
                 , addSectionIfNeeded model items
                 , tasksSection model items
                 , footerSection model items
+                , accountSection
                 ]
 
 
@@ -485,7 +546,7 @@ errorSection model =
 -- if a user somehow lands in non-edit mode with no tasks (e.g. by
 -- tapping Done after deleting all rows), the input still renders
 -- so they can keep going without having to find Edit again.
-addSectionIfNeeded : Model -> List Shared.Task -> List (View Msg)
+addSectionIfNeeded : Model -> List Shared.TodoItem -> List (View Msg)
 addSectionIfNeeded model items =
     let
         shouldShow = model.editing || List.isEmpty items
@@ -521,7 +582,7 @@ addSectionIfNeeded model items =
 -- their first row. In default mode an empty list hides the section
 -- entirely (there's nothing to mark done and no useful counter to
 -- show).
-tasksSection : Model -> List Shared.Task -> List (View Msg)
+tasksSection : Model -> List Shared.TodoItem -> List (View Msg)
 tasksSection model items =
     if List.isEmpty items then
         if model.editing then
@@ -565,7 +626,7 @@ tasksSection model items =
         ]
 
 
-renderTaskRow : Model -> Shared.Task -> KeyedView Msg
+renderTaskRow : Model -> Shared.TodoItem -> KeyedView Msg
 renderTaskRow model task =
     -- `keyed` wraps the inner view with a stable identity (task.id)
     -- so the reconciler can track this row across reorders / deletes
@@ -594,7 +655,7 @@ renderTaskRow model task =
 -- in default mode. In edit mode there's no footer affordance; the
 -- orientation message lives at the top via editIntroSection and the
 -- exit is the "Done" button in the navigation bar.
-footerSection : Model -> List Shared.Task -> List (View Msg)
+footerSection : Model -> List Shared.TodoItem -> List (View Msg)
 footerSection model items =
     if List.isEmpty items then
         []
@@ -612,6 +673,23 @@ resetActionSection : List (View Msg)
 resetActionSection =
     [ section [ footer "Fresh start for the next day." ]
         [ button [] ResetAllClicked "Clear ticks" ]
+    ]
+
+
+-- accountSection — the in-app account-deletion affordance. Rendered
+-- unconditionally once the list has loaded (independent of edit mode
+-- or task count) so it's reliably findable, which the App Store
+-- requires: any app offering account creation must let the user
+-- delete their account from inside the app. The button only ARMS the
+-- confirmation dialog; nothing is deleted without an explicit second
+-- tap on the red "Delete account" (see accountConfirmDialog).
+accountSection : List (View Msg)
+accountSection =
+    [ section
+        [ header "Account"
+        , footer "Permanently deletes your account and all your tasks. This can't be undone."
+        ]
+        [ button [] DeleteAccountClicked "Delete account" ]
     ]
 
 

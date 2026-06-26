@@ -36,18 +36,18 @@ type Msg
     | CodeRequested (Result Service.Error Auth.RequestOutcome)
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
-    ( { draft = "", error = Nothing, busy = False }, Effect.none )
+    ( { draft = "", error = Nothing, busy = False }, Cmd.none )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         -- Typing clears the previous error — once the user edits the
         -- input, the old failure no longer reflects what's there.
         DraftChanged value ->
-            ( { model | draft = value, error = Nothing }, Effect.none )
+            ( { model | draft = value, error = Nothing }, Cmd.none )
 
         Submitted ->
             -- Guard against re-entry: even with the disabled button,
@@ -56,7 +56,7 @@ update msg model =
             -- duplicate so we don't issue two requestCode calls and
             -- get rate-limited on our own attempt.
             if model.busy then
-                ( model, Effect.none )
+                ( model, Cmd.none )
             else
                 ( { model | busy = True, error = Nothing }
                 , Auth.requestCode { email = model.draft } CodeRequested
@@ -73,17 +73,17 @@ update msg model =
 
         CodeRequested (Ok Auth.InvalidEmail) ->
             ( { model | busy = False, error = Just "That doesn't look like a valid email address." }
-            , Effect.none
+            , Cmd.none
             )
 
         CodeRequested (Ok Auth.RateLimited) ->
             ( { model | busy = False, error = Just "Too many attempts. Wait a moment before trying again." }
-            , Effect.none
+            , Cmd.none
             )
 
         CodeRequested (Err why) ->
             ( { model | busy = False, error = Just (Service.errorToString why) }
-            , Effect.none
+            , Cmd.none
             )
 
 

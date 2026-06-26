@@ -52,12 +52,12 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : (Stage, Effect Msg)
+init : (Stage, Cmd Msg)
 init =
     ( Loading, Auth.me MeResolved )
 
 
-update : Msg -> Stage -> (Stage, Effect Msg)
+update : Msg -> Stage -> (Stage, Cmd Msg)
 update msg stage =
     case msg of
         MeResolved (Ok (Just user)) ->
@@ -66,10 +66,10 @@ update msg stage =
             )
 
         MeResolved _ ->
-            ( LoggedOut (AskEmail ""), Effect.none )
+            ( LoggedOut (AskEmail ""), Cmd.none )
 
         EmailDraftChanged value ->
-            ( LoggedOut (AskEmail value), Effect.none )
+            ( LoggedOut (AskEmail value), Cmd.none )
 
         RequestCodeClicked ->
             case stage of
@@ -79,15 +79,15 @@ update msg stage =
                     )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         CodeRequested (Ok Auth.CodeSent) ->
             case stage of
                 LoggedOut (Submitting email) ->
-                    ( LoggedOut (AskCode email ""), Effect.none )
+                    ( LoggedOut (AskCode email ""), Cmd.none )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         CodeRequested (Ok _) ->
             -- InvalidEmail / RateLimited. This minimal example shows no
@@ -95,26 +95,26 @@ update msg stage =
             -- daily-checklist for the per-outcome treatment.
             case stage of
                 LoggedOut (Submitting email) ->
-                    ( LoggedOut (AskEmail email), Effect.none )
+                    ( LoggedOut (AskEmail email), Cmd.none )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         CodeRequested (Err _) ->
             case stage of
                 LoggedOut (Submitting email) ->
-                    ( LoggedOut (AskEmail email), Effect.none )
+                    ( LoggedOut (AskEmail email), Cmd.none )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         CodeDraftChanged value ->
             case stage of
                 LoggedOut (AskCode email _) ->
-                    ( LoggedOut (AskCode email value), Effect.none )
+                    ( LoggedOut (AskCode email value), Cmd.none )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         VerifyCodeClicked ->
             case stage of
@@ -124,7 +124,7 @@ update msg stage =
                     )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         CodeVerified (Ok (Auth.SignedIn user)) ->
             ( LoggedIn user NotesLoading ""
@@ -135,42 +135,42 @@ update msg stage =
             -- WrongCode / TooManyAttempts: back to the code prompt.
             case stage of
                 LoggedOut (Submitting email) ->
-                    ( LoggedOut (AskCode email ""), Effect.none )
+                    ( LoggedOut (AskCode email ""), Cmd.none )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         CodeVerified (Err _) ->
             case stage of
                 LoggedOut (Submitting email) ->
-                    ( LoggedOut (AskCode email ""), Effect.none )
+                    ( LoggedOut (AskCode email ""), Cmd.none )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         NotesFetched (Ok loaded) ->
             case stage of
                 LoggedIn user _ draft ->
-                    ( LoggedIn user (NotesLoaded loaded) draft, Effect.none )
+                    ( LoggedIn user (NotesLoaded loaded) draft, Cmd.none )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         NotesFetched (Err why) ->
             case stage of
                 LoggedIn user _ draft ->
-                    ( LoggedIn user (NotesFailed (Service.errorToString why)) draft, Effect.none )
+                    ( LoggedIn user (NotesFailed (Service.errorToString why)) draft, Cmd.none )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         NoteDraftChanged value ->
             case stage of
                 LoggedIn user notes _ ->
-                    ( LoggedIn user notes value, Effect.none )
+                    ( LoggedIn user notes value, Cmd.none )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         AddNoteClicked ->
             case stage of
@@ -182,19 +182,19 @@ update msg stage =
                     )
 
                 _ ->
-                    ( stage, Effect.none )
+                    ( stage, Cmd.none )
 
         NoteCreated (Ok _) ->
             ( stage, Service.call Shared.listMine () NotesFetched )
 
         NoteCreated (Err _) ->
-            ( stage, Effect.none )
+            ( stage, Cmd.none )
 
         SignOutClicked ->
             ( stage, Auth.logout SignedOut )
 
         SignedOut _ ->
-            ( LoggedOut (AskEmail ""), Effect.none )
+            ( LoggedOut (AskEmail ""), Cmd.none )
 
 
 renderNote : Shared.Note -> View Msg

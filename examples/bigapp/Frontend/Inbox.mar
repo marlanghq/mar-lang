@@ -35,21 +35,21 @@ type Msg
     | SeenAcknowledged (Result Service.Error ())
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init _ =
     ( { items = Nothing, error = Nothing, onlyUnseen = False }
     , Service.call Shared.listMyMentions { onlyUnseen = False } MentionsFetched
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         MentionsFetched (Ok items) ->
-            ( { model | items = Just items }, Effect.none )
+            ( { model | items = Just items }, Cmd.none )
 
         MentionsFetched (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
         ToggleFilterClicked ->
             let
@@ -72,7 +72,7 @@ update _ msg model =
             -- Fire-and-forget; ignore success or failure. (Worst
             -- case: a marked-seen mention shows as unread on next
             -- visit; the user re-clicks, mark fires again. Idempotent.)
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
 
 -- ====================================================================

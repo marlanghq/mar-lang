@@ -53,7 +53,7 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init user =
     if user.handle == "" then
         ( { timeline = Loading, draft = "", posting = False }
@@ -65,17 +65,17 @@ init user =
         )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         TimelineFetched (Ok items) ->
-            ( { model | timeline = Loaded items }, Effect.none )
+            ( { model | timeline = Loaded items }, Cmd.none )
 
         TimelineFetched (Err why) ->
-            ( { model | timeline = Failed (Service.errorToString why) }, Effect.none )
+            ( { model | timeline = Failed (Service.errorToString why) }, Cmd.none )
 
         DraftChanged value ->
-            ( { model | draft = value }, Effect.none )
+            ( { model | draft = value }, Cmd.none )
 
         -- Stale-while-revalidate on Post / Delete: keep the
         -- current Loaded list visible during the post-then-fetch
@@ -95,17 +95,17 @@ update _ msg model =
             -- The compose button guards locally; reaching this means a
             -- whitespace-only body slipped past. The copy is the view's.
             ( { model | posting = False, timeline = Failed "A tweet needs some text." }
-            , Effect.none
+            , Cmd.none
             )
 
         TweetPosted (Ok Shared.BodyTooLong) ->
             ( { model | posting = False, timeline = Failed "Tweets are at most 280 characters." }
-            , Effect.none
+            , Cmd.none
             )
 
         TweetPosted (Err why) ->
             ( { model | posting = False, timeline = Failed (Service.errorToString why) }
-            , Effect.none
+            , Cmd.none
             )
 
         DeleteClicked tweetId ->
@@ -121,7 +121,7 @@ update _ msg model =
             -- because the UI only offers Delete on `isMine` rows
             -- anyway; if a request reaches here with mismatched
             -- ownership it's already suspicious.
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         SignOutClicked ->
             ( model, Auth.logout SignedOut )

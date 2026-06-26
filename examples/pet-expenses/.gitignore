@@ -1,0 +1,8 @@
+.mar/
+.env
+*.db
+*.db-shm
+*.db-wal
+*.db.lock
+dist/
+deploy/

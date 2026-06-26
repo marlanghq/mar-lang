@@ -262,7 +262,7 @@ func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err erro
 	}
 	eff, ok := mainVal.(runtime.VEffect)
 	if !ok {
-		return "", nil, fmt.Errorf("main is not an Effect (got %T)", mainVal)
+		return "", nil, fmt.Errorf("main is not a Cmd (got %T)", mainVal)
 	}
 	if _, err := eff.Run(); err != nil {
 		return "", nil, err

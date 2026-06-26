@@ -34,16 +34,16 @@ type Msg
     | ClearAll
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
-    ({ nextId = 1, items = [], draft = "" }, Effect.none)
+    ({ nextId = 1, items = [], draft = "" }, Cmd.none)
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         DraftChanged value ->
-            ({ model | draft = value }, Effect.none)
+            ({ model | draft = value }, Cmd.none)
 
         AddTodo ->
             ( { model
@@ -51,16 +51,16 @@ update msg model =
                 , items = model.items ++ [ { id = model.nextId, body = model.draft, done = False } ]
                 , draft = ""
               }
-            , Effect.none
+            , Cmd.none
             )
 
         ToggleAll ->
             ( { model | items = List.map (\t -> { id = t.id, body = t.body, done = True }) model.items }
-            , Effect.none
+            , Cmd.none
             )
 
         ClearAll ->
-            ({ model | items = [] }, Effect.none)
+            ({ model | items = [] }, Cmd.none)
 
 
 renderTodo : Todo -> View Msg
@@ -102,6 +102,6 @@ page =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.frontend [ page ]

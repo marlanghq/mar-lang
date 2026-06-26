@@ -1,0 +1,511 @@
+module Frontend.Expenses exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , list, section, keyedList, keyed, header
+    , hstack, vstack, spacer
+    , text, subtitle, textField, button, picker, datePicker, errorText
+    , numeric, onDelete, confirm, empty, submit, disabled
+    )
+
+
+-- Home screen: the expense feed. This is what you open the app for, so
+-- it leads with the running total + a per-category breakdown, then the
+-- list of expenses newest-first.
+--
+-- An expense is for ALL your pets by default (food, litter) — the pet
+-- picker defaults to "All pets" and you only pick a specific pet for a
+-- one-off (a vet visit). Pets themselves are managed on a separate
+-- screen, reached via "Pets" in the top bar; account actions live under
+-- "Settings".
+--
+-- Deleting an expense is the native list gesture (swipe on iOS,
+-- hover-reveal on web), so no Delete button clutters each row.
+
+
+type alias Model =
+    { expenses          : Maybe (List Shared.Expense)
+    , pets              : List Shared.Pet
+    , error             : Maybe String
+    , adding            : Bool
+    , draftCategory     : String
+    , draftAmount       : String
+    , draftNote         : String
+    , draftPetId        : Int
+    , draftDate         : Maybe Time
+    , busy              : Bool
+    , confirmingExpense : Maybe Shared.Expense
+    }
+
+
+type Msg
+    = ExpensesFetched (Result Service.Error (List Shared.Expense))
+    | PetsFetched (Result Service.Error (List Shared.Pet))
+    | NewExpenseClicked
+    | CancelAdd
+    | CategoryPicked String
+    | AmountChanged String
+    | NoteChanged String
+    | PetPicked Int
+    | DatePicked Time
+    | SubmitExpense
+    | ExpenseSubmitted (Result Service.Error Shared.AddExpenseOutcome)
+    | DeleteExpenseRowAt Int
+    | DeleteExpenseConfirmed
+    | DeleteExpenseCancelled
+    | ExpenseDeleted (Result Service.Error ())
+    | OpenPets
+    | OpenSettings
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { expenses = Nothing
+      , pets = []
+      , error = Nothing
+      , adding = False
+      , draftCategory = "Food"
+      , draftAmount = ""
+      , draftNote = ""
+      , draftPetId = Shared.allPetsId
+      , draftDate = Nothing
+      , busy = False
+      , confirmingExpense = Nothing
+      }
+    , Cmd.batch
+        [ Service.call Shared.listExpenses () ExpensesFetched
+        , Service.call Shared.listPets () PetsFetched
+        , Cmd.perform DatePicked Time.now
+        ]
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        ExpensesFetched (Ok items) ->
+            ( { model | expenses = Just items, error = Nothing }, Cmd.none )
+
+        ExpensesFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        PetsFetched (Ok pets) ->
+            ( { model | pets = pets }, Cmd.none )
+
+        PetsFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        NewExpenseClicked ->
+            -- Refetch when the form opens. Pets (and expenses) may have
+            -- changed on the Pets screen since this page mounted: Mar
+            -- keeps a pushed-under page's model and has no on-appear
+            -- hook, so the cached pet list could be stale (a pet you
+            -- deleted would otherwise still show in the picker). Reset
+            -- the pet choice to "All pets" too, so we never point at a
+            -- pet that was just removed.
+            ( { model | adding = True, draftAmount = "", draftNote = "", draftPetId = Shared.allPetsId, draftDate = Nothing, error = Nothing }
+            , Cmd.batch
+                [ Service.call Shared.listPets () PetsFetched
+                , Service.call Shared.listExpenses () ExpensesFetched
+                , Cmd.perform DatePicked Time.now
+                ]
+            )
+
+        CancelAdd ->
+            ( { model | adding = False, draftAmount = "", draftNote = "", error = Nothing }, Cmd.none )
+
+        CategoryPicked category ->
+            ( { model | draftCategory = category }, Cmd.none )
+
+        AmountChanged value ->
+            ( { model | draftAmount = value, error = Nothing }, Cmd.none )
+
+        NoteChanged value ->
+            ( { model | draftNote = value }, Cmd.none )
+
+        PetPicked petId ->
+            ( { model | draftPetId = petId }, Cmd.none )
+
+        DatePicked when ->
+            ( { model | draftDate = Just when }, Cmd.none )
+
+        SubmitExpense ->
+            -- Whole numbers only (no cents in this example); the backend
+            -- re-checks > 0.
+            if model.busy then
+                ( model, Cmd.none )
+            else
+                case String.toInt (String.trim model.draftAmount) of
+                    Just amount ->
+                        if amount > 0 then
+                            ( { model | busy = True, error = Nothing }
+                            , Service.call Shared.addExpense
+                                { petId = model.draftPetId
+                                , category = model.draftCategory
+                                , amount = amount
+                                , note = String.trim model.draftNote
+                                , spentAt = model.draftDate
+                                }
+                                ExpenseSubmitted
+                            )
+                        else
+                            ( { model | error = Just "Amount must be greater than zero." }, Cmd.none )
+
+                    Nothing ->
+                        ( { model | error = Just "Enter the amount as a whole number." }, Cmd.none )
+
+        ExpenseSubmitted (Ok (Shared.ExpenseAdded _)) ->
+            ( { model | busy = False, adding = False, draftAmount = "", draftNote = "", draftDate = Nothing }
+            , Service.call Shared.listExpenses () ExpensesFetched
+            )
+
+        ExpenseSubmitted (Ok Shared.AmountNotPositive) ->
+            ( { model | busy = False, error = Just "Amount must be greater than zero." }, Cmd.none )
+
+        ExpenseSubmitted (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        DeleteExpenseRowAt idx ->
+            case nth idx (currentExpenses model) of
+                Just expense ->
+                    ( { model | confirmingExpense = Just expense }, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        DeleteExpenseCancelled ->
+            ( { model | confirmingExpense = Nothing }, Cmd.none )
+
+        DeleteExpenseConfirmed ->
+            case model.confirmingExpense of
+                Just expense ->
+                    ( { model
+                        | confirmingExpense = Nothing
+                        , expenses = Maybe.map (List.filter (\e -> e.id /= expense.id)) model.expenses
+                      }
+                    , Service.call Shared.deleteExpense { id = expense.id } ExpenseDeleted
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ExpenseDeleted (Ok ()) ->
+            ( model, Cmd.none )
+
+        ExpenseDeleted (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }
+            , Service.call Shared.listExpenses () ExpensesFetched
+            )
+
+        OpenPets ->
+            ( model, Nav.pushTo Frontend.Routes.pets {} )
+
+        OpenSettings ->
+            ( model, Nav.pushTo Frontend.Routes.settings {} )
+
+
+currentExpenses : Model -> List Shared.Expense
+currentExpenses model =
+    Maybe.withDefault [] model.expenses
+
+
+nth : Int -> List a -> Maybe a
+nth idx xs =
+    case xs of
+        [] ->
+            Nothing
+
+        x :: rest ->
+            if idx <= 0 then Just x else nth (idx - 1) rest
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    navigationStack
+        [ navigationTitle "Expenses"
+        , topBarTrailing
+            (hstack []
+                [ button [] OpenPets "Pets"
+                , button [] OpenSettings "Settings"
+                ]
+            )
+        ]
+        [ list [] (sections model)
+        , expenseConfirmDialog model
+        ]
+
+
+sections : Model -> List (View Msg)
+sections model =
+    case model.expenses of
+        Nothing ->
+            [ section [] [ text [] "Loading…" ] ]
+
+        Just items ->
+            List.concat
+                [ errorSection model
+                , addBlock model
+                , summarySection items
+                , byMonthSection items
+                , expensesSection model items
+                ]
+
+
+errorSection : Model -> List (View Msg)
+errorSection model =
+    case model.error of
+        Just why ->
+            [ section [ header "Something went wrong" ] [ errorText why ] ]
+
+        Nothing ->
+            []
+
+
+-- datePicker is pure — it shows exactly the Time it's given. The model
+-- seeds "today" with `Cmd.perform DatePicked Time.now`; for the brief
+-- moment before that arrives (draftDate = Nothing) the field is empty.
+dateField : Model -> View Msg
+dateField model =
+    case model.draftDate of
+        Just d ->
+            datePicker [] d DatePicked
+
+        Nothing ->
+            empty
+
+
+addBlock : Model -> List (View Msg)
+addBlock model =
+    if model.adding then
+        [ section [ header "New expense" ]
+            [ picker [] model.draftCategory Shared.categories (\c -> c) CategoryPicked
+            , picker [] model.draftPetId (petOptions model.pets) (\petId -> Shared.petLabel petId model.pets) PetPicked
+            , dateField model
+            , textField [ numeric, submit SubmitExpense, disabled model.busy ]
+                "Amount (whole number)" model.draftAmount AmountChanged
+            , textField [ submit SubmitExpense, disabled model.busy ]
+                "Note (optional)" model.draftNote NoteChanged
+            , hstack []
+                [ button [ disabled model.busy ] SubmitExpense
+                    (if model.busy then "Saving…" else "Save")
+                , spacer
+                , button [] CancelAdd "Cancel"
+                ]
+            ]
+        ]
+    else
+        [ section [] [ button [] NewExpenseClicked "New expense" ] ]
+
+
+-- Pet picker choices: "All pets" first, then each pet (by id). Labels
+-- resolve through Shared.petLabel.
+petOptions : List Shared.Pet -> List Int
+petOptions pets =
+    Shared.allPetsId :: List.map (\p -> p.id) pets
+
+
+summarySection : List Shared.Expense -> List (View Msg)
+summarySection items =
+    if List.isEmpty items then
+        []
+    else
+        [ section [ header "Summary" ]
+            (hstack []
+                [ text [] "Total"
+                , spacer
+                , text [] (Shared.formatAmount (totalOf items))
+                ]
+                :: List.map categoryRow (breakdown items)
+            )
+        ]
+
+
+categoryRow : Shared.CategoryTotal -> View Msg
+categoryRow ct =
+    hstack []
+        [ subtitle ct.category
+        , spacer
+        , subtitle (Shared.formatAmount ct.total)
+        ]
+
+
+expensesSection : Model -> List Shared.Expense -> List (View Msg)
+expensesSection model items =
+    if List.isEmpty items then
+        [ section [ header "Expenses" ] [ subtitle "No expenses yet. Tap \"New expense\" to log one." ] ]
+    else
+        -- onDelete wired without an edit mode: web hover-reveal + iOS
+        -- swipe-to-delete, both routed through a confirm.
+        [ keyedList
+            [ header "Expenses"
+            , onDelete False DeleteExpenseRowAt
+            ]
+            (List.map (expenseRow model.pets) items)
+        ]
+
+
+expenseRow : List Shared.Pet -> Shared.Expense -> KeyedView Msg
+expenseRow pets expense =
+    keyed (String.fromInt expense.id)
+        (hstack []
+            [ vstack []
+                [ text [] expense.category
+                , subtitle (rowSubtitle pets expense)
+                ]
+            , spacer
+            , text [] (Shared.formatAmount expense.amount)
+            ]
+        )
+
+
+-- Date first (that's what the user asked to see), then the pet — but
+-- only when it's a specific pet, since "All pets" is the default and
+-- would just be noise on every row — then the note if there is one.
+rowSubtitle : List Shared.Pet -> Shared.Expense -> String
+rowSubtitle pets expense =
+    joinDot
+        (List.concat
+            [ [ Shared.formatDate expense.spentAt ]
+            , if expense.petId == Shared.allPetsId then [] else [ Shared.petLabel expense.petId pets ]
+            , if expense.note == "" then [] else [ expense.note ]
+            ]
+        )
+
+
+joinDot : List String -> String
+joinDot parts =
+    case parts of
+        [] ->
+            ""
+
+        x :: rest ->
+            if List.isEmpty rest then
+                x
+            else
+                x ++ " · " ++ joinDot rest
+
+
+-- Per-category totals, dropping categories with no spend. Computed on
+-- the client by folding the known `Shared.categories` over the expense
+-- list — no extra service needed.
+breakdown : List Shared.Expense -> List Shared.CategoryTotal
+breakdown items =
+    List.filter (\ct -> ct.total > 0)
+        (List.map
+            (\category -> { category = category, total = sumCategory category items })
+            Shared.categories
+        )
+
+
+sumCategory : String -> List Shared.Expense -> Int
+sumCategory category items =
+    List.sum
+        (List.map (\e -> e.amount)
+            (List.filter (\e -> e.category == category) items)
+        )
+
+
+totalOf : List Shared.Expense -> Int
+totalOf items =
+    List.sum (List.map (\e -> e.amount) items)
+
+
+-- Per-month report: each month the user spent in, newest first, with
+-- that month's subtotal. Pure aggregation over `spentAt` — no wall
+-- clock — and it leaves the deletable feed below untouched.
+byMonthSection : List Shared.Expense -> List (View Msg)
+byMonthSection items =
+    if List.isEmpty items then
+        []
+    else
+        [ section [ header "By month" ]
+            (List.map monthRow (byMonth items))
+        ]
+
+
+monthRow : Shared.MonthTotal -> View Msg
+monthRow mt =
+    hstack []
+        [ subtitle mt.label
+        , spacer
+        , subtitle (Shared.formatAmount mt.total)
+        ]
+
+
+byMonth : List Shared.Expense -> List Shared.MonthTotal
+byMonth items =
+    List.map
+        (\key -> { key = key, label = monthLabel key items, total = monthTotal key items })
+        (distinctMonths items)
+
+
+monthKeyOf : Shared.Expense -> Int
+monthKeyOf e =
+    Time.year e.spentAt * 100 + Time.month e.spentAt
+
+
+-- Distinct month keys in first-seen order. `items` arrives newest-first
+-- (the backend sorts it), so that order is already newest-month-first.
+distinctMonths : List Shared.Expense -> List Int
+distinctMonths items =
+    -- Mar's List.foldl is (b -> a -> b) -> b -> List a -> b: accumulator
+    -- first, element second.
+    List.foldl
+        (\seen e ->
+            if List.member (monthKeyOf e) seen then seen else seen ++ [ monthKeyOf e ]
+        )
+        []
+        items
+
+
+monthTotal : Int -> List Shared.Expense -> Int
+monthTotal key items =
+    List.sum
+        (List.map (\e -> e.amount)
+            (List.filter (\e -> monthKeyOf e == key) items)
+        )
+
+
+monthLabel : Int -> List Shared.Expense -> String
+monthLabel key items =
+    case List.head (List.filter (\e -> monthKeyOf e == key) items) of
+        Just e ->
+            Shared.formatMonth e.spentAt
+
+        Nothing ->
+            "—"
+
+
+expenseConfirmDialog : Model -> View Msg
+expenseConfirmDialog model =
+    case model.confirmingExpense of
+        Just expense ->
+            confirm
+                { title        = "Delete this " ++ expense.category ++ " expense?"
+                , confirmLabel = "Delete"
+                , destructive  = True
+                , onConfirm    = DeleteExpenseConfirmed
+                , onCancel     = DeleteExpenseCancelled
+                }
+
+        Nothing ->
+            empty
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/"
+        , title  = "Pet Expenses"
+        , init   = init
+        , update = update
+        , view   = view
+        }

@@ -1,0 +1,108 @@
+module Frontend.SignIn exposing (page)
+
+
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, text, textField, button, errorText
+    , email, submit, empty, disabled
+    , width, chars
+    )
+
+
+-- Email-entry half of the sign-in flow. When the server accepts the
+-- email and dispatches a code, we push to /sign-in/verify/{email} —
+-- a separate page (Frontend.VerifyCode) for code entry. Splitting the
+-- flow across two pages buys the navigation-stack back button for
+-- free: a mistyped email is one Back tap away from a clean retry.
+
+
+type alias Model =
+    { draft : String
+    , error : Maybe String
+    , busy  : Bool
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { draft = "", error = Nothing, busy = False }, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        DraftChanged value ->
+            ( { model | draft = value, error = Nothing }, Cmd.none )
+
+        Submitted ->
+            if model.busy then
+                ( model, Cmd.none )
+            else
+                ( { model | busy = True, error = Nothing }
+                , Auth.requestCode { email = model.draft } CodeRequested
+                )
+
+        CodeRequested (Ok Auth.CodeSent) ->
+            ( { model | busy = False }
+            , Nav.pushTo Frontend.Routes.verifyCode { email = model.draft }
+            )
+
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( { model | busy = False, error = Just "That doesn't look like a valid email address." }
+            , Cmd.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( { model | busy = False, error = Just "Too many attempts. Wait a moment before trying again." }
+            , Cmd.none
+            )
+
+        CodeRequested (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }
+            , Cmd.none
+            )
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Sign in" ]
+        [ form
+            [ section []
+                [ text [] "Track what you spend on your pets. Enter your email and we'll send you a one-time code."
+                , textField
+                    [ email, submit Submitted, width (chars 30), disabled model.busy ]
+                    "Email" model.draft DraftChanged
+                , errorView model.error
+                ]
+            , section []
+                [ button [ disabled model.busy ] Submitted "Send me a code" ]
+            ]
+        ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            errorText msg
+
+
+page : Page
+page =
+    Page.create
+        { path   = "/sign-in"
+        , title  = "Sign in"
+        , init   = init
+        , update = update
+        , view   = view
+        }

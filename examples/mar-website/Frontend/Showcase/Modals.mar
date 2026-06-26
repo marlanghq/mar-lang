@@ -48,20 +48,20 @@ type Msg
     | ConfirmNo
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
     ( { showSheet = False
       , confirmingItem = Nothing
       }
-    , Effect.none
+    , Cmd.none
     )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         OpenSheet ->
-            ( { model | showSheet = True }, Effect.none )
+            ( { model | showSheet = True }, Cmd.none )
 
         CloseSheet ->
             -- Same Msg dispatched by:
@@ -69,18 +69,18 @@ update msg model =
             --   * the sheet's onDismiss (backdrop click, browser
             --     back, iOS swipe-down)
             -- Both paths funnel here so dismissal is uniform.
-            ( { model | showSheet = False }, Effect.none )
+            ( { model | showSheet = False }, Cmd.none )
 
         OpenConfirmFor item ->
-            ( { model | confirmingItem = Just item }, Effect.none )
+            ( { model | confirmingItem = Just item }, Cmd.none )
 
         ConfirmYes ->
             -- A real app performs the delete here (Service.call, then
             -- update the model). The demo just closes the dialog.
-            ( { model | confirmingItem = Nothing }, Effect.none )
+            ( { model | confirmingItem = Nothing }, Cmd.none )
 
         ConfirmNo ->
-            ( { model | confirmingItem = Nothing }, Effect.none )
+            ( { model | confirmingItem = Nothing }, Cmd.none )
 
 
 -- ====================================================================

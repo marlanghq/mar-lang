@@ -63,22 +63,22 @@ type Msg
     | FlavorChanged String
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
     ( { priority = Medium
       , size     = 3
       , flavor   = "Vanilla"
       }
-    , Effect.none
+    , Cmd.none
     )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        PriorityChanged p -> ( { model | priority = p }, Effect.none )
-        SizeChanged n     -> ( { model | size = n },     Effect.none )
-        FlavorChanged f   -> ( { model | flavor = f },   Effect.none )
+        PriorityChanged p -> ( { model | priority = p }, Cmd.none )
+        SizeChanged n     -> ( { model | size = n },     Cmd.none )
+        FlavorChanged f   -> ( { model | flavor = f },   Cmd.none )
 
 
 -- Labels for the Int picker. List.range gives us the options; this

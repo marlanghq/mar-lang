@@ -51,19 +51,19 @@ reactions =
 -- HANDLERS
 -- ====================================================================
 
-listForIssue : Shared.ListComments -> Shared.User -> Effect (List Shared.CommentView)
+listForIssue : Shared.ListComments -> Shared.User -> Task (List Shared.CommentView)
 listForIssue input user =
     Repo.findBy comments { issueId = input.issueId }
-        |> Effect.andThen
+        |> Task.andThen
             (\raw ->
-                Effect.sequence (List.map (buildCommentView user.id) raw)
+                Task.sequence (List.map (buildCommentView user.id) raw)
             )
 
 
-create : Shared.NewComment -> Shared.User -> Effect Shared.Comment
+create : Shared.NewComment -> Shared.User -> Task Shared.Comment
 create input user =
     Time.now
-        |> Effect.andThen
+        |> Task.andThen
             (\now ->
                 Repo.create comments
                     { issueId   = input.issueId
@@ -71,7 +71,7 @@ create input user =
                     , body      = input.body
                     , createdAt = now
                     }
-                    |> Effect.andThen
+                    |> Task.andThen
                         (\comment ->
                             -- Two side effects after the primary
                             -- write: parse + store @-mentions for the
@@ -84,29 +84,29 @@ create input user =
                             -- error out. That's the best-effort
                             -- contract documented on the emit helpers.
                             Backend.Mentions.parseAndStoreMentions comment
-                                |> Effect.andThen
+                                |> Task.andThen
                                     (\_ ->
                                         Backend.Activities.emitCommentCreated user comment
                                     )
-                                |> Effect.map (\_ -> comment)
+                                |> Task.map (\_ -> comment)
                         )
             )
 
 
-remove : Shared.DeleteComment -> Shared.User -> Effect ()
+remove : Shared.DeleteComment -> Shared.User -> Task ()
 remove input user =
     Repo.findById comments input.id
-        |> Effect.andThen
+        |> Task.andThen
             (\maybeComment ->
                 Repo.deleteById comments input.id
-                    |> Effect.andThen
+                    |> Task.andThen
                         (\_ ->
                             case maybeComment of
                                 Just c ->
                                     Backend.Activities.emitCommentDeleted user c.id c.issueId
 
                                 Nothing ->
-                                    Effect.succeed ()
+                                    Task.succeed ()
                         )
             )
 
@@ -121,14 +121,14 @@ remove input user =
 -- Errors from `Repo.create` (e.g. concurrent racing toggle) bubble
 -- up as a service error; the frontend re-fetches the comment view
 -- and converges to the right state on the next render.
-toggleReaction : Shared.ToggleReaction -> Shared.User -> Effect ()
+toggleReaction : Shared.ToggleReaction -> Shared.User -> Task ()
 toggleReaction input user =
     Repo.findBy reactions
         { commentId = input.commentId
         , userId    = user.id
         , emoji     = input.emoji
         }
-        |> Effect.andThen
+        |> Task.andThen
             (\existing ->
                 case List.head existing of
                     Just row ->
@@ -136,7 +136,7 @@ toggleReaction input user =
 
                     Nothing ->
                         Time.now
-                            |> Effect.andThen
+                            |> Task.andThen
                                 (\now ->
                                     Repo.create reactions
                                         { commentId = input.commentId
@@ -144,7 +144,7 @@ toggleReaction input user =
                                         , emoji     = input.emoji
                                         , createdAt = now
                                         }
-                                        |> Effect.andThen
+                                        |> Task.andThen
                                             (\_ ->
                                                 -- Audit only the ADD half of the
                                                 -- toggle. Removes are noise; the
@@ -159,10 +159,10 @@ toggleReaction input user =
 -- countForIssue — cheap helper to fill `commentCount` on an
 -- IssueView. Exported so Backend.Issues can call it after
 -- materializing each row.
-countForIssue : Int -> Effect Int
+countForIssue : Int -> Task Int
 countForIssue issueId =
     Repo.findBy comments { issueId = issueId }
-        |> Effect.map (\rows -> List.length rows)
+        |> Task.map (\rows -> List.length rows)
 
 
 -- ====================================================================
@@ -178,13 +178,13 @@ countForIssue issueId =
 -- Takes the viewer's user id so the `mineToo` flag is correct for
 -- each call. (Reactions are global per-comment; the personalization
 -- is at view-build time.)
-buildCommentView : Int -> Shared.Comment -> Effect Shared.CommentView
+buildCommentView : Int -> Shared.Comment -> Task Shared.CommentView
 buildCommentView viewerId c =
     Repo.findById Backend.Users.users c.authorId
-        |> Effect.andThen
+        |> Task.andThen
             (\maybeAuthor ->
                 Repo.findBy reactions { commentId = c.id }
-                    |> Effect.map
+                    |> Task.map
                         (\reactRows ->
                             let
                                 authorName =
@@ -253,7 +253,7 @@ summarizeReactions viewerId rows =
 
 -- Loader for delete: returns the comment so the policy can check
 -- whether the caller is the author OR an admin.
-loadCommentByDelete : Shared.DeleteComment -> Shared.User -> Effect (Maybe Shared.Comment)
+loadCommentByDelete : Shared.DeleteComment -> Shared.User -> Task (Maybe Shared.Comment)
 loadCommentByDelete input _ =
     Repo.findById comments input.id
 

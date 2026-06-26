@@ -59,7 +59,7 @@ func TestValidateProductionConfig_AuthRequiresMail(t *testing.T) {
 func TestBuild_RejectsUnknownManifestField(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "Main.mar"),
-		"module Main exposing (main)\n\nmain : Effect ()\nmain = App.frontend []\n")
+		"module Main exposing (main)\n\nmain : Cmd ()\nmain = App.frontend []\n")
 	// "port" belongs under "server", not at the top level — the exact
 	// misplacement that used to build clean and silently fall back to
 	// the default port.

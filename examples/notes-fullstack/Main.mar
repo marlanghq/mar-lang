@@ -8,7 +8,7 @@ import Backend
 import Frontend
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.fullstack
         { services = Backend.services

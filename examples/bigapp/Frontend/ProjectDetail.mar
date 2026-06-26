@@ -42,7 +42,7 @@ type Msg
     | ProjectDeleted (Result Service.Error ())
 
 
-init : Shared.User -> { id : Int } -> (Model, Effect Msg)
+init : Shared.User -> { id : Int } -> (Model, Cmd Msg)
 init _ params =
     ( { project = Nothing
       , issues  = Nothing
@@ -55,7 +55,7 @@ init _ params =
 
 -- Helper that re-issues a listProjectIssues fetch for the active
 -- filter. Stale-while-revalidate keeps the previous list on screen.
-fetchIssuesFor : Int -> StatusFilter -> Effect Msg
+fetchIssuesFor : Int -> StatusFilter -> Cmd Msg
 fetchIssuesFor projectId filter =
     let
         input =
@@ -69,7 +69,7 @@ fetchIssuesFor projectId filter =
     Service.call Shared.listProjectIssues input IssuesFetched
 
 
-update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Cmd Msg)
 update _ params msg model =
     case msg of
         ProjectFetched (Ok maybe) ->
@@ -82,13 +82,13 @@ update _ params msg model =
             )
 
         ProjectFetched (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
         IssuesFetched (Ok items) ->
-            ( { model | issues = Just items }, Effect.none )
+            ( { model | issues = Just items }, Cmd.none )
 
         IssuesFetched (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
         FilterChanged f ->
             ( { model | filter = f }
@@ -104,7 +104,7 @@ update _ params msg model =
             ( model, Nav.replaceTo Frontend.Routes.projects {} )
 
         ProjectDeleted (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
 
 -- ====================================================================

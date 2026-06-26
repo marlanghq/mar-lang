@@ -1319,7 +1319,7 @@ enum MarBuiltins {
             .effect(MarEffect(tag: "pure") { args[0] })
         }
         env.define("effectSucceed",  .fn(effectSucceed))
-        env.define("Effect.succeed", .fn(effectSucceed))
+        env.define("Task.succeed", .fn(effectSucceed))
 
         // Effect.fail : e -> Effect e a — throws when run, carrying
         // the user-supplied error value. Mirror of the Go runtime's
@@ -1341,7 +1341,7 @@ enum MarBuiltins {
             })
         }
         env.define("effectFail",  .fn(effectFail))
-        env.define("Effect.fail", .fn(effectFail))
+        env.define("Task.fail", .fn(effectFail))
 
         // Effect.forEach : (a -> Effect e ()) -> List a -> Effect e ()
         // Sequential — each effect runs in order, halting on the first
@@ -1363,7 +1363,7 @@ enum MarBuiltins {
             })
         }
         env.define("effectForEach",  .fn(effectForEach))
-        env.define("Effect.forEach", .fn(effectForEach))
+        env.define("Task.forEach", .fn(effectForEach))
 
         // Effect.sequence : List (Effect e a) -> Effect e (List a)
         // Runs each effect, collecting the results into a list.
@@ -1384,7 +1384,7 @@ enum MarBuiltins {
             })
         }
         env.define("effectSequence",  .fn(effectSequence))
-        env.define("Effect.sequence", .fn(effectSequence))
+        env.define("Task.sequence", .fn(effectSequence))
 
         // Effect.batch : List (Effect e msg) -> Effect e msg
         // Fire-and-forget fan-out (the Cmd.batch of Mar). Each child's
@@ -1407,7 +1407,7 @@ enum MarBuiltins {
             })
         }
         env.define("effectBatch",  .fn(effectBatch))
-        env.define("Effect.batch", .fn(effectBatch))
+        env.define("Cmd.batch", .fn(effectBatch))
 
         let effectMap = MarFn.native(2) { args in
             guard case .effect(let inner) = args[1] else {
@@ -1420,7 +1420,7 @@ enum MarBuiltins {
             })
         }
         env.define("effectMap",  .fn(effectMap))
-        env.define("Effect.map", .fn(effectMap))
+        env.define("Task.map", .fn(effectMap))
 
         let effectAndThen = MarFn.native(2) { args in
             guard case .effect(let inner) = args[1] else {
@@ -1437,10 +1437,29 @@ enum MarBuiltins {
             })
         }
         env.define("effectAndThen",  .fn(effectAndThen))
-        env.define("Effect.andThen", .fn(effectAndThen))
+        env.define("Task.andThen", .fn(effectAndThen))
 
         env.define("effectNone",  .effect(MarEffect(tag: "none") { .unit }))
-        env.define("Effect.none", .effect(MarEffect(tag: "none") { .unit }))
+        env.define("Cmd.none", .effect(MarEffect(tag: "none") { .unit }))
+
+        // Cmd.perform : (a -> msg) -> Task a -> Cmd msg
+        // The Task->Cmd bridge (Elm's Task.perform): run the task and
+        // deliver its produced value to the MVU loop as a msg. The only
+        // way a Task (Time.now, future client reads) reaches `update`.
+        let cmdPerform = MarFn.native(2) { args in
+            guard case .effect(let task) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "Task", got: Eval.typeOf(args[1]))
+            }
+            let toMsg = args[0]
+            return .effect(MarEffect(tag: "perform") {
+                let v = try task.run()
+                let msg = try Eval.apply(toMsg, v)
+                Task { @MainActor in MarDispatcher.shared.dispatch(msg) }
+                return .unit
+            })
+        }
+        env.define("cmdPerform",  .fn(cmdPerform))
+        env.define("Cmd.perform", .fn(cmdPerform))
 
         // MARK: Time — Duration type + unit smart constructors
         let mkDuration: (Int) -> MarFn = { mult in
@@ -2120,6 +2139,26 @@ enum MarBuiltins {
         }
         env.define("picker",    .fn(uiPicker))
         env.define("UI.picker", .fn(uiPicker))
+
+        // datePicker : List Attr -> Maybe Time -> (Time -> msg) -> View msg
+        // Date-only field. The `Maybe Time` value rides along as the
+        // `value` attr (Nothing -> today, Just t -> that day); the
+        // renderer shows a SwiftUI DatePicker (date only) and hands the
+        // picked day back through `(Time -> msg)`.
+        let uiDatePicker = MarFn.native(3) { args in
+            var attrs = collectAttrs(args[0])
+            attrs.append(MarView.Attr(name: "value", value: args[1]))
+            return .view(MarView(
+                tag: "datePicker",
+                attrs: attrs,
+                children: [],
+                text: "",
+                msg: args[2],
+                key: nil
+            ))
+        }
+        env.define("datePicker",    .fn(uiDatePicker))
+        env.define("UI.datePicker", .fn(uiDatePicker))
 
         // text — plain text leaf. The attrs list carries the
         // universal layout attrs (width / height); `text [width

@@ -21,5 +21,12 @@
     "marketingVersion": "0.0.1",
     "buildNumber": "1",
     "serverUrl": "https://mar-daily-checklist.fly.dev"
+  },
+  "deploy": {
+    "fly": {
+      "app": "mar-daily-checklist",
+      "region": "gru",
+      "memory": "256mb"
+    }
   }
 }

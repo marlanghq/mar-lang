@@ -30,12 +30,12 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init _ =
-    ( {}, Effect.none )
+    ( {}, Cmd.none )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         SignOutClicked ->

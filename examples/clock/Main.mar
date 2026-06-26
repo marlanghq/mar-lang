@@ -24,12 +24,12 @@ type Msg
     | TimeArrived (Result String String)
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
     ({ time = "(loading)", error = Nothing }, Http.get "http://localhost:3010/time" TimeArrived)
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         Refresh ->
@@ -38,10 +38,10 @@ update msg model =
             )
 
         TimeArrived (Ok t) ->
-            ({ time = t, error = Nothing }, Effect.none)
+            ({ time = t, error = Nothing }, Cmd.none)
 
         TimeArrived (Err e) ->
-            ({ time = "?", error = Just e }, Effect.none)
+            ({ time = "?", error = Just e }, Cmd.none)
 
 
 view : Model -> View Msg
@@ -70,6 +70,6 @@ page =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.frontend [ page ]

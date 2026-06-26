@@ -38,7 +38,7 @@ page =
     Page.create
         { path = "/"
         , init = ((), Mar.Admin.serverInfo "forged" (\_ -> Done))
-        , update = \_ model -> (model, Effect.none)
+        , update = \_ model -> (model, Cmd.none)
         , view = \model -> UI.text [] "x"
         }
 `
@@ -62,7 +62,7 @@ page =
         { path = "/_mar/admin"
         , title = "Admin"
         , init = \admin -> ((), Mar.Admin.serverInfo admin (\_ -> Ignored))
-        , update = \_ _ model -> (model, Effect.none)
+        , update = \_ _ model -> (model, Cmd.none)
         , view = \_ model -> UI.text [] "ok"
         }
 `

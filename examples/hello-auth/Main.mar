@@ -32,7 +32,7 @@ auth =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.fullstack
         { services = []

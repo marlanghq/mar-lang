@@ -16,7 +16,7 @@ import Backend.Follows exposing (follows)
 --   Auth.protect contract handler
 --     |> Auth.authorize loadResource policy   -- ABAC
 --
--- The handler signature is `input -> User -> Effect result`
+-- The handler signature is `input -> User -> Task result`
 -- — every protected handler receives the authenticated user. The
 -- decorators run BEFORE the handler; a denial short-circuits with
 -- 403 (or 404 if the loader returned Nothing).
@@ -28,9 +28,9 @@ import Backend.Follows exposing (follows)
 -- after sign-in, the home page calls `me` and routes to
 -- /setup-profile if the handle is empty.
 
-meHandler : () -> Shared.User -> Effect Shared.User
+meHandler : () -> Shared.User -> Task Shared.User
 meHandler _ user =
-    Effect.succeed user
+    Task.succeed user
 
 
 -- ---------- compose / delete ----------
@@ -39,27 +39,27 @@ meHandler _ user =
 -- the entity, so we can evolve without a schema migration). Empty
 -- body after trim → reject with a transport-level error string.
 
-composeTweet : Shared.NewTweet -> Shared.User -> Effect Shared.ComposeOutcome
+composeTweet : Shared.NewTweet -> Shared.User -> Task Shared.ComposeOutcome
 composeTweet input user =
     let
         body = String.trim input.body
     in
     if body == "" then
-        Effect.succeed Shared.BodyEmpty
+        Task.succeed Shared.BodyEmpty
     else if String.length body > 280 then
-        Effect.succeed Shared.BodyTooLong
+        Task.succeed Shared.BodyTooLong
     else
         Time.now
-            |> Effect.andThen (\now ->
+            |> Task.andThen (\now ->
                 Repo.create tweets
                     { body      = body
                     , authorId  = user.id
                     , createdAt = now
                     })
-            |> Effect.map Shared.Posted
+            |> Task.map Shared.Posted
 
 
-deleteTweet : Shared.DeleteTweet -> Shared.User -> Effect ()
+deleteTweet : Shared.DeleteTweet -> Shared.User -> Task ()
 deleteTweet input _ =
     Repo.deleteById tweets input.id
 
@@ -68,7 +68,7 @@ deleteTweet input _ =
 -- the policy can compare its authorId to the caller's id. Nothing
 -- → 404; mismatch → 403.
 
-loadTweetForOwner : Shared.DeleteTweet -> Shared.User -> Effect (Maybe Shared.Tweet)
+loadTweetForOwner : Shared.DeleteTweet -> Shared.User -> Task (Maybe Shared.Tweet)
 loadTweetForOwner input _ =
     Repo.findById tweets input.id
 
@@ -90,18 +90,18 @@ tweetIsOwn _ user tweet =
 -- example is unbounded and trusts the rate-limit middleware to
 -- prevent abuse.
 
-loadTimeline : () -> Shared.User -> Effect (List Shared.TweetView)
+loadTimeline : () -> Shared.User -> Task (List Shared.TweetView)
 loadTimeline _ user =
     -- Step 1: people I follow.
     Repo.findBy follows { followerId = user.id }
-        |> Effect.andThen (\myFollows ->
+        |> Task.andThen (\myFollows ->
             let
                 followedIds = List.map (\f -> f.followedId) myFollows
                 -- Adding self surfaces my own tweets in the feed too.
                 visibleIds  = user.id :: followedIds
-                -- Build a list of Effects, one per author lookup,
-                -- then Effect.sequence runs them and collects the
-                -- results into a single Effect (List ...).
+                -- Build a list of Tasks, one per author lookup,
+                -- then Task.sequence runs them and collects the
+                -- results into a single Task (List ...).
                 tweetFetches = List.map
                     (\authorId -> Repo.findBy tweets { authorId = authorId })
                     visibleIds
@@ -113,23 +113,23 @@ loadTimeline _ user =
             -- concatenated list approximates "newest first" — good
             -- enough for a demo. A real feed would cap with
             -- cursor pagination and let the DB order via SQL.
-            Effect.sequence tweetFetches
-                |> Effect.andThen (\listOfLists ->
+            Task.sequence tweetFetches
+                |> Task.andThen (\listOfLists ->
                     let
                         flat    = List.concat listOfLists
                         ordered = List.reverse flat
                         views   = List.map (toTweetView user) ordered
                     in
-                    Effect.sequence views))
+                    Task.sequence views))
 
 
-toTweetView : Shared.User -> Shared.Tweet -> Effect Shared.TweetView
+toTweetView : Shared.User -> Shared.Tweet -> Task Shared.TweetView
 toTweetView viewer tweet =
     Repo.findById users tweet.authorId
-        |> Effect.andThen (\maybeAuthor ->
+        |> Task.andThen (\maybeAuthor ->
             case maybeAuthor of
                 Just author ->
-                    Effect.succeed
+                    Task.succeed
                         { id           = tweet.id
                         , body         = tweet.body
                         , authorHandle = author.handle
@@ -143,7 +143,7 @@ toTweetView viewer tweet =
                     -- this example — users have no delete service).
                     -- Defensive: surface a placeholder so the row
                     -- doesn't disappear from the feed silently.
-                    Effect.succeed
+                    Task.succeed
                         { id           = tweet.id
                         , body         = tweet.body
                         , authorHandle = "deleted"
@@ -160,31 +160,31 @@ toTweetView viewer tweet =
 -- found (a fresh-signup user that hasn't completed setup yet
 -- shouldn't be reachable by handle).
 
-loadProfile : Shared.ProfileQuery -> Shared.User -> Effect (Maybe Shared.ProfileView)
+loadProfile : Shared.ProfileQuery -> Shared.User -> Task (Maybe Shared.ProfileView)
 loadProfile input viewer =
     Repo.findBy users { handle = input.handle }
-        |> Effect.andThen (\matches ->
+        |> Task.andThen (\matches ->
             case matches of
                 [] ->
-                    Effect.succeed Nothing
+                    Task.succeed Nothing
 
                 target :: _ ->
                     buildProfileView viewer target)
 
 
-buildProfileView : Shared.User -> Shared.User -> Effect (Maybe Shared.ProfileView)
+buildProfileView : Shared.User -> Shared.User -> Task (Maybe Shared.ProfileView)
 buildProfileView viewer target =
     Repo.findBy tweets { authorId = target.id }
-        |> Effect.andThen (\theirTweets ->
+        |> Task.andThen (\theirTweets ->
             Repo.findBy follows { followedId = target.id }
-                |> Effect.andThen (\theirFollowers ->
+                |> Task.andThen (\theirFollowers ->
                     Repo.findBy follows { followerId = target.id }
-                        |> Effect.andThen (\theirFollowing ->
+                        |> Task.andThen (\theirFollowing ->
                             Repo.findBy follows
                                 { followerId = viewer.id
                                 , followedId = target.id
                                 }
-                                |> Effect.andThen (\edges ->
+                                |> Task.andThen (\edges ->
                                     let
                                         -- Newest-first via reverse; same caveat as
                                         -- the timeline (List.sortBy isn't available
@@ -194,9 +194,9 @@ buildProfileView viewer target =
                                         viewFetches =
                                             List.map (toTweetView viewer) sortedTweets
                                     in
-                                    Effect.sequence viewFetches
-                                        |> Effect.andThen (\views ->
-                                            Effect.succeed
+                                    Task.sequence viewFetches
+                                        |> Task.andThen (\views ->
+                                            Task.succeed
                                                 (Just
                                                     { user       = target
                                                     , tweetCount = List.length theirTweets
@@ -210,57 +210,57 @@ buildProfileView viewer target =
 
 -- ---------- follow / unfollow ----------
 
-followUser : Shared.FollowAction -> Shared.User -> Effect Shared.FollowOutcome
+followUser : Shared.FollowAction -> Shared.User -> Task Shared.FollowOutcome
 followUser input user =
     Repo.findBy users { handle = input.handle }
-        |> Effect.andThen (\matches ->
+        |> Task.andThen (\matches ->
             case matches of
                 [] ->
-                    Effect.succeed Shared.HandleNotFound
+                    Task.succeed Shared.HandleNotFound
 
                 target :: _ ->
                     if target.id == user.id then
-                        Effect.succeed Shared.CantFollowSelf
+                        Task.succeed Shared.CantFollowSelf
                     else
                         Repo.findBy follows
                             { followerId = user.id
                             , followedId = target.id
                             }
-                            |> Effect.andThen (\existing ->
+                            |> Task.andThen (\existing ->
                                 if List.length existing > 0 then
                                     -- Already following — idempotent.
-                                    Effect.succeed Shared.Followed
+                                    Task.succeed Shared.Followed
                                 else
                                     Time.now
-                                        |> Effect.andThen (\now ->
+                                        |> Task.andThen (\now ->
                                             Repo.create follows
                                                 { followerId = user.id
                                                 , followedId = target.id
                                                 , createdAt  = now
                                                 }
-                                                |> Effect.map (\_ -> Shared.Followed))))
+                                                |> Task.map (\_ -> Shared.Followed))))
 
 
-unfollowUser : Shared.FollowAction -> Shared.User -> Effect ()
+unfollowUser : Shared.FollowAction -> Shared.User -> Task ()
 unfollowUser input user =
     Repo.findBy users { handle = input.handle }
-        |> Effect.andThen (\matches ->
+        |> Task.andThen (\matches ->
             case matches of
                 [] ->
                     -- Handle vanished: the goal state ("not following
                     -- that account") already holds. Idempotent success.
-                    Effect.succeed ()
+                    Task.succeed ()
 
                 target :: _ ->
                     Repo.findBy follows
                         { followerId = user.id
                         , followedId = target.id
                         }
-                        |> Effect.andThen (\edges ->
+                        |> Task.andThen (\edges ->
                             case edges of
                                 [] ->
                                     -- Not following — idempotent.
-                                    Effect.succeed ()
+                                    Task.succeed ()
 
                                 edge :: _ ->
                                     Repo.deleteById follows edge.id))
@@ -272,7 +272,7 @@ unfollowUser input user =
 -- handle / display name. We validate the handle locally (alnum +
 -- underscore, 1–20 chars) and reject collisions.
 
-setupProfile : Shared.ProfileSetup -> Shared.User -> Effect Shared.SetupOutcome
+setupProfile : Shared.ProfileSetup -> Shared.User -> Task Shared.SetupOutcome
 setupProfile input user =
     let
         handle      = String.trim input.handle
@@ -280,48 +280,48 @@ setupProfile input user =
         bio         = String.trim input.bio
     in
     if handle == "" then
-        Effect.succeed Shared.HandleRequired
+        Task.succeed Shared.HandleRequired
     else if String.length handle > 20 then
-        Effect.succeed Shared.HandleTooLong
+        Task.succeed Shared.HandleTooLong
     else if displayName == "" then
-        Effect.succeed Shared.DisplayNameRequired
+        Task.succeed Shared.DisplayNameRequired
     else
         Repo.findBy users { handle = handle }
-            |> Effect.andThen (\matches ->
+            |> Task.andThen (\matches ->
                 case matches of
                     [] ->
                         applyProfileUpdate user.id handle displayName bio
-                            |> Effect.map Shared.ProfileSaved
+                            |> Task.map Shared.ProfileSaved
 
                     existing :: _ ->
                         if existing.id == user.id then
                             -- They picked the same handle they
                             -- already have. Treat as no-op success.
                             applyProfileUpdate user.id handle displayName bio
-                                |> Effect.map Shared.ProfileSaved
+                                |> Task.map Shared.ProfileSaved
                         else
-                            Effect.succeed Shared.HandleTaken)
+                            Task.succeed Shared.HandleTaken)
 
 
-applyProfileUpdate : Int -> String -> String -> String -> Effect Shared.User
+applyProfileUpdate : Int -> String -> String -> String -> Task Shared.User
 applyProfileUpdate userId handle displayName bio =
     Repo.update users userId
         { handle      = handle
         , displayName = displayName
         , bio         = bio
         }
-        |> Effect.andThen (\maybeUpdated ->
+        |> Task.andThen (\maybeUpdated ->
             case maybeUpdated of
                 Just updated ->
-                    Effect.succeed updated
+                    Task.succeed updated
 
                 Nothing ->
                     -- The session's own user row vanished mid-update: a
                     -- broken invariant, not a domain outcome the form
-                    -- should branch on. This is what Effect.fail is FOR
+                    -- should branch on. This is what Task.fail is FOR
                     -- (the abort channel); it surfaces to the client as
                     -- a generic ServerError.
-                    Effect.fail "user row missing for session")
+                    Task.fail "user row missing for session")
 
 
 -- ---------- service manifest ----------

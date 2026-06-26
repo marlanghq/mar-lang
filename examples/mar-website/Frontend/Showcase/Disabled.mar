@@ -64,7 +64,7 @@ type Msg
     | Tapped
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
     ( { locked = True
       , name   = ""
@@ -73,19 +73,19 @@ init =
       , agree  = False
       , taps   = 0
       }
-    , Effect.none
+    , Cmd.none
     )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        LockedChanged v -> ( { model | locked = v }, Effect.none )
-        NameChanged v   -> ( { model | name = v },   Effect.none )
-        BioChanged v    -> ( { model | bio = v },    Effect.none )
-        FlavorChanged f -> ( { model | flavor = f }, Effect.none )
-        AgreeChanged v  -> ( { model | agree = v },  Effect.none )
-        Tapped          -> ( { model | taps = model.taps + 1 }, Effect.none )
+        LockedChanged v -> ( { model | locked = v }, Cmd.none )
+        NameChanged v   -> ( { model | name = v },   Cmd.none )
+        BioChanged v    -> ( { model | bio = v },    Cmd.none )
+        FlavorChanged f -> ( { model | flavor = f }, Cmd.none )
+        AgreeChanged v  -> ( { model | agree = v },  Cmd.none )
+        Tapped          -> ( { model | taps = model.taps + 1 }, Cmd.none )
 
 
 view : Model -> View Msg

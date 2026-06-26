@@ -29,21 +29,21 @@ type Msg
     | RoleUpdated (Result Service.Error (Maybe Shared.User))
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init _ =
     ( { members = Nothing, error = Nothing, pending = 0 }
     , Service.call Shared.listTeamMembers () MembersFetched
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         MembersFetched (Ok items) ->
-            ( { model | members = Just items, pending = 0 }, Effect.none )
+            ( { model | members = Just items, pending = 0 }, Cmd.none )
 
         MembersFetched (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
         RoleToggled userId newRole ->
             ( { model | pending = userId, error = Nothing }
@@ -56,7 +56,7 @@ update _ msg model =
             ( model, Service.call Shared.listTeamMembers () MembersFetched )
 
         RoleUpdated (Err why) ->
-            ( { model | pending = 0, error = Just why }, Effect.none )
+            ( { model | pending = 0, error = Just why }, Cmd.none )
 
 
 -- ====================================================================

@@ -41,24 +41,24 @@ type Msg
     | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
-    ( { step = AskEmail "", error = Nothing }, Effect.none )
+    ( { step = AskEmail "", error = Nothing }, Cmd.none )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         DraftChanged value ->
             case model.step of
                 AskEmail _ ->
-                    ( { model | step = AskEmail value }, Effect.none )
+                    ( { model | step = AskEmail value }, Cmd.none )
 
                 AskCode emailAddr _ ->
-                    ( { model | step = AskCode emailAddr value }, Effect.none )
+                    ( { model | step = AskCode emailAddr value }, Cmd.none )
 
                 Submitting _ ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         Submitted ->
             case model.step of
@@ -73,29 +73,29 @@ update msg model =
                     )
 
                 Submitting _ ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         CodeRequested (Ok Auth.CodeSent) ->
             case model.step of
                 Submitting emailAddr ->
-                    ( { model | step = AskCode emailAddr "" }, Effect.none )
+                    ( { model | step = AskCode emailAddr "" }, Cmd.none )
 
                 _ ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         CodeRequested (Ok Auth.InvalidEmail) ->
             ( requestFailed "That doesn't look like a valid email address." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeRequested (Ok Auth.RateLimited) ->
             ( requestFailed "Too many code requests. Wait a moment and try again." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeRequested (Err why) ->
             ( requestFailed (Service.errorToString why) model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeVerified (Ok (Auth.SignedIn _)) ->
@@ -105,17 +105,17 @@ update msg model =
 
         CodeVerified (Ok Auth.WrongCode) ->
             ( verifyFailed "Wrong code. Try again or request a new one." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeVerified (Ok Auth.TooManyAttempts) ->
             ( verifyFailed "Too many tries with this code. Request a new one." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeVerified (Err why) ->
             ( verifyFailed (Service.errorToString why) model
-            , Effect.none
+            , Cmd.none
             )
 
 

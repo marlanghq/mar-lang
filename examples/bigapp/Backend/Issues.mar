@@ -50,7 +50,7 @@ issues =
 -- ====================================================================
 
 
-listForProject : Shared.ListProjectIssues -> Shared.User -> Effect (List Shared.IssueView)
+listForProject : Shared.ListProjectIssues -> Shared.User -> Task (List Shared.IssueView)
 listForProject input _ =
     let
         rows =
@@ -60,24 +60,24 @@ listForProject input _ =
                 Repo.findBy issues { projectId = input.projectId, status = input.status }
     in
     rows
-        |> Effect.andThen
+        |> Task.andThen
             (\raw ->
-                Effect.sequence (List.map buildIssueView raw)
+                Task.sequence (List.map buildIssueView raw)
             )
 
 
-getOne : Shared.GetIssue -> Shared.User -> Effect (Maybe Shared.IssueView)
+getOne : Shared.GetIssue -> Shared.User -> Task (Maybe Shared.IssueView)
 getOne input _ =
     Repo.findById issues input.id
-        |> Effect.andThen
+        |> Task.andThen
             (\maybeIssue ->
                 case maybeIssue of
                     Just i ->
                         buildIssueView i
-                            |> Effect.map (\view -> Just view)
+                            |> Task.map (\view -> Just view)
 
                     Nothing ->
-                        Effect.succeed Nothing
+                        Task.succeed Nothing
             )
 
 
@@ -85,13 +85,13 @@ getOne input _ =
 -- now because SQLite serializes writes; if traffic ever justifies
 -- it, switch to a counter column on the projects row and increment
 -- via UPDATE-RETURNING.
-create : Shared.NewIssue -> Shared.User -> Effect Shared.Issue
+create : Shared.NewIssue -> Shared.User -> Task Shared.Issue
 create input user =
     Time.now
-        |> Effect.andThen
+        |> Task.andThen
             (\now ->
                 Repo.findBy issues { projectId = input.projectId }
-                    |> Effect.andThen
+                    |> Task.andThen
                         (\existing ->
                             Repo.create issues
                                 { projectId   = input.projectId
@@ -111,19 +111,19 @@ create input user =
                                 -- still exists but the timeline misses a row.
                                 -- Acceptable: audit is best-effort, not a
                                 -- transactional boundary.
-                                |> Effect.andThen
+                                |> Task.andThen
                                     (\issue ->
                                         Backend.Activities.emitIssueCreated user issue
-                                            |> Effect.map (\_ -> issue)
+                                            |> Task.map (\_ -> issue)
                                     )
                         )
             )
 
 
-edit : Shared.EditIssue -> Shared.User -> Effect (Maybe Shared.Issue)
+edit : Shared.EditIssue -> Shared.User -> Task (Maybe Shared.Issue)
 edit input _ =
     Time.now
-        |> Effect.andThen
+        |> Task.andThen
             (\now ->
                 Repo.update issues input.id
                     { title       = input.title
@@ -136,44 +136,44 @@ edit input _ =
             )
 
 
-changeStatus : Shared.ChangeStatus -> Shared.User -> Effect (Maybe Shared.Issue)
+changeStatus : Shared.ChangeStatus -> Shared.User -> Task (Maybe Shared.Issue)
 changeStatus input user =
     Time.now
-        |> Effect.andThen
+        |> Task.andThen
             (\now ->
                 Repo.update issues input.id
                     { status    = input.status
                     , updatedAt = now
                     }
-                    |> Effect.andThen
+                    |> Task.andThen
                         (\maybeUpdated ->
                             case maybeUpdated of
                                 Just issue ->
                                     Backend.Activities.emitIssueStatusChanged user issue input.status
-                                        |> Effect.map (\_ -> Just issue)
+                                        |> Task.map (\_ -> Just issue)
 
                                 Nothing ->
-                                    Effect.succeed Nothing
+                                    Task.succeed Nothing
                         )
             )
 
 
-remove : Shared.DeleteIssue -> Shared.User -> Effect ()
+remove : Shared.DeleteIssue -> Shared.User -> Task ()
 remove input user =
     -- Look up before deleting so the audit row gets a non-empty
     -- title (post-delete the row is gone).
     Repo.findById issues input.id
-        |> Effect.andThen
+        |> Task.andThen
             (\maybeIssue ->
                 Repo.deleteById issues input.id
-                    |> Effect.andThen
+                    |> Task.andThen
                         (\_ ->
                             case maybeIssue of
                                 Just issue ->
                                     Backend.Activities.emitIssueDeleted user issue.id issue.title
 
                                 Nothing ->
-                                    Effect.succeed ()
+                                    Task.succeed ()
                         )
             )
 
@@ -181,10 +181,10 @@ remove input user =
 -- listOpenForAssignee — every Open/InProgress issue assigned to the
 -- caller, used by the Dashboard and the MyIssues page. Sorted by
 -- updatedAt descending so the freshest activity floats to the top.
-listOpenForAssignee : Shared.User -> Effect (List Shared.IssueView)
+listOpenForAssignee : Shared.User -> Task (List Shared.IssueView)
 listOpenForAssignee user =
     Repo.findBy issues { assigneeId = user.id }
-        |> Effect.andThen
+        |> Task.andThen
             (\raw ->
                 let
                     pending =
@@ -192,30 +192,30 @@ listOpenForAssignee user =
                             (\i -> i.status == Open || i.status == InProgress)
                             raw
                 in
-                Effect.sequence (List.map buildIssueView pending)
+                Task.sequence (List.map buildIssueView pending)
             )
 
 
 -- listRecent — every issue in the user's team, sorted by updatedAt
 -- descending, capped to a generous default. Used by Dashboard's
 -- "Recently updated" tile.
-listRecent : Shared.User -> Effect (List Shared.IssueView)
+listRecent : Shared.User -> Task (List Shared.IssueView)
 listRecent user =
     Repo.findBy Backend.Projects.projects { teamId = user.teamId }
-        |> Effect.andThen
+        |> Task.andThen
             (\projectsList ->
                 let
                     projectIds = List.map (\p -> p.id) projectsList
                 in
-                Effect.sequence (List.map listIssuesForProject projectIds)
-                    |> Effect.map
+                Task.sequence (List.map listIssuesForProject projectIds)
+                    |> Task.map
                         (\nested -> List.concat nested)
             )
-        |> Effect.andThen
-            (\raw -> Effect.sequence (List.map buildIssueView raw))
+        |> Task.andThen
+            (\raw -> Task.sequence (List.map buildIssueView raw))
 
 
-listIssuesForProject : Int -> Effect (List Shared.Issue)
+listIssuesForProject : Int -> Task (List Shared.Issue)
 listIssuesForProject pid =
     Repo.findBy issues { projectId = pid }
 
@@ -223,10 +223,10 @@ listIssuesForProject pid =
 -- countOpenForAssignee — small helper consumed by the team-members
 -- view to show "N open issues" per teammate. Just a length over the
 -- filtered set.
-countOpenForAssignee : Int -> Effect Int
+countOpenForAssignee : Int -> Task Int
 countOpenForAssignee userId =
     Repo.findBy issues { assigneeId = userId }
-        |> Effect.map
+        |> Task.map
             (\rows ->
                 List.length
                     (List.filter
@@ -239,19 +239,19 @@ countOpenForAssignee userId =
 -- search — naive substring scan over title + description. Adequate
 -- for an example app; a production tracker would index in FTS5 or
 -- a separate search engine.
-search : Shared.SearchIssues -> Shared.User -> Effect (List Shared.IssueView)
+search : Shared.SearchIssues -> Shared.User -> Task (List Shared.IssueView)
 search input user =
     let
         q = String.toLower input.query
     in
     Repo.findBy Backend.Projects.projects { teamId = user.teamId }
-        |> Effect.andThen
+        |> Task.andThen
             (\projectsList ->
-                Effect.sequence
+                Task.sequence
                     (List.map (\p -> listIssuesForProject p.id) projectsList)
-                    |> Effect.map (\nested -> List.concat nested)
+                    |> Task.map (\nested -> List.concat nested)
             )
-        |> Effect.andThen
+        |> Task.andThen
             (\raw ->
                 let
                     matched =
@@ -262,7 +262,7 @@ search input user =
                             )
                             raw
                 in
-                Effect.sequence (List.map buildIssueView matched)
+                Task.sequence (List.map buildIssueView matched)
             )
 
 
@@ -276,7 +276,7 @@ search input user =
 -- Looks N+1 if you squint, but each issue only triggers 4 by-id
 -- fetches; for typical project sizes (hundreds of issues) it's
 -- well within the cost budget of an example app.
-buildIssueView : Shared.Issue -> Effect Shared.IssueView
+buildIssueView : Shared.Issue -> Task Shared.IssueView
 buildIssueView i =
     let
         projectEff   = Repo.findById Backend.Projects.projects i.projectId
@@ -289,13 +289,13 @@ buildIssueView i =
         _ = commentsEff
     in
     projectEff
-        |> Effect.andThen
+        |> Task.andThen
             (\maybeProject ->
                 assigneeEff
-                    |> Effect.andThen
+                    |> Task.andThen
                         (\maybeAssignee ->
                             reporterEff
-                                |> Effect.map
+                                |> Task.map
                                     (\maybeReporter ->
                                         composeView i maybeProject maybeAssignee maybeReporter
                                     )
@@ -372,22 +372,22 @@ composeView i maybeProject maybeAssignee maybeReporter =
 -- policy. Same-team is enforced on the project, so we have to
 -- chain a second lookup.
 
-loadIssueByEdit : Shared.EditIssue -> Shared.User -> Effect (Maybe Shared.Issue)
+loadIssueByEdit : Shared.EditIssue -> Shared.User -> Task (Maybe Shared.Issue)
 loadIssueByEdit input _ =
     Repo.findById issues input.id
 
 
-loadIssueByDelete : Shared.DeleteIssue -> Shared.User -> Effect (Maybe Shared.Issue)
+loadIssueByDelete : Shared.DeleteIssue -> Shared.User -> Task (Maybe Shared.Issue)
 loadIssueByDelete input _ =
     Repo.findById issues input.id
 
 
-loadIssueByStatus : Shared.ChangeStatus -> Shared.User -> Effect (Maybe Shared.Issue)
+loadIssueByStatus : Shared.ChangeStatus -> Shared.User -> Task (Maybe Shared.Issue)
 loadIssueByStatus input _ =
     Repo.findById issues input.id
 
 
-loadIssueByGet : Shared.GetIssue -> Shared.User -> Effect (Maybe Shared.Issue)
+loadIssueByGet : Shared.GetIssue -> Shared.User -> Task (Maybe Shared.Issue)
 loadIssueByGet input _ =
     Repo.findById issues input.id
 
@@ -410,7 +410,7 @@ sameProjectTeam _ user issue =
 
 -- For the `listForProject` route we don't have an issue to load —
 -- but we can load the project and check its team.
-loadProjectForList : Shared.ListProjectIssues -> Shared.User -> Effect (Maybe Shared.Project)
+loadProjectForList : Shared.ListProjectIssues -> Shared.User -> Task (Maybe Shared.Project)
 loadProjectForList input _ =
     Repo.findById Backend.Projects.projects input.projectId
 
@@ -423,10 +423,10 @@ projectInTeam _ user project =
 -- issueProjectId — exported helper so other backend modules
 -- (Comments, Labels) can read "what project does this issue
 -- belong to" without re-implementing the join.
-issueProjectId : Int -> Effect Int
+issueProjectId : Int -> Task Int
 issueProjectId issueId =
     Repo.findById issues issueId
-        |> Effect.map
+        |> Task.map
             (\maybeIssue ->
                 case maybeIssue of
                     Just i  -> i.projectId

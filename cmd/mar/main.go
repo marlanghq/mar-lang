@@ -648,7 +648,7 @@ func lookupMainType(valueTypes map[string]typecheck.Type) typecheck.Type {
 	return nil
 }
 
-// checkMainSignature reports whether t is `Effect ()`. Returns an empty
+// checkMainSignature reports whether t is `Cmd ()`. Returns an empty
 // string when the signature is acceptable, else a short human-readable
 // message describing the mismatch. Wrapping in a `forall` is fine — main
 // can be polymorphic in unused variables.
@@ -657,11 +657,11 @@ func checkMainSignature(t typecheck.Type) string {
 		t = f.Body
 	}
 	con, ok := t.(typecheck.TCon)
-	if !ok || con.Name != "Effect" || len(con.Args) != 1 {
-		return fmt.Sprintf("main has type `%s`, expected `Effect ()`", typecheck.Pretty(t))
+	if !ok || con.Name != "Cmd" || len(con.Args) != 1 {
+		return fmt.Sprintf("main has type `%s`, expected `Cmd ()`", typecheck.Pretty(t))
 	}
 	if _, uOk := con.Args[0].(typecheck.TUnit); !uOk {
-		return fmt.Sprintf("main has type `%s`, expected `Effect ()` (success value must be unit `()`)", typecheck.Pretty(t))
+		return fmt.Sprintf("main has type `%s`, expected `Cmd ()` (success value must be unit `()`)", typecheck.Pretty(t))
 	}
 	return ""
 }
@@ -1190,7 +1190,7 @@ func runDev(path string, noOpen bool) int {
 		}
 
 		// Find main and validate its type signature. mar is a web language
-		// — every entry point ships through `main : Effect String ()`,
+		// — every entry point ships through `main : Cmd ()`,
 		// where the Effect chooses the topology by calling App.frontend /
 		// App.backend / App.fullstack. Reject anything else here so users
 		// get a clear up-front error instead of confusing runtime
@@ -1199,7 +1199,7 @@ func runDev(path string, noOpen bool) int {
 		if !ok {
 			return newHintedError(
 				"%s must export a `main` value",
-				"Add a top-level declaration: `main : Effect ()`.\n"+
+				"Add a top-level declaration: `main : Cmd ()`.\n"+
 					"It typically calls one of the topology builders: App.frontend / App.backend / App.fullstack.",
 				entryFile)
 		}
@@ -1207,16 +1207,16 @@ func runDev(path string, noOpen bool) int {
 			if msg := checkMainSignature(mainType); msg != "" {
 				return newHintedError(
 					"%s: %s",
-					"mar entry points must be `main : Effect String ()` and pick a topology with App.frontend / App.backend / App.fullstack.",
+					"mar entry points must be `main : Cmd ()` and pick a topology with App.frontend / App.backend / App.fullstack.",
 					entryFile, msg)
 			}
 		}
 		eff, ok := mainVal.(runtime.VEffect)
 		if !ok {
 			return newHintedError(
-				"main is not an Effect (got %T)",
+				"main is not a Cmd (got %T)",
 				"`mar dev` runs servers and UIs via App.frontend / App.backend / App.fullstack.\n"+
-					"Make `main` an Effect that calls one of those (e.g. `main = App.fullstack { ... }`).",
+					"Make `main` a Cmd that calls one of those (e.g. `main = App.fullstack { ... }`).",
 				mainVal)
 		}
 		// Running the Effect calls one of the overridden builtins, which

@@ -1,4 +1,4 @@
-module Backend.Tasks exposing (services)
+module Backend.Tasks exposing (services, deleteAllForUser)
 
 
 import Shared
@@ -12,7 +12,7 @@ import Shared
 -- it matches the caller before mutating (on toggle / delete). A
 -- malicious client guessing IDs can't read or modify another user's
 -- rows because the row simply doesn't appear in the per-user query.
-tasks : Entity Shared.Task
+tasks : Entity Shared.TodoItem
 tasks =
     Entity.define
         { name = "tasks"
@@ -31,10 +31,10 @@ tasks =
 -- ===== Read =====
 
 
-listTasksImpl : () -> Shared.User -> Effect (List Shared.Task)
+listTasksImpl : () -> Shared.User -> Task (List Shared.TodoItem)
 listTasksImpl _ user =
     Repo.findBy tasks { userId = user.id }
-        |> Effect.map sortByPosition
+        |> Task.map sortByPosition
 
 
 -- Sort ascending by position — the user controls the order via the
@@ -42,7 +42,7 @@ listTasksImpl _ user =
 -- per user via the addTask seeding logic) so this is a stable sort
 -- in practice; if a tie ever sneaks in, the comparison falls through
 -- to EQ and List.sortWith preserves input order.
-sortByPosition : List Shared.Task -> List Shared.Task
+sortByPosition : List Shared.TodoItem -> List Shared.TodoItem
 sortByPosition items =
     List.sortWith
         (\a b ->
@@ -59,7 +59,7 @@ sortByPosition items =
 -- ===== Create =====
 
 
-addTaskImpl : { name : String } -> Shared.User -> Effect Shared.AddTaskOutcome
+addTaskImpl : { name : String } -> Shared.User -> Task Shared.AddTaskOutcome
 addTaskImpl input user =
     -- Server-side gate: clients can disable the button but the
     -- backend is the only layer end-to-end. Reject empty /
@@ -68,7 +68,7 @@ addTaskImpl input user =
     -- typed outcome in the contract, not an abort: the frontend
     -- cases on Shared.NameEmpty instead of matching an error string.
     if String.trim input.name == "" then
-        Effect.succeed Shared.NameEmpty
+        Task.succeed Shared.NameEmpty
     else
         -- New tasks land at the FRONT of the list (position =
         -- min(existing) - 1). Rationale: a long list scrolled to
@@ -84,10 +84,10 @@ addTaskImpl input user =
         -- subsequent user-driven reorder normalizes back to 0..N-1
         -- via reorderTasksImpl.
         Repo.findBy tasks { userId = user.id }
-            |> Effect.andThen
+            |> Task.andThen
                 (\existing ->
                     Time.now
-                        |> Effect.andThen
+                        |> Task.andThen
                             (\now ->
                                 Repo.create tasks
                                     { name      = input.name
@@ -96,7 +96,7 @@ addTaskImpl input user =
                                     , userId    = user.id
                                     , position  = frontPosition existing
                                     }
-                                    |> Effect.map Shared.Added
+                                    |> Task.map Shared.Added
                             )
                 )
 
@@ -120,7 +120,7 @@ addTaskImpl input user =
 -- Mar's List.foldl signature is `(b -> a -> b) -> b -> List a -> b`
 -- — accumulator first, element second (Elm-style). The lambda
 -- takes (acc, t).
-frontPosition : List Shared.Task -> Int
+frontPosition : List Shared.TodoItem -> Int
 frontPosition existing =
     List.foldl
         (\acc t -> if t.position <= acc then t.position - 1 else acc)
@@ -138,10 +138,10 @@ frontPosition existing =
 -- nothing leaks about whether the id exists at all.
 
 
-toggleTaskImpl : { id : Int, done : Bool } -> Shared.User -> Effect (Maybe Shared.Task)
+toggleTaskImpl : { id : Int, done : Bool } -> Shared.User -> Task (Maybe Shared.TodoItem)
 toggleTaskImpl input user =
     Repo.findById tasks input.id
-        |> Effect.andThen
+        |> Task.andThen
             (\found ->
                 case found of
                     Just task ->
@@ -151,17 +151,17 @@ toggleTaskImpl input user =
                             -- Someone else's row: answer exactly like a
                             -- missing one. The Maybe in the contract
                             -- already models absence; no abort needed.
-                            Effect.succeed Nothing
+                            Task.succeed Nothing
 
                     Nothing ->
-                        Effect.succeed Nothing
+                        Task.succeed Nothing
             )
 
 
-deleteTaskImpl : { id : Int } -> Shared.User -> Effect ()
+deleteTaskImpl : { id : Int } -> Shared.User -> Task ()
 deleteTaskImpl input user =
     Repo.findById tasks input.id
-        |> Effect.andThen
+        |> Task.andThen
             (\found ->
                 case found of
                     Just task ->
@@ -172,13 +172,13 @@ deleteTaskImpl input user =
                             -- goal state ("that row is not in YOUR
                             -- list") already holds, and failing would
                             -- leak that the id exists.
-                            Effect.succeed ()
+                            Task.succeed ()
 
                     Nothing ->
                         -- Already gone (another device deleted it
                         -- first): delete is idempotent, so this is
                         -- success, not an error.
-                        Effect.succeed ()
+                        Task.succeed ()
             )
 
 
@@ -188,18 +188,18 @@ deleteTaskImpl input user =
 -- single user's task list [] (maybe 20 rows). If it ever grew, the
 -- shape "UPDATE tasks SET done = 0 WHERE userId = ?" would do it
 -- in one statement; today we don't expose raw SQL from user code,
--- so the per-row Effect.sequence is the idiomatic option.
-resetAllImpl : () -> Shared.User -> Effect ()
+-- so the per-row Task.sequence is the idiomatic option.
+resetAllImpl : () -> Shared.User -> Task ()
 resetAllImpl _ user =
     Repo.findBy tasks { userId = user.id }
-        |> Effect.andThen
+        |> Task.andThen
             (\all ->
-                Effect.sequence
+                Task.sequence
                     (List.map
                         (\t -> Repo.update tasks t.id { done = False })
                         all
                     )
-                    |> Effect.map (\_ -> ())
+                    |> Task.map (\_ -> ())
             )
 
 
@@ -223,37 +223,55 @@ resetAllImpl _ user =
 -- matches the user's full list — that'd reject legitimate cases
 -- where a row was deleted concurrently. Missing IDs just don't get
 -- updated (their position stays stale until the next reorder).
-reorderTasksImpl : { orderedIds : List Int } -> Shared.User -> Effect ()
+reorderTasksImpl : { orderedIds : List Int } -> Shared.User -> Task ()
 reorderTasksImpl input user =
-    Effect.sequence
+    Task.sequence
         (List.indexedMap
             (\idx id ->
                 Repo.findById tasks id
-                    |> Effect.andThen
+                    |> Task.andThen
                         (\found ->
                             case found of
                                 Just task ->
                                     if task.userId == user.id then
                                         Repo.update tasks id { position = idx }
-                                            |> Effect.map (\_ -> ())
+                                            |> Task.map (\_ -> ())
                                     else
                                         -- Not yours: skip, as promised
                                         -- above.
-                                        Effect.succeed ()
+                                        Task.succeed ()
 
                                 Nothing ->
                                     -- Deleted concurrently: skip.
-                                    Effect.succeed ()
+                                    Task.succeed ()
                         )
             )
             input.orderedIds
         )
-        |> Effect.map (\_ -> ())
+        |> Task.map (\_ -> ())
+
+
+-- ===== Account-deletion support =====
+--
+-- deleteAllForUser removes every task owned by `user`. Backend.Account
+-- calls it to cascade the user's data before deleting their account
+-- row. Repo has no bulk delete-by-filter, so we read the owned ids and
+-- deleteById each — same per-row shape as resetAllImpl, fine for the
+-- per-user list sizes this app sees.
+deleteAllForUser : Shared.User -> Task ()
+deleteAllForUser user =
+    Repo.findBy tasks { userId = user.id }
+        |> Task.andThen
+            (\owned ->
+                Task.sequence
+                    (List.map (\t -> Repo.deleteById tasks t.id) owned)
+                    |> Task.map (\_ -> ())
+            )
 
 
 -- ===== Service wiring =====
 --
--- Auth.protect : Service req resp -> (req -> User -> Effect resp)
+-- Auth.protect : Service req resp -> (req -> User -> Task resp)
 --                                 -> ExposedService
 -- It injects the logged User as the second argument and rejects
 -- the request with 401 if there's no session. The contract on the

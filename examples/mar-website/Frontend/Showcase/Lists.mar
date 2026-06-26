@@ -45,7 +45,7 @@ type Msg
     | StepMoved Int Int
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
     ( { tasks =
           [ "Buy groceries"
@@ -61,24 +61,24 @@ init =
           ]
       , editing = False
       }
-    , Effect.none
+    , Cmd.none
     )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         EditClicked ->
-            ( { model | editing = True }, Effect.none )
+            ( { model | editing = True }, Cmd.none )
 
         DoneClicked ->
-            ( { model | editing = False }, Effect.none )
+            ( { model | editing = False }, Cmd.none )
 
         TaskMoved from to ->
             -- (from, to) come from the onMove handler; List.move
             -- does the in-list shuffle.
             ( { model | tasks = List.move from to model.tasks }
-            , Effect.none
+            , Cmd.none
             )
 
         TaskDeleted idx ->
@@ -86,12 +86,12 @@ update msg model =
             -- this page demos the primitive, not the destructive-
             -- action pattern (see the Modals page for that).
             ( { model | tasks = removeAt idx model.tasks }
-            , Effect.none
+            , Cmd.none
             )
 
         StepMoved from to ->
             ( { model | steps = List.move from to model.steps }
-            , Effect.none
+            , Cmd.none
             )
 
 

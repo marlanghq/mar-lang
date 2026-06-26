@@ -33,15 +33,15 @@ todosPath = "/todos"
 type CounterMsg = Inc | Dec
 
 
-counterInit : (Int, Effect CounterMsg)
-counterInit = (0, Effect.none)
+counterInit : (Int, Cmd CounterMsg)
+counterInit = (0, Cmd.none)
 
 
-counterUpdate : CounterMsg -> Int -> (Int, Effect CounterMsg)
+counterUpdate : CounterMsg -> Int -> (Int, Cmd CounterMsg)
 counterUpdate msg model =
     case msg of
-        Inc -> (model + 1, Effect.none)
-        Dec -> (model - 1, Effect.none)
+        Inc -> (model + 1, Cmd.none)
+        Dec -> (model - 1, Cmd.none)
 
 
 counterView : Int -> View CounterMsg
@@ -75,16 +75,16 @@ type alias TodoModel = { items : List String, draft : String }
 type TodoMsg = DraftChanged String | AddItem | Clear
 
 
-todoInit : (TodoModel, Effect TodoMsg)
-todoInit = ({ items = [], draft = "" }, Effect.none)
+todoInit : (TodoModel, Cmd TodoMsg)
+todoInit = ({ items = [], draft = "" }, Cmd.none)
 
 
-todoUpdate : TodoMsg -> TodoModel -> (TodoModel, Effect TodoMsg)
+todoUpdate : TodoMsg -> TodoModel -> (TodoModel, Cmd TodoMsg)
 todoUpdate msg model =
     case msg of
-        DraftChanged value -> ({ model | draft = value }, Effect.none)
-        AddItem -> ({ model | items = model.items ++ [model.draft], draft = "" }, Effect.none)
-        Clear -> ({ model | items = [] }, Effect.none)
+        DraftChanged value -> ({ model | draft = value }, Cmd.none)
+        AddItem -> ({ model | items = model.items ++ [model.draft], draft = "" }, Cmd.none)
+        Clear -> ({ model | items = [] }, Cmd.none)
 
 
 todoView : TodoModel -> View TodoMsg
@@ -119,6 +119,6 @@ todoPage =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.frontend [ counterPage, todoPage ]

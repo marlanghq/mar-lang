@@ -16,7 +16,7 @@ import UI exposing
 -- Open with: mar dev examples/tasks
 
 
-type alias Task =
+type alias TaskItem =
     { id : Int
     , title : String
     , notes : String
@@ -31,7 +31,7 @@ type Filter
 
 
 type alias Model =
-    { tasks : List Task
+    { tasks : List TaskItem
     , draftTitle : String
     , draftNotes : String
     , filter : Filter
@@ -49,7 +49,7 @@ type Msg
     | SetFilter Filter
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
     ( { tasks =
           [ { id = 1, title = "Try mar", notes = "", done = True }
@@ -60,18 +60,18 @@ init =
       , filter = All
       , nextId = 3
       }
-    , Effect.none
+    , Cmd.none
     )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         TitleChanged value ->
-            ({ model | draftTitle = value }, Effect.none)
+            ({ model | draftTitle = value }, Cmd.none)
 
         NotesChanged value ->
-            ({ model | draftNotes = value }, Effect.none)
+            ({ model | draftNotes = value }, Cmd.none)
 
         AddTask ->
             ( { model
@@ -86,40 +86,40 @@ update msg model =
                 , draftTitle = ""
                 , draftNotes = ""
               }
-            , Effect.none
+            , Cmd.none
             )
 
         ToggleTask id ->
-            ({ model | tasks = List.map (toggleIfId id) model.tasks }, Effect.none)
+            ({ model | tasks = List.map (toggleIfId id) model.tasks }, Cmd.none)
 
         RemoveTask id ->
-            ({ model | tasks = List.filter (notId id) model.tasks }, Effect.none)
+            ({ model | tasks = List.filter (notId id) model.tasks }, Cmd.none)
 
         ClearDone ->
-            ({ model | tasks = List.filter pending model.tasks }, Effect.none)
+            ({ model | tasks = List.filter pending model.tasks }, Cmd.none)
 
         SetFilter f ->
-            ({ model | filter = f }, Effect.none)
+            ({ model | filter = f }, Cmd.none)
 
 
-toggleIfId : Int -> Task -> Task
+toggleIfId : Int -> TaskItem -> TaskItem
 toggleIfId id t =
     if t.id == id then
         { t | done = if t.done then False else True }
     else
         t
 
-notId : Int -> Task -> Bool
+notId : Int -> TaskItem -> Bool
 notId id t = t.id /= id
 
-pending : Task -> Bool
+pending : TaskItem -> Bool
 pending t = t.done == False
 
-isDone : Task -> Bool
+isDone : TaskItem -> Bool
 isDone t = t.done == True
 
 
-visibleTasks : Filter -> List Task -> List Task
+visibleTasks : Filter -> List TaskItem -> List TaskItem
 visibleTasks f tasks =
     case f of
         All    -> tasks
@@ -162,7 +162,7 @@ view model =
         ]
 
 
-renderTask : Task -> View Msg
+renderTask : TaskItem -> View Msg
 renderTask t =
     hstack []
         [ button [] (ToggleTask t.id) (if t.done then "[x]" else "[ ]")
@@ -185,6 +185,6 @@ page =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.frontend [ page ]

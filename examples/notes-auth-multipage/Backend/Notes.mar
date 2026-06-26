@@ -26,12 +26,12 @@ notes =
 --
 -- Impl names match the wire contract names from Shared on purpose:
 -- `Shared.listMine` is implemented by `listMine` (this module).
-listMine : () -> Shared.User -> Effect (List Shared.Note)
+listMine : () -> Shared.User -> Task (List Shared.Note)
 listMine _ user =
     Repo.findBy notes { authorId = user.id }
 
 
-createMine : { body : String } -> Shared.User -> Effect Shared.CreateOutcome
+createMine : { body : String } -> Shared.User -> Task Shared.CreateOutcome
 createMine input user =
     -- Server-side gate: clients can disable the button or guard the
     -- update, but the backend is the only layer we control end-to-end.
@@ -39,13 +39,13 @@ createMine input user =
     -- arrived (curl, tampered client, replayed request). The rejection
     -- is a typed outcome in the contract, not an abort.
     if String.trim input.body == "" then
-        Effect.succeed Shared.BodyEmpty
+        Task.succeed Shared.BodyEmpty
     else
         Repo.create notes
             { body     = input.body
             , authorId = user.id
             }
-            |> Effect.map Shared.Created
+            |> Task.map Shared.Created
 
 
 -- Domain-local services list. Main.mar concatenates every domain's

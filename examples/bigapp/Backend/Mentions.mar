@@ -47,7 +47,7 @@ mentions =
 --
 -- Self-mentions are dropped — no inbox entry for the author when
 -- they tag themselves. Misses (typo, ex-member) silently skip.
-parseAndStoreMentions : Shared.Comment -> Effect ()
+parseAndStoreMentions : Shared.Comment -> Task ()
 parseAndStoreMentions comment =
     let
         handles =
@@ -62,17 +62,17 @@ parseAndStoreMentions comment =
                 handles
     in
     if List.isEmpty distinctHandles then
-        Effect.succeed ()
+        Task.succeed ()
     else
         resolveHandles distinctHandles
-            |> Effect.andThen
+            |> Task.andThen
                 (\userIds ->
                     let
                         targets =
                             List.filter (\uid -> uid /= comment.authorId) userIds
                     in
-                    Effect.sequence (List.map (storeMention comment) targets)
-                        |> Effect.map (\_ -> ())
+                    Task.sequence (List.map (storeMention comment) targets)
+                        |> Task.map (\_ -> ())
                 )
 
 
@@ -127,10 +127,10 @@ isHandleChar c =
 
 -- resolveHandles looks up each handle against every user, returning
 -- the matching ids. List.filterMap drops un-resolvable handles.
-resolveHandles : List String -> Effect (List Int)
+resolveHandles : List String -> Task (List Int)
 resolveHandles handles =
     Repo.all Backend.Users.users
-        |> Effect.map
+        |> Task.map
             (\allUsers ->
                 List.filterMap
                     (\handle ->
@@ -165,17 +165,17 @@ handleFor user =
 -- storeMention inserts a Mention row IF the (comment, user) pair
 -- isn't already present. The pre-check makes retries silent; the
 -- UNIQUE constraint at the schema layer is the backstop.
-storeMention : Shared.Comment -> Int -> Effect ()
+storeMention : Shared.Comment -> Int -> Task ()
 storeMention comment userId =
     Repo.findBy mentions
         { commentId       = comment.id
         , mentionedUserId = userId
         }
-        |> Effect.andThen
+        |> Task.andThen
             (\existing ->
                 if List.isEmpty existing then
                     Time.now
-                        |> Effect.andThen
+                        |> Task.andThen
                             (\now ->
                                 Repo.create mentions
                                     { commentId       = comment.id
@@ -184,8 +184,8 @@ storeMention comment userId =
                                     , createdAt       = now
                                     , seen            = False
                                     }
-                                    |> Effect.map (\_ -> ())
+                                    |> Task.map (\_ -> ())
                             )
                 else
-                    Effect.succeed ()
+                    Task.succeed ()
             )

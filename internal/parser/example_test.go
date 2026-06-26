@@ -72,15 +72,15 @@ type Msg
 update msg model =
     case msg of
         BodyChanged value ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         SubmitClicked ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         TimelineLoaded result ->
             case result of
-                Ok posts -> ( model, Effect.none )
-                Err _ -> ( model, Effect.none )
+                Ok posts -> ( model, Cmd.none )
+                Err _ -> ( model, Cmd.none )
 `
 	mod, err := Parse(src)
 	if err != nil {

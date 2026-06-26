@@ -1,0 +1,62 @@
+module Main exposing (main)
+
+
+import Backend.Users
+import Backend.Pets
+import Backend.Expenses
+import Backend.Account
+import Frontend.SignIn
+import Frontend.VerifyCode
+import Frontend.Expenses
+import Frontend.Pets
+import Frontend.Settings
+
+
+-- Pet Expenses — track what you spend on your pets.
+--
+-- A per-user expense tracker. Most spending (food, litter) covers all
+-- your pets, so the app is built around the EXPENSE feed, not the pets:
+--   * sign in with an email one-time code (no passwords)
+--   * the home screen is the expense feed: running total + per-category
+--     breakdown + the list, newest first
+--   * each expense optionally tags a pet ("All pets" by default)
+--   * pets are managed on their own screen (a tag list); deleting a pet
+--     re-tags its expenses to "all pets" instead of destroying them
+--   * sign out + delete account live under Settings (App Store 5.1.1(v))
+--
+-- Wiring point: only this module sees both halves. Auth.config picks up
+-- the users entity; services come from the three backend modules (each
+-- Auth.protect'd); the pages list enumerates every route.
+--
+-- Open with:  mar dev examples/pet-expenses
+
+
+auth : Auth { id : Int, email : String }
+auth =
+    Auth.config
+        { entity     = Backend.Users.users
+        , identify   = \u -> u.email
+        , signInPage = Frontend.SignIn.page
+        , email      = { subject = "Your Pet Expenses sign-in code" }
+        , signup     = \userEmail -> { email = userEmail }
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Cmd ()
+main =
+    App.fullstack
+        { services =
+            List.concat
+                [ Backend.Expenses.services
+                , Backend.Pets.services
+                , Backend.Account.services
+                ]
+        , pages =
+            [ Frontend.SignIn.page
+            , Frontend.VerifyCode.page
+            , Frontend.Expenses.page
+            , Frontend.Pets.page
+            , Frontend.Settings.page
+            ]
+        }

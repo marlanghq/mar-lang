@@ -44,24 +44,24 @@ type Msg
     | UnfollowDone (Result Service.Error ())
 
 
-init : Shared.User -> { handle : String } -> (Model, Effect Msg)
+init : Shared.User -> { handle : String } -> (Model, Cmd Msg)
 init _ params =
     ( { handle = params.handle, state = Loading, busy = False }
     , Service.call Shared.loadProfile { handle = params.handle } Fetched
     )
 
 
-update : Shared.User -> { handle : String } -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> { handle : String } -> Msg -> Model -> (Model, Cmd Msg)
 update _ _ msg model =
     case msg of
         Fetched (Ok (Just view)) ->
-            ( { model | state = Found view }, Effect.none )
+            ( { model | state = Found view }, Cmd.none )
 
         Fetched (Ok Nothing) ->
-            ( { model | state = NotFound }, Effect.none )
+            ( { model | state = NotFound }, Cmd.none )
 
         Fetched (Err why) ->
-            ( { model | state = Failed (Service.errorToString why) }, Effect.none )
+            ( { model | state = Failed (Service.errorToString why) }, Cmd.none )
 
         FollowClicked ->
             ( { model | busy = True }
@@ -92,10 +92,10 @@ update _ _ msg model =
         FollowDone (Ok Shared.CantFollowSelf) ->
             -- The view hides the button on your own profile, so this
             -- only fires for a tampered request; nothing to do.
-            ( { model | busy = False }, Effect.none )
+            ( { model | busy = False }, Cmd.none )
 
         FollowDone (Err _) ->
-            ( { model | busy = False }, Effect.none )
+            ( { model | busy = False }, Cmd.none )
 
         UnfollowDone (Ok ()) ->
             ( { model | busy = False }
@@ -103,7 +103,7 @@ update _ _ msg model =
             )
 
         UnfollowDone (Err _) ->
-            ( { model | busy = False }, Effect.none )
+            ( { model | busy = False }, Cmd.none )
 
 
 renderTweet : Shared.TweetView -> View Msg

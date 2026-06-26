@@ -52,12 +52,12 @@ addEntry = Service.declare POST "/entries"
 
 
 -- Backend handlers
-listEntriesImpl : () -> Effect (List Entry)
+listEntriesImpl : () -> Task (List Entry)
 listEntriesImpl _ =
     Repo.all entries
 
 
-addEntryImpl : { name : String } -> Effect Entry
+addEntryImpl : { name : String } -> Task Entry
 addEntryImpl input =
     Repo.create entries { name = input.name }
 
@@ -88,24 +88,24 @@ type Msg
     | EntrySigned (Result Service.Error Entry)
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
     ( { entries = Loading, draft = "" }
     , Service.call listEntries () EntriesFetched
     )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         EntriesFetched (Ok loaded) ->
-            ( { model | entries = Loaded loaded }, Effect.none )
+            ( { model | entries = Loaded loaded }, Cmd.none )
 
         EntriesFetched (Err why) ->
-            ( { model | entries = Failed (Service.errorToString why) }, Effect.none )
+            ( { model | entries = Failed (Service.errorToString why) }, Cmd.none )
 
         DraftChanged value ->
-            ( { model | draft = value }, Effect.none )
+            ( { model | draft = value }, Cmd.none )
 
         SignClicked ->
             -- Stale-while-revalidate: keep the current Loaded list
@@ -118,7 +118,7 @@ update msg model =
             ( model, Service.call listEntries () EntriesFetched )
 
         EntrySigned (Err _) ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
 
 view : Model -> View Msg
@@ -167,7 +167,7 @@ page =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.fullstack
         { services = services

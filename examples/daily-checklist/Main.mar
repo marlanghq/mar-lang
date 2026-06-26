@@ -3,6 +3,7 @@ module Main exposing (main)
 
 import Backend.Users
 import Backend.Tasks
+import Backend.Account
 import Frontend.SignIn
 import Frontend.VerifyCode
 import Frontend.Home
@@ -39,10 +40,10 @@ auth =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.fullstack
-        { services = Backend.Tasks.services
+        { services = List.concat [ Backend.Tasks.services, Backend.Account.services ]
         , pages    =
             [ Frontend.SignIn.page
             , Frontend.VerifyCode.page

@@ -37,24 +37,24 @@ type Msg
     = NoteFetched (Result Service.Error (Maybe Shared.Note))
 
 
-init : Shared.User -> { id : Int } -> (Model, Effect Msg)
+init : Shared.User -> { id : Int } -> (Model, Cmd Msg)
 init _ params =
     ( Loading
     , Service.call Shared.getNote { id = params.id } NoteFetched
     )
 
 
-update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Cmd Msg)
 update _ _ msg model =
     case msg of
         NoteFetched (Ok (Just note)) ->
-            ( Loaded note, Effect.none )
+            ( Loaded note, Cmd.none )
 
         NoteFetched (Ok Nothing) ->
-            ( NotFound, Effect.none )
+            ( NotFound, Cmd.none )
 
         NoteFetched (Err _) ->
-            ( NotFound, Effect.none )
+            ( NotFound, Cmd.none )
 
 
 -- No explicit Back button: SwiftUI's NavigationStack provides the

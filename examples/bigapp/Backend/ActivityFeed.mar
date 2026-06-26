@@ -21,7 +21,7 @@ import Shared exposing
 -- Issues / Projects.
 
 
-listRecent : Shared.ListRecentActivity -> Shared.User -> Effect (List Shared.ActivityView)
+listRecent : Shared.ListRecentActivity -> Shared.User -> Task (List Shared.ActivityView)
 listRecent input user =
     let
         cap =
@@ -36,7 +36,7 @@ listRecent input user =
     -- memory after the fetch — fine at the scale of an audit feed
     -- (which a real product would cap-and-truncate via a sweeper).
     Repo.findBy Backend.Activities.activities { teamId = user.teamId }
-        |> Effect.andThen
+        |> Task.andThen
             (\raw ->
                 let
                     sorted =
@@ -54,17 +54,17 @@ listRecent input user =
                             raw
                             |> List.take cap
                 in
-                Effect.sequence (List.map buildActivityView sorted)
+                Task.sequence (List.map buildActivityView sorted)
             )
 
 
-buildActivityView : Shared.Activity -> Effect Shared.ActivityView
+buildActivityView : Shared.Activity -> Task Shared.ActivityView
 buildActivityView a =
     Repo.findById Backend.Users.users a.actorId
-        |> Effect.andThen
+        |> Task.andThen
             (\maybeActor ->
                 resolveIssueContext a
-                    |> Effect.map
+                    |> Task.map
                         (\ctx ->
                             { id          = a.id
                             , actorId     = a.actorId
@@ -91,7 +91,7 @@ buildActivityView a =
 -- the comment-flavored emitX helpers). For project activities,
 -- the context fields stay empty — the row itself has the project
 -- name in `extra`.
-resolveIssueContext : Shared.Activity -> Effect { issueNumber : Int, issueTitle : String, projectSlug : String }
+resolveIssueContext : Shared.Activity -> Task { issueNumber : Int, issueTitle : String, projectSlug : String }
 resolveIssueContext a =
     case a.subject of
         OnIssue ->
@@ -105,21 +105,21 @@ resolveIssueContext a =
                     lookupIssueContext issueId
 
                 Nothing ->
-                    Effect.succeed { issueNumber = 0, issueTitle = "", projectSlug = "" }
+                    Task.succeed { issueNumber = 0, issueTitle = "", projectSlug = "" }
 
         OnProject ->
-            Effect.succeed { issueNumber = 0, issueTitle = "", projectSlug = "" }
+            Task.succeed { issueNumber = 0, issueTitle = "", projectSlug = "" }
 
 
-lookupIssueContext : Int -> Effect { issueNumber : Int, issueTitle : String, projectSlug : String }
+lookupIssueContext : Int -> Task { issueNumber : Int, issueTitle : String, projectSlug : String }
 lookupIssueContext issueId =
     Repo.findById Backend.Issues.issues issueId
-        |> Effect.andThen
+        |> Task.andThen
             (\maybeIssue ->
                 case maybeIssue of
                     Just issue ->
                         Repo.findById Backend.Projects.projects issue.projectId
-                            |> Effect.map
+                            |> Task.map
                                 (\maybeProject ->
                                     { issueNumber = issue.number
                                     , issueTitle  = issue.title
@@ -131,7 +131,7 @@ lookupIssueContext issueId =
                                 )
 
                     Nothing ->
-                        Effect.succeed { issueNumber = 0, issueTitle = "", projectSlug = "" }
+                        Task.succeed { issueNumber = 0, issueTitle = "", projectSlug = "" }
             )
 
 

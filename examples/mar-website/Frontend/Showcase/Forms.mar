@@ -59,42 +59,42 @@ emptyModel =
     }
 
 
-init : (Model, Effect Msg)
-init = ( emptyModel, Effect.none )
+init : (Model, Cmd Msg)
+init = ( emptyModel, Cmd.none )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         EmailChanged v ->
-            ( { model | email = v, submitted = False }, Effect.none )
+            ( { model | email = v, submitted = False }, Cmd.none )
 
         PasswordChanged v ->
-            ( { model | password = v, submitted = False }, Effect.none )
+            ( { model | password = v, submitted = False }, Cmd.none )
 
         NewPasswordChanged v ->
-            ( { model | newPwd = v, submitted = False }, Effect.none )
+            ( { model | newPwd = v, submitted = False }, Cmd.none )
 
         AgeChanged v ->
-            ( { model | age = v, submitted = False }, Effect.none )
+            ( { model | age = v, submitted = False }, Cmd.none )
 
         OtpChanged v ->
-            ( { model | otp = v, submitted = False }, Effect.none )
+            ( { model | otp = v, submitted = False }, Cmd.none )
 
         OtpAltChanged v ->
-            ( { model | otpAlt = v, submitted = False }, Effect.none )
+            ( { model | otpAlt = v, submitted = False }, Cmd.none )
 
         BioChanged v ->
-            ( { model | bio = v, submitted = False }, Effect.none )
+            ( { model | bio = v, submitted = False }, Cmd.none )
 
         CodeChanged v ->
-            ( { model | code = v, submitted = False }, Effect.none )
+            ( { model | code = v, submitted = False }, Cmd.none )
 
         SubmitClicked ->
-            ( { model | submitted = True }, Effect.none )
+            ( { model | submitted = True }, Cmd.none )
 
         Cleared ->
-            ( emptyModel, Effect.none )
+            ( emptyModel, Cmd.none )
 
 
 -- Trivial "is this not a valid email shape" check for the

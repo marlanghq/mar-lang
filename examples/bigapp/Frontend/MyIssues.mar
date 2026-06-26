@@ -26,21 +26,21 @@ type Msg
     = IssuesFetched (Result Service.Error (List Shared.IssueView))
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init _ =
     ( { items = Nothing, error = Nothing }
     , Service.call Shared.myOpenIssues () IssuesFetched
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         IssuesFetched (Ok items) ->
-            ( { model | items = Just items }, Effect.none )
+            ( { model | items = Just items }, Cmd.none )
 
         IssuesFetched (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
 
 -- ====================================================================

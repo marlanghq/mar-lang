@@ -1940,6 +1940,20 @@
     def('picker', native(5, uiPicker));
     def('UI.picker', native(5, uiPicker));
 
+    // datePicker : List Attr -> Maybe Time -> (Time -> msg) -> View msg
+    // Date-only field. Stash the Maybe Time value as an attr so
+    // createDOM / patchDOM can render the <input type="date"> from
+    // view.attrs alone (Nothing -> today); msg carries onChange,
+    // applied to the VTime parsed back from the input.
+    function uiDatePicker(args) {
+      const [attrsList, value, onChange] = args;
+      const attrs = collectAttrs(attrsList);
+      attrs.push({ name: 'value', value: value });
+      return VView('datePicker', attrs, [], '', onChange);
+    }
+    def('datePicker', native(3, uiDatePicker));
+    def('UI.datePicker', native(3, uiDatePicker));
+
     // text — plain text leaf. The attrs list carries the universal
     // layout attrs (width / height); `text [width fill] "..."` is
     // the equal-columns idiom.
@@ -2585,21 +2599,21 @@
 
     // Effect — sync versions (effects are run-on-demand thunks).
     def('effectSucceed', native(1, ([v]) => VEffect(() => v, 'pure')));
-    def('Effect.succeed', native(1, ([v]) => VEffect(() => v, 'pure')));
+    def('Task.succeed', native(1, ([v]) => VEffect(() => v, 'pure')));
     def('effectMap', native(2, ([fn, eff]) => VEffect(() => apply(fn, eff.run()), 'map')));
-    def('Effect.map', native(2, ([fn, eff]) => VEffect(() => apply(fn, eff.run()), 'map')));
+    def('Task.map', native(2, ([fn, eff]) => VEffect(() => apply(fn, eff.run()), 'map')));
     def('effectAndThen', native(2, ([fn, eff]) => VEffect(() => apply(fn, eff.run()).run(), 'andThen')));
-    def('Effect.andThen', native(2, ([fn, eff]) => VEffect(() => apply(fn, eff.run()).run(), 'andThen')));
+    def('Task.andThen', native(2, ([fn, eff]) => VEffect(() => apply(fn, eff.run()).run(), 'andThen')));
 
     // Effect.fail : e -> Effect e a — throws when run. Uncaught
     // failures surface as a JS exception in the dispatcher; user
     // code that wants typed recovery should use Result.* instead.
     const effectFailImpl = native(1, ([err]) => VEffect(() => {
       const msg = err && err.k === 'S' ? err.s : ('(' + (err && err.k) + ')');
-      throw new Error('Effect.fail: ' + msg);
+      throw new Error('Task.fail: ' + msg);
     }, 'fail'));
     def('effectFail', effectFailImpl);
-    def('Effect.fail', effectFailImpl);
+    def('Task.fail', effectFailImpl);
 
     // Effect.forEach : (a -> Effect e ()) -> List a -> Effect e ()
     // Sequential — halts on first failure (the thrown error
@@ -2612,7 +2626,7 @@
       return VUnit();
     }, 'forEach'));
     def('effectForEach', effectForEachImpl);
-    def('Effect.forEach', effectForEachImpl);
+    def('Task.forEach', effectForEachImpl);
 
     // Effect.sequence : List (Effect e a) -> Effect e (List a)
     const effectSequenceImpl = native(1, ([list]) => VEffect(() => {
@@ -2623,7 +2637,7 @@
       return VList(out);
     }, 'sequence'));
     def('effectSequence', effectSequenceImpl);
-    def('Effect.sequence', effectSequenceImpl);
+    def('Task.sequence', effectSequenceImpl);
 
     // Effect.batch : List (Effect e msg) -> Effect e msg
     // Fire-and-forget fan-out (the Cmd.batch of Mar). Each child's
@@ -2639,10 +2653,22 @@
       return VUnit();
     }, 'batch'));
     def('effectBatch', effectBatchImpl);
-    def('Effect.batch', effectBatchImpl);
+    def('Cmd.batch', effectBatchImpl);
 
     def('effectNone', VEffect(() => VUnit(), 'none'));
-    def('Effect.none', VEffect(() => VUnit(), 'none'));
+    def('Cmd.none', VEffect(() => VUnit(), 'none'));
+
+    // Cmd.perform : (a -> msg) -> Task a -> Cmd msg
+    // The Task->Cmd bridge (Elm's Task.perform): run the task and deliver
+    // its produced value to the MVU loop as a msg. The only way a Task
+    // (Time.now, future client reads) reaches `update` on the frontend.
+    const cmdPerformImpl = native(2, ([toMsg, task]) => VEffect(() => {
+      const v = task.run();
+      if (currentDispatch) currentDispatch(apply(toMsg, v));
+      return VUnit();
+    }, 'perform'));
+    def('cmdPerform', cmdPerformImpl);
+    def('Cmd.perform', cmdPerformImpl);
 
     // Time — Duration-typed unit smart constructors. Mirrors the Go
     // runtime's timeBuiltins (internal/runtime/time.go). Each
@@ -4322,7 +4348,7 @@
     node.classList.toggle('mar-w-fill', !!(w && w.unit === 'fill'));
     node.classList.toggle('mar-h-fill', !!(h && h.unit === 'fill'));
     const ownSizing = view.tag === 'image' || view.tag === 'textField'
-      || view.tag === 'textArea' || view.tag === 'picker';
+      || view.tag === 'textArea' || view.tag === 'picker' || view.tag === 'datePicker';
     if (ownSizing) return;
     node.style.width = (w && w.unit === 'chars') ? w.amount + 'ch' : '';
     node.style.height = (h && h.unit === 'lines') ? h.amount + 'lh' : '';
@@ -4819,7 +4845,7 @@
       // Done, Sign out) which are tap-only — no pinch or scroll.
       '  touch-action: manipulation;',
       '}',
-      '.mar-nav-side button:hover { background: rgba(255, 255, 255, 0.85); }',
+      '@media (hover: hover) { .mar-nav-side button:hover { background: rgba(255, 255, 255, 0.85); } }',
       '.mar-nav-side button:active { transform: scale(0.96); }',
 
       // Auto-inserted back button — circular glass pill with the
@@ -4846,7 +4872,7 @@
       '  transition: background 200ms, transform 150ms;',
       '  touch-action: manipulation;',  // skip iOS 300ms double-tap delay
       '}',
-      '.mar-nav-back:hover { background: rgba(255, 255, 255, 0.85); }',
+      '@media (hover: hover) { .mar-nav-back:hover { background: rgba(255, 255, 255, 0.85); } }',
       '.mar-nav-back:active { transform: scale(0.92); }',
       '.mar-nav-back-chev {',
       '  font-size: 22px; font-weight: 600; line-height: 1;',
@@ -5311,6 +5337,16 @@
       // appearance:none so the only chevron the user sees is our
       // overlay glyph, which we can position consistently across
       // platforms.
+      // Date picker — a native <input type="date"> wearing the
+      // textfield chrome (.mar-textfield). We only nudge the calendar
+      // trigger so it reads as interactive; .mar-textfield's
+      // appearance:none can otherwise dim it.
+      '.mar-datepicker { cursor: pointer; }',
+      '.mar-datepicker::-webkit-calendar-picker-indicator {',
+      '  cursor: pointer; opacity: 0.55;',
+      '}',
+      '.mar-datepicker::-webkit-calendar-picker-indicator:hover { opacity: 0.9; }',
+
       '.mar-picker {',
       '  display: flex; align-items: center;',
       // `isolation: isolate` keeps the ::before's `z-index: -1`
@@ -5408,10 +5444,22 @@
       // only the `not-allowed` cursor signals "this exists but
       // doesn\'t respond." Without this guard, a disabled picker
       // would light up gray on hover, falsely inviting interaction.
-      '.mar-picker:not(.mar-disabled):hover::before {',
+      // Same sticky-hover-on-touch guard as navigationLink: `:active` carries
+      // the press tint everywhere (transient), `:hover` is gated to pointers.
+      '.mar-picker:not(.mar-disabled):active::before {',
       '  background: rgba(0, 0, 0, 0.04);',
       '}',
-      '.mar-picker:not(.mar-disabled):focus-within::before {',
+      '@media (hover: hover) {',
+      '  .mar-picker:not(.mar-disabled):hover::before {',
+      '    background: rgba(0, 0, 0, 0.04);',
+      '  }',
+      '}',
+      // Keyboard-only. A native <select> keeps focus after a mouse
+      // click, so :focus-within left this tint stuck until a second
+      // click elsewhere finally blurred it. :has(:focus-visible) shows
+      // the indicator for keyboard (Tab) focus and drops it for mouse,
+      // which is what "keyboard-focus tint" meant all along.
+      '.mar-picker:not(.mar-disabled):has(.mar-picker-select:focus-visible)::before {',
       '  background: rgba(0, 113, 227, 0.10);',
       '}',
       // Disabled picker — fade the value text + chevron and switch
@@ -5669,7 +5717,16 @@
       '  transition: background 120ms;',
       '  z-index: -1;',
       '}',
-      'a.mar-navigation-link:hover::before { background: rgba(0,0,0,0.07); }',
+      // Mobile browsers emulate `:hover` on tap and leave it STUCK on the
+      // last-tapped element (sticky-hover / bfcache restore), so the tint
+      // reappears for a moment when you navigate back to a list. Gate the
+      // hover tint to real-pointer devices; `:active` gives the same press
+      // feedback on touch but is transient (clears on touchend / navigation),
+      // so nothing sticks on return.
+      'a.mar-navigation-link:active::before { background: rgba(0,0,0,0.07); }',
+      '@media (hover: hover) {',
+      '  a.mar-navigation-link:hover::before { background: rgba(0,0,0,0.07); }',
+      '}',
       // Keyboard-focus tint. Without this, Tab navigation lands on
       // the link with no visible change — users assume Tab is
       // skipping the row entirely. Same ::before painter as hover,
@@ -6174,9 +6231,9 @@
       '      0 2px 8px rgba(0, 0, 0, 0.3);',
       '  }',
       '  .mar-nav-back { color: #0a84ff; }',
-      '  .mar-nav-back:hover { background: rgba(255, 255, 255, 0.14); }',
+      '  @media (hover: hover) { .mar-nav-back:hover { background: rgba(255, 255, 255, 0.14); } }',
       '  .mar-nav-side button, .mar-nav-inline-title { color: #f5f5f7; }',
-      '  .mar-nav-side button:hover { background: rgba(255, 255, 255, 0.14); }',
+      '  @media (hover: hover) { .mar-nav-side button:hover { background: rgba(255, 255, 255, 0.14); } }',
       // Section card in dark glass — translucent slate that lets
       // the gradient bleed through under the blur.
       '  .mar-section-body {',
@@ -6347,12 +6404,40 @@
       case 'textField':       return 'input';
       case 'textArea':        return 'textarea';
       case 'picker':          return 'div';
+      case 'datePicker':      return 'input';
       case 'spacer':          return 'div';
       case 'toggle':          return 'label';
       case 'sheet':           return 'div';  // .mar-sheet-backdrop wrapper
       case 'confirmDialog':   return 'div';  // .mar-confirm-backdrop wrapper
       default:                return 'div';
     }
+  }
+
+  // datePicker <-> <input type="date">. The native control speaks a
+  // bare "YYYY-MM-DD" calendar date with no timezone, so we read and
+  // write in the LOCAL calendar: the day shown is the day stored.
+  // (Matches iOS DatePicker, which shows the device-local date.) The
+  // bound value is a concrete `Time` (datePicker is pure — the program
+  // owns the value and seeds "today" via `Cmd.perform GotToday Time.now`),
+  // so we read it directly with no clock fallback. Changes parse back to
+  // a VTime at local midnight.
+  function dateInputValue(view) {
+    const a = (view.attrs || []).find(x => x.name === 'value');
+    const mv = a && a.value;
+    let d;
+    if (mv && typeof mv.millis === 'number') {
+      d = new Date(mv.millis);
+    } else {
+      d = new Date(0); // unset — a pure datePicker always receives a Time
+    }
+    const p = (n) => (n < 10 ? '0' : '') + n;
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+  function parseDateInput(str) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str || '');
+    if (!m) return null;
+    const ms = new Date(+m[1], +m[2] - 1, +m[3]).getTime(); // local midnight
+    return Number.isFinite(ms) ? VTime(ms) : null;
   }
 
   function createDOM(view) {
@@ -6658,6 +6743,28 @@
         applyDisabledAttr(e, view);
         attachInputDispatcher(e);
         attachSubmitDispatcher(e);
+        break;
+      }
+      case 'datePicker': {
+        // Native <input type="date">. The browser supplies the
+        // calendar popover; we reuse the textfield chrome so the row
+        // lines up with neighboring textField / picker rows, and sync
+        // the value as a local YYYY-MM-DD. Changes parse back to a
+        // VTime (local midnight) and dispatch onChange — same shape as
+        // picker / toggle (apply view.msg to the picked value).
+        ensureUIStyles();
+        e.className = 'mar-textfield mar-datepicker';
+        e.type = 'date';
+        applySizing(e, view);
+        e.value = dateInputValue(view);
+        applyDisabledAttr(e, view);
+        e.addEventListener('change', () => {
+          const v = e.__marView;
+          if (!currentDispatch || !v || v.msg == null) return;
+          const t = parseDateInput(e.value);
+          if (!t) return;
+          currentDispatch(apply(v.msg, t));
+        });
         break;
       }
       case 'picker': {
@@ -7108,6 +7215,16 @@
         // else width (chars 40)`).
         applySizing(node, newView);
         break;
+      case 'datePicker': {
+        // Only write if the value diverges, so a re-render doesn't
+        // fight a calendar the user just opened. The value comes from
+        // the Time attr, formatted as the local YYYY-MM-DD.
+        const next = dateInputValue(newView);
+        if (node.value !== next) node.value = next;
+        applyDisabledAttr(node, newView);
+        applySizing(node, newView);
+        break;
+      }
       case 'picker': {
         // Re-render the option list only when something changed.
         // Comparing the underlying VList / VFn / VValue refs lets

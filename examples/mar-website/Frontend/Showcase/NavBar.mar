@@ -29,18 +29,18 @@ type Msg
     | TrailingTapped
 
 
-init : (Model, Effect Msg)
-init = ( { tapped = Nothing }, Effect.none )
+init : (Model, Cmd Msg)
+init = ( { tapped = Nothing }, Cmd.none )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         LeadingTapped ->
-            ( { model | tapped = Just "Leading" }, Effect.none )
+            ( { model | tapped = Just "Leading" }, Cmd.none )
 
         TrailingTapped ->
-            ( { model | tapped = Just "Trailing" }, Effect.none )
+            ( { model | tapped = Just "Trailing" }, Cmd.none )
 
 
 tapMessage : Maybe String -> String

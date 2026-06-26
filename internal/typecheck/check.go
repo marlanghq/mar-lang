@@ -80,7 +80,7 @@ var reservedTypeNames = map[string]bool{
 	"Time": true, "Duration": true, "Order": true,
 	"List": true, "Dict": true, "Set": true,
 	"Maybe": true, "Result": true,
-	"Effect": true, "View": true, "Service": true, "Entity": true,
+	"Task": true, "Cmd": true, "View": true, "Service": true, "Entity": true,
 	"Auth": true, "Page": true, "Method": true,
 }
 

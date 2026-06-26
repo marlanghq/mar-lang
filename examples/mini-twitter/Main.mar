@@ -60,7 +60,7 @@ auth =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.fullstack
         { services = Backend.Services.services

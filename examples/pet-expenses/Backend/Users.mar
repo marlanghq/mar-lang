@@ -1,0 +1,21 @@
+module Backend.Users exposing (users)
+
+
+import Shared
+
+
+-- The users table backs Auth.config. The framework's Auth.* operations
+-- (requestCode, verifyCode, me, logout) read and write rows here via
+-- the Entity handle below. We add no business logic of our own — the
+-- framework owns the identity lifecycle; account deletion lives in
+-- Backend.Account.
+users : Entity Shared.User
+users =
+    Entity.define
+        { name = "users"
+        , columns =
+            { id    = Entity.serial
+            , email = Entity.text Entity.notNull
+            }
+        , uniques = []
+        }

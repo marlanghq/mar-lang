@@ -1,0 +1,268 @@
+module Frontend.Pets exposing (page)
+
+
+import Shared
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , list, section, keyedList, keyed, header, footer
+    , hstack, vstack, spacer
+    , text, subtitle, textField, button, picker, errorText
+    , onDelete, confirm, empty, submit, disabled
+    )
+
+
+-- Pet management — a secondary screen, pushed from the expenses home.
+-- Pets are just optional tags for expenses, so this is plain CRUD: add a
+-- pet, see the list, delete one. Deleting is tucked behind the top-bar
+-- "Edit" toggle (swipe / hover also work). Deleting a pet does NOT
+-- delete its expenses — the backend re-tags them to "all pets".
+
+
+type alias Model =
+    { pets          : Maybe (List Shared.Pet)
+    , error         : Maybe String
+    , adding        : Bool
+    , draftName     : String
+    , draftKind     : String
+    , busy          : Bool
+    , editing       : Bool
+    , confirmingPet : Maybe Shared.Pet
+    }
+
+
+type Msg
+    = PetsFetched (Result Service.Error (List Shared.Pet))
+    | NewPetClicked
+    | CancelAdd
+    | NameChanged String
+    | KindPicked String
+    | SubmitPet
+    | PetSubmitted (Result Service.Error Shared.AddPetOutcome)
+    | EditClicked
+    | DeletePetRowAt Int
+    | DeletePetConfirmed
+    | DeletePetCancelled
+    | PetDeleted (Result Service.Error ())
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { pets = Nothing
+      , error = Nothing
+      , adding = False
+      , draftName = ""
+      , draftKind = "Cat"
+      , busy = False
+      , editing = False
+      , confirmingPet = Nothing
+      }
+    , Service.call Shared.listPets () PetsFetched
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        PetsFetched (Ok pets) ->
+            ( { model | pets = Just pets, error = Nothing }, Cmd.none )
+
+        PetsFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        NewPetClicked ->
+            ( { model | adding = True, draftName = "", error = Nothing }, Cmd.none )
+
+        CancelAdd ->
+            ( { model | adding = False, draftName = "", error = Nothing }, Cmd.none )
+
+        NameChanged value ->
+            ( { model | draftName = value }, Cmd.none )
+
+        KindPicked kind ->
+            ( { model | draftKind = kind }, Cmd.none )
+
+        SubmitPet ->
+            if model.busy || String.trim model.draftName == "" then
+                ( model, Cmd.none )
+            else
+                ( { model | busy = True, error = Nothing }
+                , Service.call Shared.addPet
+                    { name = model.draftName, kind = model.draftKind }
+                    PetSubmitted
+                )
+
+        PetSubmitted (Ok (Shared.PetAdded _)) ->
+            ( { model | busy = False, adding = False, draftName = "" }
+            , Service.call Shared.listPets () PetsFetched
+            )
+
+        PetSubmitted (Ok Shared.PetNameEmpty) ->
+            ( { model | busy = False, error = Just "A pet needs a name." }, Cmd.none )
+
+        PetSubmitted (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        EditClicked ->
+            ( { model | editing = (if model.editing then False else True) }, Cmd.none )
+
+        DeletePetRowAt idx ->
+            case nth idx (currentPets model) of
+                Just pet ->
+                    ( { model | confirmingPet = Just pet }, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        DeletePetCancelled ->
+            ( { model | confirmingPet = Nothing }, Cmd.none )
+
+        DeletePetConfirmed ->
+            case model.confirmingPet of
+                Just pet ->
+                    ( { model
+                        | confirmingPet = Nothing
+                        , pets = Maybe.map (List.filter (\p -> p.id /= pet.id)) model.pets
+                      }
+                    , Service.call Shared.deletePet { id = pet.id } PetDeleted
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        PetDeleted (Ok ()) ->
+            ( model, Cmd.none )
+
+        PetDeleted (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }
+            , Service.call Shared.listPets () PetsFetched
+            )
+
+
+currentPets : Model -> List Shared.Pet
+currentPets model =
+    Maybe.withDefault [] model.pets
+
+
+nth : Int -> List a -> Maybe a
+nth idx xs =
+    case xs of
+        [] ->
+            Nothing
+
+        x :: rest ->
+            if idx <= 0 then Just x else nth (idx - 1) rest
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    navigationStack
+        [ navigationTitle "Pets"
+        , topBarTrailing (button [] EditClicked (if model.editing then "Done" else "Edit"))
+        ]
+        [ list [] (sections model)
+        , petConfirmDialog model
+        ]
+
+
+sections : Model -> List (View Msg)
+sections model =
+    case model.pets of
+        Nothing ->
+            [ section [] [ text [] "Loading…" ] ]
+
+        Just pets ->
+            List.concat
+                [ errorSection model
+                , addBlock model
+                , petsSection model pets
+                ]
+
+
+errorSection : Model -> List (View Msg)
+errorSection model =
+    case model.error of
+        Just why ->
+            [ section [ header "Something went wrong" ] [ errorText why ] ]
+
+        Nothing ->
+            []
+
+
+addBlock : Model -> List (View Msg)
+addBlock model =
+    if model.adding then
+        [ section [ header "Add a pet" ]
+            [ textField [ submit SubmitPet, disabled model.busy ]
+                "Name (e.g. Mia)" model.draftName NameChanged
+            , picker [] model.draftKind Shared.petKinds (\k -> k) KindPicked
+            , hstack []
+                [ button [ disabled model.busy ] SubmitPet
+                    (if model.busy then "Adding…" else "Add pet")
+                , spacer
+                , button [] CancelAdd "Cancel"
+                ]
+            ]
+        ]
+    else
+        [ section [] [ button [] NewPetClicked "New pet" ] ]
+
+
+petsSection : Model -> List Shared.Pet -> List (View Msg)
+petsSection model pets =
+    if List.isEmpty pets then
+        [ section [ header "Pets", footer "Pets are optional tags for an expense. Most expenses cover all of them." ]
+            [ subtitle "No pets yet. Tap \"New pet\" to add one." ]
+        ]
+    else
+        [ keyedList
+            [ header "Pets"
+            , footer "Deleting a pet keeps its expenses — they move to \"all pets\"."
+            , onDelete model.editing DeletePetRowAt
+            ]
+            (List.map petRow pets)
+        ]
+
+
+petRow : Shared.Pet -> KeyedView Msg
+petRow pet =
+    keyed (String.fromInt pet.id)
+        (hstack []
+            [ vstack []
+                [ text [] pet.name
+                , subtitle pet.kind
+                ]
+            , spacer
+            ]
+        )
+
+
+petConfirmDialog : Model -> View Msg
+petConfirmDialog model =
+    case model.confirmingPet of
+        Just pet ->
+            confirm
+                { title        = "Delete " ++ pet.name ++ "?"
+                , confirmLabel = "Delete pet"
+                , destructive  = True
+                , onConfirm    = DeletePetConfirmed
+                , onCancel     = DeletePetCancelled
+                }
+
+        Nothing ->
+            empty
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/pets"
+        , title  = "Pets"
+        , init   = init
+        , update = update
+        , view   = view
+        }

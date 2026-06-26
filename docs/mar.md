@@ -8,7 +8,7 @@ The syntax is Elm-style. The semantics are pure functional with effects tracked 
 
 ### 1.1 Philosophy
 
-- **Pure by default.** Side effects are values (`Effect a`) that the runtime executes. User code describes; runtime acts.
+- **Pure by default.** Side effects are values, a `Task a` on the backend and a `Cmd msg` on the frontend, that the runtime runs. User code describes; runtime acts.
 - **Compile-time correctness over runtime checks.** Types catch as much as possible.
 - **No hidden magic in user code.** Magic is allowed only at the boundary (HTTP encode/decode, schema migrations, etc.), never in the middle of business logic.
 - **High level by default.** Low-level escape hatches are added only when proven necessary.
@@ -201,7 +201,7 @@ Standard Elm syntax:
 - `\x -> body` for lambdas
 - `case expr of ...` for pattern matching
 - `let x = ... in body` for local bindings
-- `let x <- effect in body` for effect chaining (sugared `andThen`)
+- `let x <- task in body` for chaining backend Tasks (sugared `Task.andThen`)
 - `|>` for pipelines
 
 ### 3.2 Nominal IDs
@@ -216,44 +216,42 @@ type SlugId = SlugId String
 
 This prevents mixing IDs of different entities at compile time. Mar's auto-derived codecs encode them transparently (the wrapper disappears on the wire).
 
-### 3.3 Effect a
+### 3.3 Task a and Cmd msg
 
-The single type for effectful computations, Mar's `Cmd`:
+Side effects are values of two distinct types, one per side of the app.
 
-```elm
-type Effect a
-```
-
-Read as: "a computation that, when executed, eventually produces an `a`." One
-type parameter, like Elm's `Cmd`. Errors are values, never a type index: a
-failure travels inside the `a` (a `Result`), not in the effect type. A
-`Service.call` delivers `Result Service.Error resp`, where `Service.Error` is a
-union (`Offline` / `Unauthorized` / `ServerError String`) the frontend cases on.
-
-Used for backend handlers, database operations, network calls, and frontend
-commands. The runtime executes; user code only describes.
-
-API:
+**`Task a`** is the backend's value-monad: "a computation that, when run, produces an `a` (or aborts)." Read it as an "await". Service handlers return `Task resp`, `Repo.*` return `Task`, and `Time.now : Task Time`. You chain Tasks to compute a value.
 
 ```elm
-Effect.succeed   : a -> Effect a
-Effect.fail      : String -> Effect a   -- abort a backend handler with a message
-Effect.none      : Effect a
-Effect.map       : (a -> b) -> Effect a -> Effect b
-Effect.andThen   : (a -> Effect b) -> Effect a -> Effect b
-Effect.batch     : List (Effect a) -> Effect a
-Effect.forEach   : (a -> Effect ()) -> List a -> Effect ()
-Effect.sequence  : List (Effect a) -> Effect (List a)
+type Task a
+
+Task.succeed  : a -> Task a
+Task.fail     : String -> Task a          -- abort a backend handler with a message
+Task.map      : (a -> b) -> Task a -> Task b
+Task.andThen  : (a -> Task b) -> Task a -> Task b
+Task.sequence : List (Task a) -> Task (List a)
+Task.forEach  : (a -> Task ()) -> List a -> Task ()
 ```
 
-A page's `init` and `update` return `(Model, Effect Msg)`. `Effect.fail` is the
-backend abort channel: its String becomes the `Err` the frontend receives, so
-reserve it for genuine failures and keep matchable domain errors in the
-service's response value (a typed union) instead.
+**`Cmd msg`** is the frontend's message-monoid (Mar's `Cmd`, like Elm's): a description of work the MVU runtime should do, whose result returns as a `Msg`. A page's `init` and `update` return `(Model, Cmd Msg)`; `Service.call` and `Nav.*` build a `Cmd`.
 
-### 3.4 Effect chaining: `let <-`
+```elm
+type Cmd msg
 
-Sugar for `andThen`. Each `<-` binds the result of one effect before the next runs:
+Cmd.none    : Cmd msg
+Cmd.batch   : List (Cmd msg) -> Cmd msg
+Cmd.perform : (a -> msg) -> Task a -> Cmd msg   -- run a Task, deliver its value as a Msg
+```
+
+`Cmd.perform` is the bridge from a backend `Task` to the frontend loop (Elm's `Task.perform`): it runs the `Task` and hands the produced value to `update` as a `Msg`. It is the only way a Task's result reaches the frontend. `Time.now` is the same `Task Time` on both sides; the frontend reaches the loop with `Cmd.perform GotNow Time.now`.
+
+The two types stay separate on purpose. They used to be one `Effect a` that carried both algebras, and the overlap let a real bug compile: a value-producing effect like `Time.now` returned straight from a frontend `update` silently did nothing, because the loop only delivers messages. Now `Task` is a value and `Cmd` is a message: returning a `Task` where a `Cmd Msg` is expected is a compile error, so the footgun is gone.
+
+Neither type carries an error index. On the backend a `Task` aborts with `Task.fail`, whose String becomes the `Err` the frontend receives; reserve it for genuine failures and keep matchable domain errors in the service's response value (a typed union) instead. On the frontend a failure travels inside the value: a `Service.call` delivers `Result Service.Error resp`, where `Service.Error` is a union (`Offline` / `Unauthorized` / `ServerError String`) the frontend cases on.
+
+### 3.4 Task chaining: `let <-`
+
+Sugar for `Task.andThen`, on the backend. Each `<-` binds the result of one `Task` before the next runs:
 
 ```elm
 toggle id =
@@ -262,16 +260,16 @@ toggle id =
     in
     case found of
         Just task -> Repo.update tasks id { done = not task.done }
-        Nothing   -> Effect.succeed Nothing
+        Nothing   -> Task.succeed Nothing
 ```
 
-Equivalent to `Repo.findById tasks id |> Effect.andThen (\found -> ...)`.
+Equivalent to `Repo.findById tasks id |> Task.andThen (\found -> ...)`.
 
 ### 3.5 Error handling
 
 Three kinds of failure, three homes. The rule of thumb: transport is a
 shared union, domain is a per-endpoint outcome in the response value, and
-`Effect.fail` is the abort channel for broken invariants only.
+`Task.fail` is the abort channel for broken invariants only.
 
 **Transport** (offline, expired session, server failure): every call can hit
 these, so every `Service.call` delivers the same union in its `Err`:
@@ -302,7 +300,7 @@ signup : Service NewUser SignupOutcome
 signup = Service.declare POST "/signup"
 ```
 
-The handler is `NewUser -> Effect SignupOutcome`, so the backend can only
+The handler is `NewUser -> Task SignupOutcome`, so the backend can only
 produce declared outcomes, and the frontend's case is checked for
 exhaustiveness. Patterns nest flat:
 
@@ -319,7 +317,7 @@ The auth flow follows the same shape with framework-provided outcomes:
 `Auth.VerifyOutcome user` (`Auth.SignedIn user` / `Auth.WrongCode` /
 `Auth.TooManyAttempts`).
 
-**Abort** (`Effect.fail "..."`): for broken invariants in backend handlers,
+**Abort** (`Task.fail "..."`): for broken invariants in backend handlers,
 not for outcomes the frontend reacts to. The string surfaces to the client
 as `ServerError`, display-only. If a page needs to branch on a case, the
 case belongs in the service's response type.
@@ -400,27 +398,27 @@ For external APIs (Stripe, etc.), an explicit `Codec` module may be added later.
 
 ### 4.3 Data access (Repo)
 
-`Repo.*` reads and writes entity rows. Every operation runs inside a backend handler and returns an `Effect`:
+`Repo.*` reads and writes entity rows. Every operation runs inside a backend handler and returns a `Task`:
 
 ```elm
-Repo.all        : Entity a -> Effect (List a)
-Repo.findById   : Entity a -> Int -> Effect (Maybe a)
-Repo.findBy     : Entity a -> fields -> Effect (List a)
-Repo.create     : Entity a -> fields -> Effect a
-Repo.update     : Entity a -> Int -> fields -> Effect (Maybe a)
-Repo.deleteById : Entity a -> Int -> Effect ()
+Repo.all        : Entity a -> Task (List a)
+Repo.findById   : Entity a -> Int -> Task (Maybe a)
+Repo.findBy     : Entity a -> fields -> Task (List a)
+Repo.create     : Entity a -> fields -> Task a
+Repo.update     : Entity a -> Int -> fields -> Task (Maybe a)
+Repo.deleteById : Entity a -> Int -> Task ()
 ```
 
 `findBy` filters by example: pass a record of the columns to match, and it returns every row whose values equal them. `create` takes the full row minus the `serial` id. `update` takes the id and a record of just the columns to change, and answers `Nothing` when no row has that id. `deleteById` is idempotent.
 
 ```elm
-listTasksImpl : () -> Shared.User -> Effect (List Shared.Task)
+listTasksImpl : () -> Shared.User -> Task (List Shared.Task)
 listTasksImpl _ user =
     Repo.findBy tasks { userId = user.id }
-        |> Effect.map sortByPosition
+        |> Task.map sortByPosition
 ```
 
-There is no query-builder, predicate, pagination, or relation API today. Compose with `Effect.andThen` and ordinary Mar (`List.filter`, `List.sortWith`, `List.map`) over the rows you read. Raw SQL is not exposed to app code.
+There is no query-builder, predicate, pagination, or relation API today. Compose with `Task.andThen` and ordinary Mar (`List.filter`, `List.sortWith`, `List.map`) over the rows you read. Raw SQL is not exposed to app code.
 
 ### 4.4 Services
 
@@ -441,8 +439,8 @@ addTask = Service.declare POST "/tasks"
 
 ```elm
 Service.declare       : Method -> String -> Service req resp
-Service.implement     : Service req resp -> (req -> Effect resp) -> ExposedService
-Service.call          : Service req resp -> req -> (Result Service.Error resp -> msg) -> Effect msg
+Service.implement     : Service req resp -> (req -> Task resp) -> ExposedService
+Service.call          : Service req resp -> req -> (Result Service.Error resp -> msg) -> Cmd msg
 Service.errorToString : Service.Error -> String
 ```
 
@@ -451,23 +449,23 @@ The verb determines how the request travels and what the handler may do:
 - **Wire transport.** Path params fill their `{name:Type}` slots in the URL. For `GET` and `DELETE` the remaining request fields ride in a query param; for `POST`, `PUT`, and `PATCH` they ride in the JSON body. The response is always the JSON-encoded `resp`.
 - **`GET` is read-only.** The compiler rejects a `GET` whose handler reaches `Repo.create`, `Repo.update`, or `Repo.deleteById`. A call that mutates must be `POST` / `PUT` / `PATCH` / `DELETE`.
 
-A handler is `req -> Effect resp`, so it can only produce the declared response. Most calls should be authenticated, which is what `Auth.protect` is for:
+A handler is `req -> Task resp`, so it can only produce the declared response. Most calls should be authenticated, which is what `Auth.protect` is for:
 
 ```elm
-Auth.protect : Service req resp -> (req -> User -> Effect resp) -> ExposedService
+Auth.protect : Service req resp -> (req -> User -> Task resp) -> ExposedService
 ```
 
 `Auth.protect` injects the signed-in `User` as the second argument and rejects the request with 401, before the handler runs, when there is no valid session. The frontend sees the same `Service` value either way and never knows whether a handler was wrapped.
 
 ```elm
 -- Backend.Tasks
-addTaskImpl : { name : String } -> Shared.User -> Effect Shared.AddTaskOutcome
+addTaskImpl : { name : String } -> Shared.User -> Task Shared.AddTaskOutcome
 addTaskImpl input user =
     if String.trim input.name == "" then
-        Effect.succeed Shared.NameEmpty
+        Task.succeed Shared.NameEmpty
     else
         Repo.create tasks { name = input.name, done = False, {- ... -} }
-            |> Effect.map Shared.Added
+            |> Task.map Shared.Added
 
 services =
     [ Auth.protect Shared.listTasks listTasksImpl
@@ -475,7 +473,7 @@ services =
     ]
 ```
 
-On the frontend, `Service.call` turns a contract into an `Effect` that dispatches a `Msg`. The `Result` carries `Service.Error` in its `Err` (transport failure) and the declared `resp` in `Ok` (which holds the domain outcome). See section 3.5 for the full error model.
+On the frontend, `Service.call` turns a contract into a `Cmd` that dispatches a `Msg`. The `Result` carries `Service.Error` in its `Err` (transport failure) and the declared `resp` in `Ok` (which holds the domain outcome). See section 3.5 for the full error model.
 
 ```elm
 update msg model =
@@ -493,7 +491,7 @@ update msg model =
 `Main.mar` is the only module that sees both halves. It builds the auth config, lists the services and pages, and hands them to `App.fullstack`:
 
 ```elm
-main : Effect ()
+main : Cmd ()
 main =
     App.fullstack
         { services = Backend.Tasks.services
@@ -530,21 +528,21 @@ Protect a service with `Auth.protect` (section 4.4) and a page with `Page.protec
 
 ### 4.7 Errors
 
-Backend handlers return `Effect resp`; there is no error type parameter. The three kinds of failure, and where each one lives, are covered in full in section 3.5. In short:
+Backend handlers return `Task resp`; there is no error type parameter. The three kinds of failure, and where each one lives, are covered in full in section 3.5. In short:
 
 - A handler returns its declared response. Domain outcomes are constructors of that response type, matched by the frontend.
-- `Effect.fail "message"` aborts the handler; the message reaches the client as `Service.ServerError` and is display-only.
+- `Task.fail "message"` aborts the handler; the message reaches the client as `Service.ServerError` and is display-only.
 - Offline, expired-session (401), and server failures are turned into the `Service.Error` union by the runtime and delivered in the call's `Err`.
 
 ## 5. Frontend
 
 ### 5.1 MVU model
 
-Each page is its own independent MVU loop with `Model`, `Msg`, `init`, `update`, and `view`. `init` and `update` return `(Model, Effect Msg)`:
+Each page is its own independent MVU loop with `Model`, `Msg`, `init`, `update`, and `view`. `init` and `update` return `(Model, Cmd Msg)`:
 
 ```elm
-init   : (Model, Effect Msg)
-update : Msg -> Model -> (Model, Effect Msg)
+init   : (Model, Cmd Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 view   : Model -> View Msg
 ```
 
@@ -555,10 +553,10 @@ The runtime instantiates a page on navigation and swaps it out when the user nav
 Each page module exports a `page`, built with one of the `Page.*` combinators. They all take the same record, `{ path, title, init, update, view }`; the combinator decides what `init` / `update` / `view` receive:
 
 ```elm
-Page.create           -- public, static path; init : (Model, Effect Msg)
-Page.protected        -- runs Auth.me on entry, hands the User in; init : User -> (Model, Effect Msg)
-Page.dynamic          -- path carries typed args; init : args -> (Model, Effect Msg)
-Page.dynamicProtected -- both; init : User -> args -> (Model, Effect Msg)
+Page.create           -- public, static path; init : (Model, Cmd Msg)
+Page.protected        -- runs Auth.me on entry, hands the User in; init : User -> (Model, Cmd Msg)
+Page.dynamic          -- path carries typed args; init : args -> (Model, Cmd Msg)
+Page.dynamicProtected -- both; init : User -> args -> (Model, Cmd Msg)
 ```
 
 ```elm
@@ -602,11 +600,11 @@ navigationStack [ navigationTitle "Sign in" ]
     ]
 ```
 
-The building blocks: `navigationStack` / `navigationTitle`, `form` / `section`, `row` / `column` / `spacer`, `text` / `title` / `subtitle` / `paragraph`, `textField`, `button`, `link` / `navigationLink`, `list` / `keyedList`, `toggle`, `image`, `sheet` / `confirm`, `errorText`, `centered`, and `empty` (renders nothing). `button [] Submitted "Verify"` takes its message and label directly; `textField` takes its label, the current value, and an on-change message.
+The building blocks: `navigationStack` / `navigationTitle`, `form` / `section`, `row` / `column` / `spacer`, `text` / `title` / `subtitle` / `paragraph`, `textField`, `picker`, `datePicker`, `button`, `link` / `navigationLink`, `list` / `keyedList`, `toggle`, `image`, `sheet` / `confirm`, `errorText`, `centered`, and `empty` (renders nothing). `button [] Submitted "Verify"` takes its message and label directly; `textField` takes its label, the current value, and an on-change message. `datePicker [] day DatePicked` is a date-only field, and it is pure: it shows exactly the `Time` you pass and picking fires `(Time -> msg)` with the chosen day. It does not read the clock; to start on "today", seed the field with `Cmd.perform GotToday Time.now` (hold it as `Maybe Time`, render the picker once seeded). Web renders `<input type="date">`, iOS a SwiftUI `DatePicker`.
 
 ### 5.4 Navigation
 
-The `Nav` module drives navigation. In a view, `navigationLink` pushes a destination when tapped; in `update`, `Nav.pushTo` / `Nav.replaceTo` (and `Nav.push` / `Nav.replace`) return an `Effect` that navigates:
+The `Nav` module drives navigation. In a view, `navigationLink` pushes a destination when tapped; in `update`, `Nav.pushTo` / `Nav.replaceTo` (and `Nav.push` / `Nav.replace`) return a `Cmd` that navigates:
 
 ```elm
 update msg model =
@@ -646,7 +644,7 @@ The `Result` the page receives carries `Service.Error` in its `Err` (transport f
 
 ## 7. Main.mar
 
-Entry point. A single `App.fullstack { ... }` call, returning `Effect ()`:
+Entry point. A single `App.fullstack { ... }` call, returning `Cmd ()`:
 
 ```elm
 module Main exposing (main)
@@ -658,7 +656,7 @@ import Frontend.VerifyCode
 import Frontend.Home
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.fullstack
         { services = Backend.Tasks.services

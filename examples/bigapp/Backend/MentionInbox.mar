@@ -18,10 +18,10 @@ import Shared exposing (Role(..))
 -- `Backend.Mentions.parseAndStoreMentions` on every comment write).
 
 
-listMyMentions : Shared.ListMyMentions -> Shared.User -> Effect (List Shared.MentionView)
+listMyMentions : Shared.ListMyMentions -> Shared.User -> Task (List Shared.MentionView)
 listMyMentions input user =
     Repo.findBy Backend.Mentions.mentions { mentionedUserId = user.id }
-        |> Effect.andThen
+        |> Task.andThen
             (\rows ->
                 let
                     filtered =
@@ -42,20 +42,20 @@ listMyMentions input user =
                             )
                             filtered
                 in
-                Effect.sequence (List.map buildMentionView sorted)
+                Task.sequence (List.map buildMentionView sorted)
             )
 
 
-buildMentionView : Shared.Mention -> Effect Shared.MentionView
+buildMentionView : Shared.Mention -> Task Shared.MentionView
 buildMentionView m =
     Repo.findById Backend.Comments.comments m.commentId
-        |> Effect.andThen
+        |> Task.andThen
             (\maybeComment ->
                 Repo.findById Backend.Users.users m.authorId
-                    |> Effect.andThen
+                    |> Task.andThen
                         (\maybeAuthor ->
                             resolveIssueContext maybeComment
-                                |> Effect.map
+                                |> Task.map
                                     (\ctx ->
                                         { id              = m.id
                                         , commentId       = m.commentId
@@ -102,17 +102,17 @@ bodyPreviewFor maybeComment =
             "(comment removed)"
 
 
-resolveIssueContext : Maybe Shared.Comment -> Effect { issueId : Int, issueNumber : Int, issueTitle : String, projectSlug : String }
+resolveIssueContext : Maybe Shared.Comment -> Task { issueId : Int, issueNumber : Int, issueTitle : String, projectSlug : String }
 resolveIssueContext maybeComment =
     case maybeComment of
         Just c ->
             Repo.findById Backend.Issues.issues c.issueId
-                |> Effect.andThen
+                |> Task.andThen
                     (\maybeIssue ->
                         case maybeIssue of
                             Just issue ->
                                 Repo.findById Backend.Projects.projects issue.projectId
-                                    |> Effect.map
+                                    |> Task.map
                                         (\maybeProject ->
                                             { issueId     = issue.id
                                             , issueNumber = issue.number
@@ -125,26 +125,26 @@ resolveIssueContext maybeComment =
                                         )
 
                             Nothing ->
-                                Effect.succeed { issueId = 0, issueNumber = 0, issueTitle = "", projectSlug = "" }
+                                Task.succeed { issueId = 0, issueNumber = 0, issueTitle = "", projectSlug = "" }
                     )
 
         Nothing ->
-            Effect.succeed { issueId = 0, issueNumber = 0, issueTitle = "", projectSlug = "" }
+            Task.succeed { issueId = 0, issueNumber = 0, issueTitle = "", projectSlug = "" }
 
 
-markSeen : Shared.MarkMentionSeen -> Shared.User -> Effect ()
+markSeen : Shared.MarkMentionSeen -> Shared.User -> Task ()
 markSeen input _ =
     Repo.update Backend.Mentions.mentions input.id
         { seen = True
         }
-        |> Effect.map (\_ -> ())
+        |> Task.map (\_ -> ())
 
 
 -- ====================================================================
 -- AUTHORIZATION
 -- ====================================================================
 
-loadMentionByMark : Shared.MarkMentionSeen -> Shared.User -> Effect (Maybe Shared.Mention)
+loadMentionByMark : Shared.MarkMentionSeen -> Shared.User -> Task (Maybe Shared.Mention)
 loadMentionByMark input _ =
     Repo.findById Backend.Mentions.mentions input.id
 

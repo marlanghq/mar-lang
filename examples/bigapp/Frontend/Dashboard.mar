@@ -33,19 +33,19 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init _ =
     ( Loading, Service.call Shared.loadDashboard () DashboardFetched )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         DashboardFetched (Ok data) ->
-            ( Loaded data, Effect.none )
+            ( Loaded data, Cmd.none )
 
         DashboardFetched (Err why) ->
-            ( Failed (Service.errorToString why), Effect.none )
+            ( Failed (Service.errorToString why), Cmd.none )
 
         SignOutClicked ->
             ( model, Auth.logout SignedOut )

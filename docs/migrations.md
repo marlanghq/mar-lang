@@ -66,7 +66,7 @@ Non-goals:
 - Down migrations (rollback by replaying inverse). SQLite makes this
   very hard; mar takes the Rails-7 stance: forward-only + backups.
 - Data migrations (transforming rows). Out of scope; user writes a
-  one-off `Effect` if needed. Schema only.
+  one-off `Task` if needed. Schema only.
 - Multi-tenant / multi-DB orchestration. Single SQLite per app for now.
 
 ---

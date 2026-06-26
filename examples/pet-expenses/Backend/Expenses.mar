@@ -1,0 +1,155 @@
+module Backend.Expenses exposing (services, reassignPetToAll, deleteUserExpenses)
+
+
+import Shared
+
+
+-- Expenses domain, server-side. An expense belongs to the user; the
+-- `petId` is just a tag (Shared.allPetsId = shared across all pets).
+-- Per-user isolation: every read filters by userId, every write stamps
+-- or checks it.
+expenses : Entity Shared.Expense
+expenses =
+    Entity.define
+        { name = "expenses"
+        , columns =
+            { id       = Entity.serial
+            , userId   = Entity.int Entity.notNull
+            , category = Entity.text Entity.notNull
+            , amount   = Entity.int Entity.notNull
+            , note     = Entity.text Entity.notNull
+            , petId    = Entity.int Entity.notNull
+            , spentAt  = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ===== Read =====
+
+
+-- Every expense the user owns, newest first. This is the home screen's
+-- primary feed.
+listExpensesImpl : () -> Shared.User -> Task (List Shared.Expense)
+listExpensesImpl _ user =
+    Repo.findBy expenses { userId = user.id }
+        |> Task.map sortByNewest
+
+
+sortByNewest : List Shared.Expense -> List Shared.Expense
+sortByNewest items =
+    List.sortWith
+        (\a b ->
+            if Time.toMillis a.spentAt > Time.toMillis b.spentAt then
+                LT
+            else if Time.toMillis a.spentAt < Time.toMillis b.spentAt then
+                GT
+            else
+                EQ
+        )
+        items
+
+
+-- ===== Create =====
+
+
+addExpenseImpl : { petId : Int, category : String, amount : Int, note : String, spentAt : Maybe Time } -> Shared.User -> Task Shared.AddExpenseOutcome
+addExpenseImpl input user =
+    -- The row is always stamped with the caller's id. `petId` is taken
+    -- as given (a tag); we don't verify pet ownership here to avoid a
+    -- module cycle with Backend.Pets — a forged petId only mislabels
+    -- the caller's OWN expense, never leaks anything.
+    if input.amount <= 0 then
+        Task.succeed Shared.AmountNotPositive
+
+    else
+        resolveSpentAt input.spentAt
+            |> Task.andThen
+                (\when ->
+                    Repo.create expenses
+                        { userId   = user.id
+                        , category = input.category
+                        , amount   = input.amount
+                        , note     = input.note
+                        , petId    = input.petId
+                        , spentAt  = when
+                        }
+                        |> Task.map Shared.ExpenseAdded
+                )
+
+
+-- The date the user picked, or "now" if they left the picker untouched.
+-- Time.now reads the server clock; the client only sends a date when the
+-- user actually changed it.
+resolveSpentAt : Maybe Time -> Task Time
+resolveSpentAt chosen =
+    case chosen of
+        Just when ->
+            Task.succeed when
+
+        Nothing ->
+            Time.now
+
+
+-- ===== Delete =====
+
+
+deleteExpenseImpl : { id : Int } -> Shared.User -> Task ()
+deleteExpenseImpl input user =
+    Repo.findById expenses input.id
+        |> Task.andThen
+            (\found ->
+                case found of
+                    Just e ->
+                        if e.userId == user.id then
+                            Repo.deleteById expenses input.id
+
+                        else
+                            Task.succeed ()
+
+                    Nothing ->
+                        Task.succeed ()
+            )
+
+
+-- ===== Pet-deletion + account-deletion helpers =====
+
+
+-- Re-tag a pet's expenses to "all pets". Backend.Pets calls this when a
+-- pet is deleted: the money was still spent, so the expense stays — it
+-- just loses its specific pet tag rather than being destroyed.
+reassignPetToAll : Int -> Shared.User -> Task ()
+reassignPetToAll petId user =
+    Repo.findBy expenses { userId = user.id }
+        |> Task.andThen
+            (\owned ->
+                Task.sequence
+                    (List.map
+                        (\e -> Repo.update expenses e.id { petId = Shared.allPetsId })
+                        (List.filter (\e -> e.petId == petId) owned)
+                    )
+                    |> Task.map (\_ -> ())
+            )
+
+
+-- Drop every expense the user owns. Backend.Account calls this first
+-- when deleting an account.
+deleteUserExpenses : Shared.User -> Task ()
+deleteUserExpenses user =
+    Repo.findBy expenses { userId = user.id }
+        |> Task.andThen
+            (\owned ->
+                Task.sequence
+                    (List.map (\e -> Repo.deleteById expenses e.id) owned)
+                    |> Task.map (\_ -> ())
+            )
+
+
+-- ===== Service wiring =====
+
+
+services =
+    [ Auth.protect Shared.listExpenses  listExpensesImpl
+    , Auth.protect Shared.addExpense    addExpenseImpl
+    , Auth.protect Shared.deleteExpense deleteExpenseImpl
+    ]

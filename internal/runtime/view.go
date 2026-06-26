@@ -160,6 +160,24 @@ func viewBuiltins() map[string]Value {
 			return VView{Tag: "picker", Msg: onChange, Attrs: attrs}, nil
 		}),
 
+		// datePicker : List Attr -> Maybe Time -> (Time -> msg) -> View msg
+		// Date-only field. The value is a `Maybe Time`: Nothing renders
+		// today (the device's local date), Just t renders that day. The
+		// renderer shows a native date input and resolves the picked day
+		// back to a Time on change. Held opaquely here — the JS / iOS
+		// renderers unwrap the Maybe. iOS: DatePicker(.date). Web: <input
+		// type="date">.
+		"datePicker": nativeFn(3, func(args []Value) (Value, error) {
+			attrs, err := collectAttrs(args[0], "UI.datePicker")
+			if err != nil {
+				return nil, err
+			}
+			value := args[1]
+			onChange := args[2]
+			attrs = append(attrs, VAttr{Name: "value", Value: value})
+			return VView{Tag: "datePicker", Msg: onChange, Attrs: attrs}, nil
+		}),
+
 		// Modifier attrs. Each produces a VAttr that the appropriate
 		// container reads from its attrs list. The renderer is the
 		// authoritative consumer — these are just labeled name/value

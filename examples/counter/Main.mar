@@ -15,19 +15,19 @@ type Msg
     | Decrement
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
-    (0, Effect.none)
+    (0, Cmd.none)
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         Increment ->
-            (model + 1, Effect.none)
+            (model + 1, Cmd.none)
 
         Decrement ->
-            (model - 1, Effect.none)
+            (model - 1, Cmd.none)
 
 
 view : Model -> View Msg
@@ -54,6 +54,6 @@ page =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.frontend [ page ]

@@ -44,15 +44,15 @@ issueLabels =
 -- LABEL HANDLERS
 -- ====================================================================
 
-listForProject : Shared.ListProjectLabels -> Shared.User -> Effect (List Shared.Label)
+listForProject : Shared.ListProjectLabels -> Shared.User -> Task (List Shared.Label)
 listForProject input _ =
     Repo.findBy labels { projectId = input.projectId }
 
 
-createLabel : Shared.NewLabel -> Shared.User -> Effect Shared.Label
+createLabel : Shared.NewLabel -> Shared.User -> Task Shared.Label
 createLabel input _ =
     Time.now
-        |> Effect.andThen
+        |> Task.andThen
             (\now ->
                 Repo.create labels
                     { projectId = input.projectId
@@ -63,7 +63,7 @@ createLabel input _ =
             )
 
 
-removeLabel : Shared.DeleteLabel -> Shared.User -> Effect ()
+removeLabel : Shared.DeleteLabel -> Shared.User -> Task ()
 removeLabel input _ =
     Repo.deleteById labels input.id
 
@@ -72,7 +72,7 @@ removeLabel input _ =
 -- ATTACHMENT HANDLERS
 -- ====================================================================
 
-attach : Shared.AttachLabel -> Shared.User -> Effect Shared.IssueLabel
+attach : Shared.AttachLabel -> Shared.User -> Task Shared.IssueLabel
 attach input _ =
     Repo.create issueLabels
         { issueId = input.issueId
@@ -80,29 +80,29 @@ attach input _ =
         }
 
 
-detach : Shared.DetachLabel -> Shared.User -> Effect ()
+detach : Shared.DetachLabel -> Shared.User -> Task ()
 detach input _ =
     -- The simple Repo doesn't have a delete-by-where yet, so we
     -- fetch + filter + delete. For example-app traffic this is
     -- fine; for thousands of labels per issue it'd want a proper
     -- query.
     Repo.findBy issueLabels { issueId = input.issueId, labelId = input.labelId }
-        |> Effect.andThen
+        |> Task.andThen
             (\rows ->
-                Effect.sequence
+                Task.sequence
                     (List.map (\r -> Repo.deleteById issueLabels r.id) rows)
-                    |> Effect.map (\_ -> ())
+                    |> Task.map (\_ -> ())
             )
 
 
-listForIssue : Shared.ListIssueLabels -> Shared.User -> Effect (List Shared.Label)
+listForIssue : Shared.ListIssueLabels -> Shared.User -> Task (List Shared.Label)
 listForIssue input _ =
     Repo.findBy issueLabels { issueId = input.issueId }
-        |> Effect.andThen
+        |> Task.andThen
             (\pivots ->
-                Effect.sequence
+                Task.sequence
                     (List.map (\p -> Repo.findById labels p.labelId) pivots)
-                    |> Effect.map
+                    |> Task.map
                         (\maybes ->
                             -- Drop any nil labels (deleted out from
                             -- under the pivot). Keeps the wire
@@ -123,7 +123,7 @@ listForIssue input _ =
 -- AUTHORIZATION
 -- ====================================================================
 
-loadLabelByDelete : Shared.DeleteLabel -> Shared.User -> Effect (Maybe Shared.Label)
+loadLabelByDelete : Shared.DeleteLabel -> Shared.User -> Task (Maybe Shared.Label)
 loadLabelByDelete input _ =
     Repo.findById labels input.id
 

@@ -51,14 +51,14 @@ type Result = Pending | Done
 
 func TestShadowBuiltinTypeAliasRejected(t *testing.T) {
 	src := `module M exposing (..)
-type alias Effect = Int
+type alias Task = Int
 `
 	_, err := checkSource(t, src)
 	if err == nil {
-		t.Fatal("expected error for an alias named Effect, got clean check")
+		t.Fatal("expected error for an alias named Task, got clean check")
 	}
-	if !strings.Contains(err.Error(), "Effect") || !strings.Contains(err.Error(), "built-in type") {
-		t.Fatalf("expected a built-in-type error naming Effect, got: %v", err)
+	if !strings.Contains(err.Error(), "Task") || !strings.Contains(err.Error(), "built-in type") {
+		t.Fatalf("expected a built-in-type error naming Task, got: %v", err)
 	}
 }
 

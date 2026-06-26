@@ -46,31 +46,31 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init _ =
     ( { notes = Loading, draft = "" }
     , Service.call Shared.listMine () NotesLoaded
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         NotesLoaded (Ok loaded) ->
-            ( { model | notes = Loaded loaded }, Effect.none )
+            ( { model | notes = Loaded loaded }, Cmd.none )
 
         NotesLoaded (Err why) ->
-            ( { model | notes = Failed (Service.errorToString why) }, Effect.none )
+            ( { model | notes = Failed (Service.errorToString why) }, Cmd.none )
 
         DraftChanged value ->
-            ( { model | draft = value }, Effect.none )
+            ( { model | draft = value }, Cmd.none )
 
         AddClicked ->
             -- Source of truth for "is the draft empty" — view also
             -- disables the button visually. String.trim handles
             -- whitespace-only.
             if String.trim model.draft == "" then
-                ( model, Effect.none )
+                ( model, Cmd.none )
             else
                 -- Pessimistic update: keep the draft in the model
                 -- until the server confirms. If anything fails
@@ -101,14 +101,14 @@ update _ msg model =
             -- AddClicked already guards locally (trimmed-empty drafts
             -- never submit), so reaching this means a tampered or
             -- replayed request; keep the draft, nothing to show.
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         NoteCreated (Err _) ->
             -- Non-401 failures land here (network, server bug, etc).
             -- Draft is still in the model; user can retry.
             -- (401 mid-action never reaches this case — the framework
             -- intercepts and redirects before dispatching the Err.)
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         SignOutClicked ->
             ( model, Auth.logout SignedOut )

@@ -36,25 +36,25 @@ type Msg
     | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
 
-init : { email : String } -> (Model, Effect Msg)
+init : { email : String } -> (Model, Cmd Msg)
 init _ =
-    ( { draft = "", error = Nothing, busy = False }, Effect.none )
+    ( { draft = "", error = Nothing, busy = False }, Cmd.none )
 
 
-update : { email : String } -> Msg -> Model -> (Model, Effect Msg)
+update : { email : String } -> Msg -> Model -> (Model, Cmd Msg)
 update params msg model =
     case msg of
         -- Typing clears the previous error so a stale failure
         -- doesn't sit on top of a fresh attempt.
         DraftChanged value ->
-            ( { model | draft = value, error = Nothing }, Effect.none )
+            ( { model | draft = value, error = Nothing }, Cmd.none )
 
         Submitted ->
             -- Drop duplicate submits (stray Enter while busy, double-tap
             -- racing the disabled state) so we don't fire two
             -- verifyCode calls in a row.
             if model.busy then
-                ( model, Effect.none )
+                ( model, Cmd.none )
             else
                 ( { model | busy = True, error = Nothing }
                 , Auth.verifyCode
@@ -72,17 +72,17 @@ update params msg model =
             -- Clear the bad code so the user can re-type without
             -- first deleting the now-invalid attempt.
             ( { model | busy = False, draft = "", error = Just "That code didn't work. Check your email or request a new one." }
-            , Effect.none
+            , Cmd.none
             )
 
         CodeVerified (Ok Auth.TooManyAttempts) ->
             ( { model | busy = False, draft = "", error = Just "Too many tries with this code. Request a new one." }
-            , Effect.none
+            , Cmd.none
             )
 
         CodeVerified (Err why) ->
             ( { model | busy = False, draft = "", error = Just (Service.errorToString why) }
-            , Effect.none
+            , Cmd.none
             )
 
 

@@ -823,71 +823,86 @@ func stdlibBindings() map[string]Type {
 		"charToUpper":  TArrow{From: TChar, To: TChar},
 		"charToLower":  TArrow{From: TChar, To: TChar},
 
-		// Effect — Mar's Cmd: a command the runtime performs, eventually
-		// delivering a msg. One type parameter (the msg), like Elm's Cmd;
-		// errors are values, not a type index. Effect.fail aborts a backend
-		// handler with a String message that the framework turns into the
-		// Err of the Result the frontend receives (see Service.Error).
+		// Task — the value-monad ("await"): the backend's currency and any
+		// value-producing effect. Task.andThen threads the produced value
+		// (do A, then with A's result do B); a service handler runs a Task
+		// and the value becomes the response. One type parameter — failure
+		// is a value (Task.fail's String, surfaced as Service.Error), never a
+		// type index. Lives on both sides; on the frontend a Task reaches the
+		// MVU loop through Cmd.perform.
 		"effectSucceed": TForall{
 			Vars: []int{b.ID},
-			Body: TArrow{From: b, To: TEffect(b)},
+			Body: TArrow{From: b, To: TTask(b)},
 		},
 		"effectFail": TForall{
 			Vars: []int{b.ID},
-			Body: TArrow{From: TString, To: TEffect(b)},
+			Body: TArrow{From: TString, To: TTask(b)},
 		},
 		"effectMap": TForall{
 			Vars: []int{b.ID, -5},
 			Body: TArrow{
 				From: TArrow{From: b, To: TVar{ID: -5}},
 				To: TArrow{
-					From: TEffect(b),
-					To:   TEffect(TVar{ID: -5}),
+					From: TTask(b),
+					To:   TTask(TVar{ID: -5}),
 				},
 			},
 		},
 		"effectAndThen": TForall{
 			Vars: []int{b.ID, -5},
 			Body: TArrow{
-				From: TArrow{From: b, To: TEffect(TVar{ID: -5})},
+				From: TArrow{From: b, To: TTask(TVar{ID: -5})},
 				To: TArrow{
-					From: TEffect(b),
-					To:   TEffect(TVar{ID: -5}),
+					From: TTask(b),
+					To:   TTask(TVar{ID: -5}),
 				},
 			},
 		},
 		"effectForEach": TForall{
 			Vars: []int{b.ID},
 			Body: TArrow{
-				From: TArrow{From: b, To: TEffect(TUnit{})},
-				To:   TArrow{From: TList(b), To: TEffect(TUnit{})},
+				From: TArrow{From: b, To: TTask(TUnit{})},
+				To:   TArrow{From: TList(b), To: TTask(TUnit{})},
 			},
 		},
 		"effectSequence": TForall{
 			Vars: []int{b.ID},
 			Body: TArrow{
-				From: TList(TEffect(b)),
-				To:   TEffect(TList(b)),
+				From: TList(TTask(b)),
+				To:   TTask(TList(b)),
 			},
 		},
-		// Effect.batch : List (Effect msg) -> Effect msg
-		// Fire-and-forget fan-out, the Cmd.batch of Mar: performs every
-		// effect in the list, each delivering through its own toMsg.
-		// The way to launch several independent Service.calls from one
-		// update without chaining them through Effect.andThen (which is
-		// sequential and forces `\_ ->` lambdas that discard results).
-		// Unlike Effect.sequence it produces no aggregate value — the
-		// children's messages ARE the output.
+		// Cmd — the frontend message-monoid: what init/update return, which
+		// the runtime performs to deliver a msg back into the MVU loop.
+		//
+		// Cmd.batch : List (Cmd msg) -> Cmd msg — fire-and-forget fan-out:
+		//   launch several independent Service.calls from one update, each
+		//   delivering through its own toMsg. Produces no aggregate value —
+		//   the children's messages ARE the output.
+		// Cmd.none : Cmd msg — the identity (do nothing).
+		// Cmd.perform : (a -> msg) -> Task a -> Cmd msg — the Task→Cmd bridge:
+		//   run a Task and deliver its produced value as a msg (Elm's
+		//   Task.perform). The only way a Task reaches the frontend loop.
 		"effectBatch": TForall{
 			Vars: []int{b.ID},
 			Body: TArrow{
-				From: TList(TEffect(b)),
-				To:   TEffect(b),
+				From: TList(TCmd(b)),
+				To:   TCmd(b),
 			},
 		},
 		"effectNone": TForall{
 			Vars: []int{b.ID},
-			Body: TEffect(b),
+			Body: TCmd(b),
+		},
+		"cmdPerform": TForall{
+			Vars: []int{b.ID, -5},
+			Body: TArrow{
+				From: TArrow{From: b, To: TVar{ID: -5}},
+				To: TArrow{
+					From: TTask(b),
+					To:   TCmd(TVar{ID: -5}),
+				},
+			},
 		},
 
 		// Time — a small Duration type with unit-named smart constructors.
@@ -915,7 +930,7 @@ func stdlibBindings() map[string]Type {
 		"timeToSeconds": TArrow{From: TDuration, To: TInt},
 
 		// Time — absolute moments. Stored as Unix milliseconds.
-		// Time.now is an Effect because it reads the wall clock;
+		// Time.now is a Task because it reads the wall clock;
 		// .add / .sub shift a moment by a Duration; .diff gives
 		// the Duration between two moments.
 		//
@@ -928,9 +943,12 @@ func stdlibBindings() map[string]Type {
 		//   Time.toIso    : Time -> String              -- ISO 8601 ("2026-05-05T13:45:30Z")
 		//   Time.fromIso  : String -> Maybe Time        -- parse; Nothing on bad format
 		//   Time.toMillis : Time -> Int                 -- escape hatch; Unix ms since 1970
+		// Time.now : Task Time — the current time as a value-task. On the
+		// backend you thread it with Task.andThen; on the frontend you reach
+		// the MVU loop with Cmd.perform GotNow Time.now. (Elm's Time.now.)
 		"timeNow": TForall{
 			Vars: []int{a.ID, b.ID},
-			Body: TEffect(TTime),
+			Body: TTask(TTime),
 		},
 		"timeAdd":      TArrow{From: TTime, To: TArrow{From: TDuration, To: TTime}},
 		"timeSub":      TArrow{From: TTime, To: TArrow{From: TDuration, To: TTime}},
@@ -1200,7 +1218,7 @@ func stdlibBindings() map[string]Type {
 				From: TString,
 				To: TArrow{
 					From: TArrow{From: TResult(TString, TString), To: b},
-					To:   TEffect(b),
+					To:   TCmd(b),
 				},
 			},
 		},
@@ -1212,7 +1230,7 @@ func stdlibBindings() map[string]Type {
 					From: TString,
 					To: TArrow{
 						From: TArrow{From: TResult(TString, TString), To: b},
-						To:   TEffect(b),
+						To:   TCmd(b),
 					},
 				},
 			},
@@ -1287,27 +1305,27 @@ func stdlibBindings() map[string]Type {
 		// row-poly subtyping mar's HM doesn't support today.)
 		"repoAll": TForall{
 			Vars: []int{a.ID},
-			Body: TArrow{From: TEntity(a), To: TEffect(TList(a))},
+			Body: TArrow{From: TEntity(a), To: TTask(TList(a))},
 		},
 		"repoFindByID": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{
 				From: TEntity(a),
-				To:   TArrow{From: TInt, To: TEffect(TMaybe(a))},
+				To:   TArrow{From: TInt, To: TTask(TMaybe(a))},
 			},
 		},
 		"repoFindBy": TForall{
 			Vars: []int{a.ID, b.ID},
 			Body: TArrow{
 				From: TEntity(a),
-				To:   TArrow{From: b, To: TEffect(TList(a))},
+				To:   TArrow{From: b, To: TTask(TList(a))},
 			},
 		},
 		"repoCreate": TForall{
 			Vars: []int{a.ID, b.ID},
 			Body: TArrow{
 				From: TEntity(a),
-				To:   TArrow{From: b, To: TEffect(a)},
+				To:   TArrow{From: b, To: TTask(a)},
 			},
 		},
 		"repoUpdate": TForall{
@@ -1316,7 +1334,7 @@ func stdlibBindings() map[string]Type {
 				From: TEntity(a),
 				To: TArrow{
 					From: TInt,
-					To:   TArrow{From: b, To: TEffect(TMaybe(a))},
+					To:   TArrow{From: b, To: TTask(TMaybe(a))},
 				},
 			},
 		},
@@ -1324,7 +1342,7 @@ func stdlibBindings() map[string]Type {
 			Vars: []int{a.ID},
 			Body: TArrow{
 				From: TEntity(a),
-				To:   TArrow{From: TInt, To: TEffect(TUnit{})},
+				To:   TArrow{From: TInt, To: TTask(TUnit{})},
 			},
 		},
 
@@ -1572,6 +1590,28 @@ func stdlibBindings() map[string]Type {
 							From: TArrow{From: TString, To: a},
 							To:   TView(a),
 						},
+					},
+				},
+			},
+		},
+
+		// UI.datePicker : List Attr -> Time -> (Time -> msg) -> View msg
+		// Date-only field, and PURE: it shows exactly the Time you pass and
+		// fires `(Time -> msg)` with the chosen day at local midnight. The
+		// program owns the value — there is no renderer-invented default.
+		// Seed "today" on the frontend with `Cmd.perform GotToday Time.now`
+		// (hold the field as `Maybe Time`, render the picker once seeded).
+		// iOS: SwiftUI DatePicker(.date). Web: <input type="date">. Use
+		// textField for free text, picker for an enum, datePicker for a date.
+		"datePicker": TForall{
+			Vars: []int{a.ID},
+			Body: TArrow{
+				From: TList(TAttr(TAttrInputHost())),
+				To: TArrow{
+					From: TTime,
+					To: TArrow{
+						From: TArrow{From: TTime, To: a},
+						To:   TView(a),
 					},
 				},
 			},
@@ -2084,8 +2124,8 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TString,
-						"init":   TTuple{Members: []Type{a, TEffect(b)}},
-						"update": TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(b)}}}},
+						"init":   TTuple{Members: []Type{a, TCmd(b)}},
+						"update": TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}},
 						"view":   TArrow{From: a, To: TView(b)},
 					},
 					Order: []string{"path", "init", "update", "view"},
@@ -2119,8 +2159,8 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TString,
-						"init":   TArrow{From: TVar{ID: -16}, To: TTuple{Members: []Type{a, TEffect(b)}}},
-						"update": TArrow{From: TVar{ID: -16}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(b)}}}}},
+						"init":   TArrow{From: TVar{ID: -16}, To: TTuple{Members: []Type{a, TCmd(b)}}},
+						"update": TArrow{From: TVar{ID: -16}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}},
 						"view":   TArrow{From: TVar{ID: -16}, To: TArrow{From: a, To: TView(b)}},
 					},
 					Order: []string{"path", "init", "update", "view"},
@@ -2149,8 +2189,8 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TString,
-						"init":   TArrow{From: TAdminSession(), To: TTuple{Members: []Type{a, TEffect(b)}}},
-						"update": TArrow{From: TAdminSession(), To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(b)}}}}},
+						"init":   TArrow{From: TAdminSession(), To: TTuple{Members: []Type{a, TCmd(b)}}},
+						"update": TArrow{From: TAdminSession(), To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}},
 						"view":   TArrow{From: TAdminSession(), To: TArrow{From: a, To: TView(b)}},
 					},
 					Order: []string{"path", "init", "update", "view"},
@@ -2190,7 +2230,7 @@ func stdlibBindings() map[string]Type {
 						},
 						Order: []string{"marVersion", "goVersion", "buildTarget", "bootedAtMs", "requestsTotal", "requestsInFlight"},
 					}), To: TVar{ID: -30}},
-					To: TEffect(TVar{ID: -30}),
+					To: TCmd(TVar{ID: -30}),
 				},
 			},
 		},
@@ -2210,7 +2250,7 @@ func stdlibBindings() map[string]Type {
 						},
 						Order: []string{"dbSizeBytes", "walSizeBytes", "entities", "frameworkTables"},
 					}), To: TVar{ID: -31}},
-					To: TEffect(TVar{ID: -31}),
+					To: TCmd(TVar{ID: -31}),
 				},
 			},
 		},
@@ -2232,7 +2272,7 @@ func stdlibBindings() map[string]Type {
 						},
 						Order: []string{"atMs", "method", "path", "status", "durationMs", "userEmail"},
 					})), To: TVar{ID: -32}},
-					To: TEffect(TVar{ID: -32}),
+					To: TCmd(TVar{ID: -32}),
 				},
 			},
 		},
@@ -2248,7 +2288,7 @@ func stdlibBindings() map[string]Type {
 						Fields: map[string]Type{"name": TString, "columns": TList(TString)},
 						Order:  []string{"name", "columns"},
 					})), To: TVar{ID: -33}},
-					To: TEffect(TVar{ID: -33}),
+					To: TCmd(TVar{ID: -33}),
 				},
 			},
 		},
@@ -2266,7 +2306,7 @@ func stdlibBindings() map[string]Type {
 						Fields: map[string]Type{"id": TString, "sizeBytes": TInt, "createdAtMs": TInt},
 						Order:  []string{"id", "sizeBytes", "createdAtMs"},
 					})), To: TVar{ID: -35}},
-					To: TEffect(TVar{ID: -35}),
+					To: TCmd(TVar{ID: -35}),
 				},
 			},
 		},
@@ -2282,7 +2322,7 @@ func stdlibBindings() map[string]Type {
 					From: TString,
 					To: TArrow{
 						From: TArrow{From: TResult(TString, TList(TDict(TString, TString))), To: TVar{ID: -34}},
-						To:   TEffect(TVar{ID: -34}),
+						To:   TCmd(TVar{ID: -34}),
 					},
 				},
 			},
@@ -2308,8 +2348,8 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TPath(TVar{ID: -19}),
-						"init":   TArrow{From: TVar{ID: -19}, To: TTuple{Members: []Type{a, TEffect(b)}}},
-						"update": TArrow{From: TVar{ID: -19}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(b)}}}}},
+						"init":   TArrow{From: TVar{ID: -19}, To: TTuple{Members: []Type{a, TCmd(b)}}},
+						"update": TArrow{From: TVar{ID: -19}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}},
 						"view":   TArrow{From: TVar{ID: -19}, To: TArrow{From: a, To: TView(b)}},
 					},
 					Order: []string{"path", "init", "update", "view"},
@@ -2328,8 +2368,8 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TPath(TVar{ID: -22}),
-						"init":   TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TTuple{Members: []Type{a, TEffect(b)}}}},
-						"update": TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(b)}}}}}},
+						"init":   TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TTuple{Members: []Type{a, TCmd(b)}}}},
+						"update": TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}}},
 						"view":   TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TArrow{From: a, To: TView(b)}}},
 					},
 					Order: []string{"path", "init", "update", "view"},
@@ -2351,7 +2391,7 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{Fields: map[string]Type{"email": TString}, Order: []string{"email"}},
 				To: TArrow{
 					From: TArrow{From: TResult(TString, TUnit{}), To: TVar{ID: -51}},
-					To:   TEffect(TVar{ID: -51}),
+					To:   TCmd(TVar{ID: -51}),
 				},
 			},
 		},
@@ -2364,7 +2404,7 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{Fields: map[string]Type{"email": TString, "code": TString}, Order: []string{"email", "code"}},
 				To: TArrow{
 					From: TArrow{From: TResult(TString, TRecord{Fields: map[string]Type{"email": TString}, Order: []string{"email"}}), To: TVar{ID: -53}},
-					To:   TEffect(TVar{ID: -53}),
+					To:   TCmd(TVar{ID: -53}),
 				},
 			},
 		},
@@ -2374,7 +2414,7 @@ func stdlibBindings() map[string]Type {
 			Vars: []int{-54, -55},
 			Body: TArrow{
 				From: TArrow{From: TResult(TString, TUnit{}), To: TVar{ID: -55}},
-				To:   TEffect(TVar{ID: -55}),
+				To:   TCmd(TVar{ID: -55}),
 			},
 		},
 
@@ -2389,8 +2429,8 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{
 					Fields: map[string]Type{
 						"path":   TPath(TVar{ID: -40}),
-						"init":   TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TTuple{Members: []Type{a, TEffect(b)}}}},
-						"update": TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TEffect(b)}}}}}},
+						"init":   TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TTuple{Members: []Type{a, TCmd(b)}}}},
+						"update": TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}}},
 						"view":   TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: a, To: TView(b)}}},
 					},
 					Order: []string{"path", "init", "update", "view"},
@@ -2407,7 +2447,7 @@ func stdlibBindings() map[string]Type {
 		// the path pattern catch all callers in compile time.
 		"navPush": TForall{
 			Vars: []int{a.ID, b.ID},
-			Body: TArrow{From: TString, To: TEffect(b)},
+			Body: TArrow{From: TString, To: TCmd(b)},
 		},
 
 		// Nav.replace : String -> Effect e msg
@@ -2416,7 +2456,7 @@ func stdlibBindings() map[string]Type {
 		// post-login / post-logout flows.
 		"navReplace": TForall{
 			Vars: []int{a.ID, b.ID},
-			Body: TArrow{From: TString, To: TEffect(b)},
+			Body: TArrow{From: TString, To: TCmd(b)},
 		},
 
 		// Auth.completeSignIn : Effect e msg
@@ -2434,7 +2474,7 @@ func stdlibBindings() map[string]Type {
 		// pure navigation; Auth owns the post-login transition.
 		"authCompleteSignIn": TForall{
 			Vars: []int{a.ID, b.ID},
-			Body: TEffect(b),
+			Body: TCmd(b),
 		},
 
 		// Nav.pushTo : Path r -> r -> Effect e msg
@@ -2447,7 +2487,7 @@ func stdlibBindings() map[string]Type {
 			Vars: []int{-30, a.ID, b.ID},
 			Body: TArrow{
 				From: TPath(TVar{ID: -30}),
-				To:   TArrow{From: TVar{ID: -30}, To: TEffect(b)},
+				To:   TArrow{From: TVar{ID: -30}, To: TCmd(b)},
 			},
 		},
 
@@ -2459,7 +2499,7 @@ func stdlibBindings() map[string]Type {
 			Vars: []int{-31, a.ID, b.ID},
 			Body: TArrow{
 				From: TPath(TVar{ID: -31}),
-				To:   TArrow{From: TVar{ID: -31}, To: TEffect(b)},
+				To:   TArrow{From: TVar{ID: -31}, To: TCmd(b)},
 			},
 		},
 
@@ -2479,7 +2519,7 @@ func stdlibBindings() map[string]Type {
 		// App.frontend : List Page -> Effect String ()
 		// Pure frontend: ships an MVU app (one or many pages) to the browser.
 		// Port comes from <projectDir>/mar.json (server.port, default 3000).
-		"appFrontend": TArrow{From: TList(TPage()), To: TEffect(TUnit{})},
+		"appFrontend": TArrow{From: TList(TPage()), To: TCmd(TUnit{})},
 
 		// App.backend : { services } -> Effect String ()
 		// Headless API server: `services` exposes typed RPC services, each
@@ -2492,7 +2532,7 @@ func stdlibBindings() map[string]Type {
 				},
 				Order: []string{"services"},
 			},
-			To: TEffect(TUnit{}),
+			To: TCmd(TUnit{}),
 		},
 
 		// App.fullstack : { services, pages } -> Effect String ()
@@ -2507,7 +2547,7 @@ func stdlibBindings() map[string]Type {
 				},
 				Order: []string{"services", "pages"},
 			},
-			To: TEffect(TUnit{}),
+			To: TCmd(TUnit{}),
 		},
 
 		// Service.declare : Method -> String -> Service req resp
@@ -2546,7 +2586,7 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{
 				From: TService(a, b),
 				To: TArrow{
-					From: TArrow{From: a, To: TEffect(b)},
+					From: TArrow{From: a, To: TTask(b)},
 					To:   TExposedService(),
 				},
 			},
@@ -2567,7 +2607,7 @@ func stdlibBindings() map[string]Type {
 					From: a,
 					To: TArrow{
 						From: TArrow{From: TResult(TServiceError, b), To: TVar{ID: -12}},
-						To:   TEffect(TVar{ID: -12}),
+						To:   TCmd(TVar{ID: -12}),
 					},
 				},
 			},
@@ -2615,7 +2655,7 @@ func stdlibBindings() map[string]Type {
 						From: a,
 						To: TArrow{
 							From: TVar{ID: -13},
-							To:   TEffect(b),
+							To:   TTask(b),
 						},
 					},
 					To: TExposedService(),
@@ -2663,7 +2703,7 @@ func stdlibBindings() map[string]Type {
 					From: TVar{ID: -31},
 					To: TArrow{
 						From: TVar{ID: -32},
-						To:   TEffect(TMaybe(TVar{ID: -33})),
+						To:   TTask(TMaybe(TVar{ID: -33})),
 					},
 				},
 				To: TArrow{
@@ -2699,7 +2739,7 @@ func stdlibBindings() map[string]Type {
 					From: TVar{ID: -34},
 					To: TArrow{
 						From: TVar{ID: -35},
-						To:   TEffect(TMaybe(TVar{ID: -36})),
+						To:   TTask(TMaybe(TVar{ID: -36})),
 					},
 				},
 				To: TArrow{
@@ -2723,7 +2763,7 @@ func stdlibBindings() map[string]Type {
 				From: TRecord{Fields: map[string]Type{"email": TString}, Order: []string{"email"}},
 				To: TArrow{
 					From: TArrow{From: TResult(TServiceError, TAuthRequestOutcome), To: TVar{ID: -15}},
-					To:   TEffect(TVar{ID: -15}),
+					To:   TCmd(TVar{ID: -15}),
 				},
 			},
 		},
@@ -2741,7 +2781,7 @@ func stdlibBindings() map[string]Type {
 				},
 				To: TArrow{
 					From: TArrow{From: TResult(TServiceError, TAuthVerifyOutcome(a)), To: TVar{ID: -17}},
-					To:   TEffect(TVar{ID: -17}),
+					To:   TCmd(TVar{ID: -17}),
 				},
 			},
 		},
@@ -2751,7 +2791,7 @@ func stdlibBindings() map[string]Type {
 			Vars: []int{-18, -19},
 			Body: TArrow{
 				From: TArrow{From: TResult(TString, TUnit{}), To: TVar{ID: -19}},
-				To:   TEffect(TVar{ID: -19}),
+				To:   TCmd(TVar{ID: -19}),
 			},
 		},
 
@@ -2760,7 +2800,7 @@ func stdlibBindings() map[string]Type {
 			Vars: []int{a.ID, -20, -21},
 			Body: TArrow{
 				From: TArrow{From: TResult(TString, TMaybe(a)), To: TVar{ID: -21}},
-				To:   TEffect(TVar{ID: -21}),
+				To:   TCmd(TVar{ID: -21}),
 			},
 		},
 	}
@@ -2853,14 +2893,15 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"String.split":       "stringSplit",
 		"String.join":        "stringJoin",
 		"String.trim":        "stringTrim",
-		"Effect.succeed":     "effectSucceed",
-		"Effect.fail":        "effectFail",
-		"Effect.map":         "effectMap",
-		"Effect.andThen":     "effectAndThen",
-		"Effect.forEach":     "effectForEach",
-		"Effect.sequence":    "effectSequence",
-		"Effect.batch":       "effectBatch",
-		"Effect.none":        "effectNone",
+		"Task.succeed":       "effectSucceed",
+		"Task.fail":          "effectFail",
+		"Task.map":           "effectMap",
+		"Task.andThen":       "effectAndThen",
+		"Task.forEach":       "effectForEach",
+		"Task.sequence":      "effectSequence",
+		"Cmd.batch":          "effectBatch",
+		"Cmd.none":           "effectNone",
+		"Cmd.perform":        "cmdPerform",
 		"Time.seconds":       "timeSeconds",
 		"Time.minutes":       "timeMinutes",
 		"Time.hours":         "timeHours",
@@ -2917,6 +2958,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"UI.textField":       "textField",
 		"UI.textArea":        "textArea",
 		"UI.picker":          "picker",
+		"UI.datePicker":      "datePicker",
 		"UI.navigationTitle": "navigationTitle",
 		"UI.topBarTrailing":  "uiTopBarTrailing",
 		"UI.topBarLeading":   "uiTopBarLeading",

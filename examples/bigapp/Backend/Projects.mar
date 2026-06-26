@@ -30,20 +30,20 @@ projects =
 -- HANDLERS
 -- ====================================================================
 
-listMine : () -> Shared.User -> Effect (List Shared.Project)
+listMine : () -> Shared.User -> Task (List Shared.Project)
 listMine _ user =
     Repo.findBy projects { teamId = user.teamId }
 
 
-getOne : Shared.GetProject -> Shared.User -> Effect (Maybe Shared.Project)
+getOne : Shared.GetProject -> Shared.User -> Task (Maybe Shared.Project)
 getOne input _ =
     Repo.findById projects input.id
 
 
-create : Shared.NewProject -> Shared.User -> Effect Shared.Project
+create : Shared.NewProject -> Shared.User -> Task Shared.Project
 create input user =
     Time.now
-        |> Effect.andThen
+        |> Task.andThen
             (\now ->
                 Repo.create projects
                     { teamId      = user.teamId
@@ -52,15 +52,15 @@ create input user =
                     , description = input.description
                     , createdAt   = now
                     }
-                    |> Effect.andThen
+                    |> Task.andThen
                         (\project ->
                             Backend.Activities.emitProjectCreated user project
-                                |> Effect.map (\_ -> project)
+                                |> Task.map (\_ -> project)
                         )
             )
 
 
-edit : Shared.EditProject -> Shared.User -> Effect (Maybe Shared.Project)
+edit : Shared.EditProject -> Shared.User -> Task (Maybe Shared.Project)
 edit input _ =
     Repo.update projects input.id
         { name        = input.name
@@ -68,20 +68,20 @@ edit input _ =
         }
 
 
-remove : Shared.DeleteProject -> Shared.User -> Effect ()
+remove : Shared.DeleteProject -> Shared.User -> Task ()
 remove input user =
     Repo.findById projects input.id
-        |> Effect.andThen
+        |> Task.andThen
             (\maybeProject ->
                 Repo.deleteById projects input.id
-                    |> Effect.andThen
+                    |> Task.andThen
                         (\_ ->
                             case maybeProject of
                                 Just p ->
                                     Backend.Activities.emitProjectDeleted user p.id p.name
 
                                 Nothing ->
-                                    Effect.succeed ()
+                                    Task.succeed ()
                         )
             )
 
@@ -93,17 +93,17 @@ remove input user =
 -- Loaders materialize the resource so the policy can inspect it
 -- before the handler runs.
 
-loadByGet : Shared.GetProject -> Shared.User -> Effect (Maybe Shared.Project)
+loadByGet : Shared.GetProject -> Shared.User -> Task (Maybe Shared.Project)
 loadByGet input _ =
     Repo.findById projects input.id
 
 
-loadByEdit : Shared.EditProject -> Shared.User -> Effect (Maybe Shared.Project)
+loadByEdit : Shared.EditProject -> Shared.User -> Task (Maybe Shared.Project)
 loadByEdit input _ =
     Repo.findById projects input.id
 
 
-loadByDelete : Shared.DeleteProject -> Shared.User -> Effect (Maybe Shared.Project)
+loadByDelete : Shared.DeleteProject -> Shared.User -> Task (Maybe Shared.Project)
 loadByDelete input _ =
     Repo.findById projects input.id
 

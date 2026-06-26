@@ -139,11 +139,34 @@ func effectBuiltins() map[string]Value {
 			}, nil
 		}),
 
-		// Effect.none : Effect e a — succeeds with unit (or rather, unit value).
+		// Cmd.none : Cmd msg — succeeds with unit (the do-nothing command).
 		"effectNone": VEffect{
 			Tag: "none",
 			Run: func() (Value, error) { return VUnit{}, nil },
 		},
+
+		// Cmd.perform : (a -> msg) -> Task a -> Cmd msg
+		// The Task→Cmd bridge (Elm's Task.perform): run the task and deliver
+		// its produced value as a msg. On the frontend the MVU runner
+		// dispatches the result; on the backend (no dispatch loop) it just
+		// maps. The only way a Task reaches the frontend update loop.
+		"cmdPerform": nativeFn(2, func(args []Value) (Value, error) {
+			toMsg := args[0]
+			task, ok := args[1].(VEffect)
+			if !ok {
+				return nil, errEffect("cmdPerform: second argument is not a Task")
+			}
+			return VEffect{
+				Tag: "perform",
+				Run: func() (Value, error) {
+					v, err := task.Run()
+					if err != nil {
+						return nil, err
+					}
+					return apply(toMsg, v)
+				},
+			}, nil
+		}),
 
 		// Effect.batch : List (Effect e msg) -> Effect e msg
 		// Fire-and-forget fan-out: runs every child effect; each child

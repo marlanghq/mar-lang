@@ -358,11 +358,21 @@ func TSet(k Type) TCon {
 	return TCon{Name: "Set", Args: []Type{k}}
 }
 
-// TEffect returns "Effect a" — Mar's Cmd. One type parameter (the msg the
-// command eventually delivers), like Elm's Cmd. Failure is a value (carried
-// in a Result), never a type index, so there is no error parameter.
-func TEffect(a Type) TCon {
-	return TCon{Name: "Effect", Args: []Type{a}}
+// TTask returns "Task a" — the backend value-monad ("await"). A service
+// handler runs a Task and the produced `a` becomes the response; Task.andThen
+// threads the produced value (do A, then with A's result do B). Backend-only.
+// Failure is a value (a String via Task.fail, surfaced to the client as a
+// Service.Error), never a type index — so one type parameter, no error index.
+func TTask(a Type) TCon {
+	return TCon{Name: "Task", Args: []Type{a}}
+}
+
+// TCmd returns "Cmd msg" — the frontend message-monoid (Mar's Cmd). What
+// `init` / `update` return: the runtime performs it and delivers a `msg` back
+// into the MVU loop. Frontend-only. Composed with Cmd.batch / Cmd.none; it has
+// no andThen (dependent client async chains through messages, not a value).
+func TCmd(a Type) TCon {
+	return TCon{Name: "Cmd", Args: []Type{a}}
 }
 
 // TEntity returns the parameterized "Entity a" type — an entity describing

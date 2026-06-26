@@ -39,7 +39,7 @@ The model has four parts:
 1. **`Auth.config`**: declarative description of how authentication works for this app: which entity holds users, how to identify them (which field is the email), how long sessions live, how to deliver the code.
 2. **Auto-managed entities**: `auth_codes` and `auth_sessions`. Created and migrated by the runtime. The user never queries them directly.
 3. **Server primitives**: `Auth.protect` wraps a service's handler and injects the signed-in user; the `/_auth/*` endpoints are auto-registered; `Page.protected` gates a page.
-4. **Frontend primitives**: `Auth.requestCode`, `Auth.verifyCode`, `Auth.logout`, `Auth.me`. Plain `Effect` values the user wires into their `update` like any other backend call.
+4. **Frontend primitives**: `Auth.requestCode`, `Auth.verifyCode`, `Auth.logout`, `Auth.me`. Plain `Cmd` values the user wires into their `update` like any other backend call.
 
 The sign-in page is just a normal page. The verify page is just a normal page. They are the user's UX; the framework is what their messages talk to.
 
@@ -226,20 +226,20 @@ When the app provides an `Auth.config` (section 4), the runtime auto-registers t
 | POST | `/_auth/logout` | (empty) | `{ ok: true }` plus a `Set-Cookie` clearing the session |
 | GET  | `/_auth/whoami` | (none) | `{ user: <User row> | null }` |
 
-The `/_auth/*` prefix is reserved, like `/_mar/*`: a service declared at one of those paths is rejected at compile time. Frontend code never calls these paths directly; it goes through the `Auth.*` Effects in section 7.
+The `/_auth/*` prefix is reserved, like `/_mar/*`: a service declared at one of those paths is rejected at compile time. Frontend code never calls these paths directly; it goes through the `Auth.*` commands in section 7.
 
 ### 6.2 Protecting a service
 
 A service is made authenticated by wrapping its handler with `Auth.protect`:
 
 ```elm
-Auth.protect : Service req resp -> (req -> User -> Effect resp) -> ExposedService
+Auth.protect : Service req resp -> (req -> User -> Task resp) -> ExposedService
 ```
 
 `Auth.protect` injects the signed-in `User` as the handler's second argument and rejects the request with `401` before the handler runs when there is no valid session. The frontend sees the same `Service` value either way:
 
 ```elm
-listMyNotesImpl : () -> User -> Effect (List Note)
+listMyNotesImpl : () -> User -> Task (List Note)
 listMyNotesImpl _ user =
     Repo.findBy notes { authorId = user.id }
 
@@ -249,7 +249,7 @@ services =
     ]
 ```
 
-There is no built-in role enum or role group: a handler that needs a role check reads it off the injected `user` and returns the appropriate outcome (or `Effect.fail` for a hard refusal). Services that do not need a user use `Service.implement` instead of `Auth.protect` and receive no user.
+There is no built-in role enum or role group: a handler that needs a role check reads it off the injected `user` and returns the appropriate outcome (or `Task.fail` for a hard refusal). Services that do not need a user use `Service.implement` instead of `Auth.protect` and receive no user.
 
 On a protected request the runtime:
 
@@ -260,7 +260,7 @@ On a protected request the runtime:
 
 ## 7. Frontend primitives
 
-The frontend never calls `/_auth/*` directly. The Auth module exposes Effects
+The frontend never calls `/_auth/*` directly. The Auth module exposes commands
 that wrap those calls and deliver typed outcomes, one outcome union per
 endpoint (a page only matches what can happen to it; there is no shared
 auth error catch-all). Transport failures arrive as `Service.Error` in the
@@ -280,19 +280,19 @@ type Auth.VerifyOutcome user
 
 ```elm
 Auth.requestCode : { email : String }
-    -> (Result Service.Error Auth.RequestOutcome -> msg) -> Effect msg
+    -> (Result Service.Error Auth.RequestOutcome -> msg) -> Cmd msg
 -- CodeSent answers for unknown emails too, to avoid enumeration.
 
 Auth.verifyCode : { email : String, code : String }
-    -> (Result Service.Error (Auth.VerifyOutcome user) -> msg) -> Effect msg
+    -> (Result Service.Error (Auth.VerifyOutcome user) -> msg) -> Cmd msg
 -- On Auth.SignedIn the cookie/Bearer token is already stored. The user value
 -- is the complete row from the user entity, in the app's own User type.
 
-Auth.logout : (Result String () -> msg) -> Effect msg
+Auth.logout : (Result String () -> msg) -> Cmd msg
 -- Clears the cookie / forgets the Bearer token client-side, AND invalidates
 -- the session row server-side. Idempotent.
 
-Auth.me : (Result String (Maybe user) -> msg) -> Effect msg
+Auth.me : (Result String (Maybe user) -> msg) -> Cmd msg
 -- One-shot fetch of the current user. Nothing when not authenticated.
 ```
 
@@ -430,7 +430,7 @@ auth =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.fullstack
         { services = []
@@ -463,7 +463,7 @@ type Msg
     | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         Submitted ->
@@ -475,7 +475,7 @@ update msg model =
                     ( model, Auth.verifyCode { email = email, code = code } CodeVerified )
 
                 _ ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         CodeRequested (Ok Auth.CodeSent)       -> -- move to the code page
         CodeRequested (Ok Auth.InvalidEmail)   -> -- show "not a valid email"
@@ -488,7 +488,7 @@ update msg model =
         CodeVerified (Err why)                 -> -- Service.errorToString why
 
         DraftChanged value ->
-            ( updateDraft value model, Effect.none )
+            ( updateDraft value model, Cmd.none )
 
 
 page : Page
@@ -504,9 +504,9 @@ page =
 **Frontend/Home.mar** is protected, so `init` receives the `User` synchronously and there is no flash of unauthenticated content:
 
 ```elm
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init user =
-    ( { user = user }, Effect.none )
+    ( { user = user }, Cmd.none )
 
 
 page : Page
@@ -526,16 +526,16 @@ The current `Auth` surface (sections 4, 6, and 7 cover each in context):
 Auth.config : { entity, identify, signInPage, email, signup, sessionDuration } -> Auth user
 
 -- Backend: protect a service handler; injects the signed-in user, 401s without a session
-Auth.protect : Service req resp -> (req -> User -> Effect resp) -> ExposedService
+Auth.protect : Service req resp -> (req -> User -> Task resp) -> ExposedService
 
 -- Frontend: the sign-in flow
 Auth.requestCode    : { email : String }
-    -> (Result Service.Error Auth.RequestOutcome -> msg) -> Effect msg
+    -> (Result Service.Error Auth.RequestOutcome -> msg) -> Cmd msg
 Auth.verifyCode     : { email : String, code : String }
-    -> (Result Service.Error (Auth.VerifyOutcome user) -> msg) -> Effect msg
-Auth.completeSignIn : Effect msg
-Auth.me             : (Result String (Maybe user) -> msg) -> Effect msg
-Auth.logout         : (Result String () -> msg) -> Effect msg
+    -> (Result Service.Error (Auth.VerifyOutcome user) -> msg) -> Cmd msg
+Auth.completeSignIn : Cmd msg
+Auth.me             : (Result String (Maybe user) -> msg) -> Cmd msg
+Auth.logout         : (Result String () -> msg) -> Cmd msg
 ```
 
 The outcome unions (constructors are qualified, like `Service.Error`'s):
@@ -563,4 +563,4 @@ Not in v1, revisited when concrete need arises. None of these change the interfa
 - **Audit log.** An opt-in `_mar_auth_log` table.
 - **Granular permissions.** A capability or policy model beyond per-handler role checks.
 - **Refresh tokens.** Sessions currently live for `sessionDuration` and then hard-expire; a short access token plus a longer refresh token is doable but adds complexity v1 does not need.
-- **Password or OAuth sign-in.** These would add new `Auth.*` Effects (`Auth.signInWithPassword`, `Auth.signInWithGoogle`) without changing the email-code flow.
+- **Password or OAuth sign-in.** These would add new `Auth.*` commands (`Auth.signInWithPassword`, `Auth.signInWithGoogle`) without changing the email-code flow.

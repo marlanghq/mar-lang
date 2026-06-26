@@ -155,25 +155,25 @@ type LoginMsg
     | CodeVerified (Result String { email : String })
 
 
-loginInit : ( LoginModel, Effect LoginMsg )
+loginInit : ( LoginModel, Cmd LoginMsg )
 loginInit =
     ( { email = "", code = "", stage = EmailEntry, error = Nothing, busy = False }
-    , Effect.none
+    , Cmd.none
     )
 
 
-loginUpdate : LoginMsg -> LoginModel -> ( LoginModel, Effect LoginMsg )
+loginUpdate : LoginMsg -> LoginModel -> ( LoginModel, Cmd LoginMsg )
 loginUpdate msg model =
     case msg of
         EmailChanged v ->
-            ( { model | email = v, error = Nothing }, Effect.none )
+            ( { model | email = v, error = Nothing }, Cmd.none )
 
         CodeChanged v ->
-            ( { model | code = v, error = Nothing }, Effect.none )
+            ( { model | code = v, error = Nothing }, Cmd.none )
 
         SendCode ->
             if model.busy then
-                ( model, Effect.none )
+                ( model, Cmd.none )
 
             else
                 ( { model | busy = True, error = Nothing }
@@ -181,14 +181,14 @@ loginUpdate msg model =
                 )
 
         CodeSent (Ok ()) ->
-            ( { model | busy = False, stage = CodeEntry }, Effect.none )
+            ( { model | busy = False, stage = CodeEntry }, Cmd.none )
 
         CodeSent (Err why) ->
-            ( { model | busy = False, error = Just why }, Effect.none )
+            ( { model | busy = False, error = Just why }, Cmd.none )
 
         DoVerify ->
             if model.busy then
-                ( model, Effect.none )
+                ( model, Cmd.none )
 
             else
                 ( { model | busy = True, error = Nothing }
@@ -200,7 +200,7 @@ loginUpdate msg model =
             ( model, Nav.replace "/_mar/admin" )
 
         CodeVerified (Err why) ->
-            ( { model | busy = False, error = Just why }, Effect.none )
+            ( { model | busy = False, error = Just why }, Cmd.none )
 
 
 loginView : LoginModel -> View LoginMsg
@@ -266,14 +266,14 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : AdminSession -> ( Model, Effect Msg )
+init : AdminSession -> ( Model, Cmd Msg )
 init admin =
     ( { info = Loading, db = Loading, requests = Loading, backups = Loading }
     , Mar.Admin.serverInfo admin ServerInfoFetched
     )
 
 
-update : AdminSession -> Msg -> Model -> ( Model, Effect Msg )
+update : AdminSession -> Msg -> Model -> ( Model, Cmd Msg )
 update admin msg model =
     case msg of
         ServerInfoFetched (Ok info) ->
@@ -295,10 +295,10 @@ update admin msg model =
             ( { model | requests = Failed why }, Mar.Admin.listBackups admin BackupsFetched )
 
         BackupsFetched (Ok bs) ->
-            ( { model | backups = Loaded bs }, Effect.none )
+            ( { model | backups = Loaded bs }, Cmd.none )
 
         BackupsFetched (Err why) ->
-            ( { model | backups = Failed why }, Effect.none )
+            ( { model | backups = Failed why }, Cmd.none )
 
         Refresh ->
             -- Re-run the whole fetch chain: reset every section to Loading
@@ -468,21 +468,21 @@ type TableMsg
     = TableRowsFetched (Result String (List (Dict String String)))
 
 
-tableInit : AdminSession -> { name : String } -> ( TableModel, Effect TableMsg )
+tableInit : AdminSession -> { name : String } -> ( TableModel, Cmd TableMsg )
 tableInit admin params =
     ( { rows = Loading }
     , Mar.Admin.listEntityRows admin params.name TableRowsFetched
     )
 
 
-tableUpdate : AdminSession -> { name : String } -> TableMsg -> TableModel -> ( TableModel, Effect TableMsg )
+tableUpdate : AdminSession -> { name : String } -> TableMsg -> TableModel -> ( TableModel, Cmd TableMsg )
 tableUpdate _ _ msg model =
     case msg of
         TableRowsFetched (Ok rs) ->
-            ( { model | rows = Loaded rs }, Effect.none )
+            ( { model | rows = Loaded rs }, Cmd.none )
 
         TableRowsFetched (Err why) ->
-            ( { model | rows = Failed why }, Effect.none )
+            ( { model | rows = Failed why }, Cmd.none )
 
 
 -- One DB row as a grouped card of `column: value` lines (mobile-first — the
@@ -527,6 +527,6 @@ tablePage =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.frontend [ loginPage, page, tablePage ]

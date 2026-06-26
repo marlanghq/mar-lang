@@ -241,6 +241,9 @@ struct MarRenderer: View {
         case "picker":
             MarUIPicker(view: view, dispatch: dispatch)
 
+        case "datePicker":
+            MarUIDatePicker(view: view, dispatch: dispatch)
+
         case "centered":
             // Wraps a single child in a frame that fills the
             // available space and centers it. Used for full-
@@ -986,6 +989,42 @@ private struct MarUIPicker: View {
             }
         }
         .pickerStyle(.menu)
+        .labelsHidden()
+        .disabled(isDisabled(view))
+    }
+}
+
+/// Mar's UI.datePicker — a date-only field. The builtin stashes the
+/// current Time as the `value` attr; the `(Time -> msg)` onChange rides
+/// on `view.msg`. SwiftUI's DatePicker shows the device-local calendar
+/// date; on change we normalize to the start of that local day (the web
+/// renderer does the same) and hand back a Mar `.time`.
+private struct MarUIDatePicker: View {
+    let view: MarView
+    let dispatch: (MarValue) -> Void
+
+    private var current: Date {
+        // value is a concrete Time — datePicker is pure; the program owns
+        // the value and seeds "today" via `Cmd.perform GotToday Time.now`.
+        // Read it directly, no clock fallback.
+        if case .time(let ms)? = attrValue(view, "value") {
+            return Date(timeIntervalSince1970: Double(ms) / 1000.0)
+        }
+        return Date(timeIntervalSince1970: 0)
+    }
+
+    var body: some View {
+        DatePicker("", selection: Binding<Date>(
+            get: { current },
+            set: { newDate in
+                guard let onChange = view.msg else { return }
+                let day = Calendar.current.startOfDay(for: newDate)
+                let ms = Int((day.timeIntervalSince1970 * 1000).rounded())
+                if let msg = try? Eval.apply(onChange, .time(ms)) {
+                    dispatch(msg)
+                }
+            }
+        ), displayedComponents: [.date])
         .labelsHidden()
         .disabled(isDisabled(view))
     }

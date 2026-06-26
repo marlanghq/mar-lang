@@ -440,7 +440,7 @@ func runFromPath(path string) error {
 	}
 	eff, ok := mainVal.(runtime.VEffect)
 	if !ok {
-		return fmt.Errorf("main is not an Effect (got %T)", mainVal)
+		return fmt.Errorf("main is not a Cmd (got %T)", mainVal)
 	}
 	if _, err := eff.Run(); err != nil {
 		return err

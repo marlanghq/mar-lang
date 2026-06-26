@@ -194,7 +194,7 @@ go = Nav.pushTo home {}
 		t.Fatalf("unexpected: %v", err)
 	}
 	got := res.ValueTypes["go"].String()
-	if !strings.Contains(got, "Effect") {
-		t.Fatalf("go should be Effect, got %s", got)
+	if !strings.Contains(got, "Cmd") {
+		t.Fatalf("go should be Cmd, got %s", got)
 	}
 }

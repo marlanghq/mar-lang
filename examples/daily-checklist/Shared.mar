@@ -22,7 +22,7 @@ type alias User =
 -- `position` (Int) drives the user-controlled display order. The
 -- backend sorts by it ASC; the reorder gesture computes new
 -- positions and commits via the `reorderTasks` service.
-type alias Task =
+type alias TodoItem =
     { id        : Int
     , name      : String
     , done      : Bool
@@ -40,7 +40,7 @@ type alias Task =
 -- returns 401 before any of this code is reached.
 
 
-listTasks : Service () (List Task)
+listTasks : Service () (List TodoItem)
 listTasks = Service.declare GET "/tasks"
 
 
@@ -49,7 +49,7 @@ listTasks = Service.declare GET "/tasks"
 -- channel. The backend can only produce these two shapes, and the
 -- frontend's case is checked for exhaustiveness.
 type AddTaskOutcome
-    = Added Task
+    = Added TodoItem
     | NameEmpty
 
 
@@ -57,7 +57,7 @@ addTask : Service { name : String } AddTaskOutcome
 addTask = Service.declare POST "/tasks"
 
 
-toggleTask : Service { id : Int, done : Bool } (Maybe Task)
+toggleTask : Service { id : Int, done : Bool } (Maybe TodoItem)
 toggleTask = Service.declare PATCH "/tasks/{id:Int}"
 
 
@@ -77,3 +77,15 @@ resetAll = Service.declare POST "/tasks/reset"
 -- instead of N) but that's overkill here.
 reorderTasks : Service { orderedIds : List Int } ()
 reorderTasks = Service.declare POST "/tasks/reorder"
+
+
+-- ===== Account =====
+--
+-- Irreversible account deletion. Required by App Store guideline
+-- 5.1.1(v): an app that lets you create an account must let you delete
+-- it from inside the app. The backend wipes the caller's tasks and
+-- their user row; the client then signs out. () in, () out — the
+-- caller is always "me" (Auth.protect injects the user), so there's
+-- nothing to pass and nothing to return.
+deleteAccount : Service () ()
+deleteAccount = Service.declare DELETE "/account"

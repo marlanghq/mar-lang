@@ -13,19 +13,19 @@ import Shared
 -- the first paint feel slow.
 
 
-load : () -> Shared.User -> Effect Shared.DashboardData
+load : () -> Shared.User -> Task Shared.DashboardData
 load _ user =
     Repo.findBy Backend.Projects.projects { teamId = user.teamId }
-        |> Effect.andThen
+        |> Task.andThen
             (\projects ->
                 Backend.Issues.listOpenForAssignee user
-                    |> Effect.andThen
+                    |> Task.andThen
                         (\myOpen ->
                             Backend.Issues.listRecent user
-                                |> Effect.andThen
+                                |> Task.andThen
                                     (\recent ->
                                         Backend.Teams.listMembers () user
-                                            |> Effect.map
+                                            |> Task.map
                                                 (\members ->
                                                     { projects        = projects
                                                     , myOpenIssues    = myOpen

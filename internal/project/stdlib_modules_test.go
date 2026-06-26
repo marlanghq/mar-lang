@@ -8,7 +8,7 @@ import "testing"
 // module were a missing local file.
 func TestIsStdlibCoversBuiltinModules(t *testing.T) {
 	for _, m := range []string{
-		"List", "String", "Maybe", "Result", "Effect", "JSON",
+		"List", "String", "Maybe", "Result", "Task", "Cmd", "JSON",
 		"UI", "View", "App", "Page", "Http", "Entity", "Repo",
 		"Dict", "Set", "Time", "Tuple", "Char", "Auth", "Nav", "Service",
 	} {

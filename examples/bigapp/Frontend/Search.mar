@@ -33,36 +33,36 @@ type Msg
     | ClearClicked
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init _ =
     ( { query = "", results = Nothing, error = Nothing, lastFired = "" }
-    , Effect.none
+    , Cmd.none
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         QueryChanged value ->
-            ( { model | query = value }, Effect.none )
+            ( { model | query = value }, Cmd.none )
 
         SearchSubmitted ->
             if model.query == "" then
-                ( { model | error = Just (Service.ServerError "Enter a search term.") }, Effect.none )
+                ( { model | error = Just (Service.ServerError "Enter a search term.") }, Cmd.none )
             else
                 ( { model | error = Nothing, lastFired = model.query }
                 , Service.call Shared.searchIssues { query = model.query } ResultsFetched
                 )
 
         ResultsFetched (Ok items) ->
-            ( { model | results = Just items }, Effect.none )
+            ( { model | results = Just items }, Cmd.none )
 
         ResultsFetched (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
         ClearClicked ->
             ( { model | query = "", results = Nothing, error = Nothing, lastFired = "" }
-            , Effect.none
+            , Cmd.none
             )
 
 

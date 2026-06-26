@@ -35,7 +35,7 @@ type Msg
     | Saved (Result Service.Error Shared.SetupOutcome)
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init user =
     ( { handle      = user.handle
       , displayName = user.displayName
@@ -43,21 +43,21 @@ init user =
       , submitting  = False
       , error       = Nothing
       }
-    , Effect.none
+    , Cmd.none
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         HandleChanged v ->
-            ( { model | handle = v }, Effect.none )
+            ( { model | handle = v }, Cmd.none )
 
         DisplayNameChanged v ->
-            ( { model | displayName = v }, Effect.none )
+            ( { model | displayName = v }, Cmd.none )
 
         BioChanged v ->
-            ( { model | bio = v }, Effect.none )
+            ( { model | bio = v }, Cmd.none )
 
         Submitted ->
             ( { model | submitting = True, error = Nothing }
@@ -78,27 +78,27 @@ update _ msg model =
 
         Saved (Ok Shared.HandleRequired) ->
             ( { model | submitting = False, error = Just "Pick a handle." }
-            , Effect.none
+            , Cmd.none
             )
 
         Saved (Ok Shared.HandleTooLong) ->
             ( { model | submitting = False, error = Just "Handles are at most 20 characters." }
-            , Effect.none
+            , Cmd.none
             )
 
         Saved (Ok Shared.DisplayNameRequired) ->
             ( { model | submitting = False, error = Just "Add a display name." }
-            , Effect.none
+            , Cmd.none
             )
 
         Saved (Ok Shared.HandleTaken) ->
             ( { model | submitting = False, error = Just "That handle is taken. Try another." }
-            , Effect.none
+            , Cmd.none
             )
 
         Saved (Err why) ->
             ( { model | submitting = False, error = Just (Service.errorToString why) }
-            , Effect.none
+            , Cmd.none
             )
 
 

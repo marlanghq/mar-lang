@@ -39,20 +39,20 @@ notes =
 -- focuses on what to do, not who is allowed to do it. The "who"
 -- question is answered by the decorators below.
 
-listTeamNotes : () -> Shared.User -> Effect (List Shared.Note)
+listTeamNotes : () -> Shared.User -> Task (List Shared.Note)
 listTeamNotes _ user =
     Repo.findBy notes { teamId = user.teamId }
 
 
-getNote : Shared.GetNote -> Shared.User -> Effect (Maybe Shared.Note)
+getNote : Shared.GetNote -> Shared.User -> Task (Maybe Shared.Note)
 getNote input _ =
     Repo.findById notes input.id
 
 
-createNote : Shared.NewNote -> Shared.User -> Effect Shared.Note
+createNote : Shared.NewNote -> Shared.User -> Task Shared.Note
 createNote input user =
     Time.now
-        |> Effect.andThen (\now ->
+        |> Task.andThen (\now ->
             Repo.create notes
                 { body      = input.body
                 , teamId    = user.teamId
@@ -61,12 +61,12 @@ createNote input user =
                 })
 
 
-editNote : Shared.EditNote -> Shared.User -> Effect (Maybe Shared.Note)
+editNote : Shared.EditNote -> Shared.User -> Task (Maybe Shared.Note)
 editNote input _ =
     Repo.update notes input.id { body = input.body }
 
 
-deleteNote : Shared.DeleteNote -> Shared.User -> Effect ()
+deleteNote : Shared.DeleteNote -> Shared.User -> Task ()
 deleteNote input _ =
     Repo.deleteById notes input.id
 
@@ -76,17 +76,17 @@ deleteNote input _ =
 -- maps `Nothing` (e.g. row not found) to a 404 separately from
 -- "policy denied" (403).
 
-loadEditTarget : Shared.EditNote -> Shared.User -> Effect (Maybe Shared.Note)
+loadEditTarget : Shared.EditNote -> Shared.User -> Task (Maybe Shared.Note)
 loadEditTarget input _ =
     Repo.findById notes input.id
 
 
-loadDeleteTarget : Shared.DeleteNote -> Shared.User -> Effect (Maybe Shared.Note)
+loadDeleteTarget : Shared.DeleteNote -> Shared.User -> Task (Maybe Shared.Note)
 loadDeleteTarget input _ =
     Repo.findById notes input.id
 
 
-loadGetTarget : Shared.GetNote -> Shared.User -> Effect (Maybe Shared.Note)
+loadGetTarget : Shared.GetNote -> Shared.User -> Task (Maybe Shared.Note)
 loadGetTarget input _ =
     Repo.findById notes input.id
 

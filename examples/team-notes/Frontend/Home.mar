@@ -53,24 +53,24 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init _ =
     ( { notes = Loading, draft = "" }
     , Service.call Shared.listTeamNotes () NotesFetched
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         NotesFetched (Ok loaded) ->
-            ( { model | notes = Loaded loaded }, Effect.none )
+            ( { model | notes = Loaded loaded }, Cmd.none )
 
         NotesFetched (Err why) ->
-            ( { model | notes = Failed (Service.errorToString why) }, Effect.none )
+            ( { model | notes = Failed (Service.errorToString why) }, Cmd.none )
 
         DraftChanged value ->
-            ( { model | draft = value }, Effect.none )
+            ( { model | draft = value }, Cmd.none )
 
         -- Stale-while-revalidate on Add / Delete: keep the current
         -- Loaded list visible during the create-or-delete + re-fetch
@@ -85,7 +85,7 @@ update _ msg model =
             ( model, Service.call Shared.listTeamNotes () NotesFetched )
 
         NoteCreated (Err _) ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         DeleteClicked noteId ->
             ( model
@@ -99,7 +99,7 @@ update _ msg model =
             -- 403 lands here when a Member tries to delete. We don't
             -- surface it visually in this example; in production
             -- you'd toast the error.
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         SignOutClicked ->
             ( model, Auth.logout SignedOut )

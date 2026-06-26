@@ -11,8 +11,8 @@ More precisely:
 - backend reads and writes go through explicit, typed services
 - frontend pages follow a Model-View-Update architecture
 - `view` stays pure
-- side effects are explicit values returned by `init` and `update`
-- only the runtime is allowed to execute those effects
+- side effects are explicit values: backend work is a `Task`, frontend commands are a `Cmd`
+- only the runtime is allowed to run those values
 
 For the full API reference, see [mar.md](./mar.md). This document focuses on the **why**.
 
@@ -24,60 +24,64 @@ Mar separates backend and frontend cleanly while keeping them in the same langua
 
 - entities (the data shape)
 - services (typed request and response contracts)
-- handlers (effectful functions the runtime invokes per request)
+- handlers (functions the runtime invokes per request, each returning a `Task`)
 
 **Frontend** defines:
 
 - pages (MVU programs)
 - views (pure descriptions)
 - messages (state transitions)
-- effects (descriptions of work for the runtime)
+- commands (descriptions of work for the runtime)
 
 The boundary is clear:
 
-- backend exposes typed capabilities as `Service` values
-- frontend invokes them through `Service.call`, getting back `Effect` descriptions
-- the runtime executes effects and feeds results back into `update`
+- backend exposes typed capabilities as `Service` values, implemented by handlers that return a `Task`
+- frontend invokes them through `Service.call`, getting back a `Cmd` that dispatches a `Msg`
+- the runtime runs the command and feeds the result back into `update`
 
-## Effects as values
+## Two algebras: Task and Cmd
 
-Mar treats effects as **data**, not as arbitrary code execution.
+Mar treats side effects as **data**, not as arbitrary code execution. Two types carry that data, one per side of the app:
+
+- **`Task a`** is the backend's value-monad: a computation that, when run, produces an `a` (or aborts). You chain Tasks to compute a value: read a row, then read another, then return a response. `Repo.*` return `Task`, `Time.now : Task Time`, and a service handler returns `Task resp`.
+- **`Cmd msg`** is the frontend's message-monoid (Mar's `Cmd`, like Elm's): a description of work the MVU runtime should do, whose result comes back as a `Msg`. `init` and `update` return `(Model, Cmd Msg)`; `Service.call` and `Nav.*` return `Cmd msg`.
+
+They used to be one type. `Effect a` carried both algebras at once, a value-monad *and* a message-monoid, and the overlap let a real bug compile: a value-producing effect like `Time.now` returned from a frontend `update` silently did nothing, because the loop only knew how to deliver messages, not values. Splitting them makes that impossible: `Task` is a value and `Cmd` is a message, so you cannot return a `Task` where a `Cmd Msg` is expected. The compiler rejects it.
 
 This means:
 
 - `view` cannot perform effects: it returns `View Msg`, a pure description
 - helper functions stay pure
-- `init` returns an initial `Effect Msg`
-- `update` returns effects for the runtime to execute
-- effects belong to a closed, runtime-managed set
+- `init` returns an initial `(Model, Cmd Msg)`
+- `update` returns commands for the runtime to run
+- both `Task` and `Cmd` belong to a closed, runtime-managed set
 
-The single effect type is:
+Neither type carries an error index. On the backend a `Task` aborts with `Task.fail`. On the frontend failures are values, encoded into `Msg` variants (a `Result` in the payload), never a bypass of the message stream.
 
-```elm
-Effect a
-```
-
-One type parameter, like Elm's `Cmd`. For frontend MVU the runtime expects `Effect Msg`, an effect that produces a `Msg`. Effects carry no error type: failures are values, encoded into `Msg` variants (a `Result` in the payload), never a bypass of the message stream.
-
-Navigation effects:
+Frontend commands. `Service.call` and `Nav.*` build a `Cmd`; the failure of a call rides in the `Result` the `toMsg` receives, as a `Service.Error` union:
 
 ```elm
-Nav.pushTo    : route -> Effect msg
-Nav.replaceTo : route -> Effect msg
+Service.call : Service req resp -> req -> (Result Service.Error resp -> msg) -> Cmd msg
+Nav.pushTo   : route -> Cmd msg
+Nav.replaceTo : route -> Cmd msg
+Cmd.batch    : List (Cmd msg) -> Cmd msg
+Cmd.none     : Cmd msg
 ```
 
-Backend calls from the frontend (the failure rides in the `Result` the `toMsg` receives, as a `Service.Error` union):
+### Cmd.perform: the Task to Cmd bridge
+
+A `Task` produces a value; the frontend loop only consumes messages. `Cmd.perform` bridges the two, exactly like Elm's `Task.perform`:
 
 ```elm
-Service.call : Service req resp -> req -> (Result Service.Error resp -> msg) -> Effect msg
-Effect.batch : List (Effect msg) -> Effect msg
-Effect.none  : Effect msg
+Cmd.perform : (a -> msg) -> Task a -> Cmd msg
 ```
+
+It runs the `Task` and delivers the produced value to `update` as a `Msg`. This is the only way a Task's result reaches the frontend. For example, `Time.now : Task Time` is the same name on both sides; the frontend reaches the loop with `Cmd.perform GotNow Time.now`.
 
 Example:
 
 ```elm
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init user =
     ( { tasks = [], loading = True }
     , Service.call Shared.listTasks () TasksLoaded
@@ -85,7 +89,7 @@ init user =
 ```
 
 ```elm
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         RetryClicked ->
@@ -99,12 +103,12 @@ update msg model =
 
 The key claim:
 
-- application code **describes** effects
-- application code does not **execute** effects directly
+- application code **describes** work, as a `Task` or a `Cmd`
+- application code does not **run** it directly
 
 ## Backend services
 
-Backend access is explicit and typed. A `Service req resp` is the contract; a handler turns a request into an effect that produces the response.
+Backend access is explicit and typed. A `Service req resp` is the contract; a handler turns a request into a `Task` that produces the response.
 
 **Contracts** are declared once, in the shared module, each with a verb and a path:
 
@@ -115,19 +119,19 @@ addTask = Service.declare POST "/tasks"
 
 The contract names the request and response types, and `Service.declare VERB "/path"` fixes the HTTP method and route (a path may carry typed `{name:Type}` params naming fields of the request). Both backend (`Service.implement`, or `Auth.protect` when the call needs a signed-in user) and frontend (`Service.call`) reference the same value, so a contract change breaks both sides at compile time. The verb and path are transparent to the caller: `Service.call` is identical whatever method a service uses.
 
-**Handlers** are effectful functions the runtime invokes per request:
+**Handlers** are functions the runtime invokes per request; each returns a `Task`:
 
 ```elm
-addTaskImpl : { name : String } -> User -> Effect AddTaskOutcome
+addTaskImpl : { name : String } -> User -> Task AddTaskOutcome
 addTaskImpl input user =
     if String.trim input.name == "" then
-        Effect.succeed NameEmpty
+        Task.succeed NameEmpty
     else
         Repo.create tasks { name = input.name, done = False, userId = user.id }
-            |> Effect.map Added
+            |> Task.map Added
 ```
 
-The handler is pure to call: it returns a description. The runtime executes the resulting effect, reading and writing rows through `Repo.*`. A handler returns its declared response, so the outcomes it can produce are fixed by the type and the frontend's `case` over them is checked for exhaustiveness. There is no separate query language: composition is ordinary Mar over the rows `Repo.*` returns.
+The handler is pure to call: it returns a description. The runtime runs the resulting `Task`, reading and writing rows through `Repo.*`. A handler returns its declared response, so the outcomes it can produce are fixed by the type and the frontend's `case` over them is checked for exhaustiveness. There is no separate query language: composition is ordinary Mar over the rows `Repo.*` returns.
 
 The verb a service was declared with constrains its handler: a `GET` is read-only, and the compiler rejects one whose handler reaches `Repo.create`, `Repo.update`, or `Repo.deleteById`. A call that mutates is declared `POST`, `PUT`, `PATCH`, or `DELETE` (`addTask` above is a `POST`, so it may write).
 
@@ -142,7 +146,7 @@ Such forms hide too much:
 - the label shown to the user
 - the message emitted by the interaction
 - the state transition
-- the effect being requested
+- the command being requested
 - the success and failure paths
 
 That works against a clean MVU story.
@@ -153,8 +157,8 @@ The flow is uniform:
 
 1. the user interacts with the view
 2. the view emits a `Msg`
-3. `update` returns a new model plus effects
-4. the runtime executes those effects
+3. `update` returns a new model plus a `Cmd`
+4. the runtime runs that command
 5. the runtime sends a new `Msg` with the result
 
 This makes "add task", "toggle", "delete", and "reload" all the same kind of thing.
@@ -189,7 +193,7 @@ type Msg
 
 -- INIT
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init user =
     ( { tasks = [], draft = "", error = Nothing }
     , Service.call Shared.listTasks () TasksLoaded
@@ -198,29 +202,29 @@ init user =
 
 -- UPDATE
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         TasksLoaded (Ok tasks) ->
-            ( { model | tasks = tasks }, Effect.none )
+            ( { model | tasks = tasks }, Cmd.none )
 
         TasksLoaded (Err why) ->
-            ( { model | error = Just (Service.errorToString why) }, Effect.none )
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
 
         DraftChanged value ->
-            ( { model | draft = value }, Effect.none )
+            ( { model | draft = value }, Cmd.none )
 
         AddClicked ->
             ( model, Service.call Shared.addTask { name = model.draft } Added )
 
         Added (Ok (Shared.Added task)) ->
-            ( { model | tasks = model.tasks ++ [ task ], draft = "" }, Effect.none )
+            ( { model | tasks = model.tasks ++ [ task ], draft = "" }, Cmd.none )
 
         Added (Ok Shared.NameEmpty) ->
-            ( { model | error = Just "Name can't be empty." }, Effect.none )
+            ( { model | error = Just "Name can't be empty." }, Cmd.none )
 
         Added (Err why) ->
-            ( { model | error = Just (Service.errorToString why) }, Effect.none )
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
 
 
 -- VIEW
@@ -256,7 +260,7 @@ Important properties:
 - `Msg` is explicit and typed
 - the `Model` shape is explicit
 - `update` is exhaustive (compiler-enforced)
-- effects are explicit in the return value `(Model, Effect Msg)`
+- commands are explicit in the return value `(Model, Cmd Msg)`
 - `view` is pure and only describes elements
 
 Create and edit flows are just pages with their own `Msg` and `update`: there is no `create` shortcut that hides the state machine. Both the domain outcome (`Shared.Added` / `Shared.NameEmpty`) and the transport failure (`Service.Error`) arrive as ordinary values the page matches on.
@@ -268,9 +272,9 @@ The compiler distinguishes two contexts:
 | Context | Can call |
 |---|---|
 | Pure (top-level definitions, helpers, `view`) | only pure functions, including declaring `Service` contracts and building entities |
-| Effectful (handlers, `init`, `update`) | pure functions plus `Repo.*`, `Service.call`, `Nav.*`, and the rest of the `Effect` API |
+| Effectful (handlers, `init`, `update`) | pure functions plus `Repo.*`, the rest of the `Task` API (backend), and `Service.call`, `Nav.*`, `Cmd.*` (frontend) |
 
-A handler returns an `Effect`: building it is a description, and only the runtime executes it. Because `view` and helpers stay pure, the only place work happens is the effects that `init`, `update`, and handlers hand back to the runtime.
+A handler returns a `Task`, and `init` / `update` return a `Cmd`: building either is a description, and only the runtime runs it. Because `view` and helpers stay pure, the only place work happens is the `Task` and `Cmd` values that `init`, `update`, and handlers hand back to the runtime.
 
 ## Language summary
 
@@ -280,7 +284,7 @@ The language story:
 - Mar frontend is a collection of independent MVU pages
 - all end-user interactions happen through explicit messages
 - all side effects are managed by the runtime
-- purity is the default, effects are explicit values
-- the type system tracks which functions are effectful
+- purity is the default; backend work is a `Task` value, frontend commands are a `Cmd` value
+- the type system tracks which functions are effectful, and keeps backend `Task` and frontend `Cmd` distinct
 
 This is the model Mar is built around.

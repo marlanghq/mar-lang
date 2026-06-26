@@ -43,7 +43,7 @@ type Msg
     | IssueCreated (Result Service.Error Shared.Issue)
 
 
-init : Shared.User -> { projectId : Int } -> (Model, Effect Msg)
+init : Shared.User -> { projectId : Int } -> (Model, Cmd Msg)
 init user params =
     ( { title       = ""
       , description = ""
@@ -55,48 +55,47 @@ init user params =
       , error       = Nothing
       , submitting  = False
       }
-    , Effect.andThen
-        (\_ ->
-            Service.call Shared.listProjectMilestones { projectId = params.projectId }
-                MilestonesFetched
-        )
-        (Service.call Shared.listTeamMembers () MembersFetched)
+    , Cmd.batch
+        [ Service.call Shared.listTeamMembers () MembersFetched
+        , Service.call Shared.listProjectMilestones { projectId = params.projectId }
+            MilestonesFetched
+        ]
     )
 
 
-update : Shared.User -> { projectId : Int } -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> { projectId : Int } -> Msg -> Model -> (Model, Cmd Msg)
 update _ params msg model =
     case msg of
         TitleChanged value ->
-            ( { model | title = value }, Effect.none )
+            ( { model | title = value }, Cmd.none )
 
         DescriptionChanged value ->
-            ( { model | description = value }, Effect.none )
+            ( { model | description = value }, Cmd.none )
 
         PriorityChanged p ->
-            ( { model | priority = p }, Effect.none )
+            ( { model | priority = p }, Cmd.none )
 
         AssigneeChanged uid ->
-            ( { model | assigneeId = uid }, Effect.none )
+            ( { model | assigneeId = uid }, Cmd.none )
 
         MilestoneChanged mid ->
-            ( { model | milestoneId = mid }, Effect.none )
+            ( { model | milestoneId = mid }, Cmd.none )
 
         MembersFetched (Ok items) ->
-            ( { model | members = Just items }, Effect.none )
+            ( { model | members = Just items }, Cmd.none )
 
         MembersFetched (Err _) ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         MilestonesFetched (Ok items) ->
-            ( { model | milestones = Just items }, Effect.none )
+            ( { model | milestones = Just items }, Cmd.none )
 
         MilestonesFetched (Err _) ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         SubmitClicked ->
             if model.title == "" then
-                ( { model | error = Just (Service.ServerError "Title is required.") }, Effect.none )
+                ( { model | error = Just (Service.ServerError "Title is required.") }, Cmd.none )
             else
                 ( { model | submitting = True, error = Nothing }
                 , Service.call Shared.createIssue
@@ -116,7 +115,7 @@ update _ params msg model =
             )
 
         IssueCreated (Err why) ->
-            ( { model | submitting = False, error = Just why }, Effect.none )
+            ( { model | submitting = False, error = Just why }, Cmd.none )
 
 
 -- ====================================================================

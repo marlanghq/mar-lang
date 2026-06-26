@@ -50,7 +50,7 @@ type Msg
     | ToggleCChanged Bool
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
     ( { count = 0
       , canIncrement = True
@@ -59,36 +59,36 @@ init =
       , toggleB = False
       , toggleC = False
       }
-    , Effect.none
+    , Cmd.none
     )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         Inc ->
-            ( { model | count = model.count + 1 }, Effect.none )
+            ( { model | count = model.count + 1 }, Cmd.none )
 
         Dec ->
-            ( { model | count = model.count - 1 }, Effect.none )
+            ( { model | count = model.count - 1 }, Cmd.none )
 
         Reset ->
-            ( { model | count = 0 }, Effect.none )
+            ( { model | count = 0 }, Cmd.none )
 
         CanIncrementChanged v ->
-            ( { model | canIncrement = v }, Effect.none )
+            ( { model | canIncrement = v }, Cmd.none )
 
         CanDecrementChanged v ->
-            ( { model | canDecrement = v }, Effect.none )
+            ( { model | canDecrement = v }, Cmd.none )
 
         ToggleAChanged v ->
-            ( { model | toggleA = v }, Effect.none )
+            ( { model | toggleA = v }, Cmd.none )
 
         ToggleBChanged v ->
-            ( { model | toggleB = v }, Effect.none )
+            ( { model | toggleB = v }, Cmd.none )
 
         ToggleCChanged v ->
-            ( { model | toggleC = v }, Effect.none )
+            ( { model | toggleC = v }, Cmd.none )
 
 
 -- Counter row: an inner widget that groups − / 0 / + together,

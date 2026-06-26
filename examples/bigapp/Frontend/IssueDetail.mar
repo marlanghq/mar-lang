@@ -61,7 +61,7 @@ type Msg
     | IssueDeleted (Result Service.Error ())
 
 
-init : Shared.User -> { id : Int } -> (Model, Effect Msg)
+init : Shared.User -> { id : Int } -> (Model, Cmd Msg)
 init _ params =
     ( { issue        = Nothing
       , comments     = Nothing
@@ -78,7 +78,7 @@ init _ params =
     )
 
 
-update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Cmd Msg)
 update _ params msg model =
     case msg of
         IssueFetched (Ok (Just issue)) ->
@@ -91,7 +91,7 @@ update _ params msg model =
                 , draftTitle = issue.title
                 , draftDesc  = issue.description
               }
-            , Effect.batch
+            , Cmd.batch
                 [ Service.call Shared.listComments      { issueId = issue.id }        CommentsFetched
                 , Service.call Shared.listProjectLabels { projectId = issue.projectId } LabelsFetched
                 , Service.call Shared.listIssueLabels   { issueId = issue.id }        AttachedFetched
@@ -99,41 +99,41 @@ update _ params msg model =
             )
 
         IssueFetched (Ok Nothing) ->
-            ( { model | error = Just (Service.ServerError "Issue not found.") }, Effect.none )
+            ( { model | error = Just (Service.ServerError "Issue not found.") }, Cmd.none )
 
         IssueFetched (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
         CommentsFetched (Ok items) ->
-            ( { model | comments = Just items }, Effect.none )
+            ( { model | comments = Just items }, Cmd.none )
 
         CommentsFetched (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
         LabelsFetched (Ok items) ->
-            ( { model | labels = Just items }, Effect.none )
+            ( { model | labels = Just items }, Cmd.none )
 
         LabelsFetched (Err _) ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         AttachedFetched (Ok items) ->
-            ( { model | attached = Just items }, Effect.none )
+            ( { model | attached = Just items }, Cmd.none )
 
         AttachedFetched (Err _) ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         DraftCommentChanged value ->
-            ( { model | draftComment = value }, Effect.none )
+            ( { model | draftComment = value }, Cmd.none )
 
         DraftTitleChanged value ->
-            ( { model | draftTitle = value }, Effect.none )
+            ( { model | draftTitle = value }, Cmd.none )
 
         DraftDescChanged value ->
-            ( { model | draftDesc = value }, Effect.none )
+            ( { model | draftDesc = value }, Cmd.none )
 
         AddCommentClicked ->
             if model.draftComment == "" then
-                ( model, Effect.none )
+                ( model, Cmd.none )
             else
                 ( { model | posting = True }
                 , Service.call Shared.createComment
@@ -147,7 +147,7 @@ update _ params msg model =
             )
 
         CommentPosted (Err why) ->
-            ( { model | posting = False, error = Just why }, Effect.none )
+            ( { model | posting = False, error = Just why }, Cmd.none )
 
         DeleteCommentClicked commentId ->
             ( model
@@ -160,7 +160,7 @@ update _ params msg model =
             )
 
         CommentDeleted (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
         ReactionToggled commentId emoji ->
             -- Fire-and-forget toggle. We don't optimistically update
@@ -181,7 +181,7 @@ update _ params msg model =
             )
 
         ReactionResponse (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
         StatusButtonClicked status ->
             ( model
@@ -195,10 +195,10 @@ update _ params msg model =
             )
 
         StatusChanged (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
         EditMetaClicked ->
-            ( { model | editingMeta = True }, Effect.none )
+            ( { model | editingMeta = True }, Cmd.none )
 
         CancelMetaClicked ->
             case model.issue of
@@ -208,11 +208,11 @@ update _ params msg model =
                         , draftTitle  = issue.title
                         , draftDesc   = issue.description
                       }
-                    , Effect.none
+                    , Cmd.none
                     )
 
                 Nothing ->
-                    ( { model | editingMeta = False }, Effect.none )
+                    ( { model | editingMeta = False }, Cmd.none )
 
         SaveMetaClicked ->
             case model.issue of
@@ -230,7 +230,7 @@ update _ params msg model =
                     )
 
                 Nothing ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         MetaSaved (Ok _) ->
             ( { model | editingMeta = False }
@@ -238,7 +238,7 @@ update _ params msg model =
             )
 
         MetaSaved (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
         DeleteIssueClicked ->
             ( model
@@ -249,7 +249,7 @@ update _ params msg model =
             ( model, Nav.replaceTo Frontend.Routes.myIssues {} )
 
         IssueDeleted (Err why) ->
-            ( { model | error = Just why }, Effect.none )
+            ( { model | error = Just why }, Cmd.none )
 
 
 -- ====================================================================
