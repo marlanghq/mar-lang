@@ -905,6 +905,14 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
+		"subBatch": TForall{
+			Vars: []int{b.ID},
+			Body: TArrow{From: TList(TSub(b)), To: TSub(b)},
+		},
+		"subNone": TForall{
+			Vars: []int{b.ID},
+			Body: TSub(b),
+		},
 		// Time — a small Duration type with unit-named smart constructors.
 		//
 		//   Time.seconds : Int -> Duration
@@ -949,6 +957,10 @@ func stdlibBindings() map[string]Type {
 		"timeNow": TForall{
 			Vars: []int{a.ID, b.ID},
 			Body: TTask(TTime),
+		},
+		"timeEvery": TForall{
+			Vars: []int{b.ID},
+			Body: TArrow{From: TDuration, To: TArrow{From: TArrow{From: TTime, To: b}, To: TSub(b)}},
 		},
 		"timeAdd":      TArrow{From: TTime, To: TArrow{From: TDuration, To: TTime}},
 		"timeSub":      TArrow{From: TTime, To: TArrow{From: TDuration, To: TTime}},
@@ -2123,12 +2135,13 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{
 				From: TRecord{
 					Fields: map[string]Type{
-						"path":   TString,
-						"init":   TTuple{Members: []Type{a, TCmd(b)}},
-						"update": TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}},
-						"view":   TArrow{From: a, To: TView(b)},
+						"path":          TString,
+						"init":          TTuple{Members: []Type{a, TCmd(b)}},
+						"update":        TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}},
+						"view":          TArrow{From: a, To: TView(b)},
+						"subscriptions": TArrow{From: a, To: TSub(b)},
 					},
-					Order: []string{"path", "init", "update", "view"},
+					Order: []string{"path", "init", "update", "view", "subscriptions"},
 					Tail:  TVar{ID: -10},
 				},
 				To: TPage(),
@@ -2158,12 +2171,13 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{
 				From: TRecord{
 					Fields: map[string]Type{
-						"path":   TString,
-						"init":   TArrow{From: TVar{ID: -16}, To: TTuple{Members: []Type{a, TCmd(b)}}},
-						"update": TArrow{From: TVar{ID: -16}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}},
-						"view":   TArrow{From: TVar{ID: -16}, To: TArrow{From: a, To: TView(b)}},
+						"path":          TString,
+						"init":          TArrow{From: TVar{ID: -16}, To: TTuple{Members: []Type{a, TCmd(b)}}},
+						"update":        TArrow{From: TVar{ID: -16}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}},
+						"view":          TArrow{From: TVar{ID: -16}, To: TArrow{From: a, To: TView(b)}},
+						"subscriptions": TArrow{From: TVar{ID: -16}, To: TArrow{From: a, To: TSub(b)}},
 					},
-					Order: []string{"path", "init", "update", "view"},
+					Order: []string{"path", "init", "update", "view", "subscriptions"},
 					Tail:  TVar{ID: -18},
 				},
 				To: TPage(),
@@ -2188,12 +2202,13 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{
 				From: TRecord{
 					Fields: map[string]Type{
-						"path":   TString,
-						"init":   TArrow{From: TAdminSession(), To: TTuple{Members: []Type{a, TCmd(b)}}},
-						"update": TArrow{From: TAdminSession(), To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}},
-						"view":   TArrow{From: TAdminSession(), To: TArrow{From: a, To: TView(b)}},
+						"path":          TString,
+						"init":          TArrow{From: TAdminSession(), To: TTuple{Members: []Type{a, TCmd(b)}}},
+						"update":        TArrow{From: TAdminSession(), To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}},
+						"view":          TArrow{From: TAdminSession(), To: TArrow{From: a, To: TView(b)}},
+						"subscriptions": TArrow{From: TAdminSession(), To: TArrow{From: a, To: TSub(b)}},
 					},
-					Order: []string{"path", "init", "update", "view"},
+					Order: []string{"path", "init", "update", "view", "subscriptions"},
 					Tail:  TVar{ID: -27},
 				},
 				To: TPage(),
@@ -2347,12 +2362,13 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{
 				From: TRecord{
 					Fields: map[string]Type{
-						"path":   TPath(TVar{ID: -19}),
-						"init":   TArrow{From: TVar{ID: -19}, To: TTuple{Members: []Type{a, TCmd(b)}}},
-						"update": TArrow{From: TVar{ID: -19}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}},
-						"view":   TArrow{From: TVar{ID: -19}, To: TArrow{From: a, To: TView(b)}},
+						"path":          TPath(TVar{ID: -19}),
+						"init":          TArrow{From: TVar{ID: -19}, To: TTuple{Members: []Type{a, TCmd(b)}}},
+						"update":        TArrow{From: TVar{ID: -19}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}},
+						"view":          TArrow{From: TVar{ID: -19}, To: TArrow{From: a, To: TView(b)}},
+						"subscriptions": TArrow{From: TVar{ID: -19}, To: TArrow{From: a, To: TSub(b)}},
 					},
-					Order: []string{"path", "init", "update", "view"},
+					Order: []string{"path", "init", "update", "view", "subscriptions"},
 					Tail:  TVar{ID: -21},
 				},
 				To: TPage(),
@@ -2367,12 +2383,13 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{
 				From: TRecord{
 					Fields: map[string]Type{
-						"path":   TPath(TVar{ID: -22}),
-						"init":   TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TTuple{Members: []Type{a, TCmd(b)}}}},
-						"update": TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}}},
-						"view":   TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TArrow{From: a, To: TView(b)}}},
+						"path":          TPath(TVar{ID: -22}),
+						"init":          TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TTuple{Members: []Type{a, TCmd(b)}}}},
+						"update":        TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}}},
+						"view":          TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TArrow{From: a, To: TView(b)}}},
+						"subscriptions": TArrow{From: TVar{ID: -23}, To: TArrow{From: TVar{ID: -22}, To: TArrow{From: a, To: TSub(b)}}},
 					},
-					Order: []string{"path", "init", "update", "view"},
+					Order: []string{"path", "init", "update", "view", "subscriptions"},
 					Tail:  TVar{ID: -25},
 				},
 				To: TPage(),
@@ -2428,12 +2445,13 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{
 				From: TRecord{
 					Fields: map[string]Type{
-						"path":   TPath(TVar{ID: -40}),
-						"init":   TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TTuple{Members: []Type{a, TCmd(b)}}}},
-						"update": TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}}},
-						"view":   TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: a, To: TView(b)}}},
+						"path":          TPath(TVar{ID: -40}),
+						"init":          TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TTuple{Members: []Type{a, TCmd(b)}}}},
+						"update":        TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: b, To: TArrow{From: a, To: TTuple{Members: []Type{a, TCmd(b)}}}}}},
+						"view":          TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: a, To: TView(b)}}},
+						"subscriptions": TArrow{From: TAdminSession(), To: TArrow{From: TVar{ID: -40}, To: TArrow{From: a, To: TSub(b)}}},
 					},
-					Order: []string{"path", "init", "update", "view"},
+					Order: []string{"path", "init", "update", "view", "subscriptions"},
 					Tail:  TVar{ID: -42},
 				},
 				To: TPage(),
@@ -2902,6 +2920,8 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Cmd.batch":          "effectBatch",
 		"Cmd.none":           "effectNone",
 		"Cmd.perform":        "cmdPerform",
+		"Sub.batch":          "subBatch",
+		"Sub.none":           "subNone",
 		"Time.seconds":       "timeSeconds",
 		"Time.minutes":       "timeMinutes",
 		"Time.hours":         "timeHours",
@@ -2909,6 +2929,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Time.weeks":         "timeWeeks",
 		"Time.toSeconds":     "timeToSeconds",
 		"Time.now":           "timeNow",
+		"Time.every":         "timeEvery",
 		"Time.add":           "timeAdd",
 		"Time.sub":           "timeSub",
 		"Time.diff":          "timeDiff",

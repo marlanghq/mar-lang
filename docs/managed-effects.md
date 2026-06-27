@@ -45,6 +45,7 @@ Mar treats side effects as **data**, not as arbitrary code execution. Two types 
 
 - **`Task a`** is the backend's value-monad: a computation that, when run, produces an `a` (or aborts). You chain Tasks to compute a value: read a row, then read another, then return a response. `Repo.*` return `Task`, `Time.now : Task Time`, and a service handler returns `Task resp`.
 - **`Cmd msg`** is the frontend's message-monoid (Mar's `Cmd`, like Elm's): a description of work the MVU runtime should do, whose result comes back as a `Msg`. `init` and `update` return `(Model, Cmd Msg)`; `Service.call` and `Nav.*` return `Cmd msg`.
+- **`Sub msg`** is the frontend's *subscription* type: a standing declaration of what the runtime should listen to over time (a timer today; a frame loop later), reconciled against the model after every update. A page declares `subscriptions : Model -> Sub Msg`. See [Subscriptions](#subscriptions-sub).
 
 They used to be one type. `Effect a` carried both algebras at once, a value-monad *and* a message-monoid, and the overlap let a real bug compile: a value-producing effect like `Time.now` returned from a frontend `update` silently did nothing, because the loop only knew how to deliver messages, not values. Splitting them makes that impossible: `Task` is a value and `Cmd` is a message, so you cannot return a `Task` where a `Cmd Msg` is expected. The compiler rejects it.
 
@@ -105,6 +106,42 @@ The key claim:
 
 - application code **describes** work, as a `Task` or a `Cmd`
 - application code does not **run** it directly
+
+## Subscriptions: Sub
+
+`Cmd` is a one-shot — the runtime runs it once and the result comes back as a `Msg`. Some inputs aren't one-shot: a clock that ticks every second, polling, a countdown. Those are **subscriptions** — standing declarations of what the runtime should listen to, for as long as the model says so.
+
+A page declares them in a `subscriptions` field, a pure function of the model:
+
+```elm
+subscriptions : Model -> Sub Msg
+```
+
+The runtime re-evaluates it after every `update` and reconciles: a source newly returned is started, a source no longer returned is stopped, a survivor keeps running. So you turn a subscription off by returning a model where `subscriptions` no longer lists it, and leaving a page stops its subscriptions for free. Identity is structural — the *data* of the subscription, never the tagger function — so two `Time.every` at the same interval share one timer.
+
+Like `Cmd`, `Sub` is frontend-only, and it is its own algebra: there is no bridge from `Task`.
+
+```elm
+Time.every : Duration -> (Time -> msg) -> Sub msg
+Sub.batch  : List (Sub msg) -> Sub msg
+Sub.none   : Sub msg
+```
+
+`Time.every` is the v1 source: it fires every `Duration` and hands the tagger the current `Time`. Like Elm's `Time.every`, the first tick is *after* one interval, not at zero — seed the immediate value in `init` with `Cmd.perform`:
+
+```elm
+type Msg = Tick Time
+
+init : (Model, Cmd Msg)
+init =
+    ( { now = Nothing }, Cmd.perform Tick Time.now )
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Time.every (Time.seconds 1) Tick
+```
+
+A page that subscribes to nothing returns `Sub.none` — the common case, so most pages write `subscriptions = \_ -> Sub.none` (and protected/dynamic pages thread the same leading args as `view`, e.g. `\_ _ -> Sub.none`).
 
 ## Backend services
 
@@ -252,6 +289,7 @@ page =
         , init   = init
         , update = update
         , view   = view
+        , subscriptions = \_ _ -> Sub.none
         }
 ```
 
@@ -284,7 +322,7 @@ The language story:
 - Mar frontend is a collection of independent MVU pages
 - all end-user interactions happen through explicit messages
 - all side effects are managed by the runtime
-- purity is the default; backend work is a `Task` value, frontend commands are a `Cmd` value
-- the type system tracks which functions are effectful, and keeps backend `Task` and frontend `Cmd` distinct
+- purity is the default; backend work is a `Task` value, frontend commands are a `Cmd` value, and recurring inputs (timers) are a `Sub` value
+- the type system tracks which functions are effectful, and keeps backend `Task`, frontend `Cmd`, and `Sub` distinct
 
 This is the model Mar is built around.

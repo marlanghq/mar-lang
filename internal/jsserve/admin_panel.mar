@@ -241,6 +241,7 @@ loginPage =
         , init = loginInit
         , update = loginUpdate
         , view = loginView
+        , subscriptions = \_ -> Sub.none
         }
 
 
@@ -453,6 +454,7 @@ page =
         , init = init
         , update = update
         , view = view
+        , subscriptions = \_ _ -> Sub.none
         }
 
 
@@ -524,6 +526,7 @@ tablePage =
         , init = tableInit
         , update = tableUpdate
         , view = tableView
+        , subscriptions = \_ _ _ -> Sub.none
         }
 
 

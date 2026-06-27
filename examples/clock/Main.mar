@@ -1,47 +1,43 @@
 module Main exposing (main)
 
 
-import UI exposing (navigationStack, navigationTitle, form, section, text, button, empty)
+import UI exposing (navigationStack, navigationTitle, form, section, text)
 
 
--- Browser app that fetches the current time from a backend over HTTP.
+-- A real clock: it ticks on its own, once per second, with no backend and
+-- no user interaction. This is the canonical `Sub` example.
 --
--- This example targets a separately-hosted endpoint at
--- http://localhost:3010/time. To exercise it end-to-end, host that
--- endpoint with `mar dev` against an App.backend module of your own.
+--   subscriptions = Time.every (Time.seconds 1) Tick
+--
+-- `Time.every` is a subscription — a standing declaration the runtime
+-- reconciles against the model after every update: started while the page
+-- returns it, torn down when the page returns it no longer (e.g. on
+-- navigation). The first tick fires after one interval, so we seed the
+-- initial time with `Cmd.perform Tick Time.now` in init (Elm's idiom).
 --
 -- Open with: mar dev examples/clock
 
 
 type alias Model =
-    { time : String
-    , error : Maybe String
+    { now : Maybe Time
+    , ticks : Int
     }
 
 
 type Msg
-    = Refresh
-    | TimeArrived (Result String String)
+    = Tick Time
 
 
 init : (Model, Cmd Msg)
 init =
-    ({ time = "(loading)", error = Nothing }, Http.get "http://localhost:3010/time" TimeArrived)
+    ({ now = Nothing, ticks = 0 }, Cmd.perform Tick Time.now)
 
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        Refresh ->
-            ( { time = "(loading)", error = Nothing }
-            , Http.get "http://localhost:3010/time" TimeArrived
-            )
-
-        TimeArrived (Ok t) ->
-            ({ time = t, error = Nothing }, Cmd.none)
-
-        TimeArrived (Err e) ->
-            ({ time = "?", error = Just e }, Cmd.none)
+        Tick t ->
+            ({ now = Just t, ticks = model.ticks + 1 }, Cmd.none)
 
 
 view : Model -> View Msg
@@ -49,14 +45,26 @@ view model =
     navigationStack [ navigationTitle "Clock" ]
         [ form
             [ section []
-                [ text [] ("Server time: " ++ model.time)
-                , button [] Refresh "Refresh"
-                , case model.error of
-                    Just e -> text [] ("Error: " ++ e)
-                    Nothing -> empty
+                [ text [] (timeLabel model.now)
+                , text [] ("Ticks: " ++ String.fromInt model.ticks)
                 ]
             ]
         ]
+
+
+timeLabel : Maybe Time -> String
+timeLabel mt =
+    case mt of
+        Just t ->
+            "Time: " ++ Time.toIso t
+
+        Nothing ->
+            "(waiting for first tick)"
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Time.every (Time.seconds 1) Tick
 
 
 page : Page
@@ -67,6 +75,7 @@ page =
         , init = init
         , update = update
         , view = view
+        , subscriptions = subscriptions
         }
 
 

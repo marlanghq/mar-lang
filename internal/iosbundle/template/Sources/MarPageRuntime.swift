@@ -28,6 +28,7 @@ final class PageRuntime {
     @ObservationIgnored let initFn: MarValue
     @ObservationIgnored let updateFn: MarValue
     @ObservationIgnored let viewFn: MarValue
+    @ObservationIgnored let subscriptionsFn: MarValue
 
     /// For Page.protected, the User to thread into init/update/view.
     /// nil for public pages.
@@ -42,6 +43,7 @@ final class PageRuntime {
 
     @ObservationIgnored private var initEffectFired = false
     @ObservationIgnored private var pendingInitEffect: MarValue?
+    @ObservationIgnored private var activeSubs: [String: (timer: Timer, taggers: [MarValue])] = [:]
 
     /// Public-page constructor (no User threading, no params).
     convenience init(page: DecodedPage) {
@@ -59,6 +61,7 @@ final class PageRuntime {
         self.initFn = page.initFn
         self.updateFn = page.updateFn
         self.viewFn = page.viewFn
+        self.subscriptionsFn = page.subscriptionsFn
         self.user = user
         self.params = params
 
@@ -105,6 +108,7 @@ final class PageRuntime {
             initEffectFired = true
             runEffect(eff)
         }
+        reconcileSubs()
     }
 
     /// Called when the page leaves the screen. Detaches the
@@ -117,6 +121,7 @@ final class PageRuntime {
     /// freshly-set dispatcher, breaking every async msg that
     /// page's init effect posted.
     func unmount() {
+        teardownSubs()
         if MarDispatcher.shared.currentOwner == ObjectIdentifier(self) {
             MarDispatcher.shared.currentOwner = nil
             MarDispatcher.shared.current = nil
@@ -131,6 +136,7 @@ final class PageRuntime {
             let (newModel, eff) = unwrapModelEffect(result)
             model = newModel
             runEffect(eff)
+            reconcileSubs()
         } catch {
             lastError = "update failed: \(error.localizedDescription)"
         }
@@ -152,6 +158,68 @@ final class PageRuntime {
             lastError = "view failed: \(error.localizedDescription)"
             return nil
         }
+    }
+
+    // MARK: - Subscriptions
+    //
+    // Reconcile the live subscription sources against `subscriptions model`.
+    // Run after init (mount) and after every dispatch — the same funnel as the
+    // JS runtime's render(): start newly-returned sources, stop ones no longer
+    // returned, refresh taggers on survivors. Identity is the interval (the
+    // data), never the tagger. Mirrors reconcileSubs in internal/jsserve/runtime.js.
+    // NOTE: not compiled in CI (no xcode) — verify on a real iOS build.
+    private func reconcileSubs() {
+        var desired: [String: (seconds: Int, taggers: [MarValue])] = [:]
+        if let applied = try? PageRuntime.applyExtras(subscriptionsFn, user: user, params: params),
+           let subVal = try? Eval.apply(applied, model),
+           case .ctor(let tag, let items, _) = subVal, tag == "__Sub" {
+            for item in items {
+                guard case .ctor(let itag, let a, _) = item, itag == "__SubEvery",
+                      a.count == 2, case .duration(let seconds) = a[0] else { continue }
+                let key = "timeEvery:\(seconds)"
+                if desired[key] == nil { desired[key] = (seconds, []) }
+                desired[key]!.taggers.append(a[1])
+            }
+        }
+        // Stop sources no longer desired (collect keys first — never mutate
+        // the dictionary while iterating it).
+        for key in activeSubs.keys.filter({ desired[$0] == nil }) {
+            activeSubs[key]?.timer.invalidate()
+            activeSubs.removeValue(forKey: key)
+        }
+        // Start new sources; refresh taggers on survivors.
+        for (key, g) in desired {
+            if var existing = activeSubs[key] {
+                existing.taggers = g.taggers
+                activeSubs[key] = existing
+            } else {
+                let interval = TimeInterval(max(g.seconds, 1))
+                let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                    Task { @MainActor in self?.fireSub(key) }
+                }
+                activeSubs[key] = (timer, g.taggers)
+            }
+        }
+    }
+
+    /// Fire one subscription key: read the wall clock and deliver each
+    /// tagger's Msg into the loop.
+    private func fireSub(_ key: String) {
+        guard let rec = activeSubs[key] else { return }
+        let now = MarValue.time(Int(Date().timeIntervalSince1970 * 1000))
+        for tagger in rec.taggers {
+            if let msg = try? Eval.apply(tagger, now) {
+                dispatch(msg)
+            }
+        }
+    }
+
+    /// Invalidate every live timer. Called from unmount() so leaving a page
+    /// stops its subscriptions (mirrors the JS reconciler dropping the page's
+    /// keys on navigation).
+    private func teardownSubs() {
+        for (_, rec) in activeSubs { rec.timer.invalidate() }
+        activeSubs.removeAll()
     }
 
     // MARK: - Helpers

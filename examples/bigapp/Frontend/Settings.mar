@@ -85,4 +85,5 @@ page =
         , init   = init
         , update = update
         , view   = view
+        , subscriptions = \_ _ -> Sub.none
         }

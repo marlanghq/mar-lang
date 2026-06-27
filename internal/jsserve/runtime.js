@@ -797,6 +797,54 @@
   // to dispatch a Msg into the running update loop.
   let currentDispatch = null;
 
+  // ---------- Subscriptions (Sub) reconciler ----------
+  // A Sub is a declarative value `{k:'SUB', items:[{src,key,intervalMs,tagger}]}`
+  // produced by a page's `subscriptions : Model -> Sub Msg`. After every render
+  // we reconcile the live sources against the page's desired set: start newly
+  // returned ones, stop ones no longer returned, refresh taggers on survivors.
+  // Identity is the structural key (the data args, never the tagger), so two
+  // `Time.every` at the same interval share one timer. `activeSubs` is module
+  // level so a hot reload (which re-runs mountPages) can tear down the previous
+  // mount's live timers via teardownAllSubs().
+  const activeSubs = new Map(); // key -> { src, handle, taggers: [fn] }
+  const subSources = {
+    timeEvery: {
+      start: (g, fire) => setInterval(fire, g.intervalMs),
+      stop: (rec) => clearInterval(rec.handle),
+      fire: (rec) => {
+        const now = VTime(Date.now());
+        for (const tg of rec.taggers) {
+          if (currentDispatch) currentDispatch(apply(tg, now));
+        }
+      },
+    },
+  };
+  function teardownAllSubs() {
+    for (const rec of activeSubs.values()) subSources[rec.src].stop(rec);
+    activeSubs.clear();
+  }
+  function reconcileSubs(subValue) {
+    const desired = new Map(); // key -> { src, intervalMs, taggers: [] }
+    const items = (subValue && subValue.k === 'SUB' && subValue.items) ? subValue.items : [];
+    for (const it of items) {
+      let g = desired.get(it.key);
+      if (!g) { g = { src: it.src, intervalMs: it.intervalMs, taggers: [] }; desired.set(it.key, g); }
+      g.taggers.push(it.tagger);
+    }
+    for (const [key, rec] of [...activeSubs]) {
+      if (!desired.has(key)) { subSources[rec.src].stop(rec); activeSubs.delete(key); }
+    }
+    for (const [key, g] of desired) {
+      const existing = activeSubs.get(key);
+      if (existing) { existing.taggers = g.taggers; }
+      else {
+        const rec = { src: g.src, intervalMs: g.intervalMs, taggers: g.taggers, handle: null };
+        rec.handle = subSources[g.src].start(g, () => subSources[g.src].fire(rec));
+        activeSubs.set(key, rec);
+      }
+    }
+  }
+
   function makeBuiltinEnv() {
     const env = envNew(null);
     const def = (n, v) => envDefine(env, n, v);
@@ -2281,7 +2329,7 @@
     const pageCreateImpl = native(1, ([rec]) => {
       const f = rec.fields;
       const title = f.title || VString('');
-      return VCtor('__Page', [f.path, f.init, f.update, f.view, title]);
+      return VCtor('__Page', [f.path, f.init, f.update, f.view, title, f.subscriptions]);
     });
     def('pageCreate', pageCreateImpl);
     def('Page.create', pageCreateImpl);
@@ -2295,7 +2343,7 @@
     const pageProtectedImpl = native(1, ([rec]) => {
       const f = rec.fields;
       const title = f.title || VString('');
-      return VCtor('__ProtectedPage', [f.path, f.init, f.update, f.view, title]);
+      return VCtor('__ProtectedPage', [f.path, f.init, f.update, f.view, title, f.subscriptions]);
     });
     def('pageProtected', pageProtectedImpl);
     def('Page.protected', pageProtectedImpl);
@@ -2319,7 +2367,8 @@
       const init = apply(f.init, adminSession);
       const update = native(2, ([msg, model]) => apply(apply(apply(f.update, adminSession), msg), model));
       const view = native(1, ([model]) => apply(apply(f.view, adminSession), model));
-      return VCtor('__Page', [f.path, init, update, view, title]);
+      const subscriptions = native(1, ([model]) => apply(apply(f.subscriptions, adminSession), model));
+      return VCtor('__Page', [f.path, init, update, view, title, subscriptions]);
     });
     def('pageAdminProtected', pageAdminProtectedImpl);
     def('Page.adminProtected', pageAdminProtectedImpl);
@@ -2392,7 +2441,7 @@
     const pageDynamicImpl = native(1, ([rec]) => {
       const f = rec.fields;
       const title = f.title || VString('');
-      return VCtor('__DynamicPage', [f.path, f.init, f.update, f.view, title]);
+      return VCtor('__DynamicPage', [f.path, f.init, f.update, f.view, title, f.subscriptions]);
     });
     def('pageDynamic', pageDynamicImpl);
     def('Page.dynamic', pageDynamicImpl);
@@ -2404,7 +2453,7 @@
     const pageDynamicProtectedImpl = native(1, ([rec]) => {
       const f = rec.fields;
       const title = f.title || VString('');
-      return VCtor('__DynamicProtectedPage', [f.path, f.init, f.update, f.view, title]);
+      return VCtor('__DynamicProtectedPage', [f.path, f.init, f.update, f.view, title, f.subscriptions]);
     });
     def('pageDynamicProtected', pageDynamicProtectedImpl);
     def('Page.dynamicProtected', pageDynamicProtectedImpl);
@@ -2422,7 +2471,8 @@
       const init = native(1, ([params]) => apply(apply(f.init, adminSession), params));
       const update = native(3, ([params, msg, model]) => apply(apply(apply(apply(f.update, adminSession), params), msg), model));
       const view = native(2, ([params, model]) => apply(apply(apply(f.view, adminSession), params), model));
-      return VCtor('__DynamicPage', [f.path, init, update, view, title]);
+      const subscriptions = native(2, ([params, model]) => apply(apply(apply(f.subscriptions, adminSession), params), model));
+      return VCtor('__DynamicPage', [f.path, init, update, view, title, subscriptions]);
     });
     def('pageDynamicAdminProtected', pageDynamicAdminProtectedImpl);
     def('Page.dynamicAdminProtected', pageDynamicAdminProtectedImpl);
@@ -2658,6 +2708,24 @@
     def('effectNone', VEffect(() => VUnit(), 'none'));
     def('Cmd.none', VEffect(() => VUnit(), 'none'));
 
+    // Sub.none / Sub.batch — the frontend subscription monoid. A Sub is a
+    // declarative descriptor (k:'SUB'); the IIFE-level reconcileSubs reads it.
+    const subNoneVal = { k: 'SUB', items: [] };
+    def('subNone', subNoneVal);
+    def('Sub.none', subNoneVal);
+    const subBatchImpl = native(1, ([list]) => {
+      const items = [];
+      const xs = (list && list.xs) || [];
+      for (const sub of xs) {
+        if (sub && sub.k === 'SUB' && sub.items) {
+          for (const it of sub.items) items.push(it);
+        }
+      }
+      return { k: 'SUB', items };
+    });
+    def('subBatch', subBatchImpl);
+    def('Sub.batch', subBatchImpl);
+
     // Cmd.perform : (a -> msg) -> Task a -> Cmd msg
     // The Task->Cmd bridge (Elm's Task.perform): run the task and deliver
     // its produced value to the MVU loop as a msg. The only way a Task
@@ -2688,6 +2756,18 @@
     // Effect.succeed but the value is fresh on each run.
     def('timeNow', VEffect(() => VTime(Date.now()), 'timeNow'));
     def('Time.now', envLookup(env, 'timeNow'));
+
+    // Time.every : Duration -> (Time -> msg) -> Sub msg — a recurring
+    // subscription. Identity is the interval (seconds); the tagger is the
+    // payload. The reconciler turns it into a setInterval that delivers the
+    // current Time each tick. Fires first AFTER one interval (Elm's Time.every);
+    // seed the immediate value with `Cmd.perform GotNow Time.now` in init.
+    const timeEveryImpl = native(2, ([dur, tagger]) => {
+      const seconds = (dur && typeof dur.seconds === 'number') ? dur.seconds : 0;
+      return { k: 'SUB', items: [{ src: 'timeEvery', key: 'timeEvery:' + seconds, intervalMs: seconds * 1000, tagger }] };
+    });
+    def('timeEvery', timeEveryImpl);
+    def('Time.every', timeEveryImpl);
 
     // Time arithmetic — durations are seconds, times are millis;
     // multiply by 1000 to align units when shifting.
@@ -7650,6 +7730,9 @@
   }
 
   function mountPages(pageList) {
+    // A fresh mount (cold load or hot reload) owns the live timers; clear any
+    // the previous mountPages left running so they do not double-fire.
+    teardownAllSubs();
     const pages = {};
     let firstPath = null;
 
@@ -7682,7 +7765,7 @@
     // buildPathURL) live at the IIFE level so they're reachable from
     // both makeBuiltinEnv (linkTo / Nav.pushTo) and mountPages.
 
-    function buildPageEntry(path, initFn, updateFn, viewFn, title, isProtected, isDynamic) {
+    function buildPageEntry(path, initFn, updateFn, viewFn, title, isProtected, isDynamic, subsFn) {
       // For protected/dynamic pages init/update/view need extra args
       // threaded in (User, Params, or both). We can't init until those
       // are known, so we defer.
@@ -7751,6 +7834,7 @@
         init: initFn,
         update: updateFn,
         view: viewFn,
+        subscriptions: subsFn,
       };
 
       if (!isProtected && !isDynamic) {
@@ -7779,13 +7863,13 @@
       // the Auth.config builtin). __DynamicPage / __DynamicProtectedPage also
       // enable URL-pattern matching with `:param` segments. (Page.adminProtected
       // pre-applies its AdminSession and emits a plain __Page — see its builtin.)
-      const [pathV, initFn, updateFn, viewFn, titleV] = p.args;
+      const [pathV, initFn, updateFn, viewFn, titleV, subsFn] = p.args;
       const path = pathV.s;
       const title = (titleV && titleV.k === 'S') ? titleV.s : '';
       const isProtected = (p.tag === '__ProtectedPage' || p.tag === '__DynamicProtectedPage');
       const isDynamic   = (p.tag === '__DynamicPage'   || p.tag === '__DynamicProtectedPage');
       if (firstPath === null) firstPath = path;
-      const entry = buildPageEntry(path, initFn, updateFn, viewFn, title, isProtected, isDynamic);
+      const entry = buildPageEntry(path, initFn, updateFn, viewFn, title, isProtected, isDynamic, subsFn);
       if (isDynamic) {
         dynamicPages.push({ pattern: parsePathPattern(path), page: entry });
       } else {
@@ -7957,6 +8041,10 @@
       if (pg.title && document.title !== pg.title) {
         document.title = pg.title;
       }
+      // Reconcile subscriptions against the current model: this runs on every
+      // render (post-update, post-init, and on navigation), so leaving a page
+      // stops its timers and the new page's subscriptions start.
+      reconcileSubs(pg.subscriptions ? apply(applyExtras(pg, pg.subscriptions), pg.model) : null);
       const viewVal = viewWithUser(pg, pg.model);
       const root = document.getElementById('mar-root');
       // On page change, throw away the old DOM — diffing across a
@@ -9283,6 +9371,7 @@
           return /\s/.test(inner) ? '(' + inner + ')' : inner;
         }).join(' ');
       case 'E': return '<effect>';
+      case 'SUB': return '<sub>';
       case 'Fn': return '<fn>';
       case 'V': return '<view>';
       default: return '<?>';

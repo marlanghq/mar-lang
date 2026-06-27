@@ -39,6 +39,18 @@ func timeBuiltins() map[string]Value {
 			},
 		},
 
+		"timeEvery": nativeFn(2, func(args []Value) (Value, error) {
+			if _, ok := args[0].(VDuration); !ok {
+				return nil, fmt.Errorf("Time.every: expected Duration (got %T)", args[0])
+			}
+			// Inert on the backend (no MVU loop). The frontend reconciles this into
+			// a real timer that ticks every Duration, delivering the current Time.
+			return VEffect{
+				Tag: "timeEvery",
+				Run: func() (Value, error) { return VUnit{}, nil },
+			}, nil
+		}),
+
 		// Time.add / Time.sub shift a moment by a duration.
 		// Returning a new VTime — durations are seconds, times are
 		// milliseconds, so multiply by 1000 to align units.

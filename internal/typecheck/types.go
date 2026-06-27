@@ -375,6 +375,17 @@ func TCmd(a Type) TCon {
 	return TCon{Name: "Cmd", Args: []Type{a}}
 }
 
+// TSub returns "Sub msg" — the frontend subscription type (Mar's Sub). What a
+// page's `subscriptions : Model -> Sub Msg` returns: a declarative description
+// of what the runtime should listen to (timers, later a frame loop), reconciled
+// against the model after every update — a source is started when newly
+// returned and torn down when no longer returned. Frontend-only; identity is
+// structural (the data args, never the tagger). Composed with Sub.batch /
+// Sub.none, and bridged from no Task (it is its own algebra, like Elm's Sub).
+func TSub(a Type) TCon {
+	return TCon{Name: "Sub", Args: []Type{a}}
+}
+
 // TEntity returns the parameterized "Entity a" type — an entity describing
 // a SQL table whose row shape is `a`. The row type drives Repo decode and
 // the type of values returned by query operations.

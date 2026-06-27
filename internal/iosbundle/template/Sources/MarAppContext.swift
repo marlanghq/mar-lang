@@ -193,6 +193,7 @@ final class AppContext {
                     initFn: args[1],
                     updateFn: args[2],
                     viewFn: args[3],
+                    subscriptionsFn: args.count >= 6 ? args[5] : .unit,
                     isProtected: false,
                     isDynamic: false
                 )
@@ -204,6 +205,7 @@ final class AppContext {
                     initFn: args[1],
                     updateFn: args[2],
                     viewFn: args[3],
+                    subscriptionsFn: args.count >= 6 ? args[5] : .unit,
                     isProtected: true,
                     isDynamic: false
                 )
@@ -215,6 +217,7 @@ final class AppContext {
                     initFn: args[1],
                     updateFn: args[2],
                     viewFn: args[3],
+                    subscriptionsFn: args.count >= 6 ? args[5] : .unit,
                     isProtected: false,
                     isDynamic: true
                 )
@@ -226,6 +229,7 @@ final class AppContext {
                     initFn: args[1],
                     updateFn: args[2],
                     viewFn: args[3],
+                    subscriptionsFn: args.count >= 6 ? args[5] : .unit,
                     isProtected: true,
                     isDynamic: true
                 )
@@ -253,6 +257,7 @@ struct DecodedPage: Identifiable {
     let initFn: MarValue
     let updateFn: MarValue
     let viewFn: MarValue
+    let subscriptionsFn: MarValue
     let isProtected: Bool
     let isDynamic: Bool
 

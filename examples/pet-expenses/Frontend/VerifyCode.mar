@@ -13,7 +13,7 @@ import UI exposing
 
 -- Code-entry half of the sign-in flow, mounted at
 -- /sign-in/verify/{email:String}. Page.dynamic decodes the
--- `{email:String}` segment into a typed params record, so the URL is
+-- `{email:String, subscriptions = \_ _ -> Sub.none }` segment into a typed params record, so the URL is
 -- the source of truth and pasting it into a fresh tab still works.
 
 
@@ -105,4 +105,5 @@ page =
         , init   = init
         , update = update
         , view   = view
+        , subscriptions = \_ _ -> Sub.none
         }

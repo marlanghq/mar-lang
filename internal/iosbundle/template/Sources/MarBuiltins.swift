@@ -1046,8 +1046,9 @@ enum MarBuiltins {
             let updateV = fs["update"] ?? .unit
             let viewV = fs["view"] ?? .unit
             let titleV = fs["title"] ?? .string("")
+            let subsV = fs["subscriptions"] ?? .unit
             return .ctor(tag: "__Page",
-                         args: [pathV, initV, updateV, viewV, titleV],
+                         args: [pathV, initV, updateV, viewV, titleV, subsV],
                          origin: nil)
         }
         env.define("pageCreate",  .fn(pageCreate))
@@ -1071,8 +1072,9 @@ enum MarBuiltins {
             let updateV = fs["update"] ?? .unit
             let viewV = fs["view"] ?? .unit
             let titleV = fs["title"] ?? .string("")
+            let subsV = fs["subscriptions"] ?? .unit
             return .ctor(tag: "__ProtectedPage",
-                         args: [pathV, initV, updateV, viewV, titleV],
+                         args: [pathV, initV, updateV, viewV, titleV, subsV],
                          origin: nil)
         }
         env.define("pageProtected",  .fn(pageProtected))
@@ -1137,8 +1139,9 @@ enum MarBuiltins {
             let updateV = fs["update"] ?? .unit
             let viewV = fs["view"] ?? .unit
             let titleV = fs["title"] ?? .string("")
+            let subsV = fs["subscriptions"] ?? .unit
             return .ctor(tag: "__DynamicPage",
-                         args: [pathV, initV, updateV, viewV, titleV],
+                         args: [pathV, initV, updateV, viewV, titleV, subsV],
                          origin: nil)
         }
         env.define("pageDynamic",  .fn(pageDynamic))
@@ -1158,8 +1161,9 @@ enum MarBuiltins {
             let updateV = fs["update"] ?? .unit
             let viewV = fs["view"] ?? .unit
             let titleV = fs["title"] ?? .string("")
+            let subsV = fs["subscriptions"] ?? .unit
             return .ctor(tag: "__DynamicProtectedPage",
-                         args: [pathV, initV, updateV, viewV, titleV],
+                         args: [pathV, initV, updateV, viewV, titleV, subsV],
                          origin: nil)
         }
         env.define("pageDynamicProtected",  .fn(pageDynamicProtected))
@@ -1442,6 +1446,26 @@ enum MarBuiltins {
         env.define("effectNone",  .effect(MarEffect(tag: "none") { .unit }))
         env.define("Cmd.none", .effect(MarEffect(tag: "none") { .unit }))
 
+        // Sub.none / Sub.batch — the frontend subscription monoid. A Sub is a
+        // declarative value (a "__Sub" ctor carrying its items); the page
+        // runtime's reconcileSubs reads it (see MarPageRuntime).
+        env.define("subNone",  .ctor(tag: "__Sub", args: [], origin: nil))
+        env.define("Sub.none", .ctor(tag: "__Sub", args: [], origin: nil))
+        let subBatch = MarFn.native(1) { args in
+            guard case .list(let subs) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
+            }
+            var items: [MarValue] = []
+            for sub in subs {
+                if case .ctor(let tag, let xs, _) = sub, tag == "__Sub" {
+                    items.append(contentsOf: xs)
+                }
+            }
+            return .ctor(tag: "__Sub", args: items, origin: nil)
+        }
+        env.define("subBatch",  .fn(subBatch))
+        env.define("Sub.batch", .fn(subBatch))
+
         // Cmd.perform : (a -> msg) -> Task a -> Cmd msg
         // The Task->Cmd bridge (Elm's Task.perform): run the task and
         // deliver its produced value to the MVU loop as a msg. The only
@@ -1492,6 +1516,21 @@ enum MarBuiltins {
         }
         env.define("timeNow",  .effect(timeNow))
         env.define("Time.now", .effect(timeNow))
+
+        // Time.every : Duration -> (Time -> msg) -> Sub msg — a recurring
+        // subscription. Identity is the interval; the tagger is the payload.
+        // The page runtime reconciles it into a repeating Timer that delivers
+        // the current Time each tick (fires first after one interval, Elm's
+        // Time.every; seed the immediate value with Cmd.perform Tick Time.now).
+        let timeEvery = MarFn.native(2) { args in
+            guard case .duration = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "Duration", got: Eval.typeOf(args[0]))
+            }
+            let item = MarValue.ctor(tag: "__SubEvery", args: [args[0], args[1]], origin: nil)
+            return .ctor(tag: "__Sub", args: [item], origin: nil)
+        }
+        env.define("timeEvery",  .fn(timeEvery))
+        env.define("Time.every", .fn(timeEvery))
 
         let timeAdd = MarFn.native(2) { args in
             guard case .time(let t) = args[0],

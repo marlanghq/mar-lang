@@ -11,6 +11,9 @@ func BaseEnv() *Env {
 	for name, v := range effectBuiltins() {
 		env.Define(name, v)
 	}
+	for name, v := range subBuiltins() {
+		env.Define(name, v)
+	}
 	for name, v := range ioBuiltins() {
 		env.Define(name, v)
 	}
@@ -173,6 +176,8 @@ func qualifiedAliasMapping() map[string]string {
 		"Cmd.batch":       "effectBatch",
 		"Cmd.none":        "effectNone",
 		"Cmd.perform":     "cmdPerform",
+		"Sub.batch":       "subBatch",
+		"Sub.none":        "subNone",
 		"Time.seconds":    "timeSeconds",
 		"Time.minutes":    "timeMinutes",
 		"Time.hours":      "timeHours",
@@ -180,6 +185,7 @@ func qualifiedAliasMapping() map[string]string {
 		"Time.weeks":      "timeWeeks",
 		"Time.toSeconds":  "timeToSeconds",
 		"Time.now":        "timeNow",
+		"Time.every":      "timeEvery",
 		"Time.add":        "timeAdd",
 		"Time.sub":        "timeSub",
 		"Time.diff":       "timeDiff",
