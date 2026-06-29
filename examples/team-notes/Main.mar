@@ -1,0 +1,50 @@
+module Main exposing (main)
+
+
+import Backend.Users
+import Backend.Notes
+import Frontend.SignIn
+import Frontend.Home
+import Frontend.NoteDetail
+import Shared exposing (Role(..))
+
+
+-- Wiring point. Auth.config picks up `users` from Backend.Users and
+-- uses the `role` field to tell the framework where the User's
+-- role lives. Without that field, Auth.requireRole would have nowhere
+-- to read from and would 500 on first protected request.
+
+
+auth : Auth Shared.User
+auth =
+    Auth.config
+        { entity     = Backend.Users.users
+        , identify   = \u -> u.email
+        , role       = \u -> u.role
+        , signInPage = Frontend.SignIn.page
+        , email      =
+            { subject = "Sign in to Team Notes"
+            , body    = \code ttlMinutes ->
+                "Welcome to Team Notes!\n\n" ++
+                "Your one-time code is " ++ code ++ "\n\n" ++
+                "It expires in " ++ String.fromInt ttlMinutes ++ " minutes. " ++
+                "If you didn't request this, you can ignore this email.\n"
+            }
+        , signup     = \email ->
+            -- Default new users to a Member of team 1. Real apps would
+            -- assign teams via invite codes / domain matching.
+            { email = email, teamId = 1, role = Member }
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Cmd ()
+main =
+    App.fullstack
+        { services = Backend.Notes.services
+        , pages    =
+            [ Frontend.SignIn.page
+            , Frontend.Home.page
+            , Frontend.NoteDetail.page
+            ]
+        }

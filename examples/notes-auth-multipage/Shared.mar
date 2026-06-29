@@ -1,0 +1,40 @@
+module Shared exposing (..)
+
+
+-- Types and Service contracts shared between frontend and backend.
+
+
+type alias User =
+    { id    : Int
+    , email : String
+    }
+
+
+type alias Note =
+    { id       : Int
+    , body     : String
+    , authorId : Int
+    }
+
+
+type alias NewNote =
+    { body : String
+    }
+
+
+listMine : Service () (List Note)
+listMine =
+    Service.declare GET "/notes"
+
+
+-- The create outcome: the one domain rule (no empty bodies) is a
+-- typed case the frontend matches, not a string through the abort
+-- channel.
+type CreateOutcome
+    = Created Note
+    | BodyEmpty
+
+
+createMine : Service NewNote CreateOutcome
+createMine =
+    Service.declare POST "/notes"

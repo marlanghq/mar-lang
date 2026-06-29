@@ -1,0 +1,111 @@
+module Frontend.Why exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , vstack
+    , title, subtitle, text
+    , paragraph, span
+    , bold, italic, code
+    )
+
+
+-- The "why Mar exists" page. Two passes: first the elevator pitch
+-- in plain prose, then a structured list of the design pillars, then
+-- a section that calls out trade-offs honestly. The static-page
+-- shape: no Model state needed, just paragraphs of body text and a
+-- few headers.
+
+
+type alias Model = ()
+
+
+type Msg
+    = NoOp
+
+
+init : (Model, Cmd Msg)
+init = ((), Cmd.none)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update _ _ = ((), Cmd.none)
+
+
+view : Model -> View Msg
+view _ =
+    navigationStack [ navigationTitle "Why Mar" ]
+        [ list []
+            [ section
+                [ header "Foundation: Joinery, not glue"
+                , footer "Sashimono: Japanese joinery without nails, screws, or glue."
+                ]
+                [ title "Built like sashimono"
+                , paragraph
+                    [ span [] "Mar is built on the idea of "
+                    , span [italic] "sashimono"
+                    , span [] ", the Japanese joinery tradition where furniture stands because each piece is shaped to fit the others. No screws, no glue."
+                    ]
+                , paragraph
+                    [ span [] "Traditional full-stack development is IKEA: generic boards held together by screws. JSON contracts, API clients drifting out of sync, ORMs. "
+                    , span [] "Every screw is a place where the thing can come loose."
+                    ]
+                , paragraph
+                    [ span [bold] "There's no glue to fail because there is no glue."
+                    ]
+                ]
+            , section [ header "Pillar 1: One language, four runtimes" ]
+                [ title "One codebase, four targets."
+                , text [] "You write your app once. Mar's compiler produces every output you need: a web bundle, native iOS and Android apps, and a server binary."
+                ]
+            , section [ header "Pillar 2: Batteries included" ]
+                [ title "Authentication, authorization, admin panel, migrations, database, backups, and rate limiting, all in the box."
+                , text [] "Every full-stack app rebuilds the same scaffolding before it does anything new. Mar treats that scaffolding as part of the language: the layers every app needs are already chosen, already integrated, and already type-safe. You spend day one writing the part that's actually yours."
+                ]
+            , section [ header "Pillar 3: One UI vocabulary, every platform" ]
+                [ title "UI primitives, built into the language."
+                , paragraph
+                    [ span [] "Mar's UI vocabulary is built into the language: you don't write HTML, CSS, Swift, or Kotlin. You compose Mar primitives like "
+                    , span [code] "list"
+                    , span [] ", "
+                    , span [code] "sheet"
+                    , span [] ", and "
+                    , span [code] "navigationStack"
+                    , span [] ", and the compiler renders them natively on web, iOS, and Android. No drift."
+                    ]
+                ]
+            , section [ header "Pillar 4: Type-safe end-to-end" ]
+                [ title "The compiler has your back."
+                , text [] "Rename a page's URL and Mar points you to every link that needs updating. Change what a service expects and it points you to every place that calls it. Add a field to your data and it writes the database migration for you. Mistakes that other stacks only catch in production, Mar catches before you run it."
+                , text [] "You don't have to write types everywhere: Mar figures most of them out on its own. And you rarely think about it day to day. It's just there in the background, catching things before they break."
+                ]
+            , section [ header "Pillar 5: Painless deploys" ]
+                [ title "One binary, simple to deploy."
+                , text [] "Mar compiles your entire fullstack app into a single self-contained executable: your code, the runtime, a built-in SQLite engine, and all static assets, in one file. Drop it on any server and run it. No Dockerfile to write, no deploy config to maintain."
+                ]
+            , section
+                [ header "Trade-offs"
+                , footer "These trade-offs work well for some projects and not others. We'd rather be honest about that up front."
+                ]
+                [ title "⚖️ The honest caveats"
+                , vstack []
+                    [ text [] "• Storage is SQLite, embedded per app. Great for solo apps and small teams."
+                    , text [] "• The UI vocabulary is opinionated and constrained: less freedom than hand-building each platform's UI."
+                    , text [] "• The language and its ecosystem are still limited (though expanding)."
+                    ]
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/why"
+        , title = "Why Mar"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

@@ -1,0 +1,40 @@
+module Frontend.Routes exposing
+    ( home, why, getStarted, examples, credits, showcase )
+
+
+-- Central URL surface for the site. One file, one screen,
+-- typed paths everywhere. Renaming a URL flips every `navigationLink`
+-- call site into a compile-time error — the upside of doing routing
+-- in the type system instead of stringly-typed lookup tables.
+--
+-- `getStarted` (not `start` or `try`) on purpose: `try` is a Swift
+-- keyword, so naming a Mar binding `try` would land as a Swift
+-- syntax error in the iOS bundle generator. Safe spelling.
+--
+-- `showcase` is a bridge to the UI showcase sub-section under
+-- /showcase/. The showcase's internal URLs (/showcase/layout, etc.)
+-- live in Frontend.Showcase.Routes so the sub-tree is self-contained.
+
+
+home : Path {}
+home = "/"
+
+
+why : Path {}
+why = "/why"
+
+
+getStarted : Path {}
+getStarted = "/get-started"
+
+
+examples : Path {}
+examples = "/examples"
+
+
+credits : Path {}
+credits = "/credits"
+
+
+showcase : Path {}
+showcase = "/showcase"

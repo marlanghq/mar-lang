@@ -1,0 +1,33 @@
+module Frontend.Routes exposing (home, signIn, verifyCode, pets, settings)
+
+
+-- Centralized URL surface. Every page declares its `path` here so the
+-- whole route table fits on one screen, and renaming a pattern turns
+-- every `Nav.pushTo` callsite into a compile error. The String -> Path
+-- coercion happens via the `: Path r` annotation on each value.
+
+
+-- Home is the expense feed (the thing you open the app for).
+home : Path {}
+home = "/"
+
+
+signIn : Path {}
+signIn = "/sign-in"
+
+
+-- After the email step the SignIn page pushes here, carrying the email
+-- as a typed path segment so the back button gives a free retry.
+verifyCode : Path { email : String }
+verifyCode = "/sign-in/verify/{email:String}"
+
+
+-- Pet management: a secondary screen (pets are optional tags), pushed
+-- from the home top bar.
+pets : Path {}
+pets = "/pets"
+
+
+-- Account hub: sign out + delete account, pushed from the home top bar.
+settings : Path {}
+settings = "/settings"

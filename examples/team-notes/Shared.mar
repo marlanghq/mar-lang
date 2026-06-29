@@ -1,0 +1,80 @@
+module Shared exposing (..)
+
+
+-- Domain types and service contracts shared between frontend and backend.
+--
+-- A small SaaS where every user belongs to a Team and is either a
+-- Member or Admin inside it. Members can read + create team notes;
+-- admins can additionally edit + delete.
+--
+-- Role is a closed sum type — Entity.enum [Member, Admin] in the
+-- users table tells the framework to round-trip the ctor's tag
+-- through a TEXT column with a CHECK constraint. Misspelling
+-- `Auth.requireRole Adimn` becomes a compile error rather than a
+-- runtime never-allow.
+
+
+type Role
+    = Member
+    | Admin
+
+
+type alias User =
+    { id     : Int
+    , email  : String
+    , teamId : Int
+    , role   : Role
+    }
+
+
+type alias Note =
+    { id        : Int
+    , body      : String
+    , teamId    : Int
+    , authorId  : Int
+    , createdAt : Time
+    }
+
+
+type alias NewNote =
+    { body : String
+    }
+
+
+type alias EditNote =
+    { id   : Int
+    , body : String
+    }
+
+
+type alias DeleteNote =
+    { id : Int
+    }
+
+
+type alias GetNote =
+    { id : Int
+    }
+
+
+-- Service contracts. Each declares the HTTP verb and URL it answers on;
+-- the backend implements each with a per-line decorator stack that reads
+-- as the security policy of the app.
+listTeamNotes : Service () (List Note)
+listTeamNotes = Service.declare GET "/team-notes"
+
+
+getNote : Service GetNote (Maybe Note)
+getNote = Service.declare GET "/team-notes/{id:Int}"
+
+
+createNote : Service NewNote Note
+createNote = Service.declare POST "/team-notes"
+
+
+editNote : Service EditNote (Maybe Note)
+editNote = Service.declare PUT "/team-notes/{id:Int}"
+
+
+deleteNote : Service DeleteNote ()
+deleteNote = Service.declare DELETE "/team-notes/{id:Int}"

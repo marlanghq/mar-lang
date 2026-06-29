@@ -1,0 +1,285 @@
+module Frontend exposing (page)
+
+
+import Shared
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , form, list, section, header
+    , hstack
+    , title, subtitle, text, textField, button, centered, empty, errorText
+    , submit, width, chars
+    )
+
+
+-- Single-page state machine: bootstrap (Auth.me) -> login -> verify -> notes.
+
+
+type Stage
+    = Loading
+    | LoggedOut LoginStep
+    | LoggedIn Shared.User Notes String
+
+
+type LoginStep
+    = AskEmail String
+    | Submitting String
+    | AskCode String String
+
+
+-- Notes ladder for the LoggedIn stage. A bare `List Note` forces
+-- the initial state to be `[]`, which the view would render as
+-- "0 notes" while the first fetch is still pending. The three
+-- explicit states surface the loading + error cases honestly.
+type Notes
+    = NotesLoading
+    | NotesLoaded (List Shared.Note)
+    | NotesFailed String
+
+
+type Msg
+    = MeResolved (Result String (Maybe Shared.User))
+    | EmailDraftChanged String
+    | RequestCodeClicked
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+    | CodeDraftChanged String
+    | VerifyCodeClicked
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
+    | NotesFetched (Result Service.Error (List Shared.Note))
+    | NoteDraftChanged String
+    | AddNoteClicked
+    | NoteCreated (Result Service.Error Shared.Note)
+    | SignOutClicked
+    | SignedOut (Result String ())
+
+
+init : (Stage, Cmd Msg)
+init =
+    ( Loading, Auth.me MeResolved )
+
+
+update : Msg -> Stage -> (Stage, Cmd Msg)
+update msg stage =
+    case msg of
+        MeResolved (Ok (Just user)) ->
+            ( LoggedIn user NotesLoading ""
+            , Service.call Shared.listMine () NotesFetched
+            )
+
+        MeResolved _ ->
+            ( LoggedOut (AskEmail ""), Cmd.none )
+
+        EmailDraftChanged value ->
+            ( LoggedOut (AskEmail value), Cmd.none )
+
+        RequestCodeClicked ->
+            case stage of
+                LoggedOut (AskEmail email) ->
+                    ( LoggedOut (Submitting email)
+                    , Auth.requestCode { email = email } CodeRequested
+                    )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        CodeRequested (Ok Auth.CodeSent) ->
+            case stage of
+                LoggedOut (Submitting email) ->
+                    ( LoggedOut (AskCode email ""), Cmd.none )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        CodeRequested (Ok _) ->
+            -- InvalidEmail / RateLimited. This minimal example shows no
+            -- error copy on purpose; back to the email step. See
+            -- daily-checklist for the per-outcome treatment.
+            case stage of
+                LoggedOut (Submitting email) ->
+                    ( LoggedOut (AskEmail email), Cmd.none )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        CodeRequested (Err _) ->
+            case stage of
+                LoggedOut (Submitting email) ->
+                    ( LoggedOut (AskEmail email), Cmd.none )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        CodeDraftChanged value ->
+            case stage of
+                LoggedOut (AskCode email _) ->
+                    ( LoggedOut (AskCode email value), Cmd.none )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        VerifyCodeClicked ->
+            case stage of
+                LoggedOut (AskCode email code) ->
+                    ( LoggedOut (Submitting email)
+                    , Auth.verifyCode { email = email, code = code } CodeVerified
+                    )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        CodeVerified (Ok (Auth.SignedIn user)) ->
+            ( LoggedIn user NotesLoading ""
+            , Service.call Shared.listMine () NotesFetched
+            )
+
+        CodeVerified (Ok _) ->
+            -- WrongCode / TooManyAttempts: back to the code prompt.
+            case stage of
+                LoggedOut (Submitting email) ->
+                    ( LoggedOut (AskCode email ""), Cmd.none )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        CodeVerified (Err _) ->
+            case stage of
+                LoggedOut (Submitting email) ->
+                    ( LoggedOut (AskCode email ""), Cmd.none )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        NotesFetched (Ok loaded) ->
+            case stage of
+                LoggedIn user _ draft ->
+                    ( LoggedIn user (NotesLoaded loaded) draft, Cmd.none )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        NotesFetched (Err why) ->
+            case stage of
+                LoggedIn user _ draft ->
+                    ( LoggedIn user (NotesFailed (Service.errorToString why)) draft, Cmd.none )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        NoteDraftChanged value ->
+            case stage of
+                LoggedIn user notes _ ->
+                    ( LoggedIn user notes value, Cmd.none )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        AddNoteClicked ->
+            case stage of
+                -- Stale-while-revalidate: keep the current Loaded
+                -- list visible while create + re-fetch round-trip.
+                LoggedIn user notes draft ->
+                    ( LoggedIn user notes ""
+                    , Service.call Shared.createMine { body = draft } NoteCreated
+                    )
+
+                _ ->
+                    ( stage, Cmd.none )
+
+        NoteCreated (Ok _) ->
+            ( stage, Service.call Shared.listMine () NotesFetched )
+
+        NoteCreated (Err _) ->
+            ( stage, Cmd.none )
+
+        SignOutClicked ->
+            ( stage, Auth.logout SignedOut )
+
+        SignedOut _ ->
+            ( LoggedOut (AskEmail ""), Cmd.none )
+
+
+renderNote : Shared.Note -> View Msg
+renderNote note =
+    text [] note.body
+
+
+-- View built from declarative primitives. iOS renders each branch
+-- as a real NavigationStack / Form / List / Section; web gets
+-- semantic HTML with a card-list CSS layout. No pixel layout.
+view : Stage -> View Msg
+view stage =
+    case stage of
+        Loading ->
+            centered (text [] "Loading…")
+
+        LoggedOut (AskEmail draft) ->
+            navigationStack [ navigationTitle "Sign in" ]
+                [ form
+                    [ section []
+                        [ text [] "Enter your email and we'll send a one-time code."
+                        , textField [ submit RequestCodeClicked, width (chars 30) ]
+                            "Email" draft EmailDraftChanged
+                        ]
+                    , section []
+                        [ button [] RequestCodeClicked "Send me a code" ]
+                    ]
+                ]
+
+        LoggedOut (AskCode email codeDraft) ->
+            navigationStack [ navigationTitle "Enter your code" ]
+                [ form
+                    [ section []
+                        [ text [] ("We sent a 6-digit code to " ++ email ++ ".")
+                        , textField [ submit VerifyCodeClicked ]
+                            "Code" codeDraft CodeDraftChanged
+                        ]
+                    , section []
+                        [ button [] VerifyCodeClicked "Verify" ]
+                    ]
+                ]
+
+        LoggedOut (Submitting _) ->
+            centered (text [] "Working…")
+
+        LoggedIn user notes draft ->
+            navigationStack
+                [ navigationTitle ("Hi, " ++ user.email)
+                , topBarTrailing (button [] SignOutClicked "Sign out")
+                ]
+                [ list []
+                    [ section []
+                        [ hstack []
+                            [ textField [ submit AddNoteClicked ]
+                                "Add a note" draft NoteDraftChanged
+                            , button [] AddNoteClicked "Add"
+                            ]
+                        ]
+                    , notesSection notes
+                    ]
+                ]
+
+
+-- Loading + error feedback inside a section card.
+notesSection : Notes -> View Msg
+notesSection notes =
+    case notes of
+        NotesLoading ->
+            section [] [ text [] "Loading…" ]
+
+        NotesFailed why ->
+            section [] [ errorText ("Couldn't load notes: " ++ why) ]
+
+        NotesLoaded items ->
+            section [ header (String.fromInt (List.length items) ++ " notes") ]
+                (List.map renderNote (List.reverse items))
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Notes"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

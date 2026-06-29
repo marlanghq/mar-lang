@@ -1,59 +1,27 @@
 {
   "comments": {
-    "lineComment": "--"
+    "lineComment": "--",
+    "blockComment": ["{-", "-}"]
   },
   "brackets": [
-    [
-      "{",
-      "}"
-    ],
-    [
-      "(",
-      ")"
-    ],
-    [
-      "[",
-      "]"
-    ]
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"]
   ],
   "autoClosingPairs": [
-    {
-      "open": "{",
-      "close": "}"
-    },
-    {
-      "open": "(",
-      "close": ")"
-    },
-    {
-      "open": "[",
-      "close": "]"
-    },
-    {
-      "open": "\"",
-      "close": "\"",
-      "notIn": [
-        "string",
-        "comment"
-      ]
-    }
+    { "open": "{", "close": "}" },
+    { "open": "[", "close": "]" },
+    { "open": "(", "close": ")" },
+    { "open": "\"", "close": "\"", "notIn": ["string"] }
   ],
   "surroundingPairs": [
-    [
-      "{",
-      "}"
-    ],
-    [
-      "(",
-      ")"
-    ],
-    [
-      "[",
-      "]"
-    ],
-    [
-      "\"",
-      "\""
-    ]
-  ]
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    ["\"", "\""]
+  ],
+  "indentationRules": {
+    "increaseIndentPattern": "(\\b(let|of)\\b|(=|->)\\s*$|^\\s*\\(\\s*$)",
+    "decreaseIndentPattern": "^\\s*\\)\\s*$"
+  }
 }

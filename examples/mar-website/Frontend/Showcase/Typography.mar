@@ -1,0 +1,158 @@
+module Frontend.Showcase.Typography exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , vstack
+    , title, subtitle, text, errorText
+    , paragraph, span
+    , bold, italic, strikethrough, code, link
+    )
+
+
+-- Demo: text primitives.
+--
+-- Block leaves (each on its own line, full width of the section):
+--
+--   title     : large, bold — section openers and hero text
+--   subtitle : muted, smaller — captions, metadata, timestamps
+--   text     : body — the default
+--   errorText : red + semi-bold — destructive-intent messages
+--
+-- Block of flowing inline content:
+--
+--   paragraph : wraps text with inline atoms (bold, italic, code,
+--               link, strikethrough) that compose freely
+--
+-- The static-only page; pure view. The Msg type carries a single
+-- NoOp constructor so the MVU contract compiles; nothing ever
+-- dispatches it.
+
+
+type alias Model = ()
+
+
+type Msg
+    = NoOp
+
+
+init : (Model, Cmd Msg)
+init = ((), Cmd.none)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update _ _ = ((), Cmd.none)
+
+
+view : Model -> View Msg
+view _ =
+    navigationStack [ navigationTitle "Typography" ]
+        [ list []
+            [ section [ header "title" ]
+                [ title "Sample title"
+                , text [] "Large + bold. Use sparingly, one per section."
+                ]
+            , section [ header "subtitle" ]
+                [ subtitle "Subtitle text"
+                , text [] "Rendered smaller and dimmer than body text, so it recedes behind primary content without disappearing."
+                ]
+            , section [ header "text" ]
+                [ text [] "Body text is the default leaf."
+                , text [] "Multiple text leaves stack vertically inside a section, each on its own line."
+                ]
+            , section [ header "errorText" ]
+                [ errorText "Couldn't reach the server."
+                , text [] "Red + semi-bold via the `errorText` leaf. Use for validation messages, failed network responses, anything destructive the user needs to see at a glance."
+                ]
+            , section
+                [ header "block hierarchy together"
+                , footer "The block leaves stacked in one card to show the visual hierarchy."
+                ]
+                [ vstack []
+                    [ title "Title"
+                    , subtitle "Subtitle"
+                    , text [] "Body text paragraph for layout reference."
+                    , errorText "Error message at the bottom."
+                    ]
+                ]
+            , section
+                [ header "paragraph + inline atoms"
+                , footer "Flowing body text where styles mix inline. Each span carries its own attrs."
+                ]
+                [ paragraph
+                    [ span [] "The "
+                    , span [code] "paragraph"
+                    , span [] " primitive flows inline atoms together. Each "
+                    , span [code] "span"
+                    , span [] " takes an attrs list: "
+                    , span [bold] "bold"
+                    , span [] ", "
+                    , span [italic] "italic"
+                    , span [] ", "
+                    , span [strikethrough] "strikethrough"
+                    , span [] ", "
+                    , span [code] "code"
+                    , span [] ", or "
+                    , span [link "https://github.com/marlanghq/mar-lang"] "link"
+                    , span [] ". The runtime renders the whole thing as one wrapping block of body text."
+                    ]
+                ]
+            , section
+                [ header "inline composition"
+                , footer "Attrs stack inside a single span, in any order."
+                ]
+                [ paragraph
+                    [ span [] "One span can carry several attrs at once: "
+                    , span [bold, italic] "bold + italic"
+                    , span [] ", "
+                    , span [code, italic] "code + italic"
+                    , span [] ", "
+                    , span [bold, link "https://example.com"] "bold + link"
+                    , span [] ", or "
+                    , span [strikethrough, italic] "strikethrough + italic"
+                    , span [] ". Each renders the combined result."
+                    ]
+                ]
+            , section
+                [ header "links open in a new tab"
+                , footer "External links open with rel=\"noopener noreferrer\", so the page that opens can't reach back and control the tab that launched it."
+                ]
+                [ paragraph
+                    [ span [] "Visit the "
+                    , span [link "https://github.com/marlanghq/mar-lang"] "Mar repository"
+                    , span [] " on GitHub."
+                    ]
+                ]
+            , section
+                [ header "spans in prose"
+                , footer "A realistic sentence: plain text with code, emphasis, and a link woven together."
+                ]
+                [ paragraph
+                    [ span [] "Run "
+                    , span [code] "mar dev"
+                    , span [] " to start a "
+                    , span [bold] "hot-reload"
+                    , span [] " server, edit any "
+                    , span [code] ".mar"
+                    , span [] " file, and the browser refreshes "
+                    , span [italic] "instantly"
+                    , span [] ". The full story lives on "
+                    , span [link "https://github.com/marlanghq/mar-lang"] "GitHub"
+                    , span [] "."
+                    ]
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/typography"
+        , title = "Typography"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

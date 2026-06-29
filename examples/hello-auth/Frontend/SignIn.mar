@@ -1,0 +1,115 @@
+module Frontend.SignIn exposing (page)
+
+
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, text, textField, button, errorText
+    , email, submit, empty, disabled
+    , width, chars
+    )
+
+
+-- Email-entry half of the sign-in flow.
+--
+-- On successful Auth.requestCode, navigate to /sign-in/verify/<email>.
+-- Splitting the flow across two pages gives us the back button for
+-- free: a user who mistyped their email taps Back on the verify page
+-- and lands here with the email field blank, ready to try again.
+
+
+type alias Model =
+    { draft : String
+    , error : Maybe String
+    , busy  : Bool
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { draft = "", error = Nothing, busy = False }, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        DraftChanged value ->
+            -- Typing clears the previous error so a stale failure
+            -- doesn't sit on top of a fresh attempt.
+            ( { model | draft = value, error = Nothing }, Cmd.none )
+
+        Submitted ->
+            -- Guard against re-entry: a stray Enter while busy or a
+            -- racing tap could fire Submitted twice. Drop duplicates
+            -- so we don't issue two requestCode calls.
+            if model.busy then
+                ( model, Cmd.none )
+            else
+                ( { model | busy = True, error = Nothing }
+                , Auth.requestCode { email = model.draft } CodeRequested
+                )
+
+        CodeRequested (Ok Auth.CodeSent) ->
+            ( { model | busy = False }
+            , Nav.pushTo Frontend.Routes.verifyCode { email = model.draft }
+            )
+
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( { model | busy = False, error = Just "That doesn't look like a valid email address." }
+            , Cmd.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( { model | busy = False, error = Just "Too many attempts. Wait a moment before trying again." }
+            , Cmd.none
+            )
+
+        CodeRequested (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }
+            , Cmd.none
+            )
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Sign in" ]
+        [ form
+            [ section []
+                [ text [] "Enter your email and we'll send you a one-time code."
+                , textField
+                    [ email, submit Submitted, width (chars 30) ]
+                    "Email" model.draft DraftChanged
+                , errorView model.error
+                ]
+            , section []
+                [ button [ disabled model.busy ] Submitted "Send me a code" ]
+            ]
+        ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            errorText msg
+
+
+page : Page
+page =
+    Page.create
+        { path   = "/sign-in"
+        , title  = "Sign in"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ -> Sub.none
+        }

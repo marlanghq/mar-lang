@@ -1,0 +1,78 @@
+module Frontend.Routes exposing
+    ( signIn
+    , dashboard
+    , projects
+    , projectDetail
+    , issueDetail
+    , newIssue
+    , myIssues
+    , search
+    , settings
+    , teamMembers
+    , activity
+    , inbox
+    )
+
+
+-- Centralized URL surface for the BigApp frontend. Every page
+-- declares its path here so:
+--
+--   1. The whole route table fits on one screen
+--   2. Renaming a URL pattern surfaces every `Nav.pushTo` /
+--      `navigationLink` callsite as a compile error
+--   3. Refactor-safe — the typed Path machinery checks that callers
+--      pass records with the right field types
+--
+-- Routes that take parameters embed them as `{name:Type}` segments.
+-- `Path { id : Int }` means "callers must supply a record with an
+-- `id` field of type Int" — the framework substitutes it into the
+-- URL at link-build time and round-trips it back into the Params
+-- record at page-mount time.
+
+
+signIn : Path {}
+signIn = "/sign-in"
+
+
+dashboard : Path {}
+dashboard = "/"
+
+
+projects : Path {}
+projects = "/projects"
+
+
+projectDetail : Path { id : Int }
+projectDetail = "/projects/{id:Int}"
+
+
+issueDetail : Path { id : Int }
+issueDetail = "/issues/{id:Int}"
+
+
+newIssue : Path { projectId : Int }
+newIssue = "/projects/{projectId:Int}/new-issue"
+
+
+myIssues : Path {}
+myIssues = "/my-issues"
+
+
+search : Path {}
+search = "/search"
+
+
+settings : Path {}
+settings = "/settings"
+
+
+teamMembers : Path {}
+teamMembers = "/team"
+
+
+activity : Path {}
+activity = "/activity"
+
+
+inbox : Path {}
+inbox = "/inbox"

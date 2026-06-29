@@ -1,0 +1,211 @@
+module Frontend.SignIn exposing (page)
+
+
+import Shared
+import UI exposing (navigationStack, navigationTitle, form, section, text, textField, button, email, numericCode, submit, empty, width, chars)
+
+
+-- Local state machine for the sign-in flow. No bootstrap of Auth.me
+-- here — the framework lets the user visit /sign-in even when logged
+-- in (creates a new session); if you want auto-redirect-to-/notes
+-- when already logged in, see the (future) `Page.guest` combinator.
+--
+-- The `Maybe String` slot on each input state carries the last
+-- server error for that step. `Just msg` renders inline below the
+-- input so the user sees why the previous attempt failed; `Nothing`
+-- renders to `empty` (a no-op view) so the layout doesn't jump.
+type Model
+    = AskEmail String (Maybe String)
+    | Submitting String
+    | AskCode String String (Maybe String)
+
+
+-- DraftChanged / Submitted are step-agnostic — the Model already
+-- tells us whether the user is on the email or code screen, so the
+-- view binds the same handler at both steps.
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
+
+
+init : (Model, Cmd Msg)
+init =
+    ( AskEmail "" Nothing, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        -- Typing clears any pending error — once the user edits the
+        -- input, the previous failure no longer reflects what's there.
+        -- Same pattern as a stale toast that clears on edit.
+        DraftChanged value ->
+            case model of
+                AskEmail _ _ ->
+                    ( AskEmail value Nothing, Cmd.none )
+
+                AskCode email _ _ ->
+                    ( AskCode email value Nothing, Cmd.none )
+
+                Submitting _ ->
+                    ( model, Cmd.none )
+
+        Submitted ->
+            case model of
+                AskEmail email _ ->
+                    ( Submitting email
+                    , Auth.requestCode { email = email } CodeRequested
+                    )
+
+                AskCode email code _ ->
+                    ( Submitting email
+                    , Auth.verifyCode { email = email, code = code } CodeVerified
+                    )
+
+                Submitting _ ->
+                    ( model, Cmd.none )
+
+        CodeRequested (Ok Auth.CodeSent) ->
+            case model of
+                Submitting email ->
+                    ( AskCode email "" Nothing, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        -- The request's domain outcomes park their explanation on
+        -- AskEmail so the user sees what went wrong and can retry
+        -- without losing the email they typed. Each outcome is a typed
+        -- case; the copy belongs to this screen.
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( requestFailed "That doesn't look like a valid email address." model
+            , Cmd.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( requestFailed "Too many attempts. Wait a moment before trying again." model
+            , Cmd.none
+            )
+
+        CodeRequested (Err why) ->
+            ( requestFailed (Service.errorToString why) model, Cmd.none )
+
+        CodeVerified (Ok (Auth.SignedIn _)) ->
+            -- Login worked. Auth.completeSignIn returns the user to where
+            -- a 401 sent them from (or "/" by default). Replaces history
+            -- so back-button doesn't return to sign-in. Reset the state
+            -- to AskEmail "" so a future sign-out + return doesn't land
+            -- on the stale "Working…" screen (the framework preserves
+            -- screen models across navigations to keep scroll/input state).
+            ( AskEmail "" Nothing, Auth.completeSignIn )
+
+        -- The verify outcomes park their explanation on AskCode with
+        -- the code field cleared so the user can re-type without first
+        -- deleting the (now-invalid) previous attempt.
+        CodeVerified (Ok Auth.WrongCode) ->
+            ( verifyFailed "That code didn't work. Check your email or request a new one." model
+            , Cmd.none
+            )
+
+        CodeVerified (Ok Auth.TooManyAttempts) ->
+            ( verifyFailed "Too many tries with this code. Request a new one." model
+            , Cmd.none
+            )
+
+        CodeVerified (Err why) ->
+            ( verifyFailed (Service.errorToString why) model, Cmd.none )
+
+
+-- requestFailed / verifyFailed place the failure copy on the step the
+-- user should retry from (mid-flight only; otherwise leave the model).
+requestFailed : String -> Model -> Model
+requestFailed reason model =
+    case model of
+        Submitting email ->
+            AskEmail email (Just reason)
+
+        _ ->
+            model
+
+
+verifyFailed : String -> Model -> Model
+verifyFailed reason model =
+    case model of
+        Submitting email ->
+            AskCode email "" (Just reason)
+
+        _ ->
+            model
+
+
+-- View built from SwiftUI-style primitives. Each step renders as a
+-- `navigationStack { form { section [...] } }` — same shape SwiftUI
+-- uses natively. iOS gets a real NavigationStack + Form + Section
+-- (with safe-area + table styling); web gets `<main><form><section>`
+-- with CSS that mimics the iOS card-list look.
+--
+-- Errors surface as a plain text node directly below the input.
+-- `errorView` collapses to `empty` when there's nothing to show, so
+-- the layout doesn't jump between the success and failure cases.
+view : Model -> View Msg
+view model =
+    case model of
+        AskEmail draft maybeErr ->
+            navigationStack [ navigationTitle "Sign in" ]
+                [ form
+                    [ section []
+                        [ text [] "Enter your email and we'll send a one-time code."
+                        , textField [ email, submit Submitted, width (chars 30) ]
+                            "Email" draft DraftChanged
+                        , errorView maybeErr
+                        ]
+                    , section []
+                        [ button [] Submitted "Send me a code" ]
+                    ]
+                ]
+
+        AskCode emailAddr draft maybeErr ->
+            navigationStack [ navigationTitle "Enter your code" ]
+                [ form
+                    [ section []
+                        [ text [] ("We sent a 6-digit code to " ++ emailAddr ++ ".")
+                        , textField [ numericCode, submit Submitted ]
+                            "Code" draft DraftChanged
+                        , errorView maybeErr
+                        ]
+                    , section []
+                        [ button [] Submitted "Verify" ]
+                    ]
+                ]
+
+        Submitting _ ->
+            navigationStack [ navigationTitle "Sign in" ]
+                [ form
+                    [ section []
+                        [ text [] "Working…" ]
+                    ]
+                ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            text [] msg
+
+
+page : Page
+page =
+    Page.create
+        { path = "/sign-in"
+        , title = "Sign in"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

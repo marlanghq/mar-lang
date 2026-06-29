@@ -1,0 +1,91 @@
+module Shared exposing (..)
+
+
+-- Types and Service contracts shared between frontend and backend.
+-- Lives at the top level so both halves can import without dragging
+-- their internal modules along: Frontend never sees Backend's
+-- Entity definitions, Backend never imports Frontend's view code.
+
+
+type alias User =
+    { id    : Int
+    , email : String
+    }
+
+
+-- Tasks carry an explicit `userId` — owner relation enforced at the
+-- DB layer and re-checked in every handler. The frontend never reads
+-- this field (the server only returns rows where userId == caller),
+-- but it stays in the type because Repo.create needs to write it on
+-- insert and Repo.findBy uses it to filter.
+--
+-- `position` (Int) drives the user-controlled display order. The
+-- backend sorts by it ASC; the reorder gesture computes new
+-- positions and commits via the `reorderTasks` service.
+type alias TodoItem =
+    { id        : Int
+    , name      : String
+    , done      : Bool
+    , createdAt : Time
+    , userId    : Int
+    , position  : Int
+    }
+
+
+-- ===== Service contracts =====
+--
+-- Each is `Service req resp`; the actual handler in Backend.Tasks is
+-- wrapped via Auth.protect, which injects the logged User as the 2nd
+-- argument before the handler runs. A missing / expired session
+-- returns 401 before any of this code is reached.
+
+
+listTasks : Service () (List TodoItem)
+listTasks = Service.declare GET "/tasks"
+
+
+-- The add outcome: the one domain rule (no empty names) is a typed
+-- case the frontend matches, not a string smuggled through the abort
+-- channel. The backend can only produce these two shapes, and the
+-- frontend's case is checked for exhaustiveness.
+type AddTaskOutcome
+    = Added TodoItem
+    | NameEmpty
+
+
+addTask : Service { name : String } AddTaskOutcome
+addTask = Service.declare POST "/tasks"
+
+
+toggleTask : Service { id : Int, done : Bool } (Maybe TodoItem)
+toggleTask = Service.declare PATCH "/tasks/{id:Int}"
+
+
+deleteTask : Service { id : Int } ()
+deleteTask = Service.declare DELETE "/tasks/{id:Int}"
+
+
+resetAll : Service () ()
+resetAll = Service.declare POST "/tasks/reset"
+
+
+-- Bulk position update from the reorder gesture. The frontend sends
+-- the full re-ordered ID list; the backend writes position = idx in
+-- a single pass. Simple "position int" pattern — works fine for the
+-- expected task-list sizes (tens of rows). Apps with thousands of
+-- items would want lexicographic ordering (one update per move
+-- instead of N) but that's overkill here.
+reorderTasks : Service { orderedIds : List Int } ()
+reorderTasks = Service.declare POST "/tasks/reorder"
+
+
+-- ===== Account =====
+--
+-- Irreversible account deletion. Required by App Store guideline
+-- 5.1.1(v): an app that lets you create an account must let you delete
+-- it from inside the app. The backend wipes the caller's tasks and
+-- their user row; the client then signs out. () in, () out — the
+-- caller is always "me" (Auth.protect injects the user), so there's
+-- nothing to pass and nothing to return.
+deleteAccount : Service () ()
+deleteAccount = Service.declare DELETE "/account"

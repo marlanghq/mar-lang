@@ -1,0 +1,21 @@
+{
+  "name": "pet-expenses",
+  "database": {
+    "path": "./pet-expenses.db"
+  },
+  "auth": {
+    "sessionSecret": "env:SESSION_SECRET"
+  },
+  "mail": {
+    "from": "no-reply@pet-expenses.app",
+    "smtpHost": "smtp.resend.com",
+    "smtpUsername": "resend",
+    "smtpPassword": "env:SMTP_PASSWORD"
+  },
+  "ios": {
+    "bundleId": "com.example.petexpenses",
+    "displayName": "Pet Expenses",
+    "marketingVersion": "0.0.1",
+    "buildNumber": "1"
+  }
+}

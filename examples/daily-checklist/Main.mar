@@ -1,0 +1,52 @@
+module Main exposing (main)
+
+
+import Backend.Users
+import Backend.Tasks
+import Backend.Account
+import Frontend.SignIn
+import Frontend.VerifyCode
+import Frontend.Home
+
+
+-- Daily Checklist — a personal "things I want to do today" tracker,
+-- now per-user. Each signed-in user owns their own list; the server
+-- never leaks rows across users.
+--
+-- Wiring point: only this module sees both halves of the app.
+-- Auth.config picks up the users entity from the backend; the
+-- services list comes from Backend.Tasks (each entry is
+-- Auth.protect'd, so a missing session 401s before any handler
+-- runs); the pages list enumerates every frontend route (the runtime
+-- dispatches by `path`).
+--
+-- Sign-in flow: email + 6-digit one-time code. In dev mode, codes
+-- are printed to the server log so you can copy/paste without
+-- configuring SMTP. For prod, set the mailer config in mar.json
+-- under "mail".
+--
+-- Open with:  mar dev examples/daily-checklist
+
+
+auth : Auth { id : Int, email : String }
+auth =
+    Auth.config
+        { entity     = Backend.Users.users
+        , identify   = \u -> u.email
+        , signInPage = Frontend.SignIn.page
+        , email      = { subject = "Your Checklist sign-in code" }
+        , signup     = \userEmail -> { email = userEmail }
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Cmd ()
+main =
+    App.fullstack
+        { services = List.concat [ Backend.Tasks.services, Backend.Account.services ]
+        , pages    =
+            [ Frontend.SignIn.page
+            , Frontend.VerifyCode.page
+            , Frontend.Home.page
+            ]
+        }

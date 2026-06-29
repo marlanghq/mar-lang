@@ -1,0 +1,34 @@
+module Backend.Account exposing (services)
+
+
+import Shared
+import Backend.Users
+import Backend.Pets
+import Backend.Expenses
+
+
+-- Account-level operations. Today there's one: irreversible account
+-- deletion, required by App Store guideline 5.1.1(v) (an app that
+-- creates accounts must let the user delete theirs from inside the
+-- app).
+--
+-- deleteAccountImpl cascades the caller's data, then removes their
+-- identity row, in dependency order:
+--   1. expenses  (the leaves)
+--   2. pets      (now free of expenses)
+--   3. the users row itself
+--
+-- Auth.protect injects `user` as the caller, so a request can only
+-- ever delete its OWN account. Once the user row is gone the
+-- framework's session for it stops resolving (the users lookup
+-- misses); the client follows up with Auth.logout to clear the
+-- current session + cookie.
+deleteAccountImpl : () -> Shared.User -> Task ()
+deleteAccountImpl _ user =
+    Backend.Expenses.deleteUserExpenses user
+        |> Task.andThen (\_ -> Backend.Pets.deleteUserPets user)
+        |> Task.andThen (\_ -> Repo.deleteById Backend.Users.users user.id)
+
+
+services =
+    [ Auth.protect Shared.deleteAccount deleteAccountImpl ]

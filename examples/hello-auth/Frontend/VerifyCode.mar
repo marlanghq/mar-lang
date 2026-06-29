@@ -1,0 +1,115 @@
+module Frontend.VerifyCode exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, text, textField, button, errorText
+    , numericCode, submit, empty, disabled
+    , width, chars
+    )
+
+
+-- Code-entry half of the sign-in flow. Mounted at the dynamic path
+-- /sign-in/verify/{email:String}; the framework decodes the segment
+-- into a typed params record so we don't need any global state for
+-- the email — the URL itself is the source of truth.
+
+
+type alias Model =
+    { draft : String
+    , error : Maybe String
+    , busy  : Bool
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
+
+
+init : { email : String } -> (Model, Cmd Msg)
+init _ =
+    ( { draft = "", error = Nothing, busy = False }, Cmd.none )
+
+
+update : { email : String } -> Msg -> Model -> (Model, Cmd Msg)
+update params msg model =
+    case msg of
+        DraftChanged value ->
+            ( { model | draft = value, error = Nothing }, Cmd.none )
+
+        Submitted ->
+            if model.busy then
+                ( model, Cmd.none )
+            else
+                ( { model | busy = True, error = Nothing }
+                , Auth.verifyCode
+                    { email = params.email, code = model.draft }
+                    CodeVerified
+                )
+
+        CodeVerified (Ok (Auth.SignedIn _)) ->
+            -- Login worked. Auth.completeSignIn returns the user to
+            -- where a 401 sent them from (or "/" by default) and
+            -- resets the back stack so they can't accidentally return
+            -- to the (now-irrelevant) code-entry screen.
+            ( { model | busy = False, draft = "" }, Auth.completeSignIn )
+
+        CodeVerified (Ok Auth.WrongCode) ->
+            -- Clear the bad code so the user can re-type without
+            -- first deleting the now-invalid attempt.
+            ( { model | busy = False, draft = "", error = Just "That code didn't work. Check your email or request a new one." }
+            , Cmd.none
+            )
+
+        CodeVerified (Ok Auth.TooManyAttempts) ->
+            ( { model | busy = False, draft = "", error = Just "Too many tries with this code. Request a new one." }
+            , Cmd.none
+            )
+
+        CodeVerified (Err why) ->
+            ( { model | busy = False, draft = "", error = Just (Service.errorToString why) }
+            , Cmd.none
+            )
+
+
+view : { email : String } -> Model -> View Msg
+view params model =
+    navigationStack [ navigationTitle "Enter your code" ]
+        [ form
+            [ section []
+                [ text [] ("We sent a 6-digit code to " ++ params.email ++ ".")
+                , textField
+                    [ numericCode, submit Submitted, width (chars 6) ]
+                    "Code" model.draft DraftChanged
+                , errorView model.error
+                ]
+            , section []
+                [ button [ disabled model.busy ] Submitted "Verify" ]
+            ]
+        ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            errorText msg
+
+
+page : Page
+page =
+    Page.dynamic
+        { path   = Frontend.Routes.verifyCode
+        , title  = "Verify code"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

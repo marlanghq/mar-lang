@@ -1,0 +1,897 @@
+// Schema migrator — see docs/migrations.md for the full spec.
+//
+// The migrator runs on every server boot (and every `mar dev`
+// hot-reload), takes the list of registered entities, and brings the
+// live SQLite schema in line with what the code declares. Forward-only,
+// safe-by-default, blocks unsafe changes with copy-pasteable manual
+// SQL hints.
+//
+// Three rough phases per Run():
+//
+//  1. Lock the database for the duration. SQLite serializes writers
+//     anyway via BEGIN IMMEDIATE; we layer on top with a small retry
+//     loop so concurrent boots (zero-downtime deploys) don't fail
+//     loudly when the lock is briefly held.
+//  2. Ensure the audit table (_mar_schema_migrations) exists.
+//  3. For each entity: read the live schema with PRAGMA table_info,
+//     diff against the declaration, apply safe changes, block unsafe
+//     ones with helpful errors. Every applied statement gets recorded
+//     in the audit table.
+//
+// The same diff machinery powers `mar migrate plan` (read-only) and
+// the boot-time apply path. Plan walks the diff and returns
+// MigrationStep values; Run iterates the steps and executes.
+
+package runtime
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"mar/internal/clio"
+)
+
+// BlockedMigrationError is the structured error type the migrator
+// returns for unsafe schema changes. It splits the message into a
+// one-line `Summary` and a multi-line `Hint` so the CLI can render
+// them as the standard `Error:` (red) + `Hint:` (yellow) blocks
+// (see cmd/mar/color.go: fprintError / fprintHint).
+//
+// The Error() method falls back to the bundled `Summary\n\nHint`
+// shape so callers that just stringify the error still get a
+// readable message — useful for tests, logging, and the SSE
+// compile-error channel.
+type BlockedMigrationError struct {
+	Summary string // one-line headline (e.g. "migration blocked for entity tasks: ...")
+	Hint    string // multi-line body: root cause + remediation SQL + closing note
+}
+
+func (e *BlockedMigrationError) Error() string {
+	if e.Hint == "" {
+		return e.Summary
+	}
+	return e.Summary + "\n\n" + e.Hint
+}
+
+// MigrationStepKind classifies what a planned migration would do.
+// Used both for execution dispatch and for human-readable output.
+type MigrationStepKind int
+
+const (
+	StepCreateTable MigrationStepKind = iota
+	StepAddColumn
+	StepRecreateEmpty // drop+recreate when nullability changed and table is empty
+	StepNoteOrphanTable
+	StepBlocked // unsafe — has a non-nil Error
+	// StepCreateUniqueIndex: a `CREATE UNIQUE INDEX IF NOT EXISTS`
+	// for a unique constraint declared via `Entity.unique`. Emitted
+	// after the table itself is present (so column references in the
+	// index resolve). Idempotent — re-running the migrator against a
+	// DB that already has the index is a no-op.
+	StepCreateUniqueIndex
+)
+
+// MigrationStep is one item in the diff plan.
+type MigrationStep struct {
+	Kind MigrationStepKind
+
+	// Table is always set; identifies which entity table this affects.
+	Table string
+
+	// Column is set for AddColumn steps; identifies the new column.
+	Column string
+
+	// SQL is the statement that would (or did) execute. Empty for
+	// blocked or note-only steps.
+	SQL string
+
+	// Description is a one-line human summary used in plan/status output
+	// and in the audit table's `migration_kind` column. Stable —
+	// downstream code grepping the audit log can rely on the format.
+	Description string
+
+	// Error is set when Kind == StepBlocked. The error message is the
+	// long-form, copy-pasteable hint.
+	Error error
+}
+
+// migrationKind returns the audit-table key for the step. Stable
+// across releases so log greps remain valid.
+func (s MigrationStep) migrationKind() string {
+	switch s.Kind {
+	case StepCreateTable:
+		return "create_table"
+	case StepAddColumn:
+		return "add_column_" + s.Column
+	case StepRecreateEmpty:
+		return "recreate_empty_table"
+	case StepNoteOrphanTable:
+		return "orphan_table"
+	case StepCreateUniqueIndex:
+		// Column carries the underscore-joined column list (set by
+		// planUniqueIndexes); using it as the audit suffix means
+		// audit log greps can distinguish indexes on the same table.
+		return "create_unique_index_" + s.Column
+	}
+	return "unknown"
+}
+
+// Migrator applies pending schema migrations to a SQLite database.
+//
+// Constructed with a connection + the entities to migrate; Run() is
+// the apply path, Plan() is the read-only diff. Both are idempotent.
+type Migrator struct {
+	db       *sql.DB
+	entities []VEntity
+}
+
+// NewMigrator builds a migrator over the given entities. Order matters
+// only for deterministic output — actual execution is independent
+// per-table.
+func NewMigrator(db *sql.DB, entities []VEntity) *Migrator {
+	return &Migrator{db: db, entities: entities}
+}
+
+// RunBootMigrations is the top-level entry point invoked by `mar dev`
+// after `main` has run (registering all entities) and before the
+// HTTP listener accepts traffic. Plus on each hot-reload.
+//
+// Returns silently when:
+//   - no DB is configured (dbPath empty) — the project doesn't use Repo;
+//   - no entities are registered — same situation, just from the
+//     other side of the lookup;
+//   - everything is up-to-date (no changes to apply).
+//
+// On changes, prints a one-line summary plus per-step lines for
+// applied migrations and per-orphan-table notes. On block, returns
+// the formatted error so the caller can `log.Fatalf` (boot path) or
+// surface in the dev banner (hot-reload path).
+func RunBootMigrations() error {
+	entities := RegisteredEntities()
+	if len(entities) == 0 {
+		return nil
+	}
+	if currentDBPath() == "" {
+		// No DB configured but entities exist — that's a user bug.
+		// Surface it loud rather than letting Repo.* fail later
+		// with the cryptic "no database configured" message.
+		return fmt.Errorf(
+			"%d entity declaration(s) found but no database configured (set `database.path` in mar.json)",
+			len(entities))
+	}
+	db, err := getDB()
+	if err != nil {
+		return err
+	}
+	m := NewMigrator(db, entities)
+	summary, err := m.Run()
+	if err != nil {
+		return err
+	}
+	if summary.HasChanges() || len(summary.Notes) > 0 {
+		printRunSummary(summary)
+	}
+	return nil
+}
+
+// printRunSummary writes the boot-time migration log.
+//
+// Two shapes, same as the dev banner (internal/jsserve/banner.go):
+//
+//   - Non-TTY (CI / piped logs): the grep-stable `[migrate] ...` lines,
+//     no colors or blanks, so tooling can match them.
+//
+//   - TTY (interactive `mar dev`): the house style from
+//     docs/cli-style.md §1/§3 — a leading blank to separate from prior
+//     output, a bold "Migrations" header with a dim summary, and dim,
+//     indented detail lines.
+func printRunSummary(s RunSummary) {
+	if !migrateStderrTTY() {
+		if len(s.Applied) > 0 {
+			fmt.Fprintf(os.Stderr, "[migrate] applied %d change(s) in %s\n",
+				len(s.Applied), s.Elapsed.Round(time.Millisecond))
+			for _, step := range s.Applied {
+				fmt.Fprintf(os.Stderr, "[migrate]   %s\n", step.Description)
+			}
+		}
+		for _, note := range s.Notes {
+			fmt.Fprintf(os.Stderr, "[migrate] %s\n", note)
+		}
+		return
+	}
+
+	dim := migrateWrapANSI("\x1b[38;5;245m")
+	bold := migrateWrapANSI("\x1b[1m")
+
+	// Leading blank — separates the block from preceding boot output,
+	// skipped if the previous block already ended with one.
+	if clio.WantLeadingBlank() {
+		fmt.Fprintln(os.Stderr)
+	}
+	if len(s.Applied) > 0 {
+		fmt.Fprintf(os.Stderr, "  %s  %s\n",
+			bold("Migrations"),
+			dim(fmt.Sprintf("applied %s in %s",
+				pluralizeChanges(len(s.Applied)),
+				s.Elapsed.Round(time.Millisecond))))
+		for _, step := range s.Applied {
+			fmt.Fprintf(os.Stderr, "    %s %s\n", dim("•"), step.Description)
+		}
+	}
+	for _, note := range s.Notes {
+		fmt.Fprintf(os.Stderr, "  %s\n", dim(note))
+	}
+	// Tight ending — let the next block (the dev banner) emit its own
+	// leading blank rather than us trailing one here.
+	clio.ClearTrailingBlank()
+}
+
+// pluralizeChanges renders "1 change" / "N changes".
+func pluralizeChanges(n int) string {
+	if n == 1 {
+		return "1 change"
+	}
+	return fmt.Sprintf("%d changes", n)
+}
+
+// migrateStderrTTY reports whether stderr is an interactive terminal
+// (so colors are safe). Honors NO_COLOR. Mirrors the stdout check in
+// internal/jsserve/banner.go.
+func migrateStderrTTY() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	fi, err := os.Stderr.Stat()
+	return err == nil && (fi.Mode()&os.ModeCharDevice) != 0
+}
+
+// migrateWrapANSI wraps a string in the given SGR prefix + reset.
+func migrateWrapANSI(prefix string) func(string) string {
+	return func(s string) string { return prefix + s + "\x1b[0m" }
+}
+
+// Run applies every pending migration. Returns a summary of applied
+// steps so the caller can format the boot-time log line.
+//
+// Wraps the diff loop in a SQLite-busy retry: 3 attempts at 100ms /
+// 500ms / 2s. The retry only triggers on the initial lock attempt —
+// once we're past the audit-table bootstrap, individual ALTER
+// statements that hit BUSY would already be unusual and surface
+// directly as errors.
+func (m *Migrator) Run() (RunSummary, error) {
+	if err := m.acquireWithRetry(); err != nil {
+		return RunSummary{}, err
+	}
+
+	if err := m.ensureMigrationMetaTable(); err != nil {
+		return RunSummary{}, fmt.Errorf("create _mar_schema_migrations: %w", err)
+	}
+
+	plan, err := m.planLocked()
+	if err != nil {
+		return RunSummary{}, err
+	}
+
+	start := time.Now()
+	var applied []MigrationStep
+	var notes []string
+	for _, step := range plan {
+		switch step.Kind {
+		case StepBlocked:
+			return RunSummary{}, step.Error
+		case StepNoteOrphanTable:
+			notes = append(notes, step.Description)
+		default:
+			if _, err := m.db.Exec(step.SQL); err != nil {
+				return RunSummary{}, fmt.Errorf("migration %s on %s failed: %w",
+					step.migrationKind(), step.Table, err)
+			}
+			if err := m.recordMigration(step); err != nil {
+				return RunSummary{}, fmt.Errorf("audit migration %s on %s: %w",
+					step.migrationKind(), step.Table, err)
+			}
+			applied = append(applied, step)
+		}
+	}
+	return RunSummary{
+		Applied: applied,
+		Notes:   notes,
+		Elapsed: time.Since(start),
+	}, nil
+}
+
+// Plan computes the full diff without applying it. Returns even
+// blocked steps so callers (mar migrate plan) can show the user what
+// WOULD fail. The plan is stable: re-running Plan against an
+// unchanged DB produces the same result.
+func (m *Migrator) Plan() ([]MigrationStep, error) {
+	if err := m.acquireWithRetry(); err != nil {
+		return nil, err
+	}
+	if err := m.ensureMigrationMetaTable(); err != nil {
+		return nil, fmt.Errorf("create _mar_schema_migrations: %w", err)
+	}
+	return m.planLocked()
+}
+
+// RunSummary is the result of an apply operation. Used by the boot
+// path to format `[migrate] applied N changes in <duration>`.
+type RunSummary struct {
+	Applied []MigrationStep
+	Notes   []string // orphan-table warnings, etc.
+	Elapsed time.Duration
+}
+
+// HasChanges reports whether the run actually applied anything. The
+// boot path uses this to silence the "no changes" log line on
+// hot-reload.
+func (s RunSummary) HasChanges() bool {
+	return len(s.Applied) > 0
+}
+
+// ---------- Locking + retry ----------
+
+// acquireWithRetry pings the DB up to three times, waiting on busy.
+// Cheap call (SELECT 1); the real lock is taken inside each statement
+// that mutates schema. The point here is to fail fast with a useful
+// error if the file is unreadable, vs. fail loudly later.
+//
+// SQLite's busy backoff happens inside individual statements anyway;
+// this layer only adds the human-friendly retry log lines so the
+// operator sees `[migrate] database is locked; retrying (1/3)`
+// instead of a bare error.
+func (m *Migrator) acquireWithRetry() error {
+	const attempts = 3
+	delays := []time.Duration{100 * time.Millisecond, 500 * time.Millisecond, 2 * time.Second}
+	dbPath := currentDBPath()
+	for i := 0; i < attempts; i++ {
+		err := m.db.Ping()
+		if err == nil {
+			// Probe a write lock with a no-op transaction. If
+			// another process is holding the writer lock, we'll
+			// see it here and can retry instead of failing
+			// inside the audit-table bootstrap.
+			tx, err := m.db.Begin()
+			if err == nil {
+				_ = tx.Rollback()
+				return nil
+			}
+			if !isSqliteBusy(err) {
+				return err
+			}
+		} else if !isSqliteBusy(err) {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "[migrate] database %s is locked; retrying (%d/%d)\n",
+			displayPath(dbPath), i+1, attempts)
+		time.Sleep(delays[i])
+	}
+	return errors.New(formatLockedFinal(dbPath))
+}
+
+// formatLockedFinal builds the multi-line "FATAL: locked after retries"
+// message documented in docs/migrations.md.
+func formatLockedFinal(dbPath string) string {
+	return fmt.Sprintf(`[migrate] FATAL: %s locked after 3 retries (~6500ms total)
+
+  Most likely causes:
+    - A sqlite3 CLI session is holding the lock (check open terminals)
+    - A backup tool or external script is reading the file
+    - Filesystem issue (NFS, disk full, sync tool)
+    - Another mar instance has a slow-running migration (uncommon
+      for ALTER COLUMN; possible for CREATE INDEX on large tables)
+
+  Investigate with: lsof %s`, displayPath(dbPath), displayPath(dbPath))
+}
+
+func isSqliteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// modernc/sqlite returns "SQLITE_BUSY: database is locked (5)" or
+	// similar; match by substring.
+	return strings.Contains(msg, "SQLITE_BUSY") ||
+		strings.Contains(msg, "database is locked")
+}
+
+// ---------- Audit ----------
+
+func (m *Migrator) ensureMigrationMetaTable() error {
+	_, err := m.db.Exec(`
+		CREATE TABLE IF NOT EXISTS _mar_schema_migrations (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			table_name      TEXT    NOT NULL,
+			migration_kind  TEXT    NOT NULL,
+			sql_text        TEXT    NOT NULL,
+			applied_at      INTEGER NOT NULL
+		)
+	`)
+	return err
+}
+
+func (m *Migrator) recordMigration(step MigrationStep) error {
+	_, err := m.db.Exec(
+		`INSERT INTO _mar_schema_migrations (table_name, migration_kind, sql_text, applied_at) VALUES (?, ?, ?, ?)`,
+		step.Table, step.migrationKind(), step.SQL, time.Now().UnixMilli(),
+	)
+	return err
+}
+
+// ---------- Diff ----------
+
+// planLocked builds the full diff. Caller must already hold the
+// migrator lock (acquireWithRetry). Read-only.
+func (m *Migrator) planLocked() ([]MigrationStep, error) {
+	var plan []MigrationStep
+
+	// Track which tables we know about so we can detect orphan
+	// tables (in DB but no entity) afterward.
+	declared := map[string]bool{}
+
+	for _, ent := range m.entities {
+		declared[ent.Table] = true
+		steps, err := m.planEntity(ent)
+		if err != nil {
+			return nil, err
+		}
+		plan = append(plan, steps...)
+	}
+
+	// Orphan-table warnings: tables in the live DB that no entity
+	// declares. We deliberately ignore framework tables (_mar_*) since
+	// they're managed elsewhere.
+	live, err := m.liveTableNames()
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range live {
+		if strings.HasPrefix(t, "_mar_") || strings.HasPrefix(t, "sqlite_") {
+			continue
+		}
+		if declared[t] {
+			continue
+		}
+		plan = append(plan, MigrationStep{
+			Kind:        StepNoteOrphanTable,
+			Table:       t,
+			Description: fmt.Sprintf(`table %q has no entity declaring it; keeping data intact. If no longer needed, drop with: DROP TABLE %s;`, t, t),
+		})
+	}
+	return plan, nil
+}
+
+// planEntity computes the steps needed to align one entity's table
+// with its declaration.
+func (m *Migrator) planEntity(ent VEntity) ([]MigrationStep, error) {
+	exists, err := m.tableExists(ent.Table)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		steps := []MigrationStep{{
+			Kind:        StepCreateTable,
+			Table:       ent.Table,
+			SQL:         buildCreateTableSQLNew(ent),
+			Description: fmt.Sprintf("create table %s", ent.Table),
+		}}
+		// Indexes follow the CREATE TABLE so the column references
+		// resolve. SQLite would error otherwise.
+		steps = append(steps, planUniqueIndexes(ent)...)
+		return steps, nil
+	}
+
+	// Existing table — read live schema and diff column-by-column.
+	live, err := m.readTableInfo(ent.Table)
+	if err != nil {
+		return nil, err
+	}
+	liveByName := map[string]tableInfoRow{}
+	for _, r := range live {
+		liveByName[r.Name] = r
+	}
+
+	var steps []MigrationStep
+	hasRows, _ := m.tableHasRows(ent.Table)
+
+	for _, f := range ent.Fields {
+		row, found := liveByName[f.Name]
+		if !found {
+			step, err := planAddColumn(ent, f, hasRows)
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, step)
+			continue
+		}
+		// Column present — assert compatible.
+		if blocked := assertCompatibleColumn(ent, f, row, hasRows); blocked != nil {
+			if blocked.Kind == StepRecreateEmpty {
+				steps = append(steps, *blocked)
+				continue
+			}
+			steps = append(steps, *blocked)
+			return steps, nil // stop on first hard block — clear error path
+		}
+	}
+
+	// Unique indexes — emit unconditionally as IF NOT EXISTS. The
+	// migrator doesn't track per-index drift: an index that already
+	// matches is a no-op; an index that doesn't exist yet gets
+	// created. A removed Entity.unique leaves the old index in the
+	// DB (orphan) — documented as a v1 limitation; we'd add an
+	// "index drift" step later if it becomes a real problem.
+	steps = append(steps, planUniqueIndexes(ent)...)
+	return steps, nil
+}
+
+// planUniqueIndexes turns the entity's UniqueIndexes slice into a
+// sequence of StepCreateUniqueIndex steps. Empty if the entity has
+// no unique constraints. Index names are stable across boots
+// (<table>_uq_<col1>_<col2>...) so re-running the migrator emits the
+// same SQL the existing index already covers.
+func planUniqueIndexes(ent VEntity) []MigrationStep {
+	if len(ent.UniqueIndexes) == 0 {
+		return nil
+	}
+	steps := make([]MigrationStep, 0, len(ent.UniqueIndexes))
+	for _, cols := range ent.UniqueIndexes {
+		name := uniqueIndexName(ent.Table, cols)
+		steps = append(steps, MigrationStep{
+			Kind:        StepCreateUniqueIndex,
+			Table:       ent.Table,
+			Column:      strings.Join(cols, "_"), // used by migrationKind for audit suffix
+			SQL:         buildCreateUniqueIndexSQL(ent.Table, name, cols),
+			Description: fmt.Sprintf("create unique index %s on %s(%s)", name, ent.Table, strings.Join(cols, ", ")),
+		})
+	}
+	return steps
+}
+
+// uniqueIndexName builds the deterministic name we use for a
+// declared unique index. Format: `<table>_uq_<col1>_<col2>...`.
+// Stable across boots so `CREATE UNIQUE INDEX IF NOT EXISTS` is
+// idempotent — a re-run sees the same name and no-ops.
+func uniqueIndexName(table string, cols []string) string {
+	return table + "_uq_" + strings.Join(cols, "_")
+}
+
+// buildCreateUniqueIndexSQL emits the `CREATE UNIQUE INDEX IF NOT
+// EXISTS` statement. Both the index name and the column references
+// go through quoteIdent — column names are mar identifiers (alnum)
+// but quoting costs nothing and survives any future relaxation of
+// the allowed character set.
+func buildCreateUniqueIndexSQL(table, name string, cols []string) string {
+	quotedCols := make([]string, len(cols))
+	for i, c := range cols {
+		quotedCols[i] = quoteIdent(c)
+	}
+	return "CREATE UNIQUE INDEX IF NOT EXISTS " + quoteIdent(name) +
+		" ON " + quoteIdent(table) + " (" + strings.Join(quotedCols, ", ") + ")"
+}
+
+// planAddColumn decides whether adding a missing column is safe.
+//
+// SAFE cases:
+//   - Column is optional (nullable) → ALTER TABLE ADD COLUMN.
+//   - Column is NOT NULL but table is empty → same; SQLite accepts
+//     NOT NULL on empty tables.
+//
+// BLOCKED cases:
+//   - NOT NULL on a non-empty table → user must either make the
+//     column optional or backfill manually before re-running.
+//   - Serial column (auto-incrementing PK) — SQLite doesn't support
+//     adding AUTOINCREMENT via ALTER TABLE.
+func planAddColumn(ent VEntity, f EntityField, hasRows bool) (MigrationStep, error) {
+	if f.Serial {
+		return MigrationStep{
+			Kind:        StepBlocked,
+			Table:       ent.Table,
+			Column:      f.Name,
+			Description: fmt.Sprintf("blocked: cannot add auto-increment primary key to existing table %s", ent.Table),
+			Error: &BlockedMigrationError{
+				Summary: fmt.Sprintf(
+					`migration blocked for entity %s: cannot add auto-increment primary key %q to existing table %s.`,
+					ent.Table, f.Name, ent.Table),
+				Hint: fmt.Sprintf(`SQLite doesn't allow adding AUTOINCREMENT via ALTER TABLE. To migrate manually:
+
+    BEGIN TRANSACTION;
+    ALTER TABLE %s RENAME TO %s_old;
+    -- Recreate %s with the new schema (let the app boot create it).
+    -- Then copy the data back, omitting %s so the new id is auto-generated:
+    INSERT INTO %s (<other columns>) SELECT <other columns> FROM %s_old;
+    DROP TABLE %s_old;
+    COMMIT;`,
+					ent.Table, ent.Table, ent.Table, f.Name,
+					ent.Table, ent.Table, ent.Table),
+			},
+		}, nil
+	}
+
+	if f.NotNull && hasRows {
+		return MigrationStep{
+			Kind:        StepBlocked,
+			Table:       ent.Table,
+			Column:      f.Name,
+			Description: fmt.Sprintf("blocked: cannot add NOT NULL column %q to non-empty table %s", f.Name, ent.Table),
+			Error: &BlockedMigrationError{
+				Summary: fmt.Sprintf(
+					`migration blocked for entity %s: cannot add required column %q (%s) to non-empty table %s.`,
+					ent.Table, f.Name, f.SQLType, ent.Table),
+				// Backticks mark identifiers; the CLI colorizer turns
+				// them cyan in the prose AND finds the same tokens
+				// in the SQL block to highlight there too. Don't
+				// rephrase without checking colorizeHint stays in
+				// sync — bare `tasks` / `position` in either spot
+				// is what makes the two halves visually match.
+				Hint: fmt.Sprintf(`Existing rows in `+"`"+`%s`+"`"+` would violate the NOT NULL constraint on `+"`"+`%s`+"`"+`.
+
+Either drop `+"`"+`Entity.notNull`+"`"+` from the declaration to make the column optional, or backfill manually:
+
+    ALTER TABLE %s ADD COLUMN %s %s;
+    UPDATE %s SET %s = <value>;
+
+After backfilling, re-run — the next boot detects the populated column and adds the NOT NULL constraint automatically.`,
+					ent.Table, f.Name,
+					ent.Table, f.Name, sqlTypeForDDL(f.SQLType),
+					ent.Table, f.Name),
+			},
+		}, nil
+	}
+
+	return MigrationStep{
+		Kind:        StepAddColumn,
+		Table:       ent.Table,
+		Column:      f.Name,
+		SQL:         fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", ent.Table, columnDefSQL(f)),
+		Description: fmt.Sprintf("add column %s.%s (%s)", ent.Table, f.Name, f.SQLType),
+	}, nil
+}
+
+// assertCompatibleColumn checks that a live column matches the
+// declared field. Returns a Blocked step on incompatibility, or nil
+// when the column is fine.
+//
+// The Empty + Nullability-Change special case returns a
+// StepRecreateEmpty: when the table has zero rows AND a nullability
+// constraint flipped (add/remove NOT NULL), we drop and rebuild from
+// scratch since no rows are at risk. The dev-time UX matters here —
+// most projects edit entity fields before any production data
+// exists, and a hard "incompatible change" error would feel hostile.
+func assertCompatibleColumn(ent VEntity, f EntityField, live tableInfoRow, hasRows bool) *MigrationStep {
+	expectedType := strings.ToUpper(sqlTypeForDDL(f.SQLType))
+	liveType := strings.ToUpper(strings.TrimSpace(live.Type))
+	if liveType != "" && expectedType != "" && liveType != expectedType {
+		return &MigrationStep{
+			Kind:        StepBlocked,
+			Table:       ent.Table,
+			Column:      f.Name,
+			Description: fmt.Sprintf("blocked: type changed for %s.%s", ent.Table, f.Name),
+			Error: &BlockedMigrationError{
+				Summary: fmt.Sprintf(
+					`migration blocked for entity %s.%s: column type changed from %s to %s in table %s.`,
+					ent.Table, f.Name, liveType, expectedType, ent.Table),
+				Hint: fmt.Sprintf(`SQLite cannot change column types in place. To migrate manually:
+
+    BEGIN TRANSACTION;
+    ALTER TABLE %s RENAME TO %s_old;
+    -- Boot the app to create %s with the new schema.
+    -- Then copy + cast the data back:
+    INSERT INTO %s (<columns>) SELECT <columns, casting %s as needed> FROM %s_old;
+    DROP TABLE %s_old;
+    COMMIT;`,
+					ent.Table, ent.Table, ent.Table,
+					ent.Table, f.Name, ent.Table, ent.Table),
+			},
+		}
+	}
+
+	livePrimary := live.PK > 0
+	if livePrimary != f.Serial {
+		return &MigrationStep{
+			Kind:        StepBlocked,
+			Table:       ent.Table,
+			Column:      f.Name,
+			Description: fmt.Sprintf("blocked: primary-key shape changed for %s.%s", ent.Table, f.Name),
+			Error: &BlockedMigrationError{
+				Summary: fmt.Sprintf(
+					`migration blocked for entity %s.%s: primary-key shape changed in table %s.`,
+					ent.Table, f.Name, ent.Table),
+				Hint: "Mar does not auto-migrate primary-key changes; rename + rebuild the table manually.",
+			},
+		}
+	}
+
+	if !f.Serial {
+		liveNotNull := live.NotNull == 1
+		expectedNotNull := f.NotNull
+		if liveNotNull != expectedNotNull {
+			if !hasRows {
+				// Empty table: drop+recreate is safe and zero-data-loss.
+				return &MigrationStep{
+					Kind:        StepRecreateEmpty,
+					Table:       ent.Table,
+					SQL:         buildRecreateEmptySQL(ent),
+					Description: fmt.Sprintf("recreate empty table %s (nullability change)", ent.Table),
+				}
+			}
+			return &MigrationStep{
+				Kind:        StepBlocked,
+				Table:       ent.Table,
+				Column:      f.Name,
+				Description: fmt.Sprintf("blocked: nullability changed for %s.%s", ent.Table, f.Name),
+				Error: &BlockedMigrationError{
+					Summary: fmt.Sprintf(
+						`migration blocked for entity %s.%s: nullability changed from %s to %s in table %s.`,
+						ent.Table, f.Name, nullabilityLabel(liveNotNull), nullabilityLabel(expectedNotNull), ent.Table),
+					Hint: fmt.Sprintf(`SQLite cannot change NOT NULL constraints in place when data exists. To migrate manually:
+
+    BEGIN TRANSACTION;
+    ALTER TABLE %s RENAME TO %s_old;
+    -- Boot the app to create %s with the new schema.
+    INSERT INTO %s (<columns>) SELECT <columns> FROM %s_old;
+    DROP TABLE %s_old;
+    COMMIT;`,
+						ent.Table, ent.Table, ent.Table, ent.Table, ent.Table, ent.Table),
+				},
+			}
+		}
+	}
+	return nil
+}
+
+func nullabilityLabel(notNull bool) string {
+	if notNull {
+		return "required"
+	}
+	return "optional"
+}
+
+// ---------- Helpers ----------
+
+type tableInfoRow struct {
+	Name    string
+	Type    string
+	NotNull int
+	PK      int
+}
+
+func (m *Migrator) tableExists(name string) (bool, error) {
+	var found string
+	err := m.db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1`,
+		name,
+	).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (m *Migrator) tableHasRows(name string) (bool, error) {
+	var x int
+	err := m.db.QueryRow("SELECT 1 FROM " + quoteIdent(name) + " LIMIT 1").Scan(&x)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (m *Migrator) readTableInfo(name string) ([]tableInfoRow, error) {
+	rows, err := m.db.Query("PRAGMA table_info(" + quoteIdent(name) + ")")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []tableInfoRow
+	for rows.Next() {
+		var (
+			cid       int
+			colName   string
+			colType   string
+			notNull   int
+			dfltValue any
+			pk        int
+		)
+		if err := rows.Scan(&cid, &colName, &colType, &notNull, &dfltValue, &pk); err != nil {
+			return nil, err
+		}
+		out = append(out, tableInfoRow{
+			Name:    colName,
+			Type:    colType,
+			NotNull: notNull,
+			PK:      pk,
+		})
+	}
+	return out, rows.Err()
+}
+
+func (m *Migrator) liveTableNames() ([]string, error) {
+	rows, err := m.db.Query(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// columnDefSQL builds the per-column DDL fragment used inside CREATE
+// TABLE and ALTER TABLE ADD COLUMN. Mirrors the existing
+// buildCreateTableSQL formatting in entity.go but kept separate so
+// the migrator can produce ALTER fragments without rebuilding the
+// whole table SQL.
+func columnDefSQL(f EntityField) string {
+	parts := []string{f.Name, sqlTypeForDDL(f.SQLType)}
+	if f.Serial {
+		parts = append(parts, "PRIMARY KEY AUTOINCREMENT")
+	} else if f.NotNull {
+		parts = append(parts, "NOT NULL")
+	}
+	if f.AcceptedCtors != nil {
+		quoted := make([]string, len(f.AcceptedCtors))
+		for i, t := range f.AcceptedCtors {
+			quoted[i] = "'" + strings.ReplaceAll(t, "'", "''") + "'"
+		}
+		parts = append(parts, "CHECK("+f.Name+" IN ("+strings.Join(quoted, ", ")+"))")
+	}
+	return strings.Join(parts, " ")
+}
+
+// buildCreateTableSQLNew emits a plain `CREATE TABLE` (no IF NOT
+// EXISTS) for the migrator. The migrator only emits CREATE for
+// tables it has just confirmed don't exist, so the guard would be
+// noise — and worse, would mask a real bug if drift were to make
+// the table already exist. entity.go has an IF-NOT-EXISTS variant
+// used elsewhere for one-shot static-table bootstrapping.
+func buildCreateTableSQLNew(e VEntity) string {
+	cols := make([]string, len(e.Fields))
+	for i, f := range e.Fields {
+		cols[i] = columnDefSQL(f)
+	}
+	return "CREATE TABLE " + quoteIdent(e.Table) + " (" + strings.Join(cols, ", ") + ")"
+}
+
+// buildRecreateEmptySQL drops the (empty) table and recreates it
+// with the current declared schema. Wrapped in a transaction so a
+// failure mid-recreate doesn't leave the DB without the table.
+func buildRecreateEmptySQL(e VEntity) string {
+	cols := make([]string, len(e.Fields))
+	for i, f := range e.Fields {
+		cols[i] = columnDefSQL(f)
+	}
+	return "BEGIN; DROP TABLE " + quoteIdent(e.Table) + "; CREATE TABLE " +
+		quoteIdent(e.Table) + " (" + strings.Join(cols, ", ") + "); COMMIT"
+}
+
+// sqlTypeForDDL returns the storage type to write into the CREATE /
+// ALTER statement. TIMESTAMP is conceptual — stored as INTEGER (Unix
+// ms) so SQLite can compare/sort numerically.
+func sqlTypeForDDL(marType string) string {
+	if strings.EqualFold(marType, "TIMESTAMP") {
+		return "INTEGER"
+	}
+	return marType
+}
+
+func quoteIdent(name string) string {
+	// SQLite identifier quoting: double-quote with internal "" escape.
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}

@@ -1,0 +1,24 @@
+module Backend.Follows exposing (follows)
+
+
+import Shared
+
+
+-- Follows entity — the social graph as a join table.
+--
+-- Two integer columns and a timestamp. `followerId` is the user
+-- who clicked Follow; `followedId` is whose tweets they want to
+-- see. Reading the column names left-to-right matches the
+-- "follower → followed" direction of the edge.
+follows : Entity Shared.Follow
+follows =
+    Entity.define
+        { name = "follows"
+        , columns =
+            { id         = Entity.serial
+            , followerId = Entity.int Entity.notNull
+            , followedId = Entity.int Entity.notNull
+            , createdAt  = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }

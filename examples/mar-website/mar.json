@@ -1,0 +1,17 @@
+{
+  "name": "mar-website",
+  "server": { "port": 3007 },
+  "pwa": {
+    "shortName": "Mar",
+    "icon": "public/mar-logo.png",
+    "themeColor": "#0071e3",
+    "backgroundColor": "#ffffff"
+  },
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "mar-website",
+      "account": "env:CF_ACCOUNT_HASH",
+      "apiToken": "env:CF_API_TOKEN"
+    }
+  }
+}

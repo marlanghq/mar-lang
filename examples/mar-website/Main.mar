@@ -1,0 +1,77 @@
+module Main exposing (main)
+
+
+import Frontend.Home
+import Frontend.Why
+import Frontend.GetStarted
+import Frontend.Examples
+import Frontend.Credits
+
+-- Showcase sub-section: each page demos one slice of Mar's UI
+-- vocabulary. Mounted under /showcase/* so it composes inside the
+-- main site without colliding with the top-level pages.
+import Frontend.Showcase.Home
+import Frontend.Showcase.Layout
+import Frontend.Showcase.Typography
+import Frontend.Showcase.Forms
+import Frontend.Showcase.Controls
+import Frontend.Showcase.Lists
+import Frontend.Showcase.Pickers
+import Frontend.Showcase.Disabled
+import Frontend.Showcase.Modals
+import Frontend.Showcase.NavBar
+import Frontend.Showcase.Images
+
+
+-- Public site for the Mar language. Frontend-only (App.frontend) —
+-- nothing here needs a database, an auth flow, or a backend service,
+-- so the deploy is a static bundle.
+--
+-- Page order matches the natural reading flow:
+--
+--   /              — landing page, hero + nav to the rest
+--   /why           — why Mar exists, the design pillars, trade-offs
+--   /get-started   — install, scaffold, run, deploy
+--   /examples      — five reference projects to learn from
+--   /credits       — author, license, inspirations, source
+--   /showcase      — UI primitive tour (sub-section, see below)
+--
+-- The showcase sub-section is a live tour of every UI primitive
+-- the framework ships. Lives under /showcase/* so the URLs stay
+-- self-contained:
+--
+--   /showcase             — index of demos
+--   /showcase/layout      — hstack, vstack, spacer, centered
+--   /showcase/typography  — title, subtitle, text, errorText
+--   /showcase/forms       — textField + textArea + input kinds
+--   /showcase/controls    — button + toggle
+--   /showcase/lists       — sections + reorder + delete
+--   /showcase/pickers     — picker over enum / Int / String
+--   /showcase/disabled    — every interactive primitive disabled
+--   /showcase/modals      — sheet + confirm
+--
+-- The site is the proof-of-concept: dogfooding Mar's UI primitives
+-- to build the site that pitches Mar. If something looks awkward
+-- here, it's a gap in the framework, not in the content.
+
+
+main : Cmd ()
+main =
+    App.frontend
+        [ Frontend.Home.page
+        , Frontend.Why.page
+        , Frontend.GetStarted.page
+        , Frontend.Examples.page
+        , Frontend.Credits.page
+        , Frontend.Showcase.Home.page
+        , Frontend.Showcase.Layout.page
+        , Frontend.Showcase.Typography.page
+        , Frontend.Showcase.Forms.page
+        , Frontend.Showcase.Controls.page
+        , Frontend.Showcase.Lists.page
+        , Frontend.Showcase.Pickers.page
+        , Frontend.Showcase.Disabled.page
+        , Frontend.Showcase.Modals.page
+        , Frontend.Showcase.NavBar.page
+        , Frontend.Showcase.Images.page
+        ]

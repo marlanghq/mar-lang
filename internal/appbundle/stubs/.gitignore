@@ -1,0 +1,3 @@
+# Stubs are large binaries — built locally by `make stubs`, not committed.
+binaries/*
+!binaries/README

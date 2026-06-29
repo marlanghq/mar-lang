@@ -1,0 +1,409 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		083C9695A949F8618057F9DF /* Discovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D26C201F6623B7F54954F499 /* Discovery.swift */; };
+		1A4D72D7511BA7F27300525C /* MarChar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53E8BF74D256ADD608450FF1 /* MarChar.swift */; };
+		2CEBD3F805F7B14B80F13C54 /* MarEnv.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AC6D6C31DA699017A49EC69 /* MarEnv.swift */; };
+		3261C4D120A0A85998999F24 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B978C6A4C024308BE99BE1A3 /* APIClient.swift */; };
+		493D3C02C5420E09DC9A9D58 /* MarPageRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49572645D20DFF429518E618 /* MarPageRuntime.swift */; };
+		4FA4A6208515E57314147BD2 /* MarEval.swift in Sources */ = {isa = PBXBuildFile; fileRef = D82563539CB5C35B24C312D6 /* MarEval.swift */; };
+		60C37209F73BD3AFFA4C4A12 /* MarKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2F47775647F77B2B2DBD640 /* MarKeychain.swift */; };
+		656F035CBE6E9A6854646E6E /* MarAppContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 698C9F8D49856062A3E6029F /* MarAppContext.swift */; };
+		83074E905DC05A40B0E08DE3 /* MarValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = E73011F6F0CF37ADFC8EF5DC /* MarValue.swift */; };
+		872DFA5619866A24ADA2F37D /* MarExpr.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EE1E637A5CE8C785674AEE9 /* MarExpr.swift */; };
+		8DA57DCA7363582700087898 /* MarPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = C316B9C7635C3035FFE027AE /* MarPath.swift */; };
+		94EFF8C83561284EED6EAF69 /* MarDict.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916A3698EA9B7DF18D0A0E32 /* MarDict.swift */; };
+		95E175645730190913F5A4F0 /* MarRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63F190E7937B558BFD757B19 /* MarRenderer.swift */; };
+		9AEBE17711083E8BEB18294A /* MarLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79888DFD3A4BC98247BD5AA1 /* MarLoader.swift */; };
+		9B73AA11605EB14AF43FE988 /* program.json in Resources */ = {isa = PBXBuildFile; fileRef = 6654885C23C163D12E1D05A3 /* program.json */; };
+		9EBCC3CD90B7AFD22B80077C /* MarJSONCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A87CE1F15247B2227EE9907 /* MarJSONCodec.swift */; };
+		A1A11AF07CC0095511A28656 /* MarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2601D2B11FA17DA79E7C5038 /* MarApp.swift */; };
+		ACFDBA1661EBFB6A10831879 /* MarRuntimeIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8CBCB8DB09D9A40304B3DAA /* MarRuntimeIOSApp.swift */; };
+		C602AA40E91B863F11433084 /* MarHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E68B48D2583997A1EFC3A94 /* MarHTTP.swift */; };
+		CFFC0F50675D399FB5599585 /* MarDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 232B6AA41600028041EB6429 /* MarDispatcher.swift */; };
+		DF2886C32E7C23599EFB1A1B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2E7793FD50D2411F55A093 /* ContentView.swift */; };
+		E6ACB982CD28754600CF3F10 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0841188545EE6482E82F797 /* AppViewModel.swift */; };
+		F880A0113972CE9CE5F8602F /* MarBuiltins.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17AA2A49371B78A0E17CA081 /* MarBuiltins.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		17AA2A49371B78A0E17CA081 /* MarBuiltins.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarBuiltins.swift; sourceTree = "<group>"; };
+		232B6AA41600028041EB6429 /* MarDispatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarDispatcher.swift; sourceTree = "<group>"; };
+		2601D2B11FA17DA79E7C5038 /* MarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarApp.swift; sourceTree = "<group>"; };
+		49572645D20DFF429518E618 /* MarPageRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarPageRuntime.swift; sourceTree = "<group>"; };
+		4E68B48D2583997A1EFC3A94 /* MarHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarHTTP.swift; sourceTree = "<group>"; };
+		53E8BF74D256ADD608450FF1 /* MarChar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarChar.swift; sourceTree = "<group>"; };
+		5A87CE1F15247B2227EE9907 /* MarJSONCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarJSONCodec.swift; sourceTree = "<group>"; };
+		5AC6D6C31DA699017A49EC69 /* MarEnv.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarEnv.swift; sourceTree = "<group>"; };
+		63F190E7937B558BFD757B19 /* MarRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarRenderer.swift; sourceTree = "<group>"; };
+		6654885C23C163D12E1D05A3 /* program.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = program.json; sourceTree = "<group>"; };
+		698C9F8D49856062A3E6029F /* MarAppContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarAppContext.swift; sourceTree = "<group>"; };
+		69950D21362193B50C7F15BD /* __MAR_APP_NAME__.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = __MAR_APP_NAME__.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		79888DFD3A4BC98247BD5AA1 /* MarLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarLoader.swift; sourceTree = "<group>"; };
+		8EE1E637A5CE8C785674AEE9 /* MarExpr.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarExpr.swift; sourceTree = "<group>"; };
+		916A3698EA9B7DF18D0A0E32 /* MarDict.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarDict.swift; sourceTree = "<group>"; };
+		A0841188545EE6482E82F797 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
+		B978C6A4C024308BE99BE1A3 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		C316B9C7635C3035FFE027AE /* MarPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarPath.swift; sourceTree = "<group>"; };
+		C8CBCB8DB09D9A40304B3DAA /* MarRuntimeIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarRuntimeIOSApp.swift; sourceTree = "<group>"; };
+		CF2E7793FD50D2411F55A093 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		D26C201F6623B7F54954F499 /* Discovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Discovery.swift; sourceTree = "<group>"; };
+		D82563539CB5C35B24C312D6 /* MarEval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarEval.swift; sourceTree = "<group>"; };
+		E73011F6F0CF37ADFC8EF5DC /* MarValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarValue.swift; sourceTree = "<group>"; };
+		F2F47775647F77B2B2DBD640 /* MarKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarKeychain.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		2FEEC914778AF5D3E8B16B03 = {
+			isa = PBXGroup;
+			children = (
+				A41E099F0F9AFFE5B8F01807 /* Resources */,
+				E9669C949842F0C4E70FD23E /* Sources */,
+				AC17ACE29FB19E1F696C0CEA /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A41E099F0F9AFFE5B8F01807 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				6654885C23C163D12E1D05A3 /* program.json */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		AC17ACE29FB19E1F696C0CEA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				69950D21362193B50C7F15BD /* __MAR_APP_NAME__.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E9669C949842F0C4E70FD23E /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				B978C6A4C024308BE99BE1A3 /* APIClient.swift */,
+				A0841188545EE6482E82F797 /* AppViewModel.swift */,
+				CF2E7793FD50D2411F55A093 /* ContentView.swift */,
+				D26C201F6623B7F54954F499 /* Discovery.swift */,
+				2601D2B11FA17DA79E7C5038 /* MarApp.swift */,
+				698C9F8D49856062A3E6029F /* MarAppContext.swift */,
+				17AA2A49371B78A0E17CA081 /* MarBuiltins.swift */,
+				53E8BF74D256ADD608450FF1 /* MarChar.swift */,
+				916A3698EA9B7DF18D0A0E32 /* MarDict.swift */,
+				232B6AA41600028041EB6429 /* MarDispatcher.swift */,
+				5AC6D6C31DA699017A49EC69 /* MarEnv.swift */,
+				D82563539CB5C35B24C312D6 /* MarEval.swift */,
+				8EE1E637A5CE8C785674AEE9 /* MarExpr.swift */,
+				4E68B48D2583997A1EFC3A94 /* MarHTTP.swift */,
+				5A87CE1F15247B2227EE9907 /* MarJSONCodec.swift */,
+				F2F47775647F77B2B2DBD640 /* MarKeychain.swift */,
+				79888DFD3A4BC98247BD5AA1 /* MarLoader.swift */,
+				49572645D20DFF429518E618 /* MarPageRuntime.swift */,
+				C316B9C7635C3035FFE027AE /* MarPath.swift */,
+				63F190E7937B558BFD757B19 /* MarRenderer.swift */,
+				C8CBCB8DB09D9A40304B3DAA /* MarRuntimeIOSApp.swift */,
+				E73011F6F0CF37ADFC8EF5DC /* MarValue.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B6C1EF8F2E7791FB264DB075 /* __MAR_APP_NAME__ */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 419FDB1D707E3B21BA774657 /* Build configuration list for PBXNativeTarget "__MAR_APP_NAME__" */;
+			buildPhases = (
+				DC55EDD490F1749D3D9BD89D /* Sources */,
+				7C852255A940119607DC381E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = __MAR_APP_NAME__;
+			packageProductDependencies = (
+			);
+			productName = __MAR_APP_NAME__;
+			productReference = 69950D21362193B50C7F15BD /* __MAR_APP_NAME__.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		F2FB808EB95AEF73872E4B97 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1620;
+				TargetAttributes = {
+					B6C1EF8F2E7791FB264DB075 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 7D6DF8BEA9F937F2EAE4B944 /* Build configuration list for PBXProject "__MAR_APP_NAME__" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 2FEEC914778AF5D3E8B16B03;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = AC17ACE29FB19E1F696C0CEA /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B6C1EF8F2E7791FB264DB075 /* __MAR_APP_NAME__ */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		7C852255A940119607DC381E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9B73AA11605EB14AF43FE988 /* program.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		DC55EDD490F1749D3D9BD89D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3261C4D120A0A85998999F24 /* APIClient.swift in Sources */,
+				E6ACB982CD28754600CF3F10 /* AppViewModel.swift in Sources */,
+				DF2886C32E7C23599EFB1A1B /* ContentView.swift in Sources */,
+				083C9695A949F8618057F9DF /* Discovery.swift in Sources */,
+				A1A11AF07CC0095511A28656 /* MarApp.swift in Sources */,
+				656F035CBE6E9A6854646E6E /* MarAppContext.swift in Sources */,
+				F880A0113972CE9CE5F8602F /* MarBuiltins.swift in Sources */,
+				1A4D72D7511BA7F27300525C /* MarChar.swift in Sources */,
+				94EFF8C83561284EED6EAF69 /* MarDict.swift in Sources */,
+				CFFC0F50675D399FB5599585 /* MarDispatcher.swift in Sources */,
+				2CEBD3F805F7B14B80F13C54 /* MarEnv.swift in Sources */,
+				4FA4A6208515E57314147BD2 /* MarEval.swift in Sources */,
+				872DFA5619866A24ADA2F37D /* MarExpr.swift in Sources */,
+				C602AA40E91B863F11433084 /* MarHTTP.swift in Sources */,
+				9EBCC3CD90B7AFD22B80077C /* MarJSONCodec.swift in Sources */,
+				60C37209F73BD3AFFA4C4A12 /* MarKeychain.swift in Sources */,
+				9AEBE17711083E8BEB18294A /* MarLoader.swift in Sources */,
+				493D3C02C5420E09DC9A9D58 /* MarPageRuntime.swift in Sources */,
+				8DA57DCA7363582700087898 /* MarPath.swift in Sources */,
+				95E175645730190913F5A4F0 /* MarRenderer.swift in Sources */,
+				ACFDBA1661EBFB6A10831879 /* MarRuntimeIOSApp.swift in Sources */,
+				83074E905DC05A40B0E08DE3 /* MarValue.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		687EE2907C4D70A10E36773F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_NAME = __MAR_APP_NAME__;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		9D0C9700497BD3DE1812F576 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = __MAR_BUILD_NUMBER__;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = __MAR_MARKETING_VERSION__;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = __MAR_BUNDLE_ID__;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.1;
+			};
+			name = Debug;
+		};
+		A7B684AC14625AC0BE231B2A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_NAME = __MAR_APP_NAME__;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B182EC865E2242BE8A7801F3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = __MAR_BUILD_NUMBER__;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = __MAR_MARKETING_VERSION__;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = __MAR_BUNDLE_ID__;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		419FDB1D707E3B21BA774657 /* Build configuration list for PBXNativeTarget "__MAR_APP_NAME__" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A7B684AC14625AC0BE231B2A /* Debug */,
+				687EE2907C4D70A10E36773F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7D6DF8BEA9F937F2EAE4B944 /* Build configuration list for PBXProject "__MAR_APP_NAME__" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9D0C9700497BD3DE1812F576 /* Debug */,
+				B182EC865E2242BE8A7801F3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = F2FB808EB95AEF73872E4B97 /* Project object */;
+}

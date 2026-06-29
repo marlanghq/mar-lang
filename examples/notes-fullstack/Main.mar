@@ -1,0 +1,16 @@
+module Main exposing (main)
+
+
+-- Entry point for the full-stack notes app.
+
+
+import Backend
+import Frontend
+
+
+main : Cmd ()
+main =
+    App.fullstack
+        { services = Backend.services
+        , pages    = [ Frontend.page ]
+        }

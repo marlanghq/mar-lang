@@ -1,0 +1,215 @@
+module Frontend.Showcase.Forms exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, footer
+    , textField, textArea, button
+    , submit, email, password, newPassword, numeric, oneTimeCode, numericCode
+    , text, errorText, empty
+    , width, height, chars, lines
+    )
+
+
+-- Demo: `textField` with every input-kind modifier.
+--
+-- The modifiers tune three things at once on both platforms:
+--
+--   web : <input type>, autocomplete, inputmode, pattern
+--   iOS : keyboardType, textContentType, isSecure
+--
+-- Each section pairs the modifier with a placeholder so visitors
+-- can tap the field and see the keyboard / autofill chrome the
+-- platform offers (e.g. iOS suggests the Mail OTP for
+-- `numericCode`; Safari fills `password` from Keychain).
+
+
+type alias Model =
+    { email      : String
+    , password   : String
+    , newPwd     : String
+    , age        : String
+    , otp        : String
+    , otpAlt     : String
+    , bio        : String
+    , code       : String
+    , submitted  : Bool
+    }
+
+
+type Msg
+    = EmailChanged String
+    | PasswordChanged String
+    | NewPasswordChanged String
+    | AgeChanged String
+    | OtpChanged String
+    | OtpAltChanged String
+    | BioChanged String
+    | CodeChanged String
+    | SubmitClicked
+    | Cleared
+
+
+emptyModel : Model
+emptyModel =
+    { email = "", password = "", newPwd = ""
+    , age = "", otp = "", otpAlt = ""
+    , bio = "", code = ""
+    , submitted = False
+    }
+
+
+init : (Model, Cmd Msg)
+init = ( emptyModel, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        EmailChanged v ->
+            ( { model | email = v, submitted = False }, Cmd.none )
+
+        PasswordChanged v ->
+            ( { model | password = v, submitted = False }, Cmd.none )
+
+        NewPasswordChanged v ->
+            ( { model | newPwd = v, submitted = False }, Cmd.none )
+
+        AgeChanged v ->
+            ( { model | age = v, submitted = False }, Cmd.none )
+
+        OtpChanged v ->
+            ( { model | otp = v, submitted = False }, Cmd.none )
+
+        OtpAltChanged v ->
+            ( { model | otpAlt = v, submitted = False }, Cmd.none )
+
+        BioChanged v ->
+            ( { model | bio = v, submitted = False }, Cmd.none )
+
+        CodeChanged v ->
+            ( { model | code = v, submitted = False }, Cmd.none )
+
+        SubmitClicked ->
+            ( { model | submitted = True }, Cmd.none )
+
+        Cleared ->
+            ( emptyModel, Cmd.none )
+
+
+-- Trivial "is this not a valid email shape" check for the
+-- errorText demo. Empty is allowed (don't shout at the user
+-- before they've typed); non-empty without an @ is rejected.
+-- A real validator would do more, but the showcase only needs
+-- something simple enough to trigger the error styling.
+emailLooksWrong : String -> Bool
+emailLooksWrong s =
+    if s == "" then
+        False
+    else
+        String.contains "@" s == False
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Forms" ]
+        [ form
+            [ section
+                [ header "email"
+                , footer "Sets type=email and autocomplete=email; iOS suggests addresses from Contacts."
+                ]
+                [ textField [ email, submit SubmitClicked, width (chars 50) ]
+                    "you@example.com" model.email EmailChanged
+                ]
+            , section
+                [ header "password"
+                , footer "Masks input; Safari + iOS Keychain offer to autofill."
+                ]
+                [ textField [ password, submit SubmitClicked ]
+                    "Password" model.password PasswordChanged
+                ]
+            , section
+                [ header "newPassword"
+                , footer "Asks the password manager to generate + save a new one."
+                ]
+                [ textField [ newPassword, submit SubmitClicked ]
+                    "Choose a password" model.newPwd NewPasswordChanged
+                ]
+            , section
+                [ header "numeric"
+                , footer "Numeric keypad on mobile; rejects non-digit characters."
+                ]
+                [ textField [ numeric, submit SubmitClicked ]
+                    "Age" model.age AgeChanged
+                ]
+            , section
+                [ header "oneTimeCode"
+                , footer "On iOS, the latest code from Messages appears above the keyboard."
+                ]
+                [ textField [ oneTimeCode, submit SubmitClicked ]
+                    "6-digit code" model.otp OtpChanged
+                ]
+            , section
+                [ header "numericCode (numeric + oneTimeCode)"
+                , footer "Bundles the two: numeric keypad AND OTP autofill in one attr."
+                ]
+                [ textField [ numericCode, submit SubmitClicked ]
+                    "OTP" model.otpAlt OtpAltChanged
+                ]
+            , section
+                [ header "width (chars N)"
+                , footer "Sized to about 6 columns: width (chars 6) caps the width, not how much you can type."
+                ]
+                [ textField [ submit SubmitClicked, width (chars 6) ]
+                    "Code" model.code CodeChanged
+                ]
+            , section
+                [ header "textArea (width + height)"
+                , footer "Multi-line: height (lines 4) sets the visible rows; Cmd/Ctrl+Enter submits."
+                ]
+                [ textArea [ submit SubmitClicked, width (chars 40), height (lines 4) ]
+                    "Multi-line input" model.bio BioChanged
+                ]
+            -- errorText renders text with destructive styling (red,
+            -- semi-bold). It's an ordinary view, so you place it
+            -- wherever you want; below a field is just one common
+            -- spot. The app decides when to show it: here we render
+            -- it when the email is missing an @, and render nothing
+            -- otherwise (so there's no layout shift).
+            , section
+                [ header "errorText"
+                , footer "A red error message. Here one shows up below the field when the email is missing an @."
+                ]
+                [ textField [ email, submit SubmitClicked ]
+                    "you@example.com" model.email EmailChanged
+                , if emailLooksWrong model.email then
+                    errorText "Please enter a valid email address."
+                  else
+                    empty
+                ]
+            , section
+                [ header "actions"
+                , footer
+                    (if model.submitted then
+                        "Submitted! (Demo only; nothing is sent.)"
+                     else
+                        "Tap Submit, or hit Enter / Return in any field above."
+                    )
+                ]
+                [ button [] SubmitClicked "Submit"
+                , button [] Cleared "Clear"
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/forms"
+        , title = "Forms"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

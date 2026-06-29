@@ -1,0 +1,184 @@
+module Shared exposing (..)
+
+
+-- Domain types and service contracts for mini-twitter.
+--
+-- The shape is deliberately small (3 entities: User, Tweet, Follow)
+-- but exercises the framework's full surface — auth, multi-page
+-- navigation, RBAC-ish ownership policies, typed routes, and the
+-- service contract pattern that makes refactoring URLs and request
+-- shapes a compile-time conversation instead of a manual hunt.
+
+
+-- A user is identified to the framework by their email (the
+-- passwordless code lands at this address) but everywhere else in
+-- the app uses `handle` — the visible @-name. New users come in
+-- with an empty handle and the SignUp page nudges them to pick one
+-- before the rest of the app appears.
+type alias User =
+    { id          : Int
+    , email       : String
+    , handle      : String
+    , displayName : String
+    , bio         : String
+    , createdAt   : Time
+    }
+
+
+type alias Tweet =
+    { id        : Int
+    , body      : String
+    , authorId  : Int
+    , createdAt : Time
+    }
+
+
+-- `Follow` is a thin join table. A follower row says "this user
+-- subscribes to that user's tweets". Self-follows are rejected at
+-- the service layer (it'd let the timeline duplicate your own
+-- tweets next to themselves; not useful).
+type alias Follow =
+    { id         : Int
+    , followerId : Int
+    , followedId : Int
+    , createdAt  : Time
+    }
+
+
+-- View types — what flows over the wire to the frontend. Distinct
+-- from the entity rows because the wire shape carries denormalized
+-- author info + flags ("am I following them?", "did I like this?")
+-- the page needs to render without a second round-trip.
+
+
+type alias TweetView =
+    { id              : Int
+    , body            : String
+    , authorHandle    : String
+    , authorName      : String
+    , createdAt       : Time
+    , isMine          : Bool
+    }
+
+
+type alias ProfileView =
+    { user       : User
+    , tweetCount : Int
+    , followers  : Int
+    , following  : Int
+    , isFollowed : Bool       -- am I following them?
+    , isMe       : Bool       -- is this my own profile?
+    , tweets     : List TweetView
+    }
+
+
+-- Service input/output records. Each `Service.declare` below is the
+-- one place that fixes the contract; the backend and frontend
+-- agree by referring to the same Shared type, so a mismatch is a
+-- compile error in both directions.
+
+
+type alias NewTweet =
+    { body : String
+    }
+
+
+type alias DeleteTweet =
+    { id : Int
+    }
+
+
+type alias ProfileQuery =
+    { handle : String
+    }
+
+
+type alias FollowAction =
+    { handle : String       -- who to follow
+    }
+
+
+type alias ProfileSetup =
+    { handle      : String
+    , displayName : String
+    , bio         : String
+    }
+
+
+-- Service contracts. `Service.declare` produces a typed RPC handle
+-- that the backend implements (via `Auth.protect` etc. in
+-- Backend.Services) and the frontend calls (via `Service.call` in
+-- the pages). The protocol layer in between is the framework's job.
+
+
+-- Compose outcome: the two domain rules (no empty tweets, 280 max)
+-- are typed cases the frontend matches; the backend can produce no
+-- other shapes.
+type ComposeOutcome
+    = Posted Tweet
+    | BodyEmpty
+    | BodyTooLong
+
+
+composeTweet : Service NewTweet ComposeOutcome
+composeTweet = Service.declare POST "/tweets"
+
+
+deleteTweet : Service DeleteTweet ()
+deleteTweet = Service.declare DELETE "/tweets/{id:Int}"
+
+
+-- The home timeline: tweets from people I follow + my own, newest
+-- first. Returns enough denormalized info that the home page can
+-- render rows without further fetches.
+loadTimeline : Service () (List TweetView)
+loadTimeline = Service.declare GET "/timeline"
+
+
+-- Public profile lookup by handle. Returns Nothing for unknown
+-- handles, which the frontend renders as "User not found".
+loadProfile : Service ProfileQuery (Maybe ProfileView)
+loadProfile = Service.declare GET "/profiles/{handle:String}"
+
+
+-- Follow outcome: each case is a distinct UX branch on the profile
+-- page. Unfollow has no domain outcomes (unfollowing someone you
+-- don't follow, or a vanished handle, is idempotent success), so it
+-- keeps the plain unit response below.
+type FollowOutcome
+    = Followed
+    | HandleNotFound
+    | CantFollowSelf
+
+
+follow : Service FollowAction FollowOutcome
+follow = Service.declare POST "/follow"
+
+
+unfollow : Service FollowAction ()
+unfollow = Service.declare POST "/unfollow"
+
+
+-- Profile setup: called once after sign-in if the user's handle is
+-- still empty. Subsequent updates would go through a separate
+-- `editProfile` service (not in this minimal example — keeping the
+-- service list short so the security policy stays readable).
+-- Setup outcome: every validation the backend enforces is a case
+-- the form can point at the right field.
+type SetupOutcome
+    = ProfileSaved User
+    | HandleRequired
+    | HandleTooLong
+    | DisplayNameRequired
+    | HandleTaken
+
+
+setupProfile : Service ProfileSetup SetupOutcome
+setupProfile = Service.declare PUT "/profile"
+
+
+-- `me` returns the current user. The auth cookie identifies who;
+-- the frontend uses this to decide whether to redirect a new user
+-- to /setup-profile before showing the timeline.
+me : Service () User
+me = Service.declare GET "/me"

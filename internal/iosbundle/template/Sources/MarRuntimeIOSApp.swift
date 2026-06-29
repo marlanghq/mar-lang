@@ -1,0 +1,18 @@
+// The Swift app is intentionally generic: it discovers what the mar
+// backend exposes via `/_mar/schema` on every cold start, so changes
+// you make to your mar code show up in the app without rebuilding the
+// iOS binary or re-submitting to the App Store. That's the OTA model.
+
+import SwiftUI
+
+@main
+struct __MAR_APP_NAME__App: App {
+    @State private var viewModel = AppViewModel()
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+                .environment(viewModel)
+        }
+    }
+}

@@ -1,0 +1,73 @@
+module Frontend.Home exposing (page)
+
+
+import Shared
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , form, section, text, button
+    )
+
+
+-- Protected "hello world" landing page. Page.protected handles the
+-- auth bootstrap for us:
+--   1. On entry, runs Auth.me.
+--   2. If no session, redirects to the signInPage declared in
+--      Auth.config (here Frontend.SignIn.page → "/sign-in").
+--   3. If logged in, threads the User into init/update/view as the
+--      first argument — no auth juggling in user code.
+--
+-- Model is trivially empty: this page has no local state worth
+-- tracking. Even Sign-out is a single-shot effect with no
+-- intermediate state to preserve.
+
+
+type alias Model =
+    {}
+
+
+type Msg
+    = SignOutClicked
+    | SignedOut (Result String ())
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( {}, Cmd.none )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        SignOutClicked ->
+            ( model, Auth.logout SignedOut )
+
+        SignedOut _ ->
+            -- Whether the logout succeeded or not, drop the user back
+            -- on the sign-in page. Nav.replace (not push) so Back
+            -- doesn't return to the now-signed-out home screen.
+            ( model, Nav.replace "/sign-in" )
+
+
+view : Shared.User -> Model -> View Msg
+view user _ =
+    navigationStack
+        [ navigationTitle ("Hello, " ++ user.email)
+        , topBarTrailing (button [] SignOutClicked "Sign out")
+        ]
+        [ form
+            [ section []
+                [ text [] "You're signed in. This is the protected page." ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/"
+        , title  = "Hello"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

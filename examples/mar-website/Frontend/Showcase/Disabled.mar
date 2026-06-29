@@ -1,0 +1,159 @@
+module Frontend.Showcase.Disabled exposing (page)
+
+
+import Frontend.Showcase.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, footer
+    , textField, textArea, picker, button, toggle, navigationLink
+    , disabled
+    , text
+    )
+
+
+-- Demo: every interactive primitive in both states, gated by a
+-- single master toggle.
+--
+-- The mar disabled story is uniform: every interactive builtin
+-- takes a leading `List Attr`, and `disabled : Bool -> Attr`
+-- works in that list. Passing `disabled True` greys the element
+-- and blocks every dispatch path:
+--
+--   button         → tap ignored
+--   textField      → cursor doesn't land, typing blocked
+--   textArea       → same
+--   picker         → dropdown won't open
+--   toggle         → switch won't flip
+--   navigationLink → click swallowed (no navigation)
+--
+-- The "Master" toggle below flips the same flag through every row
+-- so the visual contrast is obvious — the same form, half the
+-- time inert.
+
+
+type Flavor
+    = Sweet
+    | Savory
+    | Sour
+
+
+flavorLabel : Flavor -> String
+flavorLabel f =
+    case f of
+        Sweet  -> "Sweet"
+        Savory -> "Savory"
+        Sour   -> "Sour"
+
+
+type alias Model =
+    { locked   : Bool
+    , name     : String
+    , bio      : String
+    , flavor   : Flavor
+    , agree    : Bool
+    , taps     : Int
+    }
+
+
+type Msg
+    = LockedChanged Bool
+    | NameChanged String
+    | BioChanged String
+    | FlavorChanged Flavor
+    | AgreeChanged Bool
+    | Tapped
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { locked = True
+      , name   = ""
+      , bio    = ""
+      , flavor = Sweet
+      , agree  = False
+      , taps   = 0
+      }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        LockedChanged v -> ( { model | locked = v }, Cmd.none )
+        NameChanged v   -> ( { model | name = v },   Cmd.none )
+        BioChanged v    -> ( { model | bio = v },    Cmd.none )
+        FlavorChanged f -> ( { model | flavor = f }, Cmd.none )
+        AgreeChanged v  -> ( { model | agree = v },  Cmd.none )
+        Tapped          -> ( { model | taps = model.taps + 1 }, Cmd.none )
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Disabled state" ]
+        [ form
+            [ section
+                [ header "Master"
+                , footer "Flips every row below between enabled and disabled."
+                ]
+                [ toggle [] "Lock everything" model.locked LockedChanged
+                ]
+            , section
+                [ header "textField"
+                , footer "Disabled: focus doesn't land, typing is blocked, placeholder + value fade."
+                ]
+                [ textField [ disabled model.locked ]
+                    "Plain text input" model.name NameChanged
+                ]
+            , section
+                [ header "textArea"
+                , footer "Same gating as textField. The multi-line variant honors disabled identically."
+                ]
+                [ textArea [ disabled model.locked ]
+                    "Multi-line input" model.bio BioChanged
+                ]
+            , section
+                [ header "picker"
+                , footer "Disabled: the dropdown won't open. Value text + chevron fade."
+                ]
+                [ picker [ disabled model.locked ]
+                    model.flavor
+                    [ Sweet, Savory, Sour ]
+                    flavorLabel
+                    FlavorChanged
+                ]
+            , section
+                [ header "toggle"
+                , footer "Disabled: switch won't flip; label fades; cursor turns not-allowed."
+                ]
+                [ toggle [ disabled model.locked ]
+                    "Sample toggle" model.agree AgreeChanged
+                ]
+            , section
+                [ header "button"
+                , footer ("Disabled: tap is ignored. The counter only goes up while enabled. (" ++ String.fromInt model.taps ++ " taps so far.)")
+                ]
+                [ button [ disabled model.locked ] Tapped "Tap me"
+                ]
+            , section
+                [ header "navigationLink"
+                , footer "Disabled: click is swallowed by the SPA router. Try clicking; the URL stays put."
+                ]
+                [ navigationLink [ disabled model.locked ]
+                    Frontend.Showcase.Routes.home {}
+                    (text [] "Sample link (disabled when locked)")
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/disabled"
+        , title = "Disabled state"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

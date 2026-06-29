@@ -1,0 +1,52 @@
+module Frontend.Showcase.Routes exposing
+    ( home, layout, typography, forms, controls, lists, pickers, disabled, modals, navbar, images )
+
+
+-- URL surface for the showcase sub-section. Lives under `/showcase`
+-- so it composes inside the main site without colliding with the
+-- website's own `/`, `/why`, `/get-started`, etc. The bridge from
+-- the main site to here is `Frontend.Routes.showcase`.
+
+
+home : Path {}
+home = "/showcase"
+
+
+layout : Path {}
+layout = "/showcase/layout"
+
+
+typography : Path {}
+typography = "/showcase/typography"
+
+
+forms : Path {}
+forms = "/showcase/forms"
+
+
+controls : Path {}
+controls = "/showcase/controls"
+
+
+lists : Path {}
+lists = "/showcase/lists"
+
+
+pickers : Path {}
+pickers = "/showcase/pickers"
+
+
+disabled : Path {}
+disabled = "/showcase/disabled"
+
+
+modals : Path {}
+modals = "/showcase/modals"
+
+
+navbar : Path {}
+navbar = "/showcase/navbar"
+
+
+images : Path {}
+images = "/showcase/images"

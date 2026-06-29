@@ -1,0 +1,89 @@
+module Frontend.Settings exposing (page)
+
+
+import Shared exposing (Role(..))
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , list, section, header, footer
+    , hstack, vstack
+    , title, subtitle, text, button, navigationLink, empty, spacer
+    )
+
+
+-- Settings — read-only summary of the current user + jump-offs to
+-- team management and sign-out. Editing the profile is out of scope
+-- for this example app; the page demonstrates how to assemble a
+-- multi-section status page without any service round-trips.
+
+
+type alias Model =
+    { signingOut : Bool
+    }
+
+
+type Msg
+    = SignOutClicked
+    | SignedOut (Result String ())
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { signingOut = False }, Cmd.none )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        SignOutClicked ->
+            ( { model | signingOut = True }, Auth.logout SignedOut )
+
+        SignedOut _ ->
+            ( model, Nav.replaceTo Frontend.Routes.signIn {} )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+view : Shared.User -> Model -> View Msg
+view user model =
+    let
+        ctaLabel =
+            if model.signingOut then "Signing out…" else "Sign out"
+    in
+    navigationStack [ navigationTitle "Settings" ]
+        [ list []
+            [ section [ header "Profile" ]
+                [ title user.name
+                , subtitle user.email
+                , text [] ("Role · " ++ Shared.roleLabel user.role)
+                , text [] ("Team #" ++ String.fromInt user.teamId)
+                ]
+            , section [ header "Team" ]
+                [ navigationLink [] Frontend.Routes.teamMembers {} (text [] "Members")
+                ]
+            , section [ header "Navigation" ]
+                [ navigationLink [] Frontend.Routes.dashboard {}  (text [] "Dashboard")
+                , navigationLink [] Frontend.Routes.projects {}   (text [] "Projects")
+                , navigationLink [] Frontend.Routes.myIssues {}   (text [] "My issues")
+                , navigationLink [] Frontend.Routes.search {}     (text [] "Search")
+                ]
+            , section [ header "Session" ]
+                [ button [] SignOutClicked ctaLabel ]
+            , section [ footer "BigApp, built to stress-test mar over a real codebase." ] []
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/settings"
+        , title  = "Settings"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

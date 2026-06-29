@@ -1,0 +1,125 @@
+module Frontend exposing (page)
+
+
+import Shared
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, list, section, header
+    , hstack
+    , text, textField, button, centered, errorText
+    , submit
+    )
+
+
+-- Three-state machine for the notes list. Replaces the old
+-- (notes : List, status : String) pair: the bare `[]` made the
+-- view show "0 notes" while the first fetch was still in flight,
+-- and `status` was a stringly-typed mood ring. Now the state IS
+-- the data, the typechecker forces the view to handle every
+-- branch, and the Failed case finally has somewhere to live.
+type Notes
+    = Loading
+    | Loaded (List Shared.Note)
+    | Failed String
+
+
+type alias Model =
+    { notes : Notes
+    , draft : String
+    }
+
+
+type Msg
+    = NotesFetched (Result Service.Error (List Shared.Note))
+    | DraftChanged String
+    | SubmitClicked
+    | NoteCreated  (Result Service.Error Shared.Note)
+
+
+fetchAll : Cmd Msg
+fetchAll =
+    Service.call Shared.listAllNotes () NotesFetched
+
+
+init : (Model, Cmd Msg)
+init =
+    ({ notes = Loading, draft = "" }, fetchAll)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        NotesFetched (Ok loaded) ->
+            ({ model | notes = Loaded loaded }, Cmd.none)
+
+        NotesFetched (Err e) ->
+            ({ model | notes = Failed (Service.errorToString e) }, Cmd.none)
+
+        DraftChanged value ->
+            ({ model | draft = value }, Cmd.none)
+
+        SubmitClicked ->
+            -- The Service contract is `Service NewNote Note` — the runtime
+            -- encodes the input record as JSON and decodes the response
+            -- straight into a typed Note. No JSON.encode / decode in user
+            -- code anymore.
+            --
+            -- Stale-while-revalidate: keep the current Loaded list
+            -- visible while the create + re-fetch round-trip; the
+            -- screen doesn't flash back to "Loading…" between adds.
+            ( { model | draft = "" }
+            , Service.call Shared.createNote { body = model.draft } NoteCreated
+            )
+
+        NoteCreated (Ok _) ->
+            (model, fetchAll)
+
+        NoteCreated (Err _) ->
+            (model, Cmd.none)
+
+
+renderNote : Shared.Note -> View Msg
+renderNote note =
+    text [] (String.fromInt note.id ++ ". " ++ note.body)
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Notes" ]
+        [ list []
+            [ section []
+                [ hstack []
+                    [ textField [ submit SubmitClicked ]
+                        "Add a note" model.draft DraftChanged
+                    , button [] SubmitClicked "Add"
+                    ]
+                ]
+            , notesSection model.notes
+            ]
+        ]
+
+
+notesSection : Notes -> View Msg
+notesSection notes =
+    case notes of
+        Loading ->
+            section [] [ text [] "Loading…" ]
+
+        Failed why ->
+            section [] [ errorText ("Couldn't load notes: " ++ why) ]
+
+        Loaded items ->
+            section [ header (String.fromInt (List.length items) ++ " notes") ]
+                (List.map renderNote (List.reverse items))
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Notes"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

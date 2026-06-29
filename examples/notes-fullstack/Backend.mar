@@ -1,0 +1,27 @@
+module Backend exposing (services)
+
+
+import Shared
+
+
+-- SQLite schema lives here — the browser bundle never sees it.
+notes : Entity Shared.Note
+notes =
+    Entity.define
+        { name = "notes"
+        , columns =
+            { id   = Entity.serial
+            , body = Entity.text Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- Each entry pairs a contract from Shared with its handler. The
+-- mounted URL comes from the contract's identity, so the frontend's
+-- Service.call routes to the right handler regardless of how the
+-- implementation is bound here.
+services =
+    [ Service.implement Shared.listAllNotes (\_ -> Repo.all notes)
+    , Service.implement Shared.createNote   (\input -> Repo.create notes input)
+    ]

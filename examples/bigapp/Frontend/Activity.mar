@@ -1,0 +1,167 @@
+module Frontend.Activity exposing (page)
+
+
+import Shared exposing
+    ( ActivityVerb(..)
+    , ActivitySubject(..)
+    )
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , vstack
+    , text, subtitle, navigationLink, errorText
+    )
+
+
+-- Activity — team-wide timeline of everything that happened
+-- recently: issue creates / status changes / deletes, comments,
+-- reactions, project create/delete. Fed by the same Backend.Activities
+-- audit log that every writeful handler emits to.
+--
+-- Read-only page. No filters, no controls — keeping it minimal so
+-- the timeline is the focus. If we ever need by-actor / by-project
+-- filtering, this is the obvious place to grow.
+
+
+type alias Model =
+    { items : Maybe (List Shared.ActivityView)
+    , error : Maybe Service.Error
+    }
+
+
+type Msg
+    = ActivityFetched (Result Service.Error (List Shared.ActivityView))
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { items = Nothing, error = Nothing }
+    , Service.call Shared.listRecentActivity { limit = 0 } ActivityFetched
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        ActivityFetched (Ok items) ->
+            ( { model | items = Just items }, Cmd.none )
+
+        ActivityFetched (Err why) ->
+            ( { model | error = Just why }, Cmd.none )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+-- verbCopy renders a verb-specific human-readable sentence for one
+-- activity row. The shape is "<actor> <verb-phrase> <object>", with
+-- the <object> coming from a mix of `extra` (free-form context that
+-- the emit helper attached) and the issue/project metadata that the
+-- view builder denormalized.
+verbCopy : Shared.ActivityView -> String
+verbCopy a =
+    let
+        who = a.actorName
+
+        -- "#42 \"Title\"" or just "#42" when title is missing.
+        issueRef =
+            if a.issueNumber > 0 then
+                if a.issueTitle == "" then
+                    " #" ++ String.fromInt a.issueNumber
+                else
+                    " #" ++ String.fromInt a.issueNumber ++ " \"" ++ a.issueTitle ++ "\""
+            else
+                ""
+    in
+    case a.verb of
+        CreatedIssue ->
+            who ++ " opened issue" ++ issueRef
+
+        ChangedIssueStatus ->
+            who ++ " set" ++ issueRef ++ " to " ++ a.extra
+
+        DeletedIssue ->
+            who ++ " deleted issue" ++ issueRef
+
+        CommentedOnIssue ->
+            who ++ " commented on" ++ issueRef
+
+        DeletedComment ->
+            who ++ " removed a comment on" ++ issueRef
+
+        ReactedToComment ->
+            who ++ " reacted " ++ a.extra ++ " on a comment in" ++ issueRef
+
+        CreatedProject ->
+            who ++ " created project \"" ++ a.extra ++ "\""
+
+        DeletedProject ->
+            who ++ " deleted project \"" ++ a.extra ++ "\""
+
+
+-- activityRow turns a single row into a navigationLink when there's
+-- a useful destination (the issue page), or a plain text row when
+-- there isn't (deleted resource, project-level event). The 2-line
+-- layout matches the iOS Settings row idiom — title on top,
+-- subtitle below.
+activityRow : Shared.ActivityView -> View Msg
+activityRow a =
+    if a.issueNumber > 0 then
+        navigationLink [] Frontend.Routes.issueDetail { id = a.subjectId }
+            (vstack []
+                [ text [] (verbCopy a)
+                , subtitle (Time.toIso a.createdAt)
+                ]
+            )
+    else
+        -- Project events and tombstoned issues don't deep-link.
+        vstack []
+            [ text [] (verbCopy a)
+            , subtitle (Time.toIso a.createdAt)
+            ]
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    navigationStack [ navigationTitle "Activity" ]
+        [ list [] (renderBody model) ]
+
+
+renderBody : Model -> List (View Msg)
+renderBody model =
+    case model.error of
+        Just why ->
+            [ section [ header "Couldn't load" ] [ errorText (Service.errorToString why) ] ]
+
+        Nothing ->
+            case model.items of
+                Nothing ->
+                    [ section [] [ text [] "Loading recent activity…" ] ]
+
+                Just items ->
+                    if List.isEmpty items then
+                        [ section [ header "Quiet" ]
+                            [ subtitle "Nothing has happened on this team recently." ]
+                        ]
+                    else
+                        [ section
+                            [ header ("Recent · " ++ String.fromInt (List.length items))
+                            , footer "Newest first."
+                            ]
+                            (List.map activityRow items)
+                        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/activity"
+        , title  = "Activity"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }
