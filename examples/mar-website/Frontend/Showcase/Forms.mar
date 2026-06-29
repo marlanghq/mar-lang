@@ -6,7 +6,7 @@ import UI exposing
     , form, section, header, footer
     , textField, textArea, button
     , submit, email, password, newPassword, numeric, oneTimeCode, numericCode
-    , text, errorText
+    , text, errorText, empty
     , width, height, chars, lines
     )
 
@@ -185,7 +185,7 @@ view model =
                 , if emailLooksWrong model.email then
                     errorText "Please enter a valid email address."
                   else
-                    text [] ""
+                    empty
                 ]
             , section
                 [ header "actions"
