@@ -4,7 +4,6 @@ module Frontend.GetStarted exposing (page)
 import UI exposing
     ( navigationStack, navigationTitle
     , list, section, header, footer
-    , subtitle
     , paragraph, span
     , code, link
     )
@@ -35,13 +34,12 @@ view _ =
     navigationStack [ navigationTitle "Get started" ]
         [ list []
             [ section [ header "1. Install" ]
-                [ subtitle "Single binary, no package manager."
-                , paragraph
+                [ paragraph
                     [ span [] "Download the "
                     , span [code] "mar"
                     , span [] " binary for your platform from "
                     , span [link "https://github.com/marlanghq/mar-lang/releases"] "the releases page"
-                    , span [] " and drop it on your PATH. Expect Windows to work; day-to-day development happens on macOS and Linux."
+                    , span [] " and drop it on your PATH — one binary, no package manager or runtime to install. Expect Windows to work; day-to-day development happens on macOS and Linux."
                     ]
                 , paragraph
                     [ span [] "Verify with "
@@ -50,9 +48,10 @@ view _ =
                     ]
                 ]
             , section [ header "2. Scaffold a project" ]
-                [ subtitle "mar init my-app"
-                , paragraph
-                    [ span [] "Asks which starter you want (fullstack with auth, fullstack, frontend-only, backend-only, or minimum), then scaffolds a working "
+                [ paragraph
+                    [ span [] "Run "
+                    , span [code] "mar init my-app"
+                    , span [] ". It asks which starter you want (fullstack with auth, fullstack, frontend-only, backend-only, or minimum), then scaffolds a working "
                     , span [code] "my-app/"
                     , span [] " for that shape: a "
                     , span [code] "Main.mar"
@@ -64,9 +63,10 @@ view _ =
                     ]
                 ]
             , section [ header "3. Run it locally" ]
-                [ subtitle "mar dev"
-                , paragraph
-                    [ span [] "Boots a hot-reload dev server: edit a "
+                [ paragraph
+                    [ span [] "Run "
+                    , span [code] "mar dev"
+                    , span [] ". It boots a hot-reload dev server: edit a "
                     , span [code] ".mar"
                     , span [] " file and the browser updates instantly. If an edit doesn't type-check, you get a clear error instead of a blank screen. The admin panel is live at "
                     , span [code] "/_mar/admin"
