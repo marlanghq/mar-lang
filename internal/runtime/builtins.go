@@ -261,6 +261,7 @@ func qualifiedAliasMapping() map[string]string {
 		"Nav.pushTo":                 "navPushTo",
 		"Nav.replaceTo":              "navReplaceTo",
 		"linkTo":                     "linkTo",
+		"always":                     "always",
 		"Service.declare":            "serviceDeclare",
 		"Service.implement":          "serviceImplement",
 		"Service.call":               "serviceCall",
