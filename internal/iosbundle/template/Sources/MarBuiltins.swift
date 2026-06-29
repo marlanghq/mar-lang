@@ -92,6 +92,9 @@ enum MarBuiltins {
         env.define("<=", .fn(MarFn.native(2) { args in .bool(args[0].compareMar(args[1]) <= 0) }))
         env.define(">=", .fn(MarFn.native(2) { args in .bool(args[0].compareMar(args[1]) >= 0) }))
 
+        // always : a -> b -> a — Elm's Basics.always (constant function).
+        env.define("always", .fn(MarFn.native(2) { args in args[0] }))
+
         // MARK: Logic
         env.define("&&", .fn(MarFn.native(2) { args in .bool(asBool(args[0]) && asBool(args[1])) }))
         env.define("||", .fn(MarFn.native(2) { args in .bool(asBool(args[0]) || asBool(args[1])) }))

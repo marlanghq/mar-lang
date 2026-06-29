@@ -1399,6 +1399,9 @@
     def('maybeFilter', maybeFilterImpl);
     def('Maybe.filter', maybeFilterImpl);
 
+    // always : a -> b -> a — Elm's Basics.always (constant function).
+    def('always', native(2, ([a]) => a));
+
     // Tuple — 2-tuple helpers. Tuples are VTuple values with .xs.
     const tupleFirstImpl = native(1, ([t]) => t.xs[0]);
     def('tupleFirst', tupleFirstImpl);

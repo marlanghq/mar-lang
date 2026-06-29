@@ -896,6 +896,12 @@ func stdlib() map[string]Value {
 			return VCtor{Tag: "Nothing"}, nil
 		}),
 
+		// always : a -> b -> a — Elm's Basics.always. Returns its first
+		// argument and ignores the second (a constant function).
+		"always": nativeFn(2, func(args []Value) (Value, error) {
+			return args[0], nil
+		}),
+
 		// Tuple — minimal ops on 2-element tuples. Mar tuples are
 		// VTuple values; these helpers normalize the most common
 		// access / construction patterns.

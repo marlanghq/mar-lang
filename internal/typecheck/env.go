@@ -305,6 +305,14 @@ func baseBindings() map[string]Type {
 	out["*"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
 	out["/"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
 
+	// always : a -> b -> a — Elm's Basics.always. Ignores its second
+	// argument; `always x` is `\_ -> x`. The everyday use is a constant
+	// function, e.g. `subscriptions = always Sub.none`.
+	out["always"] = TForall{
+		Vars: []int{a.ID, b.ID},
+		Body: TArrow{From: a, To: TArrow{From: b, To: a}},
+	}
+
 	// Equality: forall a. a -> a -> Bool. Stays polymorphic because
 	// equalValues is fully structural — records, tuples, lists, ctors
 	// all compare element-wise. Equality is universal; ordering is not.
@@ -3110,6 +3118,8 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		// exports without a prefix. It's the everyday way to build a
 		// URL from a typed Path.
 		"linkTo": "linkTo",
+		// always : a -> b -> a — Elm's Basics.always (bare, no module).
+		"always": "always",
 		// Auth: passwordless email-code authentication.
 		"Auth.config":       "authConfig",
 		"Auth.protect":      "authProtect",
