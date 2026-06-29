@@ -202,6 +202,29 @@ func CheckModuleWith(
 			res.TypeAliases[n.Name] = alias
 			tEnv.aliases[n.Name] = alias
 
+			// A record type alias doubles as a positional constructor, the
+			// same as Elm: `type alias Point = { x : Int, y : Int }` also
+			// introduces `Point : Int -> Int -> Point`, building the record
+			// from its fields in declaration order. Registering it as a
+			// named value (rather than desugaring to an anonymous lambda
+			// before inference) is what keeps the good diagnostics: a
+			// misapplied `Point` reports "the Nth argument to `Point`",
+			// pointing at the offending argument, instead of a generic
+			// "cannot unify" anchored at the whole binding. The runtime
+			// meaning is supplied by a post-typecheck desugar in the loader.
+			if rec, ok := body.(TRecord); ok && rec.Tail == nil {
+				fieldTypes := make([]Type, len(rec.Order))
+				for i, fname := range rec.Order {
+					fieldTypes[i] = rec.Fields[fname]
+				}
+				ctorType := buildCtorType(fieldTypes, body)
+				if len(paramIDs) > 0 {
+					ctorType = TForall{Vars: paramIDs, Body: ctorType}
+				}
+				valueEnv = valueEnv.Bind(n.Name, ctorType)
+				res.ValueTypes[n.Name] = ctorType
+			}
+
 		case *ast.CustomTypeDecl:
 			if reservedTypeNames[n.Name] {
 				return nil, errorf(n.Pos, "the name `%s` is reserved for a built-in type; rename your type (for example, `My%s`)", n.Name, n.Name)
@@ -464,6 +487,7 @@ var qualifiedBuiltinTypes = map[string]bool{
 	"Service.Error":       true,
 	"Auth.RequestOutcome": true,
 	"Auth.VerifyOutcome":  true,
+	"Random.Generator":    true,
 }
 
 func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[string]int) (Type, error) {

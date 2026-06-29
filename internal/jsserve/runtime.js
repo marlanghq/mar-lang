@@ -2726,6 +2726,59 @@
     def('subBatch', subBatchImpl);
     def('Sub.batch', subBatchImpl);
 
+    // Random — Elm-style generators. A Generator a is a unit-thunk (native(1)
+    // ignoring its arg); applying it yields one random value from Math.random.
+    // Random.generate runs it and dispatches the value as a Msg (a Cmd), like
+    // Service.call. The type system keeps Generator a distinct from () -> a.
+    const runGen = (g) => apply(g, VUnit());
+    const asGen = (produce) => native(1, () => produce());
+    const randomGenerate = native(2, ([toMsg, g]) => VEffect(() => {
+      const v = runGen(g);
+      if (currentDispatch) currentDispatch(apply(toMsg, v));
+      return VUnit();
+    }, 'randomGenerate'));
+    def('randomGenerate', randomGenerate);
+    def('Random.generate', randomGenerate);
+    const randomInt = native(2, ([lo, hi]) => {
+      let a = lo.n, b = hi.n;
+      if (a > b) { const t = a; a = b; b = t; }
+      return asGen(() => VInt(a + Math.floor(Math.random() * (b - a + 1))));
+    });
+    def('randomInt', randomInt);
+    def('Random.int', randomInt);
+    const randomConstant = native(1, ([v]) => asGen(() => v));
+    def('randomConstant', randomConstant);
+    def('Random.constant', randomConstant);
+    const randomUniform = native(2, ([first, rest]) => {
+      const items = [first].concat((rest && rest.xs) || []);
+      return asGen(() => items[Math.floor(Math.random() * items.length)]);
+    });
+    def('randomUniform', randomUniform);
+    def('Random.uniform', randomUniform);
+    const randomList = native(2, ([n, g]) => asGen(() => {
+      const count = Math.max(0, n.n);
+      const out = [];
+      for (let i = 0; i < count; i++) out.push(runGen(g));
+      return VList(out);
+    }));
+    def('randomList', randomList);
+    def('Random.list', randomList);
+    const randomPair = native(2, ([g1, g2]) => asGen(() => VTuple([runGen(g1), runGen(g2)])));
+    def('randomPair', randomPair);
+    def('Random.pair', randomPair);
+    const randomMap = native(2, ([f, g]) => asGen(() => apply(f, runGen(g))));
+    def('randomMap', randomMap);
+    def('Random.map', randomMap);
+    const randomMap2 = native(3, ([f, g1, g2]) => asGen(() => apply(apply(f, runGen(g1)), runGen(g2))));
+    def('randomMap2', randomMap2);
+    def('Random.map2', randomMap2);
+    const randomMap3 = native(4, ([f, g1, g2, g3]) => asGen(() => apply(apply(apply(f, runGen(g1)), runGen(g2)), runGen(g3))));
+    def('randomMap3', randomMap3);
+    def('Random.map3', randomMap3);
+    const randomAndThen = native(2, ([f, g]) => asGen(() => runGen(apply(f, runGen(g)))));
+    def('randomAndThen', randomAndThen);
+    def('Random.andThen', randomAndThen);
+
     // Cmd.perform : (a -> msg) -> Task a -> Cmd msg
     // The Task->Cmd bridge (Elm's Task.perform): run the task and deliver
     // its produced value to the MVU loop as a msg. The only way a Task

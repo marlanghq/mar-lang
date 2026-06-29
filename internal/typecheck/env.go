@@ -913,6 +913,31 @@ func stdlibBindings() map[string]Type {
 			Vars: []int{b.ID},
 			Body: TSub(b),
 		},
+
+		// Random — Elm-style generators. `Generator a` is a recipe for a random
+		// value; Random.generate runs it via the runtime RNG and delivers the value
+		// as a Msg (a Cmd, like Service.call). Combinators build recipes purely.
+		// (No float/weighted — Mar has no Float; Decimal analogs can come later. No
+		// Seed/step API yet.)
+		"randomGenerate": TForall{
+			Vars: []int{a.ID, -70},
+			Body: TArrow{From: TArrow{From: a, To: TVar{ID: -70}}, To: TArrow{From: TGenerator(a), To: TCmd(TVar{ID: -70})}},
+		},
+		"randomInt":      TArrow{From: TInt, To: TArrow{From: TInt, To: TGenerator(TInt)}},
+		"randomConstant": TForall{Vars: []int{a.ID}, Body: TArrow{From: a, To: TGenerator(a)}},
+		"randomUniform":  TForall{Vars: []int{a.ID}, Body: TArrow{From: a, To: TArrow{From: TList(a), To: TGenerator(a)}}},
+		"randomList":     TForall{Vars: []int{a.ID}, Body: TArrow{From: TInt, To: TArrow{From: TGenerator(a), To: TGenerator(TList(a))}}},
+		"randomPair":     TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: TGenerator(a), To: TArrow{From: TGenerator(b), To: TGenerator(TTuple{Members: []Type{a, b}})}}},
+		"randomMap":      TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: TArrow{From: a, To: b}, To: TArrow{From: TGenerator(a), To: TGenerator(b)}}},
+		"randomMap2": TForall{
+			Vars: []int{a.ID, b.ID, -71},
+			Body: TArrow{From: TArrow{From: a, To: TArrow{From: b, To: TVar{ID: -71}}}, To: TArrow{From: TGenerator(a), To: TArrow{From: TGenerator(b), To: TGenerator(TVar{ID: -71})}}},
+		},
+		"randomMap3": TForall{
+			Vars: []int{a.ID, b.ID, -72, -73},
+			Body: TArrow{From: TArrow{From: a, To: TArrow{From: b, To: TArrow{From: TVar{ID: -72}, To: TVar{ID: -73}}}}, To: TArrow{From: TGenerator(a), To: TArrow{From: TGenerator(b), To: TArrow{From: TGenerator(TVar{ID: -72}), To: TGenerator(TVar{ID: -73})}}}},
+		},
+		"randomAndThen": TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: TArrow{From: a, To: TGenerator(b)}, To: TArrow{From: TGenerator(a), To: TGenerator(b)}}},
 		// Time — a small Duration type with unit-named smart constructors.
 		//
 		//   Time.seconds : Int -> Duration
@@ -2922,6 +2947,16 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Cmd.perform":        "cmdPerform",
 		"Sub.batch":          "subBatch",
 		"Sub.none":           "subNone",
+		"Random.generate":    "randomGenerate",
+		"Random.int":         "randomInt",
+		"Random.uniform":     "randomUniform",
+		"Random.constant":    "randomConstant",
+		"Random.list":        "randomList",
+		"Random.pair":        "randomPair",
+		"Random.map":         "randomMap",
+		"Random.map2":        "randomMap2",
+		"Random.map3":        "randomMap3",
+		"Random.andThen":     "randomAndThen",
 		"Time.seconds":       "timeSeconds",
 		"Time.minutes":       "timeMinutes",
 		"Time.hours":         "timeHours",

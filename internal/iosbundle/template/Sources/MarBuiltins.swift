@@ -1466,6 +1466,95 @@ enum MarBuiltins {
         env.define("subBatch",  .fn(subBatch))
         env.define("Sub.batch", .fn(subBatch))
 
+        // Random — Elm-style generators. A Generator a is a unit-thunk
+        // (MarFn.native(1) ignoring its arg); applying it to .unit yields one
+        // random value. Random.generate runs it and dispatches the value as a
+        // Msg (a Cmd), mirroring cmdPerform. Sub-generators are run inline via
+        // Eval.apply(g, .unit). NOTE: not compiled in CI (no xcode) — verify on
+        // a real iOS build.
+        let randomGenerate = MarFn.native(2) { args in
+            let toMsg = args[0], g = args[1]
+            return .effect(MarEffect(tag: "randomGenerate") {
+                let v = try Eval.apply(g, .unit)
+                let msg = try Eval.apply(toMsg, v)
+                Task { @MainActor in MarDispatcher.shared.dispatch(msg) }
+                return .unit
+            })
+        }
+        env.define("randomGenerate", .fn(randomGenerate))
+        env.define("Random.generate", .fn(randomGenerate))
+        let randomInt = MarFn.native(2) { args in
+            guard case .int(let lo) = args[0], case .int(let hi) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "(Int, Int)", got: Eval.typeOf(args[0]))
+            }
+            let a = min(lo, hi), b = max(lo, hi)
+            return .fn(MarFn.native(1) { _ in .int(Int.random(in: a...b)) })
+        }
+        env.define("randomInt", .fn(randomInt))
+        env.define("Random.int", .fn(randomInt))
+        let randomConstant = MarFn.native(1) { args in
+            let v = args[0]
+            return .fn(MarFn.native(1) { _ in v })
+        }
+        env.define("randomConstant", .fn(randomConstant))
+        env.define("Random.constant", .fn(randomConstant))
+        let randomUniform = MarFn.native(2) { args in
+            guard case .list(let rest) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
+            }
+            let items = [args[0]] + rest
+            return .fn(MarFn.native(1) { _ in items[Int.random(in: 0..<items.count)] })
+        }
+        env.define("randomUniform", .fn(randomUniform))
+        env.define("Random.uniform", .fn(randomUniform))
+        let randomList = MarFn.native(2) { args in
+            guard case .int(let n) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "Int", got: Eval.typeOf(args[0]))
+            }
+            let g = args[1]
+            return .fn(MarFn.native(1) { _ in
+                var out: [MarValue] = []
+                if n > 0 { for _ in 0..<n { out.append(try Eval.apply(g, .unit)) } }
+                return .list(out)
+            })
+        }
+        env.define("randomList", .fn(randomList))
+        env.define("Random.list", .fn(randomList))
+        let randomPair = MarFn.native(2) { args in
+            let g1 = args[0], g2 = args[1]
+            return .fn(MarFn.native(1) { _ in .tuple([try Eval.apply(g1, .unit), try Eval.apply(g2, .unit)]) })
+        }
+        env.define("randomPair", .fn(randomPair))
+        env.define("Random.pair", .fn(randomPair))
+        let randomMap = MarFn.native(2) { args in
+            let f = args[0], g = args[1]
+            return .fn(MarFn.native(1) { _ in try Eval.apply(f, try Eval.apply(g, .unit)) })
+        }
+        env.define("randomMap", .fn(randomMap))
+        env.define("Random.map", .fn(randomMap))
+        let randomMap2 = MarFn.native(3) { args in
+            let f = args[0], g1 = args[1], g2 = args[2]
+            return .fn(MarFn.native(1) { _ in
+                try Eval.apply(try Eval.apply(f, try Eval.apply(g1, .unit)), try Eval.apply(g2, .unit))
+            })
+        }
+        env.define("randomMap2", .fn(randomMap2))
+        env.define("Random.map2", .fn(randomMap2))
+        let randomMap3 = MarFn.native(4) { args in
+            let f = args[0], g1 = args[1], g2 = args[2], g3 = args[3]
+            return .fn(MarFn.native(1) { _ in
+                try Eval.apply(try Eval.apply(try Eval.apply(f, try Eval.apply(g1, .unit)), try Eval.apply(g2, .unit)), try Eval.apply(g3, .unit))
+            })
+        }
+        env.define("randomMap3", .fn(randomMap3))
+        env.define("Random.map3", .fn(randomMap3))
+        let randomAndThen = MarFn.native(2) { args in
+            let f = args[0], g = args[1]
+            return .fn(MarFn.native(1) { _ in try Eval.apply(try Eval.apply(f, try Eval.apply(g, .unit)), .unit) })
+        }
+        env.define("randomAndThen", .fn(randomAndThen))
+        env.define("Random.andThen", .fn(randomAndThen))
+
         // Cmd.perform : (a -> msg) -> Task a -> Cmd msg
         // The Task->Cmd bridge (Elm's Task.perform): run the task and
         // deliver its produced value to the MVU loop as a msg. The only

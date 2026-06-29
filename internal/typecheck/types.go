@@ -386,6 +386,14 @@ func TSub(a Type) TCon {
 	return TCon{Name: "Sub", Args: []Type{a}}
 }
 
+// TGenerator returns "Generator a" — Elm's Random.Generator: a recipe for a
+// random `a`. Built purely with the Random.* combinators and run by
+// Random.generate, which threads the runtime RNG and delivers the value as a
+// Msg (a Cmd). Frontend-managed randomness; the seed is the runtime's.
+func TGenerator(a Type) TCon {
+	return TCon{Name: "Random.Generator", Args: []Type{a}}
+}
+
 // TEntity returns the parameterized "Entity a" type — an entity describing
 // a SQL table whose row shape is `a`. The row type drives Repo decode and
 // the type of values returned by query operations.

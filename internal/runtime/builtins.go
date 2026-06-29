@@ -14,6 +14,9 @@ func BaseEnv() *Env {
 	for name, v := range subBuiltins() {
 		env.Define(name, v)
 	}
+	for name, v := range randomBuiltins() {
+		env.Define(name, v)
+	}
 	for name, v := range ioBuiltins() {
 		env.Define(name, v)
 	}
@@ -178,6 +181,16 @@ func qualifiedAliasMapping() map[string]string {
 		"Cmd.perform":     "cmdPerform",
 		"Sub.batch":       "subBatch",
 		"Sub.none":        "subNone",
+		"Random.generate": "randomGenerate",
+		"Random.int":      "randomInt",
+		"Random.uniform":  "randomUniform",
+		"Random.constant": "randomConstant",
+		"Random.list":     "randomList",
+		"Random.pair":     "randomPair",
+		"Random.map":      "randomMap",
+		"Random.map2":     "randomMap2",
+		"Random.map3":     "randomMap3",
+		"Random.andThen":  "randomAndThen",
 		"Time.seconds":    "timeSeconds",
 		"Time.minutes":    "timeMinutes",
 		"Time.hours":      "timeHours",

@@ -212,6 +212,16 @@ func Load(root string) (*Project, error) {
 func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByName map[string]*ast.Module) error {
 	modEnv := runtime.NewChildEnv(rEnv)
 
+	// Record type aliases double as positional constructors (Elm-style; see
+	// the typecheck side in check.go). The checker validated those uses
+	// against the alias's field types and reported errors against the alias
+	// name; here we give them their runtime meaning by rewriting each
+	// `Point x y` (or a bare `Point` passed to a higher-order function) into
+	// `\a b -> { x = a, y = b }`. Done before eval — and, because the same
+	// module value is what gets serialized for the client, before that too —
+	// so no constructor concept ever has to cross the wire.
+	desugarRecordAliasCtors(mod, modulesByName)
+
 	// Pass 0: import exposing — bare-name aliases for runtime values
 	// already in env. Mirrors what CheckModuleWith does at the type
 	// level; without this, code like `column [...]` after
@@ -353,6 +363,179 @@ func LookupMain(rEnv *runtime.Env, mods []*ast.Module) (runtime.Value, bool) {
 	}
 	entry := joinName(mods[len(mods)-1].Name)
 	return rEnv.Lookup(entry + ".main")
+}
+
+// desugarRecordAliasCtors rewrites, in place, every use of a record type
+// alias as a constructor into the equivalent record-building lambda. It runs
+// once per module at load time, before evaluation and serialization, so both
+// the Go runtime and the client bundle see only ordinary lambdas.
+func desugarRecordAliasCtors(mod *ast.Module, modulesByName map[string]*ast.Module) {
+	aliases := collectRecordAliases(mod, modulesByName)
+	if len(aliases) == 0 {
+		return
+	}
+	for _, d := range mod.Decls {
+		v, ok := d.(*ast.ValueDecl)
+		if !ok {
+			continue
+		}
+		v.Body = rewriteRecordCtors(v.Body, aliases)
+	}
+}
+
+// collectRecordAliases maps the name a record-alias constructor is written as
+// — bare (`Point`) for the current module's own aliases and for those an
+// import exposes, qualified (`Geometry.Point`) for any imported module's
+// aliases — to that alias's field names in declaration order. This mirrors
+// loadIntoEnv's Pass 0 import-exposing rules, so the set matches exactly what
+// the typechecker accepted as a constructor.
+func collectRecordAliases(mod *ast.Module, modulesByName map[string]*ast.Module) map[string][]string {
+	out := map[string][]string{}
+	for name, fields := range moduleRecordAliasMap(mod) {
+		out[name] = fields
+	}
+	for _, imp := range mod.Imports {
+		impName := joinName(imp.Module)
+		impMod, ok := modulesByName[impName]
+		if !ok {
+			continue
+		}
+		impAliases := moduleRecordAliasMap(impMod)
+		for name, fields := range impAliases {
+			out[impName+"."+name] = fields
+		}
+		if imp.Exposing.All {
+			for name, fields := range impAliases {
+				out[name] = fields
+			}
+			continue
+		}
+		for _, item := range imp.Exposing.Items {
+			if fields, ok := impAliases[item.Name]; ok {
+				out[item.Name] = fields
+			}
+		}
+	}
+	return out
+}
+
+// moduleRecordAliasMap returns the closed-record type aliases declared in m,
+// each as its field names in declaration order. Only closed records become
+// constructors — `type alias Id = Int` and open rows (`{ r | ... }`) do not.
+func moduleRecordAliasMap(m *ast.Module) map[string][]string {
+	out := map[string][]string{}
+	for _, d := range m.Decls {
+		a, ok := d.(*ast.TypeAliasDecl)
+		if !ok {
+			continue
+		}
+		rec, ok := a.Body.(*ast.TypeRecord)
+		if !ok || rec.Extends != "" {
+			continue
+		}
+		fields := make([]string, len(rec.Fields))
+		for i, f := range rec.Fields {
+			fields[i] = f.Name
+		}
+		out[a.Name] = fields
+	}
+	return out
+}
+
+// rewriteRecordCtors walks an expression, replacing each ECtor that names a
+// record alias with `\a1 .. an -> { f1 = a1, ... }` and recursing into every
+// child. Sub-expression slots are reassigned in place; leaf nodes (literals,
+// EVar, EQualified, EFieldAccessor) are returned unchanged.
+func rewriteRecordCtors(e ast.Expr, aliases map[string][]string) ast.Expr {
+	if e == nil {
+		return nil
+	}
+	switch n := e.(type) {
+	case *ast.ECtor:
+		key := n.Name
+		if len(n.Module) > 0 {
+			key = joinName(n.Module) + "." + n.Name
+		}
+		if fields, ok := aliases[key]; ok {
+			return recordCtorLambda(n.Pos, fields)
+		}
+		return n
+	case *ast.EApp:
+		n.Fn = rewriteRecordCtors(n.Fn, aliases)
+		n.Arg = rewriteRecordCtors(n.Arg, aliases)
+		return n
+	case *ast.EBinop:
+		n.Left = rewriteRecordCtors(n.Left, aliases)
+		n.Right = rewriteRecordCtors(n.Right, aliases)
+		return n
+	case *ast.ELambda:
+		n.Body = rewriteRecordCtors(n.Body, aliases)
+		return n
+	case *ast.EIf:
+		n.Cond = rewriteRecordCtors(n.Cond, aliases)
+		n.Then = rewriteRecordCtors(n.Then, aliases)
+		n.Else = rewriteRecordCtors(n.Else, aliases)
+		return n
+	case *ast.ELet:
+		for i := range n.Bindings {
+			n.Bindings[i].Body = rewriteRecordCtors(n.Bindings[i].Body, aliases)
+		}
+		n.Body = rewriteRecordCtors(n.Body, aliases)
+		return n
+	case *ast.ETuple:
+		for i := range n.Members {
+			n.Members[i] = rewriteRecordCtors(n.Members[i], aliases)
+		}
+		return n
+	case *ast.EList:
+		for i := range n.Elements {
+			n.Elements[i] = rewriteRecordCtors(n.Elements[i], aliases)
+		}
+		return n
+	case *ast.ERecord:
+		for i := range n.Fields {
+			n.Fields[i].Value = rewriteRecordCtors(n.Fields[i].Value, aliases)
+		}
+		return n
+	case *ast.ERecordUpdate:
+		n.Record = rewriteRecordCtors(n.Record, aliases)
+		for i := range n.Fields {
+			n.Fields[i].Value = rewriteRecordCtors(n.Fields[i].Value, aliases)
+		}
+		return n
+	case *ast.EFieldAccess:
+		n.Record = rewriteRecordCtors(n.Record, aliases)
+		return n
+	case *ast.ECase:
+		n.Subject = rewriteRecordCtors(n.Subject, aliases)
+		for i := range n.Branches {
+			n.Branches[i].Body = rewriteRecordCtors(n.Branches[i].Body, aliases)
+		}
+		return n
+	case *ast.ENegate:
+		n.Inner = rewriteRecordCtors(n.Inner, aliases)
+		return n
+	default:
+		return e
+	}
+}
+
+// recordCtorLambda builds `\$0 $1 .. -> { f0 = $0, f1 = $1, ... }`. The
+// synthetic `$n` parameter names cannot collide with anything: the lambda
+// body references only its own parameters. A zero-field alias is just the
+// empty record value.
+func recordCtorLambda(pos ast.Pos, fields []string) ast.Expr {
+	if len(fields) == 0 {
+		return &ast.ERecord{Pos: pos}
+	}
+	params := make([]ast.Pattern, len(fields))
+	recFields := make([]ast.RecField, len(fields))
+	for i, f := range fields {
+		name := fmt.Sprintf("$%d", i)
+		params[i] = &ast.PVar{Pos: pos, Name: name}
+		recFields[i] = ast.RecField{Pos: pos, Name: f, Value: &ast.EVar{Pos: pos, Name: name}}
+	}
+	return &ast.ELambda{Pos: pos, Params: params, Body: &ast.ERecord{Pos: pos, Fields: recFields}}
 }
 
 // makeCtorValueLocal builds the runtime value for a custom-type
