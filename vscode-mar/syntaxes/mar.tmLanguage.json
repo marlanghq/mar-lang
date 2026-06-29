@@ -61,7 +61,7 @@
       "patterns": [
         {
           "name": "support.type.mar",
-          "match": "\\b(Int|Float|String|Bool|Char|List|Maybe|Result|Effect|Duration|Time|Order|Dict|Set|View|Inline|Page|Attr|Service|ExposedService|Entity|Endpoint|Route|Auth|Column|Constraint|Path)\\b"
+          "match": "\\b(Int|Float|String|Bool|Char|List|Maybe|Result|Dict|Set|Time|Duration|Order|Task|Cmd|Sub|Generator|View|Page|Path|Attr|Width|Height|KeyedView|Inline|Service|ExposedService|Entity|Column|Constraint|Auth|Method)\\b"
         },
         {
           "name": "constant.language.mar",
