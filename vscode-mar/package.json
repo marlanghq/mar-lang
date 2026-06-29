@@ -1,8 +1,9 @@
 {
   "name": "mar-language-support",
-  "displayName": "mar",
-  "description": "Language support for the mar programming language",
+  "displayName": "Mar Developer Tools",
+  "description": "Syntax highlighting, snippets, and LSP support for the Mar programming language.",
   "version": "0.0.6",
+  "icon": "mar-logo.png",
   "publisher": "mar-lang",
   "repository": {
     "type": "git",
