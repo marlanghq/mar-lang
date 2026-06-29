@@ -1,0 +1,108 @@
+module Main exposing (main)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, list, section, header
+    , hstack
+    , text, textField, button
+    , submit
+    )
+
+
+-- A small interactive todo list. Open with `mar dev examples/todo-app`.
+
+
+type alias Todo =
+    { id : Int
+    , body : String
+    , done : Bool
+    }
+
+
+type alias Model =
+    { nextId : Int
+    , items : List Todo
+    , draft : String
+    }
+
+
+type Msg
+    = DraftChanged String
+    | AddTodo
+    | ToggleAll
+    | ClearAll
+
+
+init : (Model, Cmd Msg)
+init =
+    ({ nextId = 1, items = [], draft = "" }, Cmd.none)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        DraftChanged value ->
+            ({ model | draft = value }, Cmd.none)
+
+        AddTodo ->
+            ( { model
+                | nextId = model.nextId + 1
+                , items = model.items ++ [ { id = model.nextId, body = model.draft, done = False } ]
+                , draft = ""
+              }
+            , Cmd.none
+            )
+
+        ToggleAll ->
+            ( { model | items = List.map (\t -> { id = t.id, body = t.body, done = True }) model.items }
+            , Cmd.none
+            )
+
+        ClearAll ->
+            ({ model | items = [] }, Cmd.none)
+
+
+renderTodo : Todo -> View Msg
+renderTodo t =
+    text [] (String.fromInt t.id ++ ": " ++ t.body)
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Todo" ]
+        [ list []
+            [ section []
+                [ hstack []
+                    [ textField [ submit AddTodo ]
+                        "What needs doing?" model.draft DraftChanged
+                    , button [] AddTodo "Add"
+                    ]
+                ]
+            , section []
+                [ hstack []
+                    [ button [] ToggleAll "Toggle all"
+                    , button [] ClearAll "Clear all"
+                    ]
+                ]
+            , section [ header (String.fromInt (List.length model.items) ++ " items") ]
+                (List.map renderTodo model.items)
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Todos"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]

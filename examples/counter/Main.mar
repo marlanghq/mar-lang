@@ -1,0 +1,60 @@
+module Main exposing (main)
+
+
+-- The classic MVU counter. Open with `mar dev counter.mar`.
+
+
+import UI exposing (navigationStack, navigationTitle, vstack, title, text, button, centered)
+
+
+type alias Model = Int
+
+
+type Msg
+    = Increment
+    | Decrement
+
+
+init : (Model, Cmd Msg)
+init =
+    (0, Cmd.none)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Increment ->
+            (model + 1, Cmd.none)
+
+        Decrement ->
+            (model - 1, Cmd.none)
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Counter" ]
+        [ centered
+            (vstack []
+                [ button [] Increment "+"
+                , text [] (String.fromInt model)
+                , button [] Decrement "-"
+                ]
+            )
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Counter"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]

@@ -1,0 +1,57 @@
+# golangci-lint configuration for mar.
+#
+# Run with: golangci-lint run ./...
+#
+# This complements the standalone `staticcheck` (see staticcheck.conf)
+# by adding errcheck and the rest of golangci-lint's default set. The
+# exclusions below keep it as signal rather than noise:
+#   - ST1005 stays disabled (same rationale as staticcheck.conf: the
+#     runtime's error strings are user-facing module names like
+#     "Entity.define: ...", and lowercasing them would misspell the
+#     language's own modules).
+#   - QF1001 (De Morgan's law) is disabled: standalone staticcheck
+#     doesn't flag it, and the rewrites usually read worse, not better.
+#   - The std-error-handling + common-false-positives presets drop the
+#     well-known errcheck noise (deferred Close, Fprint to stdout/stderr,
+#     os.RemoveAll in cleanup, etc.) so a genuine unchecked error stands
+#     out instead of drowning.
+#   - Generated example bundles (examples/*/dist) are skipped.
+#
+# `unparam` is intentionally NOT enabled: it's useful run ad-hoc to hunt
+# dead parameters, but flags too many intentional cases (API symmetry,
+# error returns kept for consistency) to live in the default set.
+
+version: "2"
+
+linters:
+  default: standard
+
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - -ST1005
+        - -QF1001
+    errcheck:
+      exclude-functions:
+        # Idiomatic `defer tx.Rollback()` — a no-op after a successful
+        # Commit, returns sql.ErrTxDone which is fine to ignore.
+        - (*database/sql.Tx).Rollback
+
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
+    paths:
+      - examples
+    rules:
+      # Test code: unchecked errors on setup/teardown (MkdirAll, Close,
+      # Scan, WriteString, Chdir) are deliberate — a failure there fails
+      # the test anyway.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt

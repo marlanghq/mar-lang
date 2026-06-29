@@ -1,0 +1,9 @@
+{
+  "name": "notes-fullstack",
+  "server": {
+    "port": 3000
+  },
+  "database": {
+    "path": "./notes.db"
+  }
+}

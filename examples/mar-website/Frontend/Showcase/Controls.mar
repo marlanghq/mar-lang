@@ -1,0 +1,158 @@
+module Frontend.Showcase.Controls exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header
+    , hstack
+    , title, button, toggle, spacer
+    , disabled
+    )
+
+
+-- Demo: interactive controls.
+--
+--   button [ disabled flag ] msg label
+--       — taps dispatch `msg`. Pass `disabled True` to grey it out
+--         and ignore taps.
+--
+--   toggle [ disabled flag ] label isOn onChange
+--       — iOS-style switch. The current state is passed in; the
+--         callback receives the new value on flip. Pass
+--         `disabled True` in the attrs list to grey it out and
+--         block flips (same shape as button / textField / picker).
+--
+-- The page is split into two small demos: a +/- counter showing
+-- button + disabled, and a short row of unrelated toggles showing
+-- how the same primitive looks in different states. Nothing is
+-- connected to any real preferences — the toggles just show the
+-- switch flipping.
+
+
+type alias Model =
+    { count        : Int
+    , canIncrement : Bool
+    , canDecrement : Bool
+    , toggleA      : Bool
+    , toggleB      : Bool
+    , toggleC      : Bool
+    }
+
+
+type Msg
+    = Inc
+    | Dec
+    | Reset
+    | CanIncrementChanged Bool
+    | CanDecrementChanged Bool
+    | ToggleAChanged Bool
+    | ToggleBChanged Bool
+    | ToggleCChanged Bool
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { count = 0
+      , canIncrement = True
+      , canDecrement = True
+      , toggleA = True
+      , toggleB = False
+      , toggleC = False
+      }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Inc ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Dec ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+        Reset ->
+            ( { model | count = 0 }, Cmd.none )
+
+        CanIncrementChanged v ->
+            ( { model | canIncrement = v }, Cmd.none )
+
+        CanDecrementChanged v ->
+            ( { model | canDecrement = v }, Cmd.none )
+
+        ToggleAChanged v ->
+            ( { model | toggleA = v }, Cmd.none )
+
+        ToggleBChanged v ->
+            ( { model | toggleB = v }, Cmd.none )
+
+        ToggleCChanged v ->
+            ( { model | toggleC = v }, Cmd.none )
+
+
+-- Counter row: an inner widget that groups − / 0 / + together,
+-- with the current value visually centered between the two action
+-- buttons via the standard two-spacer pattern. The outer row pins
+-- that widget to the leading edge and pushes Reset all the way to
+-- the trailing edge with one more spacer. Nesting the hstack keeps
+-- the − / 0 / + centering math independent of the Reset placement.
+counterRow : Model -> View Msg
+counterRow model =
+    hstack []
+        [ counterWidget model
+        , spacer
+        , button [] Reset "Reset"
+        ]
+
+
+counterWidget : Model -> View Msg
+counterWidget model =
+    hstack []
+        [ button [ disabled (model.canDecrement == False) ] Dec "−"
+        , spacer
+        , title (String.fromInt model.count)
+        , spacer
+        , button [ disabled (model.canIncrement == False) ] Inc "+"
+        ]
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Buttons & toggles" ]
+        [ list []
+            [ section
+                [ header "Counter"
+                , footer "Button taps dispatch +, − and Reset Msgs."
+                ]
+                [ counterRow model
+                ]
+            , section
+                [ header "Button disabled state"
+                , footer "Flip these to grey out + and − above. Disabled buttons ignore taps."
+                ]
+                [ toggle [] "Allow increment" model.canIncrement CanIncrementChanged
+                , toggle [] "Allow decrement" model.canDecrement CanDecrementChanged
+                ]
+            , section
+                [ header "Toggles"
+                , footer "Plain toggles, not connected to anything. Flip them to see the iOS-style switch."
+                ]
+                [ toggle [] "Toggle A" model.toggleA ToggleAChanged
+                , toggle [] "Toggle B" model.toggleB ToggleBChanged
+                , toggle [] "Toggle C" model.toggleC ToggleCChanged
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/controls"
+        , title = "Controls"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

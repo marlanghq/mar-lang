@@ -1,0 +1,94 @@
+module Frontend.NoteDetail exposing (page)
+
+
+import Shared exposing (Role(..))
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section
+    , text, centered
+    )
+
+
+-- Single-note detail page bound to `/notes/{id:Int}`.
+--
+-- Demonstrates Page.dynamicProtected:
+--
+--   - `path = Frontend.Routes.noteDetail` — typed Path, not String.
+--     The framework matches the URL against the pattern and decodes
+--     `{id:Int}` into a typed `params : { id : Int }` record.
+--
+--   - `init`, `update`, `view` all receive User + params as their
+--     leading args, in that order.
+--
+--   - Refactoring `Frontend.Routes.noteDetail` (e.g. switching to
+--     `{slug:String}`) breaks this file in compile time — both the
+--     `params : { id : Int }` annotations and the Service.call use
+--     stop typing.
+
+
+type Model
+    = Loading
+    | Loaded Shared.Note
+    | NotFound
+
+
+type Msg
+    = NoteFetched (Result Service.Error (Maybe Shared.Note))
+
+
+init : Shared.User -> { id : Int } -> (Model, Cmd Msg)
+init _ params =
+    ( Loading
+    , Service.call Shared.getNote { id = params.id } NoteFetched
+    )
+
+
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Cmd Msg)
+update _ _ msg model =
+    case msg of
+        NoteFetched (Ok (Just note)) ->
+            ( Loaded note, Cmd.none )
+
+        NoteFetched (Ok Nothing) ->
+            ( NotFound, Cmd.none )
+
+        NoteFetched (Err _) ->
+            ( NotFound, Cmd.none )
+
+
+-- No explicit Back button: SwiftUI's NavigationStack provides the
+-- native back-arrow + edge-swipe gesture for free once you push a
+-- destination, so the page chrome stays minimal.
+view : Shared.User -> { id : Int } -> Model -> View Msg
+view _ params model =
+    navigationStack
+        [ navigationTitle ("Note #" ++ String.fromInt params.id)
+        ]
+        [ case model of
+            Loading ->
+                centered (text [] "Loading…")
+
+            Loaded note ->
+                form
+                    [ section []
+                        [ text [] note.body
+                        , text [] (Time.toIso note.createdAt)
+                        ]
+                    ]
+
+            NotFound ->
+                centered (text [] "This note does not exist or you don't have access to it.")
+        ]
+
+
+page : Page
+page =
+    Page.dynamicProtected
+        { path = Frontend.Routes.noteDetail
+        , title = "Note"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ _ _ -> Sub.none
+        }

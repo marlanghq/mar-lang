@@ -1,0 +1,115 @@
+module Backend.Pets exposing (services, deleteUserPets)
+
+
+import Shared
+import Backend.Expenses
+
+
+-- Pets are optional tags for expenses, managed on their own screen.
+-- This module owns the pets entity and the small CRUD around it.
+pets : Entity Shared.Pet
+pets =
+    Entity.define
+        { name = "pets"
+        , columns =
+            { id        = Entity.serial
+            , name      = Entity.text Entity.notNull
+            , kind      = Entity.text Entity.notNull
+            , userId    = Entity.int Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ===== Read =====
+
+
+listPetsImpl : () -> Shared.User -> Task (List Shared.Pet)
+listPetsImpl _ user =
+    Repo.findBy pets { userId = user.id }
+        |> Task.map sortByName
+
+
+sortByName : List Shared.Pet -> List Shared.Pet
+sortByName items =
+    List.sortWith
+        (\a b ->
+            if a.name < b.name then
+                LT
+            else if a.name > b.name then
+                GT
+            else
+                EQ
+        )
+        items
+
+
+-- ===== Create =====
+
+
+addPetImpl : { name : String, kind : String } -> Shared.User -> Task Shared.AddPetOutcome
+addPetImpl input user =
+    if String.trim input.name == "" then
+        Task.succeed Shared.PetNameEmpty
+
+    else
+        Time.now
+            |> Task.andThen
+                (\now ->
+                    Repo.create pets
+                        { name      = input.name
+                        , kind      = input.kind
+                        , userId    = user.id
+                        , createdAt = now
+                        }
+                        |> Task.map Shared.PetAdded
+                )
+
+
+-- ===== Delete =====
+
+
+-- Deleting a pet keeps its expenses (the money was spent) — it re-tags
+-- them to "all pets" first, then removes the pet row. Ownership-checked;
+-- a missing/foreign id is a silent success.
+deletePetImpl : { id : Int } -> Shared.User -> Task ()
+deletePetImpl input user =
+    Repo.findById pets input.id
+        |> Task.andThen
+            (\found ->
+                case found of
+                    Just pet ->
+                        if pet.userId == user.id then
+                            Backend.Expenses.reassignPetToAll input.id user
+                                |> Task.andThen (\_ -> Repo.deleteById pets input.id)
+
+                        else
+                            Task.succeed ()
+
+                    Nothing ->
+                        Task.succeed ()
+            )
+
+
+-- Drop every pet the user owns. Account deletion calls this after the
+-- expenses are already gone.
+deleteUserPets : Shared.User -> Task ()
+deleteUserPets user =
+    Repo.findBy pets { userId = user.id }
+        |> Task.andThen
+            (\owned ->
+                Task.sequence
+                    (List.map (\p -> Repo.deleteById pets p.id) owned)
+                    |> Task.map (\_ -> ())
+            )
+
+
+-- ===== Service wiring =====
+
+
+services =
+    [ Auth.protect Shared.listPets  listPetsImpl
+    , Auth.protect Shared.addPet    addPetImpl
+    , Auth.protect Shared.deletePet deletePetImpl
+    ]

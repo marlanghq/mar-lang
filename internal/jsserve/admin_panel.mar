@@ -1,0 +1,535 @@
+module Admin.Panel exposing (..)
+
+-- The Mar-native admin panel. Framework-owned source, embedded in the `mar`
+-- binary, compiled at server boot and served at /_mar/admin. Invisible to user
+-- project code. Three pages, all in one program:
+--
+--   • login     (public)              → /_mar/admin/login
+--   • dashboard (admin-gated)         → /_mar/admin
+--   • table row browser (admin+param) → /_mar/admin/table/{name}
+--
+-- Auth: the login page calls Mar.Admin.requestCode/verifyCode (which POST to
+-- the framework's /_mar/admin/auth/* and set the admin session cookie). The
+-- dashboard + browser read privileged state through the Mar.Admin.*
+-- introspection capability, which requires an AdminSession only an admin page
+-- is handed. On a 401 the runtime sends the operator back to /_mar/admin/login.
+--
+-- Records are structural, so these aliases line up field-for-field with the
+-- Mar.Admin.* type schemes (typecheck/env.go).
+
+
+type alias ServerInfo =
+    { marVersion : String
+    , goVersion : String
+    , buildTarget : String
+    , bootedAtMs : Int
+    , requestsTotal : Int
+    , requestsInFlight : Int
+    }
+
+
+type alias EntityStat =
+    { name : String
+    , rowCount : Int
+    }
+
+
+type alias DbStats =
+    { dbSizeBytes : Int
+    , walSizeBytes : Int
+    , entities : List EntityStat
+    , frameworkTables : List EntityStat
+    }
+
+
+type alias Request =
+    { atMs : Int
+    , method : String
+    , path : String
+    , status : Int
+    , durationMs : Int
+    , userEmail : String
+    }
+
+
+type alias Backup =
+    { id : String
+    , sizeBytes : Int
+    , createdAtMs : Int
+    }
+
+
+type Remote a
+    = Loading
+    | Loaded a
+    | Failed String
+
+
+-- Shared, polymorphic helpers (no Msg of their own).
+row : String -> String -> View msg
+row label value =
+    -- The classic label/value look: two equal columns. `width fill` on
+    -- each text claims half the row, so the value sits near the
+    -- midpoint — closer to the label, not pinned to the far edge like a
+    -- spacer would. `width fill` on the hstack itself makes the row
+    -- stretch when it sits inside a flex parent (the navigationLink
+    -- table rows); in a plain section row it's inert (block context).
+    UI.hstack [ UI.width UI.fill ]
+        [ UI.text [ UI.width UI.fill ] label
+        , UI.text [ UI.width UI.fill ] value
+        ]
+
+
+-- Human-readable byte size. Mar's `/` is integer division, so we scale
+-- the value to tenths to get one decimal place without any float type.
+-- 4096 → "4 KB", 2696 → "2.6 KB", 2632712 → "2.5 MB". (1024-based units;
+-- truncates rather than rounds — fine for a size readout.)
+humanizeBytes : Int -> String
+humanizeBytes bytes =
+    if bytes < 1024 then
+        String.fromInt bytes ++ " B"
+
+    else if bytes < 1048576 then
+        sizeWithUnit bytes 1024 "KB"
+
+    else if bytes < 1073741824 then
+        sizeWithUnit bytes 1048576 "MB"
+
+    else
+        sizeWithUnit bytes 1073741824 "GB"
+
+
+sizeWithUnit : Int -> Int -> String -> String
+sizeWithUnit bytes unit unitLabel =
+    let
+        tenths =
+            bytes * 10 / unit
+
+        whole =
+            tenths / 10
+
+        frac =
+            tenths - whole * 10
+    in
+    if frac == 0 then
+        String.fromInt whole ++ " " ++ unitLabel
+
+    else
+        String.fromInt whole ++ "." ++ String.fromInt frac ++ " " ++ unitLabel
+
+
+maybeError : Maybe String -> View msg
+maybeError maybeErr =
+    case maybeErr of
+        Nothing ->
+            UI.empty
+
+        Just m ->
+            UI.errorText m
+
+
+
+-- == Login (public) ===================================================
+
+
+type LoginStage
+    = EmailEntry
+    | CodeEntry
+
+
+type alias LoginModel =
+    { email : String
+    , code : String
+    , stage : LoginStage
+    , error : Maybe String
+    , busy : Bool
+    }
+
+
+type LoginMsg
+    = EmailChanged String
+    | CodeChanged String
+    | SendCode
+    | CodeSent (Result String ())
+    | DoVerify
+    | CodeVerified (Result String { email : String })
+
+
+loginInit : ( LoginModel, Cmd LoginMsg )
+loginInit =
+    ( { email = "", code = "", stage = EmailEntry, error = Nothing, busy = False }
+    , Cmd.none
+    )
+
+
+loginUpdate : LoginMsg -> LoginModel -> ( LoginModel, Cmd LoginMsg )
+loginUpdate msg model =
+    case msg of
+        EmailChanged v ->
+            ( { model | email = v, error = Nothing }, Cmd.none )
+
+        CodeChanged v ->
+            ( { model | code = v, error = Nothing }, Cmd.none )
+
+        SendCode ->
+            if model.busy then
+                ( model, Cmd.none )
+
+            else
+                ( { model | busy = True, error = Nothing }
+                , Mar.Admin.requestCode { email = model.email } CodeSent
+                )
+
+        CodeSent (Ok ()) ->
+            ( { model | busy = False, stage = CodeEntry }, Cmd.none )
+
+        CodeSent (Err why) ->
+            ( { model | busy = False, error = Just why }, Cmd.none )
+
+        DoVerify ->
+            if model.busy then
+                ( model, Cmd.none )
+
+            else
+                ( { model | busy = True, error = Nothing }
+                , Mar.Admin.verifyCode { email = model.email, code = model.code } CodeVerified
+                )
+
+        CodeVerified (Ok _) ->
+            -- Cookie is set; land on the dashboard.
+            ( model, Nav.replace "/_mar/admin" )
+
+        CodeVerified (Err why) ->
+            ( { model | busy = False, error = Just why }, Cmd.none )
+
+
+loginView : LoginModel -> View LoginMsg
+loginView model =
+    UI.navigationStack [ UI.navigationTitle "mar admin" ]
+        [ UI.form
+            (case model.stage of
+                EmailEntry ->
+                    [ UI.section []
+                        [ UI.text [] "Sign in with the email registered in mar.json[\"admins\"]."
+                        , UI.textField [ UI.email, UI.submit SendCode, UI.width (UI.chars 30) ]
+                            "Email" model.email EmailChanged
+                        , maybeError model.error
+                        ]
+                    , UI.section []
+                        [ UI.button [ UI.disabled model.busy ] SendCode "Send code" ]
+                    ]
+
+                CodeEntry ->
+                    [ UI.section []
+                        [ UI.text [] ("Enter the code sent to " ++ model.email ++ ".")
+                        , UI.textField [ UI.numericCode, UI.submit DoVerify, UI.width (UI.chars 6) ]
+                            "Code" model.code CodeChanged
+                        , maybeError model.error
+                        ]
+                    , UI.section []
+                        [ UI.button [ UI.disabled model.busy ] DoVerify "Verify" ]
+                    ]
+            )
+        ]
+
+
+loginPage : Page
+loginPage =
+    Page.create
+        { path = "/_mar/admin/login"
+        , title = "mar admin"
+        , init = loginInit
+        , update = loginUpdate
+        , view = loginView
+        , subscriptions = \_ -> Sub.none
+        }
+
+
+
+-- == Dashboard (admin-gated) ==========================================
+
+
+type alias Model =
+    { info : Remote ServerInfo
+    , db : Remote DbStats
+    , requests : Remote (List Request)
+    , backups : Remote (List Backup)
+    }
+
+
+type Msg
+    = ServerInfoFetched (Result String ServerInfo)
+    | DbStatsFetched (Result String DbStats)
+    | RecentRequestsFetched (Result String (List Request))
+    | BackupsFetched (Result String (List Backup))
+    | Refresh
+    | SignOut
+    | SignedOut (Result String ())
+
+
+init : AdminSession -> ( Model, Cmd Msg )
+init admin =
+    ( { info = Loading, db = Loading, requests = Loading, backups = Loading }
+    , Mar.Admin.serverInfo admin ServerInfoFetched
+    )
+
+
+update : AdminSession -> Msg -> Model -> ( Model, Cmd Msg )
+update admin msg model =
+    case msg of
+        ServerInfoFetched (Ok info) ->
+            ( { model | info = Loaded info }, Mar.Admin.dbStats admin DbStatsFetched )
+
+        ServerInfoFetched (Err why) ->
+            ( { model | info = Failed why }, Mar.Admin.dbStats admin DbStatsFetched )
+
+        DbStatsFetched (Ok db) ->
+            ( { model | db = Loaded db }, Mar.Admin.recentRequests admin RecentRequestsFetched )
+
+        DbStatsFetched (Err why) ->
+            ( { model | db = Failed why }, Mar.Admin.recentRequests admin RecentRequestsFetched )
+
+        RecentRequestsFetched (Ok requests) ->
+            ( { model | requests = Loaded requests }, Mar.Admin.listBackups admin BackupsFetched )
+
+        RecentRequestsFetched (Err why) ->
+            ( { model | requests = Failed why }, Mar.Admin.listBackups admin BackupsFetched )
+
+        BackupsFetched (Ok bs) ->
+            ( { model | backups = Loaded bs }, Cmd.none )
+
+        BackupsFetched (Err why) ->
+            ( { model | backups = Failed why }, Cmd.none )
+
+        Refresh ->
+            -- Re-run the whole fetch chain: reset every section to Loading
+            -- and re-fire serverInfo (which cascades to db/requests/backups).
+            ( { info = Loading, db = Loading, requests = Loading, backups = Loading }
+            , Mar.Admin.serverInfo admin ServerInfoFetched
+            )
+
+        SignOut ->
+            ( model, Mar.Admin.signOut SignedOut )
+
+        SignedOut _ ->
+            ( model, Nav.replace "/_mar/admin/login" )
+
+
+serverSection : Remote ServerInfo -> View Msg
+serverSection remote =
+    case remote of
+        Loading ->
+            UI.section [ UI.header "Server" ] [ UI.text [] "Loading…" ]
+
+        Failed why ->
+            UI.section [ UI.header "Server" ] [ UI.errorText why ]
+
+        Loaded info ->
+            UI.section [ UI.header "Server" ]
+                [ row "Mar version" info.marVersion
+                , row "Go version" info.goVersion
+                , row "Build target" info.buildTarget
+                , row "Requests (total)" (String.fromInt info.requestsTotal)
+                , row "Requests (in flight)" (String.fromInt info.requestsInFlight)
+                ]
+
+
+dbSizeSection : Remote DbStats -> View Msg
+dbSizeSection remote =
+    case remote of
+        Loading ->
+            UI.section [ UI.header "Database" ] [ UI.text [] "Loading…" ]
+
+        Failed why ->
+            UI.section [ UI.header "Database" ] [ UI.errorText why ]
+
+        Loaded db ->
+            UI.section [ UI.header "Database" ]
+                [ row "DB size" (humanizeBytes db.dbSizeBytes)
+                , row "WAL size" (humanizeBytes db.walSizeBytes)
+                ]
+
+
+tablePath : Path { name : String }
+tablePath =
+    "/_mar/admin/table/{name:String}"
+
+
+tableLink : EntityStat -> View Msg
+tableLink stat =
+    -- Same label/value layout as the section rows (two equal columns via
+    -- `row`). The navigationLink is itself a flex row (content + absolute
+    -- chevron); `row`'s own `width fill` is what gives the inner hstack
+    -- real width there — without it the hstack hugs and the two texts
+    -- collapse together, which is the bug this used to have.
+    UI.navigationLink [] tablePath { name = stat.name }
+        (row stat.name (String.fromInt stat.rowCount ++ " rows"))
+
+
+tablesSection : String -> List EntityStat -> View Msg
+tablesSection heading stats =
+    UI.section [ UI.header heading ] (List.map tableLink stats)
+
+
+tableGroups : Remote DbStats -> List (View Msg)
+tableGroups remote =
+    case remote of
+        Loaded db ->
+            [ tablesSection "Tables" db.entities
+            , tablesSection "Framework tables" db.frameworkTables
+            ]
+
+        _ ->
+            [ UI.empty ]
+
+
+requestRow : Request -> View Msg
+requestRow req =
+    row (req.method ++ " " ++ req.path) (String.fromInt req.status)
+
+
+requestsSection : Remote (List Request) -> View Msg
+requestsSection remote =
+    case remote of
+        Loading ->
+            UI.section [ UI.header "Recent requests" ] [ UI.text [] "Loading…" ]
+
+        Failed why ->
+            UI.section [ UI.header "Recent requests" ] [ UI.errorText why ]
+
+        Loaded requests ->
+            UI.section [ UI.header "Recent requests" ] (List.map requestRow requests)
+
+
+backupRow : Backup -> View Msg
+backupRow b =
+    UI.vstack []
+        [ row b.id (humanizeBytes b.sizeBytes)
+        , UI.paragraph
+            [ UI.span [ UI.link ("/_mar/admin/api/database-backup/" ++ b.id) ] "Download" ]
+        ]
+
+
+backupsSection : Remote (List Backup) -> View Msg
+backupsSection remote =
+    case remote of
+        Loading ->
+            UI.section [ UI.header "Database backups" ] [ UI.text [] "Loading…" ]
+
+        Failed why ->
+            UI.section [ UI.header "Database backups" ] [ UI.errorText why ]
+
+        Loaded bs ->
+            UI.section [ UI.header "Database backups" ] (List.map backupRow bs)
+
+
+view : AdminSession -> Model -> View Msg
+view admin model =
+    UI.navigationStack
+        [ UI.navigationTitle "Mar Admin"
+        , UI.topBarTrailing
+            (UI.hstack []
+                [ UI.button [] Refresh "Refresh"
+                , UI.button [] SignOut "Sign out"
+                ]
+            )
+        ]
+        [ UI.list []
+            ([ serverSection model.info
+             , dbSizeSection model.db
+             ]
+                ++ tableGroups model.db
+                ++ [ requestsSection model.requests
+                   , backupsSection model.backups
+                   ]
+            )
+        ]
+
+
+page : Page
+page =
+    Page.adminProtected
+        { path = "/_mar/admin"
+        , title = "Mar Admin"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ _ -> Sub.none
+        }
+
+
+
+-- == Per-table row browser (admin + URL param) ========================
+
+
+type alias TableModel =
+    { rows : Remote (List (Dict String String)) }
+
+
+type TableMsg
+    = TableRowsFetched (Result String (List (Dict String String)))
+
+
+tableInit : AdminSession -> { name : String } -> ( TableModel, Cmd TableMsg )
+tableInit admin params =
+    ( { rows = Loading }
+    , Mar.Admin.listEntityRows admin params.name TableRowsFetched
+    )
+
+
+tableUpdate : AdminSession -> { name : String } -> TableMsg -> TableModel -> ( TableModel, Cmd TableMsg )
+tableUpdate _ _ msg model =
+    case msg of
+        TableRowsFetched (Ok rs) ->
+            ( { model | rows = Loaded rs }, Cmd.none )
+
+        TableRowsFetched (Err why) ->
+            ( { model | rows = Failed why }, Cmd.none )
+
+
+-- One DB row as a grouped card of `column: value` lines (mobile-first — the
+-- LabeledContent / Settings-style record layout).
+rowCard : Dict String String -> View TableMsg
+rowCard dict =
+    UI.section []
+        (List.map (\pair -> row (Tuple.first pair) (Tuple.second pair)) (Dict.toList dict))
+
+
+tableView : AdminSession -> { name : String } -> TableModel -> View TableMsg
+tableView _ params model =
+    UI.navigationStack
+        [ UI.navigationTitle params.name ]
+        [ UI.list []
+            (case model.rows of
+                Loading ->
+                    [ UI.section [] [ UI.text [] "Loading…" ] ]
+
+                Failed why ->
+                    [ UI.section [] [ UI.errorText why ] ]
+
+                Loaded rs ->
+                    case rs of
+                        [] ->
+                            [ UI.section [] [ UI.text [] "This table has no rows." ] ]
+
+                        _ ->
+                            List.map rowCard rs
+            )
+        ]
+
+
+tablePage : Page
+tablePage =
+    Page.dynamicAdminProtected
+        { path = tablePath
+        , title = "Table"
+        , init = tableInit
+        , update = tableUpdate
+        , view = tableView
+        , subscriptions = \_ _ _ -> Sub.none
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ loginPage, page, tablePage ]

@@ -1,0 +1,84 @@
+module Main exposing (main)
+
+
+import UI exposing (navigationStack, navigationTitle, form, section, text)
+
+
+-- A real clock: it ticks on its own, once per second, with no backend and
+-- no user interaction. This is the canonical `Sub` example.
+--
+--   subscriptions = Time.every (Time.seconds 1) Tick
+--
+-- `Time.every` is a subscription — a standing declaration the runtime
+-- reconciles against the model after every update: started while the page
+-- returns it, torn down when the page returns it no longer (e.g. on
+-- navigation). The first tick fires after one interval, so we seed the
+-- initial time with `Cmd.perform Tick Time.now` in init (Elm's idiom).
+--
+-- Open with: mar dev examples/clock
+
+
+type alias Model =
+    { now : Maybe Time
+    , ticks : Int
+    }
+
+
+type Msg
+    = Tick Time
+
+
+init : (Model, Cmd Msg)
+init =
+    ({ now = Nothing, ticks = 0 }, Cmd.perform Tick Time.now)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Tick t ->
+            ({ now = Just t, ticks = model.ticks + 1 }, Cmd.none)
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Clock" ]
+        [ form
+            [ section []
+                [ text [] (timeLabel model.now)
+                , text [] ("Ticks: " ++ String.fromInt model.ticks)
+                ]
+            ]
+        ]
+
+
+timeLabel : Maybe Time -> String
+timeLabel mt =
+    case mt of
+        Just t ->
+            "Time: " ++ Time.toIso t
+
+        Nothing ->
+            "(waiting for first tick)"
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Time.every (Time.seconds 1) Tick
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Clock"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]

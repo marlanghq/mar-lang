@@ -1,0 +1,56 @@
+# SwiftLint config for the generated iOS app.
+#
+# The Swift code under Sources/ is the mar runtime ported to iOS — an
+# interpreter that walks user-supplied Mar values, environments, and
+# expressions. Several of SwiftLint's defaults conflict with idioms
+# common to interpreters; this file relaxes those without weakening
+# the rules that catch real issues.
+
+disabled_rules:
+  # The interpreter uses one-letter names for the universal "value /
+  # environment / expression / message" parameters (`v`, `e`, `m`,
+  # `s`, `c`). Renaming each to `value`/`environment`/etc. would add
+  # noise without clarity in tight pattern-match arms.
+  - identifier_name
+
+  # We deliberately align grouped definitions by padding commas so
+  # related rows read as a column ("True" / "False", "Just" /
+  # "Nothing"). The rule flags that style as a violation.
+  - comma
+
+opt_in_rules:
+  - explicit_init
+  - first_where
+  - last_where
+  - prefer_zero_over_explicit_init
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - toggle_bool
+
+# Interpreters and pattern dispatchers naturally produce long, branchy
+# functions; raising the thresholds keeps the rule useful for genuinely
+# bloated code without screaming about the eval/match core.
+cyclomatic_complexity:
+  warning: 50
+  error: 80
+
+# `MarBuiltins.makeEnv` defines every runtime builtin in one place
+# (organized by MARK sections); `MarEval.eval` dispatches every Expr
+# variant. Both are intentionally long-by-nature; splitting them just
+# to placate the linter would scatter the dispatch table.
+function_body_length:
+  warning: 200
+  error: 400
+
+type_body_length:
+  warning: 600
+  error: 1000
+
+file_length:
+  warning: 800
+  error: 1500
+
+line_length:
+  warning: 140
+  ignores_comments: true
+  ignores_urls: true

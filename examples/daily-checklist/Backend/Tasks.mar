@@ -1,0 +1,287 @@
+module Backend.Tasks exposing (services, deleteAllForUser)
+
+
+import Shared
+
+
+-- Tasks domain, server-side. Owns the SQLite entity, the per-user
+-- business rules, and exports its slice of the services list.
+--
+-- Per-user isolation: every read filters by `userId = caller.id` and
+-- every write either sets `userId = caller.id` (on create) or checks
+-- it matches the caller before mutating (on toggle / delete). A
+-- malicious client guessing IDs can't read or modify another user's
+-- rows because the row simply doesn't appear in the per-user query.
+tasks : Entity Shared.TodoItem
+tasks =
+    Entity.define
+        { name = "tasks"
+        , columns =
+            { id        = Entity.serial
+            , name      = Entity.text Entity.notNull
+            , done      = Entity.bool Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            , userId    = Entity.int Entity.notNull
+            , position  = Entity.int Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ===== Read =====
+
+
+listTasksImpl : () -> Shared.User -> Task (List Shared.TodoItem)
+listTasksImpl _ user =
+    Repo.findBy tasks { userId = user.id }
+        |> Task.map sortByPosition
+
+
+-- Sort ascending by position — the user controls the order via the
+-- reorder gesture. createdAt ties are unlikely (positions are unique
+-- per user via the addTask seeding logic) so this is a stable sort
+-- in practice; if a tie ever sneaks in, the comparison falls through
+-- to EQ and List.sortWith preserves input order.
+sortByPosition : List Shared.TodoItem -> List Shared.TodoItem
+sortByPosition items =
+    List.sortWith
+        (\a b ->
+            if a.position < b.position then
+                LT
+            else if a.position > b.position then
+                GT
+            else
+                EQ
+        )
+        items
+
+
+-- ===== Create =====
+
+
+addTaskImpl : { name : String } -> Shared.User -> Task Shared.AddTaskOutcome
+addTaskImpl input user =
+    -- Server-side gate: clients can disable the button but the
+    -- backend is the only layer end-to-end. Reject empty /
+    -- whitespace-only names regardless of how the call arrived
+    -- (curl, replayed request, scripted client). The rejection is a
+    -- typed outcome in the contract, not an abort: the frontend
+    -- cases on Shared.NameEmpty instead of matching an error string.
+    if String.trim input.name == "" then
+        Task.succeed Shared.NameEmpty
+    else
+        -- New tasks land at the FRONT of the list (position =
+        -- min(existing) - 1). Rationale: a long list scrolled to
+        -- the top can hide a newly-added task at the bottom — the
+        -- operator hits Add, sees no visible change, and assumes
+        -- the request failed. Putting new rows at index 0 makes
+        -- "I just added this" the most prominent thing on screen.
+        --
+        -- The min-1 (instead of "shift everything by +1") approach
+        -- avoids touching N existing rows on every insert: only the
+        -- new row writes to the DB. Position values drift negative
+        -- over time, which is fine — they're just sort keys. Any
+        -- subsequent user-driven reorder normalizes back to 0..N-1
+        -- via reorderTasksImpl.
+        Repo.findBy tasks { userId = user.id }
+            |> Task.andThen
+                (\existing ->
+                    Time.now
+                        |> Task.andThen
+                            (\now ->
+                                Repo.create tasks
+                                    { name      = input.name
+                                    , done      = False
+                                    , createdAt = now
+                                    , userId    = user.id
+                                    , position  = frontPosition existing
+                                    }
+                                    |> Task.map Shared.Added
+                            )
+                )
+
+
+-- frontPosition returns a sort-key strictly less than every
+-- existing task's position, so a newly-inserted row lands at the
+-- TOP of the sorted-by-position list. Concretely:
+--
+--   - empty list → 0 (the very first task sits at position 0)
+--   - all positions positive → 0 (still less than the min)
+--   - min position ≤ 0 → min - 1 (decreases monotonically as
+--     more rows are prepended)
+--
+-- The acc-only-decreases invariant comes from `t.position <= acc`:
+-- a task with a higher position than acc is ignored (the new
+-- task's position is already smaller than it); a task at-or-below
+-- acc pulls acc down to (t.position - 1). With seed 0, the result
+-- is min(0, min(positions) - 1) — always less than every
+-- existing position.
+--
+-- Mar's List.foldl signature is `(b -> a -> b) -> b -> List a -> b`
+-- — accumulator first, element second (Elm-style). The lambda
+-- takes (acc, t).
+frontPosition : List Shared.TodoItem -> Int
+frontPosition existing =
+    List.foldl
+        (\acc t -> if t.position <= acc then t.position - 1 else acc)
+        0
+        existing
+
+
+-- ===== Update =====
+--
+-- toggleTaskImpl + deleteTaskImpl share the same "find first, check
+-- ownership, then act" pattern: the Repo primitive operates by id
+-- only, so we read the row to verify userId before mutating. A row
+-- that is missing OR owned by someone else looks identical from the
+-- outside (toggle answers Nothing, delete succeeds idempotently), so
+-- nothing leaks about whether the id exists at all.
+
+
+toggleTaskImpl : { id : Int, done : Bool } -> Shared.User -> Task (Maybe Shared.TodoItem)
+toggleTaskImpl input user =
+    Repo.findById tasks input.id
+        |> Task.andThen
+            (\found ->
+                case found of
+                    Just task ->
+                        if task.userId == user.id then
+                            Repo.update tasks input.id { done = input.done }
+                        else
+                            -- Someone else's row: answer exactly like a
+                            -- missing one. The Maybe in the contract
+                            -- already models absence; no abort needed.
+                            Task.succeed Nothing
+
+                    Nothing ->
+                        Task.succeed Nothing
+            )
+
+
+deleteTaskImpl : { id : Int } -> Shared.User -> Task ()
+deleteTaskImpl input user =
+    Repo.findById tasks input.id
+        |> Task.andThen
+            (\found ->
+                case found of
+                    Just task ->
+                        if task.userId == user.id then
+                            Repo.deleteById tasks input.id
+                        else
+                            -- Not yours: succeed without deleting. The
+                            -- goal state ("that row is not in YOUR
+                            -- list") already holds, and failing would
+                            -- leak that the id exists.
+                            Task.succeed ()
+
+                    Nothing ->
+                        -- Already gone (another device deleted it
+                        -- first): delete is idempotent, so this is
+                        -- success, not an error.
+                        Task.succeed ()
+            )
+
+
+-- ===== Reset =====
+--
+-- Naive O(N) per-row update — fine because the worst case is the
+-- single user's task list [] (maybe 20 rows). If it ever grew, the
+-- shape "UPDATE tasks SET done = 0 WHERE userId = ?" would do it
+-- in one statement; today we don't expose raw SQL from user code,
+-- so the per-row Task.sequence is the idiomatic option.
+resetAllImpl : () -> Shared.User -> Task ()
+resetAllImpl _ user =
+    Repo.findBy tasks { userId = user.id }
+        |> Task.andThen
+            (\all ->
+                Task.sequence
+                    (List.map
+                        (\t -> Repo.update tasks t.id { done = False })
+                        all
+                    )
+                    |> Task.map (\_ -> ())
+            )
+
+
+-- ===== Reorder =====
+--
+-- The frontend's reorder gesture (UI.onMove on the tasks section)
+-- emits `(from, to)` indices; the page applies `List.move` locally
+-- for instant feedback, then sends the FULL re-ordered ID list to
+-- this service. We walk it with indexedMap to set
+-- `position = idx` per row.
+--
+-- Why send the whole ordered list (and not just the delta)? Two
+-- reasons:
+--   - Race safety: if a stale move arrives out of order, we still
+--     converge to the most-recent client view of the order.
+--   - Simplicity: one round-trip, one transaction; no separate
+--     "find the moved row, compute delta" math.
+--
+-- Ownership check stays per-row: every id we touch must belong to
+-- the calling user. We don't validate that the ID set EXACTLY
+-- matches the user's full list — that'd reject legitimate cases
+-- where a row was deleted concurrently. Missing IDs just don't get
+-- updated (their position stays stale until the next reorder).
+reorderTasksImpl : { orderedIds : List Int } -> Shared.User -> Task ()
+reorderTasksImpl input user =
+    Task.sequence
+        (List.indexedMap
+            (\idx id ->
+                Repo.findById tasks id
+                    |> Task.andThen
+                        (\found ->
+                            case found of
+                                Just task ->
+                                    if task.userId == user.id then
+                                        Repo.update tasks id { position = idx }
+                                            |> Task.map (\_ -> ())
+                                    else
+                                        -- Not yours: skip, as promised
+                                        -- above.
+                                        Task.succeed ()
+
+                                Nothing ->
+                                    -- Deleted concurrently: skip.
+                                    Task.succeed ()
+                        )
+            )
+            input.orderedIds
+        )
+        |> Task.map (\_ -> ())
+
+
+-- ===== Account-deletion support =====
+--
+-- deleteAllForUser removes every task owned by `user`. Backend.Account
+-- calls it to cascade the user's data before deleting their account
+-- row. Repo has no bulk delete-by-filter, so we read the owned ids and
+-- deleteById each — same per-row shape as resetAllImpl, fine for the
+-- per-user list sizes this app sees.
+deleteAllForUser : Shared.User -> Task ()
+deleteAllForUser user =
+    Repo.findBy tasks { userId = user.id }
+        |> Task.andThen
+            (\owned ->
+                Task.sequence
+                    (List.map (\t -> Repo.deleteById tasks t.id) owned)
+                    |> Task.map (\_ -> ())
+            )
+
+
+-- ===== Service wiring =====
+--
+-- Auth.protect : Service req resp -> (req -> User -> Task resp)
+--                                 -> ExposedService
+-- It injects the logged User as the second argument and rejects
+-- the request with 401 if there's no session. The contract on the
+-- frontend is the same Service value — clients don't see the auth
+-- wrapping.
+services =
+    [ Auth.protect Shared.listTasks     listTasksImpl
+    , Auth.protect Shared.addTask       addTaskImpl
+    , Auth.protect Shared.toggleTask    toggleTaskImpl
+    , Auth.protect Shared.deleteTask    deleteTaskImpl
+    , Auth.protect Shared.resetAll      resetAllImpl
+    , Auth.protect Shared.reorderTasks  reorderTasksImpl
+    ]

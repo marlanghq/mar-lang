@@ -1,0 +1,191 @@
+module Main exposing (main)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, list, section, header
+    , hstack, vstack, width, fill
+    , text, textField, button, empty
+    , submit
+    )
+
+
+-- A more polished task tracker, exercising the layout modifiers added
+-- in the elm-ui-style refresh of the view DSL.
+--
+-- Open with: mar dev examples/tasks
+
+
+type alias TaskItem =
+    { id : Int
+    , title : String
+    , notes : String
+    , done : Bool
+    }
+
+
+type Filter
+    = All
+    | Active
+    | Done
+
+
+type alias Model =
+    { tasks : List TaskItem
+    , draftTitle : String
+    , draftNotes : String
+    , filter : Filter
+    , nextId : Int
+    }
+
+
+type Msg
+    = TitleChanged String
+    | NotesChanged String
+    | AddTask
+    | ToggleTask Int
+    | RemoveTask Int
+    | ClearDone
+    | SetFilter Filter
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { tasks =
+          [ { id = 1, title = "Try mar", notes = "", done = True }
+          , { id = 2, title = "Compare layout to elm-ui and SwiftUI", notes = "Both default to shrink", done = False }
+          ]
+      , draftTitle = ""
+      , draftNotes = ""
+      , filter = All
+      , nextId = 3
+      }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        TitleChanged value ->
+            ({ model | draftTitle = value }, Cmd.none)
+
+        NotesChanged value ->
+            ({ model | draftNotes = value }, Cmd.none)
+
+        AddTask ->
+            ( { model
+                | tasks = model.tasks ++
+                    [ { id = model.nextId
+                      , title = model.draftTitle
+                      , notes = model.draftNotes
+                      , done = False
+                      }
+                    ]
+                , nextId = model.nextId + 1
+                , draftTitle = ""
+                , draftNotes = ""
+              }
+            , Cmd.none
+            )
+
+        ToggleTask id ->
+            ({ model | tasks = List.map (toggleIfId id) model.tasks }, Cmd.none)
+
+        RemoveTask id ->
+            ({ model | tasks = List.filter (notId id) model.tasks }, Cmd.none)
+
+        ClearDone ->
+            ({ model | tasks = List.filter pending model.tasks }, Cmd.none)
+
+        SetFilter f ->
+            ({ model | filter = f }, Cmd.none)
+
+
+toggleIfId : Int -> TaskItem -> TaskItem
+toggleIfId id t =
+    if t.id == id then
+        { t | done = if t.done then False else True }
+    else
+        t
+
+notId : Int -> TaskItem -> Bool
+notId id t = t.id /= id
+
+pending : TaskItem -> Bool
+pending t = t.done == False
+
+isDone : TaskItem -> Bool
+isDone t = t.done == True
+
+
+visibleTasks : Filter -> List TaskItem -> List TaskItem
+visibleTasks f tasks =
+    case f of
+        All    -> tasks
+        Active -> List.filter pending tasks
+        Done   -> List.filter isDone tasks
+
+
+view : Model -> View Msg
+view model =
+    let
+        visible = visibleTasks model.filter model.tasks
+        counts  = String.fromInt (List.length visible)
+                    ++ " of "
+                    ++ String.fromInt (List.length model.tasks)
+                    ++ " tasks"
+    in
+    navigationStack [ navigationTitle "Tasks" ]
+        [ list []
+            [ section [ header "New task" ]
+                [ textField [] "Title" model.draftTitle TitleChanged
+                , textField [ submit AddTask ] "Notes" model.draftNotes NotesChanged
+                , button [] AddTask "Add task"
+                ]
+            , section [ header "Filter" ]
+                [ hstack []
+                    [ button [] (SetFilter All)    "All"
+                    , button [] (SetFilter Active) "Active"
+                    , button [] (SetFilter Done)   "Done"
+                    ]
+                ]
+            , case visible of
+                [] ->
+                    section [] [ text [] "No tasks. Add one above." ]
+
+                _ ->
+                    section [ header counts ] (List.map renderTask visible)
+            , section []
+                [ button [] ClearDone "Clear done" ]
+            ]
+        ]
+
+
+renderTask : TaskItem -> View Msg
+renderTask t =
+    hstack []
+        [ button [] (ToggleTask t.id) (if t.done then "[x]" else "[ ]")
+        , vstack [ width fill ]
+            [ text [] t.title
+            , if t.notes == "" then empty else text [] t.notes
+            ]
+        , button [] (RemoveTask t.id) "Remove"
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Tasks"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]

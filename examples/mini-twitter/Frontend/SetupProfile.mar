@@ -1,0 +1,149 @@
+module Frontend.SetupProfile exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section
+    , title, text, textField, button, empty, errorText
+    , submit
+    )
+
+
+-- One-time setup. New users land here straight after sign-in
+-- because the signup hook in Main creates a row with an empty
+-- handle, and the Home page's bootstrap redirects when it sees
+-- one. The redirect goes through Nav.replaceTo so the back button
+-- doesn't land the user on /sign-in again.
+
+
+type alias Model =
+    { handle      : String
+    , displayName : String
+    , bio         : String
+    , submitting  : Bool
+    , error       : Maybe String
+    }
+
+
+type Msg
+    = HandleChanged String
+    | DisplayNameChanged String
+    | BioChanged String
+    | Submitted
+    | Saved (Result Service.Error Shared.SetupOutcome)
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init user =
+    ( { handle      = user.handle
+      , displayName = user.displayName
+      , bio         = user.bio
+      , submitting  = False
+      , error       = Nothing
+      }
+    , Cmd.none
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        HandleChanged v ->
+            ( { model | handle = v }, Cmd.none )
+
+        DisplayNameChanged v ->
+            ( { model | displayName = v }, Cmd.none )
+
+        BioChanged v ->
+            ( { model | bio = v }, Cmd.none )
+
+        Submitted ->
+            ( { model | submitting = True, error = Nothing }
+            , Service.call Shared.setupProfile
+                { handle      = model.handle
+                , displayName = model.displayName
+                , bio         = model.bio
+                }
+                Saved
+            )
+
+        Saved (Ok (Shared.ProfileSaved _)) ->
+            -- Setup complete — push to home with a replace so the
+            -- back button doesn't return here.
+            ( { model | submitting = False }
+            , Nav.replaceTo Frontend.Routes.home {}
+            )
+
+        Saved (Ok Shared.HandleRequired) ->
+            ( { model | submitting = False, error = Just "Pick a handle." }
+            , Cmd.none
+            )
+
+        Saved (Ok Shared.HandleTooLong) ->
+            ( { model | submitting = False, error = Just "Handles are at most 20 characters." }
+            , Cmd.none
+            )
+
+        Saved (Ok Shared.DisplayNameRequired) ->
+            ( { model | submitting = False, error = Just "Add a display name." }
+            , Cmd.none
+            )
+
+        Saved (Ok Shared.HandleTaken) ->
+            ( { model | submitting = False, error = Just "That handle is taken. Try another." }
+            , Cmd.none
+            )
+
+        Saved (Err why) ->
+            ( { model | submitting = False, error = Just (Service.errorToString why) }
+            , Cmd.none
+            )
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    let
+        errorRow =
+            case model.error of
+                Just why -> section [] [ errorText why ]
+                Nothing  -> empty
+
+        cta =
+            if model.submitting then
+                "Saving…"
+            else
+                "Continue"
+    in
+    navigationStack [ navigationTitle "Welcome" ]
+        [ form
+            [ section []
+                [ title "Pick your handle"
+                , text [] "This is how other people will find you on mini-twitter. Letters, digits, and underscores; up to 20 characters."
+                ]
+            , section []
+                [ textField [ submit Submitted ]
+                    "Handle (e.g. ada)" model.handle HandleChanged
+                , textField [ submit Submitted ]
+                    "Display name" model.displayName DisplayNameChanged
+                , textField []
+                    "Bio (optional)" model.bio BioChanged
+                ]
+            , section []
+                [ button [] Submitted cta ]
+            , errorRow
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/setup"
+        , title  = "Welcome"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

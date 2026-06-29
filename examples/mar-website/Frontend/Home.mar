@@ -1,0 +1,117 @@
+module Frontend.Home exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , vstack
+    , title, subtitle, text, navigationLink
+    , paragraph, span
+    , bold
+    )
+import Frontend.Routes
+
+
+-- Landing page. Static — no model state, just a structured pitch
+-- followed by navigation links to the secondary pages. The MVU
+-- contract still applies, so we ship the no-op Model + Msg pair.
+
+
+type alias Model = ()
+
+
+type Msg
+    = NoOp
+
+
+init : (Model, Cmd Msg)
+init = ((), Cmd.none)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update _ _ = ((), Cmd.none)
+
+
+-- One row in the secondary-nav section: title + blurb, the whole
+-- card tappable, a chevron flush right.
+navRow : Path {} -> String -> String -> View Msg
+navRow path label blurb =
+    navigationLink [] path {}
+        (vstack []
+            [ text [] label
+            , subtitle blurb
+            ])
+
+
+-- One "What you get" row: emoji marker + bold name + description,
+-- all on one line.
+featureRow : String -> String -> String -> View Msg
+featureRow emoji name desc =
+    paragraph
+        [ span [] (emoji ++ "  ")
+        , span [bold] name
+        , span [] (": " ++ desc)
+        ]
+
+
+view : Model -> View Msg
+view _ =
+    navigationStack [ navigationTitle "Mar" ]
+        [ list []
+            -- First section is the hero: no `header` here on purpose.
+            -- The navigationStack already renders the large "Mar"
+            -- title at the top of the page, so a second "MAR" mini-
+            -- header above the title text just reads as duplication.
+            [ section []
+                [ title "A friendly language for full-stack apps"
+                , subtitle "One language for web, mobile, and the server."
+                ]
+            , section [ header "What you get" ]
+                [ featureRow "🔋" "Batteries included"
+                    "auth, database, migrations, admin, backups, with rate limiting and safe defaults baked in."
+                , featureRow "📦" "One small binary"
+                    "runs, types, formats, and ships your project."
+                , featureRow "🎨" "Opinionated UI toolkit"
+                    "native on iOS and Android, polished CSS on the web."
+                , featureRow "📡" "Over-the-air updates"
+                    "ship from the server, no app-store waits."
+                , featureRow "🔒" "Type-safe end-to-end"
+                    "paths, services, routes, schemas, checked at compile time."
+                ]
+            , section [ header "Read more" ]
+                [ navRow Frontend.Routes.why
+                    "Why Mar"
+                    "What it's for, what it isn't, the trade-offs"
+                , navRow Frontend.Routes.getStarted
+                    "Get started"
+                    "Install, scaffold, run, deploy in four commands"
+                , navRow Frontend.Routes.showcase
+                    "UI showcase"
+                    "Live tour of every UI primitive in the framework"
+                , navRow Frontend.Routes.examples
+                    "Examples"
+                    "Notes apps, to-do, auth"
+                , navRow Frontend.Routes.credits
+                    "Credits"
+                    "Author, license, inspirations, source"
+                ]
+            , section
+                [ header "Status"
+                , footer "Build small things first."
+                ]
+                [ text [] "⚠️ Mar is early and evolving fast. Great for side projects; expect breaking changes between versions."
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Mar: A friendly language for full-stack apps"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

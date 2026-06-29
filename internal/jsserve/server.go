@@ -1,0 +1,696 @@
+package jsserve
+
+import (
+	"crypto/sha256"
+	_ "embed"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	esbuild "github.com/evanw/esbuild/pkg/api"
+
+	"mar/internal/pwa"
+	"mar/internal/runtime"
+)
+
+// pwaConfig is the resolved PWA config used by the manifest + icon
+// handlers. Set once at boot via SetPWA (defaults already applied by
+// the caller). The zero value still yields a valid manifest.
+var (
+	pwaMu     sync.RWMutex
+	pwaConfig pwa.Config
+)
+
+// SetPWA installs the PWA configuration for the manifest + icon
+// endpoints. Called once from the CLI before ServeLive.
+func SetPWA(c pwa.Config) {
+	pwaMu.Lock()
+	pwaConfig = c
+	pwaMu.Unlock()
+}
+
+func currentPWA() pwa.Config {
+	pwaMu.RLock()
+	defer pwaMu.RUnlock()
+	return pwaConfig
+}
+
+// publicDir is the project's `public/` folder, whose files are served
+// verbatim at the site root by `mar dev` (e.g. /logo.svg). Set once at
+// boot via SetPublicDir; empty disables static serving. `mar build`
+// copies the same folder into dist/ (see scaffold.buildFrontendDist),
+// so a path works identically in dev and in a deployed bundle.
+var (
+	publicDirMu sync.RWMutex
+	publicDir   string
+)
+
+// SetPublicDir installs the static-asset directory. Called once from
+// the CLI before ServeLive. Passing "" disables static serving.
+func SetPublicDir(dir string) {
+	publicDirMu.Lock()
+	publicDir = dir
+	publicDirMu.Unlock()
+}
+
+func currentPublicDir() string {
+	publicDirMu.RLock()
+	defer publicDirMu.RUnlock()
+	return publicDir
+}
+
+// serveStaticOrShell serves a file from the project's public/ dir when
+// the request path maps to a real file (e.g. /logo.svg), otherwise
+// renders the SPA shell so client-side routing keeps working. The path
+// is cleaned and confined to publicDir — `..` traversal and absolute
+// escapes can't reach outside the folder.
+func serveStaticOrShell(w http.ResponseWriter, r *http.Request, lp *LiveProgram) {
+	if dir := currentPublicDir(); dir != "" && r.URL.Path != "/" {
+		clean := path.Clean(r.URL.Path) // collapses .. and duplicate slashes
+		// Skip any path with a dotfile segment (.env, .git, .DS_Store…).
+		// Matches the build's copyPublicDir, which never ships them, so
+		// dev and a deployed bundle agree — and a stray secret dropped
+		// in public/ isn't served by accident.
+		if hasDotSegment(clean) {
+			renderShell(w, lp)
+			return
+		}
+		candidate := filepath.Join(dir, filepath.FromSlash(clean))
+		if rel, err := filepath.Rel(dir, candidate); err == nil &&
+			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+				http.ServeFile(w, r, candidate)
+				return
+			}
+		}
+	}
+	renderShell(w, lp)
+}
+
+// hasDotSegment reports whether any slash-separated segment of a
+// cleaned URL path starts with a dot (".env", ".git/config", …). The
+// leading "" segment from the leading slash is ignored.
+func hasDotSegment(cleanPath string) bool {
+	for _, seg := range strings.Split(cleanPath, "/") {
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+//go:embed runtime.js
+var runtimeJS string
+
+// RuntimeJSProduction returns the runtime processed for static builds:
+//   - Flips the build-time flag to `__MAR_DEV__ = false`, so esbuild's
+//     constant folding + DCE drops the time-travel panel, dev dock,
+//     SSE reload channel, error overlay, and the `displayValue`
+//     formatter (all gated behind `if (__MAR_DEV__)` blocks).
+//   - Minifies whitespace, identifiers, and syntax.
+//
+// Used by `mar build` when writing runtime.js into a static dist/.
+func RuntimeJSProduction() (string, error) {
+	src := strings.Replace(
+		runtimeJS,
+		"const __MAR_DEV__ = true;",
+		"const __MAR_DEV__ = false;",
+		1,
+	)
+	result := esbuild.Transform(src, esbuild.TransformOptions{
+		MinifyWhitespace:  true,
+		MinifyIdentifiers: true,
+		MinifySyntax:      true,
+		Target:            esbuild.ES2020,
+		Loader:            esbuild.LoaderJS,
+	})
+	if len(result.Errors) > 0 {
+		return "", fmt.Errorf("esbuild: %s", result.Errors[0].Text)
+	}
+	return string(result.Code), nil
+}
+
+// serveProgramJSON writes the current program AST. Honors If-None-Match
+// against an ETag derived from the content hash so iOS / API clients
+// can skip re-downloading unchanged programs (the OTA case).
+//
+// Cache-Control stays `no-store` here to be safe across dev (where
+// the program changes per file save) and prod (where the deployer
+// can layer their own caching at the CDN if they want). ETag handles
+// the "did it change?" question regardless.
+func serveProgramJSON(lp *LiveProgram) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body := lp.ProgramJSON()
+		etag := `"` + lp.ProgramHash() + `"`
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		_, _ = w.Write(body)
+	}
+}
+
+// renderShell writes the HTML page. The HTML stays small — program.json
+// is fetched separately; we use <link rel="preload"> in the head so the
+// browser kicks off both runtime.js AND program.json downloads as soon
+// as the head is parsed. Result: cold-start round-trips effectively =
+// max(T_runtime, T_program) instead of T_runtime + T_program.
+//
+// Why not inline the program in the HTML? Tried; reverted. For
+// returning users with runtime.js cached, an inline program means
+// the entire program ships in every HTML response — no ETag, no 304.
+// The separate /_mar/program.json keeps its strong ETag, so steady-
+// state visits only re-download the program when it actually changed.
+//
+// Cache-Control: no-store on the HTML — the runtime.js and program.json
+// links sit in the head, and we want every visit to re-fetch the shell
+// so a stale shell doesn't keep a returning user pinned to last
+// deploy's runtime.js by serving its old reference.
+func renderShell(w http.ResponseWriter, lp *LiveProgram) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = fmt.Fprintf(w, pageHTML, lp.Title())
+}
+
+// programETag returns the strong ETag value for a program.json payload.
+// First 16 hex chars of the sha256 — plenty of collision space for a
+// single app's deploy history. Cached on the LiveProgram itself
+// (computed once per program swap, not per request).
+func programETag(body []byte) string {
+	sum := sha256.Sum256(body)
+	const hex = "0123456789abcdef"
+	out := make([]byte, 16)
+	for i := 0; i < 8; i++ {
+		out[i*2] = hex[sum[i]>>4]
+		out[i*2+1] = hex[sum[i]&0x0f]
+	}
+	return string(out)
+}
+
+// HTML page template. Loads the runtime, then the AST, then runs `main`.
+// Asset paths are stable (`/_mar/...`) so hot-reload's SSE channel sits
+// alongside them without colliding with user routes.
+//
+// One `%s` substitution: <title>.
+//
+// Cold-start optimization: kick off program.json's download as soon
+// as the head parses, in parallel with runtime.js. Effective wait
+// drops from T_runtime + T_program to max(T_runtime, T_program).
+//
+// Implementation: inline `fetch()` from the head. The HTML parser
+// dispatches the request immediately — same parallel-load timing as
+// `<link rel="preload" as="fetch">` would offer, but Safari/WebKit
+// rejects that pairing (its preload-matcher treats `as="fetch"`
+// link entries as a different request kind from the actual fetch
+// call, so the preload orphans and a second round-trip fires). The
+// promise is stashed on `window.__marProgramPromise` so the
+// runtime's marBootstrap can await it instead of re-fetching.
+const pageHTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover: extends the layout into iOS safe-area gutters
+     (notch / Dynamic Island / home indicator). Without this, iOS
+     auto-pads the viewport inconsistently and env(safe-area-inset-*)
+     returns 0 — the page renders too close to the status bar on
+     notched devices. With cover, we explicitly opt into the full
+     viewport and use env() to add appropriate padding ourselves. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- color-scheme: tells the browser the page supports both light and
+     dark color schemes. iOS Safari uses this BEFORE any CSS loads to
+     paint the initial canvas in the matching scheme — without it, a
+     dark-mode reload flashes white for the few hundred ms before
+     runtime.js gets a chance to inject the dark-mode CSS. Same hint
+     also propagates to form controls, scrollbars and the like. -->
+<meta name="color-scheme" content="light dark">
+<!-- theme-color: paints the iOS Safari status-bar / Chrome address-bar
+     to match the page. Two variants so it switches with the OS. The
+     dark hex matches the html background in the dark-mode branch of
+     the inline <style> below. -->
+<meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)">
+<!-- PWA: makes the app installable ("Add to Home Screen") and open
+     fullscreen. The manifest + icons are generated from mar.json's
+     pwa block (served at /_mar/* in dev, written into dist/ by
+     mar build). Always on for App.frontend. -->
+<link rel="manifest" href="/_mar/manifest.json">
+<link rel="apple-touch-icon" href="/_mar/icon-180.png">
+<link rel="icon" type="image/png" href="/_mar/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>%s</title>
+<script>
+  // Eager fetch — same effect as <link rel="preload"> but works
+  // uniformly across Chrome and Safari. The runtime reads
+  // window.__marProgramPromise instead of issuing its own fetch.
+  window.__marProgramPromise = fetch('/_mar/program.json').then(function (r) { return r.json(); });
+</script>
+<style>
+  /* Reasonable defaults so the bare view DSL renders looking like a
+     real app, not raw browser stock. The DSL itself stays sparse —
+     these styles target the HTML tags the runtime emits. */
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    /* color-scheme at the CSS layer mirrors the <meta> tag above. The
+       meta tag is what controls the initial canvas paint before any
+       CSS arrives; this rule keeps form widgets / scrollbars happy
+       once CSS does load. */
+    color-scheme: light dark;
+
+    --fg: #1a1a1a;
+    --fg-muted: #666;
+    --bg: #fafafa;
+    --surface: #fff;
+    --border: #e2e2e2;
+    --accent: #2563eb;
+    --accent-fg: #fff;
+    --radius: 6px;
+    --gap: 0.5rem;
+  }
+
+  /* Dark-mode baseline. Lives inline (not in runtime.js) on purpose:
+     the runtime.js dark theme only attaches once the bundle parses,
+     leaving a window where reloads on iOS Safari flashed a white
+     page. By baking the dark background into the head <style>, the
+     very first paint already matches the user's OS. The hex values
+     here are the same anchors runtime.js's dark branch later targets
+     (#161618 for the html, #f5f5f7 for foreground), so there is no
+     visible re-styling when the full theme attaches. */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #f5f5f7;
+      --fg-muted: #86868b;
+      --bg: #161618;
+      --surface: #1c1c1e;
+      --border: rgba(255, 255, 255, 0.12);
+      --accent: #0a84ff;
+      --accent-fg: #ffffff;
+    }
+    html { background-color: #161618; }
+  }
+
+  html, body { margin: 0; padding: 0; }
+  body {
+    /* Neutral baseline — full viewport, top-left, default sans. The
+       UI vocabulary's CSS in ensureUIStyles() (runtime.js) layers on
+       top with the SwiftUI-flavored Form/List look. */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.4;
+    color: var(--fg);
+    background: var(--bg);
+    padding: 1.5rem;
+  }
+
+  /* Typography (UI.title / .subtitle / .text) */
+  h1 { font-size: 1.75rem; font-weight: 700; margin: 0 0 0.5rem; }
+  h2 { font-size: 1.1rem; font-weight: 600; margin: 1rem 0 0.4rem; color: var(--fg); }
+  span { display: inline; }
+
+  /* Buttons (UI.button) */
+  button {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg);
+    padding: 0.4rem 0.9rem;
+    border-radius: var(--radius);
+    font: inherit;
+    cursor: pointer;
+    transition: background 0.1s ease, border-color 0.1s ease;
+  }
+  button:hover { background: #f0f0f0; }
+  button:active { background: #e7e7e7; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* Inputs (UI.textField). Cover every text-shaped input type
+     (text, email, password, search, tel, url, number) so
+     UI.email / UI.password / UI.numeric stay visually consistent
+     with default text inputs.
+
+     Wrapped in :where() so the selector contributes 0 specificity
+     — otherwise the :not() chain on input would beat .mar-textfield
+     (0,5,1 vs 0,1,0) and the runtime's dark-mode override would
+     never win on actual <input> elements. The behavior for stray
+     raw inputs (those without .mar-textfield) is unchanged because
+     no later rule competes there. */
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]),
+         textarea) {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg);
+    padding: 0.45rem 0.6rem;
+    border-radius: var(--radius);
+    font: inherit;
+    width: 100%%;
+    max-width: 24rem;
+  }
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]):focus,
+         textarea:focus) {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  }
+  :where(textarea) { min-height: 4.5rem; resize: vertical; }
+
+  /* Links (UI.link) */
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Bare <ul> baseline — ensureUIStyles() in runtime.js overrides
+     this for the UI.list element with .mar-list. Kept neutral here
+     so any incidental <ul> the user emits doesn't carry browser
+     bullets and indentation. */
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  li { padding: 0.35rem 0; }
+  li + li { border-top: 1px solid var(--border); }
+
+  /* Bare <section> baseline — UI.section overrides via .mar-section. */
+  section { padding: 1rem 0; }
+
+  /* Mount point: a flex column that fills the viewport height (minus
+     body padding). Lets UI.centered actually center a top-level view
+     on the page — without it, the column would have no inherent
+     height to center within.
+
+     100dvh (dynamic viewport height) tracks the *current* visible area
+     in iOS Safari — when the URL bar collapses, dvh grows; when it
+     reappears, dvh shrinks. Plain 100vh always reports the fully-
+     expanded value, which made content overflow when the URL bar
+     was visible. 100vh stays as the fallback for older browsers
+     (declared first so dvh overrides on supporting ones). */
+  #mar-root {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 3rem);
+    min-height: calc(100dvh - 3rem);
+  }
+</style>
+</head>
+<body>
+<div id="mar-root">
+  <!-- Boot placeholder. The runtime's first render replaces #mar-root's
+       children, so this disappears naturally once marRun mounts the
+       user's page. Animated in after a 200ms delay so fast cold starts
+       (sub-200ms total) never show it — the placeholder only appears
+       when the user would otherwise be staring at a blank page. -->
+  <div class="mar-boot-loading" aria-label="Loading">
+    <div class="mar-boot-spinner" aria-hidden="true"></div>
+    <div class="mar-boot-label">Loading…</div>
+  </div>
+</div>
+<style>
+  .mar-boot-loading {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 0.75rem;
+    color: var(--fg-muted, #666);
+    font-size: 14px;
+    opacity: 0;
+    animation: mar-boot-fade-in 0.3s ease-out 0.2s forwards;
+    pointer-events: none;
+  }
+  .mar-boot-spinner {
+    width: 28px; height: 28px;
+    border: 2px solid var(--border, #e2e2e2);
+    border-top-color: var(--accent, #2563eb);
+    border-radius: 50%%;
+    animation: mar-boot-spin 0.8s linear infinite;
+  }
+  @keyframes mar-boot-fade-in { to { opacity: 1; } }
+  @keyframes mar-boot-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .mar-boot-spinner { animation: none; }
+    .mar-boot-loading { animation-delay: 0s; }
+  }
+</style>
+<script src="/_mar/runtime.js"></script>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  marBootstrap();
+});
+</script>
+</body>
+</html>`
+
+// ServeLive runs the dev server backed by a LiveProgram (whose contents
+// can change at runtime via hot-reload) and a ReloadHub (broadcasts
+// "reload" events to connected browsers via SSE).
+//
+// The routing topology is pinned at startup based on what the initial
+// compile produced. Three modes:
+//
+//   - frontend-only (HasFrontend, !HasAPI): "/" serves the HTML shell;
+//     "/_mar/*" serves the JS runtime, program JSON, and SSE channel.
+//   - backend-only  (!HasFrontend, HasAPI): services mount at the verb +
+//     path they were declared with; no "/_mar/*" handlers (only the SSE
+//     channel for the dev banner). Use case: pure JSON API server.
+//   - fullstack     (HasFrontend, HasAPI):  a request first tries the
+//     service routes (their declared verb + path); a miss serves the HTML
+//     shell. "/_mar/*" serves assets.
+//
+// LiveProgram is updated on every reload but the mux registration here
+// is fixed — so ServeLive must be called after the initial compile so
+// HasFrontend/HasAPI reflect the program shape.
+//
+// `onReady` (optional) fires exactly once, after the TCP bind succeeds
+// and the banner has printed. The CLI uses this to open the user's
+// browser only when the server is actually serving — without it, a
+// polling opener would race against a stale `mar dev` already on the
+// port and launch a tab pointing at the wrong instance.
+func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error {
+	mux := http.NewServeMux()
+
+	hasFrontend := lp.HasFrontend()
+	hasAPI := lp.HasAPI()
+
+	// SSE channel for hot-reload + compile-error broadcasting. In
+	// production (mar-runtime) the caller passes a nil hub — no
+	// /_mar/reload route is registered and the JS runtime's dev
+	// channel never connects (and is skipped client-side by checking
+	// `program.devMode`).
+	if hub != nil {
+		mux.HandleFunc("/_mar/reload", hub.ServeReload)
+	}
+
+	// Auth: when the user called Auth.config in their program, the
+	// runtime registered a non-nil VAuth. Combined with a configured
+	// session secret (from mar.json or .mar/dev-secrets.json), we
+	// mount the framework HTTP endpoints at /_auth/*.
+	//
+	// Before mounting the handlers, validate that the SMTP config —
+	// if any — actually works. The boot SMTP check connects, runs
+	// STARTTLS, authenticates, and disconnects. Failures here mean
+	// the deploy would silently swallow every sign-in attempt
+	// (auth.Send would error per request); failing fast at boot
+	// surfaces the misconfiguration immediately.
+	//
+	// Skipped automatically when SMTP isn't configured (Host empty,
+	// dev's stdout sink path). To boot without SMTP verification,
+	// omit the `mail.from` field from mar.json — there's no env-var
+	// escape hatch, by design.
+	if runtime.CurrentAuth() != nil && AuthSecret() != "" {
+		if err := maybeVerifySMTP(); err != nil {
+			return err
+		}
+		mountAuthHandlers(mux)
+	}
+
+	// Admin panel — mounted unconditionally when a session secret is
+	// available. No "registered Auth.config" requirement: the admin
+	// panel doesn't share user-auth's signup hook or User entity, so
+	// it can run on a project that has no Auth.config at all (single
+	// dev tools, internal apps).
+	//
+	// Without a session secret (no auth.sessionSecret in mar.json
+	// AND no .mar/dev-secrets.json), admin endpoints would have
+	// nothing to sign cookies with — skip mounting so the panel
+	// appears unreachable rather than misbehaving.
+	if AuthSecret() != "" {
+		mountAdminHandlers(mux)
+	}
+
+	if hasFrontend {
+		mux.HandleFunc("/_mar/runtime.js", withCompression(func(w http.ResponseWriter, r *http.Request) {
+			// no-store on dev runtime: hot-reload changes the embedded
+			// runtime.js on every `mar dev` restart, but Safari/Chrome
+			// happily serve a cached copy unless we tell them not to.
+			// `no-store` is stricter than `no-cache` — guarantees a
+			// network fetch, not a 304 Not Modified.
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+			_, _ = io.WriteString(w, runtimeJS)
+		}))
+		mux.HandleFunc("/_mar/program.json", withCompression(func(w http.ResponseWriter, r *http.Request) {
+			// `no-cache` (not `no-store`) so the browser CAN cache the
+			// response — but must revalidate with the strong ETag on
+			// every request. Two reasons we don\'t use `no-store`:
+			//
+			// 1. Safari\'s preload-matcher refuses to reuse a preload
+			//    entry whose response declared `no-store`. Result: the
+			//    `<link rel="preload">` in renderShell is wasted, the
+			//    runtime\'s `fetch()` issues a second network round-trip,
+			//    and the console fires the "preloaded but not used"
+			//    warning. Chrome silently tolerates this; Safari is
+			//    strict.
+			//
+			// 2. We already have ETag-based revalidation
+			//    (serveProgramJSON returns 304 when If-None-Match
+			//    matches), which is the canonical way to express
+			//    "cache OK but always check freshness". `no-store`
+			//    forbids caching entirely, which would render the
+			//    ETag plumbing pointless and double the bandwidth
+			//    on every hot-reload tick.
+			w.Header().Set("Cache-Control", "no-cache")
+			serveProgramJSON(lp)(w, r)
+		}))
+
+		// PWA: Web App Manifest + icons, generated from the project's
+		// `pwa` block (defaults applied when absent). Always served for
+		// a frontend so every Mar app is installable. `mar build` writes
+		// the same files into dist/ for static deploys.
+		mux.HandleFunc("/_mar/manifest.json", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			_, _ = w.Write(pwa.ManifestJSON(currentPWA()))
+		})
+		for _, size := range pwa.IconSizes {
+			size := size // capture per iteration
+			mux.HandleFunc(fmt.Sprintf("/_mar/icon-%d.png", size), func(w http.ResponseWriter, r *http.Request) {
+				b, err := pwa.IconPNG(currentPWA(), size)
+				if err != nil {
+					http.Error(w, "icon generation failed", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "image/png")
+				w.Header().Set("Cache-Control", "public, max-age=3600")
+				_, _ = w.Write(b)
+			})
+		}
+		// /favicon.ico — browsers request this implicitly (tab, bookmark,
+		// address bar) regardless of <link rel="icon">. Serve the app
+		// icon as PNG bytes (browsers accept PNG at this path); without
+		// it the SPA catch-all returns HTML and the tab shows a generic
+		// icon. pwa.FaviconSize keeps it crisp at tab sizes.
+		mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+			b, err := pwa.IconPNG(currentPWA(), pwa.FaviconSize)
+			if err != nil {
+				http.Error(w, "icon generation failed", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			_, _ = w.Write(b)
+		})
+	}
+
+	switch {
+	case hasFrontend && hasAPI:
+		// Fullstack: services mount at the verb + path they were declared
+		// with (e.g. GET /notes/{id:Int}); the HTML shell answers
+		// everything else. Each request first tries the service routes; a
+		// miss falls through to the static/shell handler.
+		//
+		// Rate limit + compression wrap only the service pipeline, not the
+		// HTML shell — a 429 on a page load would be terrible UX, and the
+		// shell is cheap to serve. We pre-check matchability (cheap, no
+		// body read) to pick the pipeline without rate-limiting the shell.
+		serviceDispatch := rateLimit(withCompression(func(w http.ResponseWriter, r *http.Request) {
+			dispatchBackend(lp.Routes(), r.URL.Path, w, r)
+		}))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if anyServiceMatches(lp.Routes(), r.Method, r.URL.Path) {
+				serviceDispatch(w, r)
+				return
+			}
+			serveStaticOrShell(w, r, lp)
+		})
+	case hasFrontend:
+		// Frontend-only: HTML at /, with public/ files served verbatim.
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			serveStaticOrShell(w, r, lp)
+		})
+	case hasAPI:
+		// Backend-only: services mount directly at their declared paths.
+		// The /_mar/reload path is registered above — ServeMux
+		// longest-prefix match keeps it from being shadowed by this
+		// catch-all. An unmatched request is a 404.
+		mux.HandleFunc("/", rateLimit(withCompression(func(w http.ResponseWriter, r *http.Request) {
+			if !dispatchBackend(lp.Routes(), r.URL.Path, w, r) {
+				http.NotFound(w, r)
+			}
+		})))
+	}
+
+	addr := fmt.Sprintf(":%d", port)
+	// Bind FIRST — before any side effect that assumes the server
+	// will run. If the port is already in use, returning early here
+	// keeps the banner from printing, the Bonjour record from being
+	// advertised, and (crucially) the onReady callback — which the
+	// CLI uses to open the browser — from firing. Without this
+	// ordering, a stale `mar dev` on the same port would steal the
+	// browser tab launch even when the new instance refuses to boot.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	// Advertise on the LAN via mDNS whenever the server has an HTTP
+	// API to talk to (frontend or fullstack). Native iOS clients
+	// browse for `_mar._tcp` and auto-connect — no manual baseURL
+	// configuration on the same network. The instance name is not
+	// surfaced in the banner: `.local` resolution is unreliable across
+	// OSes, so we let it stay an iOS-discovery-only mechanism.
+	if hasAPI || hasFrontend {
+		_, stop := publishBonjour(lp.AppName(), port)
+		defer stop()
+	}
+	// mailToStdout is true when Auth.config is wired but SMTP isn't —
+	// auth.Send routes those emails to stdout. The banner surfaces
+	// this so the first sign-in attempt isn't a surprise log dump.
+	// Mirrors the skip logic in maybeVerifySMTP (Host or Password
+	// empty → stdout sink).
+	smtpCfg := SMTP()
+	mailToStdout := runtime.CurrentAuth() != nil && AuthSecret() != "" &&
+		(smtpCfg.Host == "" || smtpCfg.Password == "")
+	printBanner(addr, hub, lp.AppName(), mailToStdout)
+	noteServerBooted()
+	if onReady != nil {
+		onReady()
+	}
+	// Wrap mux with two layers:
+	//   1. adminInstrument — captures every request (method, path,
+	//      status, duration, user email) into the in-memory ring
+	//      buffer powering the admin panel's "recent requests"
+	//      section. No-op when the buffer is not configured.
+	//   2. withVersionHeaders — stamps X-Mar-Runtime and
+	//      X-Mar-Program on every response so clients can detect
+	//      version drift and trigger OTA refresh / compat alerts.
+	//
+	// Order matters: the version headers should appear on EVERY
+	// response (including admin/internal paths that adminInstrument
+	// skips). Wrapping version-headers OUTSIDE means the headers are
+	// set first, then adminInstrument decides whether to log.
+	//
+	// recoverPanic is the OUTERMOST layer so a panic anywhere in the
+	// chain (handler, version headers, instrumentation) becomes a clean
+	// 500 with the stack logged server-side — never a dropped connection
+	// or a stack trace leaked toward the client.
+	return http.Serve(ln, recoverPanic(withVersionHeaders(lp, adminInstrument(mux))))
+}

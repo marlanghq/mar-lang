@@ -1,0 +1,10 @@
+module Shared exposing (..)
+
+
+-- The smallest user record that satisfies Auth.config: an id (for
+-- session lookup) and an email (for the magic-link recipient). Any
+-- field beyond these is purely your app's choice.
+type alias User =
+    { id    : Int
+    , email : String
+    }

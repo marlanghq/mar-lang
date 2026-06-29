@@ -1,0 +1,104 @@
+module Frontend.Showcase.Home exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header
+    , vstack
+    , subtitle, text, navigationLink
+    , paragraph, span, link
+    )
+import Frontend.Showcase.Routes
+
+
+-- Index page. The model is `()` — nothing changes here, the page
+-- is a pure listing of links to each demo. Mar still requires a
+-- Model + Msg + update so the MVU contract holds; we just give
+-- them no-op shapes.
+
+
+type alias Model = ()
+
+
+type Msg
+    = NoOp
+
+
+init : (Model, Cmd Msg)
+init = ((), Cmd.none)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update _ _ = ((), Cmd.none)
+
+
+-- Each demo row is a `navigationLink` wrapping a vstack: a
+-- title-styled label and a muted subtitle. The whole row is
+-- tappable, the chevron lands flush right, and the multi-line
+-- layout reads cleanly on both iOS and web.
+demoRow : Path {} -> String -> String -> View Msg
+demoRow path name blurb =
+    navigationLink [] path {}
+        (vstack []
+            [ text [] name
+            , subtitle blurb
+            ])
+
+
+view : Model -> View Msg
+view _ =
+    navigationStack [ navigationTitle "Mar UI showcase" ]
+        [ list []
+            [ section []
+                [ paragraph
+                    [ span [] "A live tour of every UI primitive Mar gives you out of the box. Each page below demos one group, so you can see how it looks and behaves before reaching for it. Every page is a small Mar program, so you can "
+                    , span [link "https://github.com/marlanghq/mar-lang/tree/main/examples/mar-website/Frontend/Showcase"] "browse the source on GitHub"
+                    , span [] "."
+                    ]
+                ]
+            , section [ header "Demos" ]
+                [ demoRow Frontend.Showcase.Routes.layout
+                    "Layout & stacks"
+                    "hstack, vstack, spacer, centered"
+                , demoRow Frontend.Showcase.Routes.typography
+                    "Typography"
+                    "title, subtitle, text, errorText, paragraph + inline atoms"
+                , demoRow Frontend.Showcase.Routes.forms
+                    "Forms"
+                    "textField + textArea, every input kind"
+                , demoRow Frontend.Showcase.Routes.controls
+                    "Buttons & toggles"
+                    "button, toggle"
+                , demoRow Frontend.Showcase.Routes.lists
+                    "Lists & sections"
+                    "headers, footers, reorder, delete"
+                , demoRow Frontend.Showcase.Routes.pickers
+                    "Pickers"
+                    "picker over enum, Int, String"
+                , demoRow Frontend.Showcase.Routes.disabled
+                    "Disabled state"
+                    "every interactive primitive, gated by one toggle"
+                , demoRow Frontend.Showcase.Routes.modals
+                    "Modals"
+                    "sheet, confirm"
+                , demoRow Frontend.Showcase.Routes.navbar
+                    "Nav bar"
+                    "navigationTitle, topBarLeading, topBarTrailing"
+                , demoRow Frontend.Showcase.Routes.images
+                    "Images"
+                    "image, sizing in px, fit / fill"
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase"
+        , title = "Mar UI showcase"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

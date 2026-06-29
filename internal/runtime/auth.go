@@ -1,822 +1,603 @@
 package runtime
 
 import (
+	"database/sql"
 	"fmt"
-	"net/http"
-	"os"
-	"strings"
+	"sync"
 	"time"
-
-	"mar/internal/model"
 )
 
-const sessionCookieName = "mar_session"
-const adminUISessionHeader = "X-Mar-Admin-UI"
+// VAuth is the runtime registration produced by `Auth.config`. It
+// carries everything the framework needs to operate the email-code
+// flow: which user entity holds the records, which field is the
+// email, what the signup hook returns, and the session duration.
+//
+// `Auth.config` is normally bound at the top level of `Main.mar`. The
+// project loader stamps the registration into a process-wide singleton
+// (RegisteredAuth) so the dispatcher and the framework HTTP handlers
+// can find it without an explicit thread-through.
+type VAuth struct {
+	Entity   VEntity
+	Identify Value // user -> String
 
-func (r *Runtime) authConfig() model.AuthConfig {
-	var cfg model.AuthConfig
-	if r.App.Auth != nil {
-		cfg = *r.App.Auth
-	} else {
-		cfg = model.AuthConfig{
-			UserEntity:      "User",
-			EmailField:      "email",
-			RoleField:       "role",
-			CodeTTLMinutes:  10,
-			SessionTTLHours: 24,
-			EmailFrom:       "no-reply@mar.local",
-			EmailSubject:    defaultRuntimeAuthEmailSubject(r.App.AppName),
-			SMTPPort:        587,
-			SMTPStartTLS:    true,
+	// EmailSubject is the Subject: header for the sign-in code email.
+	// Required in Auth.config — gives each app a chance to brand it
+	// ("Sign in to Notes" vs the generic default).
+	//
+	// The From: header is NOT in this struct. It lives in mar.json's
+	// `mail.from` — the single source of truth for the address
+	// verified with the SMTP provider. Setting it in Mar source too
+	// would invite typos that silently shadow the manifest value
+	// and break delivery at the provider ("550 domain not verified").
+	EmailSubject string
+
+	// EmailBody is an optional `String -> Int -> String` function
+	// (code, ttlMinutes → body) provided in `Auth.config { email.body }`.
+	// nil means the framework's default body is used. Applied via
+	// Eval.apply at request-code time; failures fall back to the
+	// default so a typo in the user's body fn doesn't take down auth.
+	EmailBody       Value
+	Signup          Value // String -> userExceptId
+	SessionDuration int64 // seconds; <=0 means use the framework default
+
+	// Role is the optional getter `\user -> role` declared in
+	// Auth.config. nil when the app doesn't model roles (then
+	// Auth.requireRole is a misconfiguration). The dispatcher invokes
+	// this on the loaded User to extract the role for comparison
+	// against Auth.requireRole's argument.
+	Role Value
+
+	// SignInPath is the URL Page.protected redirects to when there's
+	// no session. Extracted from the `signInPage : Page` field in
+	// Auth.config so the source of truth is the Page itself —
+	// renaming the path on Frontend.SignIn.page propagates here
+	// automatically. Empty when the app has no Page.protected.
+	SignInPath string
+}
+
+func (VAuth) isValue()        {}
+func (VAuth) Display() string { return "<auth>" }
+
+var (
+	regMu   sync.RWMutex
+	regAuth *VAuth
+)
+
+// RegisterAuth captures the most recent Auth.config result so the
+// HTTP dispatcher can find it. The runtime sets this when evaluating
+// the user's Main module; subsequent reads are concurrent-safe.
+func RegisterAuth(a VAuth) {
+	regMu.Lock()
+	regAuth = &a
+	regMu.Unlock()
+}
+
+// CurrentAuth returns the registered Auth, if any. Used by the HTTP
+// dispatcher to know whether to mount /_auth/* and to satisfy
+// Auth.protected services.
+func CurrentAuth() *VAuth {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	return regAuth
+}
+
+// ResetAuthForTesting clears the registered Auth so tests can run in
+// isolation without leaking state from previous runs. Production
+// code should never call this — `mar dev` and `mar-runtime` rely on
+// the auth registration sticking for the lifetime of the process.
+func ResetAuthForTesting() {
+	regMu.Lock()
+	regAuth = nil
+	regMu.Unlock()
+}
+
+// authBuiltins registers the language-level surface for authentication.
+//
+//	Auth.config  : { entity, identify, email, signup, sessionDuration } -> Auth user
+//	Auth.protect : Service req resp -> (req -> user -> Effect String resp) -> ExposedService
+//
+// The four user-facing client effects (Auth.requestCode / verifyCode /
+// logout / me) are JS-runtime-only — they're built-ins on the browser
+// side that hit the framework HTTP endpoints directly.
+func authBuiltins() map[string]Value {
+	return map[string]Value{
+		"authConfig":  nativeFn(1, makeAuthConfig),
+		"authProtect": nativeFn(2, makeAuthProtect),
+
+		// PROPOSAL stubs (see docs/authorization-proposal.md). No-op
+		// pass-throughs that return the ExposedService unchanged.
+		"authRequireRole":  nativeFn(2, makeAuthRequireRole),
+		"authAuthorize":    nativeFn(3, makeAuthAuthorize),
+		"authRequireOwner": nativeFn(3, makeAuthRequireOwner),
+
+		// Browser-only Effects. On the Go side they error out — the
+		// JS runtime overrides them with fetch-based implementations
+		// (see runtime.js). Mirrors the Service.call / Http.get pattern.
+		"authRequestCode": nativeFn(2, browserOnlyEffect("Auth.requestCode")),
+		"authVerifyCode":  nativeFn(2, browserOnlyEffect("Auth.verifyCode")),
+		"authLogout":      nativeFn(1, browserOnlyEffect("Auth.logout")),
+		"authMe":          nativeFn(1, browserOnlyEffect("Auth.me")),
+	}
+}
+
+func browserOnlyEffect(name string) func([]Value) (Value, error) {
+	return func(args []Value) (Value, error) {
+		return VEffect{
+			Tag: name,
+			Run: func() (Value, error) {
+				return nil, fmt.Errorf("%s is only available in the browser runtime", name)
+			},
+		}, nil
+	}
+}
+
+// ApplyEmailBody invokes a user-supplied `email.body` function,
+// which has type `String -> Int -> String` (code, ttlMinutes →
+// body). Returns the rendered body or an error if the function
+// rejects (wrong type returned, runtime fault, etc.). Used by the
+// auth dispatcher when sending the request-code email.
+func ApplyEmailBody(fn Value, code string, ttlMinutes int) (string, error) {
+	step1, err := Apply(fn, VString{V: code})
+	if err != nil {
+		return "", err
+	}
+	step2, err := Apply(step1, VInt{V: int64(ttlMinutes)})
+	if err != nil {
+		return "", err
+	}
+	out, ok := step2.(VString)
+	if !ok {
+		return "", fmt.Errorf("email.body: expected String result (got %T)", step2)
+	}
+	return out.V, nil
+}
+
+func makeAuthConfig(args []Value) (Value, error) {
+	rec, ok := args[0].(VRecord)
+	if !ok {
+		return nil, fmt.Errorf("Auth.config: expected record (got %T)", args[0])
+	}
+	entity, ok := rec.Fields["entity"].(VEntity)
+	if !ok {
+		return nil, fmt.Errorf("Auth.config: `entity` must be an Entity (got %T)", rec.Fields["entity"])
+	}
+	identify, ok := rec.Fields["identify"]
+	if !ok {
+		return nil, fmt.Errorf("Auth.config: missing `identify`")
+	}
+	emailRec, ok := rec.Fields["email"].(VRecord)
+	if !ok {
+		return nil, fmt.Errorf("Auth.config: `email` must be a record")
+	}
+	// `email.from` is intentionally NOT accepted here — it duplicates
+	// mar.json's `mail.from` (the address verified with the SMTP
+	// provider). Reject explicitly so a stale paste doesn't silently
+	// take over and trip "550 domain not verified" at the provider.
+	if _, ok := emailRec.Fields["from"]; ok {
+		return nil, fmt.Errorf(
+			"Auth.config: email.from is not accepted — set %q in %s instead",
+			"mail.from", "mar.json")
+	}
+	subject, _ := emailRec.Fields["subject"].(VString)
+	if subject.V == "" {
+		return nil, fmt.Errorf("Auth.config: email.subject is required")
+	}
+	// Optional `email.body : String -> Int -> String` — given the
+	// generated code and TTL in minutes, produces the email body.
+	// When omitted, the framework's auth.DefaultBody fills in a
+	// transactional default. Useful for branding ("Welcome to App!
+	// Your code is …"), localized copy, or simply tweaking tone.
+	emailBody := emailRec.Fields["body"]
+	signup, ok := rec.Fields["signup"]
+	if !ok {
+		return nil, fmt.Errorf("Auth.config: missing `signup`")
+	}
+	// `sessionDuration` must be a Duration (e.g. `Time.days 30`).
+	// A bare Int is rejected: ambiguous units ("is 86400 seconds
+	// or minutes?") are the kind of subtle bug worth surfacing
+	// loudly. The compiler's type signature for Auth.config also
+	// expects Duration here, so this is just the runtime guard.
+	durationSecs := int64(0)
+	if d, ok := rec.Fields["sessionDuration"].(VDuration); ok {
+		durationSecs = d.Seconds
+	}
+	// `role` is optional; only required when the app uses
+	// Auth.requireRole. We don't validate the field's type here — the
+	// dispatcher applies it as a function and surfaces failures as 500.
+	role := rec.Fields["role"]
+	// `signInPage` is a Page reference (typically Frontend.SignIn.page)
+	// that Page.protected redirects to when the user isn't logged in.
+	// Optional — backend-only apps don't have pages at all. When the
+	// app declares any Page.protected, the bundle bootstrap errors
+	// loudly if signInPage was missing.
+	signInPath := ""
+	if pageVal, ok := rec.Fields["signInPage"]; ok {
+		page, ok := pageVal.(VPage)
+		if !ok {
+			return nil, fmt.Errorf("Auth.config: `signInPage` must be a Page (got %T)", pageVal)
 		}
+		signInPath = page.Path
 	}
-
-	return cfg
+	cfg := VAuth{
+		Entity:          entity,
+		Identify:        identify,
+		EmailSubject:    subject.V,
+		EmailBody:       emailBody,
+		Signup:          signup,
+		SessionDuration: durationSecs,
+		Role:            role,
+		SignInPath:      signInPath,
+	}
+	RegisterAuth(cfg)
+	return cfg, nil
 }
 
-func defaultRuntimeAuthEmailSubject(appName string) string {
-	humanName := model.HumanizeIdentifier(appName)
-	if humanName == "" {
-		humanName = "Mar"
-	}
-	return "Your " + humanName + " login code"
-}
-
-// resolveAuth resolves a bearer token into an active session and hydrated auth user.
-func (r *Runtime) resolveAuth(req *http.Request, requestID string) (authSession, error) {
-	token := parseBearerToken(req.Header.Get("Authorization"))
-	if token == "" {
-		token = readSessionCookie(req)
-	}
-	if token == "" {
-		return authSession{}, nil
-	}
-	tokenHash := hashAuthSecret(token)
-
-	row, ok, err := queryRowForRequest(
-		r.DB,
-		requestID,
-		`SELECT user_id, email, expires_at, revoked FROM mar_sessions WHERE token = ? LIMIT 1`,
-		tokenHash,
-	)
-	if err != nil {
-		return authSession{}, err
-	}
+func makeAuthProtect(args []Value) (Value, error) {
+	contract, ok := args[0].(VService)
 	if !ok {
-		return authSession{}, nil
+		return nil, fmt.Errorf("Auth.protect: expected Service contract (got %T)", args[0])
 	}
-	if revoked, _ := toInt64(row["revoked"]); revoked == 1 {
-		return authSession{}, nil
-	}
-	expiresAt, _ := toInt64(row["expires_at"])
-	if expiresAt < time.Now().UnixMilli() {
-		return authSession{}, nil
-	}
+	handler := args[1]
+	contract.Handler = handler
+	contract.RequiresUser = true
+	return VExposedService{Service: contract}, nil
+}
 
-	userID := row["user_id"]
-	userRow, ok, err := r.loadAuthUserByID(requestID, userID)
-	if err != nil {
-		return authSession{}, err
-	}
+// makeAuthRequireRole / makeAuthAuthorize / makeAuthRequireOwner are
+// the authorization decorators from docs/authorization-proposal.md.
+// Each attaches policy state to the wrapped ExposedService; the
+// dispatcher (ExposedServiceToRoute) reads that state and runs the
+// gates before invoking the user's handler.
+//
+// Decorators are pure: they don't run the gates themselves, they only
+// record what the dispatcher should do. This keeps the wiring code in
+// `services = [...]` static and inspectable.
+
+// Auth.requireRole : role -> ExposedService -> ExposedService
+//
+//	args = [role, exposed]
+func makeAuthRequireRole(args []Value) (Value, error) {
+	exposed, ok := args[1].(VExposedService)
 	if !ok {
-		return authSession{}, nil
+		return nil, fmt.Errorf("Auth.requireRole: expected ExposedService (got %T)", args[1])
 	}
-	user := decodeEntityRow(r.authUser, userRow)
-	cfg := r.authConfig()
-	role := user[cfg.RoleField]
-
-	email, _ := row["email"].(string)
-	return authSession{
-		Authenticated: true,
-		Token:         token,
-		Email:         email,
-		UserID:        userID,
-		Role:          role,
-		User:          user,
-	}, nil
+	exposed.Service.RequireRole = args[0]
+	return exposed, nil
 }
 
-// parseBearerToken extracts the token from an Authorization header.
-func parseBearerToken(header string) string {
-	header = strings.TrimSpace(header)
-	if header == "" {
-		return ""
+// Auth.authorize : (loader) -> (policy) -> ExposedService -> ExposedService
+//
+//	args = [loader, policy, exposed]
+func makeAuthAuthorize(args []Value) (Value, error) {
+	exposed, ok := args[2].(VExposedService)
+	if !ok {
+		return nil, fmt.Errorf("Auth.authorize: expected ExposedService (got %T)", args[2])
 	}
-	if !strings.HasPrefix(strings.ToLower(header), "bearer ") {
-		return ""
-	}
-	return strings.TrimSpace(header[len("Bearer "):])
+	exposed.Service.LoadResource = args[0]
+	exposed.Service.Policy = args[1]
+	return exposed, nil
 }
 
-func readSessionCookie(req *http.Request) string {
-	if req == nil {
-		return ""
+// Auth.requireOwner : (loader) -> (selector) -> ExposedService -> ExposedService
+//
+//	args = [loader, selector, exposed]
+//
+// Sugar for the common ABAC case "user owns this resource". Desugars
+// to Auth.authorize with a synthesized policy that compares
+// `selector(resource)` against `user.id`.
+func makeAuthRequireOwner(args []Value) (Value, error) {
+	exposed, ok := args[2].(VExposedService)
+	if !ok {
+		return nil, fmt.Errorf("Auth.requireOwner: expected ExposedService (got %T)", args[2])
 	}
-	cookie, err := req.Cookie(sessionCookieName)
+	loader := args[0]
+	selector := args[1]
+	// Synthesized policy: \input user resource -> selector(resource) == user.id
+	// We build a curried 3-arg native function so it composes the same
+	// way a user-written policy would.
+	policy := nativeFn(3, func(pargs []Value) (Value, error) {
+		// pargs = [input, user, resource]
+		ownerID, err := Apply(selector, pargs[2])
+		if err != nil {
+			return nil, fmt.Errorf("Auth.requireOwner: selector failed: %w", err)
+		}
+		userID, err := projectField(pargs[1], "id")
+		if err != nil {
+			return nil, fmt.Errorf("Auth.requireOwner: user has no `id` field: %w", err)
+		}
+		return VBool{V: equalValues(ownerID, userID)}, nil
+	})
+	exposed.Service.LoadResource = loader
+	exposed.Service.Policy = policy
+	return exposed, nil
+}
+
+// AuthDB returns the project's SQLite handle if it's been opened, so
+// the auth HTTP handlers can read/write `_mar_auth_*` rows. Mirrors
+// `getDB()` but exported (the lazy-open is shared with Repo).
+func AuthDB() (*sql.DB, error) {
+	return getDB()
+}
+
+// EnsureUser looks up a user by email; if missing, runs the signup
+// hook from VAuth and creates the row via Repo.create. Returns the
+// user's `id` (the Serial column).
+//
+// Public so jsserve.handleRequestCode can call it without poking at
+// runtime internals.
+func EnsureUser(cfg VAuth, email string) (int64, error) {
+	id, err := LookupUserID(cfg, email)
+	if err == nil {
+		return id, nil
+	}
+	// Run the user-supplied signup hook.
+	v, err := Apply(cfg.Signup, VString{V: email})
 	if err != nil {
-		return ""
+		return 0, fmt.Errorf("signup hook: %w", err)
 	}
-	return strings.TrimSpace(cookie.Value)
-}
-
-func sessionCookieSecure(req *http.Request) bool {
-	if req != nil && req.TLS != nil {
-		return true
+	rec, ok := v.(VRecord)
+	if !ok {
+		return 0, fmt.Errorf("signup hook must return a record (got %T)", v)
 	}
-	if req == nil {
-		return false
+	// Auto-fill TIMESTAMP columns with the current server time.
+	// Signup hooks are synchronous (no Effect access), so they can't
+	// call Time.now themselves — the framework patches in `now` for
+	// any timestamp field the hook didn't already provide a valid
+	// VTime for. A common pattern is `createdAt = 0` in the hook
+	// record as a sentinel meaning "fill this in for me"; we treat
+	// any non-VTime value (including missing) as that signal.
+	rec = fillTimestampsForSignup(cfg.Entity, rec)
+	// Pipe through Repo.create. We can re-use the same code path users do.
+	created, err := repoCreateInner(cfg.Entity, rec)
+	if err != nil {
+		return 0, fmt.Errorf("Repo.create: %w", err)
 	}
-	return strings.EqualFold(strings.TrimSpace(req.Header.Get("X-Forwarded-Proto")), "https")
-}
-
-func writeSessionCookie(w http.ResponseWriter, req *http.Request, token string, expiresAtMillis int64) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    strings.TrimSpace(token),
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   sessionCookieSecure(req),
-		Expires:  time.UnixMilli(expiresAtMillis).UTC(),
-		MaxAge:   max(1, int(time.Until(time.UnixMilli(expiresAtMillis)).Seconds())),
-	})
-}
-
-func clearSessionCookie(w http.ResponseWriter, req *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   sessionCookieSecure(req),
-		Expires:  time.Unix(0, 0).UTC(),
-		MaxAge:   -1,
-	})
-}
-
-func (r *Runtime) requestedAdminUISessionTTLHours(req *http.Request) int {
-	cfg := r.authConfig()
-	defaultHours := cfg.SessionTTLHours
-	if req == nil || !strings.EqualFold(strings.TrimSpace(req.Header.Get(adminUISessionHeader)), "true") {
-		return defaultHours
-	}
-	if r.App != nil && r.App.Auth != nil && r.App.Auth.AdminUISessionTTLHours != nil {
-		return *r.App.Auth.AdminUISessionTTLHours
-	}
-	return defaultHours
-}
-
-func (r *Runtime) loadAuthUserByEmail(requestID, email string) (map[string]any, bool, error) {
-	cfg := r.authConfig()
-	table, _ := quoteIdentifier(r.authUser.Table)
-	emailField, _ := quoteIdentifier(cfg.EmailField)
-	query := fmt.Sprintf("SELECT * FROM %s WHERE %s = ? COLLATE NOCASE LIMIT 1", table, emailField)
-	return queryRowForRequest(r.DB, requestID, query, email)
-}
-
-func (r *Runtime) loadAuthUserByID(requestID string, id any) (map[string]any, bool, error) {
-	table, _ := quoteIdentifier(r.authUser.Table)
-	pk, _ := quoteIdentifier(r.authUser.PrimaryKey)
-	query := fmt.Sprintf("SELECT * FROM %s WHERE %s = ? LIMIT 1", table, pk)
-	return queryRowForRequest(r.DB, requestID, query, id)
-}
-
-func (r *Runtime) countAuthUsers(requestID string) (int64, error) {
-	table, _ := quoteIdentifier(r.authUser.Table)
-	row, ok, err := queryRowForRequest(r.DB, requestID, fmt.Sprintf("SELECT COUNT(*) AS total FROM %s", table))
+	idVal, err := projectField(created, idColumnName(cfg.Entity))
 	if err != nil {
 		return 0, err
 	}
+	idInt, ok := idVal.(VInt)
 	if !ok {
-		return 0, nil
+		return 0, fmt.Errorf("user id is not an Int")
 	}
-	total, _ := toInt64(row["total"])
-	return total, nil
+	return idInt.V, nil
 }
 
-func parseAuthEmail(payload map[string]any) (string, error) {
-	emailRaw, ok := payload["email"].(string)
-	if !ok {
-		return "", newAPIError(http.StatusBadRequest, "email_required", "Email is required.")
+// fillTimestampsForSignup overlays VTime{now} onto any TIMESTAMP
+// column whose value in the signup record isn't already a VTime.
+// Returns a copy with the Fields map cloned so the caller's record
+// isn't mutated. Field order is preserved; if the entity declares a
+// timestamp column the hook omitted, the column name is appended.
+func fillTimestampsForSignup(entity VEntity, rec VRecord) VRecord {
+	now := VTime{Millis: time.Now().UnixMilli()}
+	out := VRecord{
+		Fields: make(map[string]Value, len(rec.Fields)+1),
+		Order:  append([]string(nil), rec.Order...),
 	}
-	email, err := normalizeAndValidateEmail(emailRaw)
-	if err != nil {
-		return "", newAPIError(http.StatusBadRequest, "invalid_email", err.Error())
+	for k, v := range rec.Fields {
+		out.Fields[k] = v
 	}
-	return email, nil
+	for _, field := range entity.Fields {
+		if field.SQLType != "TIMESTAMP" {
+			continue
+		}
+		if _, isTime := out.Fields[field.Name].(VTime); isTime {
+			continue
+		}
+		out.Fields[field.Name] = now
+		// Keep Order in sync — append only if the hook didn't already
+		// list the field (e.g. as a non-Time sentinel).
+		present := false
+		for _, n := range out.Order {
+			if n == field.Name {
+				present = true
+				break
+			}
+		}
+		if !present {
+			out.Order = append(out.Order, field.Name)
+		}
+	}
+	return out
 }
 
-// handleAuthRequestCode creates and delivers a one-time login code for an auth user email.
-// If the user does not exist yet, Mar may auto-create it when the auth entity allows it.
-func (r *Runtime) handleAuthRequestCode(w http.ResponseWriter, requestID string, payload map[string]any) error {
-	email, err := parseAuthEmail(payload)
+// LookupUserID returns the id of the user whose `identify` projection
+// equals the given email, or an error if no such row.
+func LookupUserID(cfg VAuth, email string) (int64, error) {
+	db, err := getDB()
 	if err != nil {
-		return err
+		return 0, err
 	}
-
-	user, found, err := r.loadOrCreateAuthUserForRequestCode(requestID, email)
+	if err := ensureMigratedNoLock(cfg.Entity, db); err != nil {
+		return 0, err
+	}
+	emailCol, err := identifyColumn(cfg)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if !found {
-		r.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "If this email exists, a code was sent."})
-		return nil
-	}
-	userID := user[r.authUser.PrimaryKey]
-	return r.issueAuthCode(w, requestID, email, userID, "If this email exists, a code was sent.", "")
-}
-
-// handleBootstrapAdmin creates the first auth user and sends a verification code.
-// The user is promoted to admin only after a successful login with that code.
-func (r *Runtime) handleBootstrapAdmin(w http.ResponseWriter, requestID string, payload map[string]any) error {
-	totalUsers, err := r.countAuthUsers(requestID)
-	if err != nil {
-		return err
-	}
-	if totalUsers > 0 {
-		return newAPIError(http.StatusConflict, "bootstrap_not_allowed", "Bootstrap is only allowed when there are no users")
-	}
-
-	email, err := parseAuthEmail(payload)
-	if err != nil {
-		return err
-	}
-
-	user, err := r.createBootstrapAdminUser(requestID, email, payload)
-	if err != nil {
-		return err
-	}
-	userID := user["id"]
-	return r.issueAuthCode(w, requestID, email, userID, "First admin verification code sent. Complete login with this code to finish setup.", "admin")
-}
-
-func (r *Runtime) issueAuthCode(w http.ResponseWriter, requestID, email string, userID any, message string, grantRole string) error {
-	cfg := r.authConfig()
-	code, err := randomCode6()
-	if err != nil {
-		return err
-	}
-	now := time.Now().UnixMilli()
-	expiresAt := now + int64(cfg.CodeTTLMinutes)*60_000
-	grantRole = strings.TrimSpace(grantRole)
-	_, err = r.DB.ExecTagged(
-		requestID,
-		`INSERT INTO mar_auth_codes (email, user_id, code, grant_role, expires_at, used, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)`,
+	idCol := idColumnName(cfg.Entity)
+	row := db.QueryRow(
+		"SELECT "+idCol+" FROM "+cfg.Entity.Table+" WHERE "+emailCol+" = ? LIMIT 1",
 		email,
-		userID,
-		hashAuthSecret(code),
-		grantRole,
-		expiresAt,
-		now,
 	)
-	if err != nil {
-		return err
+	var id int64
+	if err := row.Scan(&id); err != nil {
+		return 0, err
 	}
-	if err := r.deliverEmailCode(email, code); err != nil {
-		return err
-	}
-
-	responseMessage := message
-	if isMarDevMode() {
-		responseMessage = "Login code generated. You are running in dev mode, so check the console output."
-	}
-
-	r.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": responseMessage})
-	return nil
+	return id, nil
 }
 
-func isMarDevMode() bool {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv("MAR_DEV_MODE")))
-	return value == "1" || value == "true" || value == "yes" || value == "on"
-}
-
-// loadOrCreateAuthUserForRequestCode loads an auth user by email or auto-creates it when possible.
-func (r *Runtime) loadOrCreateAuthUserForRequestCode(requestID, email string) (map[string]any, bool, error) {
-	user, found, err := r.loadAuthUserByEmail(requestID, email)
-	if err != nil || found {
-		return user, found, err
-	}
-	totalUsers, err := r.countAuthUsers(requestID)
-	if err != nil {
-		return nil, false, err
-	}
-	if totalUsers == 0 {
-		return r.tryAutoCreateAuthUserWithRole(requestID, email, "admin")
-	}
-	return r.tryAutoCreateAuthUser(requestID, email)
-}
-
-// tryAutoCreateAuthUser creates a minimal auth user for passwordless first-login flows.
-// It only succeeds when all required fields can be safely inferred from auth config.
-func (r *Runtime) tryAutoCreateAuthUser(requestID, email string) (map[string]any, bool, error) {
-	return r.tryAutoCreateAuthUserWithRole(requestID, email, "user")
-}
-
-func (r *Runtime) createBootstrapAdminUser(requestID, email string, payload map[string]any) (map[string]any, error) {
-	if r.authUser == nil {
-		return nil, newAPIError(http.StatusUnprocessableEntity, "bootstrap_user_creation_failed", "Auth user entity is not available.")
-	}
-	if err := assertNoUnknownFields(r.authUser, payload, "create"); err != nil {
-		return nil, newAPIError(http.StatusBadRequest, "invalid_bootstrap_payload", err.Error())
-	}
-
-	cfg := r.authConfig()
-	if cfg.RoleField != "" {
-		if _, ok := payload[cfg.RoleField]; ok {
-			return nil, newAPIError(http.StatusBadRequest, "invalid_bootstrap_payload", fmt.Sprintf("Field %s is managed automatically during first admin setup", cfg.RoleField))
-		}
-	}
-
-	columns := make([]string, 0, len(r.authUser.Fields))
-	placeholders := make([]string, 0, len(r.authUser.Fields))
-	values := make([]any, 0, len(r.authUser.Fields))
-	ctx := entityNullContext(r.authUser)
-	missingFields := make([]string, 0, 4)
-	blockedRelationFields := make([]string, 0, 2)
-	now := time.Now().UnixMilli()
-
-	addValue := func(field model.Field, rawValue any) error {
-		quoted, err := quoteIdentifier(model.FieldStorageName(&field))
-		if err != nil {
-			return err
-		}
-		dbValue, apiValue, err := normalizeInputValue(&field, rawValue)
-		if err != nil {
-			return err
-		}
-		columns = append(columns, quoted)
-		placeholders = append(placeholders, "?")
-		values = append(values, dbValue)
-		ctx[field.Name] = apiValue
-		return nil
-	}
-
-	for _, field := range r.authUser.Fields {
-		if field.Primary && field.Auto {
-			continue
-		}
-		if model.IsAuditTimestampField(&field) {
-			if err := addValue(field, now); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		switch {
-		case field.Name == cfg.EmailField:
-			if err := addValue(field, email); err != nil {
-				return nil, err
-			}
-
-		case cfg.RoleField != "" && field.Name == cfg.RoleField:
-			roleValue, roleErr := resolveManagedAuthRoleValue(&field, "user")
-			if roleErr != nil {
-				return nil, newAPIError(http.StatusUnprocessableEntity, "bootstrap_user_creation_failed", roleErr.Error())
-			}
-			if err := addValue(field, roleValue); err != nil {
-				return nil, err
-			}
-
-		default:
-			rawValue, hasValue := payload[field.Name]
-			if hasValue && field.RelationEntity != "" {
-				return nil, newAPIError(http.StatusUnprocessableEntity, "bootstrap_relation_not_supported", fmt.Sprintf("First admin setup does not support relation field %s. Make this field optional or create the first admin manually in the database.", field.Name))
-			}
-			if hasValue {
-				if err := addValue(field, rawValue); err != nil {
-					return nil, newAPIError(http.StatusBadRequest, "invalid_bootstrap_payload", err.Error())
-				}
-				continue
-			}
-			if field.Default != nil {
-				if err := addValue(field, field.Default); err != nil {
-					return nil, err
-				}
-				continue
-			}
-			if field.Optional {
-				ctx[field.Name] = nil
-				continue
-			}
-			if field.RelationEntity != "" {
-				blockedRelationFields = append(blockedRelationFields, field.Name)
-				continue
-			}
-			missingFields = append(missingFields, field.Name)
-		}
-	}
-
-	if len(blockedRelationFields) > 0 {
-		fieldLabel := "fields"
-		pronoun := "these fields"
-		if len(blockedRelationFields) == 1 {
-			fieldLabel = "field"
-			pronoun = "this field"
-		}
-		return nil, newAPIError(
-			http.StatusUnprocessableEntity,
-			"bootstrap_relation_not_supported",
-			fmt.Sprintf(
-				"First admin setup cannot fill required relation %s automatically: %s. Make %s optional, or create the first admin manually in the database.",
-				fieldLabel,
-				strings.Join(blockedRelationFields, ", "),
-				pronoun,
-			),
-		)
-	}
-
-	if len(missingFields) > 0 {
-		fieldLabel := "fields"
-		verb := "values"
-		if len(missingFields) == 1 {
-			fieldLabel = "field"
-			verb = "a value"
-		}
-		return nil, newAPIError(
-			http.StatusBadRequest,
-			"bootstrap_fields_required",
-			fmt.Sprintf("First admin setup requires %s for %s: %s.", verb, fieldLabel, strings.Join(missingFields, ", ")),
-		)
-	}
-
-	if err := r.validateEntityRules(r.authUser, ctx); err != nil {
-		return nil, err
-	}
-
-	table, err := quoteIdentifier(r.authUser.Table)
+// LoadUserJSON returns the user record for `id` as a `map[string]any`
+// suitable for JSON encoding. Used by /_auth/whoami and /_auth/verify-code
+// to send the User row to the client.
+func LoadUserJSON(cfg VAuth, id int64) (map[string]any, error) {
+	v, err := loadUserValue(cfg, id)
 	if err != nil {
 		return nil, err
 	}
-	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", table, strings.Join(columns, ", "), strings.Join(placeholders, ", "))
-	if _, err := r.DB.ExecTagged(requestID, insertSQL, values...); err != nil {
-		return nil, err
-	}
-
-	user, found, err := r.loadAuthUserByEmail(requestID, email)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, newAPIError(http.StatusUnprocessableEntity, "bootstrap_user_creation_failed", "Could not create first user.")
-	}
-	return user, nil
-}
-
-func (r *Runtime) tryAutoCreateAuthUserWithRole(requestID, email, roleValue string) (map[string]any, bool, error) {
-	cfg := r.authConfig()
-	columns := make([]string, 0, len(r.authUser.Fields))
-	placeholders := make([]string, 0, len(r.authUser.Fields))
-	values := make([]any, 0, len(r.authUser.Fields))
-	ctx := entityNullContext(r.authUser)
-	hasEmailField := false
-	now := time.Now().UnixMilli()
-
-	for _, field := range r.authUser.Fields {
-		if field.Primary && field.Auto {
-			continue
-		}
-
-		quoted, err := quoteIdentifier(model.FieldStorageName(&field))
-		if err != nil {
-			return nil, false, err
-		}
-
-		switch {
-		case model.IsAuditTimestampField(&field):
-			columns = append(columns, quoted)
-			placeholders = append(placeholders, "?")
-			values = append(values, now)
-			ctx[field.Name] = now
-		case field.Name == cfg.EmailField:
-			columns = append(columns, quoted)
-			placeholders = append(placeholders, "?")
-			values = append(values, email)
-			ctx[field.Name] = email
-			hasEmailField = true
-		case cfg.RoleField != "" && field.Name == cfg.RoleField:
-			resolvedRoleValue, roleErr := resolveManagedAuthRoleValue(&field, roleValue)
-			if roleErr != nil {
-				return nil, false, nil
-			}
-			columns = append(columns, quoted)
-			placeholders = append(placeholders, "?")
-			values = append(values, resolvedRoleValue)
-			ctx[field.Name] = resolvedRoleValue
-		case field.Default != nil:
-			dbValue, apiValue, normalizeErr := normalizeInputValue(&field, field.Default)
-			if normalizeErr != nil {
-				return nil, false, normalizeErr
-			}
-			columns = append(columns, quoted)
-			placeholders = append(placeholders, "?")
-			values = append(values, dbValue)
-			ctx[field.Name] = apiValue
-		case field.Optional:
-			// Keep optional fields nil for auto-provisioned users.
-		default:
-			// Required field that cannot be inferred automatically.
-			return nil, false, nil
-		}
-	}
-
-	if !hasEmailField || len(columns) == 0 {
-		return nil, false, nil
-	}
-
-	if err := r.validateEntityRules(r.authUser, ctx); err != nil {
-		return nil, false, nil
-	}
-
-	table, err := quoteIdentifier(r.authUser.Table)
-	if err != nil {
-		return nil, false, err
-	}
-	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", table, strings.Join(columns, ", "), strings.Join(placeholders, ", "))
-	if _, err := r.DB.ExecTagged(requestID, insertSQL, values...); err != nil {
-		// If a concurrent request created the same user, load and continue.
-		user, found, loadErr := r.loadAuthUserByEmail(requestID, email)
-		if loadErr == nil && found {
-			return user, true, nil
-		}
-		return nil, false, err
-	}
-
-	user, found, err := r.loadAuthUserByEmail(requestID, email)
-	if err != nil {
-		return nil, false, err
-	}
-	return user, found, nil
-}
-
-// handleAuthLogin verifies an email+code pair and issues a session token.
-func (r *Runtime) handleAuthLogin(w http.ResponseWriter, req *http.Request, requestID string, payload map[string]any) error {
-	email, err := parseAuthEmail(payload)
-	if err != nil {
-		return err
-	}
-	codeRaw, ok := payload["code"].(string)
+	rec, ok := v.(VRecord)
 	if !ok {
-		return newAPIError(http.StatusBadRequest, "code_required", "Code is required.")
+		return nil, fmt.Errorf("user row is not a record")
 	}
-	code := strings.TrimSpace(codeRaw)
-	if code == "" {
-		return newAPIError(http.StatusBadRequest, "code_required", "Code is required.")
+	out := map[string]any{}
+	for _, name := range rec.Order {
+		out[name] = valueToAny(rec.Fields[name])
 	}
+	return out, nil
+}
 
-	row, ok, err := queryRowForRequest(r.DB, requestID, `SELECT id, user_id, code, grant_role, expires_at, used FROM mar_auth_codes WHERE email = ? ORDER BY id DESC LIMIT 1`, email)
+// LoadUserValue returns the user row as a runtime VRecord, used by the
+// dispatcher when injecting `__user` into protected service requests.
+func LoadUserValue(cfg VAuth, id int64) (Value, error) {
+	return loadUserValue(cfg, id)
+}
+
+func loadUserValue(cfg VAuth, id int64) (Value, error) {
+	// Reuse Repo.findById's machinery via Apply with VInt id.
+	eff, err := repoFindByID([]Value{cfg.Entity, VInt{V: id}})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	now := time.Now().UnixMilli()
+	veff, ok := eff.(VEffect)
 	if !ok {
-		return newAPIError(http.StatusUnauthorized, "invalid_or_expired_code", "That code is invalid or expired. Request a new one and try again.")
+		return nil, fmt.Errorf("findById didn't return Effect")
 	}
-	used, _ := toInt64(row["used"])
-	expiresAt, _ := toInt64(row["expires_at"])
-	storedCode, _ := row["code"].(string)
-	if used == 1 || expiresAt < now || !storedSecretMatches(storedCode, code) {
-		return newAPIError(http.StatusUnauthorized, "invalid_or_expired_code", "That code is invalid or expired. Request a new one and try again.")
-	}
-	codeID, _ := toInt64(row["id"])
-	userID := row["user_id"]
-	grantRole, _ := row["grant_role"].(string)
-
-	if _, err := r.DB.ExecTagged(requestID, `UPDATE mar_auth_codes SET used = 1 WHERE id = ?`, codeID); err != nil {
-		return err
-	}
-	userRow, found, err := r.loadAuthUserByID(requestID, userID)
+	out, err := veff.Run()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if !found {
-		return newAPIError(http.StatusUnauthorized, "invalid_or_expired_code", "That code is invalid or expired. Request a new one and try again.")
+	ctor, ok := out.(VCtor)
+	if !ok || ctor.Tag != "Just" || len(ctor.Args) != 1 {
+		return nil, fmt.Errorf("user not found")
 	}
-
-	if strings.EqualFold(strings.TrimSpace(grantRole), "admin") {
-		promotedUser, promoteErr := r.promoteAuthUserToAdmin(requestID, userRow)
-		if promoteErr != nil {
-			return promoteErr
-		}
-		userRow = promotedUser
-	}
-
-	decodedUser := decodeEntityRow(r.authUser, userRow)
-
-	token, err := randomToken(32)
-	if err != nil {
-		return err
-	}
-	tokenHash := hashAuthSecret(token)
-	cfg := r.authConfig()
-	sessionTTLHours := r.requestedAdminUISessionTTLHours(req)
-	sessionExpiresAt := now + int64(sessionTTLHours)*60*60*1000
-	if _, err := r.DB.ExecTagged(requestID, `INSERT INTO mar_sessions (token, user_id, email, expires_at, revoked, created_at) VALUES (?, ?, ?, ?, 0, ?)`, tokenHash, userID, email, sessionExpiresAt, now); err != nil {
-		return err
-	}
-	writeSessionCookie(w, req, token, sessionExpiresAt)
-
-	loginRole := any(nil)
-	if cfg.RoleField != "" {
-		loginRole = decodedUser[cfg.RoleField]
-	}
-	r.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":        true,
-		"token":     token,
-		"expiresAt": sessionExpiresAt,
-		"email":     email,
-		"role":      loginRole,
-	})
-	return nil
+	return ctor.Args[0], nil
 }
 
-func (r *Runtime) promoteAuthUserToAdmin(requestID string, user map[string]any) (map[string]any, error) {
-	cfg := r.authConfig()
-	if strings.TrimSpace(cfg.RoleField) == "" {
-		return user, nil
-	}
-
-	table, err := quoteIdentifier(r.authUser.Table)
-	if err != nil {
-		return nil, err
-	}
-	pk, err := quoteIdentifier(r.authUser.PrimaryKey)
-	if err != nil {
-		return nil, err
-	}
-	roleField, err := quoteIdentifier(cfg.RoleField)
-	if err != nil {
-		return nil, err
-	}
-
-	userID := user[r.authUser.PrimaryKey]
-	if userID == nil {
-		return user, nil
-	}
-
-	roleValue, err := resolveManagedAuthRoleValue(findField(r.authUser, cfg.RoleField), "admin")
-	if err != nil {
-		return nil, err
-	}
-	if _, err := r.DB.ExecTagged(requestID, fmt.Sprintf("UPDATE %s SET %s = ? WHERE %s = ?", table, roleField, pk), roleValue, userID); err != nil {
-		return nil, err
-	}
-	updated, found, err := r.loadAuthUserByID(requestID, userID)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return user, nil
-	}
-	return updated, nil
+// ensureMigratedNoLock runs the entity's migration. Wrapped helper so
+// auth code can ensure the user table exists before the first query.
+func ensureMigratedNoLock(entity VEntity, db *sql.DB) error {
+	_, err := db.Exec(buildCreateTableSQL(entity))
+	return err
 }
 
-func resolveManagedAuthRoleValue(field *model.Field, requestedRole string) (string, error) {
-	if field == nil {
-		return "", fmt.Errorf("auth role field is not available")
+// repoCreateInner is repo.go's repoCreate logic invoked synchronously
+// (it normally returns a deferred Effect). Mirrors that path so the
+// auth signup flow runs through identical SQL/decode logic.
+func repoCreateInner(entity VEntity, input VRecord) (Value, error) {
+	eff, err := repoCreate([]Value{entity, input})
+	if err != nil {
+		return nil, err
 	}
-	if len(field.EnumValues) == 0 {
-		return requestedRole, nil
+	veff, ok := eff.(VEffect)
+	if !ok {
+		return nil, fmt.Errorf("repoCreate didn't return Effect")
 	}
-
-	findVariant := func(candidates ...string) string {
-		for _, candidate := range candidates {
-			for _, value := range field.EnumValues {
-				if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(candidate)) {
-					return value
-				}
-			}
-		}
-		return ""
-	}
-
-	switch strings.ToLower(strings.TrimSpace(requestedRole)) {
-	case "admin":
-		if value := findVariant("admin"); value != "" {
-			return value, nil
-		}
-		return "", fmt.Errorf("auth role field %s must include an Admin value", field.Name)
-	case "user":
-		if value := findVariant("user", "member"); value != "" {
-			return value, nil
-		}
-		for _, value := range field.EnumValues {
-			if !strings.EqualFold(value, "admin") {
-				return value, nil
-			}
-		}
-		if len(field.EnumValues) > 0 {
-			return field.EnumValues[0], nil
-		}
-		return "", fmt.Errorf("auth role field %s must declare at least one value", field.Name)
-	default:
-		if value := findVariant(requestedRole); value != "" {
-			return value, nil
-		}
-		return "", fmt.Errorf("auth role field %s does not support role %q", field.Name, requestedRole)
-	}
+	return veff.Run()
 }
 
-// handleAuthLogout revokes the caller session token.
-func (r *Runtime) handleAuthLogout(w http.ResponseWriter, req *http.Request, requestID string, auth authSession) error {
-	if !auth.Authenticated || auth.Token == "" {
-		return newAPIError(http.StatusUnauthorized, "auth_required", "Authentication required")
+// projectField pulls a single field by name from a VRecord.
+func projectField(v Value, name string) (Value, error) {
+	rec, ok := v.(VRecord)
+	if !ok {
+		return nil, fmt.Errorf("cannot project field %q from %T", name, v)
 	}
-	if _, err := r.DB.ExecTagged(requestID, `UPDATE mar_sessions SET revoked = 1 WHERE token = ?`, hashAuthSecret(auth.Token)); err != nil {
-		return err
+	val, ok := rec.Fields[name]
+	if !ok {
+		return nil, fmt.Errorf("missing field %q", name)
 	}
-	clearSessionCookie(w, req)
-	r.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	return nil
+	return val, nil
 }
 
-// deliverEmailCode dispatches login codes through the configured transport.
-func (r *Runtime) deliverEmailCode(toEmail, code string) error {
-	cfg := r.authConfig()
+// idColumnName returns the name of the entity's serial primary key
+// column. Auth requires entities to have one.
+func idColumnName(e VEntity) string {
+	for _, f := range e.Fields {
+		if f.Serial {
+			return f.Name
+		}
+	}
+	return "id" // fallback; entities without serial PK will fail elsewhere
+}
 
-	if isMarDevMode() {
-		body := buildAuthEmailBody(code, cfg.CodeTTLMinutes)
-		r.printAuthLogHeader()
-		r.printAuthLogSection("Login code delivery")
-		r.printAuthLogFieldCommand("Status", "sent")
-		r.printAuthLogField("Transport", "console")
-		r.printAuthLogField("To", toEmail)
-		r.printAuthLogSection("Email body")
-		r.printAuthLogMultiline(body)
+// identifyColumn applies the user-supplied identify projection to a
+// dummy record where every field is named-as-its-name, so we can read
+// back which field name the projection picked. Implementation: look
+// up which field on the entity is a String (typical case) and trust
+// the convention of `\u -> u.email` mapping to the `email` field.
+//
+// For v1, we accept this slight cheat: the identify projection is
+// expected to be `\u -> u.<emailFieldName>`, and we discover the
+// column name by trying common names. If multiple String columns
+// exist, the user can name their email column something obvious or
+// the framework will pick the first one.
+func identifyColumn(cfg VAuth) (string, error) {
+	// Common case: an `email` column.
+	for _, f := range cfg.Entity.Fields {
+		if f.Name == "email" {
+			return "email", nil
+		}
+	}
+	// Fall back to the first TEXT NOT NULL column.
+	for _, f := range cfg.Entity.Fields {
+		if f.SQLType == "TEXT" && f.NotNull {
+			return f.Name, nil
+		}
+	}
+	return "", fmt.Errorf("auth: cannot determine email column on entity %q", cfg.Entity.Table)
+}
+
+// valueToAny converts a runtime Value to a JSON-friendly Go value.
+// Subset of what JSON.encode does; used to serialize user records for
+// the /_auth/* responses.
+func valueToAny(v Value) any {
+	switch x := v.(type) {
+	case VInt:
+		return x.V
+	case VFloat:
+		return x.V
+	case VString:
+		return x.V
+	case VBool:
+		return x.V
+	case VUnit:
 		return nil
+	case VDuration:
+		return x.Seconds
+	case VTime:
+		// Marker form so jsToMar / iOS decoders can rebuild a VTime
+		// (instead of dropping back to a plain VString) — same
+		// pattern as VCtor's `{__ctor:...}`.
+		return map[string]any{
+			"__time": time.UnixMilli(x.Millis).UTC().Format(time.RFC3339),
+		}
+	case VList:
+		out := make([]any, 0, len(x.Elements))
+		for _, e := range x.Elements {
+			out = append(out, valueToAny(e))
+		}
+		return out
+	case VRecord:
+		out := map[string]any{}
+		for _, name := range x.Order {
+			out[name] = valueToAny(x.Fields[name])
+		}
+		return out
+	case VCtor:
+		// Every ctor — Nothing and Just included — uses the
+		// `__ctor` marker convention shared with encodeValue + the JS
+		// / iOS runtimes. See the note in internal/runtime/json.go on
+		// why Nothing can't be transparent to null (collides with
+		// VUnit's encoding) and why Just can't be transparent either
+		// (breaks generic decoders on record payloads).
+		out := map[string]any{"__ctor": x.Tag}
+		if len(x.Args) > 0 {
+			args := make([]any, len(x.Args))
+			for i, a := range x.Args {
+				args[i] = valueToAny(a)
+			}
+			out["__args"] = args
+		}
+		return out
 	}
-
-	if err := sendWithSMTP(cfg, toEmail, code); err != nil {
-		return err
-	}
-	r.printAuthLogHeader()
-	r.printAuthLogSection("Login code delivery")
-	r.printAuthLogFieldCommand("Status", "sent")
-	r.printAuthLogField("Transport", "smtp")
-	r.printAuthLogField("To", toEmail)
 	return nil
-}
-
-func (r *Runtime) printAuthLogHeader() {
-	useColor := supportsANSI()
-	r.authLogOnce.Do(func() {
-		fmt.Println()
-		fmt.Printf("%s\n", colorize(useColor, ansiSection, "Auth logs"))
-	})
-}
-
-func (r *Runtime) printAuthLogSection(title string) {
-	useColor := supportsANSI()
-	fmt.Printf("  %s\n", colorize(useColor, ansiSection, title))
-}
-
-func (r *Runtime) printAuthLogField(label, value string) {
-	r.printAuthLogFieldWithColor(label, value, "")
-}
-
-func (r *Runtime) printAuthLogFieldCommand(label, value string) {
-	r.printAuthLogFieldWithColor(label, value, ansiCommand)
-}
-
-func (r *Runtime) printAuthLogFieldWithColor(label, value, valueColor string) {
-	useColor := supportsANSI()
-	key := label + ":"
-	const keyWidth = 12
-	if len(key) < keyWidth {
-		key += strings.Repeat(" ", keyWidth-len(key))
-	}
-	displayValue := value
-	if valueColor != "" {
-		displayValue = colorize(useColor, valueColor, value)
-	}
-	fmt.Printf("    %s %s\n", colorize(useColor, ansiLabel, key), displayValue)
-}
-
-func (r *Runtime) printAuthLogMultiline(content string) {
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		fmt.Printf("    %s\n", line)
-	}
-}
-
-func buildAuthEmailMessage(from, subject, to, code string, ttlMinutes int) string {
-	return strings.Join([]string{
-		"From: " + from,
-		"To: " + to,
-		"Subject: " + subject,
-		"Content-Type: text/plain; charset=utf-8",
-		"",
-		buildAuthEmailBody(code, ttlMinutes),
-	}, "\n")
-}
-
-func buildAuthEmailBody(code string, ttlMinutes int) string {
-	return strings.Join([]string{
-		"Your login code is:",
-		code,
-		"",
-		fmt.Sprintf("This code expires in %d minute(s).", ttlMinutes),
-		"",
-		"If you did not request this code, ignore this email.",
-	}, "\n")
 }

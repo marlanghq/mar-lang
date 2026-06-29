@@ -1,0 +1,191 @@
+module Backend.Mentions exposing
+    ( mentions
+    , parseAndStoreMentions
+    , handleFor
+    , isHandleChar
+    )
+
+
+import Backend.Users
+import Shared exposing (Role(..))
+
+
+-- Mentions — explicit "I @-tagged you" rows backed by a UNIQUE on
+-- (commentId, mentionedUserId) so a comment containing five
+-- "@marcio"s still produces one inbox entry for marcio.
+--
+-- This module is the LEAF half of the mentions story. It owns the
+-- entity and the parse/store path. The list/view path that joins
+-- mentions with Comments + Issues + Projects lives in
+-- `Backend.MentionInbox` to avoid forming a cycle with
+-- `Backend.Comments`, which imports this module to write mentions
+-- on `Comment.create`.
+mentions : Entity Shared.Mention
+mentions =
+    Entity.define
+        { name = "mentions"
+        , columns =
+            { id              = Entity.serial
+            , commentId       = Entity.int  Entity.notNull
+            , mentionedUserId = Entity.int  Entity.notNull
+            , authorId        = Entity.int  Entity.notNull
+            , createdAt       = Entity.timestamp Entity.notNull
+            , seen            = Entity.bool Entity.notNull
+            }
+        , uniques = [["commentId", "mentionedUserId"]]
+        }
+
+
+-- ====================================================================
+-- PARSE + STORE
+-- ====================================================================
+--
+-- parseAndStoreMentions scans a comment body for `@handle` tokens,
+-- resolves each to a user via handle = email-prefix (the substring
+-- before "@"), and inserts one Mention row per distinct user found.
+-- Same user mentioned twice in one comment? One row.
+--
+-- Self-mentions are dropped — no inbox entry for the author when
+-- they tag themselves. Misses (typo, ex-member) silently skip.
+parseAndStoreMentions : Shared.Comment -> Task ()
+parseAndStoreMentions comment =
+    let
+        handles =
+            extractHandles comment.body
+
+        distinctHandles =
+            List.foldl
+                (\acc h ->
+                    if List.member h acc then acc else acc ++ [h]
+                )
+                []
+                handles
+    in
+    if List.isEmpty distinctHandles then
+        Task.succeed ()
+    else
+        resolveHandles distinctHandles
+            |> Task.andThen
+                (\userIds ->
+                    let
+                        targets =
+                            List.filter (\uid -> uid /= comment.authorId) userIds
+                    in
+                    Task.sequence (List.map (storeMention comment) targets)
+                        |> Task.map (\_ -> ())
+                )
+
+
+-- extractHandles: normalize whitespace, split, keep tokens that
+-- match the @-handle pattern. Cheap and good enough for the demo.
+extractHandles : String -> List String
+extractHandles body =
+    body
+        |> String.replace "\n" " "
+        |> String.replace "\t" " "
+        |> String.split " "
+        |> List.filter (\t -> t /= "")
+        |> List.filterMap candidateHandle
+
+
+-- candidateHandle returns `Just handle` when the token is "@handle"
+-- with a non-empty handle after the @, topBarTrailing punctuation
+-- stripped (e.g. "@marcio," → Just "marcio").
+candidateHandle : String -> Maybe String
+candidateHandle token =
+    case String.toList token of
+        [] ->
+            Nothing
+
+        first :: rest ->
+            if first /= '@' then
+                Nothing
+            else
+                let
+                    stripped =
+                        rest
+                            |> List.filter isHandleChar
+                            |> String.fromList
+                in
+                if stripped == "" then
+                    Nothing
+                else
+                    Just stripped
+
+
+-- isHandleChar — letter, digit, dot, underscore, or hyphen.
+-- Mirrors the charset we accept in the email-prefix derivation
+-- of a user's handle.
+isHandleChar : Char -> Bool
+isHandleChar c =
+    Char.isAlpha c
+        || Char.isDigit c
+        || c == '.'
+        || c == '_'
+        || c == '-'
+
+
+-- resolveHandles looks up each handle against every user, returning
+-- the matching ids. List.filterMap drops un-resolvable handles.
+resolveHandles : List String -> Task (List Int)
+resolveHandles handles =
+    Repo.all Backend.Users.users
+        |> Task.map
+            (\allUsers ->
+                List.filterMap
+                    (\handle ->
+                        let
+                            match =
+                                List.filter (\u -> handleFor u == handle) allUsers
+                                    |> List.head
+                        in
+                        case match of
+                            Just u  -> Just u.id
+                            Nothing -> Nothing
+                    )
+                    handles
+            )
+
+
+-- handleFor derives a user's @-handle from their email: the part
+-- before the "@", with any non-handle chars dropped.
+handleFor : Shared.User -> String
+handleFor user =
+    case String.split "@" user.email of
+        first :: _ ->
+            first
+                |> String.toList
+                |> List.filter isHandleChar
+                |> String.fromList
+
+        [] ->
+            ""
+
+
+-- storeMention inserts a Mention row IF the (comment, user) pair
+-- isn't already present. The pre-check makes retries silent; the
+-- UNIQUE constraint at the schema layer is the backstop.
+storeMention : Shared.Comment -> Int -> Task ()
+storeMention comment userId =
+    Repo.findBy mentions
+        { commentId       = comment.id
+        , mentionedUserId = userId
+        }
+        |> Task.andThen
+            (\existing ->
+                if List.isEmpty existing then
+                    Time.now
+                        |> Task.andThen
+                            (\now ->
+                                Repo.create mentions
+                                    { commentId       = comment.id
+                                    , mentionedUserId = userId
+                                    , authorId        = comment.authorId
+                                    , createdAt       = now
+                                    , seen            = False
+                                    }
+                                    |> Task.map (\_ -> ())
+                            )
+                else
+                    Task.succeed ()
+            )

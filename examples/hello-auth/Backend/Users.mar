@@ -1,0 +1,19 @@
+module Backend.Users exposing (users)
+
+
+import Shared
+
+
+-- The users table. Auth.config (in Main) reads this entity to know
+-- what record to materialize for the signed-in user. Keep it tiny —
+-- only `id` and `email` are required by the framework.
+users : Entity Shared.User
+users =
+    Entity.define
+        { name = "users"
+        , columns =
+            { id    = Entity.serial
+            , email = Entity.text Entity.notNull
+            }
+        , uniques = []
+        }

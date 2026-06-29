@@ -1,0 +1,126 @@
+module Main exposing (main)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, list, section, header
+    , hstack
+    , text, textField, button, navigationLink, centered
+    , submit
+    )
+
+
+-- Two MVU screens served by the same app.
+--   /home    : a counter
+--   /todos   : a small todo list
+-- Each has its own model, persisted per browser session.
+--
+-- Routes are declared as typed `Path {}` values so the in-app links
+-- (`navigationLink counterPath ...`) are refactor-safe — change the
+-- URL pattern and every callsite flags in compile time.
+
+
+counterPath : Path {}
+counterPath = "/home"
+
+
+todosPath : Path {}
+todosPath = "/todos"
+
+
+-- COUNTER SCREEN
+
+type CounterMsg = Inc | Dec
+
+
+counterInit : (Int, Cmd CounterMsg)
+counterInit = (0, Cmd.none)
+
+
+counterUpdate : CounterMsg -> Int -> (Int, Cmd CounterMsg)
+counterUpdate msg model =
+    case msg of
+        Inc -> (model + 1, Cmd.none)
+        Dec -> (model - 1, Cmd.none)
+
+
+counterView : Int -> View CounterMsg
+counterView n =
+    navigationStack [ navigationTitle "Counter" ]
+        [ form
+            [ section []
+                [ text [] ("Value: " ++ String.fromInt n)
+                , hstack [] [ button [] Inc "Inc", button [] Dec "Dec" ]
+                ]
+            , section []
+                [ navigationLink [] todosPath {} (text [] "Go to todos →") ]
+            ]
+        ]
+
+
+counterPage : Page
+counterPage =
+    Page.create
+        { path = "/home"
+        , title = "Counter"
+        , init = counterInit
+        , update = counterUpdate
+        , view = counterView
+        , subscriptions = \_ -> Sub.none
+        }
+
+
+-- TODO SCREEN
+
+type alias TodoModel = { items : List String, draft : String }
+type TodoMsg = DraftChanged String | AddItem | Clear
+
+
+todoInit : (TodoModel, Cmd TodoMsg)
+todoInit = ({ items = [], draft = "" }, Cmd.none)
+
+
+todoUpdate : TodoMsg -> TodoModel -> (TodoModel, Cmd TodoMsg)
+todoUpdate msg model =
+    case msg of
+        DraftChanged value -> ({ model | draft = value }, Cmd.none)
+        AddItem -> ({ model | items = model.items ++ [model.draft], draft = "" }, Cmd.none)
+        Clear -> ({ model | items = [] }, Cmd.none)
+
+
+todoView : TodoModel -> View TodoMsg
+todoView model =
+    navigationStack [ navigationTitle "Todos" ]
+        [ list []
+            [ section []
+                [ hstack []
+                    [ textField [ submit AddItem ]
+                        "What needs doing?" model.draft DraftChanged
+                    , button [] AddItem "Add"
+                    ]
+                ]
+            , section []
+                [ button [] Clear "Clear all" ]
+            , section [ header (String.fromInt (List.length model.items) ++ " items") ]
+                (List.map (text []) model.items)
+            , section []
+                [ navigationLink [] counterPath {} (text [] "← Back to counter") ]
+            ]
+        ]
+
+
+todoPage : Page
+todoPage =
+    Page.create
+        { path = "/todos"
+        , title = "Todos"
+        , init = todoInit
+        , update = todoUpdate
+        , view = todoView
+        , subscriptions = \_ -> Sub.none
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ counterPage, todoPage ]

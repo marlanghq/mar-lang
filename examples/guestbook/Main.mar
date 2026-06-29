@@ -1,0 +1,176 @@
+module Main exposing (main)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, list, section, header
+    , hstack
+    , text, textField, button, errorText
+    , submit
+    )
+
+
+-- Guestbook backed by SQLite. A small full-stack app:
+--   - Backend exposes two RPC services (list + add).
+--   - Frontend is an MVU page that fetches the list on mount, lets
+--     the user type their name, and re-fetches on each new entry.
+--
+-- Open with:  mar dev examples/guestbook
+--
+-- Demonstrates:
+--   - Repo for persistence with auto-derived schema + auto-migration.
+--   - Service.declare / Service.implement (typed RPC, no JSON mucking).
+--   - The UI vocabulary on a minimal example — navigationStack with
+--     a Form of two Sections (input row + entries row).
+
+
+type alias Entry =
+    { id   : Int
+    , name : String
+    }
+
+
+entries : Entity Entry
+entries =
+    Entity.define
+        { name = "entries"
+        , columns =
+            { id   = Entity.serial
+            , name = Entity.text Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- Service contracts — shared between backend impl and frontend caller.
+listEntries : Service () (List Entry)
+listEntries = Service.declare GET "/entries"
+
+
+addEntry : Service { name : String } Entry
+addEntry = Service.declare POST "/entries"
+
+
+-- Backend handlers
+listEntriesImpl : () -> Task (List Entry)
+listEntriesImpl _ =
+    Repo.all entries
+
+
+addEntryImpl : { name : String } -> Task Entry
+addEntryImpl input =
+    Repo.create entries { name = input.name }
+
+
+services =
+    [ Service.implement listEntries listEntriesImpl
+    , Service.implement addEntry addEntryImpl
+    ]
+
+
+-- Frontend
+type Entries
+    = Loading
+    | Loaded (List Entry)
+    | Failed String
+
+
+type alias Model =
+    { entries : Entries
+    , draft   : String
+    }
+
+
+type Msg
+    = EntriesFetched (Result Service.Error (List Entry))
+    | DraftChanged String
+    | SignClicked
+    | EntrySigned (Result Service.Error Entry)
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { entries = Loading, draft = "" }
+    , Service.call listEntries () EntriesFetched
+    )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        EntriesFetched (Ok loaded) ->
+            ( { model | entries = Loaded loaded }, Cmd.none )
+
+        EntriesFetched (Err why) ->
+            ( { model | entries = Failed (Service.errorToString why) }, Cmd.none )
+
+        DraftChanged value ->
+            ( { model | draft = value }, Cmd.none )
+
+        SignClicked ->
+            -- Stale-while-revalidate: keep the current Loaded list
+            -- visible while the create + re-fetch round-trips.
+            ( { model | draft = "" }
+            , Service.call addEntry { name = model.draft } EntrySigned
+            )
+
+        EntrySigned (Ok _) ->
+            ( model, Service.call listEntries () EntriesFetched )
+
+        EntrySigned (Err _) ->
+            ( model, Cmd.none )
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Guestbook" ]
+        [ list []
+            [ section []
+                [ hstack []
+                    [ textField [ submit SignClicked ]
+                        "Your name" model.draft DraftChanged
+                    , button [] SignClicked "Sign"
+                    ]
+                ]
+            , entriesSection model.entries
+            ]
+        ]
+
+
+entriesSection : Entries -> View Msg
+entriesSection state =
+    case state of
+        Loading ->
+            section [] [ text [] "Loading…" ]
+
+        Failed why ->
+            section [] [ errorText ("Couldn't load entries: " ++ why) ]
+
+        Loaded items ->
+            section [ header (String.fromInt (List.length items) ++ " signatures") ]
+                (List.map renderEntry (List.reverse items))
+
+
+renderEntry : Entry -> View Msg
+renderEntry entry =
+    text [] entry.name
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Guestbook"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+
+
+main : Cmd ()
+main =
+    App.fullstack
+        { services = services
+        , pages    = [ page ]
+        }

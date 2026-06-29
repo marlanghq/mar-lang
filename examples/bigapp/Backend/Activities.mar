@@ -1,0 +1,209 @@
+module Backend.Activities exposing
+    ( activities
+    , emit
+    , emitIssueCreated
+    , emitIssueStatusChanged
+    , emitIssueDeleted
+    , emitCommentCreated
+    , emitCommentDeleted
+    , emitReactionAdded
+    , emitProjectCreated
+    , emitProjectDeleted
+    )
+
+
+import Shared exposing
+    ( Role(..)
+    , ActivityVerb(..)
+    , ActivitySubject(..)
+    , IssueStatus(..)
+    )
+
+
+-- Activities — denormalized audit log. Every writeful handler in
+-- the rest of the backend calls one of the `emitX` helpers below as
+-- a side effect of its primary write, so the activity feed page can
+-- render a coherent timeline without re-scanning every domain table.
+--
+-- This module is deliberately leaf-only on the dependency graph: it
+-- imports nothing from `Backend.*` so any other backend module
+-- (Issues, Comments, Projects, ...) can import emit helpers from
+-- here without creating a cycle. The list/view path that NEEDS to
+-- join activities with Issues/Projects lives in
+-- `Backend.ActivityFeed` as a separate module.
+--
+-- The verb + subject columns are Entity.enum so SQLite's CHECK
+-- constraint validates the closed set at the DB layer too — a write
+-- with an unknown verb (e.g. from a legacy migration that referenced
+-- a removed ctor) fails fast instead of corrupting the audit trail.
+activities : Entity Shared.Activity
+activities =
+    Entity.define
+        { name = "activities"
+        , columns =
+            { id        = Entity.serial
+            , teamId    = Entity.int  Entity.notNull
+            , actorId   = Entity.int  Entity.notNull
+            , verb      =
+                Entity.enum
+                    [ CreatedIssue
+                    , ChangedIssueStatus
+                    , DeletedIssue
+                    , CommentedOnIssue
+                    , DeletedComment
+                    , ReactedToComment
+                    , CreatedProject
+                    , DeletedProject
+                    ]
+                    Entity.notNull
+            , subject   =
+                Entity.enum
+                    [ OnProject
+                    , OnIssue
+                    , OnComment
+                    ]
+                    Entity.notNull
+            , subjectId = Entity.int  Entity.notNull
+            , extra     = Entity.text Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ====================================================================
+-- EMIT HELPERS
+-- ====================================================================
+--
+-- Each emitX function is the verb-specific public surface that
+-- writeful handlers call. The shared `emit` does the actual
+-- timestamping + Repo.create; the typed wrappers just shape the
+-- right ctor and extra string.
+--
+-- Returns `Effect ()` so callers can fold it into their
+-- existing Effect pipeline via Task.map / Task.andThen without
+-- ceremony. Errors in the audit write should NOT roll back the
+-- primary write — callers can ignore the result with
+-- `|> Effect.recover (\_ -> Task.succeed ())` if they want to be
+-- extra defensive.
+
+emit
+    : { teamId : Int
+      , actorId : Int
+      , verb : ActivityVerb
+      , subject : ActivitySubject
+      , subjectId : Int
+      , extra : String
+      }
+    -> Task ()
+emit args =
+    Time.now
+        |> Task.andThen
+            (\now ->
+                Repo.create activities
+                    { teamId    = args.teamId
+                    , actorId   = args.actorId
+                    , verb      = args.verb
+                    , subject   = args.subject
+                    , subjectId = args.subjectId
+                    , extra     = args.extra
+                    , createdAt = now
+                    }
+                    |> Task.map (\_ -> ())
+            )
+
+
+emitIssueCreated : Shared.User -> Shared.Issue -> Task ()
+emitIssueCreated user issue =
+    emit
+        { teamId = user.teamId
+        , actorId = user.id
+        , verb = CreatedIssue
+        , subject = OnIssue
+        , subjectId = issue.id
+        , extra = issue.title
+        }
+
+
+emitIssueStatusChanged : Shared.User -> Shared.Issue -> IssueStatus -> Task ()
+emitIssueStatusChanged user issue newStatus =
+    emit
+        { teamId = user.teamId
+        , actorId = user.id
+        , verb = ChangedIssueStatus
+        , subject = OnIssue
+        , subjectId = issue.id
+        , extra = Shared.statusLabel newStatus
+        }
+
+
+emitIssueDeleted : Shared.User -> Int -> String -> Task ()
+emitIssueDeleted user issueId title =
+    emit
+        { teamId = user.teamId
+        , actorId = user.id
+        , verb = DeletedIssue
+        , subject = OnIssue
+        , subjectId = issueId
+        , extra = title
+        }
+
+
+emitCommentCreated : Shared.User -> Shared.Comment -> Task ()
+emitCommentCreated user comment =
+    emit
+        { teamId = user.teamId
+        , actorId = user.id
+        , verb = CommentedOnIssue
+        , subject = OnComment
+        , subjectId = comment.id
+        , extra = String.fromInt comment.issueId
+        }
+
+
+emitCommentDeleted : Shared.User -> Int -> Int -> Task ()
+emitCommentDeleted user commentId issueId =
+    emit
+        { teamId = user.teamId
+        , actorId = user.id
+        , verb = DeletedComment
+        , subject = OnComment
+        , subjectId = commentId
+        , extra = String.fromInt issueId
+        }
+
+
+emitReactionAdded : Shared.User -> Int -> String -> Task ()
+emitReactionAdded user commentId emoji =
+    emit
+        { teamId = user.teamId
+        , actorId = user.id
+        , verb = ReactedToComment
+        , subject = OnComment
+        , subjectId = commentId
+        , extra = emoji
+        }
+
+
+emitProjectCreated : Shared.User -> Shared.Project -> Task ()
+emitProjectCreated user project =
+    emit
+        { teamId = user.teamId
+        , actorId = user.id
+        , verb = CreatedProject
+        , subject = OnProject
+        , subjectId = project.id
+        , extra = project.name
+        }
+
+
+emitProjectDeleted : Shared.User -> Int -> String -> Task ()
+emitProjectDeleted user projectId name =
+    emit
+        { teamId = user.teamId
+        , actorId = user.id
+        , verb = DeletedProject
+        , subject = OnProject
+        , subjectId = projectId
+        , extra = name
+        }

@@ -1,39 +1,55 @@
-# Mar Developer Tools
+# vscode-mar
 
-This extension adds syntax highlighting, snippets/autocomplete, and LSP features for `.mar` files.
-
-Mar has a built-in `User` entity in every app, and entity operations are protected by default. The extension reflects that model in snippets and editor support.
+Language support for the [mar](../) programming language.
 
 ## Features
 
-- Syntax highlighting for Mar files
-- Snippets and autocomplete for common Mar patterns
-- Diagnostics, hover, go to definition, references, rename, symbols, and quick fixes
-- Document formatting via `mar lsp`
+- Syntax highlighting for `.mar` files.
+- Diagnostics (parse + type errors as squiggles).
+- Hover (type signatures).
+- Go-to-definition.
+- Find references.
+- Rename.
+- Workspace + document symbols (outline, breadcrumbs, file picker).
+- Completion (autocomplete top-level names with type info).
+- Inlay hints (inferred types shown inline next to definitions
+  without explicit signatures).
+- Code actions:
+  - Quick fix "Did you mean `X`?" for typos that are close to a known
+    symbol.
+  - Quick fix "Replace with `field`" for missing-field errors.
+  - Refactor "Add type annotation" inserts the inferred signature
+    above a value declaration.
+- Format on save (calls `mar format` over the open document).
 
-## Install in VSCode
+## Requirements
 
-1. Open Extensions in VSCode.
-2. Search for `Mar Developer Tools`.
-3. Click `Install`.
-
-If needed, set `mar.languageServer.path` in VSCode settings (examples: `mar`, `/abs/path/to/mar`).
-
-## Format on Save
-
-1. Open VS Code settings (`settings.json`) and configure:
+The `mar` binary must be on your `$PATH`, or you can override the path
+in your settings:
 
 ```json
 {
-  "[mar]": {
-    "editor.defaultFormatter": "mar-lang.mar-language-support",
-    "editor.formatOnSave": true
-  }
+  "mar.serverPath": "/path/to/mar"
 }
 ```
 
-2. Save a `.mar` file to apply Mar formatting automatically.
+## Development
 
-## Notes
+```bash
+cd vscode-mar
+npm install
+npm run compile
+```
 
-- Keep `mar` available in your `PATH` so the extension can start LSP and formatting.
+Then in VSCode, **Run → Start Debugging** (F5) to launch an Extension
+Development Host with the extension loaded. Open any `.mar` file to
+activate it.
+
+## Packaging
+
+```bash
+npm install
+npm run compile
+npm run package    # produces mar-language-support-X.Y.Z.vsix
+code --install-extension mar-language-support-0.0.6.vsix
+```

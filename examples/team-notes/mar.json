@@ -1,0 +1,9 @@
+{
+  "name": "team-notes",
+  "ios": {
+    "bundleId": "com.yourcompany.teamnotes",
+    "displayName": "team-notes",
+    "marketingVersion": "0.0.1",
+    "buildNumber": "1"
+  }
+}

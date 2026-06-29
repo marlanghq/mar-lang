@@ -1,0 +1,532 @@
+module Frontend.IssueDetail exposing (page)
+
+
+import Shared exposing (IssueStatus(..), IssuePriority(..), Role(..))
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , form, list, section, header, footer
+    , hstack, vstack
+    , title, subtitle, text, textField, textArea, picker, button, navigationLink, empty, width, fill, spacer, toggle, errorText
+    , submit
+    )
+
+
+-- Issue detail — the single most-touched page in the app. Loads
+-- four things in parallel: the issue itself (with denormalized
+-- author + assignee), the comment thread, the project's labels
+-- (for attach), and the labels already attached to this issue.
+--
+-- The page handles status transitions inline (button row at the
+-- top), edits inline (no "Edit" mode toggle — the title/body are
+-- always editable for a member of the team), and lets anyone in
+-- the team add a comment.
+
+
+type alias Model =
+    { issue         : Maybe Shared.IssueView
+    , comments      : Maybe (List Shared.CommentView)
+    , labels        : Maybe (List Shared.Label)
+    , attached      : Maybe (List Shared.Label)
+    , draftComment  : String
+    , draftTitle    : String
+    , draftDesc     : String
+    , editingMeta   : Bool
+    , error         : Maybe Service.Error
+    , posting       : Bool
+    }
+
+
+type Msg
+    = IssueFetched (Result Service.Error (Maybe Shared.IssueView))
+    | CommentsFetched (Result Service.Error (List Shared.CommentView))
+    | LabelsFetched (Result Service.Error (List Shared.Label))
+    | AttachedFetched (Result Service.Error (List Shared.Label))
+    | DraftCommentChanged String
+    | DraftTitleChanged String
+    | DraftDescChanged String
+    | AddCommentClicked
+    | CommentPosted (Result Service.Error Shared.Comment)
+    | DeleteCommentClicked Int
+    | CommentDeleted (Result Service.Error ())
+    | ReactionToggled Int String
+    | ReactionResponse (Result Service.Error ())
+    | StatusButtonClicked IssueStatus
+    | StatusChanged (Result Service.Error (Maybe Shared.Issue))
+    | EditMetaClicked
+    | SaveMetaClicked
+    | CancelMetaClicked
+    | MetaSaved (Result Service.Error (Maybe Shared.Issue))
+    | DeleteIssueClicked
+    | IssueDeleted (Result Service.Error ())
+
+
+init : Shared.User -> { id : Int } -> (Model, Cmd Msg)
+init _ params =
+    ( { issue        = Nothing
+      , comments     = Nothing
+      , labels       = Nothing
+      , attached     = Nothing
+      , draftComment = ""
+      , draftTitle   = ""
+      , draftDesc    = ""
+      , editingMeta  = False
+      , error        = Nothing
+      , posting      = False
+      }
+    , Service.call Shared.getIssue { id = params.id } IssueFetched
+    )
+
+
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Cmd Msg)
+update _ params msg model =
+    case msg of
+        IssueFetched (Ok (Just issue)) ->
+            -- When the issue lands, fan out three more fetches
+            -- (comments + project labels + attached labels) and seed
+            -- the edit-mode drafts from the current values. Each call
+            -- delivers through its own Msg as it completes.
+            ( { model
+                | issue      = Just issue
+                , draftTitle = issue.title
+                , draftDesc  = issue.description
+              }
+            , Cmd.batch
+                [ Service.call Shared.listComments      { issueId = issue.id }        CommentsFetched
+                , Service.call Shared.listProjectLabels { projectId = issue.projectId } LabelsFetched
+                , Service.call Shared.listIssueLabels   { issueId = issue.id }        AttachedFetched
+                ]
+            )
+
+        IssueFetched (Ok Nothing) ->
+            ( { model | error = Just (Service.ServerError "Issue not found.") }, Cmd.none )
+
+        IssueFetched (Err why) ->
+            ( { model | error = Just why }, Cmd.none )
+
+        CommentsFetched (Ok items) ->
+            ( { model | comments = Just items }, Cmd.none )
+
+        CommentsFetched (Err why) ->
+            ( { model | error = Just why }, Cmd.none )
+
+        LabelsFetched (Ok items) ->
+            ( { model | labels = Just items }, Cmd.none )
+
+        LabelsFetched (Err _) ->
+            ( model, Cmd.none )
+
+        AttachedFetched (Ok items) ->
+            ( { model | attached = Just items }, Cmd.none )
+
+        AttachedFetched (Err _) ->
+            ( model, Cmd.none )
+
+        DraftCommentChanged value ->
+            ( { model | draftComment = value }, Cmd.none )
+
+        DraftTitleChanged value ->
+            ( { model | draftTitle = value }, Cmd.none )
+
+        DraftDescChanged value ->
+            ( { model | draftDesc = value }, Cmd.none )
+
+        AddCommentClicked ->
+            if model.draftComment == "" then
+                ( model, Cmd.none )
+            else
+                ( { model | posting = True }
+                , Service.call Shared.createComment
+                    { issueId = params.id, body = model.draftComment }
+                    CommentPosted
+                )
+
+        CommentPosted (Ok _) ->
+            ( { model | posting = False, draftComment = "" }
+            , Service.call Shared.listComments { issueId = params.id } CommentsFetched
+            )
+
+        CommentPosted (Err why) ->
+            ( { model | posting = False, error = Just why }, Cmd.none )
+
+        DeleteCommentClicked commentId ->
+            ( model
+            , Service.call Shared.deleteComment { id = commentId } CommentDeleted
+            )
+
+        CommentDeleted (Ok ()) ->
+            ( model
+            , Service.call Shared.listComments { issueId = params.id } CommentsFetched
+            )
+
+        CommentDeleted (Err why) ->
+            ( { model | error = Just why }, Cmd.none )
+
+        ReactionToggled commentId emoji ->
+            -- Fire-and-forget toggle. We don't optimistically update
+            -- the local model: the server has the source of truth on
+            -- whether this is an add or a remove, and racing tabs can
+            -- diverge. On response, re-fetch the comments list so
+            -- counts + mineToo flags converge to whatever the server
+            -- decided. Cheap because comments are already cached.
+            ( model
+            , Service.call Shared.toggleReaction
+                { commentId = commentId, emoji = emoji }
+                ReactionResponse
+            )
+
+        ReactionResponse (Ok ()) ->
+            ( model
+            , Service.call Shared.listComments { issueId = params.id } CommentsFetched
+            )
+
+        ReactionResponse (Err why) ->
+            ( { model | error = Just why }, Cmd.none )
+
+        StatusButtonClicked status ->
+            ( model
+            , Service.call Shared.changeIssueStatus { id = params.id, status = status }
+                StatusChanged
+            )
+
+        StatusChanged (Ok _) ->
+            ( model
+            , Service.call Shared.getIssue { id = params.id } IssueFetched
+            )
+
+        StatusChanged (Err why) ->
+            ( { model | error = Just why }, Cmd.none )
+
+        EditMetaClicked ->
+            ( { model | editingMeta = True }, Cmd.none )
+
+        CancelMetaClicked ->
+            case model.issue of
+                Just issue ->
+                    ( { model
+                        | editingMeta = False
+                        , draftTitle  = issue.title
+                        , draftDesc   = issue.description
+                      }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( { model | editingMeta = False }, Cmd.none )
+
+        SaveMetaClicked ->
+            case model.issue of
+                Just issue ->
+                    ( model
+                    , Service.call Shared.editIssue
+                        { id          = issue.id
+                        , title       = model.draftTitle
+                        , description = model.draftDesc
+                        , priority    = issue.priority
+                        , assigneeId  = issue.assigneeId
+                        , milestoneId = issue.milestoneId
+                        }
+                        MetaSaved
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        MetaSaved (Ok _) ->
+            ( { model | editingMeta = False }
+            , Service.call Shared.getIssue { id = params.id } IssueFetched
+            )
+
+        MetaSaved (Err why) ->
+            ( { model | error = Just why }, Cmd.none )
+
+        DeleteIssueClicked ->
+            ( model
+            , Service.call Shared.deleteIssue { id = params.id } IssueDeleted
+            )
+
+        IssueDeleted (Ok ()) ->
+            ( model, Nav.replaceTo Frontend.Routes.myIssues {} )
+
+        IssueDeleted (Err why) ->
+            ( { model | error = Just why }, Cmd.none )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+metaSection : Bool -> Shared.IssueView -> String -> String -> View Msg
+metaSection editing issue draftTitle draftDesc =
+    if editing then
+        section [ header "Editing issue" ]
+            [ textField [] "Title" draftTitle DraftTitleChanged
+            , textArea [ submit SaveMetaClicked ] "Description" draftDesc DraftDescChanged
+            , hstack []
+                [ button [] CancelMetaClicked "Cancel"
+                , spacer
+                , button [] SaveMetaClicked "Save"
+                ]
+            ]
+    else
+        section
+            [ header (issue.projectName ++ " · #" ++ String.fromInt issue.number)
+            , footer
+                ( "Reported by " ++ issue.reporterName
+                    ++ " · Assigned to " ++ issue.assigneeName
+                )
+            ]
+            [ title issue.title
+            , text []
+                ( if issue.description == "" then
+                    "No description."
+                  else
+                    issue.description
+                )
+            , button [] EditMetaClicked "Edit"
+            ]
+
+
+statusButton : IssueStatus -> IssueStatus -> View Msg
+statusButton current value =
+    let
+        label =
+            (if current == value then "✓ " else "")
+                ++ Shared.statusLabel value
+    in
+    button [] (StatusButtonClicked value) label
+
+
+statusSection : Shared.IssueView -> View Msg
+statusSection issue =
+    section
+        [ header ("Status · " ++ Shared.statusLabel issue.status)
+        , footer "One-click status transitions."
+        ]
+        [ hstack []
+            [ statusButton issue.status Open
+            , statusButton issue.status InProgress
+            ]
+        , hstack []
+            [ statusButton issue.status Done
+            , statusButton issue.status WontFix
+            ]
+        ]
+
+
+prioritySection : Shared.IssueView -> View Msg
+prioritySection issue =
+    section
+        [ header ("Priority · " ++ Shared.priorityLabel issue.priority) ]
+        [ text [] "Edit priority via the issue meta editor." ]
+
+
+labelChip : Shared.Label -> View Msg
+labelChip lbl =
+    text [] (lbl.name ++ " · " ++ lbl.color)
+
+
+labelsSection : Maybe (List Shared.Label) -> Maybe (List Shared.Label) -> View Msg
+labelsSection attached projectLabels =
+    let
+        attachedNames =
+            case attached of
+                Just items -> List.map (\l -> l.name) items
+                Nothing    -> []
+
+        attachedBody =
+            case attached of
+                Just items ->
+                    if List.isEmpty items then
+                        text [] "None attached."
+                    else
+                        vstack [] (List.map labelChip items)
+
+                Nothing ->
+                    text [] "Loading attached labels…"
+
+        availableBody =
+            case projectLabels of
+                Just items ->
+                    if List.isEmpty items then
+                        text [] "This project has no labels yet."
+                    else
+                        let
+                            unattached =
+                                List.filter
+                                    (\l ->
+                                        List.isEmpty
+                                            (List.filter (\n -> n == l.name) attachedNames)
+                                    )
+                                    items
+                        in
+                        if List.isEmpty unattached then
+                            text [] "All labels attached."
+                        else
+                            vstack []
+                                (List.map labelChip unattached)
+
+                Nothing ->
+                    text [] "Loading project labels…"
+    in
+    section
+        [ header "Labels"
+        , footer "Attaching/detaching coming soon. UI buttons land in a follow-up."
+        ]
+        [ subtitle "Attached"
+        , attachedBody
+        , subtitle "Available"
+        , availableBody
+        ]
+
+
+-- Standard emoji palette for the quick-react row. Limited to 6 so
+-- the row stays single-line on every viewport. Stored as a top-level
+-- value (not a `let` in renderComment) so each render shares the
+-- same VList and Mar's view-diff can skip churning the row's DOM
+-- when nothing changed.
+quickReactEmojis : List String
+quickReactEmojis =
+    [ "👍", "❤️", "🎉", "🚀", "👀", "😅" ]
+
+
+renderComment : Shared.User -> Shared.CommentView -> View Msg
+renderComment user comment =
+    vstack []
+        [ hstack []
+            [ vstack [ width fill ]
+                [ text [] comment.body
+                , subtitle (comment.authorName ++ " · " ++ Time.toIso comment.createdAt)
+                ]
+            , if user.id == comment.authorId || user.role == Admin then
+                button [] (DeleteCommentClicked comment.id) "Delete"
+              else
+                empty
+            ]
+        , reactionsRow comment
+        ]
+
+
+-- reactionsRow renders the existing reaction pills (one per distinct
+-- emoji) plus the "add reaction" affordances from the quick palette.
+-- Two rows of buttons; the model is simple and the user can pile on
+-- as many as they want.
+reactionsRow : Shared.CommentView -> View Msg
+reactionsRow comment =
+    let
+        existingPills =
+            List.map (renderReactionPill comment.id) comment.reactions
+
+        usedEmojis =
+            List.map (\r -> r.emoji) comment.reactions
+
+        -- Hide quick-add buttons for emojis already in the existing
+        -- row; the pill itself toggles those.
+        unusedQuickAdds =
+            List.filter (\e -> if List.member e usedEmojis then False else True) quickReactEmojis
+
+        addButtons =
+            List.map (renderAddReactionButton comment.id) unusedQuickAdds
+    in
+    hstack [] (List.concat [existingPills, addButtons])
+
+
+renderReactionPill : Int -> Shared.ReactionSummary -> View Msg
+renderReactionPill commentId summary =
+    let
+        label =
+            summary.emoji ++ " " ++ String.fromInt summary.count
+    in
+    -- `mineToo` could be wired to a visual emphasis on a real button
+    -- styled variant; for now we always render the same pill and
+    -- count + emoji communicate the state.
+    button [] (ReactionToggled commentId summary.emoji) label
+
+
+renderAddReactionButton : Int -> String -> View Msg
+renderAddReactionButton commentId emoji =
+    button [] (ReactionToggled commentId emoji) emoji
+
+
+commentsSection : Shared.User -> Maybe (List Shared.CommentView) -> View Msg
+commentsSection user state =
+    case state of
+        Nothing ->
+            section [ header "Comments" ] [ text [] "Loading…" ]
+
+        Just items ->
+            if List.isEmpty items then
+                section [ header "Comments" ] [ subtitle "Nobody's said anything yet." ]
+            else
+                section
+                    [ header ("Comments · " ++ String.fromInt (List.length items)) ]
+                    (List.map (renderComment user) (List.reverse items))
+
+
+composeSection : Model -> View Msg
+composeSection model =
+    let
+        ctaLabel =
+            if model.posting then "Posting…" else "Comment"
+    in
+    section [ header "Add a comment" ]
+        [ textField [ submit AddCommentClicked ]
+            "Add a comment" model.draftComment DraftCommentChanged
+        , button [] AddCommentClicked ctaLabel
+        ]
+
+
+errorBanner : Maybe Service.Error -> View Msg
+errorBanner maybeErr =
+    case maybeErr of
+        Just why -> section [ header "Heads up" ] [ errorText (Service.errorToString why) ]
+        Nothing  -> empty
+
+
+view : Shared.User -> { id : Int } -> Model -> View Msg
+view user _ model =
+    let
+        navTitle =
+            case model.issue of
+                Just i  -> "#" ++ String.fromInt i.number
+                Nothing -> "Issue"
+
+        body =
+            case model.issue of
+                Just issue ->
+                    [ errorBanner model.error
+                    , metaSection model.editingMeta issue model.draftTitle model.draftDesc
+                    , statusSection issue
+                    , prioritySection issue
+                    , labelsSection model.attached model.labels
+                    , commentsSection user model.comments
+                    , composeSection model
+                    , section [ header "Danger zone" ]
+                        [ if user.role == Admin then
+                            button [] DeleteIssueClicked "Delete issue"
+                          else
+                            text [] "Only admins can delete issues."
+                        ]
+                    ]
+
+                Nothing ->
+                    [ errorBanner model.error
+                    , section [] [ text [] "Loading issue…" ]
+                    ]
+    in
+    navigationStack [ navigationTitle navTitle ]
+        [ list [] body
+        ]
+
+
+page : Page
+page =
+    Page.dynamicProtected
+        { path   = Frontend.Routes.issueDetail
+        , title  = "Issue"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ _ -> Sub.none
+        }

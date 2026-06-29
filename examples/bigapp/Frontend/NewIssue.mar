@@ -1,0 +1,232 @@
+module Frontend.NewIssue exposing (page)
+
+
+import Shared exposing (IssueStatus(..), IssuePriority(..))
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, footer
+    , vstack, hstack
+    , title, subtitle, text, textField, textArea, picker, button, spacer
+    , submit
+    )
+
+
+-- New issue form. Embedded under a project URL
+-- (/projects/{id}/new-issue) so the page knows which project to
+-- attach the issue to without needing a separate project picker.
+-- Once created, redirects to the freshly-minted IssueDetail page.
+
+
+type alias Model =
+    { title       : String
+    , description : String
+    , priority    : IssuePriority
+    , members     : Maybe (List Shared.TeamMemberView)
+    , assigneeId  : Int
+    , milestones  : Maybe (List Shared.Milestone)
+    , milestoneId : Int
+    , error       : Maybe Service.Error
+    , submitting  : Bool
+    }
+
+
+type Msg
+    = TitleChanged String
+    | DescriptionChanged String
+    | PriorityChanged IssuePriority
+    | AssigneeChanged Int
+    | MilestoneChanged Int
+    | MembersFetched (Result Service.Error (List Shared.TeamMemberView))
+    | MilestonesFetched (Result Service.Error (List Shared.Milestone))
+    | SubmitClicked
+    | IssueCreated (Result Service.Error Shared.Issue)
+
+
+init : Shared.User -> { projectId : Int } -> (Model, Cmd Msg)
+init user params =
+    ( { title       = ""
+      , description = ""
+      , priority    = NoPriority
+      , members     = Nothing
+      , assigneeId  = user.id
+      , milestones  = Nothing
+      , milestoneId = 0
+      , error       = Nothing
+      , submitting  = False
+      }
+    , Cmd.batch
+        [ Service.call Shared.listTeamMembers () MembersFetched
+        , Service.call Shared.listProjectMilestones { projectId = params.projectId }
+            MilestonesFetched
+        ]
+    )
+
+
+update : Shared.User -> { projectId : Int } -> Msg -> Model -> (Model, Cmd Msg)
+update _ params msg model =
+    case msg of
+        TitleChanged value ->
+            ( { model | title = value }, Cmd.none )
+
+        DescriptionChanged value ->
+            ( { model | description = value }, Cmd.none )
+
+        PriorityChanged p ->
+            ( { model | priority = p }, Cmd.none )
+
+        AssigneeChanged uid ->
+            ( { model | assigneeId = uid }, Cmd.none )
+
+        MilestoneChanged mid ->
+            ( { model | milestoneId = mid }, Cmd.none )
+
+        MembersFetched (Ok items) ->
+            ( { model | members = Just items }, Cmd.none )
+
+        MembersFetched (Err _) ->
+            ( model, Cmd.none )
+
+        MilestonesFetched (Ok items) ->
+            ( { model | milestones = Just items }, Cmd.none )
+
+        MilestonesFetched (Err _) ->
+            ( model, Cmd.none )
+
+        SubmitClicked ->
+            if model.title == "" then
+                ( { model | error = Just (Service.ServerError "Title is required.") }, Cmd.none )
+            else
+                ( { model | submitting = True, error = Nothing }
+                , Service.call Shared.createIssue
+                    { projectId   = params.projectId
+                    , title       = model.title
+                    , description = model.description
+                    , priority    = model.priority
+                    , assigneeId  = model.assigneeId
+                    , milestoneId = model.milestoneId
+                    }
+                    IssueCreated
+                )
+
+        IssueCreated (Ok issue) ->
+            ( { model | submitting = False }
+            , Nav.replaceTo Frontend.Routes.issueDetail { id = issue.id }
+            )
+
+        IssueCreated (Err why) ->
+            ( { model | submitting = False, error = Just why }, Cmd.none )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+prioritySection : IssuePriority -> View Msg
+prioritySection current =
+    section [ header "Priority" ]
+        [ picker []
+            current
+            [ NoPriority, Low, Medium, High, Urgent ]
+            Shared.priorityLabel
+            PriorityChanged
+        ]
+
+
+assigneeSection : Maybe (List Shared.TeamMemberView) -> Int -> View Msg
+assigneeSection state current =
+    case state of
+        Nothing ->
+            section [ header "Assignee" ] [ text [] "Loading team members…" ]
+
+        Just members ->
+            -- Picker selects by id (Int) — keeps the type simple and
+            -- avoids the "selected record went stale after a refresh"
+            -- pitfall of picking by record value.
+            section [ header "Assignee" ]
+                [ picker []
+                    current
+                    (List.map (\m -> m.id) members)
+                    (\id -> assigneeLabel id members)
+                    AssigneeChanged
+                ]
+
+
+assigneeLabel : Int -> List Shared.TeamMemberView -> String
+assigneeLabel id members =
+    case List.head (List.filter (\m -> m.id == id) members) of
+        Just m  -> m.name ++ " (" ++ m.email ++ ")"
+        Nothing -> "(unknown)"
+
+
+milestoneSection : Maybe (List Shared.Milestone) -> Int -> View Msg
+milestoneSection state current =
+    case state of
+        Nothing ->
+            section [ header "Milestone" ] [ text [] "Loading milestones…" ]
+
+        Just milestones ->
+            if List.isEmpty milestones then
+                section [ header "Milestone" ]
+                    [ subtitle "No milestones yet. Create one in project settings." ]
+            else
+                section [ header "Milestone" ]
+                    [ picker []
+                        current
+                        (0 :: List.map (\m -> m.id) milestones)
+                        (\id -> milestoneLabel id milestones)
+                        MilestoneChanged
+                    ]
+
+
+milestoneLabel : Int -> List Shared.Milestone -> String
+milestoneLabel id milestones =
+    if id == 0 then
+        "No milestone"
+    else
+        case List.head (List.filter (\m -> m.id == id) milestones) of
+            Just m  -> m.name
+            Nothing -> "Unknown"
+
+
+view : Shared.User -> { projectId : Int } -> Model -> View Msg
+view _ _ model =
+    let
+        ctaLabel =
+            if model.submitting then "Creating…" else "Create issue"
+
+        errorBlock =
+            case model.error of
+                Just why ->
+                    section [ header "Couldn't create" ] [ text [] (Service.errorToString why) ]
+
+                Nothing ->
+                    section [] []
+    in
+    navigationStack [ navigationTitle "New issue" ]
+        [ form
+            [ errorBlock
+            , section [ header "Issue" ]
+                [ textField [] "Title" model.title TitleChanged
+                , textArea [ submit SubmitClicked ]
+                    "Description" model.description DescriptionChanged
+                ]
+            , prioritySection model.priority
+            , assigneeSection model.members model.assigneeId
+            , milestoneSection model.milestones model.milestoneId
+            , section [] [ button [] SubmitClicked ctaLabel ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.dynamicProtected
+        { path   = Frontend.Routes.newIssue
+        , title  = "New issue"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ _ -> Sub.none
+        }

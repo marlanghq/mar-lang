@@ -1,0 +1,37 @@
+module Main exposing (main)
+
+
+import Backend.Users
+import Backend.Notes
+import Frontend.SignIn
+import Frontend.Home
+
+
+-- Wiring point: only this module sees both halves of the app.
+-- Auth.config picks up the users entity from the backend; the
+-- services list is the union of every backend domain's slice; the
+-- pages list enumerates every frontend page (the runtime routes by
+-- their `path` field).
+
+
+auth : Auth { id : Int, email : String }
+auth =
+    Auth.config
+        { entity     = Backend.Users.users
+        , identify   = \u -> u.email
+        , signInPage = Frontend.SignIn.page
+        , email      = { subject = "Sign in to Notes" }
+        , signup     = \email -> { email = email }
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Cmd ()
+main =
+    App.fullstack
+        { services = Backend.Notes.services
+        , pages    =
+            [ Frontend.SignIn.page
+            , Frontend.Home.page
+            ]
+        }

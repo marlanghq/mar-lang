@@ -1,0 +1,9 @@
+{
+  "name": "guestbook",
+  "server": {
+    "port": 3000
+  },
+  "database": {
+    "path": "./guestbook.db"
+  }
+}

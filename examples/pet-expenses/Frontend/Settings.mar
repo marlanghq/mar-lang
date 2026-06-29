@@ -1,0 +1,121 @@
+module Frontend.Settings exposing (page)
+
+
+import Shared
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, footer
+    , text, button, errorText, confirm, empty, disabled
+    )
+
+
+-- Account hub, pushed from the home screen. This is where the rare,
+-- account-level actions live — sign out and (irreversible) account
+-- deletion — so they stay out of the everyday pet/expense flow but
+-- remain easy to find. Account deletion is required by App Store
+-- guideline 5.1.1(v) and goes through a destructive confirm.
+
+
+type alias Model =
+    { busy             : Bool
+    , error            : Maybe String
+    , confirmingDelete : Bool
+    }
+
+
+type Msg
+    = SignOutClicked
+    | SignedOut (Result String ())
+    | DeleteClicked
+    | DeleteConfirmed
+    | DeleteCancelled
+    | AccountDeleted (Result Service.Error ())
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { busy = False, error = Nothing, confirmingDelete = False }, Cmd.none )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        SignOutClicked ->
+            ( model, Auth.logout SignedOut )
+
+        SignedOut _ ->
+            -- Auth.logout cleared the cookie; navigate to /sign-in.
+            ( model, Auth.completeSignIn )
+
+        DeleteClicked ->
+            ( { model | confirmingDelete = True }, Cmd.none )
+
+        DeleteCancelled ->
+            ( { model | confirmingDelete = False }, Cmd.none )
+
+        DeleteConfirmed ->
+            ( { model | confirmingDelete = False, busy = True }
+            , Service.call Shared.deleteAccount () AccountDeleted
+            )
+
+        AccountDeleted (Ok ()) ->
+            -- Account + data are gone; drop the local session and land
+            -- on the sign-in page.
+            ( model, Auth.logout SignedOut )
+
+        AccountDeleted (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+
+view : Shared.User -> Model -> View Msg
+view user model =
+    navigationStack [ navigationTitle "Settings" ]
+        [ form
+            (List.concat
+                [ [ section [ header "Signed in as" ] [ text [] user.email ] ]
+                , errorSection model
+                , [ section [] [ button [] SignOutClicked "Sign out" ] ]
+                , [ section [ footer "Permanently deletes your account, pets, and expenses. This can't be undone." ]
+                        [ button [ disabled model.busy ] DeleteClicked "Delete account" ]
+                  ]
+                ]
+            )
+        , confirmDialog model
+        ]
+
+
+errorSection : Model -> List (View Msg)
+errorSection model =
+    case model.error of
+        Just why ->
+            [ section [ header "Something went wrong" ] [ errorText why ] ]
+
+        Nothing ->
+            []
+
+
+confirmDialog : Model -> View Msg
+confirmDialog model =
+    if model.confirmingDelete then
+        confirm
+            { title        = "Delete your account?"
+            , confirmLabel = "Delete account"
+            , destructive  = True
+            , onConfirm    = DeleteConfirmed
+            , onCancel     = DeleteCancelled
+            }
+
+    else
+        empty
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/settings"
+        , title  = "Settings"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

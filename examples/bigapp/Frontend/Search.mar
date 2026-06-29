@@ -1,0 +1,143 @@
+module Frontend.Search exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, list, section, header, footer
+    , hstack, vstack
+    , text, subtitle, textField, button, navigationLink, empty, spacer, errorText
+    , submit
+    )
+
+
+-- Search — global issue search across every project in the team.
+-- The query gets debounced server-side (well, naively scanned —
+-- see Backend.Issues.search). The page is a tiny state machine
+-- with a debounce-free input that fires on every Enter.
+
+
+type alias Model =
+    { query    : String
+    , results  : Maybe (List Shared.IssueView)
+    , error    : Maybe Service.Error
+    , lastFired : String
+    }
+
+
+type Msg
+    = QueryChanged String
+    | SearchSubmitted
+    | ResultsFetched (Result Service.Error (List Shared.IssueView))
+    | ClearClicked
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { query = "", results = Nothing, error = Nothing, lastFired = "" }
+    , Cmd.none
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        QueryChanged value ->
+            ( { model | query = value }, Cmd.none )
+
+        SearchSubmitted ->
+            if model.query == "" then
+                ( { model | error = Just (Service.ServerError "Enter a search term.") }, Cmd.none )
+            else
+                ( { model | error = Nothing, lastFired = model.query }
+                , Service.call Shared.searchIssues { query = model.query } ResultsFetched
+                )
+
+        ResultsFetched (Ok items) ->
+            ( { model | results = Just items }, Cmd.none )
+
+        ResultsFetched (Err why) ->
+            ( { model | error = Just why }, Cmd.none )
+
+        ClearClicked ->
+            ( { model | query = "", results = Nothing, error = Nothing, lastFired = "" }
+            , Cmd.none
+            )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+resultRow : Shared.IssueView -> View Msg
+resultRow issue =
+    navigationLink [] Frontend.Routes.issueDetail { id = issue.id }
+        (vstack []
+            [ text [] (Shared.issueHandle issue)
+            , subtitle
+                ( Shared.statusLabel issue.status
+                    ++ " · " ++ Shared.priorityLabel issue.priority
+                    ++ " · assigned " ++ issue.assigneeName
+                )
+            ])
+
+
+resultsSection : Model -> View Msg
+resultsSection model =
+    case model.results of
+        Nothing ->
+            if model.lastFired == "" then
+                section [ header "Tip" ]
+                    [ subtitle "Type a phrase and press Enter. Searches title + description across every project on your team." ]
+            else
+                section [] [ text [] "Searching…" ]
+
+        Just items ->
+            if List.isEmpty items then
+                section [ header ("No matches for \"" ++ model.lastFired ++ "\"") ]
+                    [ subtitle "Try different keywords." ]
+            else
+                section
+                    [ header
+                        ( String.fromInt (List.length items)
+                            ++ " match"
+                            ++ (if List.length items == 1 then "" else "es")
+                            ++ " for \"" ++ model.lastFired ++ "\""
+                        )
+                    ]
+                    (List.map resultRow items)
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    navigationStack [ navigationTitle "Search" ]
+        [ form
+            [ section [ header "Find an issue" ]
+                [ textField [ submit SearchSubmitted ]
+                    "Search title + description" model.query QueryChanged
+                , hstack []
+                    [ button [] SearchSubmitted "Search"
+                    , spacer
+                    , button [] ClearClicked "Clear"
+                    ]
+                ]
+            , case model.error of
+                Just why -> section [ header "Heads up" ] [ errorText (Service.errorToString why) ]
+                Nothing  -> empty
+            , resultsSection model
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/search"
+        , title  = "Search"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

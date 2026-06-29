@@ -1,0 +1,131 @@
+module Frontend.Credits exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , vstack, hstack, spacer
+    , title, subtitle, text
+    , paragraph, span
+    , link
+    )
+
+
+-- Credits & colophon page. Author, license, inspirations, where the
+-- source lives. The last stop before someone clicks away.
+
+
+type alias Model = ()
+
+
+type Msg
+    = NoOp
+
+
+init : (Model, Cmd Msg)
+init = ((), Cmd.none)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update _ _ = ((), Cmd.none)
+
+
+view : Model -> View Msg
+view _ =
+    navigationStack [ navigationTitle "Credits" ]
+        [ list []
+            [ section [ header "Author" ]
+                [ title "Marcio Frayze David"
+                , paragraph
+                    [ span [] "Mar is a personal project, designed, written, and maintained by "
+                    , span [link "https://segunda.tech/about/"] "Marcio Frayze David"
+                    , span [] ". The language, runtime, and tooling are still shifting frequently, so development is intentionally centralized for now."
+                    ]
+                ]
+            , section [ header "License" ]
+                [ subtitle "MIT"
+                , paragraph
+                    [ span [] "Mar (the compiler, runtime, CLI, and tooling) is released under the "
+                    , span [link "https://github.com/marlanghq/mar-lang/blob/main/LICENSE"] "MIT license"
+                    , span [] ". Build commercial products, fork it, ship it inside your closed-source apps. The only requirement is that the LICENSE file travels with the source."
+                    ]
+                ]
+            , section [ header "Inspirations" ]
+                [ vstack []
+                    [ paragraph
+                        [ span [] "• "
+                        , span [link "https://elm-lang.org/"] "Elm"
+                        , span [] ", for the type-driven update loop and the gentleness of compiler errors."
+                        ]
+                    , paragraph
+                        [ span [] "• "
+                        , span [link "https://developer.apple.com/xcode/swiftui/"] "SwiftUI"
+                        , span [] ", for the declarative UI vocabulary that Mar's primitives mirror."
+                        ]
+                    , paragraph
+                        [ span [] "• "
+                        , span [link "https://rubyonrails.org/"] "Rails"
+                        , span [] ", for the conviction that opinionated defaults beat infinite configuration."
+                        ]
+                    , paragraph
+                        [ span [] "• "
+                        , span [link "https://pocketbase.io/"] "PocketBase"
+                        , span [] ", for the proof that one process + SQLite is enough for most apps."
+                        ]
+                    ]
+                ]
+            , section [ header "This site" ]
+                [ subtitle "Built in Mar, deployed to Cloudflare Pages."
+                , paragraph
+                    [ span [] "You're looking at a Mar app. The source lives in the repo under "
+                    , span [link "https://github.com/marlanghq/mar-lang/tree/main/examples/mar-website"] "examples/mar-website"
+                    , span [] ". Open it to see how navigation, lists, and sections fit together in a real frontend-only project."
+                    ]
+                ]
+            , section
+                [ header "Helping out"
+                , footer "Pull requests are not accepted yet. The language and runtime are still moving too fast."
+                ]
+                [ text [] "The most useful things right now:"
+                , text [] "• Try Mar on a real side project and share what worked or didn't."
+                , text [] "• Report bugs and rough edges as you find them."
+                , text [] "• Help spread the word."
+                , paragraph
+                    [ span [] "Channels: "
+                    , span [link "https://github.com/marlanghq/mar-lang/issues"] "GitHub issues"
+                    , span [] " or email "
+                    , span [link "mailto:marcio@segunda.tech"] "marcio@segunda.tech"
+                    , span [] "."
+                    ]
+                ]
+            , section [ header "Source" ]
+                [ paragraph
+                    [ span [] "Repository: "
+                    , span [link "https://github.com/marlanghq/mar-lang"] "github.com/marlanghq/mar-lang"
+                    ]
+                , paragraph
+                    [ span [] "Release binaries: "
+                    , span [link "https://github.com/marlanghq/mar-lang/releases"] "github.com/marlanghq/mar-lang/releases"
+                    ]
+                ]
+            , section [ header "Copyright" ]
+                [ hstack []
+                    [ spacer
+                    , text [] "Copyright © 2026 Marcio Frayze David. Released under the MIT license."
+                    , spacer
+                    ]
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/credits"
+        , title = "Credits"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

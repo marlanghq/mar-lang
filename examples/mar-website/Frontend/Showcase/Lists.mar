@@ -1,0 +1,175 @@
+module Frontend.Showcase.Lists exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , list, section, keyedList, keyed, header, footer
+    , text, button
+    , onMove, onDelete
+    )
+
+
+-- Demo: the three levels of list interactivity Mar offers, one per
+-- section, from most to least editable.
+--
+--   1. Editable — tap Edit to reveal drag handles (reorder) and the
+--      red minus (delete). `keyedList` + `onMove` + `onDelete`, both
+--      gated by an edit-mode flag.
+--   2. Reorder-only — the same Edit mode reveals drag handles, but
+--      no delete. `keyedList` + `onMove` (no `onDelete`).
+--   3. Fixed — a plain `section` of read-only rows.
+--
+-- The content is picked so each level feels natural: a to-do you
+-- prune, recipe steps whose order matters but none of which you'd
+-- drop, and a static list of facts.
+--
+-- keyedList needs a stable `keyed` identity per row — the row's
+-- content, NOT its position. If you key on the index, the keys shift
+-- whenever a row moves or is deleted and the reconciler patches text
+-- into the wrong DOM node. Here each label is unique, so it doubles
+-- as the key; in a real app you'd key on a record id.
+
+
+type alias Model =
+    { tasks   : List String   -- section 1: reorder + delete
+    , steps   : List String   -- section 2: reorder only
+    , editing : Bool          -- edit mode for `tasks`
+    }
+
+
+type Msg
+    = EditClicked
+    | DoneClicked
+    | TaskMoved Int Int
+    | TaskDeleted Int
+    | StepMoved Int Int
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { tasks =
+          [ "Buy groceries"
+          , "Walk the dog"
+          , "Call the dentist"
+          , "Water the plants"
+          ]
+      , steps =
+          [ "Preheat the oven"
+          , "Mix the batter"
+          , "Bake for 30 minutes"
+          , "Let it cool"
+          ]
+      , editing = False
+      }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        EditClicked ->
+            ( { model | editing = True }, Cmd.none )
+
+        DoneClicked ->
+            ( { model | editing = False }, Cmd.none )
+
+        TaskMoved from to ->
+            -- (from, to) come from the onMove handler; List.move
+            -- does the in-list shuffle.
+            ( { model | tasks = List.move from to model.tasks }
+            , Cmd.none
+            )
+
+        TaskDeleted idx ->
+            -- onDelete fires the row index. No confirmation here —
+            -- this page demos the primitive, not the destructive-
+            -- action pattern (see the Modals page for that).
+            ( { model | tasks = removeAt idx model.tasks }
+            , Cmd.none
+            )
+
+        StepMoved from to ->
+            ( { model | steps = List.move from to model.steps }
+            , Cmd.none
+            )
+
+
+-- removeAt drops the element at index `n`. Used by TaskDeleted.
+removeAt : Int -> List a -> List a
+removeAt n xs =
+    case xs of
+        [] -> []
+        x :: rest ->
+            if n <= 0 then
+                rest
+            else
+                x :: removeAt (n - 1) rest
+
+
+-- Every row is keyed on its own label (unique here, so it works as
+-- the identity). Shared by both keyed sections.
+row : String -> KeyedView Msg
+row label =
+    keyed label (text [] label)
+
+
+view : Model -> View Msg
+view model =
+    let
+        editAffordance =
+            if model.editing then
+                button [] DoneClicked "Done"
+            else
+                button [] EditClicked "Edit"
+    in
+    navigationStack
+        [ navigationTitle "Lists & sections"
+        , topBarTrailing editAffordance
+        ]
+        [ list []
+            -- 1. Editable: reorder + delete, gated by the Edit button
+            -- in the nav bar (placed first so the connection is
+            -- obvious).
+            [ keyedList
+                [ header "Editable list"
+                , footer "Tap Edit, then drag a handle to reorder or tap the red minus to delete."
+                , onMove   model.editing TaskMoved
+                , onDelete model.editing TaskDeleted
+                ]
+                (List.map row model.tasks)
+
+            -- 2. Reorder-only: the same Edit mode reveals drag
+            -- handles, but there's no onDelete. Order matters here,
+            -- so you reorder but never drop a step.
+            , keyedList
+                [ header "Reorder-only list"
+                , footer "Reorder only. The same Edit button reveals the drag handles, but there's no delete."
+                , onMove model.editing StepMoved
+                ]
+                (List.map row model.steps)
+
+            -- 3. Fixed: a plain section of read-only rows.
+            , section
+                [ header "Fixed list"
+                , footer "Not editable. Just read-only rows."
+                ]
+                [ text [] "iOS"
+                , text [] "Android"
+                , text [] "Web"
+                , text [] "Backend"
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/lists"
+        , title = "Lists"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

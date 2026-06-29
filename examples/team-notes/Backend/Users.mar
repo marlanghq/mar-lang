@@ -1,0 +1,23 @@
+module Backend.Users exposing (users)
+
+
+import Shared exposing (Role(..))
+
+
+-- Users entity. Auth.config in Main reads this. The `role` column is
+-- declared as `Entity.enum [Member, Admin]` — stored as TEXT with a
+-- CHECK constraint, round-tripped to and from `Role` constructors
+-- automatically. Misspelling a variant in the accepted list, or in a
+-- service decorator like `Auth.requireRole`, fails at compile time.
+users : Entity Shared.User
+users =
+    Entity.define
+        { name = "users"
+        , columns =
+            { id     = Entity.serial
+            , email  = Entity.text Entity.notNull
+            , teamId = Entity.int  Entity.notNull
+            , role   = Entity.enum [Member, Admin] Entity.notNull
+            }
+        , uniques = []
+        }

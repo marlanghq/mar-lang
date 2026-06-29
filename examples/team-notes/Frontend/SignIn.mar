@@ -1,0 +1,212 @@
+module Frontend.SignIn exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section
+    , title, text, textField, button, centered, empty
+    , email, numericCode, submit, width, chars
+    )
+
+
+-- Sign-in flow with visible error feedback.
+--
+-- The model splits into a `step` (what the user is doing right now —
+-- entering email, waiting on the network, entering code) and a
+-- separate `error` field. Errors stay visible until the user tries
+-- again, instead of the form silently flashing back to the previous
+-- state when a request fails (which is what happens if you keep the
+-- error inside the step itself).
+--
+-- The input fields use `email` (autofill + email keyboard on mobile)
+-- and `numeric` (numeric keypad + iOS one-time-code suggestion from
+-- SMS/Mail). Without these, Safari treats the first input as a
+-- password field and password managers offer the wrong autofill.
+
+
+type Step
+    = AskEmail String
+    | Submitting String
+    | AskCode String String
+
+
+type alias Model =
+    { step  : Step
+    , error : Maybe String
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { step = AskEmail "", error = Nothing }, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        DraftChanged value ->
+            ( { model | step = updateDraft value model.step }, Cmd.none )
+
+        Submitted ->
+            -- Clear any previous error before kicking off a fresh
+            -- attempt; the next CodeRequested / CodeVerified will
+            -- repopulate it on failure.
+            case model.step of
+                AskEmail email ->
+                    ( { model | step = Submitting email, error = Nothing }
+                    , Auth.requestCode { email = email } CodeRequested
+                    )
+
+                AskCode email code ->
+                    ( { model | step = Submitting email, error = Nothing }
+                    , Auth.verifyCode { email = email, code = code } CodeVerified
+                    )
+
+                Submitting _ ->
+                    ( model, Cmd.none )
+
+        CodeRequested (Ok Auth.CodeSent) ->
+            case model.step of
+                Submitting email ->
+                    ( { model | step = AskCode email "", error = Nothing }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( requestFailed "That doesn't look like a valid email address." model
+            , Cmd.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( requestFailed "Too many code requests. Wait a moment and try again." model
+            , Cmd.none
+            )
+
+        CodeRequested (Err why) ->
+            ( requestFailed ("Couldn't send the code: " ++ Service.errorToString why) model
+            , Cmd.none
+            )
+
+        CodeVerified (Ok (Auth.SignedIn _)) ->
+            -- Auth.completeSignIn returns the user to where a 401 sent them
+            -- from (or the home page by default).
+            ( model, Auth.completeSignIn )
+
+        CodeVerified (Ok Auth.WrongCode) ->
+            ( verifyFailed "Wrong code. Try again or request a new one." model
+            , Cmd.none
+            )
+
+        CodeVerified (Ok Auth.TooManyAttempts) ->
+            ( verifyFailed "Too many tries with this code. Request a new one." model
+            , Cmd.none
+            )
+
+        CodeVerified (Err why) ->
+            ( verifyFailed ("Couldn't verify the code: " ++ Service.errorToString why) model
+            , Cmd.none
+            )
+
+
+-- Step-local edit: the input field belongs to whatever step is
+-- showing it. Submitting is intentionally a no-op; the input is
+-- disabled (or absent) while a request is in flight.
+updateDraft : String -> Step -> Step
+updateDraft value step =
+    case step of
+        AskEmail _      -> AskEmail value
+        AskCode email _ -> AskCode email value
+        Submitting _    -> step
+
+
+-- requestFailed / verifyFailed place the failure copy on the step the
+-- user should retry from (mid-flight only; otherwise leave the model).
+-- The per-case copy lives on the typed outcome branches in update;
+-- transport failures arrive as Service.Error and fold via
+-- Service.errorToString, so there is no string-matching of wire codes
+-- or raw exception text anywhere on this page.
+requestFailed : String -> Model -> Model
+requestFailed reason model =
+    case model.step of
+        Submitting email ->
+            { step = AskEmail email, error = Just reason }
+
+        _ ->
+            model
+
+
+verifyFailed : String -> Model -> Model
+verifyFailed reason model =
+    case model.step of
+        Submitting email ->
+            { step = AskCode email "", error = Just reason }
+
+        _ ->
+            model
+
+
+view : Model -> View Msg
+view model =
+    case model.step of
+        AskEmail draft ->
+            navigationStack [ navigationTitle "Sign in to Team Notes" ]
+                [ form
+                    [ section []
+                        [ text [] "Enter your email to receive a one-time code."
+                        , textField [ email, submit Submitted, width (chars 30) ]
+                            "Email" draft DraftChanged
+                        ]
+                    , section []
+                        [ button [] Submitted "Send me a code" ]
+                    , errorBanner model.error
+                    ]
+                ]
+
+        AskCode emailAddr draft ->
+            navigationStack [ navigationTitle "Enter your code" ]
+                [ form
+                    [ section []
+                        [ text [] ("We sent a 6-digit code to " ++ emailAddr ++ ".")
+                        , textField [ numericCode, submit Submitted ]
+                            "Code" draft DraftChanged
+                        ]
+                    , section []
+                        [ button [] Submitted "Verify" ]
+                    , errorBanner model.error
+                    ]
+                ]
+
+        Submitting _ ->
+            centered (text [] "Working…")
+
+
+-- Renders nothing (`empty`) when there's no error so the layout
+-- doesn't reserve space for the banner. Otherwise wraps the message
+-- as its own section card.
+errorBanner : Maybe String -> View Msg
+errorBanner maybeMsg =
+    case maybeMsg of
+        Just msg -> section [] [ text [] ("⚠ " ++ msg) ]
+        Nothing  -> empty
+
+
+page : Page
+page =
+    Page.create
+        { path = "/sign-in"
+        , title = "Sign in"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }

@@ -1,0 +1,35 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "daily-checklist",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/mar", "dev", "examples/daily-checklist"],
+      "port": 3000
+    },
+    {
+      "name": "bigapp",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/mar", "dev", "examples/bigapp"],
+      "port": 3000
+    },
+    {
+      "name": "showcase",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/mar", "dev", "examples/showcase"],
+      "port": 3000
+    },
+    {
+      "name": "mar-website",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/mar", "dev", "examples/mar-website"],
+      "port": 3007
+    },
+    {
+      "name": "bigapp-debug",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/mar", "dev", "/tmp/bigapp-debug"],
+      "port": 3456
+    }
+  ]
+}

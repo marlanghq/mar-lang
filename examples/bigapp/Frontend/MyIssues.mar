@@ -1,0 +1,103 @@
+module Frontend.MyIssues exposing (page)
+
+
+import Shared exposing (IssueStatus(..))
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , vstack
+    , text, subtitle, navigationLink, errorText
+    )
+
+
+-- MyIssues — every Open / InProgress issue assigned to the
+-- caller. The service-side filter does the work; this page just
+-- groups by project for legibility.
+
+
+type alias Model =
+    { items : Maybe (List Shared.IssueView)
+    , error : Maybe Service.Error
+    }
+
+
+type Msg
+    = IssuesFetched (Result Service.Error (List Shared.IssueView))
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { items = Nothing, error = Nothing }
+    , Service.call Shared.myOpenIssues () IssuesFetched
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        IssuesFetched (Ok items) ->
+            ( { model | items = Just items }, Cmd.none )
+
+        IssuesFetched (Err why) ->
+            ( { model | error = Just why }, Cmd.none )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+issueRow : Shared.IssueView -> View Msg
+issueRow issue =
+    navigationLink [] Frontend.Routes.issueDetail { id = issue.id }
+        (vstack []
+            [ text [] (Shared.issueHandle issue)
+            , subtitle
+                ( Shared.statusLabel issue.status
+                    ++ " · " ++ Shared.priorityLabel issue.priority
+                )
+            ])
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    navigationStack [ navigationTitle "My issues" ]
+        [ list [] (renderBody model) ]
+
+
+renderBody : Model -> List (View Msg)
+renderBody model =
+    case model.error of
+        Just why ->
+            [ section [ header "Couldn't load" ] [ errorText (Service.errorToString why) ] ]
+
+        Nothing ->
+            case model.items of
+                Nothing ->
+                    [ section [] [ text [] "Loading your issues…" ] ]
+
+                Just items ->
+                    if List.isEmpty items then
+                        [ section [ header "Inbox zero" ]
+                            [ subtitle "Nothing assigned to you that's still open. Nice." ]
+                        ]
+                    else
+                        [ section
+                            [ header ("Open & In progress · " ++ String.fromInt (List.length items))
+                            , footer "Sorted by recent activity."
+                            ]
+                            (List.map issueRow items)
+                        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/my-issues"
+        , title  = "My issues"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

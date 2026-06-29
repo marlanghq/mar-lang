@@ -1,0 +1,15 @@
+{
+  "name": "bigapp",
+  "admins": [
+    "mfdavid@gmail.com"
+  ],
+  "database": {
+    "path": "./bigapp.db"
+  },
+  "ios": {
+    "bundleId": "com.yourcompany.bigapp",
+    "displayName": "BigApp",
+    "marketingVersion": "0.0.1",
+    "buildNumber": "1"
+  }
+}

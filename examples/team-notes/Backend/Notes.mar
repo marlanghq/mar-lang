@@ -1,0 +1,122 @@
+module Backend.Notes exposing (services)
+
+
+import Shared exposing (Role(..))
+
+
+-- Notes domain — entity, business rules, and services list slice.
+--
+-- The services list at the bottom is the **security policy of this
+-- app made executable**. Each line shows in plain text who can do
+-- what, by stacking decorators on top of `Auth.protect`:
+--
+--   Auth.protect contract handler
+--     |> Auth.requireRole  "admin"            -- RBAC
+--     |> Auth.authorize    loadResource policy -- ABAC
+--     |> Auth.requireOwner loadResource ownerSelector
+--
+-- All three decorators compose with each other and with Auth.protect.
+-- Each runs before the handler; any rejection short-circuits with
+-- 403 (or 404 if the loader returned Nothing).
+
+
+notes : Entity Shared.Note
+notes =
+    Entity.define
+        { name = "notes"
+        , columns =
+            { id        = Entity.serial
+            , body      = Entity.text Entity.notNull
+            , teamId    = Entity.int Entity.notNull
+            , authorId  = Entity.int Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- Business rules. Each takes the User as proof of authorization and
+-- focuses on what to do, not who is allowed to do it. The "who"
+-- question is answered by the decorators below.
+
+listTeamNotes : () -> Shared.User -> Task (List Shared.Note)
+listTeamNotes _ user =
+    Repo.findBy notes { teamId = user.teamId }
+
+
+getNote : Shared.GetNote -> Shared.User -> Task (Maybe Shared.Note)
+getNote input _ =
+    Repo.findById notes input.id
+
+
+createNote : Shared.NewNote -> Shared.User -> Task Shared.Note
+createNote input user =
+    Time.now
+        |> Task.andThen (\now ->
+            Repo.create notes
+                { body      = input.body
+                , teamId    = user.teamId
+                , authorId  = user.id
+                , createdAt = now
+                })
+
+
+editNote : Shared.EditNote -> Shared.User -> Task (Maybe Shared.Note)
+editNote input _ =
+    Repo.update notes input.id { body = input.body }
+
+
+deleteNote : Shared.DeleteNote -> Shared.User -> Task ()
+deleteNote input _ =
+    Repo.deleteById notes input.id
+
+
+-- Resource loaders for ABAC policies. These run BEFORE the handler
+-- so the policy can inspect the materialized resource. The framework
+-- maps `Nothing` (e.g. row not found) to a 404 separately from
+-- "policy denied" (403).
+
+loadEditTarget : Shared.EditNote -> Shared.User -> Task (Maybe Shared.Note)
+loadEditTarget input _ =
+    Repo.findById notes input.id
+
+
+loadDeleteTarget : Shared.DeleteNote -> Shared.User -> Task (Maybe Shared.Note)
+loadDeleteTarget input _ =
+    Repo.findById notes input.id
+
+
+loadGetTarget : Shared.GetNote -> Shared.User -> Task (Maybe Shared.Note)
+loadGetTarget input _ =
+    Repo.findById notes input.id
+
+
+-- Policy: a user can act on a note iff the note belongs to their team.
+sameTeam : a -> Shared.User -> Shared.Note -> Bool
+sameTeam _ user note =
+    note.teamId == user.teamId
+
+
+-- Service manifest. Reads top-to-bottom as a security policy:
+--
+--   listTeamNotes : authed in any team        → see your team's notes
+--   createNote    : authed in any team        → create within your team
+--   editNote      : authed + sameTeam         → edit any teammate's note
+--   deleteNote    : authed + sameTeam + admin → admin-only deletes
+--
+-- The wiring tells the security story without the reader needing to
+-- open a single handler.
+services =
+    [ Auth.protect Shared.listTeamNotes  listTeamNotes
+    , Auth.protect Shared.createNote     createNote
+
+    , Auth.protect Shared.getNote getNote
+        |> Auth.authorize loadGetTarget sameTeam
+
+    , Auth.protect Shared.editNote editNote
+        |> Auth.authorize loadEditTarget sameTeam
+
+    , Auth.protect Shared.deleteNote deleteNote
+        |> Auth.authorize    loadDeleteTarget sameTeam
+        |> Auth.requireRole  Admin
+    ]

@@ -1,0 +1,190 @@
+module Shared exposing (..)
+
+
+-- Types, service contracts, and a couple of pure helpers shared between
+-- the frontend and the backend.
+--
+-- Domain note: an expense usually applies to ALL your pets (a bag of
+-- food, a box of litter), not one in particular. So an expense is NOT
+-- owned by a pet — it optionally *tags* one. `petId = allPetsId` (0)
+-- means "all pets" (the common case); a real pet id means the expense
+-- was just for that one (a vet visit). Pet ids are serial and start at
+-- 1, so 0 is a safe sentinel.
+
+
+type alias User =
+    { id    : Int
+    , email : String
+    }
+
+
+type alias Pet =
+    { id        : Int
+    , name      : String
+    , kind      : String
+    , userId    : Int
+    , createdAt : Time
+    }
+
+
+type alias Expense =
+    { id       : Int
+    , userId   : Int
+    , category : String
+    , amount   : Int
+    , note     : String
+    , petId    : Int
+    , spentAt  : Time
+    }
+
+
+-- One row of the per-category breakdown on the home screen.
+type alias CategoryTotal =
+    { category : String
+    , total    : Int
+    }
+
+
+-- One row of the per-month report (the "By month" section). `key` is
+-- year * 100 + month, so months sort newest-first as plain ints.
+type alias MonthTotal =
+    { key   : Int
+    , label : String
+    , total : Int
+    }
+
+
+-- petId sentinel: an expense that applies to every pet.
+allPetsId : Int
+allPetsId = 0
+
+
+-- ===== Expenses (the heart of the app) =====
+--
+-- Each contract is `Service req resp`. The backend wraps every handler
+-- in Auth.protect (logged User injected as the 2nd arg, 401 otherwise).
+-- GET contracts are verified read-only at compile time.
+
+
+listExpenses : Service () (List Expense)
+listExpenses = Service.declare GET "/expenses"
+
+
+type AddExpenseOutcome
+    = ExpenseAdded Expense
+    | AmountNotPositive
+
+
+-- `petId` rides in the body like the other fields (allPetsId for a
+-- shared expense). The frontend has already parsed `amount` and guards
+-- amount > 0; the backend re-checks it as a typed outcome. `spentAt` is
+-- `Nothing` when the user didn't touch the date picker (the backend
+-- stamps "now"); `Just t` carries a date they chose.
+addExpense : Service { petId : Int, category : String, amount : Int, note : String, spentAt : Maybe Time } AddExpenseOutcome
+addExpense = Service.declare POST "/expenses"
+
+
+deleteExpense : Service { id : Int } ()
+deleteExpense = Service.declare DELETE "/expenses/{id:Int}"
+
+
+-- ===== Pets (optional tags, managed on their own screen) =====
+
+
+listPets : Service () (List Pet)
+listPets = Service.declare GET "/pets"
+
+
+type AddPetOutcome
+    = PetAdded Pet
+    | PetNameEmpty
+
+
+addPet : Service { name : String, kind : String } AddPetOutcome
+addPet = Service.declare POST "/pets"
+
+
+-- Deleting a pet does NOT delete its expenses (you still spent that
+-- money) — the backend re-tags them to "all pets" first.
+deletePet : Service { id : Int } ()
+deletePet = Service.declare DELETE "/pets/{id:Int}"
+
+
+-- ===== Account =====
+--
+-- Irreversible account deletion, required by App Store guideline
+-- 5.1.1(v): an app that lets you create an account must let you delete
+-- it from inside the app.
+deleteAccount : Service () ()
+deleteAccount = Service.declare DELETE "/account"
+
+
+-- ===== Shared option lists + helpers =====
+
+
+petKinds : List String
+petKinds =
+    [ "Cat", "Dog", "Bird", "Rabbit", "Fish", "Other" ]
+
+
+categories : List String
+categories =
+    [ "Food", "Litter", "Vet", "Grooming", "Toys", "Medication", "Insurance", "Other" ]
+
+
+-- Money is stored as a whole currency unit (Int), formatted as `$N`.
+-- That keeps totals exact and the example small; a production app would
+-- store cents and format with a locale-aware currency formatter.
+formatAmount : Int -> String
+formatAmount amount =
+    "$" ++ String.fromInt amount
+
+
+-- Human label for an expense's pet tag, given the pet list.
+petLabel : Int -> List Pet -> String
+petLabel petId pets =
+    if petId == allPetsId then
+        "All pets"
+    else
+        case List.head (List.filter (\p -> p.id == petId) pets) of
+            Just pet ->
+                pet.name
+
+            Nothing ->
+                "Unknown pet"
+
+
+-- ===== Dates =====
+--
+-- An expense is stamped with `spentAt` (a Time) when it's logged. These
+-- turn that Time into the strings the UI shows. Time.year/month/day are
+-- pure, so this works the same on the backend, web, and iOS.
+
+
+monthNames : List String
+monthNames =
+    [ "January", "February", "March", "April", "May", "June"
+    , "July", "August", "September", "October", "November", "December"
+    ]
+
+
+-- 1..12 -> "January".."December" (anything else -> "—").
+monthName : Int -> String
+monthName m =
+    Maybe.withDefault "—" (List.head (List.drop (m - 1) monthNames))
+
+
+-- "May 5, 2026" — for an expense row.
+formatDate : Time -> String
+formatDate t =
+    monthName (Time.month t)
+        ++ " "
+        ++ String.fromInt (Time.day t)
+        ++ ", "
+        ++ String.fromInt (Time.year t)
+
+
+-- "May 2026" — for a month's report header.
+formatMonth : Time -> String
+formatMonth t =
+    monthName (Time.month t) ++ " " ++ String.fromInt (Time.year t)

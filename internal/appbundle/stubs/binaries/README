@@ -1,0 +1,15 @@
+This directory holds cross-compiled mar-runtime stubs.
+
+It's populated by `make stubs` (see top-level Makefile). At a fresh
+checkout the directory contains only this README so go:embed has at
+least one file to match — `go build ./cmd/mar` succeeds but `mar build`
+will report missing stubs until `make stubs` runs.
+
+Files added here:
+  darwin-amd64     macOS Intel
+  darwin-arm64     macOS Apple Silicon
+  linux-amd64      Linux x86_64
+  linux-arm64      Linux ARM64
+  windows-amd64.exe   Windows x86_64
+
+These are large binaries and are not committed to git.

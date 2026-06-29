@@ -1,0 +1,138 @@
+module Frontend.Showcase.Pickers exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, footer
+    , picker
+    )
+
+
+-- Demo: `picker` — single-selection field for enum-like inputs.
+--
+-- Mirrors SwiftUI's `Picker(selection: $value)`. Use it instead of
+-- a vertical stack of toggles whenever the candidate set has more
+-- than ~2 variants — a picker stays one row tall regardless of
+-- how many options there are, and the platform gives users the
+-- right affordance for free (menu on macOS / iOS, dropdown on web,
+-- wheel on watchOS).
+--
+-- Signature:
+--   UI.picker
+--     : List Attr
+--     -> a                       -- selected value
+--     -> List a                  -- options, in display order
+--     -> (a -> String)           -- label for each option
+--     -> (a -> msg)              -- onChange
+--     -> View msg
+--
+-- The `a` is polymorphic — works with enums, Ints, Strings,
+-- records. Equality on `selected` is structural.
+
+
+-- Three orthogonal pickers to show the polymorphism. They share
+-- a single Model + Msg type for brevity.
+
+
+type Priority
+    = Low
+    | Medium
+    | High
+    | Urgent
+
+
+priorityLabel : Priority -> String
+priorityLabel p =
+    case p of
+        Low     -> "Low"
+        Medium  -> "Medium"
+        High    -> "High"
+        Urgent  -> "Urgent"
+
+
+type alias Model =
+    { priority : Priority   -- enum
+    , size     : Int        -- Int  (1..10)
+    , flavor   : String     -- String
+    }
+
+
+type Msg
+    = PriorityChanged Priority
+    | SizeChanged Int
+    | FlavorChanged String
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { priority = Medium
+      , size     = 3
+      , flavor   = "Vanilla"
+      }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        PriorityChanged p -> ( { model | priority = p }, Cmd.none )
+        SizeChanged n     -> ( { model | size = n },     Cmd.none )
+        FlavorChanged f   -> ( { model | flavor = f },   Cmd.none )
+
+
+-- Labels for the Int picker. List.range gives us the options; this
+-- helper turns each candidate into a human-readable size string.
+sizeLabel : Int -> String
+sizeLabel n =
+    "Size " ++ String.fromInt n
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Pickers" ]
+        [ form
+            [ section
+                [ header "Enum picker"
+                , footer "Each option is a custom-type constructor (Priority)."
+                ]
+                [ picker []
+                    model.priority
+                    [ Low, Medium, High, Urgent ]
+                    priorityLabel
+                    PriorityChanged
+                ]
+            , section
+                [ header "Int picker"
+                , footer "Options come from a List Int; sizeLabel turns each into a readable row label."
+                ]
+                [ picker []
+                    model.size
+                    (List.range 1 10)
+                    sizeLabel
+                    SizeChanged
+                ]
+            , section
+                [ header "String picker"
+                , footer "A plain List String: the strings are their own labels."
+                ]
+                [ picker []
+                    model.flavor
+                    [ "Vanilla", "Chocolate", "Strawberry", "Mint", "Pistachio" ]
+                    (\s -> s)
+                    FlavorChanged
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/pickers"
+        , title = "Pickers"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
