@@ -6,11 +6,13 @@ import (
 )
 
 // TestStdlibCoversRecentAdditions sanity-checks that every builtin we
-// added in the recent stdlib expansion rounds (Dict, Set, Char, the
-// String/Char bridges, the Order ADT) shows up in the LSP symbol set
-// the editor sees. Since LSP reads from typecheck.BaseQualifiedSymbols
-// directly, the failure mode is "stdlib regression deleted something";
-// adding to env.go without thinking about LSP is automatically safe.
+// added in the recent expansion rounds (Dict, Set, Char, the
+// String/Char bridges, the Order ADT, the Task/Cmd/Sub effect split,
+// Random generators, and Service.declare REST) shows up in the LSP
+// symbol set the editor sees. Since LSP reads from
+// typecheck.BaseQualifiedSymbols directly, the failure mode is "stdlib
+// regression deleted something"; adding to env.go without thinking
+// about LSP is automatically safe.
 func TestStdlibCoversRecentAdditions(t *testing.T) {
 	syms := StdlibSymbols()
 	have := make(map[string]Symbol, len(syms))
@@ -35,6 +37,16 @@ func TestStdlibCoversRecentAdditions(t *testing.T) {
 		"Order", "LT", "EQ", "GT",
 		// sortWith should be present (and reference Order)
 		"List.sortWith",
+		// Effects: the Task/Cmd split + Sub subscriptions (Elm's pillars)
+		"Task.succeed", "Task.fail", "Task.andThen", "Task.map", "Task.sequence",
+		"Cmd.none", "Cmd.batch", "Cmd.perform",
+		"Sub.none", "Sub.batch",
+		"Time.now", "Time.every",
+		// Random — Elm-style generators + the generate-as-Cmd bridge
+		"Random.generate", "Random.int", "Random.uniform", "Random.constant",
+		"Random.map", "Random.map2", "Random.andThen", "Random.list", "Random.pair",
+		// REST services: Service.declare VERB "/path"
+		"Service.declare", "Service.call", "Service.errorToString",
 	}
 
 	for _, name := range mustHave {
@@ -57,6 +69,15 @@ func TestStdlibCoversRecentAdditions(t *testing.T) {
 	if s, ok := have["Dict.empty"]; ok {
 		if !strings.Contains(s.Type, "Dict") {
 			t.Errorf("Dict.empty type should mention Dict, got: %s", s.Type)
+		}
+	}
+
+	// Random.generate is the only bridge from a Generator into the MVU
+	// loop — its type must reach Cmd, not hand back a bare Generator.
+	// Catches a regression that re-exposes the generator directly.
+	if s, ok := have["Random.generate"]; ok {
+		if !strings.Contains(s.Type, "Cmd") {
+			t.Errorf("Random.generate should produce a Cmd, got: %s", s.Type)
 		}
 	}
 }
