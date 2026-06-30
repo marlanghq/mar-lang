@@ -1,0 +1,104 @@
+{
+  "Mar page (MVU)": {
+    "prefix": "page",
+    "description": "A full Page: Model, Msg, init, update, view, and Page.create.",
+    "body": [
+      "module ${1:Frontend.MyPage} exposing (page)",
+      "",
+      "",
+      "import UI exposing",
+      "    ( navigationStack, navigationTitle",
+      "    , text",
+      "    )",
+      "",
+      "",
+      "type alias Model =",
+      "    ()",
+      "",
+      "",
+      "type Msg",
+      "    = ${2:NoOp}",
+      "",
+      "",
+      "init : (Model, Cmd Msg)",
+      "init = ( (), Cmd.none )",
+      "",
+      "",
+      "update : Msg -> Model -> (Model, Cmd Msg)",
+      "update msg model =",
+      "    case msg of",
+      "        ${2:NoOp} ->",
+      "            ( model, Cmd.none )",
+      "",
+      "",
+      "view : Model -> View Msg",
+      "view model =",
+      "    navigationStack [ navigationTitle \"${3:Title}\" ]",
+      "        [ text [] \"${4:Hello}\"",
+      "        ]",
+      "",
+      "",
+      "page : Page",
+      "page =",
+      "    Page.create",
+      "        { path = \"${5:/my-page}\"",
+      "        , title = \"${3:Title}\"",
+      "        , init = init",
+      "        , update = update",
+      "        , view = view",
+      "        , subscriptions = always Sub.none",
+      "        }",
+      "$0"
+    ]
+  },
+  "Mar module header": {
+    "prefix": "module",
+    "description": "Module declaration with an exposing list.",
+    "body": [
+      "module ${1:Module.Name} exposing (${2:..})",
+      "",
+      "$0"
+    ]
+  },
+  "Mar type alias (record)": {
+    "prefix": "alias",
+    "description": "Record type alias.",
+    "body": [
+      "type alias ${1:Model} =",
+      "    { ${2:field} : ${3:Type}",
+      "    }",
+      "$0"
+    ]
+  },
+  "Mar union type": {
+    "prefix": "union",
+    "description": "Custom union type.",
+    "body": [
+      "type ${1:Msg}",
+      "    = ${2:FirstVariant}",
+      "    | ${3:SecondVariant}",
+      "$0"
+    ]
+  },
+  "Mar case expression": {
+    "prefix": "case",
+    "description": "case ... of with two branches.",
+    "body": [
+      "case ${1:expr} of",
+      "    ${2:First} ->",
+      "        ${3:result}",
+      "",
+      "    ${4:Second} ->",
+      "        ${5:result}"
+    ]
+  },
+  "Mar service contract": {
+    "prefix": "service",
+    "description": "Service contract declared with Service.declare.",
+    "body": [
+      "${1:listItems} : Service ${2:()} ${3:(List Item)}",
+      "${1:listItems} = Service.declare ${4|GET,POST,PUT,PATCH,DELETE|} \"${5:/items}\"",
+      "$0"
+    ]
+  }
+}
