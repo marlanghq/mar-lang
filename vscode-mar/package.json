@@ -40,6 +40,12 @@
         "path": "./syntaxes/mar.tmLanguage.json"
       }
     ],
+    "snippets": [
+      {
+        "language": "mar",
+        "path": "./snippets/mar.json"
+      }
+    ],
     "configuration": {
       "title": "mar",
       "properties": {
