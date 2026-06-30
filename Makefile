@@ -3,9 +3,12 @@
 # Usage:
 #   make                 # build the binary (./mar) — includes embedded stubs
 #   make stubs           # cross-compile mar-runtime for every supported target
+#   make release         # cross-compile ./mar for every platform (+ .zip archives)
+#   make release-macos   # sign + notarize the macOS binaries into .pkg installers
 #   make test            # run the Go test suite
 #   make check-examples  # type-check every example under examples/
 #   make vscode          # build the VSCode extension (.vsix)
+#   make open-vscode-marketplace  # open the marketplace page to upload the .vsix
 #   make website         # compile the marketing site (Elm) to website/dist/
 #   make website-serve   # build the site then serve it on :8080 (Python)
 #   make website-dev     # elm-live hot reload at :8080
@@ -30,11 +33,23 @@ LDFLAGS := -s -w \
 STUB_TARGETS := darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64
 STUB_DIR     := internal/appbundle/stubs/binaries
 
+# Release artifacts: the full ./mar binary cross-compiled for every
+# platform (each embeds the stubs + iOS template), plus .zip archives.
+# The macOS signing/notarization parameters for `release-macos` come in
+# as variables and are never committed — see that target's comment.
+RELEASE_TARGETS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64 windows-amd64
+RELEASE_DIR     := dist/releases
+MACOS_INSTALL_PREFIX         ?= /usr/local/bin
+MACOS_PKG_IDENTIFIER         ?= tech.segunda.mar
+MACOS_DEVELOPER_ID_APP       ?=
+MACOS_DEVELOPER_ID_INSTALLER ?=
+MACOS_NOTARY_PROFILE         ?=
+
 # Elm version pinned to the latest stable. The website's elm.json is
 # locked to this version too; bumping requires updating both.
 ELM_REQUIRED_VERSION := 0.19.1
 
-.PHONY: all build stubs ios-template test check-examples vscode website website-serve website-dev clean
+.PHONY: all build stubs release release-macos ios-template test check-examples vscode open-vscode-marketplace website website-serve website-dev clean
 
 all: build
 
@@ -79,6 +94,68 @@ stubs:
 	done
 	@echo "Built $$(ls $(STUB_DIR) | grep -v '^README$$' | wc -l | tr -d ' ') stubs"
 
+# Cross-compile the full ./mar binary for every supported platform into
+# RELEASE_DIR, then zip each one. Each binary embeds the runtime stubs +
+# iOS template, exactly like `make build`. These archives carry the
+# UNSIGNED binaries; for macOS distribution use the signed, notarized
+# .pkg from `make release-macos`.
+release: stubs ios-template
+	@command -v zip >/dev/null 2>&1 || { echo "error: zip is required to package release archives"; exit 1; }
+	@echo "Building mar $(VERSION) release binaries"
+	@mkdir -p $(RELEASE_DIR)
+	@for t in $(RELEASE_TARGETS); do \
+		os=$$(echo $$t | cut -d- -f1); \
+		arch=$$(echo $$t | cut -d- -f2); \
+		bin="mar"; if [ "$$os" = "windows" ]; then bin="mar.exe"; fi; \
+		mkdir -p "$(RELEASE_DIR)/$$t"; \
+		echo "  building $$t"; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 \
+			go build -trimpath -ldflags "$(LDFLAGS)" -o "$(RELEASE_DIR)/$$t/$$bin" ./cmd/mar || exit 1; \
+		rm -f "$(RELEASE_DIR)/mar-$(VERSION)-$$t.zip"; \
+		( cd "$(RELEASE_DIR)/$$t" && zip -q "../mar-$(VERSION)-$$t.zip" "$$bin" ); \
+		echo "  packaged $(RELEASE_DIR)/mar-$(VERSION)-$$t.zip"; \
+	done
+	@echo "Release binaries + archives in $(RELEASE_DIR)/"
+
+# Sign, package, notarize, and staple the macOS binaries into installer
+# .pkg files. macOS-only; needs Xcode Command Line Tools plus your Apple
+# Developer ID credentials, passed as variables (never commit these):
+#
+#   make release-macos \
+#     MACOS_DEVELOPER_ID_APP="Developer ID Application: Your Name (TEAMID)" \
+#     MACOS_DEVELOPER_ID_INSTALLER="Developer ID Installer: Your Name (TEAMID)" \
+#     MACOS_NOTARY_PROFILE="your-notarytool-keychain-profile"
+release-macos: release
+	@command -v codesign >/dev/null 2>&1 || { echo "error: codesign required (Xcode Command Line Tools, macOS)"; exit 1; }
+	@command -v pkgbuild >/dev/null 2>&1 || { echo "error: pkgbuild required (macOS)"; exit 1; }
+	@xcrun notarytool --help >/dev/null 2>&1 || { echo "error: xcrun notarytool required (Xcode 13+)"; exit 1; }
+	@xcrun stapler --help >/dev/null 2>&1 || { echo "error: xcrun stapler required (Xcode)"; exit 1; }
+	@test -n "$(MACOS_DEVELOPER_ID_APP)" || { echo "error: set MACOS_DEVELOPER_ID_APP (see the comment above release-macos)"; exit 1; }
+	@test -n "$(MACOS_DEVELOPER_ID_INSTALLER)" || { echo "error: set MACOS_DEVELOPER_ID_INSTALLER"; exit 1; }
+	@test -n "$(MACOS_NOTARY_PROFILE)" || { echo "error: set MACOS_NOTARY_PROFILE"; exit 1; }
+	@for arch in darwin-arm64 darwin-amd64; do \
+		bin="$(RELEASE_DIR)/$$arch/mar"; \
+		pkg="$(RELEASE_DIR)/mar-$(VERSION)-$$arch.pkg"; \
+		root="$(RELEASE_DIR)/$$arch/pkg-root"; \
+		echo "Signing $$bin"; \
+		codesign --force --timestamp --options runtime --sign "$(MACOS_DEVELOPER_ID_APP)" "$$bin" || exit 1; \
+		rm -rf "$$root"; rm -f "$$pkg"; \
+		mkdir -p "$$root$(MACOS_INSTALL_PREFIX)"; \
+		cp "$$bin" "$$root$(MACOS_INSTALL_PREFIX)/mar"; \
+		echo "Packaging $$pkg"; \
+		pkgbuild --root "$$root" --identifier "$(MACOS_PKG_IDENTIFIER).$$arch" \
+			--version "$(VERSION)" --install-location / \
+			--sign "$(MACOS_DEVELOPER_ID_INSTALLER)" "$$pkg" || exit 1; \
+		echo "Notarizing $$pkg"; \
+		xcrun notarytool submit "$$pkg" --keychain-profile "$(MACOS_NOTARY_PROFILE)" --wait || exit 1; \
+		xcrun stapler staple "$$pkg" || exit 1; \
+		echo "Verifying $$arch"; \
+		codesign --verify --verbose=2 "$$bin" || exit 1; \
+		spctl --assess -vv --type install "$$pkg" || true; \
+		rm -rf "$$root"; \
+	done
+	@echo "Notarized macOS installers ready in $(RELEASE_DIR)/"
+
 test: ios-template
 	@go test ./...
 
@@ -120,6 +197,12 @@ vscode:
 	@echo ""
 	@echo "Install with:"
 	@echo "  code --install-extension vscode-mar/vscode-mar.vsix --force"
+
+# Open the VS Code Marketplace management page in the browser, to upload a
+# .vsix by hand (manual publish — no PAT needed). Build the package first
+# with `cd vscode-mar && npx @vscode/vsce package`.
+open-vscode-marketplace:
+	@open https://marketplace.visualstudio.com/manage
 
 # Compile the marketing site (Elm) → website/dist/app.js, then run
 # esbuild to minify. Two-step (Elm produces an unminified bundle,
@@ -185,5 +268,6 @@ clean:
 	@rm -rf vscode-mar/out vscode-mar/*.vsix
 	@rm -rf website/dist
 	@rm -rf website/elm-stuff
+	@rm -rf dist
 	@find $(STUB_DIR) -type f ! -name 'README' -delete 2>/dev/null || true
 	@echo "Cleaned"
