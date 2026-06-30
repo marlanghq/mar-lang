@@ -1,8 +1,6 @@
 {
   "name": "daily-checklist",
-  "admins": [
-    "mfdavid@gmail.com"
-  ],
+  "admins": [],
   "database": {
     "path": "./checklist.db"
   },
