@@ -128,8 +128,8 @@ release: stubs ios-template
 release-macos: release
 	@command -v codesign >/dev/null 2>&1 || { echo "error: codesign required (Xcode Command Line Tools, macOS)"; exit 1; }
 	@command -v pkgbuild >/dev/null 2>&1 || { echo "error: pkgbuild required (macOS)"; exit 1; }
-	@xcrun notarytool --help >/dev/null 2>&1 || { echo "error: xcrun notarytool required (Xcode 13+)"; exit 1; }
-	@xcrun stapler --help >/dev/null 2>&1 || { echo "error: xcrun stapler required (Xcode)"; exit 1; }
+	@xcrun --find notarytool >/dev/null 2>&1 || { echo "error: xcrun notarytool required (Xcode 13+)"; exit 1; }
+	@xcrun --find stapler >/dev/null 2>&1 || { echo "error: xcrun stapler required (Xcode)"; exit 1; }
 	@test -n "$(MACOS_DEVELOPER_ID_APP)" || { echo "error: set MACOS_DEVELOPER_ID_APP (see the comment above release-macos)"; exit 1; }
 	@test -n "$(MACOS_DEVELOPER_ID_INSTALLER)" || { echo "error: set MACOS_DEVELOPER_ID_INSTALLER"; exit 1; }
 	@test -n "$(MACOS_NOTARY_PROFILE)" || { echo "error: set MACOS_NOTARY_PROFILE"; exit 1; }
