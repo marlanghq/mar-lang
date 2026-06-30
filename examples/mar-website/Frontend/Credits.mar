@@ -60,7 +60,7 @@ view _ =
                     , paragraph
                         [ span [] "• "
                         , span [link "https://developer.apple.com/xcode/swiftui/"] "SwiftUI"
-                        , span [] ", for the declarative UI vocabulary that Mar's primitives mirror."
+                        , span [] ", for the declarative UI vocabulary that shaped Mar's primitives."
                         ]
                     , paragraph
                         [ span [] "• "
