@@ -282,7 +282,7 @@ sections params model =
         Just (Just _) ->
             List.concat
                 [ errorSection model
-                , [ attendanceSection params model ]
+                , attendanceSection params model
                 , studentsSection model
                 ]
 
@@ -302,12 +302,33 @@ errorSection model =
 -- A button, not a navigationLink: taking attendance opens as a sheet, and a
 -- row with a chevron promises the opposite — that it pushes a screen you
 -- come back from. The affordance has to match what actually happens.
-attendanceSection : { id : Int } -> Model -> View Msg
+--
+-- The whole section is hidden while the roster is empty. There is nobody to
+-- mark, so it has nothing to summarize and the button nothing to open. Keeping
+-- it visible said "no students yet" twice on one screen, here and again under
+-- Students, and offered a button that led to an empty sheet.
+attendanceSection : { id : Int } -> Model -> List (View Msg)
 attendanceSection params model =
-    section [ header "Today" ]
-        [ subtitle (todaySummary model)
-        , button [] TakeAttendanceClicked "Take attendance"
+    if rosterEmpty model then
+        []
+    else
+        [ section [ header "Today" ]
+            [ subtitle (todaySummary model)
+            , button [] TakeAttendanceClicked "Take attendance"
+            ]
         ]
+
+
+-- Known to hold nobody. A roster still loading is not empty, it is unknown,
+-- and hiding the section on `Nothing` would make it flicker in on arrival.
+rosterEmpty : Model -> Bool
+rosterEmpty model =
+    case model.students of
+        Just students ->
+            List.isEmpty students
+
+        Nothing ->
+            False
 
 
 todaySummary : Model -> String
@@ -327,13 +348,13 @@ todaySummary model =
                 notMarked =
                     total - marked
             in
-            if total == 0 then
-                "No students on the roster yet."
-            else
-                String.fromInt counts.present ++ " present, "
-                    ++ String.fromInt counts.late ++ " late, "
-                    ++ String.fromInt counts.absent ++ " absent, "
-                    ++ String.fromInt notMarked ++ " not marked"
+            -- No empty-roster wording here on purpose: attendanceSection
+            -- hides itself in that case, so this only ever runs with people
+            -- to count.
+            String.fromInt counts.present ++ " present, "
+                ++ String.fromInt counts.late ++ " late, "
+                ++ String.fromInt counts.absent ++ " absent, "
+                ++ String.fromInt notMarked ++ " not marked"
 
         _ ->
             "Reading today…"
