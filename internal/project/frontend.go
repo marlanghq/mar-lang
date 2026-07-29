@@ -240,7 +240,7 @@ func LoadIntoEnvWithModulesAndHook(
 	}
 	byName := indexModules(mods)
 	for _, m := range mods {
-		if err := loadIntoEnv(m, joinName(m.Name), rEnv, byName); err != nil {
+		if err := loadIntoEnv(m, joinName(m.Name), rEnv, byName, declaredTypes(nil, m)); err != nil {
 			return nil, nil, nil, err
 		}
 	}

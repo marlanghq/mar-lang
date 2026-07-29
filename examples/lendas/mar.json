@@ -1,0 +1,25 @@
+{
+  "name": "lendas",
+  "admins": [
+    "mfdavid@gmail.com"
+  ],
+  "server": {
+    "port": 3030
+  },
+  "deploy": {
+    "fly": {
+      "app": "mar-lendas",
+      "region": "gru",
+      "memory": "256mb"
+    }
+  },
+  "auth": {
+    "sessionSecret": "env:SESSION_SECRET"
+  },
+  "mail": {
+    "from": "robo@segunda.tech",
+    "smtpHost": "smtp.resend.com",
+    "smtpUsername": "resend",
+    "smtpPassword": "env:SMTP_PASSWORD"
+  }
+}

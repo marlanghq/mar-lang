@@ -1,0 +1,13 @@
+{
+  "name": "iron-meridian",
+  "server": {
+    "port": 3034
+  },
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "mar-iron-meridian",
+      "account": "env:CLOUDFLARE_ACCOUNT_ID",
+      "apiToken": "env:CLOUDFLARE_API_TOKEN"
+    }
+  }
+}

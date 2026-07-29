@@ -45,6 +45,7 @@ func TestServiceErrorString(t *testing.T) {
 	}{
 		{"Offline", VCtor{Tag: "Offline"}, "Can't reach the server. Check your connection and try again."},
 		{"Unauthorized", VCtor{Tag: "Unauthorized"}, "Your session has expired. Please sign in again."},
+		{"RateLimited", VCtor{Tag: "RateLimited"}, "Too many requests. Wait a moment and try again."},
 		{"ServerError carries the server message", VCtor{Tag: "ServerError", Args: []Value{VString{V: "boom_code"}}}, "boom_code"},
 	}
 	for _, c := range cases {

@@ -1,9 +1,5 @@
 {
   "name": "bigapp",
-  "admins": [],
-  "database": {
-    "path": "./bigapp.db"
-  },
   "ios": {
     "bundleId": "com.yourcompany.bigapp",
     "displayName": "BigApp",

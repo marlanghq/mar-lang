@@ -101,7 +101,7 @@ func Build(entry, distDir, target string) error {
 //
 // To force prod-shaped output on your local machine without a deploy,
 // pick an explicit non-host target: `mar build --target=linux-amd64`
-// produces the same artifact `mar fly deploy` would push.
+// produces the same artifact `mar deploy` would push.
 func isProductionTarget(target string) bool {
 	if target == "" {
 		return false
@@ -117,7 +117,7 @@ func isProductionTarget(target string) bool {
 // don't want an admin panel — but flags the situation prominently so
 // the operator doesn't realize too late that prod has no admin access.
 //
-// `cmd/mar/fly.go` repeats this warning at the END of `mar fly deploy`
+// `cmd/mar/fly.go` repeats this warning at the END of `mar deploy`
 // (after the long `fly deploy` output, when the operator's attention
 // is back) so the message isn't lost in scrollback.
 func warnIfNoAdmins(projectDir string) {
@@ -210,7 +210,7 @@ func joinMissingForPaste(missing []string) string {
 // runtime state (Entity.define hits runtime.RegisteredEntities,
 // Auth.config sets runtime.CurrentAuth, etc.). ValidateProductionConfig
 // reads CurrentAuth to know whether the app needs mail config, so it
-// only runs after main has: Build does so directly; `mar fly deploy`
+// only runs after main has: Build does so directly; `mar deploy`
 // validates after Topology has run main.
 func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err error) {
 	info, err := os.Stat(entry)
@@ -232,7 +232,7 @@ func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err erro
 	// types, etc.) before evaluating — exactly as `mar dev` and
 	// `mar migrate` do before their own loads. Without it, a caller
 	// that evaluates twice in one process trips a false "declared more
-	// than once" guard: `mar fly deploy` runs Topology (eval #1) then
+	// than once" guard: `mar deploy` runs Topology (eval #1) then
 	// Build (eval #2), and the second re-registers every Entity.define.
 	runtime.ResetForReload()
 
@@ -274,7 +274,7 @@ func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err erro
 // "backend", or "fullstack". Runs main as a side effect (same path
 // Build / Preflight take), so the cost is one full evaluation.
 //
-// Used by `mar fly deploy` to pick the right Dockerfile shape:
+// Used by `mar deploy` to pick the right Dockerfile shape:
 // frontend ships static files via Caddy; backend / fullstack ship
 // the self-contained binary. The fly subcommand calls this BEFORE
 // any cloud interaction so the operator sees compile errors in
@@ -561,9 +561,17 @@ func buildServerExecutable(projectDir, distDir, target string, bc *buildCtx) err
 		return err
 	}
 
+	// public/ assets ride along in the bundle so the deployed
+	// self-contained binary serves them like `mar dev` does.
+	assets, err := appbundle.CollectAssets(projectDir)
+	if err != nil {
+		return err
+	}
+
 	payload, err := appbundle.BuildPayload(appbundle.BuildInput{
 		ManifestJSON: manifestJSON,
 		Sources:      sources,
+		Assets:       assets,
 	})
 	if err != nil {
 		return err
@@ -749,6 +757,22 @@ const productionPageHTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- color-scheme + theme-color: the same pair the dev shell emits, and
+     they have to be here too or a deployed app looks different from the
+     one you developed. color-scheme paints the initial canvas in the
+     OS scheme before any CSS arrives (without it a dark-mode reload
+     flashes white). theme-color tints the strip iOS Safari owns above
+     the page — the status bar — for the moment before the nav's own
+     fixed surface paints it, and while the page sits at scroll top.
+     Each hex is the page's TOP color (the top stop of the body gradient),
+     since the status bar sits where the page is lightest; the dark
+     value was the gradient's DARK stop, which showed as a near-black
+     band over a lighter graphite page. Left undeclared, Safari falls
+     back to the PWA manifest's theme_color and paints a flat saturated
+     band over the page. -->
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f7f7f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#232326" media="(prefers-color-scheme: dark)">
 <!-- PWA: manifest + icons written into dist/ by mar build (see
      buildFrontendDist). Makes the deployed app installable + fullscreen. -->
 <link rel="manifest" href="/_mar/manifest.json">
@@ -761,8 +785,22 @@ const productionPageHTML = `<!doctype html>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   :root {
+    /* Mirrors the <meta> above: the meta drives the first paint, this
+       keeps form widgets and scrollbars in the right scheme once CSS
+       lands. */
+    color-scheme: light dark;
     --fg: #1a1a1a; --bg: #fafafa; --surface: #fff; --border: #e2e2e2;
     --accent: #2563eb; --radius: 6px;
+  }
+  /* Dark baseline, on the same anchors runtime.js's dark branch targets
+     (#161618 html, #f5f5f7 foreground), so the pre-runtime paint already
+     matches the OS and nothing re-styles when the bundle attaches. */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #f5f5f7; --bg: #161618; --surface: #1c1c1e;
+      --border: rgba(255, 255, 255, 0.12); --accent: #0a84ff;
+    }
+    html { background-color: #161618; }
   }
   html, body { margin: 0; padding: 0; }
   body {
@@ -804,18 +842,48 @@ const productionPageHTML = `<!doctype html>
 <script type="application/json" id="mar-program">%s</script>
 <script src="/runtime.js"></script>
 <script>
-window.addEventListener('DOMContentLoaded', function () {
-  try {
-    var raw = document.getElementById('mar-program').textContent;
-    marRun(JSON.parse(raw));
-  } catch (e) {
+(function () {
+  function showError(e) {
     var root = document.getElementById('mar-root');
     var pre = document.createElement('pre');
     pre.style.color = '#b00';
     pre.textContent = String(e && e.message || e);
     root.appendChild(pre);
   }
-});
+  function boot() {
+    try {
+      var raw = document.getElementById('mar-program').textContent;
+      marRun(JSON.parse(raw));
+    } catch (e) {
+      showError(e);
+    }
+  }
+  function start() {
+    if (typeof marRun === 'function') { boot(); return; }
+    // marRun missing means /runtime.js did not execute. Two known causes:
+    // a dropped fetch on a flaky connection, or, right after a deploy, a
+    // CDN edge that does not have the file yet. Static hosts with SPA
+    // routing (Cloudflare Pages) answer missing paths with this page's
+    // own HTML, so the "script" parses as HTML and dies without firing
+    // onerror. One retry with a cache-busting query defeats both cases
+    // by forcing a fresh fetch past any cached bad response.
+    var s = document.createElement('script');
+    s.src = '/runtime.js?retry=' + Date.now();
+    s.onload = function () {
+      if (typeof marRun === 'function') boot();
+      else showError(new Error('runtime.js did not load correctly. A new deploy may still be propagating. Reload in a moment.'));
+    };
+    s.onerror = function () {
+      showError(new Error('could not load runtime.js. Check your connection and reload the page.'));
+    };
+    document.head.appendChild(s);
+  }
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
+  }
+})();
 </script>
 </body>
 </html>`

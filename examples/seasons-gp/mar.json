@@ -1,0 +1,19 @@
+{
+  "name": "seasons-gp",
+  "server": {
+    "port": 3025
+  },
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "mar-seasons-gp",
+      "account": "env:CLOUDFLARE_ACCOUNT_ID",
+      "apiToken": "env:CLOUDFLARE_API_TOKEN"
+    }
+  },
+  "ios": {
+    "bundleId": "tech.segunda.seasonsgp",
+    "displayName": "seasons-gp",
+    "marketingVersion": "0.0.1",
+    "buildNumber": "1"
+  }
+}

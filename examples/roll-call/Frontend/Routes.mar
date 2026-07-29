@@ -1,0 +1,39 @@
+module Frontend.Routes exposing
+    ( classes, signIn, verifyCode, classDetail, takeAttendance, studentDetail )
+
+
+-- Every URL in Roll Call, in one place, as typed paths. Because each
+-- value carries a `Path r` annotation, `Nav.pushTo` / `navigationLink`
+-- check the params against the pattern at compile time: rename a route
+-- or change `{id:Int}` and every call site turns into a type error
+-- instead of a 404 at runtime.
+
+
+-- The roster home: the teacher's list of classes. Protected.
+classes : Path {}
+classes = "/"
+
+
+signIn : Path {}
+signIn = "/sign-in"
+
+
+-- After the email step, we push here carrying the email as a typed
+-- segment, so the browser Back button gives a free retry.
+verifyCode : Path { email : String }
+verifyCode = "/sign-in/verify/{email:String}"
+
+
+-- One class's roster + today's summary.
+classDetail : Path { id : Int }
+classDetail = "/classes/{id:Int}"
+
+
+-- The take-attendance screen for a class (day chosen on the page).
+takeAttendance : Path { id : Int }
+takeAttendance = "/classes/{id:Int}/attendance"
+
+
+-- One student's attendance record within a class.
+studentDetail : Path { classId : Int, studentId : Int }
+studentDetail = "/classes/{classId:Int}/students/{studentId:Int}"

@@ -1,6 +1,6 @@
 // Post-deploy health check.
 //
-// `mar fly deploy` exits 0 the moment Fly accepts the image and assigns
+// `mar deploy` exits 0 the moment Fly accepts the image and assigns
 // it to a machine — which is BEFORE the app has actually booted. Many
 // real-world failures land in that gap: a broken migration, a missing
 // secret, an SMTP check that explodes on first boot. Without a probe,
@@ -72,7 +72,7 @@ const (
 func runHealthCheck(appName, appURL string) bool {
 	if err := waitForAppHealthy(appURL, healthCheckTimeout); err != nil {
 		fmt.Println()
-		fprintError("mar fly deploy: %v", err)
+		fprintError("mar deploy: %v", err)
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintf(os.Stderr, "Last %d lines from %s:\n",
 			healthCheckLogTailLines, colorCyan(appName))
@@ -115,7 +115,7 @@ func waitForAppHealthy(appURL string, timeout time.Duration) error {
 	start := time.Now()
 
 	if !isTTY {
-		fmt.Printf("[mar fly deploy] waiting for app to come up (timeout %s)…\n", timeout)
+		fmt.Printf("[mar deploy] waiting for app to come up (timeout %s)…\n", timeout)
 	}
 
 	for {
@@ -133,7 +133,7 @@ func waitForAppHealthy(appURL string, timeout time.Duration) error {
 			// printDeploySuccessSummary may decide to print nothing,
 			// so the blank here is what stands the success line off
 			// from the shell prompt.
-			fmt.Printf("[mar fly deploy] %s App is up at %s (healthy in %s)\n\n",
+			fmt.Printf("[mar deploy] %s App is up at %s (healthy in %s)\n\n",
 				colorGreen("✓"), colorCyan(appURL), elapsedStr)
 			return nil
 		}
@@ -145,7 +145,7 @@ func waitForAppHealthy(appURL string, timeout time.Duration) error {
 		}
 		if isTTY {
 			elapsed := time.Since(start).Round(time.Second)
-			fmt.Printf("\r\033[K[mar fly deploy] waiting for app to come up… (%s)",
+			fmt.Printf("\r\033[K[mar deploy] waiting for app to come up… (%s)",
 				colorizeElapsed(elapsed, timeout))
 		}
 		time.Sleep(healthCheckPollInterval)

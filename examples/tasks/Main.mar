@@ -3,7 +3,7 @@ module Main exposing (main)
 
 import UI exposing
     ( navigationStack, navigationTitle
-    , form, list, section, header
+    , list, section, header
     , hstack, vstack, width, fill
     , text, textField, button, empty
     , submit
@@ -105,7 +105,7 @@ update msg model =
 toggleIfId : Int -> TaskItem -> TaskItem
 toggleIfId id t =
     if t.id == id then
-        { t | done = if t.done then False else True }
+        { t | done = not t.done }
     else
         t
 

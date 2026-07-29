@@ -1,0 +1,1115 @@
+module Hud exposing (..)
+
+
+import Types exposing (..)
+import Balance exposing (..)
+import Maps exposing (..)
+import Draw exposing (..)
+import Canvas exposing ( rect, circle, group, rgb, rgba)
+
+
+-- IRON MERIDIAN: the command chrome, in screen coordinates. A slim top
+-- bar (credits with a live ticker, power, supply, clock), the right
+-- sidebar (minimap up top, then the C&C build tabs with hotkey chips
+-- and progress fills), a bottom-left selection panel, alert toasts and
+-- the help overlay. Everything is shapes plus Canvas.text.
+
+
+topH : Int
+topH = 26
+
+
+sideW : Int
+sideW = 176
+
+
+-- what Main tells the HUD every frame
+type alias HudState =
+    { w : Int                -- full canvas size
+    , h : Int
+    , tab : Int              -- 0 structures, 1 units
+    , kbMode : Int           -- 0 none, 1 structures grid, 2 units grid
+    , shownCredits : Int     -- animated ticker value
+    , sel : List Int
+    , attackArmed : Bool
+    , superArmed : Bool      -- superweapon is waiting for a target
+    , paused : Bool
+    , muted : Bool
+    , speed : Int            -- percent
+    , helpOpen : Bool
+    , objectives : List { text : String, done : Bool }
+    , clock : Int            -- mission seconds
+    , hoverCell : Int        -- hovered build/train slot, -1 = none
+    , selB : Int             -- selected building id, -1 = none
+    }
+
+
+-- ===== frame =====
+-- mmRuns: the mission's static terrain runs (Main owns them), reused by
+-- the minimap at its own scale.
+
+
+drawHud : Game -> Cam -> List Shape -> HudState -> List Shape
+drawHud g cam miniTerrain hs =
+    List.concat
+        [ drawTopBar g hs
+        , drawSidebar g cam miniTerrain hs
+        , drawSelPanel g hs
+        , drawAlerts g hs
+        , drawObjectives hs
+        , drawBanners g hs
+        , if hs.helpOpen then drawHelp hs else []
+        , if hs.paused then drawPaused hs else []
+        ]
+
+
+-- ===== top bar =====
+
+
+drawTopBar : Game -> HudState -> List Shape
+drawTopBar g hs =
+    let
+        s = playerSide g
+
+        low = s.powUse > s.powMade
+
+        powW = 46
+        powFill =
+            if s.powMade <= 0 then 0
+            else min powW (powW * s.powMade // max 1 (s.powUse + 40))
+
+        mm = hs.clock // 60
+        ss = modBy 60 hs.clock
+
+        clockStr =
+            String.fromInt mm ++ ":" ++ (if ss < 10 then "0" else "") ++ String.fromInt ss
+    in
+    List.concat
+        [ [ rect 0 0 hs.w topH (rgb 24 20 24)
+          , rect 0 (topH - 2) hs.w 2 (rgb 52 44 48)
+          , Canvas.text 12 17 12 Canvas.Left (rgb 255 214 120) ("$ " ++ String.fromInt hs.shownCredits)
+          ]
+        , [ Canvas.text 120 17 10 Canvas.Left (rgb 160 168 180) "POWER"
+          , rect 168 12 powW 10 (rgb 44 38 42)
+          , rect 168 12 powFill 10 (if low then rgb 235 110 80 else rgb 120 220 130)
+          ]
+        , if low && modBy 2 (g.tick // 12) == 0 then
+            [ Canvas.text 222 17 10 Canvas.Left (rgb 240 120 90) "LOW" ]
+          else
+            []
+        , [ Canvas.text 268 17 10 Canvas.Left (rgb 160 168 180) "SUPPLY"
+          , Canvas.text 318 17 11 Canvas.Left
+                (if s.supUse >= s.supMax then rgb 240 180 90 else rgb 210 216 224)
+                (String.fromInt s.supUse ++ "/" ++ String.fromInt s.supMax)
+          ]
+        , [ Canvas.text (hs.w // 2) 17 11 Canvas.Center (rgb 210 216 224) clockStr ]
+        , [ Canvas.text (hs.w - sideW - 96) 17 10 Canvas.Left (rgb 160 168 180)
+                ("SPEED x" ++ String.fromInt (hs.speed // 100) ++ (if modBy 100 hs.speed == 50 then ".5" else ""))
+          ]
+        , if hs.muted then
+            [ Canvas.text (hs.w - sideW - 160) 17 10 Canvas.Left (rgb 240 180 90) "MUTED" ]
+          else
+            []
+        , [ Canvas.text (hs.w - 10) 17 10 Canvas.Right (rgb 130 136 148) "H HELP  ESC MENU" ]
+        ]
+
+
+playerSide : Game -> Side
+playerSide g =
+    case List.head (List.filter (\s -> s.id == 1) g.sides) of
+        Just s -> s
+        Nothing ->
+            { id = 1, race = Compact, team = 1, human = True
+            , credits = 0, supUse = 0, supMax = 0, powUse = 0, powMade = 0
+            , sQueue = [], sProg = 0, sReady = 0 - 1, uQueue = [], uProg = 0
+            , superCd = 0, aggro = 100, mind = { mode = 0, thinkAt = 0, waveAt = 0, waveSize = 0, buildIx = 0, targetX = 0, targetY = 0, scoutIx = 0 }
+            , alive = True }
+
+
+-- ===== sidebar =====
+
+
+drawSidebar : Game -> Cam -> List Shape -> HudState -> List Shape
+drawSidebar g cam miniTerrain hs =
+    let
+        x0 = hs.w - sideW
+    in
+    List.concat
+        [ [ rect x0 topH sideW (hs.h - topH) (rgb 30 26 30)
+          , rect x0 topH 2 (hs.h - topH) (rgb 52 44 48)
+          ]
+        , drawMinimap g cam miniTerrain hs
+        , drawTabs g hs
+        , drawGrid g hs
+        , drawSuperButton g hs
+        ]
+
+
+mmX : HudState -> Int
+mmX hs = hs.w - sideW + 8
+
+
+mmY : Int
+mmY = topH + 8
+
+
+-- ===== sidebar layout, derived from the canvas height =====
+--
+-- The sidebar is one column: minimap, tabs, a 5-row build grid, then the
+-- superweapon button. These used to be constants summing to 456px. A phone in
+-- landscape gives the canvas around 370px, so the column ran off the bottom:
+-- the last grid row -- Airfield and the ARTILLERY BEACON -- and the
+-- superweapon button were both drawn below the screen. On a phone you could
+-- not build the superweapon, let alone fire it.
+--
+-- Everything under the minimap now derives from the height. The minimap gives
+-- up room first (it is the most compressible), then the grid rows. Above
+-- ~462px the numbers land exactly on the old constants, so nothing about the
+-- desktop layout moves.
+
+
+mmSizeMax : Int
+mmSizeMax = 160
+
+
+mmSizeMin : Int
+mmSizeMin = 80
+
+
+cellHMax : Int
+cellHMax = 40
+
+
+cellHMin : Int
+cellHMin = 26
+
+
+-- what sits under the minimap at a fixed size: the gap before the tabs (10),
+-- the tab row (24), the gap before the super button (6) and the button (22)
+sidebarFixed : Int
+sidebarFixed = 62
+
+
+-- room the column has under the minimap, keeping a 6px bottom margin
+sidebarRoom : Int -> Int
+sidebarRoom h = h - mmY - 6 - sidebarFixed
+
+
+cellHOf : Int -> Int
+cellHOf h = clampI cellHMin cellHMax ((sidebarRoom h - mmSizeMin) // 5)
+
+
+mmSizeOf : Int -> Int
+mmSizeOf h = clampI mmSizeMin mmSizeMax (sidebarRoom h - 5 * cellHOf h)
+
+
+tabsYOf : Int -> Int
+tabsYOf h = mmY + mmSizeOf h + 10
+
+
+gridYOf : Int -> Int
+gridYOf h = tabsYOf h + 24
+
+
+superYOf : Int -> Int
+superYOf h = gridYOf h + 5 * cellHOf h + 6
+
+
+-- world px -> minimap px
+mmOfWorld : Game -> HudState -> Int -> Int -> { x : Int, y : Int }
+mmOfWorld g hs wx wy =
+    let
+        mm = mmSizeOf hs.h
+    in
+    { x = mmX hs + wx * mm // (g.mapW * tileW)
+    , y = mmY + wy * mm // (g.mapH * tileW)
+    }
+
+
+-- the race's power building, named for the radar-offline hint
+powBldName : Race -> String
+powBldName r =
+    case r of
+        Compact -> "Power Station"
+        Combine -> "Junk Turbine"
+        Vessari -> "Spire"
+
+
+drawMinimap : Game -> Cam -> List Shape -> HudState -> List Shape
+drawMinimap g cam miniTerrain hs =
+    let
+        x0 = mmX hs
+        y0 = mmY
+        mm = mmSizeOf hs.h
+
+        radarUp =
+            let
+                s = playerSide g
+            in
+            s.powMade >= s.powUse
+    in
+    List.concat
+        [ [ rect (x0 - 2) (y0 - 2) (mm + 4) (mm + 4) (rgb 52 44 48)
+          , rect x0 y0 mm mm (rgb 40 22 18)
+          ]
+        , if bnot radarUp then
+            [ rect x0 y0 mm mm (rgb 20 14 16)
+            , Canvas.text (x0 + mm // 2) (y0 + mm // 2 - 8) 10 Canvas.Center
+                (if modBy 2 (g.tick // 15) == 0 then rgb 240 120 90 else rgb 140 70 60)
+                "RADAR OFFLINE"
+            , Canvas.text (x0 + mm // 2) (y0 + mm // 2 + 8) 8 Canvas.Center (rgb 190 160 150)
+                "Power shortage"
+            , Canvas.text (x0 + mm // 2) (y0 + mm // 2 + 20) 8 Canvas.Center (rgb 210 180 120)
+                ("Build a " ++ powBldName (playerSide g).race)
+            ]
+          else
+            List.concat
+                [ mmTerrain g miniTerrain x0 y0
+                , mmFog mm g x0 y0
+                , mmDots mm g x0 y0
+                , mmPings g hs
+                , mmCamBox g cam hs
+                ]
+        ]
+
+
+-- the minimap terrain is static per mission: shapes are prebuilt at the
+-- ORIGIN once (buildMiniTerrain) and translated into place per frame
+mmTerrain : Game -> List Shape -> Int -> Int -> List Shape
+mmTerrain g miniTerrain x0 y0 =
+    [ group [ Canvas.Translate x0 y0 ] miniTerrain ]
+
+
+buildMiniTerrain : Int -> Game -> Dict Int (List Run) -> List Shape
+buildMiniTerrain mm g runs =
+    List.concatMap
+        (\row ->
+            case Dict.get row runs of
+                Just rr ->
+                    List.map
+                        (\run ->
+                            -- span each cell to the NEXT grid line so rounding
+                            -- never leaves 1px gaps between rows/runs (the stripes)
+                            rect (run.x0 * mm // g.mapW)
+                                (row * mm // g.mapH)
+                                (max 1 ((run.x0 + run.w) * mm // g.mapW - run.x0 * mm // g.mapW))
+                                (max 1 ((row + 1) * mm // g.mapH - row * mm // g.mapH))
+                                (terraColor run.c)
+                        )
+                        rr
+
+                Nothing ->
+                    []
+        )
+        (List.range 0 (g.mapH - 1))
+
+
+mmFog : Int -> Game -> Int -> Int -> List Shape
+mmFog mm g x0 y0 =
+    List.concatMap
+        (\row ->
+            case Dict.get row g.fogRows of
+                Just rr ->
+                    List.map
+                        (\run ->
+                            rect (x0 + run.x0 * mm // g.mapW)
+                                (y0 + row * mm // g.mapH)
+                                (max 1 ((run.x0 + run.w) * mm // g.mapW - run.x0 * mm // g.mapW))
+                                (max 1 ((row + 1) * mm // g.mapH - row * mm // g.mapH))
+                                (if run.c == 0 then rgb 12 8 9 else rgba 12 8 9 170)
+                        )
+                        rr
+
+                Nothing ->
+                    []
+        )
+        (List.range 0 (g.mapH - 1))
+
+
+mmDots : Int -> Game -> Int -> Int -> List Shape
+mmDots mm g x0 y0 =
+    let
+        unitDots =
+            List.filterMap
+                (\u ->
+                    if u.side /= 1 && visAt g (upx u // tileW) (upy u // tileW) /= 2 then
+                        Nothing
+                    else
+                        Just
+                            (rect (x0 + upx u * mm // (g.mapW * tileW) - 1)
+                                (y0 + upy u * mm // (g.mapH * tileW) - 1)
+                                2 2
+                                (col (sidePaint g u.side)))
+                )
+                g.units
+
+        bldDots =
+            List.filterMap
+                (\b ->
+                    if bldVisible g b then
+                        Just
+                            (rect (x0 + bpx b * mm // (g.mapW * tileW) - 1)
+                                (y0 + bpy b * mm // (g.mapH * tileW) - 1)
+                                3 3
+                                (col (sidePaint g b.side)))
+                    else
+                        Nothing
+                )
+                g.blds
+    in
+    List.concat [ bldDots, unitDots ]
+
+
+mmPings : Game -> HudState -> List Shape
+mmPings g hs =
+    List.concatMap
+        (\p ->
+            let
+                m = mmOfWorld g hs p.x p.y
+                age = g.tick - p.t
+                r = 3 + modBy 24 age // 3
+            in
+            [ group [ Canvas.Blend Canvas.Add ]
+                [ circle m.x m.y r (rgba 255 210 120 (170 - modBy 24 age * 6))
+                , circle m.x m.y (max 1 (r - 2)) (rgba 20 12 10 255)
+                ]
+            ]
+        )
+        g.pings
+
+
+mmCamBox : Game -> Cam -> HudState -> List Shape
+mmCamBox g cam hs =
+    let
+        tl = mmOfWorld g hs cam.x cam.y
+        br = mmOfWorld g hs (cam.x + cam.w) (cam.y + cam.h)
+        w = max 6 (br.x - tl.x)
+        h = max 6 (br.y - tl.y)
+    in
+    [ rect tl.x tl.y w 1 (rgb 230 234 240)
+    , rect tl.x (tl.y + h) w 1 (rgb 230 234 240)
+    , rect tl.x tl.y 1 h (rgb 230 234 240)
+    , rect (tl.x + w) tl.y 1 (h + 1) (rgb 230 234 240)
+    ]
+
+
+-- ===== build tabs + grid =====
+
+
+drawTabs : Game -> HudState -> List Shape
+drawTabs g hs =
+    let
+        x0 = hs.w - sideW + 8
+    in
+    List.concat
+        [ tabBtn (tabsYOf hs.h) x0 "BUILD" (hs.tab == 0) "B"
+        , tabBtn (tabsYOf hs.h) (x0 + 84) "UNITS" (hs.tab == 1) "T"
+        ]
+
+
+tabBtn : Int -> Int -> String -> Bool -> String -> List Shape
+tabBtn ty tx label active hot =
+    [ rect tx ty 76 18 (if active then rgb 58 50 56 else rgb 38 32 38)
+    , Canvas.text (tx + 30) (ty + 13) 10 Canvas.Center
+        (if active then rgb 235 225 210 else rgb 150 145 150) label
+    , rect (tx + 58) (ty + 4) 12 11 (rgb 24 20 24)
+    , Canvas.text (tx + 64) (ty + 13) 9 Canvas.Center (rgb 255 214 120) hot
+    ]
+
+
+gridLetters : Int -> String
+gridLetters i =
+    case i of
+        0 -> "Q"
+        1 -> "W"
+        2 -> "E"
+        3 -> "R"
+        4 -> "T"
+        5 -> "A"
+        6 -> "S"
+        7 -> "D"
+        8 -> "F"
+        9 -> "G"
+        10 -> "Z"
+        11 -> "X"
+        _ -> "C"
+
+
+-- grid geometry shared with Main's hit testing
+gridCellAt : HudState -> Int -> { x : Int, y : Int, w : Int, h : Int }
+gridCellAt hs i =
+    { x = hs.w - sideW + 8 + modBy 2 i * 82
+    , y = gridYOf hs.h + (i // 2) * cellHOf hs.h
+    , w = 78
+    , h = cellHOf hs.h - 4
+    }
+
+
+drawGrid : Game -> HudState -> List Shape
+drawGrid g hs =
+    let
+        s = playerSide g
+    in
+    if hs.tab == 0 then
+        List.concat
+            (List.indexedMap
+                (\i k -> drawBldCell g hs s i k)
+                (raceBlds s.race))
+    else
+        List.concat
+            (List.indexedMap
+                (\i k -> drawUnitCell g hs s i k)
+                (raceUnits s.race))
+
+
+cellBase : HudState -> Int -> Bool -> Bool -> List Shape
+cellBase hs i enabled highlight =
+    let
+        c = gridCellAt hs i
+    in
+    [ rect c.x c.y c.w c.h
+        (if highlight then rgb 66 58 52
+         else if enabled then rgb 44 38 44
+         else rgb 34 30 34)
+    , rect c.x c.y c.w 2
+        (if highlight then rgb 255 214 120 else rgb 56 48 54)
+    ]
+
+
+hotkeyChip : HudState -> Int -> Bool -> List Shape
+hotkeyChip hs i visible =
+    let
+        c = gridCellAt hs i
+    in
+    if visible then
+        [ rect (c.x + c.w - 14) (c.y + 2) 12 11 (rgb 24 20 24)
+        , Canvas.text (c.x + c.w - 8) (c.y + 11) 9 Canvas.Center (rgb 255 214 120) (gridLetters i)
+        ]
+    else
+        []
+
+
+drawBldCell : Game -> HudState -> Side -> Int -> BldKind -> List Shape
+drawBldCell g hs s i k =
+    let
+        c = gridCellAt hs i
+
+        unlocked = List.all (\need -> hasBldHud g s.id need) (bNeeds k)
+        affordable = s.credits >= bCost k
+
+        isHead =
+            case List.head s.sQueue of
+                Just q -> q == k
+                Nothing -> False
+
+        ready = s.sReady == bldCode k
+
+        prog =
+            if isHead then
+                100 - s.sProg * 100 // max 1 (bBuild k)
+            else
+                0
+
+        enabled = unlocked
+        blink = modBy 2 (g.tick // 10) == 0
+    in
+    List.concat
+        [ cellBase hs i enabled (ready && blink)
+        , if isHead then
+            [ rect c.x (c.y + c.h - 4) (c.w * prog // 100) 4 (rgb 120 220 130) ]
+          else
+            []
+        -- The price line sat at a fixed +27, which falls outside the cell
+        -- once the rows shrink on a short screen. Clamped to the cell's own
+        -- floor; on a normal-height row (h 36) the min still picks 27, so
+        -- the desktop grid is pixel-identical.
+        , [ Canvas.text (c.x + 5) (c.y + 13) 9 Canvas.Left
+                (if ready then rgb 255 230 150
+                 else if enabled then rgb 220 214 206
+                 else rgb 110 106 110)
+                (bName k)
+          , Canvas.text (c.x + 5) (min (c.y + 27) (c.y + c.h - 6)) 9 Canvas.Left
+                (if ready then rgb 130 240 140
+                 else if affordable && enabled then rgb 255 214 120
+                 else rgb 150 120 90)
+                (if ready then "CLICK MAP" else "$" ++ String.fromInt (bCost k))
+          ]
+        , hotkeyChip hs i (hs.kbMode == 1)
+        ]
+
+
+hasBldHud : Game -> Int -> BldKind -> Bool
+hasBldHud g sid k =
+    List.any (\b -> b.side == sid && b.prog == 0 && b.kind == k) g.blds
+
+
+drawUnitCell : Game -> HudState -> Side -> Int -> UnitKind -> List Shape
+drawUnitCell g hs s i k =
+    let
+        c = gridCellAt hs i
+
+        unlocked = List.all (\need -> hasBldHud g s.id need) (uNeeds k)
+        affordable = s.credits >= uCost k
+
+        queued =
+            List.length (List.filter (\q -> q == k) s.uQueue)
+
+        isHead =
+            case List.head s.uQueue of
+                Just q -> q == k
+                Nothing -> False
+
+        prog =
+            if isHead then
+                100 - s.uProg * 100 // max 1 (uBuild k)
+            else
+                0
+
+        -- trained but supply-blocked: the bar would sit at 100% doing
+        -- nothing, so flag it (orange bar + blinking SUPPLY tag)
+        stalled =
+            isHead && s.uProg <= 1 && s.supUse + uSupply k > s.supMax
+
+        blink = modBy 2 (g.tick // 10) == 0
+    in
+    List.concat
+        [ cellBase hs i unlocked False
+        , if isHead then
+            [ rect c.x (c.y + c.h - 4) (c.w * prog // 100) 4
+                (if stalled then rgb 240 150 90 else rgb 120 220 130) ]
+          else
+            []
+        , [ Canvas.text (c.x + 5) (c.y + 13) 9 Canvas.Left
+                (if unlocked then rgb 220 214 206 else rgb 110 106 110)
+                (uName k)
+          , Canvas.text (c.x + 5) (min (c.y + 27) (c.y + c.h - 6)) 9 Canvas.Left
+                (if stalled then
+                    (if blink then rgb 255 170 90 else rgb 190 120 70)
+                 else if affordable && unlocked then rgb 255 214 120
+                 else rgb 150 120 90)
+                (if stalled then "SUPPLY" else "$" ++ String.fromInt (uCost k))
+          ]
+        , if queued > 0 then
+            [ rect (c.x + c.w - 18) (c.y + c.h - 15) 16 13 (rgb 24 20 24)
+            , Canvas.text (c.x + c.w - 10) (c.y + c.h - 5) 9 Canvas.Center (rgb 130 240 140) ("x" ++ String.fromInt queued)
+            ]
+          else
+            []
+        , hotkeyChip hs i (hs.kbMode == 2)
+        ]
+
+
+-- The name of the superweapon this side has built, for the aiming banner and
+-- the button. Falls back to a generic word, which no live game should reach:
+-- neither is drawn unless the building exists.
+superName : Game -> String
+superName g =
+    case List.head (List.filter (\b -> b.side == 1 && b.prog == 0 && bIsSuper b.kind) g.blds) of
+        Just b ->
+            bName b.kind
+
+        Nothing ->
+            "Superweapon"
+
+
+-- superweapon button under the grid
+drawSuperButton : Game -> HudState -> List Shape
+drawSuperButton g hs =
+    let
+        s = playerSide g
+
+        hasSuper =
+            List.any (\b -> b.side == 1 && b.prog == 0 && bIsSuper b.kind) g.blds
+
+        y = superYOf hs.h
+        x0 = hs.w - sideW + 8
+
+        readyPct =
+            if superCooldown == 0 then 100
+            else 100 - s.superCd * 100 // superCooldown
+
+        ready = s.superCd == 0
+        blink = modBy 2 (g.tick // 10) == 0
+        armed = hs.superArmed && ready
+
+        -- Three states, and the label says what the NEXT tap does. It used to
+        -- read FIRE while ready, which promises the press finishes the job —
+        -- it does not, it opens aiming, and the screen then looked unchanged.
+        label =
+            if armed then "CLICK A TARGET"
+            else if ready then "V  AIM SUPERWEAPON"
+            else "SUPERWEAPON CHARGING"
+    in
+    if bnot hasSuper then
+        []
+    else
+        [ rect x0 y 160 22
+            (if armed then rgb 122 62 40
+             else if ready && blink then rgb 80 52 48
+             else rgb 44 34 38)
+        , rect x0 y (160 * readyPct // 100) 3 (rgb 240 150 90)
+        , Canvas.text (x0 + 80) (y + 15) 10 Canvas.Center
+            (if armed then rgb 255 226 180
+             else if ready then rgb 255 190 120
+             else rgb 150 130 120)
+            label
+        ]
+
+
+-- ===== bottom command console =====
+-- Always-visible strip below the world view: the viewport reserves botH px for
+-- it (like the sidebar reserves its column), so it never covers the map. One
+-- unit shows a full stat card with its live sprite as the portrait; a squad
+-- shows a portrait grid (Main lets a click single a unit out); a building
+-- shows its card; with nothing selected it shows tips.
+
+
+botH : Int
+botH = 84
+
+
+csX : Int
+csX = 0
+
+
+csY : HudState -> Int
+csY hs = hs.h - botH
+
+
+csW : HudState -> Int
+csW hs = hs.w - sideW
+
+
+csMaxPortraits : Int
+csMaxPortraits = 16
+
+
+-- canonical order of the selected units: grouped by kind (cost is a stable
+-- per-kind key), ties by id, so portraits never swap slots between frames
+consoleUnits : Game -> HudState -> List Unit
+consoleUnits g hs =
+    List.sortBy (\u -> uCost u.kind * 100000 + modBy 100000 u.id)
+        (List.filter (\u -> List.member u.id hs.sel) g.units)
+
+
+csPortraitRect : HudState -> Int -> { x : Int, y : Int, w : Int, h : Int }
+csPortraitRect hs i =
+    { x = 190 + modBy 8 i * 32
+    , y = csY hs + 9 + (i // 8) * 34
+    , w = 28
+    , h = 30
+    }
+
+
+-- the Demolish button for a selected own building (sells it for half back)
+csDemolishRect : HudState -> { x : Int, y : Int, w : Int, h : Int }
+csDemolishRect hs =
+    { x = csW hs - 128, y = csY hs + 26, w = 104, h = 30 }
+
+
+csOrderRect : HudState -> Int -> { x : Int, y : Int, w : Int, h : Int }
+csOrderRect hs i =
+    -- anchored so the last button clears the console's right edge with margin
+    { x = csW hs - 222 + i * 66
+    , y = csY hs + 26
+    , w = 58
+    , h = 30
+    }
+
+
+hpColor : Int -> Color
+hpColor pct =
+    if pct > 60 then rgb 110 230 120
+    else if pct > 30 then rgb 240 210 90
+    else rgb 240 110 90
+
+
+classTint : Int -> Color
+classTint c =
+    if c == 2 then rgb 46 34 58
+    else if c == 1 then rgb 54 42 32
+    else rgb 34 44 60
+
+
+roleLine : UnitKind -> String
+roleLine k =
+    let
+        base =
+            if uWorker k then "Worker"
+            else if uCapturer k then "Engineer"
+            else if uClass k == 2 then "Aircraft"
+            else if uClass k == 1 then "Vehicle"
+            else "Infantry"
+    in
+    if uDmg k == 0 then
+        base ++ ", unarmed"
+    else if uAA k then
+        base ++ ", hits ground and air"
+    else
+        base ++ ", ground only"
+
+
+drawSelPanel : Game -> HudState -> List Shape
+drawSelPanel g hs =
+    let
+        mine = consoleUnits g hs
+
+        bSel =
+            List.head (List.filter (\b -> b.id == hs.selB) g.blds)
+    in
+    consoleFrame hs
+        (case bSel of
+            Just b ->
+                bldConsole g hs b
+
+            Nothing ->
+                case mine of
+                    [] ->
+                        emptyConsole hs
+
+                    [ u ] ->
+                        List.concat [ unitConsole g hs u, orderButtons hs ]
+
+                    _ ->
+                        List.concat [ squadConsole g hs mine, orderButtons hs ])
+
+
+consoleFrame : HudState -> List Shape -> List Shape
+consoleFrame hs inner =
+    List.concat
+        [ [ rect csX (csY hs) (csW hs) botH (rgb 23 18 23)
+          , rect csX (csY hs) (csW hs) 2 (rgb 82 68 58)
+          ]
+        , inner
+        ]
+
+
+emptyConsole : HudState -> List Shape
+emptyConsole hs =
+    let
+        y0 = csY hs
+    in
+    [ Canvas.text 14 (y0 + 36) 10 Canvas.Left (rgb 120 112 108) "No selection"
+    , Canvas.text 14 (y0 + 54) 9 Canvas.Left (rgb 96 90 88)
+        "Drag on the map to select units. Click a building to inspect it."
+    , Canvas.text (csW hs - 14) (y0 + 54) 9 Canvas.Right (rgb 96 90 88)
+        "B build    T units    H help"
+    ]
+
+
+-- the unit's own live sprite, scaled up, is its portrait
+portraitSprite : Game -> Unit -> Int -> Int -> Int -> List Shape
+portraitSprite g u cx cy pct =
+    [ group [ Canvas.Translate cx cy, Canvas.Scale pct pct ] (unitArt g u 0 0) ]
+
+
+unitConsole : Game -> HudState -> Unit -> List Shape
+unitConsole g hs u =
+    let
+        y0 = csY hs
+
+        pct = unitHpPct u
+    in
+    List.concat
+        [ [ rect 12 (y0 + 14) 56 56 (rgb 15 12 15)
+          , rect 12 (y0 + 14) 56 2 (col (sidePaint g u.side))
+          ]
+        , portraitSprite g u 40 (y0 + 44) 240
+        , [ Canvas.text 80 (y0 + 26) 12 Canvas.Left (rgb 238 231 220) (uName u.kind)
+          , Canvas.text 80 (y0 + 41) 9 Canvas.Left (rgb 154 144 136) (roleLine u.kind)
+          , rect 80 (y0 + 52) 150 5 (rgb 30 30 34)
+          , rect 80 (y0 + 52) (150 * pct // 100) 5 (hpColor pct)
+          , Canvas.text 238 (y0 + 59) 9 Canvas.Left (rgb 190 182 172)
+                (String.fromInt u.hp ++ " / " ++ String.fromInt (uHp u.kind))
+          ]
+        , if uDmg u.kind == 0 then
+            [ Canvas.text 330 (y0 + 44) 9 Canvas.Left (rgb 190 176 150) "Gathers resources" ]
+          else
+            [ Canvas.text 330 (y0 + 28) 9 Canvas.Left (rgb 190 176 150) ("Damage " ++ String.fromInt (uDmg u.kind))
+            , Canvas.text 330 (y0 + 43) 9 Canvas.Left (rgb 190 176 150) ("Range " ++ String.fromInt (uRange u.kind))
+            , Canvas.text 330 (y0 + 58) 9 Canvas.Left (rgb 190 176 150) ("Speed " ++ String.fromInt (uSpeed u.kind))
+            ]
+        ]
+
+
+squadConsole : Game -> HudState -> List Unit -> List Shape
+squadConsole g hs mine =
+    let
+        y0 = csY hs
+
+        n = List.length mine
+
+        shown = List.take csMaxPortraits mine
+
+        extra = n - List.length shown
+
+        counts = kindCounts mine
+    in
+    List.concat
+        [ [ Canvas.text 14 (y0 + 22) 12 Canvas.Left (rgb 238 231 220)
+                (String.fromInt n ++ " units")
+          ]
+        , List.concat
+            (List.indexedMap
+                (\i c ->
+                    [ Canvas.text 14 (y0 + 38 + i * 12) 9 Canvas.Left (rgb 154 144 136)
+                        (String.fromInt c.n ++ "x " ++ c.name)
+                    ]
+                )
+                (List.take 3 counts))
+        , List.concat (List.indexedMap (\i u -> portraitCell g hs i u) shown)
+        , if extra > 0 then
+            [ Canvas.text (190 + 8 * 32 + 8) (y0 + 28) 10 Canvas.Left (rgb 190 182 172)
+                ("+" ++ String.fromInt extra)
+            ]
+          else
+            []
+        ]
+
+
+portraitCell : Game -> HudState -> Int -> Unit -> List Shape
+portraitCell g hs i u =
+    let
+        c = csPortraitRect hs i
+
+        pct = unitHpPct u
+    in
+    List.concat
+        [ [ rect c.x c.y c.w c.h (rgb 15 12 15)
+          , rect c.x c.y c.w 2 (col (sidePaint g u.side))
+          ]
+        , portraitSprite g u (c.x + c.w // 2) (c.y + 14) 110
+        , [ rect (c.x + 3) (c.y + c.h - 6) (c.w - 6) 3 (rgb 30 30 34)
+          , rect (c.x + 3) (c.y + c.h - 6) ((c.w - 6) * pct // 100) 3 (hpColor pct)
+          ]
+        ]
+
+
+kindCounts : List Unit -> List { name : String, n : Int }
+kindCounts us =
+    List.foldl
+        (\u acc ->
+            if List.any (\c -> c.name == uName u.kind) acc then
+                List.map
+                    (\c -> if c.name == uName u.kind then { c | n = c.n + 1 } else c)
+                    acc
+            else
+                List.concat [ acc, [ { name = uName u.kind, n = 1 } ] ]
+        )
+        []
+        us
+
+
+orderButtons : HudState -> List Shape
+orderButtons hs =
+    List.concat
+        (List.indexedMap
+            (\i b ->
+                let
+                    r = csOrderRect hs i
+
+                    hot = i == 0 && hs.attackArmed
+                in
+                [ rect r.x r.y r.w r.h (if hot then rgb 66 58 52 else rgb 44 38 44)
+                , rect r.x r.y r.w 2 (if hot then rgb 255 214 120 else rgb 56 48 54)
+                , Canvas.text (r.x + r.w // 2) (r.y + 13) 9 Canvas.Center (rgb 224 218 210) b.word
+                , Canvas.text (r.x + r.w // 2) (r.y + 24) 8 Canvas.Center (rgb 255 214 120) b.key
+                ]
+            )
+            [ { word = "Attack", key = "A" }
+            , { word = "Stop", key = "S" }
+            , { word = "Hold", key = "G" }
+            ])
+
+
+bldConsole : Game -> HudState -> Bld -> List Shape
+bldConsole g hs b =
+    let
+        y0 = csY hs
+
+        maxHp = bHp b.kind
+
+        pct = 100 * b.hp // max 1 maxHp
+
+        s = playerSide g
+
+        wpx = bW b.kind * tileW
+
+        hpx = bH b.kind * tileW
+
+        -- scale the building art down so it fits the 56px photo box
+        sc = min 90 (5200 // max 1 (max wpx hpx))
+    in
+    List.concat
+        [ [ rect 12 (y0 + 14) 56 56 (rgb 15 12 15)
+          , rect 12 (y0 + 14) 56 2 (col (sidePaint g b.side))
+          ]
+        , [ group
+                [ Canvas.Translate (40 - wpx * sc // 200) (y0 + 44 - hpx * sc // 200)
+                , Canvas.Scale sc sc
+                ]
+                (bldArt g b 0 0 wpx hpx)
+          ]
+        , [ Canvas.text 80 (y0 + 26) 12 Canvas.Left (rgb 238 231 220) (bName b.kind)
+          , Canvas.text 80 (y0 + 41) 9 Canvas.Left (rgb 154 144 136) (bDesc b.kind)
+          , rect 80 (y0 + 52) 180 5 (rgb 30 30 34)
+          , rect 80 (y0 + 52) (180 * pct // 100) 5 (hpColor pct)
+          , Canvas.text 268 (y0 + 59) 9 Canvas.Left (rgb 190 182 172)
+                (String.fromInt b.hp ++ " / " ++ String.fromInt maxHp)
+          ]
+        , if b.side == 1 && bnot (bIsHQ b.kind) then
+            let
+                d = csDemolishRect hs
+            in
+            [ rect d.x d.y d.w d.h (rgb 66 38 38)
+            , rect d.x d.y d.w 2 (rgb 200 90 80)
+            , Canvas.text (d.x + d.w // 2) (d.y + 13) 9 Canvas.Center (rgb 232 205 200) "Demolish"
+            , Canvas.text (d.x + d.w // 2) (d.y + 24) 8 Canvas.Center (rgb 205 155 130)
+                ("+" ++ String.fromInt (bCost b.kind // 2))
+            ]
+          else
+            []
+        , if bProduces b.kind >= 0 && b.side == 1 then
+            [ Canvas.text 80 (y0 + botH - 10) 8 Canvas.Left (rgb 130 122 116)
+                ("Queue " ++ String.fromInt (List.length s.uQueue) ++ ". Click the ground to set the rally point.")
+            ]
+          else if b.side /= 1 then
+            [ Canvas.text 80 (y0 + botH - 10) 8 Canvas.Left (rgb 130 122 116) "Enemy structure." ]
+          else
+            []
+        ]
+
+
+-- ===== alerts + objectives + banners =====
+
+
+drawAlerts : Game -> HudState -> List Shape
+drawAlerts g hs =
+    List.concat
+        (List.indexedMap
+            (\i a ->
+                let
+                    age = g.tick - a.t
+                    fade = max 0 (200 - age)
+                in
+                [ Canvas.text (hs.w // 2) (topH + 18 + i * 14) 11 Canvas.Center
+                    (rgba 255 220 150 (min 255 fade))
+                    a.msg
+                ]
+            )
+            (List.take 3 g.alerts))
+
+
+drawObjectives : HudState -> List Shape
+drawObjectives hs =
+    if List.isEmpty hs.objectives then
+        []
+    else
+        List.concat
+            [ [ Canvas.text 12 (topH + 16) 9 Canvas.Left (rgb 150 145 150) "OBJECTIVES" ]
+            , List.concat
+                (List.indexedMap
+                    (\i o ->
+                        [ rect 12 (topH + 24 + i * 13) 7 7 (rgb 44 38 44)
+                        , if o.done then
+                            rect 14 (topH + 26 + i * 13) 3 3 (rgb 130 240 140)
+                          else
+                            rect 13 (topH + 25 + i * 13) 5 5 (rgb 30 26 30)
+                        , Canvas.text 24 (topH + 31 + i * 13) 9 Canvas.Left
+                            (if o.done then rgb 130 200 140 else rgb 210 205 200)
+                            o.text
+                        ]
+                    )
+                    hs.objectives)
+            ]
+
+
+drawBanners : Game -> HudState -> List Shape
+drawBanners g hs =
+    let
+        s = playerSide g
+    in
+    List.concat
+        [ if hs.attackArmed then
+            [ rect (hs.w // 2 - 90) (topH + 4) 180 16 (rgba 90 40 34 220)
+            , Canvas.text (hs.w // 2) (topH + 16) 10 Canvas.Center (rgb 255 170 140) "ATTACK MOVE: click a target"
+            ]
+          else
+            []
+        -- Same banner the other two aimed modes get. Without it, arming the
+        -- superweapon changed nothing on screen and the next step was a guess.
+        , if hs.superArmed then
+            [ rect (hs.w // 2 - 145) (topH + 4) 290 16 (rgba 96 44 30 230)
+            , Canvas.text (hs.w // 2) (topH + 16) 10 Canvas.Center (rgb 255 190 120)
+                (superName g ++ ": click a target (its button cancels)")
+            ]
+          else
+            []
+        -- All three share one slot, and this one is drawn last, so it used to
+        -- paint over whichever aim banner was up. A finished building waiting
+        -- to be placed is the normal state during a fight, so that overlap was
+        -- reachable any time you pressed A. The aim banner describes the click
+        -- you are about to make and wins; this one is a standing reminder.
+        , if s.sReady >= 0 && bnot (hs.attackArmed || hs.superArmed) then
+            [ rect (hs.w // 2 - 130) (topH + 4) 260 16 (rgba 40 70 40 220)
+            , Canvas.text (hs.w // 2) (topH + 16) 10 Canvas.Center (rgb 170 240 170)
+                ((bName (bldFromCode s.sReady)) ++ ": click the map to build (its icon cancels)")
+            ]
+          else
+            []
+        ]
+
+
+drawPaused : HudState -> List Shape
+drawPaused hs =
+    [ rect 0 0 hs.w hs.h (rgba 10 8 10 140)
+    , Canvas.text (hs.w // 2) (hs.h // 2) 26 Canvas.Center (rgb 235 225 210) "PAUSED"
+    , Canvas.text (hs.w // 2) (hs.h // 2 + 22) 11 Canvas.Center (rgb 160 155 160) "P resumes"
+    ]
+
+
+-- ===== help =====
+
+
+drawHelp : HudState -> List Shape
+drawHelp hs =
+    let
+        x0 = hs.w // 2 - 240
+        y0 = hs.h // 2 - 170
+    in
+    List.concat
+        [ [ rect x0 y0 480 340 (rgba 18 15 18 240)
+          , rect x0 y0 480 3 (rgb 255 214 120)
+          , Canvas.text (hs.w // 2) (y0 + 30) 15 Canvas.Center (rgb 235 225 210) "FIELD MANUAL"
+          ]
+        , [ helpLine x0 y0 0 True "LEFT CLICK  select / order"
+          , helpLine x0 y0 1 True "DRAG  box select"
+          , helpLine x0 y0 2 True "A + CLICK  attack move"
+          , helpLine x0 y0 3 True "S STOP    G HOLD"
+          , helpLine x0 y0 4 True "SHIFT+1..5  assign group"
+          , helpLine x0 y0 5 True "1..5  recall group"
+          , helpLine x0 y0 6 True "Q  select army on screen"
+          , helpLine x0 y0 7 True "E  cycle production"
+          , helpLine x0 y0 8 True "ARROWS / WHEEL  scroll"
+          , helpLine x0 y0 9 True "SPACE  jump to last alert"
+          , helpLine x0 y0 0 False "B  structures tab + hotkeys"
+          , helpLine x0 y0 1 False "T  units tab + hotkeys"
+          -- Phrased like the "A + CLICK" line above it: both are aim-then-click,
+          -- and the old "V fire the superweapon" read as if V did the whole job.
+          , helpLine x0 y0 2 False "V + CLICK  fire superweapon"
+          , helpLine x0 y0 3 False "MINUS / EQUAL  game speed"
+          , helpLine x0 y0 4 False "P  pause    M  mute"
+          , helpLine x0 y0 5 False "ESC  cancel / menu"
+          , helpLine x0 y0 6 False "Capture derelicts with"
+          , helpLine x0 y0 7 False "your engineer; sappers"
+          , helpLine x0 y0 8 False "repair your buildings."
+          , helpLine x0 y0 9 False "RIGHT-CLICK  order / cancel"
+          ]
+        , [ Canvas.text (hs.w // 2) (y0 + 320) 10 Canvas.Center (rgb 150 145 150) "H closes" ]
+        ]
+
+
+helpLine : Int -> Int -> Int -> Bool -> String -> Shape
+helpLine x0 y0 i left textStr =
+    Canvas.text (if left then x0 + 24 else x0 + 250) (y0 + 56 + modBy 10 i * 24) 11 Canvas.Left
+        (rgb 210 205 200) textStr

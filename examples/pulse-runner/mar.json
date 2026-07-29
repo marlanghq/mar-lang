@@ -1,0 +1,13 @@
+{
+  "name": "pulse-runner",
+  "server": {
+    "port": 3027
+  },
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "mar-pulse-runner",
+      "account": "env:CLOUDFLARE_ACCOUNT_ID",
+      "apiToken": "env:CLOUDFLARE_API_TOKEN"
+    }
+  }
+}

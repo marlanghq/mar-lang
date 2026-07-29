@@ -4,7 +4,7 @@ module Frontend.Home exposing (page)
 import Shared
 import UI exposing
     ( navigationStack, navigationTitle, topBarTrailing
-    , form, list, section, header
+    , list, section, header
     , hstack
     , text, textField, button, errorText
     , submit, disabled

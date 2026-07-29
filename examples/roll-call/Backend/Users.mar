@@ -1,0 +1,20 @@
+module Backend.Users exposing (users)
+
+
+import Shared
+
+
+-- Backs Auth.config. The framework owns the reads/writes here
+-- (signup on first sign-in, the requestCode / verifyCode / me
+-- lifecycle); we only hand it the entity handle. Email is unique so
+-- one address is one teacher.
+users : Entity Shared.User
+users =
+    Entity.define
+        { name = "users"
+        , columns =
+            { id    = Entity.serial
+            , email = Entity.text Entity.notNull
+            }
+        , uniques = [ [ "email" ] ]
+        }

@@ -410,6 +410,13 @@ func adminPanelProgram() ([]byte, error) {
 				},
 			},
 		}
+		// Built here, not parsed, so the typechecker never sees it. There is
+		// nothing for elaboration to decide: no numeric literals and no
+		// polymorphic references, only a call and three qualified names.
+		// Saying so explicitly is the point — the evaluating side refuses an
+		// unelaborated tree, and this is the one place that claims exemption.
+		entryMod.MarkElaborated()
+
 		adminPanelJSON, adminPanelErr = makeProgramJSON([]*ast.Module{mod, entryMod}, "__entry", false, false)
 	})
 	return adminPanelJSON, adminPanelErr

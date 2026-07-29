@@ -152,8 +152,8 @@ func TestIsProductionTarget(t *testing.T) {
 	}
 }
 
-// TestFlyDeployEvalSequence_NoDuplicateEntity guards the `mar fly deploy`
-// double-evaluation bug. The deploy runs main twice in one process —
+// TestFlyDeployEvalSequence_NoDuplicateEntity guards the `mar deploy`
+// (Fly path) double-evaluation bug. The deploy runs main twice in one process —
 // Topology() to pick the Dockerfile shape, then Build() to compile — and
 // both go through loadAndRunForBuild. That helper must reset the global
 // entity registry before evaluating; without it, the second eval
@@ -172,7 +172,7 @@ func TestFlyDeployEvalSequence_NoDuplicateEntity(t *testing.T) {
 		t.Skipf("guestbook fixture missing: %v", err)
 	}
 
-	// Eval #1 — the same call mar fly deploy makes to detect topology.
+	// Eval #1 — the same call mar deploy makes to detect topology.
 	if _, err := Topology(dir); err != nil {
 		t.Fatalf("Topology (eval #1) failed: %v", err)
 	}
@@ -198,4 +198,30 @@ func writeFile(t *testing.T, path, content string) {
 // only checks `CurrentAuth() != nil`.
 func registerFakeAuth() {
 	runtime.RegisterAuth(runtime.VAuth{})
+}
+
+// TestProductionShellDeclaresColorScheme guards a dev≠prod gap that
+// shipped once: the `mar dev` shell grew the color-scheme and
+// theme-color metas, the `mar build` shell did not, and deployed apps
+// quietly behaved differently from the ones they were developed as.
+//
+// theme-color is the one with teeth. The strip above the page on iOS
+// Safari is browser chrome — env(safe-area-inset-top) reads 0 there,
+// so the frosted nav bar cannot reach it and its color is only ever
+// what this meta says. Undeclared, Safari falls back to the PWA
+// manifest's theme_color and paints a flat band over a light page.
+func TestProductionShellDeclaresColorScheme(t *testing.T) {
+	for _, want := range []string{
+		`<meta name="color-scheme" content="light dark">`,
+		`<meta name="theme-color" content="#f7f7f9" media="(prefers-color-scheme: light)">`,
+		`<meta name="theme-color" content="#232326" media="(prefers-color-scheme: dark)">`,
+		// The pre-runtime dark baseline, so a dark-mode reload does not
+		// flash white before the bundle parses.
+		`@media (prefers-color-scheme: dark)`,
+		`html { background-color: #161618; }`,
+	} {
+		if !strings.Contains(productionPageHTML, want) {
+			t.Errorf("production shell is missing %s", want)
+		}
+	}
 }

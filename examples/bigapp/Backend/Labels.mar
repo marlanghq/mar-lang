@@ -108,7 +108,7 @@ listForIssue input _ =
                             -- under the pivot). Keeps the wire
                             -- payload honest.
                             List.foldl
-                                (\acc m ->
+                                (\m acc ->
                                     case m of
                                         Just lbl -> acc ++ [lbl]
                                         Nothing  -> acc

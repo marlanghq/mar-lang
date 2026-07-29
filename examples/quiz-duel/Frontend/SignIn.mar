@@ -1,0 +1,108 @@
+module Frontend.SignIn exposing (page)
+
+
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, text, textField, button, errorText
+    , email, submit, empty, disabled
+    , width, chars
+    )
+
+
+-- Email-entry half of the sign-in flow. On a successful Auth.requestCode
+-- we push to /sign-in/verify/<email>; the split gives us a free Back
+-- button so a mistyped address is one tap from a blank retry.
+
+
+type alias Model =
+    { draft : String
+    , error : Maybe String
+    , busy  : Bool
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { draft = "", error = Nothing, busy = False }, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        DraftChanged value ->
+            ( { model | draft = value, error = Nothing }, Cmd.none )
+
+        Submitted ->
+            if model.busy then
+                ( model, Cmd.none )
+
+            else
+                ( { model | busy = True, error = Nothing }
+                , Auth.requestCode { email = model.draft } CodeRequested
+                )
+
+        CodeRequested (Ok Auth.CodeSent) ->
+            ( { model | busy = False }
+            , Nav.pushTo Frontend.Routes.verifyCode { email = model.draft }
+            )
+
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( { model | busy = False, error = Just "Esse e-mail não parece válido." }
+            , Cmd.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( { model | busy = False, error = Just "Muitas tentativas. Espere um instante antes de tentar de novo." }
+            , Cmd.none
+            )
+
+        CodeRequested (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }
+            , Cmd.none
+            )
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Quiz Duel" ]
+        [ form
+            [ section []
+                [ text [] "Duelos de perguntas contra seus amigos. Informe seu e-mail e enviamos um código de acesso."
+                , textField
+                    [ email, submit Submitted, disabled model.busy, width (chars 30) ]
+                    "E-mail" model.draft DraftChanged
+                , errorView model.error
+                ]
+            , section []
+                [ button [ disabled model.busy ] Submitted "Enviar código" ]
+            ]
+        ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            errorText msg
+
+
+page : Page
+page =
+    Page.create
+        { path   = "/sign-in"
+        , title  = "Entrar"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = always Sub.none
+        }

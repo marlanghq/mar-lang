@@ -70,6 +70,57 @@ func SMTP() auth.SMTPConfig {
 	return authSMTPCfg
 }
 
+// guardMailSink refuses to boot when a surface that emails one-time
+// codes is about to mount, SMTP is not usable, and the stdout sink is
+// not permitted (that is: production).
+//
+// Without this, such a deploy boots happily and every sign-in prints a
+// valid code to stdout, which on Fly / journald means the code lands in
+// the production log stream. Security audit 2026-07-15, finding #6.
+//
+// Two surfaces can send:
+//
+//   - user auth  — mounted when the program called Auth.config and a
+//     session secret is plumbed;
+//   - admin panel — mounted on any project with a session secret and a
+//     database, with NO Auth.config required. This is the one the audit
+//     found: an admin-only project has no Auth.config, so it slipped
+//     past the user-auth checks entirely.
+//
+// Failing at boot (rather than per request) follows the house rule the
+// repo already applies to a short sessionSecret and to a bad SMTP
+// credential: a misconfiguration that would silently degrade security
+// stops the deploy instead of shipping.
+func guardMailSink() error {
+	cfg := SMTP()
+	if cfg.Complete() || cfg.AllowStdoutSink {
+		return nil
+	}
+	userAuth := runtime.CurrentAuth() != nil && AuthSecret() != ""
+	adminPanel := AuthSecret() != "" && runtime.CurrentDBPath() != ""
+	if !userAuth && !adminPanel {
+		return nil
+	}
+	// The verb rides along with the subject so it agrees in number:
+	// one surface "sends", two "send".
+	surface := "the admin panel sends"
+	if userAuth {
+		surface = "sign-in sends"
+		if adminPanel {
+			surface = "sign-in and the admin panel send"
+		}
+	}
+	return fmt.Errorf(
+		"refusing to start: %s one-time codes by email, but no SMTP is "+
+			"configured.\n"+
+			"Without it the code would be printed to stdout, which in production "+
+			"is the log stream — anyone who can read the logs could sign in.\n"+
+			"Set mail.smtpHost and mail.smtpPassword in mar.json (mail.from too), "+
+			"or run this project with `mar dev`, where printing the code locally "+
+			"is the intended behavior.",
+		surface)
+}
+
 // maybeVerifySMTP runs the boot-time SMTP connectivity check. Returns
 // nil only when there's no SMTP to verify (dev's stdout-sink path: an
 // empty Host means auth.Send falls back to printing the email locally
@@ -412,20 +463,40 @@ func handleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	}
 	candidate := auth.Hash(secret, codeStr)
 	if !auth.Equal(candidate, storedHash) {
-		// Increment attempts; lock at 5.
-		newAttempts := attempts + 1
+		// Atomic increment: SQLite serializes writes, so concurrent wrong
+		// guesses each advance the counter in the DB instead of all reading
+		// attempts=0 and getting "5 tries per concurrency round". Lock the
+		// row the moment it crosses the threshold.
+		// See docs/security-audit-2026-07-15.md #4.
+		var newAttempts int
+		if err := db.QueryRow(
+			`UPDATE _mar_auth_codes SET attempts = attempts + 1 WHERE id = ? RETURNING attempts`,
+			id,
+		).Scan(&newAttempts); err != nil {
+			writeAuthError(w, http.StatusUnauthorized, "invalid_code")
+			return
+		}
 		if newAttempts >= 5 {
-			_, _ = db.Exec(`UPDATE _mar_auth_codes SET attempts = ?, locked_at = ? WHERE id = ?`,
-				newAttempts, now, id)
+			_, _ = db.Exec(`UPDATE _mar_auth_codes SET locked_at = ? WHERE id = ?`, now, id)
 			writeAuthError(w, http.StatusUnauthorized, "too_many_attempts")
 			return
 		}
-		_, _ = db.Exec(`UPDATE _mar_auth_codes SET attempts = ? WHERE id = ?`, newAttempts, id)
 		writeAuthError(w, http.StatusUnauthorized, "invalid_code")
 		return
 	}
-	// Code matched — burn it.
-	_, _ = db.Exec(`DELETE FROM _mar_auth_codes WHERE id = ?`, id)
+	// Code matched — consume it atomically. If a concurrent request with the
+	// same valid code already deleted this row, RowsAffected == 0 and we
+	// reject here, so one code can never mint two sessions.
+	// See docs/security-audit-2026-07-15.md #4.
+	consumed, err := db.Exec(`DELETE FROM _mar_auth_codes WHERE id = ?`, id)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "code_consume")
+		return
+	}
+	if n, _ := consumed.RowsAffected(); n == 0 {
+		writeAuthError(w, http.StatusUnauthorized, "invalid_code")
+		return
+	}
 	// Resolve user.
 	userID, err := runtime.LookupUserID(*cfg, email)
 	if err != nil {

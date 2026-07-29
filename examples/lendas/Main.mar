@@ -1,0 +1,63 @@
+module Main exposing (main)
+
+
+import Backend.Users
+import Backend.Players
+import Backend.Games
+import Frontend.SignIn
+import Frontend.VerifyCode
+import Frontend.Nickname
+import Frontend.Home
+import Frontend.Match
+import Frontend.ComoJogar
+
+
+-- LENDAS — an async two-player collectible card game about Latin
+-- American myth, and a Mar fullstack showcase with a CANVAS game page:
+-- email-code Auth, REST services, SQLite entities, an App UI lobby and
+-- a fully animated card table. The rules engine lives in Shared and is
+-- replayed identically by the Go server (to validate moves) and the JS
+-- client (to draw the board).
+--
+-- Open with:  mar dev examples/lendas    (port 3030)
+-- Dev magic-codes print to the server log (no SMTP needed). Open two
+-- browser sessions with different e-mails to play a full match.
+-- Rules: REGRAS.md.
+
+
+auth : Auth { id : Int, email : String }
+auth =
+    Auth.config
+        { entity     = Backend.Users.users
+        , identify   = \u -> u.email
+        , signInPage = Frontend.SignIn.page
+        , email      =
+            { subject = "Seu código de acesso ao LENDAS"
+            , body =
+                \code minutes ->
+                    "Seu código de acesso é " ++ code ++ ".\n\n"
+                        ++ "Ele expira em " ++ String.fromInt minutes ++ " minutos. "
+                        ++ "Se você não pediu este código, pode ignorar este e-mail.\n"
+            }
+        , signup     = \userEmail -> { email = userEmail }
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Cmd ()
+main =
+    App.fullstack
+        { services =
+            List.concat
+                [ Backend.Players.services
+                , Backend.Games.services
+                ]
+        , pages =
+            [ Frontend.SignIn.page
+            , Frontend.VerifyCode.page
+            , Frontend.Nickname.page
+            , Frontend.Home.page
+            , Frontend.Match.page
+            , Frontend.ComoJogar.page
+            ]
+        }

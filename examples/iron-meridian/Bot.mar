@@ -1,0 +1,624 @@
+module Bot exposing (..)
+
+
+import Types exposing (..)
+import Balance exposing (..)
+import Maps exposing (..)
+import Sim exposing (..)
+
+
+-- IRON MERIDIAN: the AI. Pure planner: `think` reads the Game and
+-- returns a list of Acts; Main pipes them through Sim.applyAct. Each AI
+-- side thinks once a second (staggered by side id). The shape is a
+-- macro loop, not a script:
+--
+--   1. keep the economy alive (workers, refinery, power, supply)
+--   2. follow the opening build order, rebuild what dies
+--   3. tech up, then keep an army composition target
+--   4. launch waves on a timer that scales with `aggro`, telegraphed
+--      to the player with an alert
+--   5. pull the army home when the base is hit
+--
+-- Beatable by design: the bot never harvests faster than the player,
+-- reserves credits clumsily and retargets slowly at low aggro.
+
+
+think : Game -> Int -> ( Game, List Act )
+think g sid =
+    let
+        s = sideOf g sid
+    in
+    if s.human || bnot s.alive then
+        ( g, [] )
+    else
+        let
+            plan0 = { g = g, acts = [], s = s }
+
+            planned =
+                plan0
+                    |> planWorkers
+                    |> planStructures
+                    |> planArmy
+                    |> planCapture
+                    |> planDefense
+                    |> planAttack
+                    |> planSuper
+                    |> planIdleWorkers
+        in
+        ( planned.g, List.reverse planned.acts )
+
+
+type alias Plan =
+    { g : Game
+    , acts : List Act
+    , s : Side
+    }
+
+
+push : Act -> Plan -> Plan
+push a p =
+    { p | acts = a :: p.acts }
+
+
+-- ----- census helpers -----
+
+
+myUnits : Plan -> List Unit
+myUnits p =
+    List.filter (\u -> u.side == p.s.id) p.g.units
+
+
+myBlds : Plan -> List Bld
+myBlds p =
+    List.filter (\b -> b.side == p.s.id && b.prog == 0) p.g.blds
+
+
+countKind : Plan -> UnitKind -> Int
+countKind p k =
+    List.length (List.filter (\u -> u.kind == k) (myUnits p))
+        + List.length (List.filter (\q -> q == k) p.s.uQueue)
+
+
+hasBld : Plan -> BldKind -> Bool
+hasBld p k =
+    List.any (\b -> b.kind == k) (myBlds p)
+
+
+countBld : Plan -> BldKind -> Int
+countBld p k =
+    List.length (List.filter (\b -> b.kind == k) (myBlds p))
+
+
+queuedBld : Plan -> BldKind -> Bool
+queuedBld p k =
+    List.any (\q -> q == k) p.s.sQueue || p.s.sReady == bldCode k
+
+
+combatUnits : Plan -> List Unit
+combatUnits p =
+    List.filter
+        (\u -> uDmg u.kind > 0 && bnot (uWorker u.kind) && bnot (uCapturer u.kind))
+        (myUnits p)
+
+
+hqOf : Plan -> Maybe Bld
+hqOf p =
+    List.head (List.filter (\b -> bIsHQ b.kind) (myBlds p))
+
+
+-- ----- economy -----
+
+
+planWorkers : Plan -> Plan
+planWorkers p =
+    let
+        workers = countKind p (raceWorker p.s.race)
+        want = if countBld p (raceRefKind p.s.race) >= 2 then 4 else 3
+    in
+    if workers < want
+        && p.s.credits > uCost (raceWorker p.s.race)
+        && List.length p.s.uQueue < 2
+    then
+        push (AQueueUnit p.s.id (raceWorker p.s.race)) p
+    else
+        p
+
+
+raceRefKind : Race -> BldKind
+raceRefKind r =
+    case r of
+        Compact -> Refinery
+        Combine -> Smeltery
+        Vessari -> ExtractBloom
+
+
+racePowKind : Race -> BldKind
+racePowKind r =
+    case r of
+        Compact -> PowerStation
+        Combine -> JunkTurbine
+        Vessari -> Spire
+
+
+raceSupKind : Race -> BldKind
+raceSupKind r =
+    case r of
+        Compact -> Billet
+        Combine -> Bunkroom
+        Vessari -> Spire
+
+
+raceInfKind : Race -> BldKind
+raceInfKind r =
+    case r of
+        Compact -> Foundry
+        Combine -> RatDen
+        Vessari -> Chrysalis
+
+
+raceVehKind : Race -> BldKind
+raceVehKind r =
+    case r of
+        Compact -> MotorPool
+        Combine -> ChopShop
+        Vessari -> ForgeWomb
+
+
+raceTechKind : Race -> BldKind
+raceTechKind r =
+    case r of
+        Compact -> Armory
+        Combine -> WarlordHall
+        Vessari -> AscendantGate
+
+
+raceDefKind : Race -> BldKind
+raceDefKind r =
+    case r of
+        Compact -> Watchtower
+        Combine -> SpikeNest
+        Vessari -> PylonThorn
+
+
+raceAAKind : Race -> BldKind
+raceAAKind r =
+    case r of
+        Compact -> FlakTower
+        Combine -> FlakRack
+        Vessari -> PylonThorn
+
+
+-- the opening order and the standing base plan in one table:
+-- (kind, how many the bot wants alive)
+basePlan : Race -> List { kind : BldKind, want : Int }
+basePlan r =
+    case r of
+        Compact ->
+            [ { kind = PowerStation, want = 1 }
+            , { kind = Refinery, want = 1 }
+            , { kind = Billet, want = 1 }
+            , { kind = Foundry, want = 1 }
+            , { kind = PowerStation, want = 2 }
+            , { kind = Watchtower, want = 1 }
+            , { kind = Refinery, want = 2 }
+            , { kind = MotorPool, want = 1 }
+            , { kind = Billet, want = 2 }
+            , { kind = Watchtower, want = 2 }
+            , { kind = Armory, want = 1 }
+            , { kind = FlakTower, want = 1 }
+            , { kind = PowerStation, want = 3 }
+            , { kind = Billet, want = 3 }
+            , { kind = Airfield, want = 1 }
+            , { kind = FlakTower, want = 2 }
+            , { kind = ArtilleryBeacon, want = 1 }
+            ]
+
+        Combine ->
+            [ { kind = JunkTurbine, want = 1 }
+            , { kind = Smeltery, want = 1 }
+            , { kind = Bunkroom, want = 1 }
+            , { kind = RatDen, want = 1 }
+            , { kind = JunkTurbine, want = 2 }
+            , { kind = SpikeNest, want = 1 }
+            , { kind = Smeltery, want = 2 }
+            , { kind = ChopShop, want = 1 }
+            , { kind = Bunkroom, want = 2 }
+            , { kind = SpikeNest, want = 2 }
+            , { kind = WarlordHall, want = 1 }
+            , { kind = FlakRack, want = 1 }
+            , { kind = Bunkroom, want = 3 }
+            , { kind = JunkTurbine, want = 3 }
+            , { kind = Roost, want = 1 }
+            , { kind = SpikeNest, want = 3 }
+            , { kind = ScrapMagnet, want = 1 }
+            ]
+
+        Vessari ->
+            [ { kind = Spire, want = 1 }
+            , { kind = ExtractBloom, want = 1 }
+            , { kind = Chrysalis, want = 1 }
+            , { kind = Spire, want = 2 }
+            , { kind = PylonThorn, want = 1 }
+            , { kind = ExtractBloom, want = 2 }
+            , { kind = ForgeWomb, want = 1 }
+            , { kind = Spire, want = 3 }
+            , { kind = PylonThorn, want = 2 }
+            , { kind = AscendantGate, want = 1 }
+            , { kind = AegisNode, want = 1 }
+            , { kind = Spire, want = 4 }
+            , { kind = SkyCradle, want = 1 }
+            , { kind = PylonThorn, want = 3 }
+            , { kind = PurgeLens, want = 1 }
+            ]
+
+
+planStructures : Plan -> Plan
+planStructures p =
+    if p.s.sReady >= 0 then
+        -- a finished structure is waiting for placement (the autopilot
+        -- reaches this too: side 1 completions stay in sReady until a
+        -- map click, so the bot clicks for it)
+        case hqOf p of
+            Just hq ->
+                let
+                    spot = findSpot p.g p.s.id (bldFromCode p.s.sReady) (hq.tx + 1) (hq.ty + 1)
+                in
+                if spot.ok then
+                    push (APlaceBld p.s.id spot.tx spot.ty) p
+                else
+                    push (ACancelBld p.s.id) p
+
+            Nothing ->
+                push (ACancelBld p.s.id) p
+    else if bnot (List.isEmpty p.s.sQueue) then
+        p
+    else
+        let
+            -- emergency power beats the plan
+            needPower =
+                p.s.powUse + 15 > p.s.powMade
+
+            nextWanted =
+                List.head
+                    (List.filter
+                        (\step ->
+                            countBld p step.kind < step.want
+                                && prereqsMet p step.kind
+                        )
+                        (basePlan p.s.race))
+        in
+        if needPower && p.s.credits >= bCost (racePowKind p.s.race) then
+            push (AQueueBld p.s.id (racePowKind p.s.race)) p
+        else
+            case nextWanted of
+                Just step ->
+                    if p.s.credits >= bCost step.kind + 150 then
+                        push (AQueueBld p.s.id step.kind) p
+                    else
+                        p
+
+                Nothing ->
+                    p
+
+
+prereqsMet : Plan -> BldKind -> Bool
+prereqsMet p k =
+    List.all (\need -> hasBld p need) (bNeeds k)
+
+
+-- ----- army -----
+
+
+-- cycling composition per race (anti-air baked in)
+compMix : Race -> Int -> UnitKind
+compMix r i =
+    case r of
+        Compact ->
+            case modBy 6 i of
+                0 -> Rifle
+                1 -> Rocket
+                2 -> Bulwark
+                3 -> Thumper
+                4 -> Bulwark
+                _ -> Thumper
+
+        Combine ->
+            case modBy 7 i of
+                0 -> Scrapper
+                1 -> Spiker
+                2 -> Warthog
+                3 -> Scrapper
+                4 -> DuneBike
+                5 -> Scorcher
+                _ -> RamTruck
+
+        Vessari ->
+            case modBy 5 i of
+                0 -> Lancer
+                1 -> Lancer
+                2 -> Nullifier
+                3 -> Sliver
+                _ -> Colossus
+
+
+planArmy : Plan -> Plan
+planArmy p =
+    let
+        army = List.length (combatUnits p)
+        wantArmy = 10 + p.s.mind.waveSize * 3
+
+        mixIx = p.s.mind.scoutIx
+        kind = pickBuildable p (compMix p.s.race mixIx) 0
+    in
+    if army >= wantArmy || List.length p.s.uQueue >= 3 then
+        p
+    else if p.s.credits < uCost kind + 300 then
+        p
+    else
+        let
+            p2 =
+                { p
+                    | g =
+                        mapSide p.s.id
+                            (\s2 -> { s2 | mind = bumpScout s2.mind })
+                            p.g
+                }
+        in
+        push (AQueueUnit p.s.id kind) p2
+
+
+bumpScout : BotMind -> BotMind
+bumpScout m =
+    { m | scoutIx = m.scoutIx + 1 }
+
+
+-- fall back down the mix until something is actually buildable
+pickBuildable : Plan -> UnitKind -> Int -> UnitKind
+pickBuildable p k depth =
+    if depth > 6 then
+        compMix p.s.race 0
+    else if List.all (\need -> hasBld p need) (uNeeds k) then
+        k
+    else
+        pickBuildable p (compMix p.s.race (p.s.mind.scoutIx + depth + 1)) (depth + 1)
+
+
+-- ----- capture -----
+
+
+planCapture : Plan -> Plan
+planCapture p =
+    let
+        derelicts =
+            List.filter
+                (\b ->
+                    (case b.kind of
+                        Derelict -> True
+                        _ -> False)
+                        && b.side /= p.s.id
+                )
+                p.g.blds
+
+        capturers =
+            List.filter
+                (\u -> uCapturer u.kind && u.ord == OIdle)
+                (myUnits p)
+    in
+    case ( List.head derelicts, List.head capturers ) of
+        ( Just d, Just c ) ->
+            push (ACapture [ c.id ] d.id) p
+
+        ( Just _, Nothing ) ->
+            if countKind p (raceCapturer p.s.race) < 1
+                && hasBld p (raceInfKind p.s.race)
+                && p.s.credits > uCost (raceCapturer p.s.race) + 500
+                && List.length p.s.uQueue < 2
+            then
+                push (AQueueUnit p.s.id (raceCapturer p.s.race)) p
+            else
+                p
+
+        _ ->
+            p
+
+
+-- ----- defense -----
+
+
+planDefense : Plan -> Plan
+planDefense p =
+    let
+        myB = myBlds p
+
+        -- an armed enemy inside the base perimeter is the real trigger: rally
+        -- as the assault arrives, not three seconds after a wall is scratched.
+        raider =
+            List.head
+                (List.filter
+                    (\u ->
+                        hostile p.g p.s.id u.side
+                            && uDmg u.kind > 0
+                            && List.any
+                                (\b -> octd (upx u - bpx b) (upy u - bpy b) < 6 * tileW)
+                                myB
+                    )
+                    p.g.units)
+
+        hitB =
+            List.head (List.filter (\b -> p.g.tick - b.lastHit < 150) myB)
+
+        target =
+            case raider of
+                Just u ->
+                    Just { x = upx u, y = upy u }
+
+                Nothing ->
+                    case hitB of
+                        Just b ->
+                            Just { x = bpx b, y = bpy b }
+
+                        Nothing ->
+                            Nothing
+    in
+    case target of
+        Nothing ->
+            p
+
+        Just pt ->
+            let
+                soldiers = List.map (\u -> u.id) (combatUnits p)
+            in
+            if List.isEmpty soldiers then
+                p
+            else
+                push (AAtkMove soldiers pt.x pt.y)
+                    { p | g = mapSide p.s.id (\s2 -> { s2 | mind = calmWave s2.mind p.g.tick }) p.g }
+
+
+-- getting attacked delays the next planned wave a little
+calmWave : BotMind -> Int -> BotMind
+calmWave m tick =
+    { m | waveAt = max m.waveAt (tick + 450) }
+
+
+-- ----- attack waves -----
+
+
+planAttack : Plan -> Plan
+planAttack p =
+    let
+        m = p.s.mind
+        army = combatUnits p
+        ready = List.length army >= 8 + m.waveSize * 2
+    in
+    if m.waveAt == 0 then
+        -- first think: schedule the opening wave (aggro shortens it)
+        { p
+            | g =
+                mapSide p.s.id
+                    (\s2 -> { s2 | mind = scheduleWave s2.mind (p.g.tick + 5400 * 100 // max 60 s2.aggro) })
+                    p.g
+        }
+    else if p.g.tick >= m.waveAt && ready then
+        launchWave p
+    else
+        p
+
+
+scheduleWave : BotMind -> Int -> BotMind
+scheduleWave m at =
+    { m | waveAt = at }
+
+
+launchWave : Plan -> Plan
+launchWave p =
+    let
+        target = pickTarget p
+        soldiers = List.map (\u -> u.id) (combatUnits p)
+
+        nextAt =
+            p.g.tick + 3600 * 100 // max 60 p.s.aggro
+
+        g2 =
+            mapSide p.s.id
+                (\s2 ->
+                    { s2
+                        | mind =
+                            { mode = 2
+                            , thinkAt = s2.mind.thinkAt
+                            , waveAt = nextAt
+                            , waveSize = min 8 (s2.mind.waveSize + 1)
+                            , buildIx = s2.mind.buildIx
+                            , targetX = target.x
+                            , targetY = target.y
+                            , scoutIx = s2.mind.scoutIx
+                            }
+                    }
+                )
+                p.g
+
+        -- fair telegraph: the player hears the wave leave
+        g3 =
+            if hostile g2 p.s.id 1 then
+                alertAt "Enemy forces inbound." target.x target.y (cue CUnderAttack g2)
+            else
+                g2
+    in
+    push (AAtkMove soldiers target.x target.y) { p | g = g3 }
+
+
+-- the wave walks at the NEAREST hostile building to home, so armies
+-- clear forward positions instead of trickling across defended ground
+pickTarget : Plan -> { x : Int, y : Int }
+pickTarget p =
+    let
+        home =
+            case hqOf p of
+                Just b -> { x = bpx b, y = bpy b }
+                Nothing -> { x = p.g.mapW * tileW // 2, y = p.g.mapH * tileW // 2 }
+
+        nearest =
+            List.foldl
+                (\b best ->
+                    if hostile p.g p.s.id b.side then
+                        let
+                            d = octd (bpx b - home.x) (bpy b - home.y)
+                        in
+                        if d < best.d then { d = d, x = bpx b, y = bpy b, ok = True } else best
+                    else
+                        best
+                )
+                { d = 999999, x = 0, y = 0, ok = False }
+                p.g.blds
+    in
+    if nearest.ok then
+        { x = nearest.x, y = nearest.y }
+    else
+        case List.head (List.filter (\u -> hostile p.g p.s.id u.side) p.g.units) of
+            Just u ->
+                { x = upx u, y = upy u }
+
+            Nothing ->
+                { x = p.g.mapW * tileW // 2, y = p.g.mapH * tileW // 2 }
+
+
+-- ----- superweapon -----
+
+
+planSuper : Plan -> Plan
+planSuper p =
+    let
+        hasSuper =
+            List.any (\b -> bIsSuper b.kind) (myBlds p)
+    in
+    if hasSuper && p.s.superCd == 0 then
+        let
+            t = pickTarget p
+        in
+        push (ASuper p.s.id t.x t.y) p
+    else
+        p
+
+
+-- ----- idle workers back to the ore -----
+
+
+planIdleWorkers : Plan -> Plan
+planIdleWorkers p =
+    let
+        idle =
+            List.filter
+                (\u -> uWorker u.kind && u.ord == OIdle)
+                (myUnits p)
+    in
+    case List.head idle of
+        Nothing ->
+            p
+
+        Just w ->
+            case nearestOre p.g (upx w) (upy w) of
+                Just idx ->
+                    push (AHarvest [ w.id ] idx) p
+
+                Nothing ->
+                    p

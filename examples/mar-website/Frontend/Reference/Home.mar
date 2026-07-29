@@ -1,0 +1,186 @@
+module Frontend.Reference.Home exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, footer
+    , vstack
+    , subtitle, text, navigationLink
+    , textField
+    )
+import Frontend.Reference.Routes
+import Frontend.Reference.Data exposing (Entry, Group, modules, moduleGroups, entriesFor)
+import Frontend.Reference.Render exposing (entryRow)
+
+
+-- Index of the function reference, with search. Type to filter across every
+-- covered module; clear the box to browse module by module.
+--
+-- The search reads three fields, and results come back ordered by which one
+-- matched: qualified name first, then type signature, then description. So
+-- "flatten" finds List.concat by what it does, "String -> Int" finds
+-- String.length by its shape, and a description-only hit never outranks a
+-- function that is actually named after what you typed.
+
+
+type alias Model =
+    { query : String }
+
+
+type Msg
+    = QueryChanged String
+
+
+init : (Model, Cmd Msg)
+init = ( { query = "" }, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        QueryChanged q ->
+            ( { model | query = q }, Cmd.none )
+
+
+-- Every function across every covered module, flattened. `entriesFor` tags
+-- each entry with its module, so a mixed result list is self-describing.
+allEntries : List Entry
+allEntries =
+    List.concatMap entriesFor modules
+
+
+-- Spaces removed and case folded, so a typed signature matches however the
+-- author spaced it: "String->Int", "String -> Int" and "String  ->  Int" all
+-- come out the same. Only the signature comparison uses this — squeezing the
+-- description would glue unrelated words into accidental matches.
+squeeze : String -> String
+squeeze s =
+    String.filter (\c -> c /= ' ') (String.toLower s)
+
+
+-- WHERE a query hit, lowest first. The name is what you almost always mean,
+-- the signature is what you mean when you type an arrow, and the description
+-- is the long shot — it finds things by concept but it also matches passing
+-- mentions, including negative ones ("the result is not a string").
+--
+-- 3 means no match at all; `matches` is defined in terms of this so the two
+-- can never disagree about what counts as a hit.
+rank : String -> Entry -> Int
+rank q e =
+    if String.contains (String.toLower q) (String.toLower (e.moduleName ++ "." ++ e.name)) then
+        0
+
+    else if String.contains (squeeze q) (squeeze e.signature) then
+        1
+
+    else if String.contains (String.toLower q) (String.toLower e.description) then
+        2
+
+    else
+        3
+
+
+matches : String -> Entry -> Bool
+matches q e =
+    rank q e < 3
+
+
+-- One module row. Everything it shows comes from the generated data, so the
+-- browse list grows on its own when a module is added to the reference.
+moduleRow : String -> View Msg
+moduleRow name =
+    navigationLink [] Frontend.Reference.Routes.moduleDoc { moduleName = name }
+        (vstack []
+            [ text [] name
+            , subtitle (Frontend.Reference.Render.blurb name)
+            ])
+
+
+-- How many documented functions a group adds up to, read off the generated
+-- data rather than written down, so it follows the reference on its own.
+groupCount : Group -> Int
+groupCount g =
+    List.sum (List.map (\m -> List.length (entriesFor m)) g.modules)
+
+
+-- One section per group of modules. The grouping is not by layer or by where
+-- the code lives, it is by what you came here to do, and it comes from the
+-- generated data so a new module always lands in a section.
+--
+-- Each footer counts exactly the rows above it; the whole-reference total sits
+-- on the intro card, which is the only thing on the page that owns all of it.
+groupSection : Group -> View Msg
+groupSection g =
+    section
+        [ header g.title
+        , footer (String.fromInt (groupCount g) ++ " functions")
+        ]
+        (List.map moduleRow g.modules)
+
+
+browseSections : List (View Msg)
+browseSections =
+    section
+        [ footer
+            (String.fromInt (List.length allEntries)
+                ++ " functions across "
+                ++ String.fromInt (List.length modules)
+                ++ " modules."
+            )
+        ]
+        [ text [] "Look up the functions in Mar's core library, with type signatures and short descriptions."
+        ]
+        :: List.map groupSection moduleGroups
+
+
+resultSections : String -> List (View Msg)
+resultSections q =
+    let
+        -- Ordered by where the query hit, not just filtered. A search for
+        -- "string" still surfaces List.sort (its description mentions
+        -- strings), but it lands below every String.* function instead of
+        -- among them, which is what made the old result list confusing.
+        found =
+            List.sortBy (rank q) (List.filter (matches q) allEntries)
+    in
+    if List.isEmpty found then
+        [ section [] [ text [] ("No functions match \"" ++ q ++ "\".") ] ]
+
+    else
+        [ section
+            [ header (String.fromInt (List.length found) ++ " matching") ]
+            (List.map entryRow found)
+        ]
+
+
+view : Model -> View Msg
+view model =
+    let
+        q =
+            String.trim model.query
+
+        body =
+            if q == "" then
+                browseSections
+
+            else
+                resultSections q
+
+        searchSection =
+            section [ footer "Searches by name, type signature, and description." ]
+                [ textField [] "Find a function" model.query QueryChanged ]
+    in
+    navigationStack [ navigationTitle "Reference" ]
+        [ form (searchSection :: body) ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/reference"
+        , title = "Mar reference"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = always Sub.none
+        }

@@ -5,10 +5,7 @@ import Shared exposing (IssueStatus(..), IssuePriority(..))
 import Frontend.Routes
 import UI exposing
     ( navigationStack, navigationTitle
-    , form, section, header, footer
-    , vstack, hstack
-    , title, subtitle, text, textField, textArea, picker, button, spacer
-    , submit
+    , form, section, header, title, subtitle, text, textField, textArea, picker, button, submit
     )
 
 

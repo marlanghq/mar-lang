@@ -385,8 +385,13 @@ enum MarHTTP {
     static func fireAuthOutcome(
         path: String,
         body: MarValue?,
-        okOutcome: @escaping (MarValue) -> MarValue,
-        mapCode: @escaping (String) -> MarValue?,
+        // @Sendable: these pure ctor-builders are captured by URLSession's
+        // @Sendable completion handler below. The call sites pass literal
+        // closures that only build ctors from their args (no shared state), so
+        // the annotation is free and silences the strict-concurrency capture
+        // warning.
+        okOutcome: @escaping @Sendable (MarValue) -> MarValue,
+        mapCode: @escaping @Sendable (String) -> MarValue?,
         toMsg: MarValue
     ) {
         Task { @MainActor in
@@ -449,10 +454,10 @@ enum MarHTTP {
     // MARK: Service.call result (Service.Error union)
     //
     // A Service.call delivers `Result Service.Error resp`: the Err is a
-    // union (Offline / Unauthorized / ServerError String), not a string,
-    // so transport failure is a value the app cases on. Mirrors the JS
-    // runtime's serviceErrorFromResponse / serviceErrorOffline and the Go
-    // serviceErrorString.
+    // union (Offline / Unauthorized / RateLimited / ServerError String), not
+    // a string, so transport failure is a value the app cases on. Mirrors
+    // the JS runtime's serviceErrorFromResponse / serviceErrorOffline and the
+    // Go serviceErrorString.
 
     static func serviceErrorOffline() -> MarValue {
         .ctor(tag: "Offline", args: [], origin: nil)
@@ -460,6 +465,7 @@ enum MarHTTP {
 
     static func serviceErrorFromResponse(status: Int, body: Data, fallbackBody: String) -> MarValue {
         if status == 401 { return .ctor(tag: "Unauthorized", args: [], origin: nil) }
+        if status == 429 { return .ctor(tag: "RateLimited", args: [], origin: nil) }
         let msg = decodeServerError(body: body, fallbackBody: fallbackBody, status: status)
         return .ctor(tag: "ServerError", args: [.string(msg)], origin: nil)
     }

@@ -1,0 +1,33 @@
+{
+  "name": "roll-call",
+  "server": {
+    "port": 3037
+  },
+  "admins": [],
+  "database": {
+    "path": "./roll-call.db"
+  },
+  "auth": {
+    "sessionSecret": "env:SESSION_SECRET"
+  },
+  "mail": {
+    "from": "no-reply@segunda.tech",
+    "smtpHost": "smtp.resend.com",
+    "smtpUsername": "resend",
+    "smtpPassword": "env:SMTP_PASSWORD"
+  },
+  "ios": {
+    "bundleId": "com.yourcompany.rollcall",
+    "displayName": "Roll Call",
+    "marketingVersion": "0.0.1",
+    "buildNumber": "1",
+    "serverUrl": "https://mar-roll-call.fly.dev"
+  },
+  "deploy": {
+    "fly": {
+      "app": "mar-roll-call",
+      "region": "gru",
+      "memory": "256mb"
+    }
+  }
+}

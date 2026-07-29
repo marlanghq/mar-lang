@@ -1,0 +1,121 @@
+module Frontend.Reference.Render exposing (moduleDoc, entryRow, detailSections, blurb, displayName)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , text, paragraph, span, navigationLink
+    , vstack
+    , code, bold
+    )
+import Frontend.Reference.Data exposing (Entry, Section, sectionsFor, entriesFor)
+import Frontend.Reference.Data
+import Frontend.Reference.Routes
+
+
+-- Shared rendering for the reference, in two forms:
+--
+--   entryRow  — a compact, tappable row: qualified name + signature only.
+--               Used in the module lists and the search results. Tapping it
+--               navigates to the function's detail page.
+--   entryCard — the full detail: name + signature, description, and any worked
+--               examples. Used on the detail page.
+--
+-- Both are pure and static, so they type as `View msg` for any msg. Entries,
+-- signatures, and examples come from Frontend.Reference.Data, generated from
+-- the compiler (examples compiled and run in the generator's tests), so nothing
+-- here is maintained by hand per function.
+
+
+-- How a function is spelled in real code. Everything is qualified except the
+-- Basics group, which is the reference's shelf for the builtins that have no
+-- module: you write `not`, never `Basics.not`, so printing the qualifier here
+-- would document a name the compiler rejects.
+displayName : String -> String -> String
+displayName moduleName name =
+    if moduleName == "Basics" then name else moduleName ++ "." ++ name
+
+
+-- Compact row: the whole row is a link into the detail page for this function.
+entryRow : Entry -> View msg
+entryRow e =
+    navigationLink [] Frontend.Reference.Routes.detail { moduleName = e.moduleName, fn = e.name }
+        (paragraph
+            [ span [ code, bold ] (displayName e.moduleName e.name)
+            , span [ code ] (" : " ++ e.signature)
+            ])
+
+
+-- One worked example, shown in monospace: a list of lines, because some
+-- examples need a declaration before the expression that uses it (a Path only
+-- exists through an annotated binding). Every line the build has already
+-- compiled, and single-expression ones it has evaluated to True.
+--
+-- The whole example is ONE row of the card. It used to be one row PER LINE,
+-- which put a divider through the middle of a snippet and drew a snippet's
+-- blank separator line as an empty row.
+exampleBlock : List String -> View msg
+exampleBlock lines =
+    vstack [] (List.map (\line -> paragraph [ span [ code ] line ]) lines)
+
+
+-- The detail page's body: a card with the signature and description, then a
+-- separate, clearly-labelled card of worked examples (only when there are any),
+-- so the example code never reads as loose code dropped onto the page.
+detailSections : Entry -> List (View msg)
+detailSections e =
+    List.concat
+        [ [ section []
+                [ paragraph
+                    [ span [ code, bold ] (displayName e.moduleName e.name)
+                    , span [ code ] (" : " ++ e.signature)
+                    ]
+                , text [] e.description
+                ]
+          ]
+        , if List.isEmpty e.examples then
+            []
+
+          else
+            [ section
+                [ header (exampleHeader e.examples) ]
+                (List.map exampleBlock e.examples)
+            ]
+        ]
+
+
+exampleHeader : List a -> String
+exampleHeader xs =
+    if List.length xs == 1 then
+        "Example"
+
+    else
+        "Examples"
+
+
+-- The module one-liner. Generated alongside the entries, so a module added to
+-- the reference arrives with its description already written; this used to be a
+-- case expression here, and a new module meant a blank row until someone
+-- remembered to come back and fill it in.
+blurb : String -> String
+blurb mod =
+    Frontend.Reference.Data.blurbFor mod
+
+
+sectionView : Section -> View msg
+sectionView s =
+    section [ header s.category ] (List.map entryRow s.entries)
+
+
+moduleDoc : String -> View msg
+moduleDoc mod =
+    navigationStack [ navigationTitle mod ]
+        [ list []
+            (List.concat
+                [ [ section
+                        [ footer (String.fromInt (List.length (entriesFor mod)) ++ " functions") ]
+                        [ text [] (blurb mod) ]
+                  ]
+                , List.map sectionView (sectionsFor mod)
+                ])
+        ]

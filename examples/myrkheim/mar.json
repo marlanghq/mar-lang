@@ -1,0 +1,13 @@
+{
+  "name": "myrkheim",
+  "server": {
+    "port": 3028
+  },
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "mar-myrkheim",
+      "account": "env:CLOUDFLARE_ACCOUNT_ID",
+      "apiToken": "env:CLOUDFLARE_API_TOKEN"
+    }
+  }
+}

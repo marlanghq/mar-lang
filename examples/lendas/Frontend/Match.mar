@@ -1,0 +1,2424 @@
+module Frontend.Match exposing (page)
+
+
+import Shared exposing (Status(..), CType(..), Keyword(..), Efeito(..))
+import Frontend.Routes
+import Canvas exposing
+    ( canvas, rect, circle, text, group, rgb
+    , onTap, watchSize
+    )
+
+
+-- The table. A 640x360 logical scene scaled to the window, drawn every
+-- tick: the rival's row on top, yours below, your hand fanned at the
+-- bottom. Every move — yours or the rival's — arrives through the same
+-- pipeline: fetched from the server, queued, ANIMATED one at a time
+-- into the displayed state (so you watch the rival's turn happen), with
+-- a sound for each beat. State is Shared.replay of the move log; this
+-- page never invents rules, it only asks the same engine the server
+-- runs.
+
+
+-- ====================================================================
+-- MODEL
+-- ====================================================================
+
+
+type AnimKind
+    = KPlay Int Bool Int Int       -- cid, byMe, fromHandIx, fromHandN: the card
+                                   -- lifts out of its hand slot onto the board
+    | KDraw Bool                   -- a card slides out of the deck into the hand (mine?)
+    | KLunge Bool Int Int Int      -- attacker mine?, slot ix, target ix (-1 = hero), attacker cid
+    | KHit Bool Int                -- flash a board slot (onMe?, ix)
+    | KHitHero Bool                -- flash a hero portrait (mine?)
+    | KNum Int Int Int Bool        -- floating number: x, y, amount, heal?
+    | KTurn Bool                   -- banner: now MY turn?
+    | KSpark Bool Int              -- spell circle on a slot (onMe?, ix)
+    | KDie Bool Int Int            -- death ghost: on MY side?, BEFORE-board ix, cid.
+                                   -- keeps the victim visible (hp 0) until the
+                                   -- killing animation ends, THEN it leaves
+
+
+type alias Anim =
+    { kind : AnimKind
+    , t    : Int
+    , dur  : Int
+    }
+
+
+type Cue
+    = CuePlay
+    | CueSpell
+    | CueAtk
+    | CueHit
+    | CueHurt
+    | CueHeal
+    | CueDraw
+    | CueTurn
+    | CueWin
+    | CueLose
+    | CueClick
+    | CueErr
+
+
+type alias Model =
+    { gid      : Int
+    , dat      : Maybe Shared.PartidaData
+    , disp     : Maybe Shared.GState      -- replay of `shown`
+    , shown    : List Shared.MoveData
+    , queue    : List Shared.MoveData     -- fetched, waiting to animate
+    , anims    : List Anim
+    , sel      : Maybe Int                -- selected hand index
+    , selSlot  : Maybe Int                -- selected attacker (my board ix)
+    , inspect  : Maybe Int                -- a board card tapped to read (cid)
+    , pending  : String                   -- move sent, awaiting MoveOk
+    , sending  : Bool
+    , toast    : Maybe String
+    , toastT   : Int
+    , concedeArm : Bool
+    , endCued  : Bool
+    , help     : Bool                     -- a tap on "?" asked for the rules
+    , leave    : Bool                     -- a tap on "‹ Voltar" asked to go back to the lobby
+    , taught   : Bool                     -- showed the "now tap your field" hint once
+    , w        : Int
+    , h        : Int
+    , tick     : Int
+    , sfx      : List Cue
+    , muted    : Bool
+    , showLog  : Bool                     -- the game-history panel is open
+    , log      : List String              -- event lines, most recent first
+    }
+
+
+type Msg
+    = Fetched (Result Service.Error Shared.PartidaResult)
+    | Played (Result Service.Error Shared.MoveResult)
+    | Tick Time
+    | Poll Time
+    | Resized Int Int
+    | Tapped Int Int
+
+
+init : Shared.User -> { id : Int } -> (Model, Cmd Msg)
+init _ params =
+    ( { gid = params.id
+      , dat = Nothing, disp = Nothing, shown = [], queue = []
+      , anims = [], sel = Nothing, selSlot = Nothing, inspect = Nothing
+      , pending = "", sending = False
+      , toast = Nothing, toastT = 0, concedeArm = False, endCued = False
+      , help = False, leave = False, taught = False
+      , w = 1024, h = 640, tick = 0, sfx = [], muted = False
+      , showLog = False, log = []
+      }
+    , Service.call Shared.partida { id = params.id } Fetched
+    )
+
+
+-- ====================================================================
+-- UPDATE
+-- ====================================================================
+
+
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Cmd Msg)
+update _ _ msg model =
+    case msg of
+        Resized w h ->
+            ( { model | w = w, h = h }, Cmd.none )
+
+        Fetched (Ok (Shared.PartidaOk d)) ->
+            ( absorb d model, Cmd.none )
+
+        Fetched (Ok Shared.PartidaNaoEncontrada) ->
+            ( { model | toast = Just "Partida não encontrada.", toastT = 120 }, Cmd.none )
+
+        Fetched (Err why) ->
+            ( { model | toast = Just (Service.errorToString why), toastT = 120 }, Cmd.none )
+
+        Poll _ ->
+            ( model, Service.call Shared.partida { id = model.gid } Fetched )
+
+        Played (Ok Shared.MoveOk) ->
+            -- The server blessed our move: feed it through the same
+            -- animation pipeline the rival's moves use.
+            ( queueOwn model, Cmd.none )
+
+        Played (Ok (Shared.MoveIlegal reason)) ->
+            ( { model | sending = False, pending = "", toast = Just reason, toastT = 110, sfx = CueErr :: model.sfx }
+            , Cmd.none
+            )
+
+        Played (Ok Shared.MoveDesatualizado) ->
+            -- The rival moved under us: refetch and let the queue catch up.
+            ( { model | sending = False, pending = "" }
+            , Service.call Shared.partida { id = model.gid } Fetched
+            )
+
+        Played (Ok Shared.PartidaIndisponivel) ->
+            ( { model | sending = False, pending = "", toast = Just "Essa partida não está mais ativa.", toastT = 110 }
+            , Cmd.none
+            )
+
+        Played (Err why) ->
+            ( { model | sending = False, pending = "", toast = Just (Service.errorToString why), toastT = 110 }
+            , Cmd.none
+            )
+
+        Tick _ ->
+            emit (step model)
+
+        Tapped x y ->
+            let
+                m2 = tap model x y
+            in
+            -- a tap on "‹ Voltar" returns to the lobby. The match is
+            -- server-saved, so nothing is abandoned: it waits in the list.
+            if m2.leave && model.leave == False then
+                emitPlus { m2 | leave = False } (Nav.replaceTo Frontend.Routes.home {})
+
+            -- a tap on "?" asks for the rules: open the how-to-play page
+            -- (the match is server-saved, so it resumes on the way back).
+            else if m2.help && model.help == False then
+                emitPlus { m2 | help = False } (Nav.pushTo Frontend.Routes.comoJogar {})
+
+            -- `tap` marks a validated move by flipping `sending` on;
+            -- the actual HTTP call is issued here, once, with the
+            -- optimistic-concurrency index of everything we know.
+            else if m2.sending && model.sending == False then
+                emitPlus m2
+                    (Service.call Shared.jogar
+                        { id = m2.gid
+                        , ix = List.length m2.shown + List.length m2.queue
+                        , data = m2.pending
+                        }
+                        Played)
+
+            else
+                emit m2
+
+
+-- First fetch replays everything silently (resuming a match should not
+-- re-run its history); later fetches only QUEUE the unseen tail.
+absorb : Shared.PartidaData -> Model -> Model
+absorb d model =
+    let
+        known = List.length model.shown + List.length model.queue
+        total = List.length d.moves
+    in
+    case model.dat of
+        Nothing ->
+            { model
+                | dat = Just d
+                , shown = d.moves
+                , disp = Just (Shared.replay d.seed d.deckA d.deckB d.moves)
+            }
+
+        Just _ ->
+            if total > known then
+                { model
+                    | dat = Just d
+                    , queue = List.concat [ model.queue, List.drop known d.moves ]
+                }
+
+            else
+                { model | dat = Just d }
+
+
+queueOwn : Model -> Model
+queueOwn model =
+    case model.dat of
+        Just d ->
+            { model
+                | sending = False
+                , pending = ""
+                , queue = List.concat [ model.queue, [ { byA = d.souA, data = model.pending } ] ]
+            }
+
+        Nothing ->
+            { model | sending = False, pending = "" }
+
+
+-- One frame: advance overlays, pop the queue when the stage is clear,
+-- fire the end-of-match jingle exactly once.
+step : Model -> Model
+step model0 =
+    let
+        model = { model0 | tick = model0.tick + 1, toastT = Shared.max 0 (model0.toastT - 1) }
+        aged =
+            List.filterMap
+                (\a -> if a.t + 1 >= a.dur then Nothing else Just { a | t = a.t + 1 })
+                model.anims
+        m2 = { model | anims = aged, toast = if model.toastT == 1 then Nothing else model.toast }
+        m3 = if blocking aged then m2 else popQueue m2
+    in
+    endCue m3
+
+
+blocking : List Anim -> Bool
+blocking anims =
+    List.any
+        (\a ->
+            case a.kind of
+                KPlay _ _ _ _ -> True
+                KLunge _ _ _ _ -> True
+                KTurn _ -> True
+                -- deaths block too: the next move must not start while a
+                -- ghost still holds the old board layout
+                KDie _ _ _ -> True
+                _ -> False)
+        anims
+
+
+popQueue : Model -> Model
+popQueue model =
+    case model.queue of
+        [] ->
+            model
+
+        mv :: rest ->
+            case (model.disp, model.dat) of
+                (Just st, Just d) ->
+                    case Shared.applyMoveBy mv.byA st mv.data of
+                        Ok st2 ->
+                            let
+                                fx = deriveAnims d.souA st st2 mv
+                                ln = logLine d st st2 mv
+                            in
+                            { model
+                                | disp = Just st2
+                                , shown = List.concat [ model.shown, [ mv ] ]
+                                , queue = rest
+                                , anims = List.concat [ fx.anims, model.anims ]
+                                , sfx = List.concat [ fx.cues, model.sfx ]
+                                , log = if String.length ln == 0 then model.log else ln :: model.log
+                            }
+
+                        Err _ ->
+                            -- Impossible for server-blessed moves; drop it.
+                            { model | queue = rest }
+
+                _ ->
+                    model
+
+
+endCue : Model -> Model
+endCue model =
+    case model.disp of
+        Just st ->
+            if st.winner /= 0 && model.endCued == False && List.length model.queue == 0 then
+                case model.dat of
+                    Just d ->
+                        let
+                            iWon = (st.winner == 1) == d.souA
+                        in
+                        { model | endCued = True, sfx = (if iWon then CueWin else CueLose) :: model.sfx }
+
+                    Nothing ->
+                        model
+
+            else
+                model
+
+        Nothing ->
+            model
+
+
+emit : Model -> (Model, Cmd Msg)
+emit model =
+    emitPlus model Cmd.none
+
+
+emitPlus : Model -> Cmd Msg -> (Model, Cmd Msg)
+emitPlus model extra =
+    if List.length model.sfx == 0 || model.muted then
+        ( { model | sfx = [] }, extra )
+
+    else
+        ( { model | sfx = [] }
+        , Cmd.batch (extra :: List.map (\c -> Sound.play (cueSound c)) model.sfx)
+        )
+
+
+-- ====================================================================
+-- DERIVING ANIMATIONS FROM A MOVE
+-- ====================================================================
+
+
+type alias Fx =
+    { anims : List Anim
+    , cues  : List Cue
+    }
+
+
+deriveAnims : Bool -> Shared.GState -> Shared.GState -> Shared.MoveData -> Fx
+deriveAnims souA before after mv =
+    let
+        byMe = mv.byA == souA
+        meBefore = Shared.sideOf souA before
+        foeBefore = Shared.sideOf (souA == False) before
+        meAfter = Shared.sideOf souA after
+        foeAfter = Shared.sideOf (souA == False) after
+        lifeNums =
+            List.concat
+                [ lifeNum True meBefore.life meAfter.life
+                , lifeNum False foeBefore.life foeAfter.life
+                ]
+    in
+    case String.split " " mv.data of
+        [ "E" ] ->
+            -- turn end also draws a card for the incoming player; slide one
+            -- out of their deck alongside the turn banner
+            { anims =
+                [ mk (KTurn (after.turnA == souA)) 40
+                , mk (KDraw (after.turnA == souA)) 30
+                ]
+            , cues = [ if after.turnA == souA then CueTurn else CueDraw ]
+            }
+
+        [ "C" ] ->
+            { anims = [], cues = [] }
+
+        [ "J", iStr, tStr ] ->
+            let
+                moverHand = if mv.byA then before.a.hand else before.b.hand
+                fromIx = Maybe.withDefault 0 (String.toInt iStr)
+                fromN = List.length moverHand
+                cid = Maybe.withDefault 0 (Shared.nth fromIx moverHand)
+                card = Shared.cardOf cid
+                sparks =
+                    if card.tipo == Feitico then
+                        spellSparks byMe card before tStr
+
+                    else
+                        []
+            in
+            { anims =
+                List.concat
+                    [ [ mk (KPlay cid byMe fromIx fromN) 30 ]
+                    -- deaths first, so sparks/flashes draw OVER the ghost
+                    , deathAnims 38 souA before after
+                    , sparks
+                    , lifeNums
+                    ]
+            , cues = [ if card.tipo == Feitico then CueSpell else CuePlay ]
+            }
+
+        [ "A", sStr, tStr ] ->
+            let
+                s = Maybe.withDefault 0 (String.toInt sStr)
+                tIx =
+                    if tStr == "h" then -1 else Maybe.withDefault 0 (String.toInt tStr)
+                moverBoard = if mv.byA then before.a.board else before.b.board
+                atkCid = Maybe.withDefault 0 (Maybe.map (\sl -> sl.cid) (Shared.nth s moverBoard))
+                hits =
+                    if tIx < 0 then
+                        [ mk (KHitHero (byMe == False)) 24 ]
+
+                    else
+                        [ mk (KHit (byMe == False) tIx) 24 ]
+            in
+            { anims =
+                List.concat
+                    [ [ mk (KLunge byMe s tIx atkCid) 22 ]
+                    , deathAnims 30 souA before after
+                    , hits
+                    , lifeNums
+                    ]
+            , cues = [ CueAtk, CueHit ]
+            }
+
+        _ ->
+            { anims = [], cues = [] }
+
+
+mk : AnimKind -> Int -> Anim
+mk kind dur =
+    { kind = kind, t = 0, dur = dur }
+
+
+lifeNum : Bool -> Int -> Int -> List Anim
+lifeNum mine before after =
+    if after == before then
+        []
+
+    else
+        let
+            p = heroPos mine
+        in
+        [ mk (KNum p.x (p.y - 14) (after - before) (after > before)) 46 ]
+
+
+-- Sparkle where the spell lands. `byMe` decides WHOSE row lights up:
+-- my spells hit the rival's row (onMe = False) and vice versa.
+spellSparks : Bool -> Shared.Card -> Shared.GState -> String -> List Anim
+spellSparks byMe card before tStr =
+    let
+        onMe = byMe == False
+        caster = if byMe then before.turnA else before.turnA
+        victimBoard =
+            (Shared.sideOf (before.turnA == False) before).board
+        t = Maybe.withDefault 0 (String.toInt tStr)
+    in
+    case card.fx of
+        DanoTodos _ ->
+            List.indexedMap (\i _ -> mk (KSpark onMe i) 26) victimBoard
+
+        DanoAlvo _ ->
+            [ mk (KSpark onMe t) 26 ]
+
+        Adormecer ->
+            [ mk (KSpark onMe t) 26 ]
+
+        _ ->
+            []
+
+
+-- The creatures a move killed: present in `before`, gone from `after`.
+-- One KDie ghost each, so the victim stays on the felt until the killing
+-- animation finishes, and only THEN leaves the table. Deaths are found
+-- per side by a two-pointer walk matching cids: the engine only removes
+-- dead slots in place (pruneDead is a filter, order kept) and new
+-- creatures only append at the end, so the walk is exact.
+deathAnims : Int -> Bool -> Shared.GState -> Shared.GState -> List Anim
+deathAnims dur souA before after =
+    List.concat
+        [ List.map (\dd -> mk (KDie True dd.ix dd.cid) dur)
+            (deadBetween (Shared.sideOf souA before).board (Shared.sideOf souA after).board)
+        , List.map (\dd -> mk (KDie False dd.ix dd.cid) dur)
+            (deadBetween (Shared.sideOf (souA == False) before).board (Shared.sideOf (souA == False) after).board)
+        ]
+
+
+deadBetween : List Shared.Slot -> List Shared.Slot -> List { ix : Int, cid : Int }
+deadBetween before after =
+    deadWalk 0 before after
+
+
+deadWalk : Int -> List Shared.Slot -> List Shared.Slot -> List { ix : Int, cid : Int }
+deadWalk i before after =
+    case before of
+        [] ->
+            []
+
+        b :: bs ->
+            case after of
+                [] ->
+                    { ix = i, cid = b.cid } :: deadWalk (i + 1) bs []
+
+                sl :: rest ->
+                    if sl.cid == b.cid then
+                        deadWalk (i + 1) bs rest
+
+                    else
+                        { ix = i, cid = b.cid } :: deadWalk (i + 1) bs after
+
+
+-- ====================================================================
+-- GAME LOG — one readable line per move, built as moves animate
+-- ====================================================================
+
+
+parseIx : String -> Int
+parseIx s =
+    Maybe.withDefault 0 (String.toInt s)
+
+
+-- Names of every creature that died between two states (both sides).
+deadNames : Shared.GState -> Shared.GState -> String
+deadNames before after =
+    String.join ", "
+        (List.map
+            (\dd -> shortName (Shared.cardOf dd.cid).nome)
+            (List.concat
+                [ deadBetween before.a.board after.a.board
+                , deadBetween before.b.board after.b.board
+                ]))
+
+
+-- Turn a move into a history line, from MY reading perspective (souA).
+logLine : Shared.PartidaData -> Shared.GState -> Shared.GState -> Shared.MoveData -> String
+logLine d before after mv =
+    let
+        who = if mv.byA == d.souA then "Você" else d.rivalNick
+        dead = deadNames before after
+    in
+    case String.split " " mv.data of
+        [ "E" ] ->
+            who ++ " encerrou o turno"
+
+        [ "C" ] ->
+            who ++ " desistiu da partida"
+
+        [ "J", iStr, _ ] ->
+            let
+                hand = if mv.byA then before.a.hand else before.b.hand
+                card = Shared.cardOf (Maybe.withDefault 0 (Shared.nth (parseIx iStr) hand))
+            in
+            if card.tipo == Feitico && dead /= "" then
+                who ++ " lançou " ++ shortName card.nome ++ ", derrubando " ++ dead
+
+            else
+                who ++ " jogou " ++ shortName card.nome
+
+        [ "A", sStr, tStr ] ->
+            let
+                board = if mv.byA then before.a.board else before.b.board
+                atkName =
+                    case Shared.nth (parseIx sStr) board of
+                        Just sl ->
+                            shortName (Shared.cardOf sl.cid).nome
+
+                        Nothing ->
+                            "Uma criatura"
+
+                tail = if dead == "" then "" else " — caiu " ++ dead
+            in
+            if tStr == "h" then
+                if mv.byA == d.souA then
+                    who ++ ": " ++ atkName ++ " atacou o herói inimigo"
+
+                else
+                    who ++ ": " ++ atkName ++ " atacou você diretamente"
+
+            else
+                who ++ ": " ++ atkName ++ " atacou" ++ tail
+
+        _ ->
+            ""
+
+
+-- ====================================================================
+-- TAP HANDLING
+-- ====================================================================
+
+
+tap : Model -> Int -> Int -> Model
+tap model sx sy =
+    let
+        lay = layout model
+        x = (sx - lay.ox) * 100 // lay.s
+        y = (sy - lay.oy) * 100 // lay.s
+    in
+    case (model.dat, model.disp) of
+        (Just d, Just st) ->
+            -- Chrome that works in ANY state (incl. game over): the ‹ back
+            -- button (extreme top-left) and the history (≡) button top-right.
+            if inBox x y 0 0 30 28 then
+                { model | leave = True }
+
+            else if inBox x y 510 6 36 30 then
+                { model | showLog = model.showLog == False, sel = Nothing, selSlot = Nothing, inspect = Nothing }
+
+            -- history panel open: any tap outside the ≡ button closes it
+            else if model.showLog then
+                { model | showLog = False }
+
+            -- game over: the board stays visible; only the ribbon's
+            -- "Voltar ao salão" line responds (‹ top-left also works)
+            else if st.winner /= 0 then
+                if inBox x y 244 166 152 14 then
+                    { model | leave = True }
+
+                else
+                    model
+
+            else
+                tapBoard model d st x y
+
+        _ ->
+            model
+
+
+tapBoard : Model -> Shared.PartidaData -> Shared.GState -> Int -> Int -> Model
+tapBoard model d st x y =
+    let
+        me = Shared.sideOf d.souA st
+        foe = Shared.sideOf (d.souA == False) st
+        myTurn = st.turnA == d.souA && model.sending == False && List.length model.queue == 0
+    in
+    -- help (?) — opens the rules; readable any time, even on the rival's turn
+    if inBox x y 552 6 36 30 then
+        { model | help = True }
+
+    -- concede flag (always tappable while the match runs)
+    else if inBox x y 596 6 38 30 then
+        if model.concedeArm then
+            send { model | concedeArm = False } d "C"
+
+        else
+            { model | concedeArm = True, toast = Just "Toque de novo na bandeira para conceder.", toastT = 90, sfx = CueClick :: model.sfx }
+
+    -- not your turn: say so, instead of swallowing the tap silently
+    else if myTurn == False then
+        { model | concedeArm = False, toast = Just "Não é a sua vez. Aguarde o rival jogar.", toastT = 80 }
+
+    -- end turn button
+    else if inBox x y endBtnX endBtnY endBtnW endBtnH then
+        send { model | sel = Nothing, selSlot = Nothing, concedeArm = False } d "E"
+
+    -- while death ghosts play, the rows are DRAWN in the before-move
+    -- layout but hit-tested in the settled one — swallow row taps for
+    -- that beat so a tap never lands on a shifted neighbour
+    else if y >= foeRowY && y < handY
+        && List.length (deadIxsFor model True) + List.length (deadIxsFor model False) > 0 then
+        model
+
+    -- my hand
+    else if y >= handY then
+        case handIndexAt me x y of
+            Just i ->
+                if model.sel == Just i then
+                    { model | sel = Nothing, sfx = CueClick :: model.sfx }
+
+                else
+                    let
+                        picked = { model | sel = Just i, selSlot = Nothing, inspect = Nothing, concedeArm = False, sfx = CueClick :: model.sfx }
+                    in
+                    -- first pick of the match teaches the second tap
+                    if model.taught then
+                        picked
+
+                    else
+                        { picked | taught = True, toast = Just "Agora toque no seu campo para jogar a carta.", toastT = 100 }
+
+            Nothing ->
+                { model | sel = Nothing }
+
+    -- my board row: play a selected creature, or pick an attacker
+    else if y >= myRowY && y < myRowY + slotH then
+        case model.sel of
+            Just i ->
+                playSelected model d me i "-"
+
+            Nothing ->
+                case slotIndexAt me.board x of
+                    Just s ->
+                        case Shared.nth s me.board of
+                            Just sl ->
+                                if sl.ready then
+                                    { model | selSlot = Just s, sel = Nothing, inspect = Nothing, sfx = CueClick :: model.sfx }
+
+                                else
+                                    -- sleeping: can't attack, but let me read it
+                                    { model | inspect = Just sl.cid, toast = Just (sleepReason sl), toastT = 80 }
+
+                            Nothing ->
+                                model
+
+                    Nothing ->
+                        { model | selSlot = Nothing }
+
+    -- enemy board row: spell target or attack target
+    else if y >= foeRowY && y < foeRowY + slotH then
+        case slotIndexAt foe.board x of
+            Just t ->
+                case model.sel of
+                    Just i ->
+                        playSelected model d me i (String.fromInt t)
+
+                    Nothing ->
+                        case model.selSlot of
+                            Just s ->
+                                send { model | selSlot = Nothing } d
+                                    ("A " ++ String.fromInt s ++ " " ++ String.fromInt t)
+
+                            Nothing ->
+                                -- nothing selected: read the enemy card
+                                case Shared.nth t foe.board of
+                                    Just sl ->
+                                        { model | inspect = Just sl.cid, sfx = CueClick :: model.sfx }
+
+                                    Nothing ->
+                                        model
+
+            Nothing ->
+                { model | sel = Nothing, selSlot = Nothing }
+
+    -- enemy hero strip: attack the face
+    else if y < foeRowY then
+        case model.selSlot of
+            Just s ->
+                send { model | selSlot = Nothing } d ("A " ++ String.fromInt s ++ " h")
+
+            Nothing ->
+                { model | sel = Nothing }
+
+    else
+        { model | sel = Nothing, selSlot = Nothing }
+
+
+sleepReason : Shared.Slot -> String
+sleepReason sl =
+    if sl.sono then
+        "Essa criatura está adormecida."
+
+    else
+        "Essa criatura ainda não pode atacar neste turno."
+
+
+-- Play the selected hand card. Creatures ignore the target; targeted
+-- spells demand one (tapping my own row with one selected explains).
+playSelected : Model -> Shared.PartidaData -> Shared.Side -> Int -> String -> Model
+playSelected model d me i target =
+    case Shared.nth i me.hand of
+        Nothing ->
+            { model | sel = Nothing }
+
+        Just cid ->
+            let
+                card = Shared.cardOf cid
+                needsT = card.tipo == Feitico && Shared.fxNeedsTarget card.fx
+            in
+            if needsT && target == "-" then
+                { model | toast = Just "Esse feitiço precisa de um alvo: toque numa criatura inimiga.", toastT = 90 }
+
+            else if needsT == False && target /= "-" then
+                -- tapped an enemy slot with a creature selected: explain
+                { model | toast = Just "Criaturas entram no SEU lado do campo.", toastT = 90 }
+
+            else
+                send { model | sel = Nothing } d
+                    ("J " ++ String.fromInt i ++ " " ++ target)
+
+
+-- Pre-flight the move through the SAME engine the server runs; an
+-- illegal move never leaves the client (and the reason is instant).
+send : Model -> Shared.PartidaData -> String -> Model
+send model d data =
+    case model.disp of
+        Just st ->
+            case Shared.applyMoveBy d.souA st data of
+                Err reason ->
+                    { model | toast = Just reason, toastT = 100, sfx = CueErr :: model.sfx }
+
+                Ok _ ->
+                    { model | sending = True, pending = data }
+
+        Nothing ->
+            model
+
+
+-- ====================================================================
+-- SOUND
+-- ====================================================================
+
+
+cueSound : Cue -> Sound
+cueSound c =
+    case c of
+        CuePlay ->
+            Sound.chord
+                [ Sound.volume 22 (Sound.sweep 40 (Sound.tone Sound.Triangle 190 90))
+                , Sound.volume 12 (Sound.tone Sound.Noise 0 50)
+                ]
+
+        CueSpell ->
+            Sound.sequence
+                [ Sound.volume 14 (Sound.duty 25 (Sound.tone Sound.Square 620 60))
+                , Sound.volume 16 (Sound.duty 25 (Sound.tone Sound.Square 830 60))
+                , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square 1040 90))
+                ]
+
+        CueAtk ->
+            Sound.volume 18 (Sound.sweep 320 (Sound.tone Sound.Sawtooth 240 110))
+
+        CueHit ->
+            Sound.chord
+                [ Sound.volume 26 (Sound.tone Sound.Noise 0 90)
+                , Sound.volume 18 (Sound.sweep 50 (Sound.tone Sound.Triangle 130 120))
+                ]
+
+        CueHurt ->
+            Sound.volume 24 (Sound.sweep 55 (Sound.tone Sound.Triangle 100 160))
+
+        CueHeal ->
+            Sound.sequence
+                [ Sound.volume 14 (Sound.tone Sound.Triangle 520 70)
+                , Sound.volume 16 (Sound.tone Sound.Triangle 780 120)
+                ]
+
+        CueDraw ->
+            Sound.volume 10 (Sound.sweep 200 (Sound.tone Sound.Triangle 300 50))
+
+        CueTurn ->
+            Sound.sequence
+                [ Sound.volume 16 (Sound.tone Sound.Triangle 440 80)
+                , Sound.volume 20 (Sound.tone Sound.Triangle 660 140)
+                ]
+
+        CueWin ->
+            Sound.sequence
+                [ Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square 523 110))
+                , Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square 659 110))
+                , Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square 784 110))
+                , Sound.chord
+                    [ Sound.volume 24 (Sound.tone Sound.Triangle 1047 420)
+                    , Sound.volume 14 (Sound.tone Sound.Triangle 784 420)
+                    ]
+                ]
+
+        CueLose ->
+            Sound.sequence
+                [ Sound.volume 18 (Sound.tone Sound.Triangle 330 160)
+                , Sound.volume 16 (Sound.tone Sound.Triangle 262 160)
+                , Sound.volume 14 (Sound.tone Sound.Triangle 196 300)
+                ]
+
+        CueClick ->
+            Sound.volume 10 (Sound.tone Sound.Square 240 25)
+
+        CueErr ->
+            Sound.sequence
+                [ Sound.volume 14 (Sound.duty 25 (Sound.tone Sound.Square 180 60))
+                , Sound.volume 12 (Sound.duty 25 (Sound.tone Sound.Square 140 90))
+                ]
+
+
+-- ====================================================================
+-- LAYOUT
+-- ====================================================================
+
+
+gameW : Int
+gameW = 640
+
+
+gameH : Int
+gameH = 360
+
+
+slotW : Int
+slotW = 76
+
+
+slotH : Int
+slotH = 74
+
+
+foeRowY : Int
+foeRowY = 56
+
+
+myRowY : Int
+myRowY = 150
+
+
+handY : Int
+handY = 244
+
+
+cardW : Int
+cardW = 82
+
+
+cardH : Int
+cardH = 108
+
+
+endBtnX : Int
+endBtnX = 546
+
+
+endBtnY : Int
+endBtnY = 152
+
+
+endBtnW : Int
+endBtnW = 86
+
+
+endBtnH : Int
+endBtnH = 34
+
+
+layout : Model -> { s : Int, ox : Int, oy : Int }
+layout model =
+    let
+        s = Shared.max 40 (Shared.min (model.w * 100 // gameW) (model.h * 100 // gameH))
+    in
+    { s = s
+    , ox = (model.w - gameW * s // 100) // 2
+    , oy = (model.h - gameH * s // 100) // 2
+    }
+
+
+slotX : Int -> Int -> Int
+slotX n i =
+    320 - (n * (slotW + 6) - 6) // 2 + i * (slotW + 6)
+
+
+slotIndexAt : List Shared.Slot -> Int -> Maybe Int
+slotIndexAt board x =
+    let
+        n = List.length board
+        hits =
+            List.filterMap
+                (\i ->
+                    let
+                        sx = slotX n i
+                    in
+                    if x >= sx && x < sx + slotW then Just i else Nothing)
+                (List.indexedMap (\i _ -> i) board)
+    in
+    List.head hits
+
+
+handX : Int -> Int -> Int
+handX n i =
+    let
+        span = Shared.min (n * (cardW + 4) - 4) 470
+        -- keep the leftmost card clear of the bottom-left hero panel (x 6..156,
+        -- with the life + mana pips): center normally, but nudge right when the
+        -- fan is wide enough to reach it.
+        left = Shared.max 164 (320 - span // 2)
+        step = if n <= 1 then 0 else (span - cardW) // (n - 1)
+    in
+    left + i * step
+
+
+handIndexAt : Shared.Side -> Int -> Int -> Maybe Int
+handIndexAt me x y =
+    let
+        n = List.length me.hand
+        -- rightmost card wins the overlap, so scan from the end
+        hits =
+            List.filterMap
+                (\i ->
+                    let
+                        hx = handX n i
+                    in
+                    if x >= hx && x < hx + cardW && y >= handY - 16 then Just i else Nothing)
+                (List.indexedMap (\i _ -> i) me.hand)
+    in
+    List.head (List.reverse hits)
+
+
+heroPos : Bool -> { x : Int, y : Int }
+heroPos mine =
+    if mine then { x = 46, y = 300 } else { x = 46, y = 28 }
+
+
+inBox : Int -> Int -> Int -> Int -> Int -> Int -> Bool
+inBox x y bx by bw bh =
+    x >= bx && x < bx + bw && y >= by && y < by + bh
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+view : Shared.User -> { id : Int } -> Model -> View Msg
+view _ _ model =
+    canvas Crisp [ watchSize Resized, onTap Tapped ]
+        (List.concat
+            [ [ rect 0 0 model.w model.h (rgb 16 14 22) ]
+            , [ group [ Canvas.Translate (layout model).ox (layout model).oy, Canvas.Scale (layout model).s (layout model).s ]
+                    (scene model)
+              ]
+            ])
+
+
+scene : Model -> List Shape
+scene model =
+    case (model.dat, model.disp) of
+        (Just d, Just st) ->
+            List.concat
+                [ tableShapes d
+                , heroShapes model d st
+                , boardShapes model d st
+                , handShapes model d st
+                , buttonShapes model d st
+                , infoShapes model d st
+                , desafioShapes d st
+                , animShapes model d st
+                , toastShapes model
+                , endShapes model d st
+                , logShapes model
+                ]
+
+        _ ->
+            List.concat
+                [ tableShapes { id = 0, souA = True, meuNick = "", rivalNick = ""
+                              , deckA = "floresta", deckB = "sol", seed = 1
+                              , status = Ativa, winnerN = 0, moves = [] }
+                , [ text 320 176 14 Canvas.Center (rgb 220 214 194) "Abrindo a mesa..." ]
+                ]
+
+
+-- While the challenge awaits an accept, say so on the center seam —
+-- and tell the challenger they can already play their opening turn.
+desafioShapes : Shared.PartidaData -> Shared.GState -> List Shape
+desafioShapes d st =
+    if d.status /= Desafio then
+        []
+
+    else
+        let
+            msg =
+                if d.souA == False then
+                    "aceite o desafio no salão para escolher seu deck"
+
+                else if st.turnA then
+                    "desafio enviado, você já pode jogar seu 1º turno"
+
+                else
+                    "1º turno jogado, aguardando " ++ d.rivalNick ++ " aceitar"
+        in
+        [ text 320 147 8 Canvas.Center (rgb 226 208 150) msg ]
+
+
+-- The table itself: deep felt split in two territories, an Andean
+-- zigzag band on each edge, a center seam where the decks meet.
+tableShapes : Shared.PartidaData -> List Shape
+tableShapes d =
+    let
+        myPal = deckPal (if d.souA then d.deckA else d.deckB)
+        foePal = deckPal (if d.souA then d.deckB else d.deckA)
+    in
+    List.concat
+        [ [ rect 0 0 640 144 (shadeC foePal.felt 88)
+          , rect 0 144 640 6 (rgb 34 28 40)
+          , rect 0 150 640 210 (shadeC myPal.felt 100)
+          ]
+        , zigzag 0 foePal.trim
+        , zigzag 352 myPal.trim
+        ]
+
+
+zigzag : Int -> Rgb -> List Shape
+zigzag y trim =
+    List.concat
+        (List.map
+            (\i ->
+                let
+                    x = i * 32
+                    up = imod2 i == 0
+                in
+                [ rect x (y + (if up then 0 else 4)) 16 4 (toC trim)
+                , rect (x + 16) (y + (if up then 4 else 0)) 16 4 (toC trim)
+                ])
+            (rangeN 20))
+
+
+-- ====================================================================
+-- HEROES (portraits, life, energy, decks, opposing hand)
+-- ====================================================================
+
+
+heroShapes : Model -> Shared.PartidaData -> Shared.GState -> List Shape
+heroShapes model d st =
+    let
+        me = Shared.sideOf d.souA st
+        foe = Shared.sideOf (d.souA == False) st
+        myPal = deckPal (if d.souA then d.deckA else d.deckB)
+        foePal = deckPal (if d.souA then d.deckB else d.deckA)
+        myTurn = st.turnA == d.souA
+    in
+    List.concat
+        [ heroPanel 44 8 d.rivalNick foe foePal (myTurn == False) False
+        , foeFaceTarget model d st
+        , heroPanel 6 282 d.meuNick me myPal myTurn True
+        , foeHandShapes foe
+        , deckPile 596 96 (List.length foe.deck)
+        , deckPile 596 214 (List.length me.deck)
+        , backBtn
+        , logBtn
+        , helpBtn
+        , concedeFlag model
+        ]
+
+
+-- "‹" back button in the TOP-LEFT corner (the conventional back spot),
+-- mirroring the "?" circle top-right. Returns to the lobby; the match is
+-- server-saved so it never forfeits, just leaves. Hit-tested at inBox 6 8 34 28.
+-- A "‹" drawn as a pixel staircase instead of a text glyph. The "‹"
+-- character rides high in its em box and its side bearings aren't
+-- symmetric, so `text` never sat centered in the circle (Marcio: "não
+-- está centralizado no meio da bolinha"). This hand-drawn chevron's
+-- bounding box is exactly (cx, cy)-centered, and its blocky look matches
+-- the card art. Vertex on the left; two 2px arms meet with 1px overlap so
+-- the diagonal reads as continuous. (Defined ABOVE backBtn: backBtn is a
+-- top-level value and evaluates eagerly, so a forward reference would
+-- resolve to VUnit — see docs/… the file-order eval trap.)
+chevronLeft : Int -> Int -> Color -> List Shape
+chevronLeft cx cy c =
+    [ rect (cx + 1) (cy - 5) 2 2 c
+    , rect (cx + 0) (cy - 4) 2 2 c
+    , rect (cx - 1) (cy - 3) 2 2 c
+    , rect (cx - 2) (cy - 2) 2 2 c
+    , rect (cx - 3) (cy - 1) 2 2 c
+    , rect (cx - 2) (cy + 0) 2 2 c
+    , rect (cx - 1) (cy + 1) 2 2 c
+    , rect (cx + 0) (cy + 2) 2 2 c
+    , rect (cx + 1) (cy + 3) 2 2 c
+    ]
+
+
+-- Hugs the extreme top-left corner of the board. Hit-tested at inBox 0 0 30 28.
+backBtn : List Shape
+backBtn =
+    List.concat
+        [ [ circle 15 14 11 (rgb 58 54 72)
+          , circle 15 14 10 (rgb 38 34 50)
+          ]
+        , chevronLeft 15 14 (rgb 208 202 224)
+        ]
+
+
+-- A pulsing red frame on the rival's portrait, shown ONLY when an
+-- attacker of yours is selected AND the face is a legal target (no enemy
+-- Guardião). Makes "you can go straight for the player" obvious, and
+-- only when it's actually allowed. The whole top strip (y < foeRowY) is
+-- already the face-attack hit zone.
+foeFaceTarget : Model -> Shared.PartidaData -> Shared.GState -> List Shape
+foeFaceTarget model d st =
+    let
+        foe = Shared.sideOf (d.souA == False) st
+        canFace =
+            model.selSlot /= Nothing
+                && st.winner == 0
+                && Shared.hasGuardian foe.board == False
+        c = shadeC { r = 255, g = 90, b = 80 } (40 + imod2 (model.tick // 14) * 30)
+    in
+    if canFace then
+        [ rect 42 6 154 2 c
+        , rect 42 52 154 2 c
+        , rect 42 6 2 48 c
+        , rect 194 6 2 48 c
+        ]
+
+    else
+        []
+
+
+-- "?" that opens the how-to-play. Hit-tested at inBox 552 6 36 30 (a bit
+-- left of the concede flag); readable even on the rival's turn.
+helpBtn : List Shape
+helpBtn =
+    [ circle 570 21 11 (rgb 58 54 72)
+    , circle 570 21 10 (rgb 38 34 50)
+    , text 570 22 14 Canvas.Center (rgb 208 202 224) "?"
+    ]
+
+
+-- "≡" history button (three bars), left of "?". Toggles the game-log
+-- panel; works during play AND after the match ends. Hit at inBox 510 6 36 30.
+logBtn : List Shape
+logBtn =
+    List.concat
+        [ [ circle 528 21 11 (rgb 58 54 72)
+          , circle 528 21 10 (rgb 38 34 50)
+          ]
+        , [ rect 522 17 13 2 (rgb 208 202 224)
+          , rect 522 20 13 2 (rgb 208 202 224)
+          , rect 522 23 13 2 (rgb 208 202 224)
+          ]
+        ]
+
+
+heroPanel : Int -> Int -> String -> Shared.Side -> Pal -> Bool -> Bool -> List Shape
+heroPanel x y nick side pal active mine =
+    List.concat
+        [ [ rect x y 150 44 (rgb 24 20 32)
+          , rect x y 150 2 (toC pal.trim)
+          , rect x (y + 42) 150 2 (toC pal.trim)
+          , circle (x + 22) (y + 22) 15 (toC pal.trim)
+          , circle (x + 22) (y + 22) 12 (shadeC pal.felt 160)
+          , text (x + 22) (y + 23) 12 Canvas.Center (rgb 245 240 225) (initialOf nick)
+          , text (x + 44) (y + 12) 9 Canvas.Left (rgb 226 218 198) nick
+          ]
+        , lifeShapes (x + 44) (y + 22) side.life
+        , energyShapes (x + 44) (y + 34) side.energy side.maxE
+        , if active then
+            [ rect x y 3 44 (rgb 250 220 110) ]
+
+          else
+            []
+        ]
+
+
+lifeShapes : Int -> Int -> Int -> List Shape
+lifeShapes x y life =
+    [ circle (x + 5) (y + 3) 5 (rgb 196 44 54)
+    , circle (x + 10) (y + 3) 5 (rgb 196 44 54)
+    , rect x (y + 3) 15 6 (rgb 196 44 54)
+    , text (x + 22) (y + 6) 11 Canvas.Left (rgb 255 235 235) (String.fromInt life)
+    ]
+
+
+energyShapes : Int -> Int -> Int -> Int -> List Shape
+energyShapes x y have maxE =
+    List.concat
+        (List.map
+            (\i ->
+                let
+                    cx = x + i * 10
+                    fillC =
+                        if i < have then rgb 110 220 255
+                        else if i < maxE then rgb 40 70 92
+                        else rgb 30 34 44
+                in
+                [ rect cx y 7 9 fillC
+                , rect (cx + 1) (y + 1) 2 3 (rgb 235 250 255)
+                ])
+            (rangeN 8))
+
+
+foeHandShapes : Shared.Side -> List Shape
+foeHandShapes foe =
+    let
+        n = List.length foe.hand
+    in
+    List.concat
+        (List.map
+            (\i ->
+                let
+                    x = 320 - (n * 14) // 2 + i * 14
+                in
+                [ rect x 2 20 30 (rgb 52 40 78)
+                , rect (x + 2) 4 16 26 (rgb 74 58 108)
+                , circle (x + 10) 17 5 (rgb 52 40 78)
+                ])
+            (rangeN n))
+
+
+deckPile : Int -> Int -> Int -> List Shape
+deckPile x y n =
+    [ rect x y 30 40 (rgb 46 38 66)
+    , rect (x + 2) (y + 2) 26 36 (rgb 66 54 96)
+    , circle (x + 15) (y + 20) 8 (rgb 46 38 66)
+    , text (x + 15) (y + 52) 9 Canvas.Center (rgb 190 182 206) (String.fromInt n)
+    ]
+
+
+concedeFlag : Model -> List Shape
+concedeFlag model =
+    let
+        c = if model.concedeArm then rgb 235 90 80 else rgb 150 144 160
+    in
+    [ rect 606 8 3 24 c
+    , rect 609 8 14 10 c
+    ]
+
+
+-- ====================================================================
+-- BOARDS
+-- ====================================================================
+
+
+-- BEFORE-board indexes of the creatures currently dying on `mine`'s side
+-- (active KDie ghosts), ascending. While any exist that side is drawn in
+-- its before-move layout: survivors keep their old positions around the
+-- ghost, and only when it expires does the row slide shut.
+deadIxsFor : Model -> Bool -> List Int
+deadIxsFor model mine =
+    List.sortBy (\ix -> ix)
+        (List.filterMap
+            (\a ->
+                case a.kind of
+                    KDie m ix _ ->
+                        if m == mine then Just ix else Nothing
+
+                    _ ->
+                        Nothing)
+            model.anims)
+
+
+-- Map an AFTER-board index back to its BEFORE-board position, stepping
+-- over the dead slots. deadIxs must be ascending.
+beforeIx : List Int -> Int -> Int
+beforeIx deadIxs i =
+    List.foldl (\d bi -> if d <= bi then bi + 1 else bi) i deadIxs
+
+
+-- Board length in DISPLAY terms: the settled board plus the ghosts still
+-- dying on it. Position math uses this while deaths animate, so slots,
+-- lunges, flashes and sparks all land on the layout the player still sees.
+liveLen : Model -> Shared.PartidaData -> Shared.GState -> Bool -> Int
+liveLen model d st onMe =
+    boardLen d st onMe + List.length (deadIxsFor model onMe)
+
+
+boardShapes : Model -> Shared.PartidaData -> Shared.GState -> List Shape
+boardShapes model d st =
+    let
+        me = Shared.sideOf d.souA st
+        foe = Shared.sideOf (d.souA == False) st
+        atkSel = model.selSlot
+        spellTargeting =
+            case model.sel of
+                Just i ->
+                    case Shared.nth i me.hand of
+                        Just cid ->
+                            Shared.fxNeedsTarget (Shared.cardOf cid).fx
+
+                        Nothing ->
+                            False
+
+                Nothing ->
+                    False
+        foeGuard = Shared.hasGuardian foe.board
+        -- a slot that is mid-flight (its card is sliding in, or is out
+        -- lunging at a target) must NOT also be drawn settled, or you see
+        -- the card in two places at once.
+        hideFoe = flyingSlot model False foe.board
+        hideMe = flyingSlot model True me.board
+        -- while ghosts die, survivors are drawn at their BEFORE positions
+        deadFoe = deadIxsFor model False
+        deadMe = deadIxsFor model True
+        nFoeB = List.length foe.board + List.length deadFoe
+        nMeB = List.length me.board + List.length deadMe
+    in
+    List.concat
+        [ List.concat
+            (List.indexedMap
+                (\i sl ->
+                    if Just i == hideFoe then
+                        []
+
+                    else
+                        slotShapes model (slotX nFoeB (beforeIx deadFoe i)) foeRowY sl False
+                            (targetRing (atkSel /= Nothing) spellTargeting foeGuard sl))
+                foe.board)
+        , List.concat
+            (List.indexedMap
+                (\i sl ->
+                    if Just i == hideMe then
+                        []
+
+                    else
+                        slotShapes model (slotX nMeB (beforeIx deadMe i)) myRowY sl True
+                            (atkSel == Just i))
+                me.board)
+        ]
+
+
+-- The board index (if any) on `mine`'s side that an active animation has
+-- lifted off the felt: the freshly-played creature during its KPlay, or an
+-- attacker during its KLunge (only while it still exists on the board —
+-- if it traded and died, there is nothing to hide).
+flyingSlot : Model -> Bool -> List Shared.Slot -> Maybe Int
+flyingSlot model mine board =
+    let
+        n = List.length board
+    in
+    List.head
+        (List.filterMap
+            (\a ->
+                case a.kind of
+                    KPlay cid byMe _ _ ->
+                        if byMe == mine && (Shared.cardOf cid).tipo == Criatura then
+                            Just (n - 1)
+
+                        else
+                            Nothing
+
+                    KLunge lm s _ acid ->
+                        if lm == mine then
+                            case Shared.nth s board of
+                                Just sl ->
+                                    if sl.cid == acid then Just s else Nothing
+
+                                Nothing ->
+                                    Nothing
+
+                        else
+                            Nothing
+
+                    _ ->
+                        Nothing)
+            model.anims)
+
+
+-- Should this enemy slot show a target ring? While targeting, guards
+-- eclipse everyone else (matching the engine's rule).
+-- Which enemy creatures light up as targets. A SPELL can hit ANY creature
+-- (the engine ignores Guardião for spells — see playCard), so ring them
+-- all. An ATTACK obeys the Guardião eclipse: while a guard stands, only the
+-- guard is a legal target.
+targetRing : Bool -> Bool -> Bool -> Shared.Slot -> Bool
+targetRing attacking spellTargeting foeGuard sl =
+    if spellTargeting then
+        True
+
+    else if attacking then
+        foeGuard == False || (Shared.cardOf sl.cid).kw == Guardiao
+
+    else
+        False
+
+
+slotShapes : Model -> Int -> Int -> Shared.Slot -> Bool -> Bool -> List Shape
+slotShapes model x y sl mine ring =
+    let
+        card = Shared.cardOf sl.cid
+        pal = deckPal (deckKeyOf card.deck)
+        sick = mine && sl.ready == False
+        pulse = 40 + imod2 (model.tick // 14) * 25
+    in
+    List.concat
+        [ [ rect x y slotW slotH (rgb 30 26 40)
+          , rect (x + 2) (y + 2) (slotW - 4) (slotH - 4) (shadeC pal.frame (if sick then 62 else 100))
+          , rect (x + 5) (y + 4) (slotW - 10) 40 (shadeC pal.felt 70)
+          ]
+        , [ group [ Canvas.Translate (x + 3) (y + 4) ] (artFor card.cid) ]
+        , [ text (x + slotW // 2) (y + 51) (nameSize 7 (shortName card.nome)) Canvas.Center (rgb 232 226 208) (shortName card.nome) ]
+        , statBadge (x + 4) (y + slotH - 15) (rgb 226 148 60) (String.fromInt card.atk)
+        , statBadge (x + slotW - 20) (y + slotH - 15) (hpColor sl.hp card.hp) (String.fromInt sl.hp)
+        , if (Shared.cardOf sl.cid).kw == Guardiao then
+            [ rect (x + slotW // 2 - 7) (y - 4) 14 6 (rgb 205 205 215)
+            , rect (x + slotW // 2 - 5) (y + 2) 10 3 (rgb 160 160 175)
+            ]
+
+          else
+            []
+        , if sl.sono then
+            [ text (x + slotW - 12) (y + 8) 10 Canvas.Center (rgb 170 190 255) "z" ]
+
+          else
+            []
+        , if mine && sl.ready && model.selSlot == Nothing then
+            [ rect x (y + slotH - 2) slotW 2 (rgb 120 230 140) ]
+
+          else
+            []
+        , if ring then
+            [ rect x (y - 2) slotW 2 (shadeC { r = 255, g = 120, b = 90 } pulse)
+            , rect x (y + slotH) slotW 2 (shadeC { r = 255, g = 120, b = 90 } pulse)
+            ]
+
+          else
+            []
+        ]
+
+
+statBadge : Int -> Int -> Color -> String -> List Shape
+statBadge x y c label =
+    [ circle (x + 8) (y + 6) 8 (rgb 20 18 26)
+    , circle (x + 8) (y + 6) 7 c
+    , text (x + 8) (y + 7) 9 Canvas.Center (rgb 20 16 20) label
+    ]
+
+
+hpColor : Int -> Int -> Color
+hpColor hp full =
+    if hp < full then rgb 235 90 80 else rgb 130 220 120
+
+
+-- ====================================================================
+-- HAND
+-- ====================================================================
+
+
+handShapes : Model -> Shared.PartidaData -> Shared.GState -> List Shape
+handShapes model d st =
+    let
+        me = Shared.sideOf d.souA st
+        n = List.length me.hand
+        myTurn = st.turnA == d.souA
+    in
+    List.concat
+        (List.indexedMap
+            (\i cid ->
+                let
+                    lift = if model.sel == Just i then 14 else 0
+                in
+                cardShapes model (handX n i) (handY + 6 - lift) cid
+                    (myTurn && (Shared.cardOf cid).custo <= me.energy)
+                    (model.sel == Just i))
+            me.hand)
+
+
+cardShapes : Model -> Int -> Int -> Int -> Bool -> Bool -> List Shape
+cardShapes model x y cid playable selected =
+    let
+        card = Shared.cardOf cid
+        pal = deckPal (deckKeyOf card.deck)
+        frameF = if playable then 100 else 58
+    in
+    List.concat
+        [ if selected then
+            [ rect (x - 3) (y - 3) (cardW + 6) (cardH + 6) (rgb 250 220 110) ]
+
+          else
+            []
+        , [ rect x y cardW cardH (rgb 26 22 34)
+          , rect (x + 2) (y + 2) (cardW - 4) (cardH - 4) (shadeC pal.frame frameF)
+          , rect (x + 5) (y + 16) (cardW - 10) 46 (shadeC pal.felt 75)
+          ]
+        , [ group [ Canvas.Translate (x + 6) (y + 18) ] (artFor cid) ]
+        , [ text (x + cardW // 2) (y + 9) (nameSize 8 (shortName card.nome)) Canvas.Center (rgb 240 234 216) (shortName card.nome) ]
+        , [ circle (x + 9) (y + 9) 8 (rgb 24 40 60)
+          , circle (x + 9) (y + 9) 7 (rgb 96 200 245)
+          , text (x + 9) (y + 10) 9 Canvas.Center (rgb 12 24 36) (String.fromInt card.custo)
+          ]
+        , if card.tipo == Criatura then
+            List.concat
+                [ statBadge (x + 4) (y + cardH - 18) (rgb 226 148 60) (String.fromInt card.atk)
+                , statBadge (x + cardW - 20) (y + cardH - 18) (rgb 130 220 120) (String.fromInt card.hp)
+                , kwTag x y card.kw
+                ]
+
+          else
+            [ text (x + cardW // 2) (y + cardH - 12) 7 Canvas.Center (toC pal.trim) "FEITIÇO" ]
+        ]
+
+
+kwTag : Int -> Int -> Shared.Keyword -> List Shape
+kwTag x y kw =
+    case kw of
+        Impeto ->
+            [ text (x + cardW // 2) (y + cardH - 12) 7 Canvas.Center (rgb 250 210 120) "ÍMPETO" ]
+
+        Guardiao ->
+            [ text (x + cardW // 2) (y + cardH - 12) 7 Canvas.Center (rgb 205 205 220) "GUARDIÃO" ]
+
+        SemHabilidade ->
+            []
+
+
+-- ====================================================================
+-- BUTTONS + INFO
+-- ====================================================================
+
+
+buttonShapes : Model -> Shared.PartidaData -> Shared.GState -> List Shape
+buttonShapes model d st =
+    let
+        myTurn = st.turnA == d.souA && model.sending == False && List.length model.queue == 0
+    in
+    if st.winner /= 0 then
+        []
+
+    else
+        [ rect endBtnX endBtnY endBtnW endBtnH (if myTurn then rgb 168 120 40 else rgb 52 48 58)
+        , rect (endBtnX + 2) (endBtnY + 2) (endBtnW - 4) (endBtnH - 4) (if myTurn then rgb 232 176 70 else rgb 66 62 72)
+        , text (endBtnX + endBtnW // 2) (endBtnY + 14) 9 Canvas.Center (rgb 30 22 12) "ENCERRAR"
+        , text (endBtnX + endBtnW // 2) (endBtnY + 25) 9 Canvas.Center (rgb 30 22 12) "TURNO"
+        ]
+
+
+-- Card text is written as "RULES. FLAVOR." — split at the first ". " so the
+-- reading strip can put the rules on one line and the flavor on the next,
+-- instead of one line that runs past the panel. No ". " (single sentence) =>
+-- it all stays on the first line (the adaptive font in infoShapes shrinks it).
+descLines : String -> { rules : String, flavor : String }
+descLines s =
+    case String.split ". " s of
+        first :: rest ->
+            if List.isEmpty rest then
+                { rules = s, flavor = "" }
+
+            else
+                { rules = first ++ ".", flavor = String.join ". " rest }
+
+        [] ->
+            { rules = s, flavor = "" }
+
+
+-- The reading strip: whose turn it is, plus the selected card's full
+-- name and rules text (canvas text doesn't wrap; we split by budget).
+infoShapes : Model -> Shared.PartidaData -> Shared.GState -> List Shape
+infoShapes model d st =
+    let
+        me = Shared.sideOf d.souA st
+        myTurn = st.turnA == d.souA
+        turnLine =
+            if st.winner /= 0 then
+                ""
+
+            else if myTurn then
+                "Seu turno. Jogue cartas, ataque e encerre."
+
+            else
+                "Vez de " ++ d.rivalNick ++ "… a mesa avisa quando ele jogar."
+        -- the card whose text to read: a hand card being played, an attacker
+        -- I picked, or ANY board creature (mine or the rival's) I tapped to
+        -- inspect. So enemy cards are readable too, not just my own.
+        focus =
+            case model.sel of
+                Just i ->
+                    Maybe.map Shared.cardOf (Shared.nth i me.hand)
+
+                Nothing ->
+                    case model.selSlot of
+                        Just s ->
+                            Maybe.map (\sl -> Shared.cardOf sl.cid) (Shared.nth s me.board)
+
+                        Nothing ->
+                            Maybe.map Shared.cardOf model.inspect
+    in
+    List.concat
+        [ [ text 320 141 10 Canvas.Center (rgb 210 200 180) turnLine ]
+        , case focus of
+            Just card ->
+                -- reading strip: name, then rules + flavor on their own lines
+                -- so long text stays inside the panel. Sits just above the
+                -- lifted hand card (top 236); briefly covers the board's lower
+                -- edge while reading, which is fine for a transient panel.
+                let
+                    dl = descLines card.descr
+                    dLen = Shared.max (String.length dl.rules) (String.length dl.flavor)
+                    dsize = if dLen > 52 then 7 else 9
+                in
+                List.concat
+                    [ [ rect 50 190 540 46 (rgb 20 18 28)
+                      , text 320 202 11 Canvas.Center (rgb 250 235 200) card.nome
+                      , text 320 219 dsize Canvas.Center (rgb 200 192 176) dl.rules
+                      ]
+                    , if dl.flavor == "" then
+                        []
+
+                      else
+                        [ text 320 231 dsize Canvas.Center (rgb 168 160 144) dl.flavor ]
+                    ]
+
+            Nothing ->
+                []
+        ]
+
+
+-- ====================================================================
+-- ANIMATION OVERLAYS
+-- ====================================================================
+
+
+animShapes : Model -> Shared.PartidaData -> Shared.GState -> List Shape
+animShapes model d st =
+    List.concat (List.map (\a -> animShape model d st a) model.anims)
+
+
+animShape : Model -> Shared.PartidaData -> Shared.GState -> Anim -> List Shape
+animShape model d st a =
+    let
+        f = a.t * 100 // Shared.max 1 a.dur
+    in
+    case a.kind of
+        KPlay cid byMe fromIx fromN ->
+            let
+                card = Shared.cardOf cid
+                n = boardLen d st byMe
+                -- a creature flies into the slot it will occupy (its settled
+                -- slot is hidden meanwhile); a spell just rises to the center.
+                xEnd =
+                    if card.tipo == Criatura && n > 0 then
+                        slotX n (n - 1)
+
+                    else
+                        320 - cardW // 2
+                -- Land the (tall) flying card CENTERED on the (shorter)
+                -- settled slot, not top-aligned — otherwise it sinks
+                -- ~17px past the slot before the smaller slot pops in
+                -- higher, reading as an overshoot ("foi longe demais").
+                yEnd = (if byMe then myRowY else foeRowY) - (cardH - slotH) // 2
+                -- my card lifts out of the exact hand slot it came from, so
+                -- it's clear WHICH card is entering; the rival's still flies
+                -- in from the top edge (their hand is face-down, no slot).
+                x0 = if byMe then handX fromN fromIx else xEnd
+                y0 = if byMe then handY else 0 - cardH
+                x = x0 + (xEnd - x0) * f // 100
+                y = y0 + (yEnd - y0) * f // 100
+            in
+            cardShapes model x y cid True False
+
+        KDraw mine ->
+            let
+                drawerIsA = if mine then d.souA else (d.souA == False)
+                drawer = Shared.sideOf drawerIsA st
+                n = List.length drawer.hand
+                -- drawOne appends to the end, so the fresh card is the last
+                -- hand slot; the rival's face-down hand just takes the top.
+                ex = if mine then handX n (Shared.max 0 (n - 1)) else 300
+                ey = if mine then handY else 8
+                sy = if mine then 214 else 96
+                x = 596 + (ex - 596) * f // 100
+                y = sy + (ey - sy) * f // 100
+            in
+            [ rect x y 30 40 (rgb 46 38 66)
+            , rect (x + 2) (y + 2) 26 36 (rgb 66 54 96)
+            ]
+
+        KLunge mine s tIx cid ->
+            let
+                card = Shared.cardOf cid
+                pal = deckPal (deckKeyOf card.deck)
+                nAtk = Shared.max 1 (liveLen model d st mine)
+                nTgt = Shared.max 1 (liveLen model d st (mine == False))
+                fromX = slotX nAtk (Shared.min s (nAtk - 1))
+                fromY = if mine then myRowY else foeRowY
+                tp =
+                    if tIx < 0 then
+                        heroPos (mine == False)
+
+                    else
+                        { x = slotX nTgt (Shared.min tIx (nTgt - 1)), y = if mine then foeRowY else myRowY }
+                -- lunge out at the target and snap back (there-and-back arc)
+                arc = if f < 50 then f * 2 else (100 - f) * 2
+                x = fromX + (tp.x - fromX) * arc // 100
+                y = fromY + (tp.y - fromY) * arc // 100
+            in
+            List.concat
+                [ [ rect x y slotW slotH (rgb 30 26 40)
+                  , rect (x + 2) (y + 2) (slotW - 4) (slotH - 4) (toC pal.frame)
+                  , rect (x + 5) (y + 4) (slotW - 10) 40 (shadeC pal.felt 70)
+                  ]
+                , [ group [ Canvas.Translate (x + 3) (y + 4) ] (artFor card.cid) ]
+                , [ rect x (y - 2) slotW 2 (rgb 255 230 150)
+                  , rect x (y + slotH) slotW 2 (rgb 255 230 150)
+                  ]
+                ]
+
+        KHit onMe ix ->
+            let
+                n = liveLen model d st onMe
+            in
+            if imod2 (a.t // 3) == 0 && n > 0 then
+                [ rect (slotX n (Shared.min ix (n - 1))) (if onMe then myRowY else foeRowY) slotW slotH (rgb 255 120 90) ]
+
+            else
+                []
+
+        KHitHero mine ->
+            -- flash the struck hero's OWN panel: mine is at (6, 282), the
+            -- rival's at (44, 8). The foe used to flash at x=6 (over my
+            -- corner, now under the back button) — wrong hero.
+            if imod2 (a.t // 3) == 0 then
+                [ rect (if mine then 6 else 44) (if mine then 282 else 8) 150 44 (rgb 255 120 90) ]
+
+            else
+                []
+
+        KNum x y n heal ->
+            let
+                fy = y - a.t // 2
+                label = if n > 0 then "+" ++ String.fromInt n else String.fromInt n
+            in
+            [ text x fy 13 Canvas.Center (if heal then rgb 130 235 130 else rgb 255 110 96) label ]
+
+        KTurn mine ->
+            let
+                slide = if f < 30 then f * 640 // 30 - 640 else if f > 76 then (f - 76) * 640 // 24 else 0
+            in
+            [ rect 0 160 640 36 (rgb 22 18 30)
+            , text (320 + slide) 178 16 Canvas.Center
+                (if mine then rgb 250 220 110 else rgb 170 178 200)
+                (if mine then "SUA VEZ" else "VEZ DO RIVAL")
+            ]
+
+        KSpark onMe ix ->
+            let
+                n = Shared.max 1 (liveLen model d st onMe)
+                cx = slotX n (Shared.min ix (n - 1)) + slotW // 2
+                cy = (if onMe then myRowY else foeRowY) + slotH // 2
+                r = 6 + a.t
+            in
+            [ circle cx cy r (rgb 190 150 255)
+            , circle cx cy (Shared.max 1 (r - 4)) (rgb 30 26 40)
+            ]
+
+        KDie mine ix cid ->
+            let
+                -- an attacker that traded is drawn by its own KLunge while
+                -- it flies; hold the ghost until the lunge lands
+                lunging =
+                    List.any
+                        (\b ->
+                            case b.kind of
+                                KLunge lm s _ acid ->
+                                    lm == mine && s == ix && acid == cid
+
+                                _ ->
+                                    False)
+                        model.anims
+                n = Shared.max 1 (liveLen model d st mine)
+                x = slotX n (Shared.min ix (n - 1))
+                y = if mine then myRowY else foeRowY
+                -- blink out over the last ticks, then gone for real
+                fading = a.t >= a.dur - 12 && imod2 (a.t // 3) == 1
+            in
+            if lunging || fading then
+                []
+
+            else
+                slotShapes model x y { cid = cid, hp = 0, ready = False, sono = False } mine False
+
+
+-- Length of the board on MY side (onMe) or the rival's, in display terms.
+boardLen : Shared.PartidaData -> Shared.GState -> Bool -> Int
+boardLen d st onMe =
+    if onMe then
+        List.length (Shared.sideOf d.souA st).board
+
+    else
+        List.length (Shared.sideOf (d.souA == False) st).board
+
+
+toastShapes : Model -> List Shape
+toastShapes model =
+    case model.toast of
+        Just msg ->
+            -- sits ABOVE the card-reading strip (which starts at y 188) so an
+            -- instruction like "toque no seu campo" never lands on the
+            -- description it shares the screen with
+            [ rect 120 160 400 22 (rgb 30 24 20)
+            , rect 120 160 400 2 (rgb 235 180 80)
+            , text 320 172 9 Canvas.Center (rgb 245 226 190) msg
+            ]
+
+        Nothing ->
+            []
+
+
+-- Victory one-liners. Picked STABLY per match by the game seed, so a
+-- given match always shows the same line (no per-frame flicker), but
+-- different matches vary. Curated pool.
+winLines : List String
+winLines =
+    [ "Vão fazer canção sobre essa!"
+    , "Essa partida pede uma canção."
+    , "Mais uma lenda com o seu nome."
+    , "Você entrou pro folclore."
+    , "Do jeito que as lendas gostam."
+    , "Já pode contar pros netos."
+    , "Essa ficou pra história."
+    , "Os cantadores vão lembrar dessa."
+    , "Isso é assunto pra repente."
+    , "Merece um cordel só seu."
+    , "O folclore agradece."
+    , "A mesa ainda treme."
+    ]
+
+
+winCry : Int -> String
+winCry seed =
+    Maybe.withDefault "Essa ficou pra história."
+        (Shared.nth (Shared.imodP seed (List.length winLines)) winLines)
+
+
+-- A COMPACT result ribbon across the center seam — the board (final
+-- position, life totals, both fields) stays visible so you can see how
+-- it ended. The ≡ log button reviews the blow-by-blow. Back to the lobby
+-- via the ribbon line OR the ‹ top-left.
+endShapes : Model -> Shared.PartidaData -> Shared.GState -> List Shape
+endShapes model d st =
+    if st.winner == 0 || List.length model.queue > 0 then
+        []
+
+    else
+        let
+            iWon = (st.winner == 1) == d.souA
+            barC = if iWon then rgb 250 220 110 else rgb 150 120 130
+        in
+        [ rect 150 120 340 66 (rgb 16 13 20)
+        , rect 150 120 340 3 barC
+        , rect 150 183 340 3 barC
+        , text 320 142 22 Canvas.Center
+            (if iWon then rgb 255 226 120 else rgb 214 150 150)
+            (if iWon then "VITÓRIA" else "DERROTA")
+        , text 320 159 8 Canvas.Center (rgb 210 202 186)
+            (if iWon then winCry d.seed else ("Dessa vez " ++ d.rivalNick ++ " levou. Toque em ≡ pra rever."))
+        -- back-to-lobby line (hit-tested in `tap`)
+        , rect 244 166 152 14 (rgb 54 50 68)
+        , text 320 176 8 Canvas.Center (rgb 224 220 240) "‹ Voltar ao salão"
+        ]
+
+
+-- The game-history panel: the readable move log (built in popQueue),
+-- most-recent-first. Opened by the ≡ button; any tap closes it. Useful
+-- mid-match ("what did the rival just do?") and after ("how did I die?").
+logShapes : Model -> List Shape
+logShapes model =
+    if model.showLog == False then
+        []
+
+    else
+        List.concat
+            [ [ rect 70 26 500 308 (rgb 14 12 18)
+              , rect 70 26 500 3 (rgb 120 110 140)
+              , text 320 46 12 Canvas.Center (rgb 236 230 212) "Histórico da partida"
+              , text 320 320 7 Canvas.Center (rgb 150 144 168) "toque em qualquer lugar para fechar"
+              ]
+            , if List.length model.log == 0 then
+                [ text 320 180 8 Canvas.Center (rgb 170 164 186) "Ainda não houve jogadas." ]
+
+              else
+                List.indexedMap
+                    (\i line -> text 86 (66 + i * 15) 8 Canvas.Left (rgb 208 202 222) line)
+                    (List.take 17 model.log)
+            ]
+
+
+-- ====================================================================
+-- CARD ART — one hand-drawn emblem per legend, in a 70x42 local box
+-- ====================================================================
+
+
+artFor : Int -> List Shape
+artFor cid =
+    case cid of
+        1 ->
+            -- Saci: red cap, one leg, a dust whirl
+            [ circle 22 16 9 (rgb 88 52 36)
+            , rect 18 4 9 7 (rgb 210 50 40)
+            , rect 24 1 4 6 (rgb 210 50 40)
+            , rect 20 24 5 12 (rgb 88 52 36)
+            , circle 44 30 8 (rgb 120 110 96)
+            , circle 52 24 5 (rgb 140 130 112)
+            , circle 40 18 4 (rgb 150 142 124)
+            ]
+
+        2 ->
+            -- Caipora on her boar
+            [ rect 14 22 34 12 (rgb 92 62 44)
+            , rect 10 26 8 6 (rgb 92 62 44)
+            , rect 16 34 4 6 (rgb 70 48 34)
+            , rect 38 34 4 6 (rgb 70 48 34)
+            , circle 30 14 8 (rgb 70 120 66)
+            , rect 26 18 9 8 (rgb 70 120 66)
+            , rect 22 8 16 4 (rgb 200 80 50)
+            ]
+
+        3 ->
+            -- Curupira: flame hair, feet on backwards
+            [ circle 34 16 9 (rgb 190 120 70)
+            , rect 28 2 4 8 (rgb 235 90 40)
+            , rect 34 0 4 10 (rgb 245 140 40)
+            , rect 40 3 4 7 (rgb 235 90 40)
+            , rect 30 24 9 10 (rgb 150 95 58)
+            , rect 24 34 8 4 (rgb 120 70 40)
+            , rect 38 34 8 4 (rgb 120 70 40)
+            ]
+
+        4 ->
+            -- Lobisomem under a full moon
+            [ circle 54 10 8 (rgb 235 232 210)
+            , rect 16 16 20 16 (rgb 84 84 92)
+            , circle 16 14 7 (rgb 84 84 92)
+            , rect 8 10 6 5 (rgb 84 84 92)
+            , rect 14 32 4 8 (rgb 64 64 72)
+            , rect 26 32 4 8 (rgb 64 64 72)
+            , circle 13 13 2 (rgb 240 90 60)
+            ]
+
+        5 ->
+            -- Mula-sem-Cabeça: headless horse, neck of fire
+            [ rect 18 18 30 12 (rgb 52 40 46)
+            , rect 20 30 4 10 (rgb 40 30 36)
+            , rect 40 30 4 10 (rgb 40 30 36)
+            , circle 18 14 5 (rgb 245 140 40)
+            , circle 14 8 4 (rgb 250 190 60)
+            , circle 22 6 3 (rgb 250 220 90)
+            ]
+
+        6 ->
+            -- Cuca: the alligator witch
+            [ rect 20 12 22 16 (rgb 92 130 66)
+            , rect 12 18 10 7 (rgb 92 130 66)
+            , circle 26 8 3 (rgb 240 220 90)
+            , circle 36 8 3 (rgb 240 220 90)
+            , rect 18 4 26 5 (rgb 90 60 110)
+            , rect 26 0 10 6 (rgb 90 60 110)
+            , rect 12 20 6 2 (rgb 235 235 225)
+            ]
+
+        7 ->
+            -- Boitatá: the fire serpent
+            [ circle 12 28 6 (rgb 240 120 40)
+            , circle 22 20 7 (rgb 245 150 45)
+            , circle 34 14 8 (rgb 250 180 55)
+            , circle 48 12 8 (rgb 250 210 70)
+            , circle 52 10 2 (rgb 30 20 20)
+            , rect 58 8 6 3 (rgb 245 120 45)
+            ]
+
+        8 ->
+            -- Mapinguari: one eye, mouth on the belly
+            [ rect 18 6 28 32 (rgb 110 78 50)
+            , circle 32 4 12 (rgb 110 78 50)
+            , circle 32 12 4 (rgb 250 220 90)
+            , circle 32 12 2 (rgb 30 20 16)
+            , rect 24 26 16 6 (rgb 60 30 26)
+            , rect 26 26 3 3 (rgb 235 230 210)
+            , rect 34 26 3 3 (rgb 235 230 210)
+            ]
+
+        9 ->
+            -- Garrafada: the healer's bottle
+            [ rect 26 14 14 22 (rgb 70 140 90)
+            , rect 30 6 6 9 (rgb 70 140 90)
+            , rect 29 2 8 5 (rgb 150 100 60)
+            , rect 28 20 10 8 (rgb 110 200 130)
+            , circle 50 10 2 (rgb 245 245 200)
+            , circle 16 20 2 (rgb 245 245 200)
+            ]
+
+        10 ->
+            -- Cipó: strangler vine on a branch
+            [ rect 8 20 48 5 (rgb 120 96 70)
+            , circle 18 20 5 (rgb 70 130 60)
+            , circle 30 24 5 (rgb 60 120 54)
+            , circle 42 19 5 (rgb 70 130 60)
+            , rect 46 10 4 10 (rgb 70 130 60)
+            , rect 14 26 4 10 (rgb 60 120 54)
+            ]
+
+        11 ->
+            -- Xolo: the slim hairless hound
+            [ rect 16 20 28 10 (rgb 120 108 104)
+            , circle 44 16 6 (rgb 120 108 104)
+            , rect 46 6 3 8 (rgb 120 108 104)
+            , rect 51 6 3 8 (rgb 120 108 104)
+            , rect 18 30 3 9 (rgb 100 90 88)
+            , rect 38 30 3 9 (rgb 100 90 88)
+            , circle 46 15 2 (rgb 250 200 90)
+            ]
+
+        12 ->
+            -- Guerreiro Jaguar: spotted headdress
+            [ circle 32 18 9 (rgb 200 150 100)
+            , rect 22 4 20 9 (rgb 235 190 80)
+            , circle 26 8 2 (rgb 60 40 20)
+            , circle 34 7 2 (rgb 60 40 20)
+            , rect 26 26 13 12 (rgb 180 70 50)
+            , rect 44 20 4 16 (rgb 150 120 80)
+            ]
+
+        13 ->
+            -- Múmia: bandaged sleeper
+            [ rect 24 6 18 32 (rgb 200 190 160)
+            , rect 24 12 18 3 (rgb 160 150 122)
+            , rect 24 20 18 3 (rgb 160 150 122)
+            , rect 24 28 18 3 (rgb 160 150 122)
+            , circle 30 10 2 (rgb 90 200 220)
+            ]
+
+        14 ->
+            -- Guerreira Águia: wings and beak
+            [ circle 32 16 8 (rgb 205 160 110)
+            , rect 24 6 16 6 (rgb 235 235 225)
+            , rect 38 10 8 4 (rgb 240 190 60)
+            , rect 12 18 14 5 (rgb 235 235 225)
+            , rect 38 18 14 5 (rgb 235 235 225)
+            , rect 28 26 9 12 (rgb 90 110 160)
+            ]
+
+        15 ->
+            -- Chupacabra: spined shadow with red eyes
+            [ rect 20 18 24 14 (rgb 62 66 60)
+            , circle 20 16 7 (rgb 62 66 60)
+            , rect 28 10 4 6 (rgb 62 66 60)
+            , rect 36 8 4 8 (rgb 62 66 60)
+            , rect 44 10 4 6 (rgb 62 66 60)
+            , circle 17 14 2 (rgb 250 70 60)
+            , circle 23 14 2 (rgb 250 70 60)
+            ]
+
+        16 ->
+            -- Nahual: half man, half jaguar
+            [ rect 20 8 12 28 (rgb 190 150 105)
+            , rect 32 8 12 28 (rgb 220 170 70)
+            , circle 36 14 2 (rgb 60 40 20)
+            , circle 40 22 2 (rgb 60 40 20)
+            , circle 26 14 2 (rgb 40 44 60)
+            , circle 52 8 6 (rgb 230 226 200)
+            ]
+
+        17 ->
+            -- Inti: the living sun
+            [ circle 32 20 11 (rgb 250 200 60)
+            , circle 32 20 8 (rgb 255 225 110)
+            , rect 30 2 4 8 (rgb 250 200 60)
+            , rect 30 32 4 8 (rgb 250 200 60)
+            , rect 12 18 8 4 (rgb 250 200 60)
+            , rect 44 18 8 4 (rgb 250 200 60)
+            , circle 29 18 2 (rgb 150 90 30)
+            , circle 36 18 2 (rgb 150 90 30)
+            ]
+
+        18 ->
+            -- Quetzalcóatl: the feathered serpent
+            [ circle 14 26 7 (rgb 60 160 110)
+            , circle 26 18 8 (rgb 66 175 118)
+            , circle 40 14 9 (rgb 72 190 126)
+            , circle 52 18 7 (rgb 66 175 118)
+            , rect 36 2 4 10 (rgb 230 80 70)
+            , rect 42 0 4 12 (rgb 240 130 60)
+            , circle 54 16 2 (rgb 20 30 24)
+            ]
+
+        19 ->
+            -- Lança de Obsidiana
+            [ rect 12 30 34 4 (rgb 140 100 66)
+            , rect 42 20 8 12 (rgb 34 30 40)
+            , rect 46 14 6 12 (rgb 34 30 40)
+            , rect 50 10 4 8 (rgb 50 46 60)
+            , circle 40 30 3 (rgb 200 170 110)
+            ]
+
+        20 ->
+            -- Fúria do Vulcão
+            [ rect 16 22 32 16 (rgb 90 78 76)
+            , rect 24 14 16 10 (rgb 105 92 88)
+            , rect 28 8 8 8 (rgb 240 110 40)
+            , circle 32 6 5 (rgb 250 160 50)
+            , circle 22 4 4 (rgb 120 110 112)
+            , circle 44 6 4 (rgb 120 110 112)
+            , rect 30 22 4 10 (rgb 245 130 45)
+            ]
+
+        21 ->
+            -- Encantado do Rio
+            [ rect 6 28 52 4 (rgb 60 120 160)
+            , rect 10 33 44 3 (rgb 50 105 145)
+            , circle 32 18 8 (rgb 150 190 200)
+            , rect 28 24 9 6 (rgb 150 190 200)
+            , circle 30 16 2 (rgb 30 60 80)
+            ]
+
+        22 ->
+            -- Boto: pink dolphin in a party hat
+            [ circle 28 24 10 (rgb 235 140 150)
+            , rect 36 18 14 8 (rgb 235 140 150)
+            , rect 48 14 6 6 (rgb 225 120 132)
+            , rect 18 8 18 4 (rgb 245 245 235)
+            , rect 22 2 10 7 (rgb 245 245 235)
+            , circle 25 21 2 (rgb 40 26 30)
+            ]
+
+        23 ->
+            -- Jacaré-Açu at the waterline
+            [ rect 6 30 52 4 (rgb 60 120 160)
+            , rect 12 22 36 8 (rgb 76 120 60)
+            , rect 44 24 16 6 (rgb 76 120 60)
+            , circle 20 20 3 (rgb 240 220 90)
+            , circle 30 20 3 (rgb 240 220 90)
+            , rect 46 26 2 3 (rgb 240 240 225)
+            , rect 52 26 2 3 (rgb 240 240 225)
+            ]
+
+        24 ->
+            -- Pirarucu: the red-scaled giant
+            [ circle 30 22 11 (rgb 150 120 110)
+            , rect 30 14 22 16 (rgb 150 120 110)
+            , rect 50 18 10 8 (rgb 200 80 70)
+            , circle 24 20 2 (rgb 30 24 24)
+            , circle 36 22 2 (rgb 200 80 70)
+            , circle 42 20 2 (rgb 200 80 70)
+            ]
+
+        25 ->
+            -- La Llorona: the veiled weeper
+            [ rect 24 10 16 28 (rgb 225 225 232)
+            , circle 32 10 8 (rgb 225 225 232)
+            , circle 29 11 2 (rgb 90 110 140)
+            , circle 35 11 2 (rgb 90 110 140)
+            , rect 28 18 2 6 (rgb 120 190 220)
+            , rect 34 18 2 6 (rgb 120 190 220)
+            ]
+
+        26 ->
+            -- Iara on her rock
+            [ rect 14 30 36 8 (rgb 105 95 90)
+            , circle 30 14 7 (rgb 205 160 120)
+            , rect 24 8 14 4 (rgb 40 90 60)
+            , rect 26 20 9 10 (rgb 205 160 120)
+            , rect 34 26 14 6 (rgb 60 170 160)
+            , rect 46 24 6 4 (rgb 60 170 160)
+            ]
+
+        27 ->
+            -- Minhocão bursting from the earth
+            [ rect 6 34 52 6 (rgb 100 74 50)
+            , circle 30 18 11 (rgb 140 96 70)
+            , circle 30 10 8 (rgb 150 105 76)
+            , rect 22 20 18 3 (rgb 110 76 56)
+            , circle 12 32 4 (rgb 120 88 60)
+            , circle 50 32 4 (rgb 120 88 60)
+            , circle 27 8 2 (rgb 30 22 18)
+            ]
+
+        28 ->
+            -- Iemanjá over the waves
+            [ rect 6 32 52 4 (rgb 60 120 170)
+            , rect 10 36 44 3 (rgb 50 105 150)
+            , circle 32 12 7 (rgb 190 150 120)
+            , rect 24 18 17 14 (rgb 120 170 220)
+            , rect 20 26 25 6 (rgb 235 240 245)
+            , circle 32 4 3 (rgb 250 240 180)
+            ]
+
+        29 ->
+            -- Canto da Iara: notes over water
+            [ rect 6 32 52 4 (rgb 60 120 160)
+            , circle 24 22 4 (rgb 240 235 220)
+            , rect 27 8 3 15 (rgb 240 235 220)
+            , circle 42 18 4 (rgb 240 235 220)
+            , rect 45 4 3 15 (rgb 240 235 220)
+            , rect 27 8 12 3 (rgb 240 235 220)
+            ]
+
+        30 ->
+            -- Maré Cheia: the curling wave
+            [ circle 26 22 13 (rgb 70 140 190)
+            , circle 30 18 9 (rgb 16 14 22)
+            , rect 6 32 52 6 (rgb 70 140 190)
+            , rect 38 28 18 4 (rgb 120 190 230)
+            , circle 52 8 5 (rgb 240 240 210)
+            ]
+
+        _ ->
+            [ rect 24 12 18 18 (rgb 90 90 100) ]
+
+
+-- ====================================================================
+-- PALETTE + SMALL HELPERS
+-- ====================================================================
+
+
+type alias Rgb =
+    { r : Int, g : Int, b : Int }
+
+
+type alias Pal =
+    { felt  : Rgb
+    , frame : Rgb
+    , trim  : Rgb
+    }
+
+
+deckPal : String -> Pal
+deckPal key =
+    case key of
+        "sol" ->
+            { felt = { r = 74, g = 44, b = 26 }
+            , frame = { r = 172, g = 120, b = 44 }
+            , trim = { r = 240, g = 180, b = 70 }
+            }
+
+        "aguas" ->
+            { felt = { r = 22, g = 46, b = 70 }
+            , frame = { r = 60, g = 110, b = 150 }
+            , trim = { r = 120, g = 200, b = 230 }
+            }
+
+        _ ->
+            { felt = { r = 26, g = 52, b = 36 }
+            , frame = { r = 62, g = 116, b = 74 }
+            , trim = { r = 140, g = 210, b = 120 }
+            }
+
+
+deckKeyOf : Int -> String
+deckKeyOf ix =
+    case ix of
+        1 -> "sol"
+        2 -> "aguas"
+        _ -> "floresta"
+
+
+toC : Rgb -> Color
+toC c =
+    rgb c.r c.g c.b
+
+
+shadeC : Rgb -> Int -> Color
+shadeC c pct =
+    rgb (c.r * pct // 100) (c.g * pct // 100) (c.b * pct // 100)
+
+
+-- Canvas text neither wraps nor clips: a long name would bleed over the
+-- card edges onto its neighbours. Shrink the font by name length so the
+-- whole name fits the card width (hand cards are 82 wide, slots 76 —
+-- the longest name, "Múmia da Cordilheira", is 20 chars and needs the
+-- smallest step).
+nameSize : Int -> String -> Int
+nameSize base nome =
+    let
+        n = String.length nome
+    in
+    if n <= 9 then
+        base
+
+    else if n <= 12 then
+        base - 1
+
+    else if n <= 15 then
+        base - 2
+
+    else
+        base - 3
+
+
+shortName : String -> String
+shortName nome =
+    case String.split "," nome of
+        first :: _ ->
+            first
+
+        [] ->
+            nome
+
+
+initialOf : String -> String
+initialOf nick =
+    case String.toList nick of
+        c :: _ ->
+            String.fromList [ c ]
+
+        [] ->
+            "?"
+
+
+imod2 : Int -> Int
+imod2 n =
+    Shared.imodP n 2
+
+
+rangeN : Int -> List Int
+rangeN n =
+    List.indexedMap (\i _ -> i) (List.repeat n 0)
+
+
+-- ====================================================================
+-- PAGE
+-- ====================================================================
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    let
+        needPoll =
+            case (model.dat, model.disp) of
+                (Just d, Just st) ->
+                    -- Desafio polls too: after the challenger's opening turn
+                    -- the next change is the rival ACCEPTING (then moving).
+                    (d.status == Ativa || d.status == Desafio)
+                        && st.winner == 0
+                        && (st.turnA /= d.souA || List.length model.queue > 0)
+
+                (Just d, Nothing) ->
+                    d.status == Ativa || d.status == Desafio
+
+                _ ->
+                    True
+    in
+    Sub.batch
+        [ Time.every (Time.millis 33) Tick
+        , if needPoll then
+            Time.every (Time.seconds 3) Poll
+
+          else
+            Sub.none
+        ]
+
+
+page : Page
+page =
+    Page.dynamicProtected
+        { path   = Frontend.Routes.partida
+        , title  = "Partida"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ model -> subscriptions model
+        }

@@ -1,0 +1,264 @@
+module Frontend.Result exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header
+    , vstack, text, subtitle, picker, button, errorText, disabled, centered
+    )
+
+
+-- The duel detail / result screen. A finished duel shows the score,
+-- the outcome, the head-to-head vs this rival, and a per-question
+-- breakdown; anything unfinished shows just a status line (so the
+-- opponent can never peek at the challenger's score before playing).
+-- If the caller is the challenger seeing a freshly-finished duel, we
+-- fire markSeen to clear its "novo" badge back on the lobby.
+
+
+-- Rematch UI carried alongside a finished duel: the theme roster for
+-- the picker, the currently-chosen theme (defaults to the theme just
+-- played), and whether a createChallenge is in flight.
+type alias RematchState =
+    { themes : Maybe (List Shared.ThemeCard)
+    , theme  : String
+    , busy   : Bool
+    }
+
+
+type Model
+    = Loading
+    | Finished Shared.DuelDetail RematchState
+    | Waiting { opponentNick : String, theme : String, waitingOn : String }
+    | Denied
+    | Failed String
+
+
+type Msg
+    = Fetched (Result Service.Error Shared.DetailResult)
+    | Seen (Result Service.Error ())
+    | ThemesFetched (Result Service.Error (List Shared.ThemeCard))
+    | ThemeChosen String
+    | Rematch
+    | Rematched (Result Service.Error Shared.CreateResult)
+    | GoHome
+
+
+init : Shared.User -> { id : Int } -> (Model, Cmd Msg)
+init _ params =
+    ( Loading, Service.call Shared.duelDetail { id = params.id } Fetched )
+
+
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Cmd Msg)
+update _ params msg model =
+    case msg of
+        Fetched (Ok (Shared.FinishedDetail d)) ->
+            -- Load the theme roster too, so the rematch picker can offer
+            -- a fresh topic; default it to the theme just played.
+            ( Finished d { themes = Nothing, theme = d.theme, busy = False }
+            , Cmd.batch
+                [ if d.iAmChallenger then
+                    Service.call Shared.markSeen { id = params.id } Seen
+
+                  else
+                    Cmd.none
+                , Service.call Shared.listThemes () ThemesFetched
+                ]
+            )
+
+        Fetched (Ok (Shared.UnfinishedDetail u)) ->
+            ( Waiting u, Cmd.none )
+
+        Fetched (Ok Shared.DetailNotYours) ->
+            ( Denied, Cmd.none )
+
+        Fetched (Err why) ->
+            ( Failed (Service.errorToString why), Cmd.none )
+
+        Seen _ ->
+            ( model, Cmd.none )
+
+        ThemesFetched (Ok themes) ->
+            ( mapRematch model (\r -> { r | themes = Just themes }), Cmd.none )
+
+        ThemesFetched (Err _) ->
+            ( model, Cmd.none )
+
+        ThemeChosen theme ->
+            ( mapRematch model (\r -> { r | theme = theme }), Cmd.none )
+
+        Rematch ->
+            case model of
+                Finished d r ->
+                    ( Finished d { r | busy = True }
+                    , Service.call Shared.createChallenge
+                        { opponentNick = d.opponentNick, theme = r.theme }
+                        Rematched
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        Rematched (Ok (Shared.DuelStarted id)) ->
+            ( model, Nav.replaceTo Frontend.Routes.quiz { id = id } )
+
+        Rematched _ ->
+            -- Any non-start outcome or transport error: drop the busy
+            -- flag so the button is tappable again.
+            ( mapRematch model (\r -> { r | busy = False }), Cmd.none )
+
+        GoHome ->
+            ( model, Nav.replaceTo Frontend.Routes.home {} )
+
+
+-- Apply f to the rematch state of a finished duel; a no-op in any
+-- other state.
+mapRematch : Model -> (RematchState -> RematchState) -> Model
+mapRematch model f =
+    case model of
+        Finished d r ->
+            Finished d (f r)
+
+        _ ->
+            model
+
+
+view : Shared.User -> { id : Int } -> Model -> View Msg
+view _ _ model =
+    navigationStack [ navigationTitle "Resultado" ]
+        [ case model of
+            Loading ->
+                centered (text [] "Carregando…")
+
+            Denied ->
+                centered (text [] "Este duelo não está disponível.")
+
+            Failed why ->
+                centered (errorText why)
+
+            Waiting u ->
+                waitingView u
+
+            Finished d rematch ->
+                finishedView d rematch
+        ]
+
+
+waitingView : { opponentNick : String, theme : String, waitingOn : String } -> View Msg
+waitingView u =
+    list []
+        [ section [ header (Shared.themeLabel u.theme) ]
+            [ vstack []
+                [ text [] ("Duelo contra " ++ u.opponentNick)
+                , subtitle u.waitingOn
+                ]
+            ]
+        , section []
+            [ button [] GoHome "Voltar ao início" ]
+        ]
+
+
+finishedView : Shared.DuelDetail -> RematchState -> View Msg
+finishedView d rematch =
+    list []
+        [ section [ header (Shared.outcomeLabel d.iAmChallenger d.outcome) ]
+            [ vstack []
+                [ text [] (Shared.themeLabel d.theme ++ ", contra " ++ d.opponentNick)
+                , subtitle (scoreLine d)
+                , subtitle (timeLine d)
+                , subtitle (h2hLine d)
+                ]
+            ]
+        , section [ header "Como cada um respondeu" ]
+            (List.indexedMap (\idx rev -> reviewRow d.opponentNick idx rev) d.reviews)
+        , rematchSection rematch
+        , section []
+            [ button [] GoHome "Voltar ao início" ]
+        ]
+
+
+-- Rematch: pick a topic (defaults to the one just played) and challenge
+-- the same rival again. The rematcher becomes the new challenger.
+rematchSection : RematchState -> View Msg
+rematchSection rematch =
+    case rematch.themes of
+        Nothing ->
+            section [ header "Revanche" ] [ text [] "Carregando temas…" ]
+
+        Just themes ->
+            section [ header "Revanche" ]
+                [ picker []
+                    rematch.theme
+                    (List.map (\t -> t.name) themes)
+                    Shared.themeLabel
+                    ThemeChosen
+                , button [ disabled rematch.busy ] Rematch
+                    (if rematch.busy then "Criando…" else "Desafiar de novo")
+                ]
+
+
+scoreLine : Shared.DuelDetail -> String
+scoreLine d =
+    "Você " ++ String.fromInt d.myScore ++ " × " ++ String.fromInt d.theirScore ++ " " ++ d.opponentNick
+
+
+timeLine : Shared.DuelDetail -> String
+timeLine d =
+    "Tempo — você " ++ Shared.fmtSeconds d.myTimeMs ++ ", " ++ d.opponentNick ++ " " ++ Shared.fmtSeconds d.theirTimeMs
+
+
+h2hLine : Shared.DuelDetail -> String
+h2hLine d =
+    "Confronto direto: "
+        ++ String.fromInt d.h2hMine
+        ++ " V, "
+        ++ String.fromInt d.h2hTheirs
+        ++ " D, "
+        ++ String.fromInt d.h2hDraws
+        ++ " E"
+
+
+reviewRow : String -> Int -> Shared.Review -> View Msg
+reviewRow rivalNick idx r =
+    vstack []
+        [ text [] (String.fromInt (idx + 1) ++ ". " ++ r.text)
+        , subtitle ("Certa: " ++ letterFor r.correctIndex)
+        , subtitle (answerLine "Você" r.myChosen r.correctIndex r.myElapsedMs)
+        , subtitle (answerLine rivalNick r.theirChosen r.correctIndex r.theirElapsedMs)
+        ]
+
+
+answerLine : String -> Int -> Int -> Int -> String
+answerLine who chosen correctIndex ms =
+    who
+        ++ ": "
+        ++ letterFor chosen
+        ++ (if chosen == correctIndex then " ✓" else " ✗")
+        ++ " ("
+        ++ Shared.fmtSeconds ms
+        ++ ")"
+
+
+-- Option index → letter; -1 (a timeout) renders as a dash.
+letterFor : Int -> String
+letterFor i =
+    case i of
+        0 -> "A"
+        1 -> "B"
+        2 -> "C"
+        3 -> "D"
+        _ -> "—"
+
+
+page : Page
+page =
+    Page.dynamicProtected
+        { path   = Frontend.Routes.result
+        , title  = "Resultado"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ _ -> Sub.none
+        }

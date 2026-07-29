@@ -30,6 +30,24 @@
       "runtimeExecutable": "go",
       "runtimeArgs": ["run", "./cmd/mar", "dev", "/tmp/bigapp-debug"],
       "port": 3456
+    },
+    {
+      "name": "mini-soccer",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/mar", "dev", "examples/mini-soccer"],
+      "port": 3021
+    },
+    {
+      "name": "iron-meridian",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/mar", "dev", "examples/iron-meridian"],
+      "port": 3034
+    },
+    {
+      "name": "pulse-runner",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/mar", "dev", "examples/pulse-runner"],
+      "port": 3027
     }
   ]
 }

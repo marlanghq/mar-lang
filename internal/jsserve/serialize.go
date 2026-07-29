@@ -5,13 +5,21 @@ package jsserve
 
 import (
 	"fmt"
+	"strings"
 
 	"mar/internal/ast"
 )
 
-// SerializeModule converts a parsed module to a JSON-friendly map suitable
-// for the browser runtime.
+// SerializeModule turns a checked module into the wire form the JS and Swift
+// runtimes read. It panics on an unelaborated tree rather than shipping one:
+// this is a build-time path with no error channel to a user, and a silently
+// unelaborated bundle would put the disagreement in the browser, the hardest
+// place to trace it back from.
 func SerializeModule(m *ast.Module) map[string]any {
+	if m != nil && !m.IsElaborated() {
+		panic("serialize module " + strings.Join(m.Name, ".") +
+			": the typechecker has not elaborated this tree")
+	}
 	decls := make([]any, 0, len(m.Decls))
 	for _, d := range m.Decls {
 		if s := serializeDecl(d); s != nil {
@@ -72,12 +80,32 @@ func serializeDecl(d ast.Decl) any {
 	return nil
 }
 
+// withImpl attaches the implementation the typechecker chose for a reference,
+// and omits the key entirely when it had nothing to say — which is all but a
+// handful of nodes, so the wire stays the size it was.
+func withImpl(m map[string]any, impl string) map[string]any {
+	if impl != "" {
+		m["impl"] = impl
+	}
+	return m
+}
+
 func serializeExpr(e ast.Expr) any {
 	switch n := e.(type) {
 	case *ast.EInt:
+		// An elaborated literal ships as the Decimal it became, so the JS
+		// and Swift runtimes need no knowledge of the flag: they already
+		// know how to read an EDecimal.
+		if n.AsDecimal {
+			return map[string]any{"kind": "EDecimal", "coef": fmt.Sprintf("%d", n.Value), "scale": 0}
+		}
 		return map[string]any{"kind": "EInt", "value": n.Value}
-	case *ast.EFloat:
-		return map[string]any{"kind": "EFloat", "value": n.Value}
+	case *ast.EDecimal:
+		// Coefficient ships as a STRING: a 34-digit coefficient
+		// overflows JSON number parsers (JS Number tops out at 2^53),
+		// so both clients rebuild it textually (BigInt on the web, the
+		// 128-bit pair on iOS).
+		return map[string]any{"kind": "EDecimal", "coef": n.Coef, "scale": n.Scale}
 	case *ast.EString:
 		return map[string]any{"kind": "EString", "value": n.Value}
 	case *ast.EChar:
@@ -88,11 +116,11 @@ func serializeExpr(e ast.Expr) any {
 	case *ast.EUnit:
 		return map[string]any{"kind": "EUnit"}
 	case *ast.EVar:
-		return map[string]any{"kind": "EVar", "name": n.Name}
+		return withImpl(map[string]any{"kind": "EVar", "name": n.Name}, n.Impl)
 	case *ast.ECtor:
 		return map[string]any{"kind": "ECtor", "module": n.Module, "name": n.Name}
 	case *ast.EQualified:
-		return map[string]any{"kind": "EQualified", "module": n.Module, "name": n.Name}
+		return withImpl(map[string]any{"kind": "EQualified", "module": n.Module, "name": n.Name}, n.Impl)
 	case *ast.ENegate:
 		return map[string]any{"kind": "ENegate", "inner": serializeExpr(n.Inner)}
 	case *ast.EApp:

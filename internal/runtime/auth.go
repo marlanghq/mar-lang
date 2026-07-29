@@ -199,7 +199,7 @@ func makeAuthConfig(args []Value) (Value, error) {
 	// expects Duration here, so this is just the runtime guard.
 	durationSecs := int64(0)
 	if d, ok := rec.Fields["sessionDuration"].(VDuration); ok {
-		durationSecs = d.Seconds
+		durationSecs = int64(d.Seconds)
 	}
 	// `role` is optional; only required when the app uses
 	// Auth.requireRole. We don't validate the field's type here — the
@@ -262,6 +262,13 @@ func makeAuthRequireRole(args []Value) (Value, error) {
 		return nil, fmt.Errorf("Auth.requireRole: expected ExposedService (got %T)", args[1])
 	}
 	exposed.Service.RequireRole = args[0]
+	// A role gate is meaningless without an authenticated user, so an
+	// authorization decorator always implies authentication. Without this,
+	// `Auth.requireRole role (Service.implement c h)` (i.e. decorating a raw
+	// service instead of an `Auth.protect`ed one) leaves RequiresUser=false,
+	// the dispatcher skips every gate, and the "protected" service serves
+	// public. See docs/security-audit-2026-07-15.md #1.
+	exposed.Service.RequiresUser = true
 	return exposed, nil
 }
 
@@ -275,6 +282,8 @@ func makeAuthAuthorize(args []Value) (Value, error) {
 	}
 	exposed.Service.LoadResource = args[0]
 	exposed.Service.Policy = args[1]
+	// A policy gate implies an authenticated user (see #1 above).
+	exposed.Service.RequiresUser = true
 	return exposed, nil
 }
 
@@ -309,6 +318,8 @@ func makeAuthRequireOwner(args []Value) (Value, error) {
 	})
 	exposed.Service.LoadResource = loader
 	exposed.Service.Policy = policy
+	// An ownership gate implies an authenticated user (see #1 above).
+	exposed.Service.RequiresUser = true
 	return exposed, nil
 }
 

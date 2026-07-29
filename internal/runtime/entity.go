@@ -126,6 +126,11 @@ type EntityField struct {
 	// emits a CHECK(name IN ('Ctor1', 'Ctor2', ...)) so the database
 	// also enforces the closed set.
 	AcceptedCtors []string
+
+	// DecimalScale is the fixed scale for Entity.decimal columns
+	// (SQLType "DECIMAL"); storage is an INTEGER coefficient at this
+	// scale. Zero for every other column type.
+	DecimalScale int
 }
 
 func (VEntity) isValue() {}
@@ -142,6 +147,12 @@ type VColumn struct {
 	NotNull       bool
 	Serial        bool
 	AcceptedCtors []string // populated by Entity.enum; nil otherwise
+
+	// DecimalScale is the fixed scale for Entity.decimal columns
+	// (SQLType "DECIMAL"). Values are stored as INTEGER coefficients
+	// at this scale — scale 2 means the column literally stores
+	// cents. Meaningless for other column types.
+	DecimalScale int
 }
 
 func (VColumn) isValue() {}
@@ -186,6 +197,26 @@ func entityBuiltins() map[string]Value {
 		// based on this column type, so handlers see Time, never
 		// raw integers.
 		"entityTimestamp": nativeFn(1, makeColumnConstructor("TIMESTAMP")),
+
+		// Entity.decimal <scale> <constraint> — fixed-scale exact
+		// decimal, stored as an INTEGER coefficient at the column's
+		// scale (scale 2 → cents). Writes finer than the scale abort
+		// instead of silently rounding; coarser writes rescale
+		// exactly. Reads rehydrate to Decimal at the column scale.
+		"entityDecimal": nativeFn(2, func(args []Value) (Value, error) {
+			n, ok := args[0].(VInt)
+			if !ok {
+				return nil, fmt.Errorf("Entity.decimal: expected an Int scale")
+			}
+			if n.V < 0 || n.V > int64(maxDecimalDigits) {
+				return nil, fmt.Errorf("Entity.decimal: scale %d out of range (0..%d)", n.V, maxDecimalDigits)
+			}
+			c, ok := args[1].(VConstraint)
+			if !ok {
+				return nil, fmt.Errorf("Entity.decimal: expected Constraint")
+			}
+			return VColumn{SQLType: "DECIMAL", NotNull: c.NotNull, DecimalScale: int(n.V)}, nil
+		}),
 
 		// Entity.enum [Ctor1, Ctor2, ...] notNull
 		// Stored as TEXT; round-trips via the ctor's tag. Validates
@@ -274,6 +305,7 @@ func entityDefineImpl(args []Value) (Value, error) {
 			NotNull:       col.NotNull,
 			Serial:        col.Serial,
 			AcceptedCtors: col.AcceptedCtors,
+			DecimalScale:  col.DecimalScale,
 		})
 	}
 
@@ -480,11 +512,11 @@ func buildCreateTableSQL(e VEntity) string {
 		if i > 0 {
 			sql += ", "
 		}
-		// TIMESTAMP is conceptual — store as INTEGER (Unix ms) so
-		// SQLite can compare/sort and integers round-trip without
-		// timezone or string-format mishaps.
+		// TIMESTAMP and DECIMAL are conceptual — both store as
+		// INTEGER (Unix ms / scaled coefficient) so SQLite can
+		// compare/sort numerically and values round-trip exactly.
 		sqlType := f.SQLType
-		if sqlType == "TIMESTAMP" {
+		if sqlType == "TIMESTAMP" || sqlType == "DECIMAL" {
 			sqlType = "INTEGER"
 		}
 		sql += f.Name + " " + sqlType

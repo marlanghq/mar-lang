@@ -62,7 +62,7 @@ view _ =
                 , text [] "Multiple text leaves stack vertically inside a section, each on its own line."
                 ]
             , section [ header "errorText" ]
-                [ errorText "Couldn't reach the server."
+                [ errorText "This is an error message."
                 , text [] "Red + semi-bold via the `errorText` leaf. Use for validation messages, failed network responses, anything destructive the user needs to see at a glance."
                 ]
             , section

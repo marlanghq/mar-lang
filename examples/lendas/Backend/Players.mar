@@ -1,0 +1,202 @@
+module Backend.Players exposing
+    ( players
+    , services
+    , playerForUser
+    , nickForUser
+    , findByNick
+    , bumpRecord
+    , botId
+    , botNick
+    )
+
+
+import Shared
+
+
+-- The solo-play opponent is a virtual player: a reserved id that no real
+-- user can own (auth user ids are serial from 1), and a reserved nick no
+-- human can register. It has no `players` row — findByNick/nickForUser
+-- special-case it, and bumpRecord already no-ops a missing player, so a
+-- bot match still credits the HUMAN's W/L and just skips the bot's.
+botId : Int
+botId =
+    0
+
+
+botNick : String
+botNick =
+    "bot"
+
+
+-- Players — a user's game identity (nick) plus their public W/L
+-- record. One row per user, created at the nickname gate. The record
+-- counters are bumped exactly once, when a match transitions to
+-- Encerrada (see Backend.Games), so the lobby reads columns instead of
+-- replaying every finished game.
+players : Entity Shared.Player
+players =
+    Entity.define
+        { name = "players"
+        , columns =
+            { id     = Entity.serial
+            , userId = Entity.int  Entity.notNull
+            , nick   = Entity.text Entity.notNull
+            , wins   = Entity.int  Entity.notNull
+            , losses = Entity.int  Entity.notNull
+            }
+        -- The handlers also check these (case-insensitively for the
+        -- nick); the indexes are the backstop against a race.
+        , uniques = [ [ "userId" ], [ "nick" ] ]
+        }
+
+
+-- ====================================================================
+-- HELPERS (shared with Backend.Games)
+-- ====================================================================
+
+
+playerForUser : Int -> Task (Maybe Shared.Player)
+playerForUser userId =
+    Repo.findBy players { userId = userId }
+        |> Task.map List.head
+
+
+nickForUser : Int -> Task String
+nickForUser userId =
+    if userId == botId then
+        Task.succeed botNick
+
+    else
+        playerForUser userId
+            |> Task.map
+                (\maybeP ->
+                    case maybeP of
+                        Just p  -> p.nick
+                        Nothing -> "misterioso"
+                )
+
+
+findByNick : String -> Task (Maybe Shared.Player)
+findByNick nick =
+    let
+        target = String.toLower (String.trim nick)
+    in
+    if target == botNick then
+        -- the virtual bot: a synthetic player with the reserved id
+        Task.succeed (Just { id = 0, userId = botId, nick = botNick, wins = 0, losses = 0 })
+
+    else
+        Repo.all players
+            |> Task.map
+                (\all ->
+                    List.head (List.filter (\p -> String.toLower p.nick == target) all)
+                )
+
+
+-- Credit a finished match: +1 win to one user, +1 loss to the other.
+bumpRecord : Int -> Int -> Task ()
+bumpRecord winnerUserId loserUserId =
+    playerForUser winnerUserId
+        |> Task.andThen
+            (\maybeW ->
+                case maybeW of
+                    Just w ->
+                        Repo.update players w.id { wins = w.wins + 1 }
+                            |> Task.map (\_ -> ())
+
+                    Nothing ->
+                        Task.succeed ()
+            )
+        |> Task.andThen
+            (\_ ->
+                playerForUser loserUserId
+                    |> Task.andThen
+                        (\maybeL ->
+                            case maybeL of
+                                Just l ->
+                                    Repo.update players l.id { losses = l.losses + 1 }
+                                        |> Task.map (\_ -> ())
+
+                                Nothing ->
+                                    Task.succeed ()
+                        )
+            )
+
+
+-- ====================================================================
+-- me  (GET /me)
+-- ====================================================================
+
+
+meImpl : () -> Shared.User -> Task Shared.MeResult
+meImpl _ user =
+    playerForUser user.id
+        |> Task.map
+            (\maybeP ->
+                case maybeP of
+                    Just p  -> Shared.TemJogador p
+                    Nothing -> Shared.SemJogador
+            )
+
+
+-- ====================================================================
+-- criarJogador  (POST /jogadores)
+-- ====================================================================
+
+
+criarImpl : { nick : String } -> Shared.User -> Task Shared.CriarResult
+criarImpl input user =
+    case Shared.nickProblem input.nick of
+        Just _ ->
+            Task.succeed Shared.ApelidoInvalido
+
+        Nothing ->
+            if String.toLower (String.trim input.nick) == botNick then
+                -- reserved for the solo-play opponent
+                Task.succeed Shared.ApelidoEmUso
+
+            else
+                findByNick input.nick
+                |> Task.andThen
+                    (\existing ->
+                        case existing of
+                            Just _ ->
+                                Task.succeed Shared.ApelidoEmUso
+
+                            Nothing ->
+                                Repo.create players
+                                    { userId = user.id
+                                    , nick   = String.trim input.nick
+                                    , wins   = 0
+                                    , losses = 0
+                                    }
+                                    |> Task.map (\p -> Shared.JogadorCriado p)
+                    )
+
+
+-- ====================================================================
+-- listarJogadores  (GET /jogadores) — everyone but the caller, so the
+-- challenge screen can offer opponents.
+-- ====================================================================
+
+
+listarImpl : () -> Shared.User -> Task (List Shared.JogadorCard)
+listarImpl _ user =
+    Repo.all players
+        |> Task.map
+            (\all ->
+                List.filter (\p -> p.userId /= user.id) all
+                    |> List.map (\p -> { nick = p.nick, wins = p.wins, losses = p.losses })
+            )
+
+
+-- ====================================================================
+-- SERVICE MANIFEST
+-- ====================================================================
+
+
+services =
+    [ Auth.protect Shared.me              meImpl
+    , Auth.protect Shared.criarJogador    criarImpl
+    , Auth.protect Shared.listarJogadores listarImpl
+    ]

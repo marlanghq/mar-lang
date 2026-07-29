@@ -25,8 +25,8 @@ foo = 42
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := res.ValueTypes["foo"].String(); got != "Int" {
-		t.Fatalf("want Int, got %s", got)
+	if got := Pretty(res.ValueTypes["foo"]); got != "number" {
+		t.Fatalf("want number, got %s", got)
 	}
 }
 
@@ -43,7 +43,7 @@ flag = True
 	if got := res.ValueTypes["greeting"].String(); got != "String" {
 		t.Fatalf("greeting: %s", got)
 	}
-	if got := res.ValueTypes["count"].String(); got != "Int" {
+	if got := Pretty(res.ValueTypes["count"]); got != "number" {
 		t.Fatalf("count: %s", got)
 	}
 	if got := res.ValueTypes["flag"].String(); got != "Bool" {
@@ -93,7 +93,7 @@ fooStr = Box "x"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := res.ValueTypes["fooInt"].String(); got != "Box Int" {
+	if got := Pretty(res.ValueTypes["fooInt"]); got != "Box number" {
 		t.Fatalf("fooInt: %s", got)
 	}
 	if got := res.ValueTypes["fooStr"].String(); got != "Box String" {
@@ -138,8 +138,10 @@ add x y = x + y
 		t.Fatal(err)
 	}
 	got := res.ValueTypes["add"].String()
-	if got != "Int -> Int -> Int" && got != "Int -> (Int -> Int)" {
-		t.Fatalf("add: want Int -> Int -> Int, got %s", got)
+	// `+` is number-constrained (Int | Decimal), so an unannotated add
+	// generalizes over number instead of pinning to Int.
+	if !strings.Contains(got, "number") {
+		t.Fatalf("add: want a number-constrained scheme, got %s", got)
 	}
 }
 
@@ -152,9 +154,9 @@ fact n =
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := res.ValueTypes["fact"].String()
-	if got != "Int -> Int" {
-		t.Fatalf("fact: want Int -> Int, got %s", got)
+	got := Pretty(res.ValueTypes["fact"])
+	if got != "number -> number" {
+		t.Fatalf("fact: want number -> number, got %s", got)
 	}
 }
 
@@ -167,10 +169,10 @@ odd n = if n == 0 then False else even (n - 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := res.ValueTypes["even"].String(); got != "Int -> Bool" {
+	if got := Pretty(res.ValueTypes["even"]); got != "number -> Bool" {
 		t.Fatalf("even: %s", got)
 	}
-	if got := res.ValueTypes["odd"].String(); got != "Int -> Bool" {
+	if got := Pretty(res.ValueTypes["odd"]); got != "number -> Bool" {
 		t.Fatalf("odd: %s", got)
 	}
 }
@@ -203,7 +205,7 @@ toInt c =
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := res.ValueTypes["toInt"].String(); got != "Color -> Int" {
+	if got := Pretty(res.ValueTypes["toInt"]); got != "Color -> number" {
 		t.Fatalf("toInt: %s", got)
 	}
 }
@@ -322,7 +324,7 @@ xs = List.take 3 [1, 2, 3, 4, 5]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := res.ValueTypes["xs"].String(); got != "List Int" {
+	if got := Pretty(res.ValueTypes["xs"]); got != "List number" {
 		t.Fatalf("xs: %s", got)
 	}
 }
@@ -361,8 +363,8 @@ split = List.partition (\n -> n > 2) [1, 2, 3, 4]
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := res.ValueTypes["split"].String()
-	if !strings.Contains(got, "List Int") {
+	got := Pretty(res.ValueTypes["split"])
+	if !strings.Contains(got, "List number") {
 		t.Fatalf("split: %s", got)
 	}
 }
@@ -391,10 +393,10 @@ sorted = List.sortWith desc [3, 1, 4, 1, 5, 9, 2, 6]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := res.ValueTypes["sorted"].String(); got != "List Int" {
+	if got := Pretty(res.ValueTypes["sorted"]); got != "List number" {
 		t.Fatalf("sorted: %s", got)
 	}
-	if got := res.ValueTypes["desc"].String(); got != "Int -> Int -> Order" {
+	if got := Pretty(res.ValueTypes["desc"]); got != "number -> number -> Order" {
 		t.Fatalf("desc: %s", got)
 	}
 }
@@ -426,10 +428,10 @@ ks = Dict.keys prices
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := res.ValueTypes["prices"].String(); got != "Dict String Int" {
+	if got := Pretty(res.ValueTypes["prices"]); got != "Dict String number" {
 		t.Fatalf("prices: %s", got)
 	}
-	if got := res.ValueTypes["n"].String(); got != "Maybe Int" {
+	if got := Pretty(res.ValueTypes["n"]); got != "Maybe number" {
 		t.Fatalf("n: %s", got)
 	}
 	if got := res.ValueTypes["size"].String(); got != "Int" {
@@ -450,10 +452,10 @@ total = Dict.foldl (\k v acc -> acc + v) 0 counts
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := res.ValueTypes["doubled"].String(); got != "Dict String Int" {
+	if got := Pretty(res.ValueTypes["doubled"]); got != "Dict String number" {
 		t.Fatalf("doubled: %s", got)
 	}
-	if got := res.ValueTypes["total"].String(); got != "Int" {
+	if got := Pretty(res.ValueTypes["total"]); got != "number" {
 		t.Fatalf("total: %s", got)
 	}
 }
@@ -469,7 +471,7 @@ both = Set.union s (Set.singleton 4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := res.ValueTypes["s"].String(); got != "Set Int" {
+	if got := Pretty(res.ValueTypes["s"]); got != "Set number" {
 		t.Fatalf("s: %s", got)
 	}
 	if got := res.ValueTypes["yes"].String(); got != "Bool" {
@@ -478,7 +480,7 @@ both = Set.union s (Set.singleton 4)
 	if got := res.ValueTypes["size"].String(); got != "Int" {
 		t.Fatalf("size: %s", got)
 	}
-	if got := res.ValueTypes["both"].String(); got != "Set Int" {
+	if got := Pretty(res.ValueTypes["both"]); got != "Set number" {
 		t.Fatalf("both: %s", got)
 	}
 }
@@ -550,11 +552,11 @@ broken = Set.fromList [{ id = 1 }, { id = 2 }]
 }
 
 func TestCheckDictAcceptsComparableKeys(t *testing.T) {
-	// Sanity: Int, Float, String, Char keys all still pass through.
+	// Sanity: Int, String, Char keys all still pass through.
 	src := `module M exposing (..)
 byInt = Dict.fromList [(1, "a"), (2, "b")]
 byString = Dict.fromList [("a", 1), ("b", 2)]
-byFloat = Dict.fromList [(1.0, "a"), (2.0, "b")]
+byChar = Dict.fromList [('a', 1), ('b', 2)]
 `
 	_, err := checkSource(t, src)
 	if err != nil {
@@ -564,14 +566,13 @@ byFloat = Dict.fromList [(1.0, "a"), (2.0, "b")]
 
 // --- Ordering operators are Comparable-only ---
 //
-// `<`, `>`, `<=`, `>=` accept only Int / Float / String / Char.
+// `<`, `>`, `<=`, `>=` accept only Int / String / Char.
 // Equality (`==`, `/=`) stays polymorphic because it's structural.
 // These tests document the constraint and guard against regression.
 
 func TestCheckOrderingAcceptsComparable(t *testing.T) {
 	src := `module M exposing (..)
 intLt = 1 < 2
-floatLt = 3.14 < 5.0
 strLt = "abc" < "abd"
 charLt = 'a' < 'z'
 combinedGte = "x" >= "y"
@@ -778,8 +779,9 @@ combine p =
 		t.Fatal(err)
 	}
 	got := res.ValueTypes["combine"].String()
-	// All three fields should be inferred as Int (since +).
-	for _, fld := range []string{"a : Int", "b : Int", "c : Int"} {
+	// All three fields flow through `+`, so they share ONE
+	// number-constrained variable (Int | Decimal).
+	for _, fld := range []string{"a : number", "b : number", "c : number"} {
 		if !strings.Contains(got, fld) {
 			t.Errorf("combine: missing %q in type %s", fld, got)
 		}
@@ -956,7 +958,11 @@ describe o =
         Shared.Created name -> name
 `)
 	_, err = CheckModuleWith(main, env, nil, sharedRes.CustomTypes)
-	if err == nil || !strings.Contains(err.Error(), "missing pattern for Rejected") {
+	// The message names the value nobody matched. It used to list the missing
+	// constructor; the usefulness algorithm builds a witness instead, which
+	// says the same thing for a nullary constructor and much more for a
+	// nested one (`Just _`, `x :: _ :: _`).
+	if err == nil || !strings.Contains(err.Error(), "no branch matches Rejected") {
 		t.Fatalf("qualified patterns must still participate in exhaustiveness, got: %v", err)
 	}
 }

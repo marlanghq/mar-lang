@@ -1,12 +1,9 @@
-// `mar cloudflare-pages` subcommands.
-//
-// Cloudflare Pages is the static-host counterpart to `mar fly deploy`:
-// where Fly hosts an App.fullstack VM with SQLite + auth + backend,
-// CF Pages hosts an App.frontend bundle on a global CDN. The two are
-// complementary, not interchangeable — a single Mar project can
-// declare both deploy.fly and deploy.cloudflare-pages blocks, and
-// the operator picks which command to run based on the topology
-// they want to ship.
+// Cloudflare Pages deploy — the flow behind `mar deploy` for an
+// App.frontend project (static bundle → global CDN). The Fly
+// counterpart (App.fullstack: VM + SQLite + auth) is in fly_deploy.go;
+// `mar deploy` routes to whichever deploy block the project declares
+// (see deploy.go). This file holds the manifest resolver + the
+// validation/error helpers the deploy flow calls.
 //
 // Why a native Go implementation (vs. shelling out to wrangler):
 // CF's Direct Upload API is documented, stable, and HTTP-only.
@@ -15,10 +12,6 @@
 // binary, no toolchain" promise. The native implementation lives
 // entirely in cmd/mar/cloudflarepages_api.go and cmd/mar/
 // cloudflarepages_deploy.go.
-//
-// Phase 1 (this file) covers just `deploy`. Follow-on commands —
-// `preview`, `secrets`, `destroy`, `logs`, `list`, `rollback` —
-// would mirror their Fly counterparts when needed.
 
 package main
 
@@ -32,73 +25,6 @@ import (
 	"mar/internal/scaffold"
 )
 
-// runCloudflarePages dispatches `mar cloudflare-pages <sub> [path]`.
-// Mirrors runFly's shape. The hyphen in the top-level command name
-// is deliberate — see docs/cli-surface-proposal.md (and the design
-// discussion that led to this naming): "cloudflare" alone is
-// ambiguous (Cloudflare has many products), "cf" abbreviates too
-// aggressively, and `cloudflare-pages` reads as one identifier for
-// one product.
-func runCloudflarePages(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, cloudflarePagesUsage())
-		fmt.Fprintln(os.Stderr)
-		return 2
-	}
-	sub := args[0]
-	// Strip --no-open from positional args before path parsing so
-	// the flag can appear before or after the path (matches the
-	// shape `mar fly deploy` already established).
-	noOpen, subArgs := extractNoOpenFlag(args[1:])
-	path := "."
-	if len(subArgs) >= 1 {
-		path = subArgs[0]
-	}
-	switch sub {
-	case "deploy":
-		return runCloudflarePagesDeploy(path, noOpen)
-	default:
-		fprintError("mar cloudflare-pages: unknown subcommand %q", sub)
-		fmt.Fprintln(os.Stderr, cloudflarePagesUsage())
-		fmt.Fprintln(os.Stderr)
-		return 2
-	}
-}
-
-// cloudflarePagesUsage returns the help text for `mar cloudflare-pages`.
-// Same palette as flyUsage (green binary, bold subcommands, magenta
-// paths/keys, cyan URLs).
-func cloudflarePagesUsage() string {
-	bin := colorGreen("mar")
-	name := func(s string) string { return colorBold(s) }
-	pth := func(s string) string { return colorMagenta(s) }
-	url := func(s string) string { return colorCyan(s) }
-	hdr := func(s string) string { return colorBold(s) }
-	run := func(rest string) string { return bin + " " + name(rest) }
-
-	return "Usage: " + run("cloudflare-pages") + " " + name("<command> [path]") + "\n" +
-		"\n" +
-		hdr("Commands:") + "\n" +
-		"  " + name("deploy") + "     Build the static bundle and push it to Cloudflare\n" +
-		"             Pages. Auto-creates the Pages project on the first\n" +
-		"             deploy (with confirmation).\n" +
-		"\n" +
-		hdr("Configuration:") + "\n" +
-		"  Reads " + pth("mar.json") + "'s " + pth("deploy.cloudflare-pages") + " block:\n" +
-		"\n" +
-		"    " + pth(`"deploy": { "cloudflare-pages": {`) + "\n" +
-		"    " + pth(`  "app": "...", "account": "...",`) + "\n" +
-		"    " + pth(`  "apiToken": "env:CF_API_TOKEN"`) + "\n" +
-		"    " + pth(`} }`) + "\n" +
-		"\n" +
-		hdr("Authentication:") + "\n" +
-		"  The API token is declared in " + pth("mar.json") + " as " + pth("env:VAR_NAME") + ",\n" +
-		"  the operator picks the env var name. Create the token at\n" +
-		"  " + url("https://dash.cloudflare.com/profile/api-tokens") + " with the\n" +
-		"  " + name("Account.Cloudflare Pages: Edit") + " permission."
-}
-
 // cloudflarePagesTarget bundles the resolved deploy fields. Returned
 // by resolveCloudflarePagesProject so callers don't have to thread
 // account/app/apiToken/projectDir/manifest through their own
@@ -106,13 +32,13 @@ func cloudflarePagesUsage() string {
 //
 // String fields (Account, App, APIToken) are the POST-env:
 // resolved values. The operator may have written
-// "env:CF_API_TOKEN" in mar.json; what arrives here is the actual
+// "env:CLOUDFLARE_API_TOKEN" in mar.json; what arrives here is the actual
 // token bytes.
 //
 // APITokenEnvVar is the special one: it carries the LITERAL env
-// var name (e.g. "CF_API_TOKEN") that apiToken was bound to in
+// var name (e.g. "CLOUDFLARE_API_TOKEN") that apiToken was bound to in
 // the manifest. Captured BEFORE env resolution so error messages
-// can name the var explicitly ("export CF_API_TOKEN=..." rather
+// can name the var explicitly ("export CLOUDFLARE_API_TOKEN=..." rather
 // than the generic "export the env var your apiToken points to").
 // Empty when apiToken is a literal (which checkSecrets rejects,
 // but the field exists for completeness).
@@ -164,12 +90,12 @@ func resolveCloudflarePagesProject(path string) (*cloudflarePagesTarget, error) 
 // env:VAR — and validation downstream sees the resolved value.
 //
 // Returns apiTokenEnvVar separately: the literal env var name (e.g.
-// "CF_API_TOKEN") that apiToken was bound to before resolution. We
+// "CLOUDFLARE_API_TOKEN") that apiToken was bound to before resolution. We
 // capture this from a parallel LoadManifestStructure pass because
 // the resolving load CLOBBERS the literal — by the time it returns,
 // apiToken holds the actual token bytes and the original env:VAR
 // reference is gone. Error messages need the var name to be
-// concrete ("export CF_API_TOKEN=..." instead of a placeholder).
+// concrete ("export CLOUDFLARE_API_TOKEN=..." instead of a placeholder).
 func loadCloudflarePagesManifest(path string) (projectDir string, m *project.Manifest, apiTokenEnvVar string, err error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -229,13 +155,13 @@ func pathDir(p string) string {
 func printDeployCloudflarePagesError(err error) {
 	de, ok := err.(*project.DeployCloudflarePagesError)
 	if !ok {
-		printError("mar cloudflare-pages deploy", err)
+		printError("mar deploy", err)
 		return
 	}
 	switch de.Kind {
 	case "missing-block":
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "%s mar cloudflare-pages deploy: %s has no %s block.\n",
+		fmt.Fprintf(os.Stderr, "%s mar deploy: %s has no %s block.\n",
 			colorRed("Error:"), colorMagenta("mar.json"), colorMagenta("deploy.cloudflare-pages"))
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintf(os.Stderr, "%s %s:\n", colorBold("Add this to"), colorMagenta("mar.json"))
@@ -247,7 +173,7 @@ func printDeployCloudflarePagesError(err error) {
 		fmt.Fprintf(os.Stderr, "      %s:  %s,\n",
 			colorMagenta(`"account"`), colorCyan(`"<32-char-account-id>"`))
 		fmt.Fprintf(os.Stderr, "      %s: %s\n",
-			colorMagenta(`"apiToken"`), colorCyan(`"env:CF_API_TOKEN"`))
+			colorMagenta(`"apiToken"`), colorCyan(`"env:CLOUDFLARE_API_TOKEN"`))
 		fmt.Fprintln(os.Stderr, "    }")
 		fmt.Fprintln(os.Stderr, "  }")
 		fmt.Fprintln(os.Stderr)
@@ -267,26 +193,26 @@ func printDeployCloudflarePagesError(err error) {
 			colorCyan("https://dash.cloudflare.com/profile/api-tokens"))
 		fmt.Fprintln(os.Stderr)
 	case "missing-app":
-		fprintError("mar cloudflare-pages deploy: %s is missing %s.",
+		fprintError("mar deploy: %s is missing %s.",
 			colorMagenta("mar.json"), colorMagenta("deploy.cloudflare-pages.app"))
 		fprintHint("%s is the Pages project name; becomes %s.\n"+
 			"      It will be auto-created on the first deploy.",
 			colorMagenta("app"),
 			colorCyan("<app>.pages.dev"))
 	case "invalid-app":
-		fprintError("mar cloudflare-pages deploy: %s = %q is not a valid Pages\n      project name.",
+		fprintError("mar deploy: %s = %q is not a valid Pages\n      project name.",
 			colorMagenta("deploy.cloudflare-pages.app"), de.BadValue)
 		fprintHint("Pages project names use lowercase letters, digits, and hyphens\n" +
 			"      only (1–58 chars; cannot start or end with a hyphen).")
 	case "missing-account":
-		fprintError("mar cloudflare-pages deploy: %s is missing %s.",
+		fprintError("mar deploy: %s is missing %s.",
 			colorMagenta("mar.json"), colorMagenta("deploy.cloudflare-pages.account"))
 		fprintHint("%s is your Cloudflare account ID (32 hex chars; visible in the\n"+
 			"      dashboard URL right after %s, or via the API).",
 			colorMagenta("account"),
 			colorCyan("dash.cloudflare.com/"))
 	case "invalid-account":
-		fprintError("mar cloudflare-pages deploy: %s = %q is not a valid Cloudflare\n      account ID (expected 32 hex characters).",
+		fprintError("mar deploy: %s = %q is not a valid Cloudflare\n      account ID (expected 32 hex characters).",
 			colorMagenta("deploy.cloudflare-pages.account"), de.BadValue)
 		fprintHint("Account IDs are 32 lowercase-hex chars. Find yours at\n"+
 			"      %s, the slug after %s in the URL\n"+
@@ -294,7 +220,7 @@ func printDeployCloudflarePagesError(err error) {
 			colorCyan("https://dash.cloudflare.com/"),
 			colorCyan("dash.cloudflare.com/"))
 	case "missing-api-token":
-		fprintError("mar cloudflare-pages deploy: %s is missing %s.",
+		fprintError("mar deploy: %s is missing %s.",
 			colorMagenta("mar.json"), colorMagenta("deploy.cloudflare-pages.apiToken"))
 		fprintHint("%s is the Cloudflare API token used for uploads. Required\n"+
 			"      permission: %s.\n"+
@@ -310,15 +236,15 @@ func printDeployCloudflarePagesError(err error) {
 			colorMagenta("env:VAR_NAME"),
 			colorMagenta("mar.json"),
 			colorMagenta(`"apiToken"`),
-			colorCyan(`"env:CF_API_TOKEN"`),
+			colorCyan(`"env:CLOUDFLARE_API_TOKEN"`),
 			colorCyan("https://dash.cloudflare.com/profile/api-tokens"))
 	default:
-		printError("mar cloudflare-pages deploy", err)
+		printError("mar deploy", err)
 	}
 }
 
 // printCloudflarePagesDeployError is the catch-all error renderer
-// for runtime failures during `mar cloudflare-pages deploy`. It
+// for runtime failures during `mar deploy`. It
 // recognizes structured *cfAPIError values and adds Hint blocks
 // for known failure modes (auth, rate limit, etc.). Anything it
 // doesn't recognize falls through to the plain printError.
@@ -342,7 +268,7 @@ func printCloudflarePagesDeployError(target *cloudflarePagesTarget, err error) {
 			return
 		}
 	}
-	printError("mar cloudflare-pages deploy", err)
+	printError("mar deploy", err)
 }
 
 // printCloudflareAuthError renders the structured Hint for "the API
@@ -352,13 +278,13 @@ func printCloudflarePagesDeployError(target *cloudflarePagesTarget, err error) {
 //
 // When target is non-nil and APITokenEnvVar is set, the hint names
 // the specific env var the operator should re-check ("export
-// CF_API_TOKEN=..."). Otherwise it falls back to a generic phrasing.
+// CLOUDFLARE_API_TOKEN=..."). Otherwise it falls back to a generic phrasing.
 func printCloudflareAuthError(target *cloudflarePagesTarget) {
-	fprintError("mar cloudflare-pages deploy: Cloudflare rejected the API token.")
+	fprintError("mar deploy: Cloudflare rejected the API token.")
 
 	// "Double-check the env var" step: name the var explicitly
 	// when we know it. With the var name, the operator can
-	// `echo $CF_API_TOKEN` immediately; without it, they'd have
+	// `echo $CLOUDFLARE_API_TOKEN` immediately; without it, they'd have
 	// to look up mar.json first.
 	envCheckLine := fmt.Sprintf(
 		"1. Double-check the value of the env var your %s points to.\n"+
@@ -398,7 +324,7 @@ func printCloudflareAuthError(target *cloudflarePagesTarget) {
 
 // requireFrontendTopology errors out when the project isn't
 // App.frontend. CF Pages can only host static bundles; running
-// `mar cloudflare-pages deploy` on a fullstack project is a
+// `mar deploy` on a fullstack project is a
 // configuration mistake the user wants to catch early, not a
 // 5-minute partial deploy followed by "your SQLite died because
 // there's no filesystem on CF".
@@ -429,14 +355,15 @@ func (e *topologyMismatchError) Error() string {
 }
 
 // printTopologyMismatch is the structured rendering for a
-// topologyMismatchError. Hint points at mar fly deploy as the
-// right command for the user's actual topology.
+// topologyMismatchError: a fullstack project carrying a
+// deploy.cloudflare-pages block. The hint points at swapping it for
+// deploy.fly, which is what `mar deploy` needs for a fullstack app.
 func printTopologyMismatch(e *topologyMismatchError) {
-	fprintError("mar cloudflare-pages deploy: this project is %s, not frontend-only.",
+	fprintError("mar deploy: this project is %s, not frontend-only.",
 		colorCyan(string(e.got)))
-	fprintHint("Cloudflare Pages only hosts static bundles. For projects with\n"+
-		"      a backend (database, services, auth), use %s instead,\n"+
-		"      it provisions a VM with SQLite, secrets, and the runtime\n"+
-		"      that fullstack apps need.",
-		cmdSuggest("fly deploy"))
+	fprintHint("Cloudflare Pages only hosts static bundles. This is a fullstack app —\n"+
+		"      replace the %s block with %s in %s, and %s will\n"+
+		"      provision a Fly VM with SQLite, secrets, and the runtime it needs.",
+		colorMagenta("deploy.cloudflare-pages"), colorMagenta("deploy.fly"),
+		colorMagenta("mar.json"), cmdSuggest("deploy"))
 }

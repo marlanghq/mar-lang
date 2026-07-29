@@ -134,7 +134,7 @@ func TestEnumField_EncodeRejectsCtorWithArgs(t *testing.T) {
 
 func TestEnumField_DecodeReturnsCtor(t *testing.T) {
 	f := enumField()
-	got := decodeColumn(f, "Admin")
+	got := mustDecodeColumn(t, f, "Admin")
 	ctor, ok := got.(VCtor)
 	if !ok {
 		t.Fatalf("decode = %T, want VCtor", got)
@@ -147,7 +147,7 @@ func TestEnumField_DecodeReturnsCtor(t *testing.T) {
 func TestEnumField_DecodeAcceptsBytes(t *testing.T) {
 	// SQLite drivers sometimes return TEXT as []byte.
 	f := enumField()
-	got := decodeColumn(f, []byte("Member"))
+	got := mustDecodeColumn(t, f, []byte("Member"))
 	ctor, ok := got.(VCtor)
 	if !ok || ctor.Tag != "Member" {
 		t.Fatalf("decode([]byte) = %v, want VCtor{Member}", got)
@@ -161,7 +161,7 @@ func TestEnumField_DecodeUnknownTagStillReturnsCtor(t *testing.T) {
 	// surface as a VCtor so callers can detect it via pattern-
 	// matching, not silently coerce to a string.
 	f := enumField()
-	got := decodeColumn(f, "Owner")
+	got := mustDecodeColumn(t, f, "Owner")
 	ctor, ok := got.(VCtor)
 	if !ok || ctor.Tag != "Owner" {
 		t.Fatalf("decode unknown = %v, want VCtor{Owner}", got)
@@ -194,4 +194,17 @@ func TestBuildCreateTableSQL_EmitsCheckForEnum(t *testing.T) {
 	if !strings.Contains(sql, "role TEXT NOT NULL CHECK") {
 		t.Errorf("CREATE TABLE has malformed enum column.\nGot: %s", sql)
 	}
+}
+
+// mustDecodeColumn keeps these tests focused on the decoded VALUE. decodeColumn
+// gained an error channel when Int became 53 bits (a 64-bit row can hold a
+// number Mar cannot represent); the range itself is covered separately, so an
+// unexpected failure here should just stop the test.
+func mustDecodeColumn(t *testing.T, f EntityField, raw any) Value {
+	t.Helper()
+	v, err := decodeColumn(f, raw)
+	if err != nil {
+		t.Fatalf("decodeColumn(%v): %v", raw, err)
+	}
+	return v
 }

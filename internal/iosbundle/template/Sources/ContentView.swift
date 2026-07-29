@@ -18,11 +18,13 @@
 //
 //   - failed   → error banner with retry.
 //
-// Connectivity is handled invisibly: in DEBUG, Bonjour discovers
-// `_mar._tcp` services on the LAN (auto-finds `mar dev` running on
-// your laptop); in RELEASE, the baked-in `ios.serverUrl` from
-// mar.json is the only target. No user-facing "settings" UI — the
-// backend is configuration, not preference.
+// Connectivity: in DEBUG, Bonjour discovers `_mar._tcp` services on
+// the LAN and auto-connects to a `mar dev` advertising THIS app's
+// name (see AppViewModel.maybeAutoPick), showing an orange "Dev
+// server" banner while the override is active; in RELEASE, the
+// baked-in `ios.serverUrl` from mar.json is the only target. No
+// user-facing "settings" UI — the backend is configuration, not
+// preference.
 
 import SwiftUI
 
@@ -41,6 +43,22 @@ struct ContentView: View {
             }
         }
         .animation(.default, value: viewModel.state)
+        // DEBUG-only dev-server banner. When Bonjour swaps the backend
+        // to a LAN `mar dev`, say so on screen — sign-in codes then go
+        // to that terminal's stdout, not to real email, and without
+        // this banner that reads as "login is broken".
+        .overlay(alignment: .bottom) {
+            if let label = viewModel.devOverrideLabel {
+                Text("Dev server: \(label)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.orange.opacity(0.92), in: Capsule())
+                    .padding(.bottom, 6)
+                    .allowsHitTesting(false)
+            }
+        }
         .task {
             // Always fire loadAll on first appear. If state is .idle
             // (no embedded snapshot), this is the only fetch and it
@@ -129,13 +147,44 @@ private struct StackShell: View {
         // preserving the root entry. When the user swipes back the
         // only pushed entry, set is called with [], leaving navPath
         // with just the root — correct.
+        // A Page.sheet route at the TOP of the stack is presented, not
+        // pushed: it comes off the pushed array and goes to `.sheet`
+        // below, so the screen it was reached from stays on screen
+        // underneath. As the ROOT it has nothing to present over and
+        // mounts normally — the same graceful fallback the web gives a
+        // cold load of a sheet route.
+        let presented: String? = {
+            guard ctx.navPath.count > 1, let top = ctx.navPath.last else { return nil }
+            return isSheetRoute(top) ? top : nil
+        }()
+
         let pushedBinding = Binding<[String]>(
-            get: { Array(ctx.navPath.dropFirst()) },
+            get: {
+                let pushed = Array(ctx.navPath.dropFirst())
+                return presented == nil ? pushed : Array(pushed.dropLast())
+            },
             set: { newPushed in
+                // While a route is presented the stack underneath is
+                // covered and cannot pop, so the presented entry is
+                // preserved here; `.sheet`'s own binding is what removes
+                // it (swipe down, or a Nav effect from the sheet).
+                let tail = presented.map { [$0] } ?? []
                 if let first = ctx.navPath.first {
-                    ctx.navPath = [first] + newPushed
+                    ctx.navPath = [first] + newPushed + tail
                 } else {
-                    ctx.navPath = newPushed
+                    ctx.navPath = newPushed + tail
+                }
+            }
+        )
+
+        // Dismissal drops the presented entry from navPath, so the route
+        // and what is on screen can never disagree — the same rule the
+        // web follows by routing every dismissal through history.
+        let presentedBinding = Binding<Bool>(
+            get: { presented != nil },
+            set: { showing in
+                if !showing, presented != nil, ctx.navPath.count > 1 {
+                    ctx.navPath.removeLast()
                 }
             }
         )
@@ -162,6 +211,11 @@ private struct StackShell: View {
                     RouteView(path: path, pages: pages)
                 }
         }
+        .sheet(isPresented: presentedBinding) {
+            if let path = presented {
+                RouteView(path: path, pages: pages)
+            }
+        }
         .id(ctx.rootGeneration)
         .transition(.opacity)
         .animation(.easeInOut(duration: 0.25), value: ctx.rootGeneration)
@@ -174,6 +228,19 @@ private struct StackShell: View {
     /// declared page keeps the renderer from blanking out.
     private var rootPath: String {
         ctx.navPath.first ?? pages.first?.path ?? "/"
+    }
+
+    /// Does `url` resolve to a page declared with Page.sheet? Static
+    /// paths first, then dynamic patterns, mirroring RouteView's own
+    /// resolution order so both agree on which page a URL means.
+    private func isSheetRoute(_ url: String) -> Bool {
+        for pg in pages where !pg.isDynamic {
+            if pg.path == url { return pg.isSheet }
+        }
+        for pg in pages where pg.isDynamic {
+            if pg.matchURL(url) != nil { return pg.isSheet }
+        }
+        return false
     }
 }
 

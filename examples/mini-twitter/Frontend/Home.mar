@@ -5,7 +5,7 @@ import Shared
 import Frontend.Routes
 import UI exposing
     ( navigationStack, navigationTitle, topBarTrailing
-    , form, list, section, header
+    , list, section, header
     , hstack, vstack, width, fill
     , text, textField, button, navigationLink, empty, errorText
     , submit

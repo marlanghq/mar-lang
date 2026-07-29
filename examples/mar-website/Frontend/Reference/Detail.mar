@@ -1,0 +1,69 @@
+module Frontend.Reference.Detail exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, text
+    )
+import Frontend.Reference.Data exposing (Entry, entriesFor)
+import Frontend.Reference.Render exposing (detailSections)
+import Frontend.Reference.Routes
+
+
+-- One function's detail page. A dynamic route: the /reference/{moduleName}/{fn}
+-- segments are matched by the runtime and threaded, as a `params` record, into
+-- init/update/view. The list pages and the search link here. The page is
+-- otherwise stateless — everything it shows comes from the URL plus the
+-- generated data.
+
+
+type alias Params =
+    { moduleName : String, fn : String }
+
+
+type alias Model = ()
+
+
+type Msg
+    = NoOp
+
+
+init : Params -> (Model, Cmd Msg)
+init _ = ((), Cmd.none)
+
+
+update : Params -> Msg -> Model -> (Model, Cmd Msg)
+update _ _ model = ( model, Cmd.none )
+
+
+-- The one entry whose name matches, within its module. Nothing if the URL
+-- names a function that is not in the reference.
+lookup : String -> String -> Maybe Entry
+lookup mod name =
+    List.head (List.filter (\e -> e.name == name) (entriesFor mod))
+
+
+view : Params -> Model -> View Msg
+view params _ =
+    navigationStack [ navigationTitle (Frontend.Reference.Render.displayName params.moduleName params.fn) ]
+        [ list []
+            (case lookup params.moduleName params.fn of
+                Just e ->
+                    detailSections e
+
+                Nothing ->
+                    [ section [] [ text [] "That function is not in the reference." ] ]
+            )
+        ]
+
+
+page : Page
+page =
+    Page.dynamic
+        { path = Frontend.Reference.Routes.detail
+        , title = "Reference"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ _ -> Sub.none
+        }

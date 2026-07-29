@@ -12,6 +12,7 @@ package runtime
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 )
 
@@ -26,6 +27,28 @@ type VInt struct{ V int64 }
 
 func (VInt) isValue()          {}
 func (v VInt) Display() string { return fmt.Sprintf("%d", v.V) }
+
+// VDecimal is an exact base-10 number: integer coefficient (bounded
+// to 34 significant digits) plus a scale. See decimal.go.
+type VDecimal struct {
+	Coef  *big.Int
+	Scale int
+}
+
+func (VDecimal) isValue()          {}
+func (v VDecimal) Display() string { return decString(v) }
+
+// VDivision is the inert exact quotient `/` produces: both operands,
+// held in suspense. Opaque on purpose — no codec, no arithmetic, not
+// comparable; only the Decimal.rounded / exact / withRemainder
+// resolvers turn it into a value.
+type VDivision struct {
+	Num VDecimal
+	Den VDecimal
+}
+
+func (VDivision) isValue()          {}
+func (v VDivision) Display() string { return "<division>" }
 
 // VFloat is a floating-point value.
 type VFloat struct{ V float64 }
@@ -67,15 +90,17 @@ type VUnit struct{}
 func (VUnit) isValue()        {}
 func (VUnit) Display() string { return "()" }
 
-// VDuration is a time interval, normalized to seconds. Built only via
-// Time.seconds / Time.minutes / Time.hours / Time.days / Time.weeks
-// — there's no public Int → Duration coercion, so unit confusion is
-// impossible at the call site.
-type VDuration struct{ Seconds int64 }
+// VDuration is a time interval, normalized to seconds (fractional, so
+// Time.millis can express sub-second intervals). Built only via
+// Time.millis / Time.seconds / Time.minutes / Time.hours / Time.days /
+// Time.weeks — there's no public number → Duration coercion, so unit
+// confusion is impossible at the call site.
+type VDuration struct{ Seconds float64 }
 
 func (VDuration) isValue() {}
 func (v VDuration) Display() string {
-	return fmt.Sprintf("%ds", v.Seconds)
+	// %g renders whole seconds as "2s" and sub-second as "1.5s".
+	return fmt.Sprintf("%gs", v.Seconds)
 }
 
 // VTime is an absolute moment in time, as Unix milliseconds. Built
@@ -101,6 +126,10 @@ type VFn struct {
 	Applied []Value
 	// Total arity (params for closure, fixed for native).
 	Arity int
+	// How deep the call chain was when this value was produced. Set by
+	// applyAt so that a function handed to a builtin (List.map, Dict.foldl)
+	// resumes the count instead of restarting at zero — see MaxCallDepth.
+	Depth int
 	// CtorTag is set when this VFn was produced by makeCtorValue for a
 	// custom-type constructor with arity ≥ 1. Empty string for plain
 	// functions. Renderers read this to recognize a constructor

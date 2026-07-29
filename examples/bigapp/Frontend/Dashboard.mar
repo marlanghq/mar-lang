@@ -75,8 +75,8 @@ issueRow issue =
             [ text [] ("#" ++ String.fromInt issue.number ++ ": " ++ issue.title)
             , subtitle
                 ( issue.projectName
-                    ++ " · " ++ Shared.statusLabel issue.status
-                    ++ " · " ++ Shared.priorityLabel issue.priority
+                    ++ ", " ++ Shared.statusLabel issue.status
+                    ++ ", " ++ Shared.priorityLabel issue.priority
                 )
             ])
 
@@ -110,7 +110,7 @@ projectsSection projects =
             [ subtitle "No projects yet. Create one to get started." ]
     else
         section
-            [ header ("Projects · " ++ String.fromInt (List.length projects))
+            [ header ("Projects (" ++ String.fromInt (List.length projects) ++ ")")
             , footer "Tap to open a project board."
             ]
             (List.map projectRow projects)
@@ -123,7 +123,7 @@ myIssuesSection items =
             [ subtitle "Inbox zero. Nice." ]
     else
         section
-            [ header ("Assigned to me · " ++ String.fromInt (List.length items))
+            [ header ("Assigned to me (" ++ String.fromInt (List.length items) ++ ")")
             , footer "Open + In progress issues, sorted by recent activity."
             ]
             (List.map issueRow items)

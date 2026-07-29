@@ -4,10 +4,9 @@ module Frontend.IssueDetail exposing (page)
 import Shared exposing (IssueStatus(..), IssuePriority(..), Role(..))
 import Frontend.Routes
 import UI exposing
-    ( navigationStack, navigationTitle, topBarTrailing
-    , form, list, section, header, footer
+    ( navigationStack, navigationTitle, list, section, header, footer
     , hstack, vstack
-    , title, subtitle, text, textField, textArea, picker, button, navigationLink, empty, width, fill, spacer, toggle, errorText
+    , title, subtitle, text, textField, textArea, button, empty, width, fill, spacer, errorText
     , submit
     )
 
@@ -271,10 +270,10 @@ metaSection editing issue draftTitle draftDesc =
             ]
     else
         section
-            [ header (issue.projectName ++ " · #" ++ String.fromInt issue.number)
+            [ header (issue.projectName ++ " #" ++ String.fromInt issue.number)
             , footer
                 ( "Reported by " ++ issue.reporterName
-                    ++ " · Assigned to " ++ issue.assigneeName
+                    ++ ", assigned to " ++ issue.assigneeName
                 )
             ]
             [ title issue.title
@@ -301,7 +300,7 @@ statusButton current value =
 statusSection : Shared.IssueView -> View Msg
 statusSection issue =
     section
-        [ header ("Status · " ++ Shared.statusLabel issue.status)
+        [ header ("Status: " ++ Shared.statusLabel issue.status)
         , footer "One-click status transitions."
         ]
         [ hstack []
@@ -318,13 +317,13 @@ statusSection issue =
 prioritySection : Shared.IssueView -> View Msg
 prioritySection issue =
     section
-        [ header ("Priority · " ++ Shared.priorityLabel issue.priority) ]
+        [ header ("Priority: " ++ Shared.priorityLabel issue.priority) ]
         [ text [] "Edit priority via the issue meta editor." ]
 
 
 labelChip : Shared.Label -> View Msg
 labelChip lbl =
-    text [] (lbl.name ++ " · " ++ lbl.color)
+    text [] (lbl.name ++ ", " ++ lbl.color)
 
 
 labelsSection : Maybe (List Shared.Label) -> Maybe (List Shared.Label) -> View Msg
@@ -397,7 +396,7 @@ renderComment user comment =
         [ hstack []
             [ vstack [ width fill ]
                 [ text [] comment.body
-                , subtitle (comment.authorName ++ " · " ++ Time.toIso comment.createdAt)
+                , subtitle (comment.authorName ++ ", " ++ Time.toIso comment.createdAt)
                 ]
             , if user.id == comment.authorId || user.role == Admin then
                 button [] (DeleteCommentClicked comment.id) "Delete"
@@ -424,7 +423,7 @@ reactionsRow comment =
         -- Hide quick-add buttons for emojis already in the existing
         -- row; the pill itself toggles those.
         unusedQuickAdds =
-            List.filter (\e -> if List.member e usedEmojis then False else True) quickReactEmojis
+            List.filter (\e -> not (List.member e usedEmojis)) quickReactEmojis
 
         addButtons =
             List.map (renderAddReactionButton comment.id) unusedQuickAdds
@@ -460,7 +459,7 @@ commentsSection user state =
                 section [ header "Comments" ] [ subtitle "Nobody's said anything yet." ]
             else
                 section
-                    [ header ("Comments · " ++ String.fromInt (List.length items)) ]
+                    [ header ("Comments (" ++ String.fromInt (List.length items) ++ ")") ]
                     (List.map (renderComment user) (List.reverse items))
 
 

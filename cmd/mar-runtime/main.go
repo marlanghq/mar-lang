@@ -354,10 +354,20 @@ func runFromPath(path string) error {
 	}))
 
 	// PWA manifest + icons for a fullstack frontend. No icon
-	// re-validation here: `mar build` already checked it. The
-	// generated-tile path needs no files; a custom icon must be in the
-	// deploy bundle (same caveat as public/).
+	// re-validation here: `mar build` already checked it.
 	jsserve.SetPWA(manifest.ResolvePWA(projectDir))
+
+	// Static assets: serve the project's public/ folder, exactly like
+	// `mar dev`. In a deployed binary `mar build` bundles public/ into
+	// the payload and runEmbedded extracts it to projectDir/public, so
+	// this points at real files (e.g. a logo referenced as /logo.png).
+	// A missing public/ is a no-op — ValidatePublicDir returns nil and
+	// serveStaticOrShell falls through to the shell.
+	publicDir := filepath.Join(projectDir, "public")
+	if err := jsserve.ValidatePublicDir(publicDir); err != nil {
+		return err
+	}
+	jsserve.SetPublicDir(publicDir)
 
 	// Per-request body cap (see cmd/mar/main.go for the rationale).
 	var serverCfg *project.ServerConfig

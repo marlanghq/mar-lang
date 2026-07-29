@@ -1,0 +1,53 @@
+module Main exposing (main)
+
+
+import Backend.Users
+import Backend.Nights
+import Frontend.SignIn
+import Frontend.VerifyCode
+import Frontend.Log
+
+
+-- Sleep Log — one rating per night, and what the last 30 add up to.
+--
+-- Sign in with a one-time code sent by email, then pick a date (today is
+-- already filled in) and tap how you slept. Tapping a different rating for the
+-- same date CORRECTS that night instead of adding a second one: the date is the
+-- identity of a night, which is why every date is rounded to midnight before it
+-- is stored or matched.
+--
+-- The log is PRIVATE. Every read filters by the signed-in user, every write
+-- stamps them, and the unique index is (userId, date) rather than date alone,
+-- so two people can both rate the same night.
+--
+-- In dev the sign-in codes are printed to the server log, so there is no SMTP
+-- to configure. For production set mail.from and the smtp.* env refs in
+-- mar.json.
+--
+-- Open with:  mar dev examples/sleep-log
+--
+-- Wiring point: only this module sees both halves.
+
+
+auth : Auth { id : Int, email : String }
+auth =
+    Auth.config
+        { entity = Backend.Users.users
+        , identify = \u -> u.email
+        , signInPage = Frontend.SignIn.page
+        , email = { subject = "Your Sleep Log sign-in code" }
+        , signup = \userEmail -> { email = userEmail }
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Cmd ()
+main =
+    App.fullstack
+        { services = Backend.Nights.services
+        , pages =
+            [ Frontend.SignIn.page
+            , Frontend.VerifyCode.page
+            , Frontend.Log.page
+            ]
+        }

@@ -1,0 +1,13 @@
+{
+  "name": "star-condor",
+  "server": {
+    "port": 3032
+  },
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "mar-star-condor",
+      "account": "env:CLOUDFLARE_ACCOUNT_ID",
+      "apiToken": "env:CLOUDFLARE_API_TOKEN"
+    }
+  }
+}

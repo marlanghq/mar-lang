@@ -19,7 +19,33 @@ type Module struct {
 	Exposing Exposing
 	Imports  []Import
 	Decls    []Decl
+
+	// elaborated records that the typechecker has run its elaboration
+	// pass over this tree. See MarkElaborated.
+	elaborated bool
 }
+
+// MarkElaborated is called by the typechecker once it has written its
+// decisions back into the tree: which integer literals became Decimals,
+// which reference resolved to which native implementation, and what order
+// the value declarations must be evaluated in.
+//
+// None of that is recoverable from the tree alone. Types are erased at the
+// runtime boundary — no runtime package imports the typechecker — so an
+// unelaborated tree is not merely under-optimised, it is *wrong*: it will
+// hand Eval an Int where the checker proved a Decimal, or evaluate values
+// in an order that reads placeholders. The failure is a disagreement
+// between the two halves of the compiler, which surfaces far from its
+// cause (`+: expected Int` on `1 + 1.50` was the first one).
+//
+// Marking it is what lets the evaluating side refuse the tree instead of
+// running it and producing a plausible wrong answer.
+func (m *Module) MarkElaborated() { m.elaborated = true }
+
+// IsElaborated reports whether the typechecker has finished with this tree.
+// Anything that evaluates or serializes a module must refuse when this is
+// false.
+func (m *Module) IsElaborated() bool { return m.elaborated }
 
 // ModuleName is a dotted identifier path: ["Foo", "Bar"] for "Foo.Bar".
 type ModuleName []string
@@ -303,7 +329,7 @@ type Expr interface {
 	Position() Pos
 }
 
-// EInt is a literal expression (also covers EFloat / EString literals).
+// EInt is a literal expression (also covers EString / EChar literals).
 //
 // Every expression node carries an unexported `end` position alongside
 // its start `Pos`, stamped by the parser. Read it with EndOf and the
@@ -315,19 +341,34 @@ type EInt struct {
 	Pos   Pos
 	Value int64
 	end   Pos
+
+	// AsDecimal is set by the typechecker's elaboration pass when this
+	// literal's context resolved its `number` variable to Decimal, so
+	// `price : Decimal` / `price = 1` yields a Decimal at runtime. The
+	// parser never sets it; the runtimes read it. Rewriting the flag
+	// rather than swapping in an EDecimal node keeps the rewrite to one
+	// field, and since the serializer walks this same AST the decision
+	// reaches every runtime without a second implementation.
+	AsDecimal bool
 }
 
 func (e *EInt) exprNode()     {}
 func (e *EInt) Position() Pos { return e.Pos }
 
-type EFloat struct {
+// EDecimal — an exact base-10 literal like 12.50. Coef holds the digit
+// string with the point removed ("1250"), Scale the number of digits
+// after it (2). A string, not an int64: the coefficient may carry up
+// to 34 significant digits. Literals are unsigned; minus arrives as
+// ENegate around the node.
+type EDecimal struct {
 	Pos   Pos
-	Value float64
+	Coef  string
+	Scale int
 	end   Pos
 }
 
-func (e *EFloat) exprNode()     {}
-func (e *EFloat) Position() Pos { return e.Pos }
+func (e *EDecimal) exprNode()     {}
+func (e *EDecimal) Position() Pos { return e.Pos }
 
 type EString struct {
 	Pos   Pos
@@ -357,6 +398,14 @@ type EVar struct {
 	Pos  Pos
 	Name string
 	end  Pos
+
+	// Impl is the sibling of EInt.AsDecimal for a *reference*: when one
+	// name stands for several native implementations, the elaboration
+	// pass writes down which one this occurrence resolved to, and the
+	// runtimes look that up instead of Name. Empty means "resolve Name
+	// as usual", which is every reference but a numeric List.sum /
+	// List.product. See EQualified.Impl.
+	Impl string
 }
 
 func (e *EVar) exprNode()     {}
@@ -368,6 +417,14 @@ type EQualified struct {
 	Module ModuleName
 	Name   string
 	end    Pos
+
+	// Impl names the native implementation the typechecker picked for
+	// this occurrence, or "" to resolve Module.Name normally. It exists
+	// because `List.sum : List number -> number` has two zeroes — VInt 0
+	// and Decimal 0 — and only the checker knows which one an empty list
+	// wants. The name is deliberately absent from the typecheck env, so
+	// the implementation it points at stays unwritable from Mar source.
+	Impl string
 }
 
 func (e *EQualified) exprNode()     {}
@@ -562,7 +619,7 @@ func SetEnd(e Expr, end Pos) {
 	switch n := e.(type) {
 	case *EInt:
 		n.end = end
-	case *EFloat:
+	case *EDecimal:
 		n.end = end
 	case *EString:
 		n.end = end
@@ -613,7 +670,7 @@ func EndOf(e Expr) Pos {
 	switch n := e.(type) {
 	case *EInt:
 		end = n.end
-	case *EFloat:
+	case *EDecimal:
 		end = n.end
 	case *EString:
 		end = n.end

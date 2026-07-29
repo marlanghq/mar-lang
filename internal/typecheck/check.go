@@ -46,6 +46,16 @@ type CustomType struct {
 	Params       []string
 	Constructors map[string]CustomCtor
 	CtorOrder    []string
+	// Module is the qualified prefix under which a BUILTIN union's
+	// constructors exist at runtime ("Canvas" → Canvas.Translate, "Keyboard"
+	// → Keyboard.KeyW). It is the single source the ctor-registry generator
+	// (internal/ctorgen) reads to emit the JS + Swift registrations, so a
+	// builtin union is registered everywhere or nowhere — never half. Empty
+	// means "not part of the generated registry": user-declared types, the
+	// core types with native representations (Bool, Maybe, Result), and the
+	// unions whose constructors are deliberately GLOBAL bare names (Order,
+	// Method, Pointer, CanvasMode), which each runtime registers by hand.
+	Module string
 }
 
 // CustomCtor describes one constructor: its arg types (in order) and the
@@ -76,7 +86,7 @@ var bareBuiltinCtors = map[string]string{
 // types (Section / Text / Input / ...), several of which are common domain
 // words app authors legitimately model.
 var reservedTypeNames = map[string]bool{
-	"Int": true, "Float": true, "String": true, "Bool": true, "Char": true,
+	"Int": true, "String": true, "Bool": true, "Char": true, "Decimal": true,
 	"Time": true, "Duration": true, "Order": true,
 	"List": true, "Dict": true, "Set": true,
 	"Maybe": true, "Result": true,
@@ -169,7 +179,10 @@ func CheckModuleWith(
 	}
 
 	// --- Pass 1: type declarations ---
-	for _, d := range mod.Decls {
+	// Dependency order, not source order: an alias has to be registered
+	// before a body that names it, or it silently becomes an opaque TCon.
+	// See typeDeclsInDependencyOrder.
+	for _, d := range typeDeclsInDependencyOrder(mod) {
 		switch n := d.(type) {
 		case *ast.TypeAliasDecl:
 			if reservedTypeNames[n.Name] {
@@ -438,13 +451,90 @@ func CheckModuleWith(
 		return nil, err
 	}
 
+	// With cycles ruled out, put the value declarations in an order the
+	// runtimes can evaluate straight through. Source order stops being
+	// load-bearing: a value may read a value declared below it.
+	orderValueDecls(mod)
+
 	// Snapshot the post-substitution expression types so consumers
 	// (shape lint, future LSP hover) get concrete shapes instead of
 	// raw type variables. The substitution `s` would otherwise be
 	// dropped when this function returns.
 	res.ExprTypes = s.ExtractExprTypes()
 
+	// Elaboration: an integer literal whose `number` variable resolved to
+	// Decimal becomes a Decimal at runtime. This is where the compiler
+	// stops keeping what it learned to itself — types are erased at the
+	// runtime boundary, so a decision the checker made has to be written
+	// back into the tree to survive. Doing it on the node means the
+	// serializer carries it to the JS and Swift runtimes for free.
+	Elaborate(res.ExprTypes)
+
+	// Everything the runtimes cannot re-derive is now written into the
+	// tree. Mark it, so the evaluating and serializing sides can refuse a
+	// module that never came through here.
+	mod.MarkElaborated()
+
 	return res, nil
+}
+
+// Elaborate writes the checker's numeric decisions back onto the tree, in the
+// two places where a `number` can resolve to Decimal and the runtime would
+// otherwise have no way to know:
+//
+//   - an integer literal whose context typed it as Decimal, and
+//   - a reference to List.sum / List.product instantiated at Decimal, which
+//     picks the implementation whose empty-list zero is a Decimal.
+//
+// Anything still a variable — a literal in a genuinely polymorphic position,
+// or one nobody constrained — is left alone: it stays `number` in the type and
+// Int in the value, which is the behavior that existed before this pass.
+//
+// Exported because the module checker is not the only caller: the REPL runs
+// Infer directly, and a node it typed as Decimal has to be elaborated before
+// Eval sees it, or the type-checker and the runtime disagree — a disagreement
+// that shows up as `+: expected Int` on `1 + 1.50`.
+func Elaborate(exprTypes map[ast.Expr]Type) {
+	for e, t := range exprTypes {
+		switch n := e.(type) {
+		case *ast.EInt:
+			if isDecimalType(t) {
+				n.AsDecimal = true
+			}
+		case *ast.EQualified:
+			n.Impl = decimalImplFor(joinName(n.Module, n.Name), t)
+		case *ast.EVar:
+			n.Impl = decimalImplFor(n.Name, t)
+		}
+	}
+}
+
+func isDecimalType(t Type) bool {
+	con, ok := t.(TCon)
+	return ok && con.Name == TDecimal.Name && len(con.Args) == 0
+}
+
+// decimalImplFor returns the Decimal-specific native implementation for a
+// reference to name, or "" when the reference is anything else or its
+// instantiation is not Decimal. The returned names are registered in the
+// runtimes but deliberately not in the typecheck env, which is what keeps
+// them unwritable from Mar source: the language keeps one name, List.sum.
+func decimalImplFor(name string, t Type) string {
+	var impl string
+	switch name {
+	case "List.sum", "listSum":
+		impl = "listSumDecimal"
+	case "List.product", "listProduct":
+		impl = "listProductDecimal"
+	default:
+		return ""
+	}
+	// The reference's own type is the instantiated arrow, List a -> a.
+	arrow, ok := t.(TArrow)
+	if !ok || !isDecimalType(arrow.To) {
+		return ""
+	}
+	return impl
 }
 
 // --- Type name environment for resolving type expressions ---
@@ -458,8 +548,21 @@ type typeNameEnv struct {
 
 func newTypeNameEnv() *typeNameEnv {
 	return &typeNameEnv{
-		aliases: map[string]TypeAlias{},
+		aliases: builtinTypeAliases(),
 		customs: map[string]CustomType{},
+	}
+}
+
+// builtinTypeAliases seeds the framework-provided type aliases every module
+// starts with. Currently just `Device` (docs/proposals/device.md) → the closed
+// record `Device.watch` delivers, so an app can annotate `dev : Device` in its
+// model without re-declaring the seven fields. Seeded as a type name only (not
+// a positional constructor — apps receive the record from the runtime, they
+// never build one). A user's own `type alias Device`, should they write one,
+// simply overwrites this entry: harmless shadowing, no duplicate error.
+func builtinTypeAliases() map[string]TypeAlias {
+	return map[string]TypeAlias{
+		"Device": {Name: "Device", Params: nil, ParamIDs: nil, Body: TDeviceRecord()},
 	}
 }
 
@@ -485,9 +588,15 @@ func (e *typeNameEnv) lookupParam(name string) (int, bool) {
 // these would otherwise lose their qualifier and collide on the bare tail.
 var qualifiedBuiltinTypes = map[string]bool{
 	"Service.Error":       true,
+	"Decimal.Rounding":    true,
+	"Decimal.Division":    true,
 	"Auth.RequestOutcome": true,
 	"Auth.VerifyOutcome":  true,
 	"Random.Generator":    true,
+	"Random.Seed":         true,
+	"Keyboard.Key":        true,
+	"Gamepad.Button":      true,
+	"Sound.Wave":          true,
 }
 
 func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[string]int) (Type, error) {
@@ -555,8 +664,8 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 		switch t.Name {
 		case "Int":
 			return TInt, nil
-		case "Float":
-			return TFloat, nil
+		case "Decimal":
+			return TDecimal, nil
 		case "String":
 			return TString, nil
 		case "Bool":

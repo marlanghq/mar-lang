@@ -5,7 +5,7 @@ import UI exposing
     ( navigationStack, navigationTitle
     , form, list, section, header
     , hstack
-    , text, textField, button, navigationLink, centered
+    , text, textField, button, navigationLink
     , submit
     )
 
@@ -53,7 +53,7 @@ counterView n =
                 , hstack [] [ button [] Inc "Inc", button [] Dec "Dec" ]
                 ]
             , section []
-                [ navigationLink [] todosPath {} (text [] "Go to todos →") ]
+                [ navigationLink [] todosPath {} (text [] "Todos") ]
             ]
         ]
 

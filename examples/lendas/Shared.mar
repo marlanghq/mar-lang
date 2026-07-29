@@ -1,0 +1,947 @@
+module Shared exposing (..)
+
+
+-- LENDAS — the contract layer AND the rules engine, shared by the
+-- Backend (which validates and persists every move) and the Frontend
+-- (which replays the same moves to draw the board and predict
+-- legality). The engine is a pure, DETERMINISTIC fold: given the same
+-- seed, decks and move list, the server (Go runtime) and the client
+-- (JS runtime) reach bit-identical states — which is why the LCG below
+-- uses a Park-Miller multiplier small enough to stay exact in float64.
+--
+-- Player-facing copy is Brazilian Portuguese; code stays English.
+
+
+-- ====================================================================
+-- USER + PLAYER
+-- ====================================================================
+
+
+type alias User =
+    { id    : Int
+    , email : String
+    }
+
+
+type alias Player =
+    { id     : Int
+    , userId : Int
+    , nick   : String
+    , wins   : Int
+    , losses : Int
+    }
+
+
+-- ====================================================================
+-- MATCH ROWS
+-- ====================================================================
+
+
+-- Desafio   — created, waiting for the opponent to accept (or refuse)
+-- Ativa     — both decks locked, being played (maybe over days)
+-- Encerrada — someone hit 0 life or conceded; winnerN says who
+-- Recusada  — the challenged player said no (terminal)
+type Status
+    = Desafio
+    | Ativa
+    | Encerrada
+    | Recusada
+
+
+-- The stored match. Player A is ALWAYS the challenger. `turnA` and
+-- `winnerN` (0 none / 1 = A / 2 = B) are denormalized from the replay
+-- so the lobby can render without replaying every game.
+type alias Game =
+    { id           : Int
+    , aId          : Int
+    , bId          : Int
+    , deckA        : String
+    , deckB        : String
+    , seed         : Int
+    , status       : Status
+    , turnA        : Bool
+    , winnerN      : Int
+    , createdAt    : Time
+    }
+
+
+-- One move in a game's append-only log. `ix` is the 0-based position;
+-- `byA` records who made it (concessions can happen off-turn).
+type alias Move =
+    { id     : Int
+    , gameId : Int
+    , ix     : Int
+    , byA    : Bool
+    , data   : String
+    }
+
+
+-- ====================================================================
+-- CARDS
+-- ====================================================================
+
+
+type CType
+    = Criatura
+    | Feitico
+
+
+type Keyword
+    = SemHabilidade
+    | Impeto
+    | Guardiao
+
+
+-- Every card effect in the game. Creatures use them as "Ao entrar:"
+-- battlecries (never targeted); spells resolve them directly, and only
+-- DanoAlvo / Adormecer ask for a target (an enemy board slot).
+type Efeito
+    = SemEfeito
+    | DanoHeroi Int          -- damage the enemy hero
+    | DanoTodos Int          -- damage every enemy creature
+    | CurarHeroi Int         -- heal your hero (cap 20)
+    | Comprar Int            -- draw cards
+    | DanoAlvo Int           -- spell: damage one enemy creature
+    | Adormecer              -- spell: enemy creature skips its next attack
+    | CurarComprar Int Int   -- heal N and draw M
+
+
+type alias Card =
+    { cid   : Int
+    , nome  : String
+    , custo : Int
+    , tipo  : CType
+    , atk   : Int
+    , hp    : Int
+    , kw    : Keyword
+    , fx    : Efeito
+    , descr : String
+    , deck  : Int            -- 0 floresta / 1 sol / 2 aguas (frame palette)
+    }
+
+
+creature : Int -> String -> Int -> Int -> Int -> Keyword -> Efeito -> String -> Int -> Card
+creature cid nome custo atk hp kw fx descr deck =
+    { cid = cid, nome = nome, custo = custo, tipo = Criatura
+    , atk = atk, hp = hp, kw = kw, fx = fx, descr = descr, deck = deck }
+
+
+spell : Int -> String -> Int -> Efeito -> String -> Int -> Card
+spell cid nome custo fx descr deck =
+    { cid = cid, nome = nome, custo = custo, tipo = Feitico
+    , atk = 0, hp = 0, kw = SemHabilidade, fx = fx, descr = descr, deck = deck }
+
+
+unknownCard : Card
+unknownCard =
+    creature 0 "???" 0 0 1 SemHabilidade SemEfeito "Carta perdida no tempo." 0
+
+
+-- The whole bank. Deck Floresta = cids 1..10, Sol = 11..20,
+-- Águas = 21..30. Every deck runs two copies of each of its ten.
+cardOf : Int -> Card
+cardOf cid =
+    case cid of
+        -- ---------------- FLORESTA (folclore brasileiro) ----------------
+        1  -> creature 1  "Saci-Pererê"          1 1 1 Impeto SemEfeito
+                "Chega num redemoinho, já aprontando." 0
+        2  -> creature 2  "Caipora"              2 2 3 SemHabilidade SemEfeito
+                "Protetora da caça, montada num porco-do-mato." 0
+        3  -> creature 3  "Curupira"             2 1 4 Guardiao SemEfeito
+                "Os pés virados confundem quem invade a mata." 0
+        4  -> creature 4  "Lobisomem"            3 4 2 SemHabilidade SemEfeito
+                "Na lua cheia, ninguém cruza a estrada." 0
+        5  -> creature 5  "Mula-sem-Cabeça"      3 3 3 Impeto SemEfeito
+                "Galopa em chamas pelas noites de sexta." 0
+        6  -> creature 6  "Cuca"                 4 3 5 SemHabilidade (Comprar 1)
+                "Ao entrar: compre 1 carta. Ela sabe onde tudo se esconde." 0
+        7  -> creature 7  "Boitatá"              5 4 4 SemHabilidade (DanoTodos 1)
+                "Ao entrar: 1 de dano às criaturas inimigas. A serpente de fogo guarda os campos." 0
+        8  -> creature 8  "Mapinguari"           6 5 7 Guardiao SemEfeito
+                "A muralha peluda da Amazônia." 0
+        9  -> spell    9  "Garrafada do Pajé"    2 (CurarHeroi 4)
+                "Cure 4 de vida. Remédio do mato não falha." 0
+        10 -> spell    10 "Cipó-Estrangulador"   3 (DanoAlvo 3)
+                "Cause 3 de dano a uma criatura. A mata cobra pedágio." 0
+
+        -- ---------------- SOL (Andes e Mesoamérica) ----------------
+        11 -> creature 11 "Xolo, o Cão-Guia"     1 2 1 SemHabilidade SemEfeito
+                "Guia as almas pelo deserto frio." 1
+        12 -> creature 12 "Guerreiro Jaguar"     2 3 2 SemHabilidade SemEfeito
+                "A elite de Tenochtitlán." 1
+        13 -> creature 13 "Múmia da Cordilheira" 2 1 4 Guardiao SemEfeito
+                "Dorme no gelo há mil anos. Odeia visitas." 1
+        14 -> creature 14 "Guerreira Águia"      3 3 3 Impeto SemEfeito
+                "Cai do céu como um raio." 1
+        15 -> creature 15 "Chupacabra"           3 4 2 SemHabilidade SemEfeito
+                "Os rebanhos somem nas noites sem lua." 1
+        16 -> creature 16 "Nahual"               4 4 4 SemHabilidade SemEfeito
+                "Troca de pele quando ninguém está olhando." 1
+        17 -> creature 17 "Inti, o Sol Vivo"     5 4 5 SemHabilidade (DanoHeroi 2)
+                "Ao entrar: 2 de dano ao rival. O ouro inca era só o reflexo." 1
+        18 -> creature 18 "Quetzalcóatl"         6 6 5 SemHabilidade SemEfeito
+                "A serpente emplumada volta quando o mundo precisa." 1
+        19 -> spell    19 "Lança de Obsidiana"   2 (DanoAlvo 3)
+                "Cause 3 de dano a uma criatura. Afiada o bastante pra cortar o vento." 1
+        20 -> spell    20 "Fúria do Vulcão"      4 (DanoTodos 2)
+                "2 de dano a todas as criaturas inimigas. Pachamama perdeu a paciência." 1
+
+        -- ---------------- ÁGUAS (rios e mar) ----------------
+        21 -> creature 21 "Encantado do Rio"     1 1 2 SemHabilidade SemEfeito
+                "Some quando você pisca." 2
+        22 -> creature 22 "Boto-Cor-de-Rosa"     2 2 2 SemHabilidade (Comprar 1)
+                "Ao entrar: compre 1 carta. Chega de chapéu, sai de madrugada." 2
+        23 -> creature 23 "Jacaré-Açu"           2 2 3 Guardiao SemEfeito
+                "O rio inteiro é o quintal dele." 2
+        24 -> creature 24 "Pirarucu Gigante"     3 3 4 SemHabilidade SemEfeito
+                "O gigante de escamas vermelhas." 2
+        25 -> creature 25 "La Llorona"           3 4 2 Impeto SemEfeito
+                "O choro chega antes dela." 2
+        26 -> creature 26 "Iara, a Mãe-d'Água"   4 3 5 SemHabilidade (CurarHeroi 2)
+                "Ao entrar: cure 2. O canto dela acalma até a correnteza." 2
+        27 -> creature 27 "Minhocão"             5 4 7 Guardiao SemEfeito
+                "Quando ele se mexe, os barrancos caem." 2
+        28 -> creature 28 "Iemanjá, Rainha do Mar" 6 5 6 SemHabilidade (CurarHeroi 4)
+                "Ao entrar: cure 4. As ondas obedecem." 2
+        29 -> spell    29 "Canto da Iara"        2 Adormecer
+                "Adormeça uma criatura inimiga. Ninguém rema contra a canção." 2
+        30 -> spell    30 "Maré Cheia"           3 (CurarComprar 3 1)
+                "Cure 3 e compre 1 carta. O mar devolve o que é seu." 2
+
+        _  -> unknownCard
+
+
+-- ====================================================================
+-- DECKS
+-- ====================================================================
+
+
+deckKeys : List String
+deckKeys =
+    [ "floresta", "sol", "aguas" ]
+
+
+deckLabel : String -> String
+deckLabel key =
+    case key of
+        "floresta" -> "Floresta"
+        "sol"      -> "Sol"
+        "aguas"    -> "Águas"
+        _          -> key
+
+
+deckTagline : String -> String
+deckTagline key =
+    case key of
+        "floresta" -> "Folclore brasileiro: muralhas, sustento e a mata cobrando pedágio."
+        "sol"      -> "Andes e Mesoamérica: agressão, dano direto e ouro que morde."
+        "aguas"    -> "Rios e mar: cura, cartas e paciência de maré."
+        _          -> ""
+
+
+deckValid : String -> Bool
+deckValid key =
+    List.member key deckKeys
+
+
+-- Two copies of each of the deck's ten cards, interleaved so the
+-- pre-shuffle order is at least mixed.
+deckCards : String -> List Int
+deckCards key =
+    let
+        base =
+            case key of
+                "floresta" -> [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
+                "sol"      -> [ 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 ]
+                _          -> [ 21, 22, 23, 24, 25, 26, 27, 28, 29, 30 ]
+    in
+    List.concat [ base, base ]
+
+
+deckIndex : String -> Int
+deckIndex key =
+    case key of
+        "floresta" -> 0
+        "sol"      -> 1
+        _          -> 2
+
+
+-- ====================================================================
+-- RULES CONSTANTS
+-- ====================================================================
+
+
+vidaInicial : Int
+vidaInicial = 20
+
+
+maoMaxima : Int
+maoMaxima = 8
+
+
+campoMaximo : Int
+campoMaximo = 5
+
+
+energiaMaxima : Int
+energiaMaxima = 8
+
+
+-- ====================================================================
+-- ENGINE STATE
+-- ====================================================================
+
+
+-- One creature on the board. `ready` = may attack this turn;
+-- `sono` = a lullaby is holding it down through its next refresh.
+type alias Slot =
+    { cid   : Int
+    , hp    : Int
+    , ready : Bool
+    , sono  : Bool
+    }
+
+
+type alias Side =
+    { deck    : List Int
+    , hand    : List Int
+    , board   : List Slot
+    , life    : Int
+    , energy  : Int
+    , maxE    : Int
+    , fatigue : Int
+    }
+
+
+-- winner: 0 = playing, 1 = side A, 2 = side B.
+type alias GState =
+    { a      : Side
+    , b      : Side
+    , turnA  : Bool
+    , turn   : Int
+    , winner : Int
+    }
+
+
+-- ====================================================================
+-- DETERMINISTIC SHUFFLE
+-- ====================================================================
+--
+-- Deterministic shuffle on the stdlib `Random`: a Seed threaded through
+-- `Random.step`. The PCG is bit-identical across the Go server and the JS
+-- client, so a replay from the same stored seed lands on the same shuffle
+-- everywhere — the same guarantee the hand-rolled Park-Miller LCG gave, now
+-- from the language instead of copied into the app.
+
+
+sanitizeSeed : Int -> Int
+sanitizeSeed raw =
+    let
+        s = imodP raw 2147483647
+    in
+    if s <= 0 then 42 else s
+
+
+shuffle : Random.Seed -> List Int -> (Random.Seed, List Int)
+shuffle seed cards =
+    let
+        step =
+            \_ acc ->
+                let
+                    n = List.length acc.rest
+                    (i, s2) = Random.step (Random.int 0 (n - 1)) acc.seed
+                    picked = Maybe.withDefault 0 (nth i acc.rest)
+                    rest2 = List.concat [ List.take i acc.rest, List.drop (i + 1) acc.rest ]
+                in
+                { seed = s2, out = picked :: acc.out, rest = rest2 }
+
+        r =
+            List.foldl step { seed = seed, out = [], rest = cards } cards
+    in
+    (r.seed, r.out)
+
+
+-- ====================================================================
+-- ENGINE — INIT
+-- ====================================================================
+
+
+initState : Int -> String -> String -> GState
+initState rawSeed dkA dkB =
+    let
+        seed0 = Random.initialSeed (sanitizeSeed rawSeed)
+        (seed1, cardsA) = shuffle seed0 (deckCards dkA)
+        (_, cardsB) = shuffle seed1 (deckCards dkB)
+        sideA =
+            { deck = List.drop 4 cardsA
+            , hand = List.take 4 cardsA
+            , board = []
+            , life = vidaInicial
+            , energy = 1
+            , maxE = 1
+            , fatigue = 0
+            }
+        sideB =
+            { deck = List.drop 5 cardsB
+            , hand = List.take 5 cardsB
+            , board = []
+            , life = vidaInicial
+            , energy = 0
+            , maxE = 0
+            , fatigue = 0
+            }
+    in
+    { a = sideA, b = sideB, turnA = True, turn = 1, winner = 0 }
+
+
+-- ====================================================================
+-- ENGINE — SMALL ACCESS HELPERS
+-- ====================================================================
+
+
+nth : Int -> List a -> Maybe a
+nth i xs =
+    List.head (List.drop i xs)
+
+
+removeAt : Int -> List a -> List a
+removeAt i xs =
+    List.concat [ List.take i xs, List.drop (i + 1) xs ]
+
+
+sideOf : Bool -> GState -> Side
+sideOf isA st =
+    if isA then st.a else st.b
+
+
+setSide : Bool -> Side -> GState -> GState
+setSide isA side st =
+    if isA then { st | a = side } else { st | b = side }
+
+
+-- After any life change: has someone died? (Both can't drop in one
+-- move — every effect hits a single hero.)
+checkWin : GState -> GState
+checkWin st =
+    if st.winner /= 0 then
+        st
+    else if st.a.life <= 0 then
+        { st | winner = 2 }
+    else if st.b.life <= 0 then
+        { st | winner = 1 }
+    else
+        st
+
+
+healLife : Int -> Int -> Int
+healLife life n =
+    min vidaInicial (life + n)
+
+
+-- Draw one card, honoring the hand cap and the fatigue clock.
+drawOne : Side -> Side
+drawOne s =
+    case s.deck of
+        [] ->
+            let
+                f = s.fatigue + 1
+            in
+            { s | fatigue = f, life = s.life - f }
+
+        top :: rest ->
+            if List.length s.hand >= maoMaxima then
+                { s | deck = rest }
+
+            else
+                { s | deck = rest, hand = List.concat [ s.hand, [ top ] ] }
+
+
+drawN : Int -> Side -> Side
+drawN n s =
+    if n <= 0 then s else drawN (n - 1) (drawOne s)
+
+
+hasGuardian : List Slot -> Bool
+hasGuardian board =
+    List.any (\sl -> (cardOf sl.cid).kw == Guardiao) board
+
+
+pruneDead : List Slot -> List Slot
+pruneDead board =
+    List.filter (\sl -> sl.hp > 0) board
+
+
+damageAll : Int -> List Slot -> List Slot
+damageAll n board =
+    pruneDead (List.map (\sl -> { sl | hp = sl.hp - n }) board)
+
+
+damageAt : Int -> Int -> List Slot -> List Slot
+damageAt i n board =
+    pruneDead
+        (List.indexedMap
+            (\j sl -> if j == i then { sl | hp = sl.hp - n } else sl)
+            board)
+
+
+sleepAt : Int -> List Slot -> List Slot
+sleepAt i board =
+    List.indexedMap
+        (\j sl -> if j == i then { sl | sono = True, ready = False } else sl)
+        board
+
+
+-- ====================================================================
+-- ENGINE — APPLY ONE MOVE
+-- ====================================================================
+--
+-- Moves are compact strings in the append-only log:
+--   "J <handIx> <target>"  play a card ("-" when no target, else the
+--                          enemy board index a spell aims at)
+--   "A <slotIx> <target>"  attack ("h" = the enemy hero, else index)
+--   "E"                    end the turn
+--   "C"                    concede (legal even off-turn)
+--
+-- `applyMoveBy isA` validates EVERYTHING: it is the single rules
+-- authority for the server (reject) and the client (prevent).
+
+
+applyMoveBy : Bool -> GState -> String -> Result String GState
+applyMoveBy isA st data =
+    if st.winner /= 0 then
+        Err "A partida já terminou."
+
+    else
+        case String.split " " data of
+            [ "C" ] ->
+                Ok { st | winner = if isA then 2 else 1 }
+
+            [ "E" ] ->
+                if isA == st.turnA then
+                    Ok (endTurn st)
+
+                else
+                    Err "Não é o seu turno."
+
+            [ "J", iStr, target ] ->
+                if isA == st.turnA then
+                    case String.toInt iStr of
+                        Just i ->
+                            playCard st i target
+
+                        Nothing ->
+                            Err "Jogada inválida."
+
+                else
+                    Err "Não é o seu turno."
+
+            [ "A", sStr, target ] ->
+                if isA == st.turnA then
+                    case String.toInt sStr of
+                        Just s ->
+                            attack st s target
+
+                        Nothing ->
+                            Err "Jogada inválida."
+
+                else
+                    Err "Não é o seu turno."
+
+            _ ->
+                Err "Jogada inválida."
+
+
+endTurn : GState -> GState
+endTurn st0 =
+    let
+        st = { st0 | turnA = st0.turnA == False, turn = st0.turn + 1 }
+        cur = sideOf st.turnA st
+        m2 = min energiaMaxima (cur.maxE + 1)
+        woken =
+            List.map
+                (\sl ->
+                    if sl.sono then
+                        { sl | sono = False, ready = False }
+
+                    else
+                        { sl | ready = True })
+                cur.board
+        cur2 = drawOne { cur | maxE = m2, energy = m2, board = woken }
+    in
+    checkWin (setSide st.turnA cur2 st)
+
+
+playCard : GState -> Int -> String -> Result String GState
+playCard st i target =
+    let
+        me = sideOf st.turnA st
+    in
+    case nth i me.hand of
+        Nothing ->
+            Err "Essa carta não está na sua mão."
+
+        Just cid ->
+            let
+                card = cardOf cid
+            in
+            if card.custo > me.energy then
+                Err "Energia insuficiente."
+
+            else if card.tipo == Criatura && List.length me.board >= campoMaximo then
+                Err "Seu campo está cheio."
+
+            else if fxNeedsTarget card.fx && card.tipo == Feitico then
+                case String.toInt target of
+                    Nothing ->
+                        Err "Esse feitiço precisa de um alvo."
+
+                    Just t ->
+                        if t < 0 || t >= List.length (sideOf (st.turnA == False) st).board then
+                            Err "Alvo inválido."
+
+                        else
+                            Ok (resolvePlay st i card (Just t))
+
+            else
+                Ok (resolvePlay st i card Nothing)
+
+
+fxNeedsTarget : Efeito -> Bool
+fxNeedsTarget fx =
+    case fx of
+        DanoAlvo _ -> True
+        Adormecer  -> True
+        _          -> False
+
+
+resolvePlay : GState -> Int -> Card -> Maybe Int -> GState
+resolvePlay st i card target =
+    let
+        me0 = sideOf st.turnA st
+        me1 = { me0 | hand = removeAt i me0.hand, energy = me0.energy - card.custo }
+        withCreature =
+            if card.tipo == Criatura then
+                { me1
+                    | board =
+                        List.concat
+                            [ me1.board
+                            , [ { cid = card.cid, hp = card.hp, ready = card.kw == Impeto, sono = False } ]
+                            ]
+                }
+
+            else
+                me1
+        st2 = setSide st.turnA withCreature st
+    in
+    checkWin (applyFx st2 card.fx target)
+
+
+-- Resolve an effect from the CURRENT player's point of view.
+applyFx : GState -> Efeito -> Maybe Int -> GState
+applyFx st fx target =
+    let
+        meIsA = st.turnA
+        me = sideOf meIsA st
+        foe = sideOf (meIsA == False) st
+    in
+    case fx of
+        SemEfeito ->
+            st
+
+        DanoHeroi n ->
+            setSide (meIsA == False) { foe | life = foe.life - n } st
+
+        DanoTodos n ->
+            setSide (meIsA == False) { foe | board = damageAll n foe.board } st
+
+        CurarHeroi n ->
+            setSide meIsA { me | life = healLife me.life n } st
+
+        Comprar n ->
+            setSide meIsA (drawN n me) st
+
+        DanoAlvo n ->
+            case target of
+                Just t ->
+                    setSide (meIsA == False) { foe | board = damageAt t n foe.board } st
+
+                Nothing ->
+                    st
+
+        Adormecer ->
+            case target of
+                Just t ->
+                    setSide (meIsA == False) { foe | board = sleepAt t foe.board } st
+
+                Nothing ->
+                    st
+
+        CurarComprar h d ->
+            let
+                healed = { me | life = healLife me.life h }
+            in
+            setSide meIsA (drawN d healed) st
+
+
+attack : GState -> Int -> String -> Result String GState
+attack st s target =
+    let
+        me = sideOf st.turnA st
+        foe = sideOf (st.turnA == False) st
+    in
+    case nth s me.board of
+        Nothing ->
+            Err "Essa criatura não está no campo."
+
+        Just mine ->
+            if mine.ready == False then
+                Err "Essa criatura ainda não pode atacar."
+
+            else if target == "h" then
+                if hasGuardian foe.board then
+                    Err "Um Guardião bloqueia o caminho."
+
+                else
+                    let
+                        atkN = (cardOf mine.cid).atk
+                        me2 = { me | board = markAttacked s me.board }
+                        foe2 = { foe | life = foe.life - atkN }
+                    in
+                    Ok (checkWin (setSide (st.turnA == False) foe2 (setSide st.turnA me2 st)))
+
+            else
+                case String.toInt target of
+                    Nothing ->
+                        Err "Alvo inválido."
+
+                    Just t ->
+                        case nth t foe.board of
+                            Nothing ->
+                                Err "Alvo inválido."
+
+                            Just theirs ->
+                                if hasGuardian foe.board && (cardOf theirs.cid).kw /= Guardiao then
+                                    Err "Um Guardião bloqueia o caminho."
+
+                                else
+                                    let
+                                        myAtk = (cardOf mine.cid).atk
+                                        theirAtk = (cardOf theirs.cid).atk
+                                        me2 =
+                                            { me
+                                                | board =
+                                                    pruneDead
+                                                        (List.indexedMap
+                                                            (\j sl ->
+                                                                if j == s then
+                                                                    { sl | hp = sl.hp - theirAtk, ready = False }
+
+                                                                else
+                                                                    sl)
+                                                            me.board)
+                                            }
+                                        foe2 = { foe | board = damageAt t myAtk foe.board }
+                                    in
+                                    Ok (setSide (st.turnA == False) foe2 (setSide st.turnA me2 st))
+
+
+markAttacked : Int -> List Slot -> List Slot
+markAttacked i board =
+    List.indexedMap
+        (\j sl -> if j == i then { sl | ready = False } else sl)
+        board
+
+
+-- ====================================================================
+-- ENGINE — REPLAY
+-- ====================================================================
+
+
+type alias MoveData =
+    { byA  : Bool
+    , data : String
+    }
+
+
+-- Fold the whole log. Moves come from the server pre-validated, so an
+-- Err here (impossible for stored games) just freezes the fold.
+replay : Int -> String -> String -> List MoveData -> GState
+replay seed dkA dkB moves =
+    List.foldl
+        (\mv st ->
+            case applyMoveBy mv.byA st mv.data of
+                Ok st2 ->
+                    st2
+
+                Err _ ->
+                    st)
+        (initState seed dkA dkB)
+        moves
+
+
+-- ====================================================================
+-- DTOs
+-- ====================================================================
+
+
+type MeResult
+    = TemJogador Player
+    | SemJogador
+
+
+type CriarResult
+    = JogadorCriado Player
+    | ApelidoEmUso
+    | ApelidoInvalido
+
+
+type alias JogadorCard =
+    { nick   : String
+    , wins   : Int
+    , losses : Int
+    }
+
+
+type DesafiarResult
+    = DesafioCriado Int
+    | OponenteNaoExiste
+    | JaTemPartida
+    | DeckInvalido
+    | AutoDesafio
+
+
+type Ack
+    = AckOk
+    | AckNegado
+
+
+-- One lobby row. `winnerMe`: 0 in-progress / 1 I won / 2 I lost.
+type alias PartidaCard =
+    { id        : Int
+    , rivalNick : String
+    , status    : Status
+    , minhaVez  : Bool
+    , souA      : Bool
+    , meuDeck   : String
+    , winnerMe  : Int
+    }
+
+
+type alias Lobby =
+    { convites  : List PartidaCard   -- challenges waiting on MY accept
+    , enviados  : List PartidaCard   -- my challenges waiting on THEM
+    , ativas    : List PartidaCard   -- running games
+    , encerradas : List PartidaCard  -- finished or refused
+    }
+
+
+-- Everything the client needs to replay and render a match.
+type alias PartidaData =
+    { id        : Int
+    , souA      : Bool
+    , meuNick   : String
+    , rivalNick : String
+    , deckA     : String
+    , deckB     : String
+    , seed      : Int
+    , status    : Status
+    , winnerN   : Int
+    , moves     : List MoveData
+    }
+
+
+type PartidaResult
+    = PartidaOk PartidaData
+    | PartidaNaoEncontrada
+
+
+type MoveResult
+    = MoveOk
+    | MoveIlegal String
+    | MoveDesatualizado      -- your ix != server count: refetch and retry
+    | PartidaIndisponivel
+
+
+-- ====================================================================
+-- SERVICES
+-- ====================================================================
+
+
+me : Service () MeResult
+me = Service.declare GET "/me"
+
+
+criarJogador : Service { nick : String } CriarResult
+criarJogador = Service.declare POST "/jogadores"
+
+
+listarJogadores : Service () (List JogadorCard)
+listarJogadores = Service.declare GET "/jogadores"
+
+
+desafiar : Service { nick : String, deck : String } DesafiarResult
+desafiar = Service.declare POST "/partidas"
+
+
+aceitar : Service { id : Int, deck : String } Ack
+aceitar = Service.declare POST "/partidas/{id:Int}/aceitar"
+
+
+recusar : Service { id : Int } Ack
+recusar = Service.declare POST "/partidas/{id:Int}/recusar"
+
+
+lobby : Service () Lobby
+lobby = Service.declare GET "/partidas"
+
+
+partida : Service { id : Int } PartidaResult
+partida = Service.declare GET "/partidas/{id:Int}"
+
+
+jogar : Service { id : Int, ix : Int, data : String } MoveResult
+jogar = Service.declare POST "/partidas/{id:Int}/jogar"
+
+
+-- ====================================================================
+-- NICK RULES (client and server share one validator)
+-- ====================================================================
+
+
+nickProblem : String -> Maybe String
+nickProblem raw =
+    let
+        nick = String.trim raw
+        n = String.length nick
+    in
+    if n < 3 then
+        Just "O apelido precisa ter ao menos 3 caracteres."
+
+    else if n > 16 then
+        Just "O apelido pode ter no máximo 16 caracteres."
+
+    else if String.any (\c -> nickChar c == False) nick then
+        Just "Use letras, números, hífen ou sublinhado — sem espaços."
+
+    else
+        Nothing
+
+
+nickChar : Char -> Bool
+nickChar c =
+    Char.isAlpha c || Char.isDigit c || c == '-' || c == '_'
+
+
+-- ====================================================================
+-- INT HELPERS
+-- ====================================================================
+
+
+
+
+imodP : Int -> Int -> Int
+imodP n m =
+    let
+        r = n - (n // m) * m
+    in
+    if r < 0 then r + m else r

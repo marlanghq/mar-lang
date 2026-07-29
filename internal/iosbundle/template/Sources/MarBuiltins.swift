@@ -45,27 +45,16 @@ enum MarBuiltins {
         env.define("DELETE", .ctor(tag: "DELETE", args: [], origin: nil))
 
         // Service.Error constructors — the transport failure a Service.call
-        // delivers in its Err. MarHTTP builds these directly. Registered
-        // under their qualified names only, the Elm Http.Error model: user
-        // code writes `Service.Offline` to construct and to pattern-match,
-        // and the bare names stay free for user constructors. Tags stay
-        // bare. Keep the errorToString messages identical to Go and JS.
-        env.define("Service.Offline", .ctor(tag: "Offline", args: [], origin: nil))
-        env.define("Service.Unauthorized", .ctor(tag: "Unauthorized", args: [], origin: nil))
-        env.define("Service.ServerError", .fn(MarFn.native(1) { .ctor(tag: "ServerError", args: $0, origin: nil) }))
-
-        // Auth outcome constructors — qualified-only, like Service.Error.
-        env.define("Auth.CodeSent", .ctor(tag: "CodeSent", args: [], origin: nil))
-        env.define("Auth.InvalidEmail", .ctor(tag: "InvalidEmail", args: [], origin: nil))
-        env.define("Auth.RateLimited", .ctor(tag: "RateLimited", args: [], origin: nil))
-        env.define("Auth.WrongCode", .ctor(tag: "WrongCode", args: [], origin: nil))
-        env.define("Auth.TooManyAttempts", .ctor(tag: "TooManyAttempts", args: [], origin: nil))
-        env.define("Auth.SignedIn", .fn(MarFn.native(1) { .ctor(tag: "SignedIn", args: $0, origin: nil) }))
+        // delivers in its Err. MarHTTP builds these directly. The
+        // Service.Error and Auth outcome constructors themselves come from
+        // the generated registry (MarBuiltinCtors.swift). Keep the
+        // errorToString messages identical to Go and JS.
         let serviceErrorToString = MarFn.native(1) { args -> MarValue in
             guard case let .ctor(tag, cargs, _) = args[0] else { return .string("") }
             switch tag {
             case "Offline": return .string("Can't reach the server. Check your connection and try again.")
             case "Unauthorized": return .string("Your session has expired. Please sign in again.")
+            case "RateLimited": return .string("Too many requests. Wait a moment and try again.")
             case "ServerError":
                 if case let .string(s)? = cargs.first { return .string(s) }
                 return .string("")
@@ -75,13 +64,39 @@ enum MarBuiltins {
         env.define("serviceErrorToString", .fn(serviceErrorToString))
         env.define("Service.errorToString", .fn(serviceErrorToString))
 
-        // MARK: Arithmetic (integer for now; matches runtime.js)
-        env.define("+", .fn(MarFn.native(2) { args in .int(asInt(args[0]) + asInt(args[1])) }))
-        env.define("-", .fn(MarFn.native(2) { args in .int(asInt(args[0]) - asInt(args[1])) }))
-        env.define("*", .fn(MarFn.native(2) { args in .int(asInt(args[0]) * asInt(args[1])) }))
-        env.define("/", .fn(MarFn.native(2) { args in
+        // MARK: Arithmetic — `+ - *` close over both Int and Decimal
+        // (the typechecker's `number` constraint guarantees the
+        // operands agree); matches runtime.js and the Go runtime.
+        env.define("+", .fn(MarFn.native(2) { args in
+            if case .decimal(let a) = args[0], case .decimal(let b) = args[1] {
+                return .decimal(try DecMath.decAdd(a, b))
+            }
+            return .int(try MarInt.add(asInt(args[0]), asInt(args[1])))
+        }))
+        env.define("-", .fn(MarFn.native(2) { args in
+            if case .decimal(let a) = args[0], case .decimal(let b) = args[1] {
+                return .decimal(try DecMath.decSub(a, b))
+            }
+            return .int(try MarInt.sub(asInt(args[0]), asInt(args[1])))
+        }))
+        env.define("*", .fn(MarFn.native(2) { args in
+            if case .decimal(let a) = args[0], case .decimal(let b) = args[1] {
+                return .decimal(try DecMath.decMul(a, b))
+            }
+            return .int(try MarInt.mul(asInt(args[0]), asInt(args[1])))
+        }))
+        // `//` — truncating Int division, total: /0 yields 0 on every runtime.
+        env.define("//", .fn(MarFn.native(2) { args in
             let b = asInt(args[1])
             return .int(b == 0 ? 0 : asInt(args[0]) / b)
+        }))
+        // `/` — Decimal-only; produces the inert exact quotient,
+        // resolved only by Decimal.rounded / exact / withRemainder.
+        env.define("/", .fn(MarFn.native(2) { args in
+            guard case .decimal(let a) = args[0], case .decimal(let b) = args[1] else {
+                throw MarRuntimeError.typeMismatch(expected: "Decimal", got: Eval.typeOf(args[0]))
+            }
+            return .division(num: a, den: b)
         }))
 
         // MARK: Comparison
@@ -98,6 +113,48 @@ enum MarBuiltins {
         // MARK: Logic
         env.define("&&", .fn(MarFn.native(2) { args in .bool(asBool(args[0]) && asBool(args[1])) }))
         env.define("||", .fn(MarFn.native(2) { args in .bool(asBool(args[0]) || asBool(args[1])) }))
+        // not : Bool -> Bool — Elm's Basics.not. Mar has no prefix operator,
+        // so negation is an ordinary function.
+        env.define("not", .fn(MarFn.native(1) { args in .bool(!asBool(args[0])) }))
+
+        // The numeric kit, bare and Elm-named. max/min/clamp go through
+        // compareMar — the same ordering `<` uses — so Comparable is one
+        // definition of order across Int, Decimal, String and Char.
+        env.define("max", .fn(MarFn.native(2) { args in
+            args[0].compareMar(args[1]) >= 0 ? args[0] : args[1]
+        }))
+        env.define("min", .fn(MarFn.native(2) { args in
+            args[0].compareMar(args[1]) <= 0 ? args[0] : args[1]
+        }))
+        // clamp low high x. Crossed bounds pin to low: the caller's bug, but
+        // total either way.
+        env.define("clamp", .fn(MarFn.native(3) { args in
+            let low = args[0], high = args[1], x = args[2]
+            if x.compareMar(low) <= 0 { return low }
+            if x.compareMar(high) >= 0 { return high }
+            return x
+        }))
+        env.define("abs", .fn(MarFn.native(1) { args in
+            if case .decimal(var d) = args[0] {
+                d.negative = false
+                return .decimal(d)
+            }
+            let n = asInt(args[0])
+            return .int(n < 0 ? -n : n)
+        }))
+        // modBy takes the DIVISOR's sign (floor modulo), remainderBy the
+        // DIVIDEND's (truncated, in step with `//`). Both total at 0.
+        env.define("modBy", .fn(MarFn.native(2) { args in
+            let d = asInt(args[0]), n = asInt(args[1])
+            if d == 0 { return .int(0) }
+            var r = n % d
+            if r != 0 && ((r < 0) != (d < 0)) { r += d }
+            return .int(r)
+        }))
+        env.define("remainderBy", .fn(MarFn.native(2) { args in
+            let d = asInt(args[0]), n = asInt(args[1])
+            return .int(d == 0 ? 0 : n % d)
+        }))
 
         // MARK: Append (string + list, polymorphic)
         env.define("++", .fn(MarFn.native(2) { args in
@@ -119,6 +176,156 @@ enum MarBuiltins {
         // MARK: Pipes
         env.define("|>", .fn(MarFn.native(2) { args in try Eval.apply(args[1], args[0]) }))
         env.define("<|", .fn(MarFn.native(2) { args in try Eval.apply(args[0], args[1]) }))
+
+        // MARK: Decimal stdlib — semantics match internal/runtime/
+        // decimal.go and runtime.js exactly (conformance vectors in
+        // decimal_test.go are the contract).
+        func asDec(_ v: MarValue, _ op: String) throws -> MarDec {
+            if case .decimal(let d) = v { return d }
+            throw MarRuntimeError.message("\(op): expected Decimal")
+        }
+        func asDiv(_ v: MarValue, _ op: String) throws -> (MarDec, MarDec) {
+            if case .division(let n, let d) = v { return (n, d) }
+            throw MarRuntimeError.message("\(op): expected a Decimal division (a / b)")
+        }
+        env.define("decimalZero", .decimal(MarDec.zero))
+        env.define("Decimal.zero", .decimal(MarDec.zero))
+
+        let decimalFromInt = MarFn.native(1) { args in .decimal(MarDec.fromInt(asInt(args[0]))) }
+        env.define("decimalFromInt", .fn(decimalFromInt))
+        env.define("Decimal.fromInt", .fn(decimalFromInt))
+
+        let decimalFromCents = MarFn.native(1) { args in
+            var d = MarDec.fromInt(asInt(args[0]))
+            d.scale = 2
+            return .decimal(d)
+        }
+        env.define("decimalFromCents", .fn(decimalFromCents))
+        env.define("Decimal.fromCents", .fn(decimalFromCents))
+
+        let decimalToCents = MarFn.native(1) { args in
+            let d = try asDec(args[0], "Decimal.toCents")
+            if d.scale > 2 {
+                throw MarRuntimeError.message("Decimal.toCents: value has scale \(d.scale) (more than 2 places); round explicitly first with Decimal.toScale")
+            }
+            let r = try DecMath.decToScale(d, 2, "Down")
+            guard let n = DecMath.toInt(r.digits, negative: r.negative) else {
+                throw MarRuntimeError.message("Decimal.toCents: value does not fit an Int")
+            }
+            return .int(n)
+        }
+        env.define("decimalToCents", .fn(decimalToCents))
+        env.define("Decimal.toCents", .fn(decimalToCents))
+
+        let decimalTruncate = MarFn.native(1) { args in
+            .int(try DecMath.decToInt(try asDec(args[0], "Decimal.truncate"), "Down"))
+        }
+        env.define("decimalTruncate", .fn(decimalTruncate))
+        env.define("Decimal.truncate", .fn(decimalTruncate))
+
+        let decimalRound = MarFn.native(1) { args in
+            .int(try DecMath.decToInt(try asDec(args[0], "Decimal.round"), "HalfEven"))
+        }
+        env.define("decimalRound", .fn(decimalRound))
+        env.define("Decimal.round", .fn(decimalRound))
+
+        let decimalFloor = MarFn.native(1) { args in
+            .int(try DecMath.decToInt(try asDec(args[0], "Decimal.floor"), "Floor"))
+        }
+        env.define("decimalFloor", .fn(decimalFloor))
+        env.define("Decimal.floor", .fn(decimalFloor))
+
+        let decimalCeiling = MarFn.native(1) { args in
+            .int(try DecMath.decToInt(try asDec(args[0], "Decimal.ceiling"), "Ceiling"))
+        }
+        env.define("decimalCeiling", .fn(decimalCeiling))
+        env.define("Decimal.ceiling", .fn(decimalCeiling))
+
+        let decimalToIntWith = MarFn.native(2) { args in
+            .int(try DecMath.decToInt(try asDec(args[1], "Decimal.toIntWith"), try DecMath.roundingTag(args[0])))
+        }
+        env.define("decimalToIntWith", .fn(decimalToIntWith))
+        env.define("Decimal.toIntWith", .fn(decimalToIntWith))
+
+        let decimalToScale = MarFn.native(3) { args in
+            .decimal(try DecMath.decToScale(try asDec(args[2], "Decimal.toScale"), asInt(args[1]), try DecMath.roundingTag(args[0])))
+        }
+        env.define("decimalToScale", .fn(decimalToScale))
+        env.define("Decimal.toScale", .fn(decimalToScale))
+
+        let decimalAbs = MarFn.native(1) { args in
+            var d = try asDec(args[0], "Decimal.abs")
+            d.negative = false
+            return .decimal(d)
+        }
+        env.define("decimalAbs", .fn(decimalAbs))
+        env.define("Decimal.abs", .fn(decimalAbs))
+
+        let decimalNegate = MarFn.native(1) { args in
+            var d = try asDec(args[0], "Decimal.negate")
+            d.negative = !d.negative && !d.isZero
+            return .decimal(d)
+        }
+        env.define("decimalNegate", .fn(decimalNegate))
+        env.define("Decimal.negate", .fn(decimalNegate))
+
+        let decimalCompare = MarFn.native(2) { args in
+            let c = DecMath.decCompare(try asDec(args[0], "Decimal.compare"), try asDec(args[1], "Decimal.compare"))
+            return .ctor(tag: c < 0 ? "LT" : (c > 0 ? "GT" : "EQ"), args: [], origin: nil)
+        }
+        env.define("decimalCompare", .fn(decimalCompare))
+        env.define("Decimal.compare", .fn(decimalCompare))
+
+        let decimalFromString = MarFn.native(1) { args in
+            guard let d = DecMath.parseDecimalString(asString(args[0])) else {
+                return .ctor(tag: "Nothing", args: [], origin: nil)
+            }
+            return .ctor(tag: "Just", args: [.decimal(d)], origin: nil)
+        }
+        env.define("decimalFromString", .fn(decimalFromString))
+        env.define("Decimal.fromString", .fn(decimalFromString))
+
+        let decimalToString = MarFn.native(1) { args in
+            .string(DecMath.decString(try asDec(args[0], "Decimal.toString")))
+        }
+        env.define("decimalToString", .fn(decimalToString))
+        env.define("Decimal.toString", .fn(decimalToString))
+
+        // Division resolvers — the ONLY exits from Decimal.Division,
+        // and the only places rounding can happen.
+        let decimalRounded = MarFn.native(3) { args in
+            let mode = try DecMath.roundingTag(args[0])
+            let scale = asInt(args[1])
+            let (num, den) = try asDiv(args[2], "Decimal.rounded")
+            if scale < 0 {
+                throw MarRuntimeError.message("Decimal.rounded: negative scale \(scale)")
+            }
+            if den.isZero {
+                // Total, matching Int's `//`: zero at the requested scale.
+                return .decimal(MarDec(negative: false, digits: [0], scale: scale))
+            }
+            return .decimal(try DecMath.roundQuotient(num, den, scale, mode))
+        }
+        env.define("decimalRounded", .fn(decimalRounded))
+        env.define("Decimal.rounded", .fn(decimalRounded))
+
+        let decimalWithRemainder = MarFn.native(2) { args in
+            let scale = asInt(args[0])
+            let (num, den) = try asDiv(args[1], "Decimal.withRemainder")
+            if scale < 0 {
+                throw MarRuntimeError.message("Decimal.withRemainder: negative scale \(scale)")
+            }
+            let q: MarDec = den.isZero
+                ? MarDec(negative: false, digits: [0], scale: scale)
+                : try DecMath.roundQuotient(num, den, scale, "Down")
+            // remainder = a - q*b via the exact ops, so q * b + r == a
+            // holds by construction.
+            let r = try DecMath.decSub(num, DecMath.decMul(q, den))
+            return .record(fields: ["quotient": .decimal(q), "remainder": .decimal(r)],
+                           order: ["quotient", "remainder"])
+        }
+        env.define("decimalWithRemainder", .fn(decimalWithRemainder))
+        env.define("Decimal.withRemainder", .fn(decimalWithRemainder))
 
         // MARK: String stdlib
         let stringFromInt = MarFn.native(1) { args in .string(String(asInt(args[0]))) }
@@ -239,42 +446,23 @@ enum MarBuiltins {
         env.define("stringEndsWith",  .fn(stringEndsWith))
         env.define("String.endsWith", .fn(stringEndsWith))
 
-        // String.toInt / toFloat : Maybe-returning parsers — Nothing
-        // on any parse failure (empty / non-digit / overflow).
+        // String.toInt : Maybe-returning parser — Nothing on any parse
+        // failure (empty / non-digit / overflow).
         let stringToInt = MarFn.native(1) { args in
             guard case .string(let s) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
             }
-            if let n = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            // A number too big to BE an Int is a parse failure like any other,
+            // not an error: the type already says this text might not be a
+            // number. Missing this check is what the conformance corpus caught
+            // — the arithmetic was bounded and this was not.
+            if let n = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)), MarInt.inRange(n) {
                 return .ctor(tag: "Just", args: [.int(n)], origin: nil)
             }
             return .ctor(tag: "Nothing", args: [], origin: nil)
         }
         env.define("stringToInt",  .fn(stringToInt))
         env.define("String.toInt", .fn(stringToInt))
-
-        let stringToFloat = MarFn.native(1) { args in
-            guard case .string(let s) = args[0] else {
-                throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
-            }
-            if let f = Double(s.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                return .ctor(tag: "Just", args: [.float(f)], origin: nil)
-            }
-            return .ctor(tag: "Nothing", args: [], origin: nil)
-        }
-        env.define("stringToFloat",  .fn(stringToFloat))
-        env.define("String.toFloat", .fn(stringToFloat))
-
-        // String.fromFloat — Swift's default String(Double) gives
-        // shortest round-trip representation.
-        let stringFromFloat = MarFn.native(1) { args in
-            guard case .float(let f) = args[0] else {
-                throw MarRuntimeError.typeMismatch(expected: "Float", got: Eval.typeOf(args[0]))
-            }
-            return .string(String(f))
-        }
-        env.define("stringFromFloat",  .fn(stringFromFloat))
-        env.define("String.fromFloat", .fn(stringFromFloat))
 
         // String.replace : needle -> replacement -> s -> String
         let stringReplace = MarFn.native(3) { args in
@@ -380,16 +568,15 @@ enum MarBuiltins {
         env.define("listMap",  .fn(listMap))
         env.define("List.map", .fn(listMap))
 
-        let listSum = MarFn.native(1) { args in
-            guard case .list(let xs) = args[0] else {
-                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
-            }
-            var sum = 0
-            for x in xs { sum += asInt(x) }
-            return .int(sum)
-        }
+        // listSum / listProduct : List number -> number. A non-empty list
+        // settles its own type from the first element; the empty list takes
+        // the zero the typechecker chose by naming the implementation.
+        let listSum = numericFold(DecMath.decAdd, { $0 + $1 }, .int(0))
         env.define("listSum",  .fn(listSum))
         env.define("List.sum", .fn(listSum))
+        env.define("listSumDecimal",
+                   .fn(numericFold(DecMath.decAdd, { $0 + $1 },
+                                   .decimal(MarDec.zero))))
 
         let listFilter = MarFn.native(2) { args in
             guard case .list(let xs) = args[1] else {
@@ -415,7 +602,7 @@ enum MarBuiltins {
         env.define("listReverse",  .fn(listReverse))
         env.define("List.reverse", .fn(listReverse))
 
-        // List.foldl : (b -> a -> b) -> b -> List a -> b
+        // List.foldl : (a -> b -> b) -> b -> List a -> b
         // Tight-loop fold; errors from the function abort the fold.
         let listFoldl = MarFn.native(3) { args in
             let fn = args[0]
@@ -424,8 +611,8 @@ enum MarBuiltins {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[2]))
             }
             for x in xs {
-                let partial = try Eval.apply(fn, acc)
-                acc = try Eval.apply(partial, x)
+                let partial = try Eval.apply(fn, x)
+                acc = try Eval.apply(partial, acc)
             }
             return acc
         }
@@ -720,17 +907,13 @@ enum MarBuiltins {
         env.define("listMinimum",  .fn(listMinimum))
         env.define("List.minimum", .fn(listMinimum))
 
-        // MARK: List.product : List Int -> Int
-        let listProduct = MarFn.native(1) { args in
-            guard case .list(let xs) = args[0] else {
-                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
-            }
-            var p = 1
-            for x in xs { p *= asInt(x) }
-            return .int(p)
-        }
+        // MARK: List.product : List number -> number
+        let listProduct = numericFold(DecMath.decMul, { $0 * $1 }, .int(1))
         env.define("listProduct",  .fn(listProduct))
         env.define("List.product", .fn(listProduct))
+        env.define("listProductDecimal",
+                   .fn(numericFold(DecMath.decMul, { $0 * $1 },
+                                   .decimal(MarDec(negative: false, digits: [1], scale: 0)))))
 
         // MARK: List.sort / sortBy / sortWith
         // Swift's Array.sort(by:) is stable since Swift 5.0.
@@ -1100,6 +1283,34 @@ enum MarBuiltins {
         env.define("pageDynamicAdminProtected",  .fn(pageDynamicAdminProtected))
         env.define("Page.dynamicAdminProtected", .fn(pageDynamicAdminProtected))
 
+        // MARK: Page.sheet
+        //
+        // Presentation, not a fifth page kind: takes a page built by any
+        // of the constructors here and marks it as PRESENTED over the
+        // screen it was reached from rather than pushed onto the stack.
+        // The route is unchanged — same path, same navPath entry — so
+        // only ContentView's StackShell reads this, to hand the top entry
+        // to `.sheet` instead of `.navigationDestination`.
+        //
+        // Carried as a seventh ctor arg. Every reader indexes args
+        // defensively (`args.count >= n`), so appending is invisible to
+        // the four existing shapes.
+        let pageSheet = MarFn.native(1) { args in
+            guard case .ctor(let tag, let ctorArgs, let origin) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "Page", got: Eval.typeOf(args[0]))
+            }
+            var withPresentation = ctorArgs
+            while withPresentation.count < 6 { withPresentation.append(.unit) }
+            if withPresentation.count == 6 {
+                withPresentation.append(.bool(true))
+            } else {
+                withPresentation[6] = .bool(true)
+            }
+            return .ctor(tag: tag, args: withPresentation, origin: origin)
+        }
+        env.define("pageSheet",  .fn(pageSheet))
+        env.define("Page.sheet", .fn(pageSheet))
+
         // Mar.Admin.* — privileged server-introspection for the web admin
         // panel. No iOS admin app, so these are web-only: registered (each
         // name spelled literally for the builtin-coverage drift test) but they
@@ -1199,6 +1410,19 @@ enum MarBuiltins {
         }
         env.define("navReplace",  .fn(navReplace))
         env.define("Nav.replace", .fn(navReplace))
+
+        // MARK: Nav.dismiss
+        //
+        // Closes a presented route (Page.sheet) — the verb a sheet's own
+        // Cancel / Done needs, matching the swipe-down the system already
+        // gives. With a pushed route on top it pops that instead, and at
+        // the app's first screen it does nothing. A VALUE, not a function.
+        let navDismiss = MarValue.effect(MarEffect(tag: "navDismiss") {
+            Task { @MainActor in AppContext.shared.dismissTop() }
+            return .unit
+        })
+        env.define("navDismiss",  navDismiss)
+        env.define("Nav.dismiss", navDismiss)
 
         // Auth.completeSignIn : Effect e msg
         // Drains the framework-managed `pendingReturnPath` set when a
@@ -1469,16 +1693,67 @@ enum MarBuiltins {
         env.define("subBatch",  .fn(subBatch))
         env.define("Sub.batch", .fn(subBatch))
 
-        // Random — Elm-style generators. A Generator a is a unit-thunk
-        // (MarFn.native(1) ignoring its arg); applying it to .unit yields one
-        // random value. Random.generate runs it and dispatches the value as a
-        // Msg (a Cmd), mirroring cmdPerform. Sub-generators are run inline via
-        // Eval.apply(g, .unit). NOTE: not compiled in CI (no xcode) — verify on
-        // a real iOS build.
+        // Random — PURE, seedable core. A Generator a is Seed -> (a, Seed):
+        // MarFn.native(1) taking a Seed, returning .tuple([value, nextSeed]).
+        // PCG-XSH-RR (UInt64 state) mirrors internal/runtime/random.go
+        // bit-for-bit — the golden vectors in random_test.go are the contract.
+        // A Seed rides in a .tuple of two 32-bit halves, opaque at the type
+        // level, so no new MarValue case is needed. NOTE: not compiled in CI
+        // (no xcode) — verify on a real iOS build.
+        let PCG_MUL: UInt64 = 6364136223846793005
+        let PCG_INC: UInt64 = 1442695040888963407
+        func pcgStep(_ state: UInt64) -> (UInt64, UInt32) {
+            let ns = state &* PCG_MUL &+ PCG_INC
+            let xs = UInt32(truncatingIfNeeded: ((state >> 18) ^ state) >> 27)
+            let rot = UInt32(state >> 59)
+            let out: UInt32 = rot == 0 ? xs : (xs >> rot) | (xs << (32 - rot))
+            return (ns, out)
+        }
+        func seedState(_ v: MarValue) -> UInt64 {
+            guard case .tuple(let xs) = v, xs.count == 2,
+                  case .int(let hi) = xs[0], case .int(let lo) = xs[1] else { return 0 }
+            return (UInt64(UInt32(truncatingIfNeeded: hi)) << 32) | UInt64(UInt32(truncatingIfNeeded: lo))
+        }
+        func makeSeed(_ state: UInt64) -> MarValue {
+            .tuple([.int(Int(state >> 32)), .int(Int(state & 0xFFFFFFFF))])
+        }
+        func scramble(_ n: Int) -> UInt64 {
+            pcgStep(UInt64(bitPattern: Int64(n)) &* PCG_MUL &+ PCG_INC).0
+        }
+        func entropySeed() -> MarValue {
+            var rng = SystemRandomNumberGenerator()
+            return makeSeed(rng.next())
+        }
+        func runGen(_ g: MarValue, _ seed: MarValue) throws -> (MarValue, MarValue) {
+            let r = try Eval.apply(g, seed)
+            guard case .tuple(let xs) = r, xs.count == 2 else {
+                throw MarRuntimeError.typeMismatch(expected: "(value, seed)", got: Eval.typeOf(r))
+            }
+            return (xs[0], xs[1])
+        }
+        func asGen(_ step: @escaping (MarValue) throws -> (MarValue, MarValue)) -> MarValue {
+            .fn(MarFn.native(1) { a in let (v, next) = try step(a[0]); return .tuple([v, next]) })
+        }
+
+        let randomInitialSeed = MarFn.native(1) { args in
+            guard case .int(let n) = args[0] else { throw MarRuntimeError.typeMismatch(expected: "Int", got: Eval.typeOf(args[0])) }
+            return makeSeed(scramble(n))
+        }
+        env.define("randomInitialSeed", .fn(randomInitialSeed))
+        env.define("Random.initialSeed", .fn(randomInitialSeed))
+        let randomStep = MarFn.native(2) { args in
+            let (v, next) = try runGen(args[0], args[1]); return .tuple([v, next])
+        }
+        env.define("randomStep", .fn(randomStep))
+        env.define("Random.step", .fn(randomStep))
+        let randomSeed = MarValue.effect(MarEffect(tag: "randomSeed") { entropySeed() })
+        env.define("randomSeed", randomSeed)
+        env.define("Random.seed", randomSeed)
+
         let randomGenerate = MarFn.native(2) { args in
             let toMsg = args[0], g = args[1]
             return .effect(MarEffect(tag: "randomGenerate") {
-                let v = try Eval.apply(g, .unit)
+                let (v, _) = try runGen(g, entropySeed())
                 let msg = try Eval.apply(toMsg, v)
                 Task { @MainActor in MarDispatcher.shared.dispatch(msg) }
                 return .unit
@@ -1491,13 +1766,18 @@ enum MarBuiltins {
                 throw MarRuntimeError.typeMismatch(expected: "(Int, Int)", got: Eval.typeOf(args[0]))
             }
             let a = min(lo, hi), b = max(lo, hi)
-            return .fn(MarFn.native(1) { _ in .int(Int.random(in: a...b)) })
+            let span = UInt64(bitPattern: Int64(b &- a)) &+ 1
+            return asGen { seed in
+                let (ns, out) = pcgStep(seedState(seed))
+                let v: Int = span == 0 ? a &+ Int(out) : a &+ Int(bitPattern: UInt(UInt64(out) % span))
+                return (.int(v), makeSeed(ns))
+            }
         }
         env.define("randomInt", .fn(randomInt))
         env.define("Random.int", .fn(randomInt))
         let randomConstant = MarFn.native(1) { args in
             let v = args[0]
-            return .fn(MarFn.native(1) { _ in v })
+            return asGen { seed in (v, seed) }
         }
         env.define("randomConstant", .fn(randomConstant))
         env.define("Random.constant", .fn(randomConstant))
@@ -1506,7 +1786,10 @@ enum MarBuiltins {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
             }
             let items = [args[0]] + rest
-            return .fn(MarFn.native(1) { _ in items[Int.random(in: 0..<items.count)] })
+            return asGen { seed in
+                let (ns, out) = pcgStep(seedState(seed))
+                return (items[Int(UInt64(out) % UInt64(items.count))], makeSeed(ns))
+            }
         }
         env.define("randomUniform", .fn(randomUniform))
         env.define("Random.uniform", .fn(randomUniform))
@@ -1515,45 +1798,62 @@ enum MarBuiltins {
                 throw MarRuntimeError.typeMismatch(expected: "Int", got: Eval.typeOf(args[0]))
             }
             let g = args[1]
-            return .fn(MarFn.native(1) { _ in
+            return asGen { seed in
                 var out: [MarValue] = []
-                if n > 0 { for _ in 0..<n { out.append(try Eval.apply(g, .unit)) } }
-                return .list(out)
-            })
+                var cur = seed
+                if n > 0 { for _ in 0..<n { let (v, next) = try runGen(g, cur); out.append(v); cur = next } }
+                return (.list(out), cur)
+            }
         }
         env.define("randomList", .fn(randomList))
         env.define("Random.list", .fn(randomList))
         let randomPair = MarFn.native(2) { args in
             let g1 = args[0], g2 = args[1]
-            return .fn(MarFn.native(1) { _ in .tuple([try Eval.apply(g1, .unit), try Eval.apply(g2, .unit)]) })
+            return asGen { seed in
+                let (v1, s1) = try runGen(g1, seed)
+                let (v2, s2) = try runGen(g2, s1)
+                return (.tuple([v1, v2]), s2)
+            }
         }
         env.define("randomPair", .fn(randomPair))
         env.define("Random.pair", .fn(randomPair))
         let randomMap = MarFn.native(2) { args in
             let f = args[0], g = args[1]
-            return .fn(MarFn.native(1) { _ in try Eval.apply(f, try Eval.apply(g, .unit)) })
+            return asGen { seed in
+                let (v, next) = try runGen(g, seed)
+                return (try Eval.apply(f, v), next)
+            }
         }
         env.define("randomMap", .fn(randomMap))
         env.define("Random.map", .fn(randomMap))
         let randomMap2 = MarFn.native(3) { args in
             let f = args[0], g1 = args[1], g2 = args[2]
-            return .fn(MarFn.native(1) { _ in
-                try Eval.apply(try Eval.apply(f, try Eval.apply(g1, .unit)), try Eval.apply(g2, .unit))
-            })
+            return asGen { seed in
+                let (v1, s1) = try runGen(g1, seed)
+                let (v2, s2) = try runGen(g2, s1)
+                return (try Eval.apply(try Eval.apply(f, v1), v2), s2)
+            }
         }
         env.define("randomMap2", .fn(randomMap2))
         env.define("Random.map2", .fn(randomMap2))
         let randomMap3 = MarFn.native(4) { args in
             let f = args[0], g1 = args[1], g2 = args[2], g3 = args[3]
-            return .fn(MarFn.native(1) { _ in
-                try Eval.apply(try Eval.apply(try Eval.apply(f, try Eval.apply(g1, .unit)), try Eval.apply(g2, .unit)), try Eval.apply(g3, .unit))
-            })
+            return asGen { seed in
+                let (v1, s1) = try runGen(g1, seed)
+                let (v2, s2) = try runGen(g2, s1)
+                let (v3, s3) = try runGen(g3, s2)
+                return (try Eval.apply(try Eval.apply(try Eval.apply(f, v1), v2), v3), s3)
+            }
         }
         env.define("randomMap3", .fn(randomMap3))
         env.define("Random.map3", .fn(randomMap3))
         let randomAndThen = MarFn.native(2) { args in
             let f = args[0], g = args[1]
-            return .fn(MarFn.native(1) { _ in try Eval.apply(try Eval.apply(f, try Eval.apply(g, .unit)), .unit) })
+            return asGen { seed in
+                let (v, s1) = try runGen(g, seed)
+                let g2 = try Eval.apply(f, v)
+                return try runGen(g2, s1)
+            }
         }
         env.define("randomAndThen", .fn(randomAndThen))
         env.define("Random.andThen", .fn(randomAndThen))
@@ -1578,14 +1878,23 @@ enum MarBuiltins {
         env.define("Cmd.perform", .fn(cmdPerform))
 
         // MARK: Time — Duration type + unit smart constructors
-        let mkDuration: (Int) -> MarFn = { mult in
+        let mkDuration: (Double) -> MarFn = { mult in
             MarFn.native(1) { args in
                 guard case .int(let n) = args[0] else {
                     throw MarRuntimeError.typeMismatch(expected: "Int", got: Eval.typeOf(args[0]))
                 }
-                return .duration(n * mult)
+                return .duration(Double(n) * mult)
             }
         }
+        // millis divides (not multiplies) so `Time.millis 1500` is exactly
+        // 1.5s; Duration is normalized to (fractional) seconds.
+        let timeMillis = MarFn.native(1) { args in
+            guard case .int(let n) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "Int", got: Eval.typeOf(args[0]))
+            }
+            return .duration(Double(n) / 1000)
+        }
+        env.define("timeMillis",  .fn(timeMillis));            env.define("Time.millis",  .fn(timeMillis))
         env.define("timeSeconds", .fn(mkDuration(1)));         env.define("Time.seconds", .fn(mkDuration(1)))
         env.define("timeMinutes", .fn(mkDuration(60)));        env.define("Time.minutes", .fn(mkDuration(60)))
         env.define("timeHours",   .fn(mkDuration(60*60)));     env.define("Time.hours",   .fn(mkDuration(60*60)))
@@ -1595,7 +1904,7 @@ enum MarBuiltins {
             guard case .duration(let s) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Duration", got: Eval.typeOf(args[0]))
             }
-            return .int(s)
+            return .int(Int(s))
         }
         env.define("timeToSeconds",  .fn(timeToSeconds))
         env.define("Time.toSeconds", .fn(timeToSeconds))
@@ -1631,7 +1940,7 @@ enum MarBuiltins {
                     expected: "(Time, Duration)",
                     got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])))")
             }
-            return .time(t + d * 1000)
+            return .time(t + Int(d * 1000))
         }
         env.define("timeAdd",  .fn(timeAdd))
         env.define("Time.add", .fn(timeAdd))
@@ -1643,7 +1952,7 @@ enum MarBuiltins {
                     expected: "(Time, Duration)",
                     got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])))")
             }
-            return .time(t - d * 1000)
+            return .time(t - Int(d * 1000))
         }
         env.define("timeSub",  .fn(timeSub))
         env.define("Time.sub", .fn(timeSub))
@@ -1655,7 +1964,7 @@ enum MarBuiltins {
                     expected: "(Time, Time)",
                     got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])))")
             }
-            return .duration((b - a) / 1000)
+            return .duration(Double(b - a) / 1000)
         }
         env.define("timeDiff",  .fn(timeDiff))
         env.define("Time.diff", .fn(timeDiff))
@@ -1799,9 +2108,16 @@ enum MarBuiltins {
         env.define("jsonEncode", .fn(MarFn.native(1) { args in
             let any = MarJSONCodec.marToJSON(args[0])
             do {
+                // `.sortedKeys` is not cosmetic. marToJSON hands back Swift
+                // Dictionaries, whose iteration order is unspecified and
+                // reseeded per process, so without it the SAME value encodes
+                // differently on different runs of the same app — and
+                // differently from the Go and JS runtimes, which emit their
+                // keys sorted. JSON.encode is a pure function; equal values
+                // have to give equal strings.
                 let data = try JSONSerialization.data(
                     withJSONObject: any,
-                    options: [.fragmentsAllowed]
+                    options: [.fragmentsAllowed, .sortedKeys]
                 )
                 return .string(String(data: data, encoding: .utf8) ?? "")
             } catch {
@@ -1828,6 +2144,14 @@ enum MarBuiltins {
         env.define("entityText",      .fn(colCtor)); env.define("Entity.text",      .fn(colCtor))
         env.define("entityBool",      .fn(colCtor)); env.define("Entity.bool",      .fn(colCtor))
         env.define("entityTimestamp", .fn(colCtor)); env.define("Entity.timestamp", .fn(colCtor))
+        let decimalColCtor = MarFn.native(2) { _ in .ctor(tag: "__Column", args: [.string("?")], origin: nil) }
+        env.define("entityDecimal", .fn(decimalColCtor)); env.define("Entity.decimal", .fn(decimalColCtor))
+        // enum takes the allowed constructors plus the constraint. Missing here
+        // (and on the web) until 2026-07-20: a shared module declaring an enum
+        // column typechecked and then died on the client, because the schema is
+        // server-only but the module that DECLARES it still has to evaluate.
+        let enumColCtor = MarFn.native(2) { _ in .ctor(tag: "__Column", args: [.string("?")], origin: nil) }
+        env.define("entityEnum", .fn(enumColCtor)); env.define("Entity.enum", .fn(enumColCtor))
 
         let constraintStub = MarValue.ctor(tag: "__Constraint", args: [], origin: nil)
         env.define("entityNotNull",  constraintStub)
@@ -2090,6 +2414,15 @@ enum MarBuiltins {
         }
         env.define("authMe",  .fn(authMe))
         env.define("Auth.me", .fn(authMe))
+
+        // Web-first subsystems (native on iOS): the 2D canvas draw-list, the
+        // chip-audio synth, and the Gamepad / Keyboard / Device input +
+        // capability sources. Registered from their own files to keep this
+        // dispatch table readable.
+        MarBuiltinCtors.register(env)
+        MarCanvas.register(env)
+        MarSound.register(env)
+        MarInput.register(env)
 
         return env
     }
@@ -2918,6 +3251,41 @@ enum MarBuiltins {
         set.insert(charactersIn: "-_.!~*'()")
         return set
     }()
+
+    /// One name over two element types. The elements decide for a non-empty
+    /// list — they all share a type, so the first one settles it — which keeps
+    /// this right even where a call site was never elaborated. `empty` is the
+    /// answer no value can supply, so the typechecker supplies it.
+    static func numericFold(
+        _ dec: @escaping (MarDec, MarDec) throws -> MarDec,
+        _ ints: @escaping (Int, Int) -> Int,
+        _ empty: MarValue
+    ) -> MarFn {
+        MarFn.native(1) { args in
+            guard case .list(let xs) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
+            }
+            guard let first = xs.first else { return empty }
+            if case .decimal(let d0) = first {
+                var acc = d0
+                for x in xs.dropFirst() {
+                    guard case .decimal(let d) = x else {
+                        throw MarRuntimeError.typeMismatch(expected: "Decimal", got: Eval.typeOf(x))
+                    }
+                    acc = try dec(acc, d)
+                }
+                return .decimal(acc)
+            }
+            var acc = asInt(first)
+            for x in xs.dropFirst() {
+                guard case .int(let n) = x else {
+                    throw MarRuntimeError.typeMismatch(expected: "Int", got: Eval.typeOf(x))
+                }
+                acc = ints(acc, n)
+            }
+            return .int(acc)
+        }
+    }
 
     static func asInt(_ v: MarValue) -> Int {
         switch v {

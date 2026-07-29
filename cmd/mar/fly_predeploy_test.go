@@ -10,7 +10,7 @@ import (
 	"mar/internal/scaffold"
 )
 
-// flyPreDeployValidate gates `mar fly deploy`: a server (backend/fullstack)
+// flyPreDeployValidate gates `mar deploy` (Fly path): a server (backend/fullstack)
 // app whose mar.json is missing the production config its Auth.config needs
 // must be rejected as a pre-flight — before any Fly resource is created —
 // so a misconfigured project never leaves an orphaned app/volume/secrets.

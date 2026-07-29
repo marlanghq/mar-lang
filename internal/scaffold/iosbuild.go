@@ -54,6 +54,14 @@ type IOSBuildResult struct {
 	// not set. Caller should warn the operator before shipping to
 	// TestFlight / App Store.
 	MissingServerURL bool
+
+	// FrontendOnly is true when the app is App.frontend (no backend).
+	// Such an app is self-contained — it renders from the embedded
+	// program and calls no Services — so ios.serverUrl is irrelevant
+	// and the "missing serverUrl / no production backend" warning is
+	// noise. Backend and fullstack apps DO talk to a server, so the
+	// warning stands for them.
+	FrontendOnly bool
 }
 
 // IOSConfigError reports that mar.json's `ios` block is missing
@@ -137,7 +145,7 @@ func BuildIOS(entry, distDir, marVersion string) (IOSBuildResult, error) {
 	// can render its first screen instantly from the embedded bundle
 	// (instant cold start). Failure here means the user's mar source
 	// has an error; surface it the same way other build paths do.
-	programJSON, err := compileIOSProgram(entry)
+	programJSON, frontendOnly, err := compileIOSProgram(entry)
 	if err != nil {
 		return IOSBuildResult{}, fmt.Errorf("mar build: %w", err)
 	}
@@ -175,6 +183,7 @@ func BuildIOS(entry, distDir, marVersion string) (IOSBuildResult, error) {
 		BuildNumber:      ios.BuildNumber,
 		BaseURL:          resolvedBaseURL,
 		MissingServerURL: ios.ServerURL == "",
+		FrontendOnly:     frontendOnly,
 	}, nil
 }
 
@@ -247,19 +256,22 @@ func resolveProjectDir(entry string) (string, error) {
 // cold-start; the same bytes are also fetched fresh from the
 // server when the network is available so the embedded copy is a
 // fallback, not the source of truth.
-func compileIOSProgram(entry string) ([]byte, error) {
+// compileIOSProgram compiles the user's mar code into the embedded
+// program.json AND reports whether the app is frontend-only (App.frontend,
+// no backend) so the caller can decide if ios.serverUrl is relevant.
+func compileIOSProgram(entry string) (program []byte, frontendOnly bool, err error) {
 	// Resolve entry → Main.mar path. Caller passes either a directory
 	// (look for Main.mar inside) or a file path (use directly). Same
 	// shape as scaffold.Build.
 	info, err := os.Stat(entry)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %v", entry, err)
+		return nil, false, fmt.Errorf("%s: %v", entry, err)
 	}
 	mainFile := entry
 	if info.IsDir() {
 		mainFile = filepath.Join(entry, "Main.mar")
 		if _, err := os.Stat(mainFile); err != nil {
-			return nil, fmt.Errorf("Main.mar not found in %s", entry)
+			return nil, false, fmt.Errorf("Main.mar not found in %s", entry)
 		}
 	}
 
@@ -285,25 +297,30 @@ func compileIOSProgram(entry string) ([]byte, error) {
 			env.Define("App.backend", be)
 		})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	mainVal, ok := project.LookupMain(rEnv, allMods)
 	if !ok {
-		return nil, fmt.Errorf("Main.mar must export `main`")
+		return nil, false, fmt.Errorf("Main.mar must export `main`")
 	}
 	eff, ok := mainVal.(runtime.VEffect)
 	if !ok {
-		return nil, fmt.Errorf("main is not a Cmd (got %T)", mainVal)
+		return nil, false, fmt.Errorf("main is not a Cmd (got %T)", mainVal)
 	}
 	if _, err := eff.Run(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	// bc.kind is set by the App.* capture that ran during eff.Run:
+	// kindFrontend for App.frontend, kindFullstack for App.fullstack,
+	// kindBackend for App.backend. Only a pure frontend has no server.
+	frontendOnly = bc.kind == kindFrontend
 	if len(bc.pages) == 0 {
 		// App.backend project (no pages). iOS still needs a stub
 		// program; we ship an empty pages list so the shell can
 		// render a sensible "No pages defined" placeholder without
 		// crashing. No __entry needed when there's nothing to mount.
-		return makeProgramJSON(nil, "main", false)
+		b, err := makeProgramJSON(nil, "main", false)
+		return b, frontendOnly, err
 	}
 	// apphost.PickFrontMods does the page-reachable module walk AND
 	// appends a synthetic `__entry = appFrontend [pages]` module that
@@ -315,9 +332,10 @@ func compileIOSProgram(entry string) ([]byte, error) {
 	// snapshot was meant to provide.
 	mods, err := apphost.PickFrontMods(bc.pages, allMods)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return makeProgramJSON(mods, "__entry", false)
+	b, err := makeProgramJSON(mods, "__entry", false)
+	return b, frontendOnly, err
 }
 
 // makeIOSPagesCapture captures the page list from App.frontend
@@ -372,7 +390,14 @@ func makeIOSPagesCapture(bc *buildCtx, fromRecord bool) runtime.Value {
 					return nil, fmt.Errorf("page %d has no provenance — pages must be top-level bindings", i)
 				}
 			}
-			bc.kind = kindFrontend
+			// App.frontend is a pure client (no backend); App.fullstack
+			// carries a backend behind its pages. Record which so the
+			// build summary can tell whether ios.serverUrl matters.
+			if fromRecord {
+				bc.kind = kindFullstack
+			} else {
+				bc.kind = kindFrontend
+			}
 			bc.pages = pageList.Elements
 			return runtime.VEffect{Tag: tag, Run: func() (runtime.Value, error) {
 				return runtime.VUnit{}, nil

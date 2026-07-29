@@ -30,6 +30,9 @@ const (
 	// Filenames inside the ZIP payload.
 	manifestFile = "mar.json"
 	sourceDir    = "src/"
+	// Static assets from the project's public/ folder, so a deployed
+	// self-contained binary serves them the same as `mar dev` does.
+	assetDir = "public/"
 
 	// Footer marker so we can detect a stamped binary at startup.
 	footerMagic = "MARBNDL2"
@@ -45,12 +48,14 @@ var fixedTimestamp = time.Unix(0, 0).UTC()
 type Bundle struct {
 	ManifestJSON []byte
 	Sources      map[string][]byte // relative path -> .mar source bytes
+	Assets       map[string][]byte // public/-relative path -> file bytes
 }
 
 // BuildInput collects everything BuildPayload needs to produce the ZIP.
 type BuildInput struct {
 	ManifestJSON []byte            // raw mar.json bytes
 	Sources      map[string][]byte // relative path -> .mar source bytes
+	Assets       map[string][]byte // public/-relative path -> file bytes (may be empty)
 }
 
 // BuildPayload zips a project source tree + mar.json into the byte
@@ -78,6 +83,17 @@ func BuildPayload(input BuildInput) ([]byte, error) {
 	slices.Sort(names)
 	for _, name := range names {
 		if err := addZipFile(w, sourceDir+name, input.Sources[name]); err != nil {
+			return nil, err
+		}
+	}
+	// Static assets (public/), same stable-order treatment.
+	assetNames := make([]string, 0, len(input.Assets))
+	for name := range input.Assets {
+		assetNames = append(assetNames, name)
+	}
+	slices.Sort(assetNames)
+	for _, name := range assetNames {
+		if err := addZipFile(w, assetDir+name, input.Assets[name]); err != nil {
 			return nil, err
 		}
 	}
@@ -187,7 +203,7 @@ func parsePayload(payload []byte) (*Bundle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("appbundle: open zip: %w", err)
 	}
-	bundle := &Bundle{Sources: map[string][]byte{}}
+	bundle := &Bundle{Sources: map[string][]byte{}, Assets: map[string][]byte{}}
 	for _, file := range zr.File {
 		if err := safeBundleEntryName(file.Name); err != nil {
 			return nil, fmt.Errorf("appbundle: rejected entry %q: %w", file.Name, err)
@@ -202,6 +218,9 @@ func parsePayload(payload []byte) (*Bundle, error) {
 		case strings.HasPrefix(file.Name, sourceDir):
 			rel := strings.TrimPrefix(file.Name, sourceDir)
 			bundle.Sources[rel] = data
+		case strings.HasPrefix(file.Name, assetDir):
+			rel := strings.TrimPrefix(file.Name, assetDir)
+			bundle.Assets[rel] = data
 		default:
 			// safeBundleEntryName already constrained the name to
 			// either manifestFile or sourceDir + clean rel — any
@@ -225,7 +244,7 @@ func parsePayload(payload []byte) (*Bundle, error) {
 // collapses the ".." segments.
 //
 // Rules:
-//   - Name must be exactly "mar.json" OR have the "src/" prefix.
+//   - Name must be exactly "mar.json" OR have the "src/" or "public/" prefix.
 //   - No backslashes (ZIP spec uses "/" only; a "\" suggests either
 //     a malformed archive or a deliberate attempt to slip past path
 //     parsers).
@@ -262,7 +281,14 @@ func safeBundleEntryName(name string) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("entry is neither %q nor under %q", manifestFile, sourceDir)
+	if strings.HasPrefix(name, assetDir) {
+		rel := strings.TrimPrefix(name, assetDir)
+		if rel == "" {
+			return errors.New("empty asset-relative path")
+		}
+		return nil
+	}
+	return fmt.Errorf("entry is not %q, nor under %q or %q", manifestFile, sourceDir, assetDir)
 }
 
 // ErrNoBundle is returned by Load* when the binary doesn't carry a
@@ -326,32 +352,78 @@ func ExtractToDir(b *Bundle, destDir string) error {
 		return err
 	}
 	for rel, data := range b.Sources {
-		if err := safeBundleEntryName(sourceDir + rel); err != nil {
-			return fmt.Errorf("appbundle: unsafe source path %q: %w", rel, err)
-		}
-		dest := filepath.Join(destDir, filepath.FromSlash(rel))
-		absDest, err := filepath.Abs(dest)
-		if err != nil {
-			return fmt.Errorf("appbundle: resolve dest: %w", err)
-		}
-		// filepath.Rel handles trailing-separator subtleties and
-		// returns a path starting with ".." iff absDest escapes
-		// absDestDir. The "==" check covers the (impossible-but-cheap)
-		// case where rel resolves exactly to destDir itself.
-		relCheck, err := filepath.Rel(absDestDir, absDest)
-		if err != nil ||
-			relCheck == ".." ||
-			strings.HasPrefix(relCheck, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("appbundle: path %q resolves outside destDir", rel)
-		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		if err := writeUnderDir(absDestDir, destDir, filepath.FromSlash(rel), data); err != nil {
 			return err
 		}
-		if err := os.WriteFile(dest, data, 0o644); err != nil {
+	}
+	// Static assets land back under public/ so the runtime serves them
+	// from destDir/public — the same layout `mar dev` reads from disk.
+	for rel, data := range b.Assets {
+		if err := writeUnderDir(absDestDir, destDir, filepath.Join("public", filepath.FromSlash(rel)), data); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// writeUnderDir writes data to destDir/relPath, re-checking that the
+// resolved path stays inside absDestDir (belt-and-suspenders zip-slip
+// guard; parsePayload already rejects unsafe entry names).
+func writeUnderDir(absDestDir, destDir, relPath string, data []byte) error {
+	dest := filepath.Join(destDir, relPath)
+	absDest, err := filepath.Abs(dest)
+	if err != nil {
+		return fmt.Errorf("appbundle: resolve dest: %w", err)
+	}
+	// filepath.Rel returns a path starting with ".." iff absDest escapes
+	// absDestDir. The "==" check covers the (impossible-but-cheap) case
+	// where relPath resolves exactly to destDir itself.
+	relCheck, err := filepath.Rel(absDestDir, absDest)
+	if err != nil ||
+		relCheck == ".." ||
+		strings.HasPrefix(relCheck, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("appbundle: path %q resolves outside destDir", relPath)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dest, data, 0o644)
+}
+
+// CollectAssets walks projectDir/public (if present) and returns every
+// file keyed by its path relative to public/ (e.g. public/logo.png ->
+// "logo.png"). Dotfiles are skipped, matching copyPublicDir /
+// serveStaticOrShell, which never ship or serve them. A missing public/
+// is not an error — most projects have none, so nil is returned.
+func CollectAssets(projectDir string) (map[string][]byte, error) {
+	root := filepath.Join(projectDir, "public")
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return nil, nil // no public/ folder — nothing to bundle
+	}
+	out := map[string][]byte{}
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || strings.HasPrefix(d.Name(), ".") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		out[filepath.ToSlash(rel)] = data
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // addZipFile writes a single file into the ZIP with a fixed timestamp

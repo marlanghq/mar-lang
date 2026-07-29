@@ -29,7 +29,7 @@ func readSecure(buf []byte) (int, error) {
 // Defaults (when block absent OR field zero):
 //
 //	requestsPerMinute = 600 (= 10 req/s sustained)
-//	burst             = 30
+//	burst             = 60
 //
 // The /_auth/request-code endpoint keeps its own stricter limit
 // (3/h/email + 20/h/IP) regardless of this block — it triggers
@@ -51,7 +51,7 @@ type RateLimitConfig struct {
 // the documented default when the field is absent / zero.
 func (r *RateLimitConfig) ResolvedRequestsPerMinute() int {
 	if r == nil || r.RequestsPerMinute == 0 {
-		return 600
+		return DefaultRateLimitRequestsPerMinute
 	}
 	return r.RequestsPerMinute
 }
@@ -59,7 +59,7 @@ func (r *RateLimitConfig) ResolvedRequestsPerMinute() int {
 // ResolvedBurst returns the effective burst capacity.
 func (r *RateLimitConfig) ResolvedBurst() int {
 	if r == nil || r.Burst == 0 {
-		return 30
+		return DefaultRateLimitBurst
 	}
 	return r.Burst
 }
@@ -217,23 +217,24 @@ func (m *Manifest) ResolvePWA(projectDir string) pwa.Config {
 // (Fly.io for fullstack VMs, Cloudflare Pages for static bundles).
 // Future targets (`aws`, `render`, `github-pages`, etc.) would be
 // sibling fields. The block is optional — projects without it can\'t
-// use `mar X deploy` commands, but `mar dev` / `mar build` work fine.
+// run `mar deploy`, but `mar dev` / `mar build` work fine.
 //
 // Conventional pairing today:
 //
 //   - App.fullstack → deploy.fly      (VM + SQLite + auth)
 //   - App.frontend  → deploy.cloudflare-pages  (static CDN)
 //
-// A project can declare both blocks; the dispatch is by the
-// subcommand the operator runs, not by topology.
+// A project normally declares exactly one block; `mar deploy` reads
+// whichever is present and routes to that provider's flow.
 type DeployConfig struct {
 	Fly             *FlyDeployConfig             `json:"fly,omitempty"`
 	CloudflarePages *CloudflarePagesDeployConfig `json:"cloudflare-pages,omitempty"`
 }
 
-// FlyDeployConfig holds everything `mar fly deploy` needs to push
-// the project to Fly.io. The block is required for any `mar fly *`
-// subcommand to work; all three fields are required (validated in
+// FlyDeployConfig holds everything `mar deploy` needs to push a
+// fullstack project to Fly.io. The block is required for `mar deploy`
+// and any `mar fly *` subcommand to work; all three fields are
+// required (validated in
 // validate.go) — none have defaults because each represents a real
 // decision the operator must make consciously:
 //
@@ -263,9 +264,9 @@ type FlyDeployConfig struct {
 	Memory string `json:"memory,omitempty"`
 }
 
-// CloudflarePagesDeployConfig holds everything `mar cloudflare-pages
-// deploy` needs to push a static App.frontend bundle to Cloudflare
-// Pages. All three fields are required (validated in validate.go) —
+// CloudflarePagesDeployConfig holds everything `mar deploy` needs to
+// push a static App.frontend bundle to Cloudflare Pages. All three
+// fields are required (validated in validate.go) —
 // none have defaults because each pins a real choice the operator
 // makes:
 //
@@ -289,9 +290,9 @@ type FlyDeployConfig struct {
 type CloudflarePagesDeployConfig struct {
 	// App is the Cloudflare Pages project name. Becomes the
 	// hostname: <app>.pages.dev. Auto-created on the first
-	// `mar cloudflare-pages deploy` (with operator confirmation
-	// in interactive mode) if it doesn\'t already exist on the
-	// account — no manual dashboard setup needed.
+	// `mar deploy` (with operator confirmation in interactive
+	// mode) if it doesn\'t already exist on the account — no
+	// manual dashboard setup needed.
 	//
 	// Accepts an env:VAR reference for operators who want it
 	// resolved from the environment instead of committed.
@@ -672,6 +673,15 @@ func resolveEnvRefs(m *Manifest, tolerateMissing bool) error {
 		var err error
 		if m.Auth.SessionSecret, err = resolve("auth.sessionSecret", m.Auth.SessionSecret); err != nil {
 			return err
+		}
+		// A short HMAC key weakens every session/OTP hash if the database
+		// leaks. Require at least 32 bytes when a secret is explicitly
+		// configured. (An unset secret falls back to the 64-hex-char
+		// auto-generated dev secret, which is always long enough, so this
+		// never trips `mar dev` with zero config.)
+		// See docs/security-audit-2026-07-15.md #10.
+		if s := m.Auth.SessionSecret; s != "" && len(s) < 32 {
+			return fmt.Errorf("mar.json: auth.sessionSecret must be at least 32 bytes (got %d) — generate a longer random secret", len(s))
 		}
 	}
 	// deploy.fly fields: app/region/memory all accept env:VAR. None

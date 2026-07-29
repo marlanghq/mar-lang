@@ -4,9 +4,6 @@
 // everything from mar.json (the `deploy.fly` block) and translates
 // each subcommand into the equivalent Fly call(s):
 //
-//   mar fly deploy [path]    -- build + ship in one shot (creates the
-//                               Fly app + volume on the first run if
-//                               needed; pushes any missing secrets)
 //   mar fly preview [path]   -- print what would be deployed, no-op
 //   mar fly logs [path]      -- tail logs from the running machine(s)
 //   mar fly status [path]    -- show app + machine status
@@ -14,6 +11,11 @@
 //   mar fly secrets ...      -- set / list / unset secrets directly
 //   mar fly admin list ...   -- read-only admin inspection
 //   mar fly database ...     -- backup / list backups / download
+//
+// Shipping itself is the top-level `mar deploy` command (see
+// deploy.go + fly_deploy.go): it builds + pushes in one shot, creating
+// the Fly app + volume on the first run and syncing any missing
+// secrets. It routes here automatically for an App.fullstack project.
 //
 // Docker is treated as an implementation detail. Every deploy
 // regenerates the Dockerfile + fly.toml in a temp directory from
@@ -51,16 +53,12 @@ func runFly(args []string) int {
 		return 2
 	}
 	sub := args[0]
-	// Strip --no-open from `mar fly deploy` args before positional
-	// parsing, so the flag can appear before or after the path.
-	noOpen, subArgs := extractNoOpenFlag(args[1:])
+	subArgs := args[1:]
 	path := "."
 	if len(subArgs) >= 1 {
 		path = subArgs[0]
 	}
 	switch sub {
-	case "deploy":
-		return runFlyDeploy(path, noOpen)
 	case "preview":
 		return runFlyPreview(path)
 	case "destroy":
@@ -97,8 +95,6 @@ func flyUsage() string {
 	return "Usage: " + run("fly") + " " + name("<command> [path]") + "\n" +
 		"\n" +
 		hdr("Commands:") + "\n" +
-		"  " + name("deploy") + "     Build + ship to Fly. Creates the app + volume on the\n" +
-		"             first run if needed; pushes any missing secrets.\n" +
 		"  " + name("preview") + "    Show what would be deployed (no side effects).\n" +
 		"  " + name("logs") + "       Tail logs from the running machine(s).\n" +
 		"  " + name("status") + "     Show app + machine status.\n" +
@@ -110,6 +106,8 @@ func flyUsage() string {
 		"  " + name("secrets") + "    Set / list / unset env: secrets on the Fly app; see\n" +
 		"             " + run("fly secrets --help") + ".\n" +
 		"  " + name("destroy") + "    Destroy the Fly app and its volume. Asks twice.\n" +
+		"\n" +
+		"To ship the app, run " + run("deploy") + " — it routes to Fly automatically.\n" +
 		"\n" +
 		hdr("Configuration:") + "\n" +
 		"  Every command reads " + pth("mar.json") + "'s " + pth("deploy.fly") + " block:\n" +
@@ -357,7 +355,7 @@ func flyAdminUsage() string {
 		"  " + name("list") + "       Show production's admin list and last-login data.\n" +
 		"             Read-only.\n" +
 		"\n" +
-		"Adding or removing admins happens via " + pth("mar.json") + " + " + run("fly deploy") + "\n" +
+		"Adding or removing admins happens via " + pth("mar.json") + " + " + run("deploy") + "\n" +
 		"(the source of truth is the committed config). For an urgent runtime\n" +
 		"override (rare, lossy, reverted on next deploy):\n" +
 		"\n" +
@@ -398,7 +396,7 @@ func runFlyAdminList(path string) int {
 // through to a generic "Error: <prefix>: <err>" line.
 //
 // `prefix` is the command name shown in the Error line, e.g.
-// "mar fly deploy".
+// "mar deploy".
 //
 // The hint shown for EnvVarNotSetError branches on the field path:
 // fields under deploy.cloudflare-pages.* get an .env pointer (CF
@@ -422,7 +420,7 @@ func printManifestError(prefix string, err error) {
 		switch {
 		case envErr.Field == "deploy.cloudflare-pages.apiToken":
 			// Most loaded case for missing-env: the operator wrote
-			// `apiToken: env:CF_API_TOKEN` in mar.json but doesn't
+			// `apiToken: env:CLOUDFLARE_API_TOKEN` in mar.json but doesn't
 			// have it set. Tell them where to put it (.env, the
 			// canonical home for CLI-only tokens), then where to
 			// GET the token if they don't have one yet (dashboard
@@ -601,7 +599,7 @@ func ensureFlyAppExists(appName string) error {
 		return newHintedError(
 			"Fly.io app %q does not exist.",
 			"Check that "+colorMagenta("deploy.fly.app")+" in "+colorMagenta("mar.json")+" matches an app on your Fly account.\n"+
-				"To create it, run "+cmdSuggest("fly deploy")+".",
+				"To create it, run "+cmdSuggest("deploy")+".",
 			appName)
 	}
 	if out != "" {
@@ -701,7 +699,7 @@ func promptRequiredSecret(name string) (string, error) {
 		if val != "" {
 			return val, nil
 		}
-		fprintWarn("%s is required. The app won't boot without it.",
+		fprintError("%s is required. The app won't boot without it.",
 			colorMagenta(name))
 	}
 	return "", fmt.Errorf("%s: no value provided after %d attempts", name, maxAttempts)

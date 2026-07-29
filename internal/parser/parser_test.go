@@ -523,3 +523,36 @@ create =
 		t.Fatalf("expected several decls, got %d", len(mod.Decls))
 	}
 }
+
+// Int is 53 bits (see internal/runtime/intrange.go), so a literal past that
+// range cannot be represented by the program that wrote it. Refusing at parse
+// time is the earliest possible answer, and the only one that is the same on
+// every runtime — the bound used to be 64 bits, back when the three runtimes
+// disagreed about what an Int was.
+func TestIntegerLiteralsStopAtFiftyThreeBits(t *testing.T) {
+	for _, tc := range []struct {
+		name, literal string
+		ok            bool
+	}{
+		{"largest representable", "9007199254740991", true},
+		{"most negative representable", "-9007199254740991", true},
+		{"one past the top", "9007199254740992", false},
+		{"one past the bottom", "-9007199254740992", false},
+		{"beyond 64 bits", "99999999999999999999", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse("module M exposing (n)\n\n\nn : Int\nn = " + tc.literal + "\n")
+			if tc.ok && err != nil {
+				t.Fatalf("%s was refused: %v", tc.literal, err)
+			}
+			if !tc.ok {
+				if err == nil {
+					t.Fatalf("%s was accepted", tc.literal)
+				}
+				if !strings.Contains(err.Error(), "out of range for Int") {
+					t.Errorf("expected a range error, got: %v", err)
+				}
+			}
+		})
+	}
+}

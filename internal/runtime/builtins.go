@@ -5,6 +5,12 @@ import "fmt"
 // BaseEnv returns the initial runtime environment with all built-ins bound.
 func BaseEnv() *Env {
 	env := NewEnv()
+	// Generated from the typecheck union tables — see internal/ctorgen. It
+	// goes in first so a hand-written binding below still wins if one ever
+	// needs to; the generator is the source of truth for the SET.
+	for name, v := range builtinCtors() {
+		env.Define(name, v)
+	}
 	for name, v := range builtins() {
 		env.Define(name, v)
 	}
@@ -12,6 +18,12 @@ func BaseEnv() *Env {
 		env.Define(name, v)
 	}
 	for name, v := range subBuiltins() {
+		env.Define(name, v)
+	}
+	for name, v := range soundBuiltins() {
+		env.Define(name, v)
+	}
+	for name, v := range deviceBuiltins() {
 		env.Define(name, v)
 	}
 	for name, v := range randomBuiltins() {
@@ -42,6 +54,9 @@ func BaseEnv() *Env {
 		env.Define(name, v)
 	}
 	for name, v := range timeBuiltins() {
+		env.Define(name, v)
+	}
+	for name, v := range decimalBuiltins() {
 		env.Define(name, v)
 	}
 	for name, v := range dictBuiltins() {
@@ -120,8 +135,6 @@ func qualifiedAliasMapping() map[string]string {
 		"String.endsWith":   "stringEndsWith",
 		"String.fromInt":    "stringFromInt",
 		"String.toInt":      "stringToInt",
-		"String.fromFloat":  "stringFromFloat",
-		"String.toFloat":    "stringToFloat",
 		"String.toUpper":    "stringToUpper",
 		"String.toLower":    "stringToLower",
 		"String.split":      "stringSplit",
@@ -139,6 +152,26 @@ func qualifiedAliasMapping() map[string]string {
 		"String.filter":     "stringFilter",
 		"String.foldl":      "stringFoldl",
 		"String.any":        "stringAny",
+		// Entity decimal column
+		"Entity.decimal": "entityDecimal",
+		// Decimal
+		"Decimal.fromInt":       "decimalFromInt",
+		"Decimal.fromCents":     "decimalFromCents",
+		"Decimal.toCents":       "decimalToCents",
+		"Decimal.truncate":      "decimalTruncate",
+		"Decimal.round":         "decimalRound",
+		"Decimal.floor":         "decimalFloor",
+		"Decimal.ceiling":       "decimalCeiling",
+		"Decimal.toIntWith":     "decimalToIntWith",
+		"Decimal.toScale":       "decimalToScale",
+		"Decimal.abs":           "decimalAbs",
+		"Decimal.negate":        "decimalNegate",
+		"Decimal.compare":       "decimalCompare",
+		"Decimal.zero":          "decimalZero",
+		"Decimal.fromString":    "decimalFromString",
+		"Decimal.toString":      "decimalToString",
+		"Decimal.rounded":       "decimalRounded",
+		"Decimal.withRemainder": "decimalWithRemainder",
 		// Char
 		"Char.toCode":   "charToCode",
 		"Char.fromCode": "charFromCode",
@@ -164,63 +197,104 @@ func qualifiedAliasMapping() map[string]string {
 		"Result.fromMaybe":   "resultFromMaybe",
 		"Result.toMaybe":     "resultToMaybe",
 		// Tuple
-		"Tuple.first":     "tupleFirst",
-		"Tuple.second":    "tupleSecond",
-		"Tuple.pair":      "tuplePair",
-		"Tuple.mapFirst":  "tupleMapFirst",
-		"Tuple.mapSecond": "tupleMapSecond",
-		"Tuple.mapBoth":   "tupleMapBoth",
-		"Task.succeed":    "effectSucceed",
-		"Task.fail":       "effectFail",
-		"Task.map":        "effectMap",
-		"Task.andThen":    "effectAndThen",
-		"Task.forEach":    "effectForEach",
-		"Task.sequence":   "effectSequence",
-		"Cmd.batch":       "effectBatch",
-		"Cmd.none":        "effectNone",
-		"Cmd.perform":     "cmdPerform",
-		"Sub.batch":       "subBatch",
-		"Sub.none":        "subNone",
-		"Random.generate": "randomGenerate",
-		"Random.int":      "randomInt",
-		"Random.uniform":  "randomUniform",
-		"Random.constant": "randomConstant",
-		"Random.list":     "randomList",
-		"Random.pair":     "randomPair",
-		"Random.map":      "randomMap",
-		"Random.map2":     "randomMap2",
-		"Random.map3":     "randomMap3",
-		"Random.andThen":  "randomAndThen",
-		"Time.seconds":    "timeSeconds",
-		"Time.minutes":    "timeMinutes",
-		"Time.hours":      "timeHours",
-		"Time.days":       "timeDays",
-		"Time.weeks":      "timeWeeks",
-		"Time.toSeconds":  "timeToSeconds",
-		"Time.now":        "timeNow",
-		"Time.every":      "timeEvery",
-		"Time.add":        "timeAdd",
-		"Time.sub":        "timeSub",
-		"Time.diff":       "timeDiff",
-		"Time.before":     "timeBefore",
-		"Time.after":      "timeAfter",
-		"Time.toIso":      "timeToIso",
-		"Time.fromIso":    "timeFromIso",
-		"Time.toMillis":   "timeToMillis",
-		"Time.fromYMD":    "timeFromYMD",
-		"Time.addDays":    "timeAddDays",
-		"Time.addMonths":  "timeAddMonths",
-		"Time.addYears":   "timeAddYears",
-		"Time.year":       "timeYear",
-		"Time.month":      "timeMonth",
-		"Time.day":        "timeDay",
-		"Time.hour":       "timeHour",
-		"Time.minute":     "timeMinute",
-		"Time.second":     "timeSecond",
-		"Http.get":        "httpGet",
-		"Http.post":       "httpPost",
-		"JSON.encode":     "jsonEncode",
-		"JSON.decode":     "jsonDecode",
+		"Tuple.first":        "tupleFirst",
+		"Tuple.second":       "tupleSecond",
+		"Tuple.pair":         "tuplePair",
+		"Tuple.mapFirst":     "tupleMapFirst",
+		"Tuple.mapSecond":    "tupleMapSecond",
+		"Tuple.mapBoth":      "tupleMapBoth",
+		"Task.succeed":       "effectSucceed",
+		"Task.fail":          "effectFail",
+		"Task.map":           "effectMap",
+		"Task.andThen":       "effectAndThen",
+		"Task.forEach":       "effectForEach",
+		"Task.sequence":      "effectSequence",
+		"Cmd.batch":          "effectBatch",
+		"Cmd.none":           "effectNone",
+		"Cmd.perform":        "cmdPerform",
+		"Sub.batch":          "subBatch",
+		"Sub.none":           "subNone",
+		"Keyboard.watch":     "keyboardWatch",
+		"Gamepad.watch":      "gamepadWatch",
+		"Device.watch":       "deviceWatch",
+		"Device.touchOnly":   "deviceTouchOnly",
+		"Device.canHover":    "deviceCanHover",
+		"Sound.tone":         "soundTone",
+		"Sound.volume":       "soundVolume",
+		"Sound.sweep":        "soundSweep",
+		"Sound.holdPitch":    "soundHoldPitch",
+		"Sound.attack":       "soundAttack",
+		"Sound.release":      "soundRelease",
+		"Sound.duty":         "soundDuty",
+		"Sound.vibrato":      "soundVibrato",
+		"Sound.lowCut":       "soundLowCut",
+		"Sound.highCut":      "soundHighCut",
+		"Sound.arp":          "soundArp",
+		"Sound.rest":         "soundRest",
+		"Sound.chord":        "soundChord",
+		"Sound.sequence":     "soundSequence",
+		"Sound.play":         "soundPlay",
+		"Sound.loop":         "soundLoop",
+		"Sound.hold":         "soundHold",
+		"Sound.once":         "soundOnce",
+		"Sound.setMuted":     "soundSetMuted",
+		"Sound.master":       "soundMaster",
+		"Sound.c":            "soundPitch_c",
+		"Sound.cs":           "soundPitch_cs",
+		"Sound.d":            "soundPitch_d",
+		"Sound.ds":           "soundPitch_ds",
+		"Sound.e":            "soundPitch_e",
+		"Sound.f":            "soundPitch_f",
+		"Sound.fs":           "soundPitch_fs",
+		"Sound.g":            "soundPitch_g",
+		"Sound.gs":           "soundPitch_gs",
+		"Sound.a":            "soundPitch_a",
+		"Sound.as_":          "soundPitch_as_",
+		"Sound.b":            "soundPitch_b",
+		"Random.generate":    "randomGenerate",
+		"Random.int":         "randomInt",
+		"Random.uniform":     "randomUniform",
+		"Random.constant":    "randomConstant",
+		"Random.list":        "randomList",
+		"Random.pair":        "randomPair",
+		"Random.map":         "randomMap",
+		"Random.map2":        "randomMap2",
+		"Random.map3":        "randomMap3",
+		"Random.andThen":     "randomAndThen",
+		"Random.initialSeed": "randomInitialSeed",
+		"Random.step":        "randomStep",
+		"Random.seed":        "randomSeed",
+		"Time.millis":        "timeMillis",
+		"Time.seconds":       "timeSeconds",
+		"Time.minutes":       "timeMinutes",
+		"Time.hours":         "timeHours",
+		"Time.days":          "timeDays",
+		"Time.weeks":         "timeWeeks",
+		"Time.toSeconds":     "timeToSeconds",
+		"Time.now":           "timeNow",
+		"Time.every":         "timeEvery",
+		"Time.add":           "timeAdd",
+		"Time.sub":           "timeSub",
+		"Time.diff":          "timeDiff",
+		"Time.before":        "timeBefore",
+		"Time.after":         "timeAfter",
+		"Time.toIso":         "timeToIso",
+		"Time.fromIso":       "timeFromIso",
+		"Time.toMillis":      "timeToMillis",
+		"Time.fromYMD":       "timeFromYMD",
+		"Time.addDays":       "timeAddDays",
+		"Time.addMonths":     "timeAddMonths",
+		"Time.addYears":      "timeAddYears",
+		"Time.year":          "timeYear",
+		"Time.month":         "timeMonth",
+		"Time.day":           "timeDay",
+		"Time.hour":          "timeHour",
+		"Time.minute":        "timeMinute",
+		"Time.second":        "timeSecond",
+		"Http.get":           "httpGet",
+		"Http.post":          "httpPost",
+		"JSON.encode":        "jsonEncode",
+		"JSON.decode":        "jsonDecode",
 		// Entity (record-literal form)
 		"Entity.define":    "entityDefine",
 		"Entity.serial":    "entitySerial",
@@ -246,6 +320,7 @@ func qualifiedAliasMapping() map[string]string {
 		"Page.dynamic":               "pageDynamic",
 		"Page.dynamicProtected":      "pageDynamicProtected",
 		"Page.dynamicAdminProtected": "pageDynamicAdminProtected",
+		"Page.sheet":                 "pageSheet",
 		"Mar.Admin.serverInfo":       "marAdminServerInfo",
 		"Mar.Admin.dbStats":          "marAdminDbStats",
 		"Mar.Admin.recentRequests":   "marAdminRecentRequests",
@@ -257,11 +332,19 @@ func qualifiedAliasMapping() map[string]string {
 		"Mar.Admin.signOut":          "marAdminSignOut",
 		"Nav.push":                   "navPush",
 		"Nav.replace":                "navReplace",
+		"Nav.dismiss":                "navDismiss",
 		"Auth.completeSignIn":        "authCompleteSignIn",
 		"Nav.pushTo":                 "navPushTo",
 		"Nav.replaceTo":              "navReplaceTo",
 		"linkTo":                     "linkTo",
 		"always":                     "always",
+		"not":                        "not",
+		"max":                        "max",
+		"min":                        "min",
+		"clamp":                      "clamp",
+		"abs":                        "abs",
+		"modBy":                      "modBy",
+		"remainderBy":                "remainderBy",
 		"Service.declare":            "serviceDeclare",
 		"Service.implement":          "serviceImplement",
 		"Service.call":               "serviceCall",
@@ -341,12 +424,31 @@ func qualifiedAliasMapping() map[string]string {
 		"UI.confirm":         "uiConfirm",
 		"UI.empty":           "uiEmpty",
 		"UI.centered":        "uiCentered",
-		"UI.email":           "viewEmail",
-		"UI.password":        "viewPassword",
-		"UI.newPassword":     "viewNewPassword",
-		"UI.numeric":         "viewNumeric",
-		"UI.oneTimeCode":     "viewOneTimeCode",
-		"UI.submit":          "viewSubmit",
+		// Canvas (v0.0.7) — the 2D draw-list module. Functions bind bare via
+		// `import Canvas exposing (...)`; the Transform / Align ctors are
+		// qualified (registered below). Mirrors typecheck's qualifiedAliases.
+		"Canvas.canvas":        "canvas",
+		"Canvas.rect":          "rect",
+		"Canvas.circle":        "circle",
+		"Canvas.triangle":      "triangle",
+		"Canvas.text":          "canvasText",
+		"Canvas.group":         "group",
+		"Canvas.rgb":           "rgb",
+		"Canvas.rgba":          "rgba",
+		"Canvas.onTap":         "onTap",
+		"Canvas.watchSize":     "watchSize",
+		"Canvas.watchPointers": "watchPointers",
+		"Canvas.onRelease":     "onRelease",
+		"Canvas.onDrag":        "onDrag",
+		"Canvas.onHover":       "onHover",
+		"Canvas.onAltTap":      "onAltTap",
+		"Canvas.onWheel":       "onWheel",
+		"UI.email":             "viewEmail",
+		"UI.password":          "viewPassword",
+		"UI.newPassword":       "viewNewPassword",
+		"UI.numeric":           "viewNumeric",
+		"UI.oneTimeCode":       "viewOneTimeCode",
+		"UI.submit":            "viewSubmit",
 		// Dict: Elm-style polymorphic ordered map. Keys must be a
 		// comparable type at runtime (Int / Float / String). Sorted
 		// internally so toList / keys / values iteration is stable.
@@ -433,6 +535,7 @@ func builtins() map[string]Value {
 		// Service.errorToString can fold them to a string.
 		"Service.Offline":      VCtor{Tag: "Offline"},
 		"Service.Unauthorized": VCtor{Tag: "Unauthorized"},
+		"Service.RateLimited":  VCtor{Tag: "RateLimited"},
 		"Service.ServerError": nativeFn(1, func(args []Value) (Value, error) {
 			return VCtor{Tag: "ServerError", Args: []Value{args[0]}}, nil
 		}),
@@ -448,15 +551,53 @@ func builtins() map[string]Value {
 		"Auth.SignedIn": nativeFn(1, func(args []Value) (Value, error) {
 			return VCtor{Tag: "SignedIn", Args: []Value{args[0]}}, nil
 		}),
+
+		// Canvas Transform / Align constructors — qualified-only (used as
+		// `Canvas.Translate`, `Canvas.Center`, ...). The runtime tag is the
+		// bare ctor name, matching how the renderers read draw-list nodes.
+		"Canvas.Translate": nativeFn(2, func(args []Value) (Value, error) {
+			return VCtor{Tag: "Translate", Args: []Value{args[0], args[1]}}, nil
+		}),
+		"Canvas.Scale": nativeFn(2, func(args []Value) (Value, error) {
+			return VCtor{Tag: "Scale", Args: []Value{args[0], args[1]}}, nil
+		}),
+		"Canvas.Rotate": nativeFn(1, func(args []Value) (Value, error) {
+			return VCtor{Tag: "Rotate", Args: []Value{args[0]}}, nil
+		}),
+		"Canvas.Alpha": nativeFn(1, func(args []Value) (Value, error) {
+			return VCtor{Tag: "Alpha", Args: []Value{args[0]}}, nil
+		}),
+		"Canvas.Blend": nativeFn(1, func(args []Value) (Value, error) {
+			return VCtor{Tag: "Blend", Args: []Value{args[0]}}, nil
+		}),
+		"Canvas.Normal":   VCtor{Tag: "Normal"},
+		"Canvas.Add":      VCtor{Tag: "Add"},
+		"Canvas.Multiply": VCtor{Tag: "Multiply"},
+		"Canvas.Screen":   VCtor{Tag: "Screen"},
+		"Canvas.Erase":    VCtor{Tag: "Erase"},
+		"Canvas.Left":     VCtor{Tag: "Left"},
+		"Canvas.Center":   VCtor{Tag: "Center"},
+		"Canvas.Right":    VCtor{Tag: "Right"},
+
+		// Decimal.Rounding constructors — qualified-only
+		// (`Decimal.HalfEven`), consumed by the Decimal resolvers.
+		"Decimal.HalfEven": VCtor{Tag: "HalfEven"},
+		"Decimal.HalfUp":   VCtor{Tag: "HalfUp"},
+		"Decimal.Down":     VCtor{Tag: "Down"},
+		"Decimal.Up":       VCtor{Tag: "Up"},
+		"Decimal.Floor":    VCtor{Tag: "Floor"},
+		"Decimal.Ceiling":  VCtor{Tag: "Ceiling"},
+
 		"serviceErrorToString": nativeFn(1, func(args []Value) (Value, error) {
 			return VString{V: serviceErrorString(args[0])}, nil
 		}),
 
 		// Arithmetic
-		"+": nativeFn(2, addOp),
-		"-": nativeFn(2, subOp),
-		"*": nativeFn(2, mulOp),
-		"/": nativeFn(2, divOp),
+		"+":  nativeFn(2, addOp),
+		"-":  nativeFn(2, subOp),
+		"*":  nativeFn(2, mulOp),
+		"//": nativeFn(2, intDivOp),
+		"/":  nativeFn(2, divOp),
 
 		// Comparison
 		"==": nativeFn(2, eqOp),
@@ -511,13 +652,13 @@ func addOp(args []Value) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("+: expected Int")
 		}
-		return VInt{V: a.V + b.V}, nil
-	case VFloat:
-		b, ok := args[1].(VFloat)
+		return checkedVInt(addInts(a.V, b.V))
+	case VDecimal:
+		b, ok := args[1].(VDecimal)
 		if !ok {
-			return nil, fmt.Errorf("+: expected Float")
+			return nil, fmt.Errorf("+: expected Decimal")
 		}
-		return VFloat{V: a.V + b.V}, nil
+		return decAdd(a, b)
 	}
 	return nil, fmt.Errorf("+: unsupported types")
 }
@@ -529,13 +670,13 @@ func subOp(args []Value) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("-: expected Int")
 		}
-		return VInt{V: a.V - b.V}, nil
-	case VFloat:
-		b, ok := args[1].(VFloat)
+		return checkedVInt(subInts(a.V, b.V))
+	case VDecimal:
+		b, ok := args[1].(VDecimal)
 		if !ok {
-			return nil, fmt.Errorf("-: expected Float")
+			return nil, fmt.Errorf("-: expected Decimal")
 		}
-		return VFloat{V: a.V - b.V}, nil
+		return decSub(a, b)
 	}
 	return nil, fmt.Errorf("-: unsupported")
 }
@@ -547,41 +688,52 @@ func mulOp(args []Value) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("*: expected Int")
 		}
-		return VInt{V: a.V * b.V}, nil
-	case VFloat:
-		b, ok := args[1].(VFloat)
+		return checkedVInt(mulInts(a.V, b.V))
+	case VDecimal:
+		b, ok := args[1].(VDecimal)
 		if !ok {
-			return nil, fmt.Errorf("*: expected Float")
+			return nil, fmt.Errorf("*: expected Decimal")
 		}
-		return VFloat{V: a.V * b.V}, nil
+		return decMul(a, b)
 	}
 	return nil, fmt.Errorf("*: unsupported")
 }
 
-func divOp(args []Value) (Value, error) {
-	switch a := args[0].(type) {
-	case VInt:
-		b, ok := args[1].(VInt)
-		if !ok {
-			return nil, fmt.Errorf("/: expected Int")
-		}
-		// Integer division is total: dividing by zero yields 0. This
-		// matches the web (runtime.js) and iOS runtimes (both return 0)
-		// and Elm's `//`. Erroring here would diverge by platform — the
-		// server would 500 while the client returns 0 — and there is no
-		// error channel in pure client-side eval.
-		if b.V == 0 {
-			return VInt{V: 0}, nil
-		}
-		return VInt{V: a.V / b.V}, nil
-	case VFloat:
-		b, ok := args[1].(VFloat)
-		if !ok {
-			return nil, fmt.Errorf("/: expected Float")
-		}
-		return VFloat{V: a.V / b.V}, nil
+// intDivOp — `//`, truncating integer division wearing its loss in
+// its spelling (Elm's `//`).
+func intDivOp(args []Value) (Value, error) {
+	a, ok := args[0].(VInt)
+	if !ok {
+		return nil, fmt.Errorf("//: expected Int")
 	}
-	return nil, fmt.Errorf("/: unsupported")
+	b, ok := args[1].(VInt)
+	if !ok {
+		return nil, fmt.Errorf("//: expected Int")
+	}
+	// Integer division is total: dividing by zero yields 0. This
+	// matches the web (runtime.js) and iOS runtimes (both return 0)
+	// and Elm's `//`. Erroring here would diverge by platform — the
+	// server would 500 while the client returns 0 — and there is no
+	// error channel in pure client-side eval.
+	if b.V == 0 {
+		return VInt{V: 0}, nil
+	}
+	return VInt{V: a.V / b.V}, nil
+}
+
+// divOp — `/`, Decimal-only. Produces a QUESTION, not a number: the
+// inert exact quotient, resolved only by Decimal.rounded /
+// withRemainder, which is where the precision gets written.
+func divOp(args []Value) (Value, error) {
+	a, ok := args[0].(VDecimal)
+	if !ok {
+		return nil, fmt.Errorf("/: expected Decimal")
+	}
+	b, ok := args[1].(VDecimal)
+	if !ok {
+		return nil, fmt.Errorf("/: expected Decimal")
+	}
+	return VDivision{Num: a, Den: b}, nil
 }
 
 // --- comparison ---
@@ -634,6 +786,10 @@ func equalValues(a, b Value) bool {
 	case VFloat:
 		bv, ok := b.(VFloat)
 		return ok && av.V == bv.V
+	case VDecimal:
+		bv, ok := b.(VDecimal)
+		// Numeric equality: 1.50 == 1.5 (scale is display metadata).
+		return ok && decCompare(av, bv) == 0
 	case VString:
 		bv, ok := b.(VString)
 		return ok && av.V == bv.V
@@ -721,6 +877,12 @@ func compareValues(a, b Value) (int, error) {
 			return 1, nil
 		}
 		return 0, nil
+	case VDecimal:
+		bv, ok := b.(VDecimal)
+		if !ok {
+			return 0, fmt.Errorf("comparison: type mismatch")
+		}
+		return decCompare(av, bv), nil
 	case VString:
 		bv, ok := b.(VString)
 		if !ok {

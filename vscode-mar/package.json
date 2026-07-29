@@ -2,7 +2,7 @@
   "name": "mar-language-support",
   "displayName": "Mar Developer Tools",
   "description": "Syntax highlighting, snippets, and LSP support for the Mar programming language.",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "icon": "mar-logo.png",
   "publisher": "mar-lang",
   "repository": {
@@ -10,7 +10,7 @@
     "url": "https://github.com/marlanghq/mar-lang"
   },
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.91.0"
   },
   "categories": [
     "Programming Languages"
@@ -66,12 +66,12 @@
     "package": "vsce package"
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.1"
+    "vscode-languageclient": "^10.1.0"
   },
   "devDependencies": {
-    "@types/node": "^22.19.17",
-    "@types/vscode": "^1.74.0",
-    "@vscode/vsce": "^3.9.1",
+    "@types/node": "^22.20.1",
+    "@types/vscode": "^1.91.0",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.25.12",
     "typescript": "^6.0.3"
   }

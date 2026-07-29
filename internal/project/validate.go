@@ -38,7 +38,7 @@ const (
 	DefaultRateLimitRequestsPerMinute = 600
 	MinRateLimitRequestsPerMinute     = 1
 	MaxRateLimitRequestsPerMinute     = 100000
-	DefaultRateLimitBurst             = 30
+	DefaultRateLimitBurst             = 60
 	MinRateLimitBurst                 = 1
 	MaxRateLimitBurst                 = 10000
 )
@@ -598,7 +598,7 @@ type DeployCloudflarePagesError struct {
 func (e *DeployCloudflarePagesError) Error() string {
 	switch e.Kind {
 	case "missing-block":
-		return "mar.json: no `deploy.cloudflare-pages` block. Add app, account, apiToken to enable `mar cloudflare-pages deploy`."
+		return "mar.json: no `deploy.cloudflare-pages` block. Add app, account, apiToken to enable `mar deploy` for a frontend app."
 	case "missing-app":
 		return "mar.json: deploy.cloudflare-pages.app is required (the Pages project name; becomes <app>.pages.dev)."
 	case "missing-account":
@@ -616,8 +616,8 @@ func (e *DeployCloudflarePagesError) Error() string {
 
 // ValidateDeployCloudflarePages enforces that the deploy.cloudflare-pages
 // block is present and well-formed. NOT called from the general
-// Validate() pass — only from `mar cloudflare-pages *` subcommands,
-// since non-deploy workflows don't require this block.
+// Validate() pass — only from the `mar deploy` flow when it routes to
+// Cloudflare Pages, since non-deploy workflows don't require this block.
 //
 // The shape rules are deliberately strict (account = 32 hex chars,
 // app = Pages's documented project-name regex) so typos fail at

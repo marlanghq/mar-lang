@@ -34,6 +34,10 @@ func runRepl() int {
 	tEnv := typecheck.BaseEnv()
 	rEnv := runtime.BaseEnv()
 	subst := typecheck.NewSubst()
+	// Literal elaboration needs the per-expression types, and those are only
+	// recorded when tracking is on. Without this the REPL would type
+	// `1 + 1.50` as Decimal and then hand Eval an Int literal.
+	subst.EnableExprTracking()
 	userBindings := map[string]bool{}
 
 	prompt := "> "
@@ -178,6 +182,7 @@ func replEvalExpr(exprSrc string, tEnv *typecheck.TypeEnv, rEnv *runtime.Env, su
 	if err != nil {
 		return nil, nil, err
 	}
+	typecheck.Elaborate(subst.ExtractExprTypes())
 	v, err := runtime.Eval(vd.Body, rEnv)
 	if err != nil {
 		return nil, nil, err
@@ -202,6 +207,7 @@ func replBind(name, exprSrc string, tEnv *typecheck.TypeEnv, rEnv *runtime.Env, 
 	if err != nil {
 		return err
 	}
+	typecheck.Elaborate(subst.ExtractExprTypes())
 	v, err := runtime.Eval(vd.Body, rEnv)
 	if err != nil {
 		return err

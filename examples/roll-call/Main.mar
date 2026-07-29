@@ -1,0 +1,66 @@
+module Main exposing (main)
+
+
+import Backend.Users
+import Backend.Classes
+import Backend.Students
+import Backend.Attendance
+import Backend.Account
+import Frontend.SignIn
+import Frontend.VerifyCode
+import Frontend.Classes
+import Frontend.ClassDetail
+import Frontend.TakeAttendance
+import Frontend.StudentDetail
+
+
+-- Roll Call — attendance & roster for teachers.
+--
+-- Sign in with an email + one-time code, keep a roster of classes and
+-- students, take daily attendance (present / late / absent), and read
+-- back per-student rates and streaks. Every row is scoped to the
+-- signed-in teacher; the server never returns another teacher's data.
+--
+-- This is the only module that sees both halves of the app. Auth.config
+-- picks up the users entity; the services list gathers every protected
+-- endpoint from the four backend modules; the pages list enumerates
+-- every frontend route (the runtime dispatches by path).
+--
+-- Sign-in codes are printed to the server log in dev mode, so you can
+-- copy/paste without configuring SMTP. For production, set the mailer
+-- under "mail" in mar.json.
+--
+-- Open with:  mar dev examples/roll-call
+
+
+auth : Auth { id : Int, email : String }
+auth =
+    Auth.config
+        { entity     = Backend.Users.users
+        , identify   = \u -> u.email
+        , signInPage = Frontend.SignIn.page
+        , email      = { subject = "Your Roll Call sign-in code" }
+        , signup     = \userEmail -> { email = userEmail }
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Cmd ()
+main =
+    App.fullstack
+        { services =
+            List.concat
+                [ Backend.Classes.services
+                , Backend.Students.services
+                , Backend.Attendance.services
+                , Backend.Account.services
+                ]
+        , pages =
+            [ Frontend.SignIn.page
+            , Frontend.VerifyCode.page
+            , Frontend.Classes.page
+            , Frontend.ClassDetail.page
+            , Frontend.TakeAttendance.page
+            , Frontend.StudentDetail.page
+            ]
+        }

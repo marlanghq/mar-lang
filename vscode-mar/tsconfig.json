@@ -7,7 +7,8 @@
     "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "types": ["node"]
   },
   "exclude": ["node_modules", "out"]
 }

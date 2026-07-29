@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -75,10 +76,27 @@ func encodeValue(v Value) (string, error) {
 			return "true", nil
 		}
 		return "false", nil
+	case VDecimal:
+		// Wire format `{"__dec": "1.50"}` — the value rides as a STRING
+		// so no JSON parser on any side ever runs it through binary
+		// floating point. The marker (same convention as __time/__char)
+		// lets jsToMar / MarJSONCodec rebuild a Decimal instead of a
+		// 4-char string; the digits themselves stay readable to non-mar
+		// consumers inspecting raw JSON.
+		b, _ := json.Marshal(decString(x))
+		return `{"__dec":` + string(b) + `}`, nil
+	case VDivision:
+		// Division is deliberately inert: an unresolved exact quotient
+		// has no canonical digit form, so it never crosses a boundary.
+		// Resolve it first (Decimal.rounded / withRemainder).
+		return "", fmt.Errorf("JSON.encode: cannot encode a Decimal.Division — resolve it with Decimal.rounded or Decimal.withRemainder first")
 	case VUnit:
 		return "null", nil
 	case VDuration:
-		return strconv.FormatInt(x.Seconds, 10), nil
+		// -1 precision drops trailing zeros, so whole-second durations
+		// still serialize as integers ("2") — only sub-second ones carry
+		// a fraction ("1.5"). Keeps the wire format stable for existing data.
+		return strconv.FormatFloat(x.Seconds, 'f', -1, 64), nil
 	case VTime:
 		// Wire format is `{"__time": "ISO 8601"}` — marker keeps the
 		// type round-trippable on the client (jsToMar / iOS decoder
@@ -104,9 +122,19 @@ func encodeValue(v Value) (string, error) {
 		sb.WriteByte(']')
 		return sb.String(), nil
 	case VRecord:
+		// Sorted by field name, not by the order the literal was written.
+		// `Order` is where the fields appeared in the source, which is not
+		// part of the value: `{ a = 1, b = 2 }` and `{ b = 2, a = 1 }` are
+		// equal, and encoding them differently would break the one property
+		// a pure function must have — equal inputs, equal output. It also
+		// puts the three runtimes on the same answer; the iOS encoder already
+		// sorted, so web and server were the odd ones out.
+		names := make([]string, len(x.Order))
+		copy(names, x.Order)
+		sort.Strings(names)
 		var sb strings.Builder
 		sb.WriteByte('{')
-		for i, n := range x.Order {
+		for i, n := range names {
 			if i > 0 {
 				sb.WriteByte(',')
 			}
@@ -134,12 +162,17 @@ func encodeValue(v Value) (string, error) {
 		// collide with VUnit's null and break generic decoders for
 		// payload records. The tag costs a few bytes on the wire but
 		// makes the round-trip predictable.
+		//
+		// `__args` is written before `__ctor` because every object this
+		// encoder emits has its keys in sorted order — see the record case.
+		// The iOS encoder hands its tree to JSONSerialization, which can only
+		// be made deterministic with `.sortedKeys`, so sorted is the one order
+		// all three runtimes can agree on. Decoders look keys up, so none of
+		// them notices.
 		var sb strings.Builder
-		sb.WriteString(`{"__ctor":`)
-		b, _ := json.Marshal(x.Tag)
-		sb.Write(b)
+		sb.WriteByte('{')
 		if len(x.Args) > 0 {
-			sb.WriteString(`,"__args":[`)
+			sb.WriteString(`"__args":[`)
 			for i, a := range x.Args {
 				if i > 0 {
 					sb.WriteByte(',')
@@ -150,8 +183,11 @@ func encodeValue(v Value) (string, error) {
 				}
 				sb.WriteString(s)
 			}
-			sb.WriteByte(']')
+			sb.WriteString(`],`)
 		}
+		sb.WriteString(`"__ctor":`)
+		b, _ := json.Marshal(x.Tag)
+		sb.Write(b)
 		sb.WriteByte('}')
 		return sb.String(), nil
 	case VTuple:
@@ -259,7 +295,21 @@ func convertJSON(raw any) (Value, error) {
 		return VString{V: x}, nil
 	case json.Number:
 		if i, err := x.Int64(); err == nil {
+			// A whole number the wire can carry but Mar cannot represent is
+			// refused rather than rounded. On the request path this reaches
+			// the caller as a 422 alongside every other malformed body (see
+			// assembleServiceInput): the sender is wrong, the program is not.
+			if !inIntRange(i) {
+				return nil, intOutOfRange("JSON", i)
+			}
 			return VInt{V: i}, nil
+		}
+		// A fractional JSON number decodes TEXTUALLY into a Decimal —
+		// `19.99` arrives as exactly 19.99, never a float64 approximation.
+		// Exponent forms (1.5e10) and out-of-bound widths fall back to
+		// VFloat, the runtime-only interop representation.
+		if d, err := parseDecimalString(x.String()); err == nil {
+			return d, nil
 		}
 		f, err := x.Float64()
 		if err != nil {
@@ -286,6 +336,17 @@ func convertJSON(raw any) (Value, error) {
 		// would arrive at the handler as a plain VRecord and any
 		// downstream pattern match — or Repo.findBy enum lookup —
 		// would explode with "expected a constructor (got VRecord)".
+		// Tagged decimal — `{"__dec": "1.50"}`. Counterpart to the
+		// VDecimal encoder: rebuilds the exact coefficient + scale from
+		// the digit string, keeping binary floating point out of the
+		// round-trip entirely.
+		if raw, ok := x["__dec"]; ok && len(x) == 1 {
+			s, ok := raw.(string)
+			if !ok {
+				return nil, fmt.Errorf("JSON.decode: __dec must be a string")
+			}
+			return parseDecimalString(s)
+		}
 		if tag, ok := x["__ctor"].(string); ok {
 			var argsV []Value
 			if rawArgs, present := x["__args"]; present {

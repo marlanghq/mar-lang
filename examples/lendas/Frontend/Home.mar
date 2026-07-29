@@ -1,0 +1,527 @@
+module Frontend.Home exposing (page)
+
+
+import Shared exposing (Status(..))
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , list, section, header, footer
+    , hstack, vstack, spacer, width, fill, align, leading
+    , text, subtitle, title, button, navigationLink, errorText, picker
+    , form, textField, submit, disabled, chars
+    , sheet, confirm, empty
+    )
+
+
+-- The hall of challenges. Four buckets:
+--
+--   Desafios recebidos — someone wants a match; pick a deck and accept
+--   Desafios enviados  — waiting on the rival's accept
+--   Partidas em andamento — tap to play (canvas page)
+--   Encerradas         — finished / refused, with the outcome
+--
+-- The lobby polls every 5s, and Mar re-runs `init` on every navigation
+-- so returning from a match always shows fresh state.
+
+
+type alias Model =
+    { player     : Maybe Shared.Player
+    , lobby      : Maybe Shared.Lobby
+    , error      : Maybe String
+    -- desafiar sheet (botMode = the "jogar contra o bot" variant of it)
+    , showNew    : Bool
+    , botMode    : Bool
+    , nickDraft  : String
+    , deckDraft  : String
+    , newError   : Maybe String
+    , sending    : Bool
+    -- aceitar sheet (deck pick for a received challenge)
+    , acceptId   : Maybe Int
+    , acceptDeck : String
+    -- sign out
+    , confirmingSignOut : Bool
+    }
+
+
+type Msg
+    = Me (Result Service.Error Shared.MeResult)
+    | LobbyFetched (Result Service.Error Shared.Lobby)
+    | Tick Time
+      -- desafiar
+    | NewOpened
+    | BotOpened
+    | NewDismissed
+    | NickDraftChanged String
+    | DeckPicked String
+    | NewSubmitted
+    | TrainBot
+    | Challenged (Result Service.Error Shared.DesafiarResult)
+      -- aceitar / recusar
+    | AcceptOpened Int
+    | AcceptDismissed
+    | AcceptDeckPicked String
+    | AcceptSubmitted
+    | Accepted Int (Result Service.Error Shared.Ack)
+    | DeclineClicked Int
+    | Declined (Result Service.Error Shared.Ack)
+      -- conta
+    | SignOutClicked
+    | SignOutConfirmed
+    | SignOutCancelled
+    | SignedOut (Result String ())
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { player = Nothing, lobby = Nothing, error = Nothing
+      , showNew = False, botMode = False, nickDraft = "", deckDraft = "floresta", newError = Nothing, sending = False
+      , acceptId = Nothing, acceptDeck = "floresta"
+      , confirmingSignOut = False
+      }
+    , Service.call Shared.me () Me
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        Me (Ok (Shared.TemJogador p)) ->
+            ( { model | player = Just p }, Service.call Shared.lobby () LobbyFetched )
+
+        Me (Ok Shared.SemJogador) ->
+            ( model, Nav.replaceTo Frontend.Routes.nickname {} )
+
+        Me (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        LobbyFetched (Ok lb) ->
+            ( { model | lobby = Just lb }, Cmd.none )
+
+        LobbyFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        Tick _ ->
+            ( model, Service.call Shared.lobby () LobbyFetched )
+
+        NewOpened ->
+            ( { model | showNew = True, botMode = False, nickDraft = "", deckDraft = "floresta", newError = Nothing }
+            , Cmd.none
+            )
+
+        BotOpened ->
+            ( { model | showNew = True, botMode = True, deckDraft = "floresta", newError = Nothing }
+            , Cmd.none
+            )
+
+        NewDismissed ->
+            ( { model | showNew = False }, Cmd.none )
+
+        NickDraftChanged value ->
+            ( { model | nickDraft = value, newError = Nothing }, Cmd.none )
+
+        DeckPicked key ->
+            ( { model | deckDraft = key }, Cmd.none )
+
+        NewSubmitted ->
+            if model.sending then
+                ( model, Cmd.none )
+
+            else if String.length (String.trim model.nickDraft) == 0 then
+                ( { model | newError = Just "Diga o apelido de quem você quer desafiar." }, Cmd.none )
+
+            else
+                ( { model | sending = True, newError = Nothing }
+                , Service.call Shared.desafiar
+                    { nick = String.trim model.nickDraft, deck = model.deckDraft }
+                    Challenged
+                )
+
+        TrainBot ->
+            if model.sending then
+                ( model, Cmd.none )
+
+            else
+                -- solo play: challenge the reserved "bot" with the chosen deck
+                ( { model | sending = True, newError = Nothing }
+                , Service.call Shared.desafiar
+                    { nick = "bot", deck = model.deckDraft }
+                    Challenged
+                )
+
+        Challenged (Ok (Shared.DesafioCriado id)) ->
+            -- Straight into the arena: the challenger plays the opening
+            -- turn now, before the rival even accepts (the backend lets A
+            -- move while the match is still Desafio). No "sent, now wait".
+            ( { model | sending = False, showNew = False }
+            , Nav.pushTo Frontend.Routes.partida { id = id }
+            )
+
+        Challenged (Ok Shared.OponenteNaoExiste) ->
+            ( { model | sending = False, newError = Just "Não achei ninguém com esse apelido." }, Cmd.none )
+
+        Challenged (Ok Shared.JaTemPartida) ->
+            ( { model | sending = False, newError = Just "Você já tem uma partida (ou desafio) em aberto com esse rival." }, Cmd.none )
+
+        Challenged (Ok Shared.DeckInvalido) ->
+            ( { model | sending = False, newError = Just "Escolha um deck." }, Cmd.none )
+
+        Challenged (Ok Shared.AutoDesafio) ->
+            ( { model | sending = False, newError = Just "Contra você mesmo? Isso só no espelho." }, Cmd.none )
+
+        Challenged (Err why) ->
+            ( { model | sending = False, newError = Just (Service.errorToString why) }, Cmd.none )
+
+        AcceptOpened id ->
+            ( { model | acceptId = Just id, acceptDeck = "floresta" }, Cmd.none )
+
+        AcceptDismissed ->
+            ( { model | acceptId = Nothing }, Cmd.none )
+
+        AcceptDeckPicked key ->
+            ( { model | acceptDeck = key }, Cmd.none )
+
+        AcceptSubmitted ->
+            case model.acceptId of
+                Just id ->
+                    ( model
+                    , Service.call Shared.aceitar { id = id, deck = model.acceptDeck } (\r -> Accepted id r)
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        Accepted id (Ok Shared.AckOk) ->
+            ( { model | acceptId = Nothing }
+            , Nav.pushTo Frontend.Routes.partida { id = id }
+            )
+
+        Accepted _ _ ->
+            ( { model | acceptId = Nothing }, Service.call Shared.lobby () LobbyFetched )
+
+        DeclineClicked id ->
+            ( model, Service.call Shared.recusar { id = id } Declined )
+
+        Declined _ ->
+            ( model, Service.call Shared.lobby () LobbyFetched )
+
+        SignOutClicked ->
+            ( { model | confirmingSignOut = True }, Cmd.none )
+
+        SignOutConfirmed ->
+            ( { model | confirmingSignOut = False }, Auth.logout SignedOut )
+
+        SignOutCancelled ->
+            ( { model | confirmingSignOut = False }, Cmd.none )
+
+        SignedOut _ ->
+            ( model, Nav.replaceTo Frontend.Routes.signIn {} )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    navigationStack
+        [ navigationTitle "LENDAS"
+        , topBarTrailing (button [] SignOutClicked "Sair")
+        ]
+        [ list [] (headerSection model :: lobbyBody model)
+        , newSheet model
+        , acceptSheet model
+        , signOutDialog model
+        ]
+
+
+headerSection : Model -> View Msg
+headerSection model =
+    section []
+        [ playerLine model
+        , navigationLink [ width fill ] Frontend.Routes.comoJogar {} (text [] "📖  Como jogar")
+        , errorView model.error
+        ]
+
+
+playerLine : Model -> View Msg
+playerLine model =
+    case model.player of
+        Just p ->
+            vstack []
+                [ title ("Olá, " ++ p.nick)
+                , subtitle (recordLine p)
+                ]
+
+        Nothing ->
+            text [] "Carregando seu jogador…"
+
+
+-- Wins and losses spelled out, no dashes or dots between them.
+recordLine : Shared.Player -> String
+recordLine p =
+    let
+        v = if p.wins == 1 then " vitória" else " vitórias"
+        d = if p.losses == 1 then " derrota" else " derrotas"
+    in
+    String.fromInt p.wins ++ v ++ " e " ++ String.fromInt p.losses ++ d
+
+
+lobbyBody : Model -> List (View Msg)
+lobbyBody model =
+    case model.lobby of
+        Nothing ->
+            [ section [] [ text [] "Buscando suas partidas…" ] ]
+
+        Just lb ->
+            List.concat
+                [ conviteSection lb.convites
+                , ativaSection lb.ativas
+                -- "Novo jogo" sits BELOW the games in progress, so finishing
+                -- what you started comes first, starting a new one second.
+                , [ desafiarSection ]
+                , enviadoSection lb.enviados
+                , encerradaSection lb.encerradas
+                ]
+
+
+desafiarSection : View Msg
+desafiarSection =
+    -- the explainer rides BELOW the card as the section footer
+    -- (iOS-Settings style), not as a row inside it
+    section
+        [ header "Novo jogo"
+        , footer "Desafie alguém pelo apelido, ou jogue uma partida contra o bot."
+        ]
+        [ button [] NewOpened "⚔️  Desafiar um rival"
+        , button [] BotOpened "🤖  Jogar contra o bot"
+        ]
+
+
+conviteSection : List Shared.PartidaCard -> List (View Msg)
+conviteSection cards =
+    if List.length cards == 0 then
+        []
+
+    else
+        [ section [ header "Desafios recebidos" ]
+            (List.map conviteRow cards)
+        ]
+
+
+conviteRow : Shared.PartidaCard -> View Msg
+conviteRow c =
+    vstack []
+        [ text [] (c.rivalNick ++ " desafiou você!")
+        , hstack []
+            [ button [] (AcceptOpened c.id) "Aceitar"
+            , button [] (DeclineClicked c.id) "Recusar"
+            , spacer
+            ]
+        ]
+
+
+ativaSection : List Shared.PartidaCard -> List (View Msg)
+ativaSection cards =
+    if List.length cards == 0 then
+        []
+
+    else
+        [ section [ header "Partidas em andamento" ]
+            (List.map ativaRow cards)
+        ]
+
+
+ativaRow : Shared.PartidaCard -> View Msg
+ativaRow c =
+    navigationLink [ width fill ] Frontend.Routes.partida { id = c.id }
+        -- width fill makes the row stretch so `spacer` can push the status
+        -- flush-right (next to the chevron); without it the hstack hugs and
+        -- the status floats mid-row. Every status is a `subtitle` so the
+        -- three sections read the same (muted label on the right).
+        (hstack [ width fill ]
+            [ text [] ("Contra " ++ c.rivalNick)
+            , spacer
+            , if c.minhaVez then
+                subtitle "Sua vez"
+
+              else
+                subtitle "Vez do rival"
+            ])
+
+
+enviadoSection : List Shared.PartidaCard -> List (View Msg)
+enviadoSection cards =
+    if List.length cards == 0 then
+        []
+
+    else
+        [ section [ header "Desafios enviados" ]
+            (List.map enviadoRow cards)
+        ]
+
+
+enviadoRow : Shared.PartidaCard -> View Msg
+enviadoRow c =
+    navigationLink [ width fill ] Frontend.Routes.partida { id = c.id }
+        (hstack [ width fill ]
+            [ text [] ("Contra " ++ c.rivalNick)
+            , spacer
+            , subtitle "Aguardando resposta"
+            ])
+
+
+encerradaSection : List Shared.PartidaCard -> List (View Msg)
+encerradaSection cards =
+    if List.length cards == 0 then
+        []
+
+    else
+        [ section [ header "Encerradas" ]
+            (List.map encerradaRow cards)
+        ]
+
+
+encerradaRow : Shared.PartidaCard -> View Msg
+encerradaRow c =
+    if c.status == Recusada then
+        text [] ("Contra " ++ c.rivalNick ++ ", desafio recusado")
+
+    else
+        navigationLink [ width fill ] Frontend.Routes.partida { id = c.id }
+            (hstack [ width fill ]
+                [ text [] ("Contra " ++ c.rivalNick)
+                , spacer
+                , if c.winnerMe == 1 then
+                    subtitle "Vitória"
+
+                  else
+                    subtitle "Derrota"
+                ])
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            errorText msg
+
+
+-- ====================================================================
+-- SHEETS
+-- ====================================================================
+
+
+newSheet : Model -> View Msg
+newSheet model =
+    sheet
+        { open      = model.showNew
+        , onDismiss = NewDismissed
+        , outlet    = "novo-desafio"
+        }
+        [ vstack []
+            (if model.botMode then
+                -- bot: just pick a deck and go (no rival to name)
+                [ hstack []
+                    [ title "Jogar contra o bot"
+                    , spacer
+                    , button [] NewDismissed "Cancelar"
+                    ]
+                , subtitle "Escolha seu deck"
+                , deckPicker model.deckDraft DeckPicked
+                , errorView model.newError
+                , button [ disabled model.sending ] TrainBot "🤖  Começar contra o bot"
+                ]
+
+             else
+                [ hstack []
+                    [ title "Novo desafio"
+                    , spacer
+                    , button [] NewDismissed "Cancelar"
+                    ]
+                , subtitle "Escolha seu deck"
+                , deckPicker model.deckDraft DeckPicked
+                , subtitle "Contra quem?"
+                , form
+                    [ section []
+                        [ textField
+                            [ submit NewSubmitted, disabled model.sending, width (chars 20) ]
+                            "Apelido do rival" model.nickDraft NickDraftChanged
+                        ]
+                    ]
+                , errorView model.newError
+                , button [ disabled model.sending ] NewSubmitted "Desafiar e começar"
+                ]
+            )
+        ]
+
+
+acceptSheet : Model -> View Msg
+acceptSheet model =
+    sheet
+        { open      = model.acceptId /= Nothing
+        , onDismiss = AcceptDismissed
+        , outlet    = "aceitar-desafio"
+        }
+        [ vstack []
+            [ title "Aceitar desafio"
+            , subtitle "Escolha seu deck para esta partida"
+            , deckPicker model.acceptDeck AcceptDeckPicked
+            , button [] AcceptSubmitted "Entrar na arena"
+            ]
+        ]
+
+
+signOutDialog : Model -> View Msg
+signOutDialog model =
+    if model.confirmingSignOut then
+        confirm
+            { title        = "Sair da conta? Suas partidas ficam salvas."
+            , confirmLabel = "Sair"
+            , destructive  = False
+            , onConfirm    = SignOutConfirmed
+            , onCancel     = SignOutCancelled
+            }
+
+    else
+        empty
+
+
+deckEmoji : String -> String
+deckEmoji key =
+    case key of
+        "floresta" -> "🌿"
+        "sol"      -> "☀️"
+        "aguas"    -> "🌊"
+        _          -> "🃏"
+
+
+-- A native picker (left-aligned value + chevron, OS-native option list
+-- so dark mode is correct) plus a subtitle showing the chosen deck's
+-- tagline. Replaced a hand-rolled column of bare <button>s, which the
+-- browser centered and whose pressed state was unreadable in dark mode.
+deckPicker : String -> (String -> Msg) -> View Msg
+deckPicker current toMsg =
+    vstack [ align leading ]
+        [ picker []
+            current
+            Shared.deckKeys
+            (\key -> deckEmoji key ++ "  " ++ Shared.deckLabel key)
+            toMsg
+        , subtitle (Shared.deckTagline current)
+        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/"
+        , title  = "Lendas"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Time.every (Time.seconds 5) Tick
+        }

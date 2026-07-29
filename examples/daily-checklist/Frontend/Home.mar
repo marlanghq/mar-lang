@@ -4,9 +4,8 @@ module Frontend.Home exposing (page)
 import Shared
 import UI exposing
     ( navigationStack, navigationTitle, topBarTrailing
-    , form, list, section, keyedList, keyed, header, footer, subtitle
-    , hstack, vstack, spacer
-    , text, textField, button, toggle, errorText
+    , list, section, keyedList, keyed, header, footer, subtitle
+    , hstack, text, textField, button, toggle, errorText
     , submit, disabled, onMove, onDelete
     , confirm, empty
     )
@@ -196,7 +195,7 @@ update _ msg model =
             -- failed call undoes only its own flip.
             let
                 original =
-                    if attempted then False else True
+                    not attempted
             in
             ( { model
                 | items = Maybe.map (updateLocalDone id original) model.items
@@ -213,7 +212,7 @@ update _ msg model =
             -- in DeleteConfirmed below.
             case model.items of
                 Just items ->
-                    case nth idx items of
+                    case List.head (List.drop idx items) of
                         Just task ->
                             ( { model | confirmingDelete = Just task }
                             , Cmd.none
@@ -397,17 +396,6 @@ updateLocalDone id newValue items =
         items
 
 
--- nth returns the i-th element of a list, or Nothing if out of
--- range. Used by DeleteRowAt to translate the onDelete index into
--- the actual task object.
-nth : Int -> List a -> Maybe a
-nth idx xs =
-    case xs of
-        [] -> Nothing
-        x :: rest ->
-            if idx <= 0 then Just x else nth (idx - 1) rest
-
-
 -- ====================================================================
 -- VIEW
 -- ====================================================================
@@ -478,7 +466,7 @@ navigationBarAttrs _ model =
     let
         hasTasks =
             case model.items of
-                Just items -> if List.isEmpty items then False else True
+                Just items -> not (List.isEmpty items)
                 Nothing    -> False
 
         showEditAffordance =

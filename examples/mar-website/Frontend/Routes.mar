@@ -1,5 +1,5 @@
 module Frontend.Routes exposing
-    ( home, why, getStarted, examples, credits, showcase )
+    ( home, why, getStarted, demos, credits, showcase, reference )
 
 
 -- Central URL surface for the site. One file, one screen,
@@ -28,8 +28,8 @@ getStarted : Path {}
 getStarted = "/get-started"
 
 
-examples : Path {}
-examples = "/examples"
+demos : Path {}
+demos = "/demos"
 
 
 credits : Path {}
@@ -38,3 +38,10 @@ credits = "/credits"
 
 showcase : Path {}
 showcase = "/showcase"
+
+
+-- `reference` is a bridge to the function-reference sub-section under
+-- /reference/. Its internal URLs (/reference/list, etc.) live in
+-- Frontend.Reference.Routes so the sub-tree is self-contained.
+reference : Path {}
+reference = "/reference"

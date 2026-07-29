@@ -148,7 +148,7 @@ renderBody model =
                         ]
                     else
                         [ section
-                            [ header ("Recent · " ++ String.fromInt (List.length items))
+                            [ header ("Recent (" ++ String.fromInt (List.length items) ++ ")")
                             , footer "Newest first."
                             ]
                             (List.map activityRow items)

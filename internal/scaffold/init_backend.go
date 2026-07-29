@@ -64,12 +64,12 @@ addEntry = Service.declare POST "/entries"
 
 
 -- Service handlers.
-listEntriesImpl : () -> Effect (List Entry)
+listEntriesImpl : () -> Task (List Entry)
 listEntriesImpl _ =
     Repo.all entries
 
 
-addEntryImpl : NewEntry -> Effect Entry
+addEntryImpl : NewEntry -> Task Entry
 addEntryImpl input =
     Repo.create entries input
 
@@ -80,7 +80,7 @@ services =
     ]
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.backend
         { services = services

@@ -1,0 +1,858 @@
+module Main exposing (main)
+
+
+import UI exposing (navigationStack, navigationTitle, form, section, header, button)
+
+
+-- A tap-to-hear soundboard: a cookbook of chip SFX, four ORIGINAL tunes
+-- (invented for this example — melody, harmony, bass and drums as
+-- independent chip voices), and a full drum-kit groove.
+--
+-- The one hard rule of the tunes: EVERY voice in a piece totals exactly
+-- the same number of milliseconds (the math is in each piece's comment).
+-- Sound.loop repeats each voice at its own length, so equal totals keep
+-- the channels phase-locked forever; unequal ones drift apart.
+--
+-- It also showcases the sound DX helpers:
+--   * pitch helpers — Sound.e 5 instead of the magic number 659 (no Hz table)
+--   * the pack      — Sound.duty / vibrato / arp (arp doubles as chord stab)
+--   * Sound.chord / Sound.sequence — layer voices / string cells back-to-back
+--
+-- Run: mar dev examples/soundboard   (tap a button — audio needs one gesture)
+
+
+type alias Model =
+    { playing : Maybe Int }
+
+
+type Msg
+    = Sfx Sound       -- a one-shot effect (fire and forget, may overlap)
+    | Music Int       -- toggle a looping music track by index
+    | StopMusic
+
+
+init : (Model, Cmd Msg)
+init =
+    ({ playing = Nothing }, Cmd.none)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Sfx snd ->
+            (model, Sound.play snd)
+
+        Music i ->
+            -- The track is a keyed Sub (see subscriptions), so picking a new
+            -- one automatically STOPS the one playing before — no overlap.
+            -- Tapping the track that's already playing stops it.
+            ( { model | playing = if model.playing == Just i then Nothing else Just i }
+            , Cmd.none
+            )
+
+        StopMusic ->
+            ({ model | playing = Nothing }, Cmd.none)
+
+
+-- the five music tracks, by index (matches the buttons + subscriptions)
+musicOf : Int -> Sound
+musicOf i =
+    case i of
+        0 -> emberwake
+        1 -> moonglass
+        2 -> alleycatSwing
+        3 -> undertow
+        _ -> drumKit
+
+
+-- ===== instruments =====
+-- Each helper is one "instrument": hn = horn (fat 50% square), ld = lead
+-- (classic 25% pulse), sv = soft inner voice (thin 12% square), tb = triangle
+-- (bass / round pluck), sing = triangle with a gentle vibrato (a singing lead).
+
+
+hn : Int -> Int -> Int -> Sound
+hn vol hz ms =
+    Sound.volume vol (Sound.duty 50 (Sound.tone Sound.Square hz ms))
+
+
+ld : Int -> Int -> Int -> Sound
+ld vol hz ms =
+    Sound.volume vol (Sound.duty 25 (Sound.tone Sound.Square hz ms))
+
+
+sv : Int -> Int -> Int -> Sound
+sv vol hz ms =
+    Sound.volume vol (Sound.duty 12 (Sound.tone Sound.Square hz ms))
+
+
+tb : Int -> Int -> Int -> Sound
+tb vol hz ms =
+    Sound.volume vol (Sound.tone Sound.Triangle hz ms)
+
+
+sing : Int -> Int -> Int -> Sound
+sing vol hz ms =
+    Sound.vibrato 12 4 (Sound.volume vol (Sound.tone Sound.Triangle hz ms))
+
+
+-- ===== "Emberwake" — a driving action theme in E minor =====
+-- Eighth = 160ms, bar (4/4) = 1280ms, 16 bars = 20480ms PER VOICE.
+-- Form: a 4-bar riff, an 8-bar soaring theme that climbs to the B-major
+-- dominant, the riff back (an octave up on the way), and a full close.
+-- Voices: fat square lead, offbeat chord stabs, galloping sawtooth bass,
+-- kick / snare / hats — with a snare fill rolling the loop around.
+
+
+-- lead note, duration in eighth-note units
+ewN : Int -> Int -> Sound
+ewN units hz =
+    hn 30 hz (units * 160)
+
+
+ewB : Int -> Sound
+ewB hz =
+    Sound.volume 20 (Sound.tone Sound.Sawtooth hz 160)
+
+
+-- bass bar: R R o R | R o 5 R  (o = octave, 5 = fifth) — 8 eighths = 1280ms
+ewBassBar : Int -> Int -> Int -> Sound
+ewBassBar root oct fifth =
+    Sound.sequence
+        [ ewB root, ewB root, ewB oct, ewB root
+        , ewB root, ewB oct, ewB fifth, ewB root
+        ]
+
+
+-- one chord stab: the whole triad as ONE fast-cycled arp voice, 160ms
+ewStab : Int -> List Int -> Sound
+ewStab base extras =
+    Sound.volume 15 (Sound.arp extras (Sound.duty 25 (Sound.tone Sound.Square base 160)))
+
+
+-- stabs answer on beats 2 and 4: . . X . | . . X . = 1280ms
+ewStabBar : Int -> List Int -> Sound
+ewStabBar base extras =
+    Sound.sequence
+        [ Sound.rest 320, ewStab base extras, Sound.rest 160
+        , Sound.rest 320, ewStab base extras, Sound.rest 160
+        ]
+
+
+ewKick : Sound
+ewKick =
+    Sound.sequence [ Sound.volume 62 (Sound.sweep 44 (Sound.tone Sound.Triangle 150 85)), Sound.rest 75 ]
+
+
+ewSnare : Sound
+ewSnare =
+    Sound.sequence
+        [ Sound.chord
+            [ Sound.volume 38 (Sound.tone Sound.Noise 0 70)
+            , Sound.volume 15 (Sound.sweep 130 (Sound.tone Sound.Triangle 200 40))
+            ]
+        , Sound.rest 90
+        ]
+
+
+ewHat : Sound
+ewHat =
+    Sound.sequence [ Sound.volume 12 (Sound.tone Sound.Noise 0 26), Sound.rest 134 ]
+
+
+ewOpen : Sound
+ewOpen =
+    Sound.sequence [ Sound.volume 16 (Sound.tone Sound.Noise 0 95), Sound.rest 65 ]
+
+
+ewRest : Sound
+ewRest =
+    Sound.rest 160
+
+
+-- kick on 1, 3, and the last eighth (drives into the next bar)
+ewKickBar : Sound
+ewKickBar =
+    Sound.sequence [ ewKick, ewRest, ewRest, ewRest, ewKick, ewRest, ewRest, ewKick ]
+
+
+ewSnareBar : Sound
+ewSnareBar =
+    Sound.sequence [ ewRest, ewRest, ewSnare, ewRest, ewRest, ewRest, ewSnare, ewRest ]
+
+
+-- the fill that rolls the loop around (last bar only)
+ewSnareFill : Sound
+ewSnareFill =
+    Sound.sequence [ ewRest, ewRest, ewSnare, ewRest, ewSnare, ewSnare, ewSnare, ewSnare ]
+
+
+ewHatBar : Sound
+ewHatBar =
+    Sound.sequence [ ewHat, ewHat, ewHat, ewHat, ewHat, ewHat, ewHat, ewOpen ]
+
+
+emberwake : Sound
+emberwake =
+    Sound.chord
+        [ -- LEAD — one line per bar, each bar sums to 8 units.
+          -- Chords: Em Em C D | Em C G D | Em C Am B | Em C D Em
+          Sound.sequence
+            [ ewN 1 (Sound.e 4), ewN 1 (Sound.e 4), Sound.rest 160, ewN 1 (Sound.e 4), ewN 1 (Sound.g 4), ewN 1 (Sound.e 4), ewN 1 (Sound.d 4), ewN 1 (Sound.e 4)
+            , ewN 1 (Sound.e 4), ewN 1 (Sound.e 4), Sound.rest 160, ewN 1 (Sound.e 4), ewN 1 (Sound.g 4), ewN 1 (Sound.a 4), ewN 2 (Sound.b 4)
+            , ewN 2 (Sound.c 5), ewN 1 (Sound.b 4), ewN 1 (Sound.c 5), ewN 2 (Sound.e 5), ewN 1 (Sound.d 5), ewN 1 (Sound.c 5)
+            , ewN 2 (Sound.d 5), ewN 1 (Sound.a 4), ewN 1 (Sound.d 5), ewN 2 (Sound.fs 5), ewN 1 (Sound.e 5), ewN 1 (Sound.d 5)
+            , ewN 3 (Sound.b 4), ewN 1 (Sound.g 4), ewN 2 (Sound.e 4), ewN 2 (Sound.g 4)
+            , ewN 3 (Sound.a 4), ewN 1 (Sound.b 4), ewN 4 (Sound.c 5)
+            , ewN 2 (Sound.b 4), ewN 2 (Sound.d 5), ewN 3 (Sound.g 5), ewN 1 (Sound.fs 5)
+            , ewN 2 (Sound.e 5), ewN 1 (Sound.d 5), ewN 1 (Sound.a 4), ewN 4 (Sound.fs 4)
+            , ewN 3 (Sound.e 5), ewN 1 (Sound.d 5), ewN 2 (Sound.b 4), ewN 2 (Sound.g 4)
+            , ewN 3 (Sound.c 5), ewN 1 (Sound.d 5), ewN 2 (Sound.e 5), ewN 2 (Sound.g 5)
+            , ewN 3 (Sound.a 5), ewN 1 (Sound.g 5), ewN 2 (Sound.e 5), ewN 2 (Sound.c 5)
+            , ewN 2 (Sound.b 4), ewN 2 (Sound.ds 5), ewN 2 (Sound.fs 5), ewN 2 (Sound.b 5)
+            , ewN 1 (Sound.e 4), ewN 1 (Sound.e 4), Sound.rest 160, ewN 1 (Sound.e 4), ewN 1 (Sound.g 4), ewN 1 (Sound.e 4), ewN 1 (Sound.d 4), ewN 1 (Sound.e 4)
+            , ewN 1 (Sound.e 5), ewN 1 (Sound.e 5), Sound.rest 160, ewN 1 (Sound.e 5), ewN 1 (Sound.g 5), ewN 1 (Sound.e 5), ewN 1 (Sound.d 5), ewN 1 (Sound.c 5)
+            , ewN 1 (Sound.d 5), ewN 1 (Sound.d 5), Sound.rest 160, ewN 1 (Sound.d 5), ewN 1 (Sound.fs 5), ewN 1 (Sound.a 5), ewN 1 (Sound.fs 5), ewN 1 (Sound.d 5)
+            , ewN 4 (Sound.e 5), ewN 2 (Sound.b 4), ewN 2 (Sound.e 5)
+            ]
+        , -- STABS — same 16-bar chord ride
+          Sound.sequence
+            [ ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
+            , ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
+            , ewStabBar (Sound.c 4) [ Sound.e 4, Sound.g 4 ]
+            , ewStabBar (Sound.d 4) [ Sound.fs 4, Sound.a 4 ]
+            , ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
+            , ewStabBar (Sound.c 4) [ Sound.e 4, Sound.g 4 ]
+            , ewStabBar (Sound.g 3) [ Sound.b 3, Sound.d 4 ]
+            , ewStabBar (Sound.d 4) [ Sound.fs 4, Sound.a 4 ]
+            , ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
+            , ewStabBar (Sound.c 4) [ Sound.e 4, Sound.g 4 ]
+            , ewStabBar (Sound.a 3) [ Sound.c 4, Sound.e 4 ]
+            , ewStabBar (Sound.b 3) [ Sound.ds 4, Sound.fs 4 ]
+            , ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
+            , ewStabBar (Sound.c 4) [ Sound.e 4, Sound.g 4 ]
+            , ewStabBar (Sound.d 4) [ Sound.fs 4, Sound.a 4 ]
+            , ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
+            ]
+        , -- BASS — root / octave / fifth gallop, same chords
+          Sound.sequence
+            [ ewBassBar (Sound.e 2) (Sound.e 3) (Sound.b 2)
+            , ewBassBar (Sound.e 2) (Sound.e 3) (Sound.b 2)
+            , ewBassBar (Sound.c 2) (Sound.c 3) (Sound.g 2)
+            , ewBassBar (Sound.d 2) (Sound.d 3) (Sound.a 2)
+            , ewBassBar (Sound.e 2) (Sound.e 3) (Sound.b 2)
+            , ewBassBar (Sound.c 2) (Sound.c 3) (Sound.g 2)
+            , ewBassBar (Sound.g 2) (Sound.g 3) (Sound.d 3)
+            , ewBassBar (Sound.d 2) (Sound.d 3) (Sound.a 2)
+            , ewBassBar (Sound.e 2) (Sound.e 3) (Sound.b 2)
+            , ewBassBar (Sound.c 2) (Sound.c 3) (Sound.g 2)
+            , ewBassBar (Sound.a 2) (Sound.a 3) (Sound.e 3)
+            , ewBassBar (Sound.b 2) (Sound.b 3) (Sound.fs 3)
+            , ewBassBar (Sound.e 2) (Sound.e 3) (Sound.b 2)
+            , ewBassBar (Sound.c 2) (Sound.c 3) (Sound.g 2)
+            , ewBassBar (Sound.d 2) (Sound.d 3) (Sound.a 2)
+            , ewBassBar (Sound.e 2) (Sound.e 3) (Sound.b 2)
+            ]
+        , Sound.sequence
+            [ ewKickBar, ewKickBar, ewKickBar, ewKickBar
+            , ewKickBar, ewKickBar, ewKickBar, ewKickBar
+            , ewKickBar, ewKickBar, ewKickBar, ewKickBar
+            , ewKickBar, ewKickBar, ewKickBar, ewKickBar
+            ]
+        , Sound.sequence
+            [ ewSnareBar, ewSnareBar, ewSnareBar, ewSnareBar
+            , ewSnareBar, ewSnareBar, ewSnareBar, ewSnareBar
+            , ewSnareBar, ewSnareBar, ewSnareBar, ewSnareBar
+            , ewSnareBar, ewSnareBar, ewSnareBar, ewSnareFill
+            ]
+        , Sound.sequence
+            [ ewHatBar, ewHatBar, ewHatBar, ewHatBar
+            , ewHatBar, ewHatBar, ewHatBar, ewHatBar
+            , ewHatBar, ewHatBar, ewHatBar, ewHatBar
+            , ewHatBar, ewHatBar, ewHatBar, ewHatBar
+            ]
+        ]
+
+
+-- ===== "Moonglass" — a slow music-box waltz in G major =====
+-- 3/4 time. Quarter = 320ms, bar = 960ms, 16 bars = 15360ms PER VOICE.
+-- A singing triangle melody floats over oom-pah-pah: a round bass note on
+-- beat 1, two soft inner-voice plucks on beats 2 and 3. No drums.
+-- Chords: G Em C D | G Em Am D | C D Bm Em | C Am D7 G
+
+
+-- melody note, duration in 160ms units (quarter = 2 units, bar = 6)
+mgN : Int -> Int -> Sound
+mgN units hz =
+    sing 32 hz (units * 160)
+
+
+mgBass : Int -> Sound
+mgBass hz =
+    Sound.sequence [ tb 24 hz 320, Sound.rest 640 ]
+
+
+mgPah : Int -> Int -> Sound
+mgPah lo hi =
+    Sound.sequence [ Sound.rest 320, sv 12 lo 320, sv 12 hi 320 ]
+
+
+moonglass : Sound
+moonglass =
+    Sound.chord
+        [ -- MELODY — one line per bar, each bar sums to 6 units
+          Sound.sequence
+            [ mgN 4 (Sound.b 4), mgN 1 (Sound.a 4), mgN 1 (Sound.g 4)
+            , mgN 3 (Sound.e 5), mgN 2 (Sound.d 5), mgN 1 (Sound.b 4)
+            , mgN 2 (Sound.c 5), mgN 2 (Sound.d 5), mgN 2 (Sound.e 5)
+            , mgN 4 (Sound.d 5), mgN 2 (Sound.a 4)
+            , mgN 2 (Sound.g 4), mgN 2 (Sound.b 4), mgN 2 (Sound.d 5)
+            , mgN 4 (Sound.e 5), mgN 2 (Sound.g 5)
+            , mgN 2 (Sound.e 5), mgN 2 (Sound.c 5), mgN 2 (Sound.a 4)
+            , mgN 1 (Sound.b 4), mgN 1 (Sound.a 4), mgN 4 (Sound.fs 4)
+            , mgN 2 (Sound.e 5), mgN 2 (Sound.g 5), mgN 1 (Sound.e 5), mgN 1 (Sound.d 5)
+            , mgN 4 (Sound.fs 5), mgN 2 (Sound.d 5)
+            , mgN 2 (Sound.b 4), mgN 2 (Sound.d 5), mgN 2 (Sound.fs 5)
+            , mgN 4 (Sound.g 5), mgN 2 (Sound.e 5)
+            , mgN 1 (Sound.e 5), mgN 1 (Sound.d 5), mgN 4 (Sound.c 5)
+            , mgN 2 (Sound.c 5), mgN 2 (Sound.b 4), mgN 2 (Sound.a 4)
+            , mgN 2 (Sound.d 5), mgN 2 (Sound.c 5), mgN 2 (Sound.a 4)
+            , mgN 4 (Sound.g 4), Sound.rest 320
+            ]
+        , -- BASS — the "oom" on beat 1 of each bar
+          Sound.sequence
+            [ mgBass (Sound.g 2), mgBass (Sound.e 2), mgBass (Sound.c 3), mgBass (Sound.d 3)
+            , mgBass (Sound.g 2), mgBass (Sound.e 2), mgBass (Sound.a 2), mgBass (Sound.d 3)
+            , mgBass (Sound.c 3), mgBass (Sound.d 3), mgBass (Sound.b 2), mgBass (Sound.e 2)
+            , mgBass (Sound.c 3), mgBass (Sound.a 2), mgBass (Sound.d 3), mgBass (Sound.g 2)
+            ]
+        , -- PAH-PAH — two soft chord tones on beats 2 and 3
+          Sound.sequence
+            [ mgPah (Sound.b 3) (Sound.d 4), mgPah (Sound.b 3) (Sound.e 4), mgPah (Sound.c 4) (Sound.e 4), mgPah (Sound.a 3) (Sound.d 4)
+            , mgPah (Sound.b 3) (Sound.d 4), mgPah (Sound.b 3) (Sound.e 4), mgPah (Sound.c 4) (Sound.e 4), mgPah (Sound.a 3) (Sound.d 4)
+            , mgPah (Sound.c 4) (Sound.e 4), mgPah (Sound.a 3) (Sound.d 4), mgPah (Sound.b 3) (Sound.d 4), mgPah (Sound.b 3) (Sound.e 4)
+            , mgPah (Sound.c 4) (Sound.e 4), mgPah (Sound.c 4) (Sound.e 4), mgPah (Sound.a 3) (Sound.c 4), mgPah (Sound.b 3) (Sound.d 4)
+            ]
+        ]
+
+
+-- ===== "Alleycat Swing" — a 12-bar blues shuffle in A =====
+-- Swing grid: every 300ms beat splits long-short (200 + 100), the classic
+-- shuffle. Bar = 1200ms, 12 bars = 14400ms PER VOICE.
+-- A 25% pulse sings blues lines (with the minor-to-major blue-note slide),
+-- offbeat chord comps, a WALKING triangle bass in quarters, and a shuffled
+-- ride / kick / snare kit. Chords: A A A A | D D A A | E D A E.
+
+
+-- one swung pair: a long note then a short one (200 + 100 = one beat)
+ckSw : Int -> Int -> Sound
+ckSw a b =
+    Sound.sequence [ ld 30 a 200, ld 30 b 100 ]
+
+
+ckQ : Int -> Sound
+ckQ hz =
+    ld 30 hz 300
+
+
+ckH : Int -> Sound
+ckH hz =
+    ld 30 hz 600
+
+
+ckWalk : Int -> Sound
+ckWalk hz =
+    tb 26 hz 300
+
+
+-- one comp hit: rest, then a 100ms chord stab on the swung offbeat
+ckComp : Int -> Int -> Int -> Sound
+ckComp base third fifth =
+    Sound.sequence
+        [ Sound.rest 200
+        , Sound.volume 14 (Sound.arp [ third, fifth ] (Sound.duty 25 (Sound.tone Sound.Square base 100)))
+        ]
+
+
+ckCompBar : Int -> Int -> Int -> Sound
+ckCompBar base third fifth =
+    Sound.sequence [ ckComp base third fifth, ckComp base third fifth, ckComp base third fifth, ckComp base third fifth ]
+
+
+ckKick : Sound
+ckKick =
+    Sound.sequence [ Sound.volume 52 (Sound.sweep 46 (Sound.tone Sound.Triangle 140 80)), Sound.rest 220 ]
+
+
+ckSnare : Sound
+ckSnare =
+    Sound.sequence [ Sound.volume 32 (Sound.tone Sound.Noise 0 60), Sound.rest 240 ]
+
+
+-- one swung ride beat: ting......ti (long hit then a soft short one)
+ckRide : Sound
+ckRide =
+    Sound.sequence
+        [ Sound.volume 13 (Sound.tone Sound.Noise 0 24), Sound.rest 176
+        , Sound.volume 10 (Sound.tone Sound.Noise 0 20), Sound.rest 80
+        ]
+
+
+ckRideBar : Sound
+ckRideBar =
+    Sound.sequence [ ckRide, ckRide, ckRide, ckRide ]
+
+
+ckKickBar : Sound
+ckKickBar =
+    Sound.sequence [ ckKick, Sound.rest 300, ckKick, Sound.rest 300 ]
+
+
+ckSnareBar : Sound
+ckSnareBar =
+    Sound.sequence [ Sound.rest 300, ckSnare, Sound.rest 300, ckSnare ]
+
+
+alleycatSwing : Sound
+alleycatSwing =
+    Sound.chord
+        [ -- LEAD — one line per bar, each bar sums to 1200ms.
+          -- Bar 7 has THE blues move: the minor third sliding to major (c -> cs).
+          Sound.sequence
+            [ ckSw (Sound.a 4) (Sound.c 5), ckSw (Sound.d 5) (Sound.ds 5), ckQ (Sound.e 5), ckSw (Sound.g 5) (Sound.e 5)
+            , ckSw (Sound.e 5) (Sound.d 5), ckSw (Sound.c 5) (Sound.a 4), ckQ (Sound.c 5), ckQ (Sound.a 4)
+            , Sound.rest 300, ckSw (Sound.a 4) (Sound.c 5), ckSw (Sound.d 5) (Sound.c 5), ckQ (Sound.a 4)
+            , ckH (Sound.e 5), ckSw (Sound.ds 5) (Sound.d 5), ckQ (Sound.c 5)
+            , ckSw (Sound.d 5) (Sound.fs 5), ckSw (Sound.g 5) (Sound.fs 5), ckQ (Sound.d 5), ckSw (Sound.fs 5) (Sound.a 5)
+            , ckH (Sound.a 5), ckSw (Sound.g 5) (Sound.fs 5), ckQ (Sound.d 5)
+            , ckSw (Sound.c 5) (Sound.cs 5), ckQ (Sound.e 5), ckSw (Sound.a 4) (Sound.c 5), ckQ (Sound.a 4)
+            , ckSw (Sound.e 4) (Sound.g 4), ckH (Sound.a 4), Sound.rest 300
+            , ckQ (Sound.e 5), ckSw (Sound.gs 4) (Sound.b 4), ckQ (Sound.e 5), ckSw (Sound.d 5) (Sound.b 4)
+            , ckSw (Sound.d 5) (Sound.fs 5), ckH (Sound.a 5), ckQ (Sound.fs 5)
+            , ckSw (Sound.e 5) (Sound.c 5), ckH (Sound.a 4), ckSw (Sound.g 4) (Sound.a 4)
+            , ckQ (Sound.a 4), ckSw (Sound.b 4) (Sound.gs 4), ckQ (Sound.e 4), Sound.rest 300
+            ]
+        , -- COMPS — A A A A | D D A A | E D A E
+          Sound.sequence
+            [ ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
+            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
+            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
+            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
+            , ckCompBar (Sound.d 4) (Sound.fs 4) (Sound.a 4)
+            , ckCompBar (Sound.d 4) (Sound.fs 4) (Sound.a 4)
+            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
+            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
+            , ckCompBar (Sound.e 4) (Sound.gs 4) (Sound.b 4)
+            , ckCompBar (Sound.d 4) (Sound.fs 4) (Sound.a 4)
+            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
+            , ckCompBar (Sound.e 4) (Sound.gs 4) (Sound.b 4)
+            ]
+        , -- WALKING BASS — four quarters per bar, chromatic walk in bar 8
+          Sound.sequence
+            [ ckWalk (Sound.a 2), ckWalk (Sound.cs 3), ckWalk (Sound.e 3), ckWalk (Sound.fs 3)
+            , ckWalk (Sound.a 2), ckWalk (Sound.cs 3), ckWalk (Sound.e 3), ckWalk (Sound.g 3)
+            , ckWalk (Sound.a 2), ckWalk (Sound.g 2), ckWalk (Sound.fs 2), ckWalk (Sound.e 2)
+            , ckWalk (Sound.a 2), ckWalk (Sound.cs 3), ckWalk (Sound.e 3), ckWalk (Sound.g 3)
+            , ckWalk (Sound.d 3), ckWalk (Sound.fs 3), ckWalk (Sound.a 3), ckWalk (Sound.b 3)
+            , ckWalk (Sound.d 3), ckWalk (Sound.fs 3), ckWalk (Sound.a 3), ckWalk (Sound.c 4)
+            , ckWalk (Sound.a 2), ckWalk (Sound.cs 3), ckWalk (Sound.e 3), ckWalk (Sound.fs 3)
+            , ckWalk (Sound.a 2), ckWalk (Sound.b 2), ckWalk (Sound.c 3), ckWalk (Sound.cs 3)
+            , ckWalk (Sound.e 2), ckWalk (Sound.gs 2), ckWalk (Sound.b 2), ckWalk (Sound.d 3)
+            , ckWalk (Sound.d 3), ckWalk (Sound.fs 3), ckWalk (Sound.a 3), ckWalk (Sound.fs 3)
+            , ckWalk (Sound.a 2), ckWalk (Sound.cs 3), ckWalk (Sound.e 3), ckWalk (Sound.g 3)
+            , ckWalk (Sound.e 3), ckWalk (Sound.b 2), ckWalk (Sound.gs 2), ckWalk (Sound.e 2)
+            ]
+        , Sound.sequence
+            [ ckRideBar, ckRideBar, ckRideBar, ckRideBar
+            , ckRideBar, ckRideBar, ckRideBar, ckRideBar
+            , ckRideBar, ckRideBar, ckRideBar, ckRideBar
+            ]
+        , Sound.sequence
+            [ ckKickBar, ckKickBar, ckKickBar, ckKickBar
+            , ckKickBar, ckKickBar, ckKickBar, ckKickBar
+            , ckKickBar, ckKickBar, ckKickBar, ckKickBar
+            ]
+        , Sound.sequence
+            [ ckSnareBar, ckSnareBar, ckSnareBar, ckSnareBar
+            , ckSnareBar, ckSnareBar, ckSnareBar, ckSnareBar
+            , ckSnareBar, ckSnareBar, ckSnareBar, ckSnareBar
+            ]
+        ]
+
+
+-- ===== "Undertow" — a dark, hypnotic descent in A minor =====
+-- Sixteenth = 90ms, bar = 1440ms, 16 bars = 23040ms PER VOICE.
+-- The old falling progression Am -> G -> F -> E cycles four times under
+-- fast buzzing arpeggios; a haunting triangle lead enters on the second
+-- cycle, peaks, then sinks back. Heartbeat kick every half note, and a
+-- soft noise wave washes in at the end of each cycle.
+
+
+utA : Int -> Sound
+utA hz =
+    Sound.volume 13 (Sound.tone Sound.Sawtooth hz 90)
+
+
+-- one bar of 16th-note arpeggio: up (R 5 o 3) and back, twice = 1440ms
+utArpBar : Int -> Int -> Int -> Int -> Sound
+utArpBar root fifth oct third =
+    Sound.sequence
+        [ utA root, utA fifth, utA oct, utA third, utA oct, utA fifth, utA root, utA fifth
+        , utA root, utA fifth, utA oct, utA third, utA oct, utA fifth, utA root, utA fifth
+        ]
+
+
+utBassBar : Int -> Int -> Sound
+utBassBar root oct =
+    Sound.sequence [ tb 26 root 720, tb 26 root 360, tb 26 oct 360 ]
+
+
+utKick : Sound
+utKick =
+    Sound.sequence [ Sound.volume 58 (Sound.sweep 42 (Sound.tone Sound.Triangle 150 85)), Sound.rest 635 ]
+
+
+utKickBar : Sound
+utKickBar =
+    Sound.sequence [ utKick, utKick ]
+
+
+-- one 4-bar cycle of the wash: silence, then a wave rolls in = 5760ms
+utWash : Sound
+utWash =
+    Sound.sequence [ Sound.rest 4320, Sound.volume 8 (Sound.tone Sound.Noise 0 720), Sound.rest 720 ]
+
+
+undertow : Sound
+undertow =
+    Sound.chord
+        [ -- ARPEGGIOS — (Am G F E) x 4, the engine of the piece
+          Sound.sequence
+            [ utArpBar (Sound.a 3) (Sound.e 4) (Sound.a 4) (Sound.c 5)
+            , utArpBar (Sound.g 3) (Sound.d 4) (Sound.g 4) (Sound.b 4)
+            , utArpBar (Sound.f 3) (Sound.c 4) (Sound.f 4) (Sound.a 4)
+            , utArpBar (Sound.e 3) (Sound.b 3) (Sound.e 4) (Sound.gs 4)
+            , utArpBar (Sound.a 3) (Sound.e 4) (Sound.a 4) (Sound.c 5)
+            , utArpBar (Sound.g 3) (Sound.d 4) (Sound.g 4) (Sound.b 4)
+            , utArpBar (Sound.f 3) (Sound.c 4) (Sound.f 4) (Sound.a 4)
+            , utArpBar (Sound.e 3) (Sound.b 3) (Sound.e 4) (Sound.gs 4)
+            , utArpBar (Sound.a 3) (Sound.e 4) (Sound.a 4) (Sound.c 5)
+            , utArpBar (Sound.g 3) (Sound.d 4) (Sound.g 4) (Sound.b 4)
+            , utArpBar (Sound.f 3) (Sound.c 4) (Sound.f 4) (Sound.a 4)
+            , utArpBar (Sound.e 3) (Sound.b 3) (Sound.e 4) (Sound.gs 4)
+            , utArpBar (Sound.a 3) (Sound.e 4) (Sound.a 4) (Sound.c 5)
+            , utArpBar (Sound.g 3) (Sound.d 4) (Sound.g 4) (Sound.b 4)
+            , utArpBar (Sound.f 3) (Sound.c 4) (Sound.f 4) (Sound.a 4)
+            , utArpBar (Sound.e 3) (Sound.b 3) (Sound.e 4) (Sound.gs 4)
+            ]
+        , -- LEAD — silent first cycle, sings the second, peaks, sinks.
+          -- One line per bar, each bar sums to 1440ms.
+          Sound.sequence
+            [ Sound.rest 1440
+            , Sound.rest 1440
+            , Sound.rest 720, sing 30 (Sound.a 4) 360, sing 30 (Sound.c 5) 360
+            , sing 30 (Sound.b 4) 1080, sing 30 (Sound.gs 4) 360
+            , sing 30 (Sound.e 5) 720, sing 30 (Sound.c 5) 360, sing 30 (Sound.a 4) 360
+            , sing 30 (Sound.b 4) 720, sing 30 (Sound.d 5) 360, sing 30 (Sound.g 4) 360
+            , sing 30 (Sound.a 4) 720, sing 30 (Sound.c 5) 360, sing 30 (Sound.f 5) 360
+            , sing 30 (Sound.e 5) 1080, sing 30 (Sound.b 4) 360
+            , sing 30 (Sound.a 5) 720, sing 30 (Sound.g 5) 360, sing 30 (Sound.e 5) 360
+            , sing 30 (Sound.g 5) 720, sing 30 (Sound.d 5) 360, sing 30 (Sound.b 4) 360
+            , sing 30 (Sound.c 5) 360, sing 30 (Sound.f 5) 360, sing 30 (Sound.a 5) 720
+            , sing 30 (Sound.gs 5) 720, sing 30 (Sound.e 5) 360, sing 30 (Sound.b 4) 360
+            , sing 30 (Sound.c 5) 720, sing 30 (Sound.a 4) 720
+            , sing 30 (Sound.b 4) 720, sing 30 (Sound.g 4) 720
+            , sing 30 (Sound.a 4) 1440
+            , sing 30 (Sound.gs 4) 720, sing 30 (Sound.e 4) 720
+            ]
+        , -- BASS — root held, re-struck, then the octave answers
+          Sound.sequence
+            [ utBassBar (Sound.a 2) (Sound.a 3)
+            , utBassBar (Sound.g 2) (Sound.g 3)
+            , utBassBar (Sound.f 2) (Sound.f 3)
+            , utBassBar (Sound.e 2) (Sound.e 3)
+            , utBassBar (Sound.a 2) (Sound.a 3)
+            , utBassBar (Sound.g 2) (Sound.g 3)
+            , utBassBar (Sound.f 2) (Sound.f 3)
+            , utBassBar (Sound.e 2) (Sound.e 3)
+            , utBassBar (Sound.a 2) (Sound.a 3)
+            , utBassBar (Sound.g 2) (Sound.g 3)
+            , utBassBar (Sound.f 2) (Sound.f 3)
+            , utBassBar (Sound.e 2) (Sound.e 3)
+            , utBassBar (Sound.a 2) (Sound.a 3)
+            , utBassBar (Sound.g 2) (Sound.g 3)
+            , utBassBar (Sound.f 2) (Sound.f 3)
+            , utBassBar (Sound.e 2) (Sound.e 3)
+            ]
+        , Sound.sequence
+            [ utKickBar, utKickBar, utKickBar, utKickBar
+            , utKickBar, utKickBar, utKickBar, utKickBar
+            , utKickBar, utKickBar, utKickBar, utKickBar
+            , utKickBar, utKickBar, utKickBar, utKickBar
+            ]
+        , Sound.sequence [ utWash, utWash, utWash, utWash ]
+        ]
+
+
+-- ===== Drum Kit — "Session Groove" =====
+-- A real-kit groove, no Atari booms: pitched-down triangle KICK, layered SNARE
+-- (noise crack + a low triangle body), closed/open HATS, ghost notes, three
+-- pitched TOMS, a snare-and-toms FILL, and a tight kick+snare+splash button
+-- ending (the splash is short and quiet — a "tss", not an explosion).
+-- Eighth = 200ms, bar = 1600ms; pattern: A B A B, fill, A, hit.
+
+
+dkKick : Sound
+dkKick =
+    Sound.sequence [ Sound.volume 70 (Sound.sweep 45 (Sound.tone Sound.Triangle 150 85)), Sound.rest 115 ]
+
+
+dkSnare : Sound
+dkSnare =
+    Sound.sequence
+        [ Sound.chord
+            [ Sound.volume 44 (Sound.tone Sound.Noise 0 80)
+            , Sound.volume 18 (Sound.sweep 130 (Sound.tone Sound.Triangle 190 45))
+            ]
+        , Sound.rest 120
+        ]
+
+
+dkGhost : Sound
+dkGhost =
+    Sound.sequence [ Sound.volume 15 (Sound.tone Sound.Noise 0 40), Sound.rest 160 ]
+
+
+dkHat : Sound
+dkHat =
+    Sound.sequence [ Sound.volume 14 (Sound.tone Sound.Noise 0 30), Sound.rest 170 ]
+
+
+dkHat2 : Sound
+dkHat2 =
+    Sound.sequence
+        [ Sound.volume 14 (Sound.tone Sound.Noise 0 30), Sound.rest 70
+        , Sound.volume 11 (Sound.tone Sound.Noise 0 26), Sound.rest 74
+        ]
+
+
+dkOpen : Sound
+dkOpen =
+    Sound.sequence [ Sound.volume 19 (Sound.tone Sound.Noise 0 120), Sound.rest 80 ]
+
+
+dkTom : Int -> Sound
+dkTom hz =
+    Sound.sequence [ Sound.volume 46 (Sound.sweep (hz - 40) (Sound.tone Sound.Triangle hz 75)), Sound.rest 125 ]
+
+
+dkRest : Sound
+dkRest =
+    Sound.rest 200
+
+
+-- one 16th-note snare hit inside the fill (100ms grid)
+dkR16 : Sound
+dkR16 =
+    Sound.sequence [ Sound.volume 30 (Sound.tone Sound.Noise 0 45), Sound.rest 55 ]
+
+
+kickBarA : Sound
+kickBarA =
+    Sound.sequence [ dkKick, dkRest, dkRest, dkRest, dkKick, dkRest, dkKick, dkRest ]
+
+
+kickBarB : Sound
+kickBarB =
+    Sound.sequence [ dkKick, dkRest, dkRest, dkKick, dkRest, dkRest, dkKick, dkRest ]
+
+
+snareBarA : Sound
+snareBarA =
+    Sound.sequence [ dkRest, dkRest, dkSnare, dkRest, dkRest, dkRest, dkSnare, dkGhost ]
+
+
+snareBarB : Sound
+snareBarB =
+    Sound.sequence [ dkRest, dkGhost, dkSnare, dkRest, dkGhost, dkRest, dkSnare, dkRest ]
+
+
+hatBar : Sound
+hatBar =
+    Sound.sequence [ dkHat, dkHat, dkHat, dkHat2, dkHat, dkHat, dkHat2, dkOpen ]
+
+
+-- the fill: half a bar of building snare 16ths, then a tom cascade hi > mid > low
+fillBar : Sound
+fillBar =
+    Sound.chord
+        [ Sound.sequence [ dkKick, Sound.rest 1400 ]
+        , Sound.sequence
+            [ Sound.rest 400
+            , dkR16, dkR16, dkR16, dkR16
+            , dkTom 230, dkTom 170, dkTom 125, Sound.rest 200
+            ]
+        ]
+
+
+-- Every voice = 9600ms (6 bars), so it also loops clean in the jukebox:
+-- A B A B, fill, A — and a kick+snare+splash crash lands on the downbeat
+-- right after the fill.
+drumKit : Sound
+drumKit =
+    Sound.chord
+        [ Sound.sequence [ kickBarA, kickBarB, kickBarA, kickBarB, Sound.rest 1600, kickBarA ]
+        , Sound.sequence [ snareBarA, snareBarB, snareBarA, snareBarB, Sound.rest 1600, snareBarA ]
+        , Sound.sequence [ hatBar, hatBar, hatBar, hatBar, Sound.rest 1600, hatBar ]
+        , Sound.sequence [ Sound.rest 6400, fillBar, Sound.rest 1600 ]
+        , Sound.sequence
+            [ Sound.rest 8000
+            , Sound.chord
+                [ Sound.volume 70 (Sound.sweep 45 (Sound.tone Sound.Triangle 150 85))
+                , Sound.volume 44 (Sound.tone Sound.Noise 0 80)
+                , Sound.volume 20 (Sound.tone Sound.Noise 0 160)
+                ]
+            , Sound.rest 1440
+            ]
+        ]
+
+
+-- ===== the SFX cookbook =====
+-- A 25%-duty square is the classic NES lead timbre; `pulse` bakes it in so the
+-- melodic recipes read cleanly.
+
+
+pulse : Int -> Int -> Sound
+pulse hz ms =
+    Sound.duty 25 (Sound.tone Sound.Square hz ms)
+
+
+coinSfx : Sound
+coinSfx =
+    Sound.sequence [ pulse (Sound.b 5) 70, pulse (Sound.e 6) 150 ]
+
+
+jumpSfx : Sound
+jumpSfx =
+    Sound.duty 25 (Sound.sweep (Sound.a 5) (Sound.tone Sound.Square (Sound.a 4) 170))
+
+
+laserSfx : Sound
+laserSfx =
+    Sound.sweep 180 (Sound.tone Sound.Sawtooth 1400 200)
+
+
+hitSfx : Sound
+hitSfx =
+    Sound.volume 70 (Sound.tone Sound.Noise 0 110)
+
+
+boomSfx : Sound
+boomSfx =
+    Sound.volume 85 (Sound.tone Sound.Noise 0 520)
+
+
+powerSfx : Sound
+powerSfx =
+    Sound.sequence [ pulse (Sound.c 5) 55, pulse (Sound.e 5) 55, pulse (Sound.g 5) 55, pulse (Sound.c 6) 200 ]
+
+
+blipSfx : Sound
+blipSfx =
+    Sound.volume 55 (pulse (Sound.g 5) 50)
+
+
+confirmSfx : Sound
+confirmSfx =
+    Sound.sequence [ pulse (Sound.e 5) 90, pulse (Sound.a 5) 170 ]
+
+
+denySfx : Sound
+denySfx =
+    -- a thin (12%) buzzy two-note DOWN — the classic "nope"
+    Sound.sequence
+        [ Sound.duty 12 (Sound.tone Sound.Square (Sound.e 4) 110)
+        , Sound.duty 12 (Sound.tone Sound.Square (Sound.c 4) 220)
+        ]
+
+
+teleportSfx : Sound
+teleportSfx =
+    -- a warbly whoosh: vibrato on a falling sawtooth
+    Sound.vibrato 60 18 (Sound.sweep 200 (Sound.tone Sound.Sawtooth 900 340))
+
+
+arpSfx : Sound
+arpSfx =
+    -- a C-major shimmer from ONE voice (Sound.arp cycles C5, E5, G5 fast)
+    Sound.arp [ Sound.e 5, Sound.g 5 ] (Sound.tone Sound.Square (Sound.c 5) 320)
+
+
+fanfareSfx : Sound
+fanfareSfx =
+    Sound.sequence [ pulse (Sound.g 5) 90, pulse (Sound.c 6) 90, pulse (Sound.e 6) 90, pulse (Sound.g 6) 280 ]
+
+
+-- ===== app =====
+
+
+-- a music button that marks the track playing right now with a ▶
+musicButton : Model -> Int -> String -> View Msg
+musicButton model i label =
+    button [] (Music i) (if model.playing == Just i then "▶  " ++ label else label)
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Soundboard" ]
+        [ form
+            [ section [ header "Effects" ]
+                [ button [] (Sfx coinSfx) "🪙  Coin"
+                , button [] (Sfx jumpSfx) "⬆️  Jump"
+                , button [] (Sfx laserSfx) "🔫  Laser"
+                , button [] (Sfx hitSfx) "💥  Hit"
+                , button [] (Sfx boomSfx) "🧨  Explosion"
+                , button [] (Sfx powerSfx) "⭐  Power-up"
+                , button [] (Sfx blipSfx) "🔹  Blip"
+                , button [] (Sfx confirmSfx) "✅  Confirm"
+                , button [] (Sfx denySfx) "🚫  Deny"
+                , button [] (Sfx teleportSfx) "🌀  Teleport"
+                , button [] (Sfx arpSfx) "🎵  Chord (arp)"
+                , button [] (Sfx fanfareSfx) "🎉  Fanfare"
+                ]
+            , section [ header "Music (tap to loop — a new pick stops the last)" ]
+                [ musicButton model 0 "🔥  Emberwake"
+                , musicButton model 1 "🌙  Moonglass"
+                , musicButton model 2 "🐈  Alleycat Swing"
+                , musicButton model 3 "🌊  Undertow"
+                , musicButton model 4 "🥁  Drum Kit"
+                , button [] StopMusic "⏹  Stop"
+                ]
+            ]
+        ]
+
+
+-- The playing track is a Sub keyed by its sound, so switching tracks stops
+-- the previous automatically and only one plays at a time.
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    case model.playing of
+        Just i -> Sound.loop (musicOf i)
+        Nothing -> Sub.none
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Soundboard"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]

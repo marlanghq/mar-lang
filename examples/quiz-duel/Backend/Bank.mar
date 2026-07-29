@@ -1,0 +1,2393 @@
+module Backend.Bank exposing
+    ( BankQ
+    , byId
+    , byTheme
+    , themeCards
+    , themeExists
+    , sampleQids
+    )
+
+
+import Shared
+
+
+-- The question bank — static Mar data, backend-only. It never becomes
+-- a database table: there's nothing per-user to store, keeping it in
+-- code means no seeding step, and (crucially) the `correct` index
+-- lives ONLY on the server. The serve service copies a question into
+-- a Shared.Question WITHOUT `correct`, so a client that inspects the
+-- network traffic can't read the answer key.
+--
+-- Each duel samples 10 of a theme's 125 questions via a deterministic
+-- shuffle (sampleQids), so a rematch on the same theme reshuffles
+-- rather than replaying the identical set.
+
+
+type alias BankQ =
+    { id      : Int
+    , theme   : String
+    , text    : String
+    , a       : String
+    , b       : String
+    , c       : String
+    , d       : String
+    , correct : Int    -- index of the right option: 0=a 1=b 2=c 3=d
+    }
+
+
+-- Theme keys in display order. The key is the stable id sent over the
+-- wire; Shared.themeLabel turns it into pt-BR for the screen.
+themeKeys : List String
+themeKeys =
+    [ "futebol", "games", "geografia", "ciencia", "cinema", "musica" ]
+
+
+-- One ThemeCard per theme, with a live question count. Drives the
+-- theme picker on the New Challenge screen.
+--
+-- A function (not a bare value) on purpose: the runtime force-evaluates
+-- top-level values in file order at module load, and this one reaches
+-- `bank` (defined lower). Deferring it behind a `()` param means it
+-- runs at request time, once `bank` is fully initialized.
+themeCards : () -> List Shared.ThemeCard
+themeCards _ =
+    List.map
+        (\key -> { name = key, count = List.length (byTheme key) })
+        themeKeys
+
+
+themeExists : String -> Bool
+themeExists key =
+    List.any (\k -> k == key) themeKeys
+
+
+byTheme : String -> List BankQ
+byTheme theme =
+    List.filter (\q -> q.theme == theme) bank
+
+
+byId : Int -> Maybe BankQ
+byId id =
+    List.head (List.filter (\q -> q.id == id) bank)
+
+
+-- ====================================================================
+-- DETERMINISTIC SAMPLING
+-- ====================================================================
+--
+-- sampleQids picks `questionsPerDuel` ids from a theme in a
+-- seed-dependent pseudo-random order. Same seed → same 10 (so a
+-- refresh mid-creation is stable); different seed → different draw.
+-- The caller seeds from Time.toMillis + userId, so two duels created
+-- at the same instant by different players still diverge.
+--
+-- Implementation: assign every question an Int sort-key derived from
+-- (seed, id) via a multiplicative hash, sort ascending by it, take
+-- the first 10. Every intermediate stays under 2^31 so the products
+-- never overflow Int (int64).
+sampleQids : String -> Int -> List Int
+sampleQids theme seed =
+    byTheme theme
+        |> List.sortBy (\q -> shuffleKey seed q.id)
+        |> List.take Shared.questionsPerDuel
+        |> List.map (\q -> q.id)
+
+
+-- Knuth multiplicative mix, folded into a Park-Miller LCG step. The
+-- inner imodP keeps the base below 2^31 BEFORE the * 48271, so the
+-- widest product is ~2^31 * 48271 ≈ 1.0e14, comfortably within Int.
+shuffleKey : Int -> Int -> Int
+shuffleKey seed qid =
+    let
+        base = Shared.imodP (seed + qid * 2654435761) 2147483647
+    in
+    Shared.imodP (base * 48271) 2147483647
+
+
+-- ====================================================================
+-- THE QUESTIONS
+-- ====================================================================
+
+
+bank : List BankQ
+bank =
+    [ -- ===== Futebol (100–174, extras 1000–1049) =====
+      { id = 100, theme = "futebol"
+      , text = "Quantas Copas do Mundo a seleção brasileira já venceu?"
+      , a = "Três", b = "Quatro", c = "Cinco", d = "Seis", correct = 2 }
+    , { id = 101, theme = "futebol"
+      , text = "Em que país foi disputada a Copa do Mundo de 2014?"
+      , a = "Brasil", b = "África do Sul", c = "Rússia", d = "Alemanha", correct = 0 }
+    , { id = 102, theme = "futebol"
+      , text = "Qual clube paulista é apelidado de \"Timão\"?"
+      , a = "Palmeiras", b = "Corinthians", c = "Santos", d = "São Paulo", correct = 1 }
+    , { id = 103, theme = "futebol"
+      , text = "Em que ano o Brasil conquistou sua primeira Copa do Mundo?"
+      , a = "1950", b = "1958", c = "1962", d = "1970", correct = 1 }
+    , { id = 104, theme = "futebol"
+      , text = "Qual seleção venceu a Copa do Mundo de 2022?"
+      , a = "França", b = "Argentina", c = "Brasil", d = "Croácia", correct = 1 }
+    , { id = 105, theme = "futebol"
+      , text = "Quantos jogadores cada time tem em campo no início de uma partida?"
+      , a = "Nove", b = "Dez", c = "Onze", d = "Doze", correct = 2 }
+    , { id = 106, theme = "futebol"
+      , text = "Qual jogador brasileiro é apelidado de \"O Fenômeno\"?"
+      , a = "Ronaldinho", b = "Ronaldo", c = "Romário", d = "Rivaldo", correct = 1 }
+    , { id = 107, theme = "futebol"
+      , text = "Em qual cidade fica o estádio do Maracanã?"
+      , a = "São Paulo", b = "Rio de Janeiro", c = "Belo Horizonte", d = "Salvador", correct = 1 }
+    , { id = 108, theme = "futebol"
+      , text = "Qual país sediou a primeira Copa do Mundo, em 1930?"
+      , a = "Brasil", b = "Uruguai", c = "Itália", d = "Argentina", correct = 1 }
+    , { id = 109, theme = "futebol"
+      , text = "Quantos pontos vale uma vitória no sistema atual de pontos corridos?"
+      , a = "Um", b = "Dois", c = "Três", d = "Quatro", correct = 2 }
+    , { id = 110, theme = "futebol"
+      , text = "Qual clube espanhol é conhecido como os \"Merengues\"?"
+      , a = "Barcelona", b = "Real Madrid", c = "Atlético de Madrid", d = "Valência", correct = 1 }
+    , { id = 111, theme = "futebol"
+      , text = "Qual seleção venceu a Copa do Mundo de 2018, na Rússia?"
+      , a = "Croácia", b = "França", c = "Bélgica", d = "Inglaterra", correct = 1 }
+    , { id = 112, theme = "futebol"
+      , text = "Qual é a duração normal de uma partida de futebol (sem acréscimos)?"
+      , a = "60 minutos", b = "80 minutos", c = "90 minutos", d = "120 minutos", correct = 2 }
+    , { id = 113, theme = "futebol"
+      , text = "Quem foi o capitão da Argentina campeã da Copa de 2022?"
+      , a = "Maradona", b = "Messi", c = "Di María", d = "Agüero", correct = 1 }
+    , { id = 114, theme = "futebol"
+      , text = "Qual cor de cartão significa a expulsão de um jogador?"
+      , a = "Amarelo", b = "Vermelho", c = "Verde", d = "Azul", correct = 1 }
+    , { id = 115, theme = "futebol"
+      , text = "Qual seleção venceu a Copa do Mundo de 1970?"
+      , a = "Brasil", b = "Itália", c = "Alemanha", d = "Uruguai", correct = 0 }
+    , { id = 116, theme = "futebol"
+      , text = "Quem é o maior artilheiro da história das Copas do Mundo?"
+      , a = "Ronaldo", b = "Miroslav Klose", c = "Pelé", d = "Gerd Müller", correct = 1 }
+    , { id = 117, theme = "futebol"
+      , text = "Qual é o estádio do Barcelona?"
+      , a = "Santiago Bernabéu", b = "Camp Nou", c = "Wembley", d = "San Siro", correct = 1 }
+    , { id = 118, theme = "futebol"
+      , text = "De qual país é o jogador Cristiano Ronaldo?"
+      , a = "Brasil", b = "Espanha", c = "Portugal", d = "Argentina", correct = 2 }
+    , { id = 119, theme = "futebol"
+      , text = "Quantas Copas do Mundo a Alemanha já venceu?"
+      , a = "Duas", b = "Três", c = "Quatro", d = "Cinco", correct = 2 }
+    , { id = 120, theme = "futebol"
+      , text = "Qual clube inglês é conhecido como \"Red Devils\"?"
+      , a = "Liverpool", b = "Manchester United", c = "Arsenal", d = "Chelsea", correct = 1 }
+    , { id = 121, theme = "futebol"
+      , text = "Em que país foi disputada a Copa do Mundo de 2010?"
+      , a = "Brasil", b = "Alemanha", c = "África do Sul", d = "Japão", correct = 2 }
+    , { id = 122, theme = "futebol"
+      , text = "Qual jogador brasileiro é considerado o rei do futebol?"
+      , a = "Pelé", b = "Maradona", c = "Garrincha", d = "Zico", correct = 0 }
+    , { id = 123, theme = "futebol"
+      , text = "Em quantos tempos é dividida uma partida de futebol?"
+      , a = "Um", b = "Dois", c = "Três", d = "Quatro", correct = 1 }
+    , { id = 124, theme = "futebol"
+      , text = "Qual seleção venceu a Copa América de 2021?"
+      , a = "Brasil", b = "Argentina", c = "Uruguai", d = "Chile", correct = 1 }
+    , { id = 125, theme = "futebol"
+      , text = "Qual país sediará a Copa do Mundo de 2026 junto com EUA e Canadá?"
+      , a = "México", b = "Colômbia", c = "Costa Rica", d = "Panamá", correct = 0 }
+    , { id = 126, theme = "futebol"
+      , text = "Qual clube paulista é apelidado de Verdão?"
+      , a = "Palmeiras", b = "Corinthians", c = "Santos", d = "São Paulo", correct = 0 }
+    , { id = 127, theme = "futebol"
+      , text = "Qual seleção venceu a Copa do Mundo de 1994?"
+      , a = "Itália", b = "Brasil", c = "Alemanha", d = "Argentina", correct = 1 }
+    , { id = 128, theme = "futebol"
+      , text = "Qual é o número tradicional da camisa do goleiro?"
+      , a = "1", b = "7", c = "10", d = "11", correct = 0 }
+    , { id = 129, theme = "futebol"
+      , text = "No futebol argentino, qual é o maior rival do Boca Juniors?"
+      , a = "Racing", b = "River Plate", c = "Independiente", d = "San Lorenzo", correct = 1 }
+    , { id = 130, theme = "futebol"
+      , text = "Em qual continente fica o Catar, sede da Copa de 2022?"
+      , a = "África", b = "Ásia", c = "Europa", d = "Oceania", correct = 1 }
+    , { id = 131, theme = "futebol"
+      , text = "Quantas Copas do Mundo a Itália já venceu?"
+      , a = "Duas", b = "Três", c = "Quatro", d = "Cinco", correct = 2 }
+    , { id = 132, theme = "futebol"
+      , text = "Qual seleção é pentacampeã mundial?"
+      , a = "Alemanha", b = "Itália", c = "Brasil", d = "Argentina", correct = 2 }
+    , { id = 133, theme = "futebol"
+      , text = "Quantos jogadores de linha (sem contar o goleiro) cada time tem?"
+      , a = "Nove", b = "Dez", c = "Onze", d = "Doze", correct = 1 }
+    , { id = 134, theme = "futebol"
+      , text = "Qual clube italiano divide o estádio San Siro com a Inter de Milão?"
+      , a = "Juventus", b = "Milan", c = "Roma", d = "Napoli", correct = 1 }
+    , { id = 135, theme = "futebol"
+      , text = "Qual é o apelido da seleção da Itália?"
+      , a = "Fúria", b = "Azzurra", c = "Oranje", d = "Albiceleste", correct = 1 }
+    , { id = 136, theme = "futebol"
+      , text = "Quem foi o artilheiro do Brasil na Copa do Mundo de 2002?"
+      , a = "Rivaldo", b = "Ronaldinho", c = "Ronaldo", d = "Cafu", correct = 2 }
+    , { id = 137, theme = "futebol"
+      , text = "Para que serve o VAR no futebol?"
+      , a = "Marcar o tempo", b = "Revisar decisões da arbitragem", c = "Contar o público", d = "Escolher o juiz", correct = 1 }
+    , { id = 138, theme = "futebol"
+      , text = "Qual seleção é chamada de Albiceleste?"
+      , a = "Uruguai", b = "Argentina", c = "Brasil", d = "Chile", correct = 1 }
+    , { id = 139, theme = "futebol"
+      , text = "Qual craque argentino marcou o polêmico gol com a mão em 1986?"
+      , a = "Messi", b = "Maradona", c = "Kempes", d = "Batistuta", correct = 1 }
+    , { id = 140, theme = "futebol"
+      , text = "Qual é o maior rival do Flamengo no clássico carioca Fla-Flu?"
+      , a = "Vasco", b = "Botafogo", c = "Fluminense", d = "Bangu", correct = 2 }
+    , { id = 141, theme = "futebol"
+      , text = "Qual é a punição para uma falta grave cometida dentro da grande área?"
+      , a = "Escanteio", b = "Pênalti", c = "Tiro livre", d = "Lateral", correct = 1 }
+    , { id = 142, theme = "futebol"
+      , text = "Qual seleção venceu a Copa do Mundo de 1998, jogando em casa?"
+      , a = "Brasil", b = "França", c = "Croácia", d = "Itália", correct = 1 }
+    , { id = 143, theme = "futebol"
+      , text = "Qual é a principal competição de clubes da Europa?"
+      , a = "Liga Europa", b = "Liga dos Campeões", c = "Copa do Rei", d = "Supercopa", correct = 1 }
+    , { id = 144, theme = "futebol"
+      , text = "Qual seleção africana chegou às semifinais da Copa do Mundo de 2022?"
+      , a = "Senegal", b = "Marrocos", c = "Gana", d = "Camarões", correct = 1 }
+    , { id = 145, theme = "futebol"
+      , text = "Quantos minutos tem cada tempo de uma partida de futebol?"
+      , a = "30", b = "40", c = "45", d = "60", correct = 2 }
+    , { id = 146, theme = "futebol"
+      , text = "Por qual clube Lionel Messi se tornou ídolo na Espanha?"
+      , a = "Real Madrid", b = "Barcelona", c = "Atlético de Madrid", d = "Sevilla", correct = 1 }
+    , { id = 147, theme = "futebol"
+      , text = "Qual seleção venceu a Copa do Mundo de 2006?"
+      , a = "França", b = "Itália", c = "Alemanha", d = "Brasil", correct = 1 }
+    , { id = 148, theme = "futebol"
+      , text = "Qual jogador português é apelidado de CR7?"
+      , a = "Cristiano Ronaldo", b = "Ronaldinho", c = "Bruno Fernandes", d = "Figo", correct = 0 }
+    , { id = 149, theme = "futebol"
+      , text = "Em qual país o campeonato de futebol é chamado de Calcio?"
+      , a = "Espanha", b = "Itália", c = "França", d = "Portugal", correct = 1 }
+    , { id = 150, theme = "futebol"
+      , text = "Quem marcou o gol do título da Alemanha na final da Copa de 2014?"
+      , a = "Thomas Müller", b = "Mario Götze", c = "Miroslav Klose", d = "Mesut Özil", correct = 1 }
+    , { id = 151, theme = "futebol"
+      , text = "Qual seleção venceu a Eurocopa de 2016?"
+      , a = "França", b = "Portugal", c = "Espanha", d = "Alemanha", correct = 1 }
+    , { id = 152, theme = "futebol"
+      , text = "Em que continente foi disputada a Copa do Mundo de 2010?"
+      , a = "Ásia", b = "Europa", c = "África", d = "América", correct = 2 }
+    , { id = 153, theme = "futebol"
+      , text = "Qual clube inglês é apelidado de \"Diabos Vermelhos\"?"
+      , a = "Liverpool", b = "Manchester United", c = "Arsenal", d = "Chelsea", correct = 1 }
+    , { id = 154, theme = "futebol"
+      , text = "Quantas vezes a Itália venceu a Copa do Mundo?"
+      , a = "Duas", b = "Três", c = "Quatro", d = "Cinco", correct = 2 }
+    , { id = 155, theme = "futebol"
+      , text = "Quem é o maior artilheiro da história da seleção brasileira?"
+      , a = "Pelé", b = "Neymar", c = "Ronaldo", d = "Romário", correct = 1 }
+    , { id = 156, theme = "futebol"
+      , text = "Qual clube italiano é apelidado de \"Velha Senhora\"?"
+      , a = "Milan", b = "Juventus", c = "Inter de Milão", d = "Roma", correct = 1 }
+    , { id = 157, theme = "futebol"
+      , text = "Por qual seleção Lionel Messi joga?"
+      , a = "Uruguai", b = "Argentina", c = "Chile", d = "Colômbia", correct = 1 }
+    , { id = 158, theme = "futebol"
+      , text = "Qual é o nome da penalidade máxima, cobrada a 11 metros do gol?"
+      , a = "Escanteio", b = "Pênalti", c = "Falta", d = "Lateral", correct = 1 }
+    , { id = 159, theme = "futebol"
+      , text = "Em qual país fica o clube Boca Juniors?"
+      , a = "Brasil", b = "Argentina", c = "Uruguai", d = "Chile", correct = 1 }
+    , { id = 160, theme = "futebol"
+      , text = "Qual seleção foi vice-campeã da Copa do Mundo de 2014?"
+      , a = "Argentina", b = "Holanda", c = "Brasil", d = "Alemanha", correct = 0 }
+    , { id = 161, theme = "futebol"
+      , text = "Qual prêmio da France Football elege o melhor jogador do mundo?"
+      , a = "Bola de Ouro", b = "Chuteira de Prata", c = "Luva de Ouro", d = "Bota de Bronze", correct = 0 }
+    , { id = 162, theme = "futebol"
+      , text = "Qual clube tem o recorde de títulos da Liga dos Campeões da UEFA?"
+      , a = "Barcelona", b = "Real Madrid", c = "Milan", d = "Bayern de Munique", correct = 1 }
+    , { id = 163, theme = "futebol"
+      , text = "Qual seleção africana chegou às semifinais da Copa de 2022, de forma inédita?"
+      , a = "Senegal", b = "Marrocos", c = "Gana", d = "Camarões", correct = 1 }
+    , { id = 164, theme = "futebol"
+      , text = "Qual posição tem como função principal defender o gol?"
+      , a = "Zagueiro", b = "Goleiro", c = "Atacante", d = "Volante", correct = 1 }
+    , { id = 165, theme = "futebol"
+      , text = "Qual clube alemão manda seus jogos na Allianz Arena de Munique?"
+      , a = "Borussia Dortmund", b = "Bayern de Munique", c = "Schalke 04", d = "RB Leipzig", correct = 1 }
+    , { id = 166, theme = "futebol"
+      , text = "Qual seleção venceu a Copa do Mundo de 1998, jogando em casa?"
+      , a = "Brasil", b = "França", c = "Croácia", d = "Itália", correct = 1 }
+    , { id = 167, theme = "futebol"
+      , text = "Como se chama o principal torneio de clubes da América do Sul?"
+      , a = "Copa Sul-Americana", b = "Copa Libertadores", c = "Liga dos Campeões", d = "Recopa", correct = 1 }
+    , { id = 168, theme = "futebol"
+      , text = "Qual jogador argentino era chamado de \"Dios\" e fez o gol da \"Mão de Deus\"?"
+      , a = "Messi", b = "Maradona", c = "Kempes", d = "Batistuta", correct = 1 }
+    , { id = 169, theme = "futebol"
+      , text = "Quantos minutos tem cada tempo de uma partida oficial (sem acréscimos)?"
+      , a = "30", b = "40", c = "45", d = "50", correct = 2 }
+    , { id = 170, theme = "futebol"
+      , text = "Qual seleção europeia venceu a Copa do Mundo de 1966, em casa?"
+      , a = "Alemanha", b = "Inglaterra", c = "Portugal", d = "União Soviética", correct = 1 }
+    , { id = 171, theme = "futebol"
+      , text = "Qual atacante norueguês do Manchester City é famoso por marcar muitos gols?"
+      , a = "Erling Haaland", b = "Darwin Núñez", c = "Alexander Isak", d = "Rasmus Højlund", correct = 0 }
+    , { id = 172, theme = "futebol"
+      , text = "Qual seleção venceu a primeira Copa do Mundo de futebol feminino, em 1991?"
+      , a = "Estados Unidos", b = "Noruega", c = "Alemanha", d = "Brasil", correct = 0 }
+    , { id = 173, theme = "futebol"
+      , text = "Qual estádio é a casa histórica da seleção inglesa, em Londres?"
+      , a = "Old Trafford", b = "Wembley", c = "Anfield", d = "Emirates", correct = 1 }
+    , { id = 174, theme = "futebol"
+      , text = "Qual clube brasileiro é conhecido como \"Verdão\"?"
+      , a = "Palmeiras", b = "Corinthians", c = "Fluminense", d = "Grêmio", correct = 0 }
+      -- Futebol: extras fáceis (1000–1019)
+    , { id = 1000, theme = "futebol"
+      , text = "Qual seleção é a única a ter disputado todas as Copas do Mundo?"
+      , a = "Alemanha", b = "Brasil", c = "Itália", d = "Argentina", correct = 1 }
+    , { id = 1001, theme = "futebol"
+      , text = "Com quantos jogadores um time fica quando um é expulso?"
+      , a = "Nove", b = "Dez", c = "Onze", d = "Doze", correct = 1 }
+    , { id = 1002, theme = "futebol"
+      , text = "Em que parte do corpo é proibido tocar a bola (exceto o goleiro)?"
+      , a = "Cabeça", b = "Peito", c = "Mãos", d = "Pés", correct = 2 }
+    , { id = 1003, theme = "futebol"
+      , text = "Qual competição reúne as seleções da Europa a cada quatro anos?"
+      , a = "Copa América", b = "Eurocopa", c = "Libertadores", d = "Recopa", correct = 1 }
+    , { id = 1004, theme = "futebol"
+      , text = "Qual competição reúne as seleções da América do Sul?"
+      , a = "Eurocopa", b = "Copa América", c = "Liga dos Campeões", d = "Copa do Mundo", correct = 1 }
+    , { id = 1005, theme = "futebol"
+      , text = "Qual clube carioca tem uniforme tricolor (verde, branco e grená)?"
+      , a = "Flamengo", b = "Fluminense", c = "Vasco", d = "Botafogo", correct = 1 }
+    , { id = 1006, theme = "futebol"
+      , text = "Qual clube carioca é apelidado de \"Mengão\"?"
+      , a = "Flamengo", b = "Vasco", c = "Botafogo", d = "Fluminense", correct = 0 }
+    , { id = 1007, theme = "futebol"
+      , text = "Em quantos tempos é dividida uma partida de futebol?"
+      , a = "Um", b = "Dois", c = "Três", d = "Quatro", correct = 1 }
+    , { id = 1008, theme = "futebol"
+      , text = "Que objeto o árbitro usa para marcar faltas e paradas?"
+      , a = "Bandeira", b = "Apito", c = "Cartão azul", d = "Cronômetro", correct = 1 }
+    , { id = 1009, theme = "futebol"
+      , text = "Qual seleção é chamada de \"La Roja\" e venceu a Copa de 2010?"
+      , a = "Portugal", b = "Espanha", c = "Itália", d = "França", correct = 1 }
+    , { id = 1010, theme = "futebol"
+      , text = "Como é chamada a reposição feita quando a bola sai pela linha lateral?"
+      , a = "Escanteio", b = "Lateral", c = "Tiro de meta", d = "Pênalti", correct = 1 }
+    , { id = 1011, theme = "futebol"
+      , text = "Qual clube inglês tem como hino a canção \"You'll Never Walk Alone\"?"
+      , a = "Liverpool", b = "Everton", c = "Arsenal", d = "Tottenham", correct = 0 }
+    , { id = 1012, theme = "futebol"
+      , text = "Quantos gols vale cada bola que entra na rede?"
+      , a = "Um", b = "Dois", c = "Três", d = "Depende do lance", correct = 0 }
+    , { id = 1013, theme = "futebol"
+      , text = "Qual seleção venceu a Copa do Mundo de 1994, nos Estados Unidos?"
+      , a = "Itália", b = "Brasil", c = "Alemanha", d = "Argentina", correct = 1 }
+    , { id = 1014, theme = "futebol"
+      , text = "Como é chamado o jogador que fica à frente, com a função de marcar gols?"
+      , a = "Zagueiro", b = "Goleiro", c = "Atacante", d = "Lateral", correct = 2 }
+    , { id = 1015, theme = "futebol"
+      , text = "Em qual país fica o clube Real Madrid?"
+      , a = "Itália", b = "Espanha", c = "Portugal", d = "França", correct = 1 }
+    , { id = 1016, theme = "futebol"
+      , text = "Qual clube paulista joga na Vila Belmiro e revelou Pelé?"
+      , a = "Santos", b = "Palmeiras", c = "Corinthians", d = "São Paulo", correct = 0 }
+    , { id = 1017, theme = "futebol"
+      , text = "Quantos jogadores de linha (sem contar o goleiro) cada time tem em campo?"
+      , a = "Nove", b = "Dez", c = "Onze", d = "Oito", correct = 1 }
+    , { id = 1018, theme = "futebol"
+      , text = "Qual é o apelido mais conhecido da seleção brasileira?"
+      , a = "La Roja", b = "Canarinho", c = "Fúria", d = "Azzurra", correct = 1 }
+    , { id = 1019, theme = "futebol"
+      , text = "Qual seleção é apelidada de \"Azzurra\"?"
+      , a = "Itália", b = "França", c = "Alemanha", d = "Espanha", correct = 0 }
+      -- Futebol: extras intermediárias (1020–1043)
+    , { id = 1020, theme = "futebol"
+      , text = "Qual jogador brasileiro venceu a Bola de Ouro em 2007?"
+      , a = "Ronaldinho", b = "Kaká", c = "Ronaldo", d = "Neymar", correct = 1 }
+    , { id = 1021, theme = "futebol"
+      , text = "Quais países sediaram, juntos, a Copa do Mundo de 2002?"
+      , a = "China e Japão", b = "Coreia do Sul e Japão", c = "Coreia do Sul e China", d = "Japão e Tailândia", correct = 1 }
+    , { id = 1022, theme = "futebol"
+      , text = "Qual técnico comandou o Brasil no penta de 2002?"
+      , a = "Zagallo", b = "Luiz Felipe Scolari", c = "Carlos Alberto Parreira", d = "Dunga", correct = 1 }
+    , { id = 1023, theme = "futebol"
+      , text = "Qual estádio, em Madri, é a casa do Real Madrid?"
+      , a = "Camp Nou", b = "Santiago Bernabéu", c = "Wanda Metropolitano", d = "Mestalla", correct = 1 }
+    , { id = 1024, theme = "futebol"
+      , text = "Por qual seleção Zinédine Zidane jogou?"
+      , a = "Argélia", b = "França", c = "Itália", d = "Espanha", correct = 1 }
+    , { id = 1025, theme = "futebol"
+      , text = "Quem foi o artilheiro da Copa do Mundo de 2002, com 8 gols?"
+      , a = "Rivaldo", b = "Ronaldo", c = "Miroslav Klose", d = "Christian Vieri", correct = 1 }
+    , { id = 1026, theme = "futebol"
+      , text = "Em que ano o Brasil perdeu a final da Copa em casa para o Uruguai (Maracanaço)?"
+      , a = "1950", b = "1954", c = "1958", d = "1962", correct = 0 }
+    , { id = 1027, theme = "futebol"
+      , text = "Quem é o maior artilheiro da história do Real Madrid?"
+      , a = "Raúl", b = "Cristiano Ronaldo", c = "Di Stéfano", d = "Karim Benzema", correct = 1 }
+    , { id = 1028, theme = "futebol"
+      , text = "Qual país sediou a Copa do Mundo de 2006?"
+      , a = "Alemanha", b = "África do Sul", c = "França", d = "Suíça", correct = 0 }
+    , { id = 1029, theme = "futebol"
+      , text = "Qual seleção venceu a Copa do Mundo de 1986, com Maradona?"
+      , a = "Brasil", b = "Argentina", c = "Alemanha", d = "Itália", correct = 1 }
+    , { id = 1030, theme = "futebol"
+      , text = "Qual clube inglês é apelidado de \"Gunners\"?"
+      , a = "Chelsea", b = "Arsenal", c = "Tottenham", d = "West Ham", correct = 1 }
+    , { id = 1031, theme = "futebol"
+      , text = "Qual craque holandês foi o símbolo do \"Carrossel Holandês\" nos anos 70?"
+      , a = "Marco van Basten", b = "Johan Cruyff", c = "Ruud Gullit", d = "Dennis Bergkamp", correct = 1 }
+    , { id = 1032, theme = "futebol"
+      , text = "Como é apelidada, no Brasil, a taça da Liga dos Campeões da UEFA?"
+      , a = "Jules Rimet", b = "Orelhuda", c = "Taça das Bolinhas", d = "Salva de Prata", correct = 1 }
+    , { id = 1033, theme = "futebol"
+      , text = "Qual seleção africana foi a primeira a chegar às quartas de final de uma Copa (1990)?"
+      , a = "Nigéria", b = "Camarões", c = "Senegal", d = "Gana", correct = 1 }
+    , { id = 1034, theme = "futebol"
+      , text = "Qual clube é o maior campeão da história da Copa Libertadores?"
+      , a = "Boca Juniors", b = "Independiente", c = "Peñarol", d = "River Plate", correct = 1 }
+    , { id = 1035, theme = "futebol"
+      , text = "Qual craque português foi campeão da Eurocopa de 2016 mesmo saindo lesionado da final?"
+      , a = "Luís Figo", b = "Cristiano Ronaldo", c = "Nani", d = "Deco", correct = 1 }
+    , { id = 1036, theme = "futebol"
+      , text = "Em que setor do campo atua um \"volante\"?"
+      , a = "No ataque", b = "No meio-campo", c = "No gol", d = "Na lateral", correct = 1 }
+    , { id = 1037, theme = "futebol"
+      , text = "Qual seleção sul-americana é bicampeã mundial (1930 e 1950)?"
+      , a = "Argentina", b = "Uruguai", c = "Chile", d = "Peru", correct = 1 }
+    , { id = 1038, theme = "futebol"
+      , text = "Qual jovem francês foi eleito o melhor jogador jovem da Copa de 2018?"
+      , a = "Antoine Griezmann", b = "Kylian Mbappé", c = "Paul Pogba", d = "Ousmane Dembélé", correct = 1 }
+    , { id = 1039, theme = "futebol"
+      , text = "Qual é a principal competição de clubes da Europa?"
+      , a = "Liga Europa", b = "Liga dos Campeões", c = "Supercopa", d = "Recopa", correct = 1 }
+    , { id = 1040, theme = "futebol"
+      , text = "Qual clube espanhol Lionel Messi defendeu por quase toda a carreira?"
+      , a = "Real Madrid", b = "Barcelona", c = "Atlético de Madrid", d = "Sevilla", correct = 1 }
+    , { id = 1041, theme = "futebol"
+      , text = "Qual jogador é mundialmente conhecido como o \"Rei do Futebol\"?"
+      , a = "Pelé", b = "Maradona", c = "Garrincha", d = "Zico", correct = 0 }
+    , { id = 1042, theme = "futebol"
+      , text = "Qual torneio reúne os campeões continentais de clubes de todo o mundo?"
+      , a = "Libertadores", b = "Copa do Mundo de Clubes da FIFA", c = "Liga dos Campeões", d = "Recopa", correct = 1 }
+    , { id = 1043, theme = "futebol"
+      , text = "Qual atacante argentino era apelidado de \"El Matador\" e marcou muito pela seleção?"
+      , a = "Gabriel Batistuta", b = "Hernán Crespo", c = "Sergio Agüero", d = "Gonzalo Higuaín", correct = 0 }
+      -- Futebol: extras difíceis (1044–1049)
+    , { id = 1044, theme = "futebol"
+      , text = "Quem foi o artilheiro da primeira Copa do Mundo, em 1930?"
+      , a = "Guillermo Stábile", b = "Leônidas da Silva", c = "Ademir", d = "Sándor Kocsis", correct = 0 }
+    , { id = 1045, theme = "futebol"
+      , text = "Qual goleiro é o único a vencer a Bola de Ouro, em 1963?"
+      , a = "Lev Yashin", b = "Gordon Banks", c = "Dino Zoff", d = "Gigi Buffon", correct = 0 }
+    , { id = 1046, theme = "futebol"
+      , text = "Em que ano foi disputada a primeira edição da Copa Libertadores?"
+      , a = "1955", b = "1960", c = "1965", d = "1971", correct = 1 }
+    , { id = 1047, theme = "futebol"
+      , text = "Qual húngaro foi o artilheiro da Copa de 1954, estrela do \"Time de Ouro\"?"
+      , a = "Ferenc Puskás", b = "Sándor Kocsis", c = "Nándor Hidegkuti", d = "Just Fontaine", correct = 1 }
+    , { id = 1048, theme = "futebol"
+      , text = "Quem detém o recorde de gols em uma única Copa do Mundo (13, em 1958)?"
+      , a = "Pelé", b = "Just Fontaine", c = "Gerd Müller", d = "Ronaldo", correct = 1 }
+    , { id = 1049, theme = "futebol"
+      , text = "Qual seleção venceu a primeira Eurocopa da história, em 1960?"
+      , a = "Espanha", b = "União Soviética", c = "Itália", d = "Alemanha", correct = 1 }
+
+      -- ===== Video Games (200–274, extras 1050–1099) =====
+    , { id = 200, theme = "games"
+      , text = "Qual encanador de bigode é o mascote da Nintendo?"
+      , a = "Sonic", b = "Mario", c = "Kirby", d = "Link", correct = 1 }
+    , { id = 201, theme = "games"
+      , text = "Em qual série de jogos aparece o soldado \"Master Chief\"?"
+      , a = "Halo", b = "Doom", c = "Gears of War", d = "Destiny", correct = 0 }
+    , { id = 202, theme = "games"
+      , text = "Qual empresa criou o console PlayStation?"
+      , a = "Microsoft", b = "Sony", c = "Nintendo", d = "Sega", correct = 1 }
+    , { id = 203, theme = "games"
+      , text = "Qual personagem azul e veloz coleta anéis dourados?"
+      , a = "Mario", b = "Sonic", c = "Crash", d = "Kirby", correct = 1 }
+    , { id = 204, theme = "games"
+      , text = "Em que jogo você constrói com blocos e enfrenta os \"creepers\"?"
+      , a = "Roblox", b = "Minecraft", c = "Terraria", d = "Fortnite", correct = 1 }
+    , { id = 205, theme = "games"
+      , text = "Qual empresa criou o console Xbox?"
+      , a = "Sony", b = "Microsoft", c = "Nintendo", d = "Valve", correct = 1 }
+    , { id = 206, theme = "games"
+      , text = "Qual princesa Mario costuma tentar resgatar?"
+      , a = "Zelda", b = "Peach", c = "Daisy", d = "Rosalina", correct = 1 }
+    , { id = 207, theme = "games"
+      , text = "Qual franquia tem o lema \"Gotta catch 'em all\" e criaturas capturáveis?"
+      , a = "Digimon", b = "Pokémon", c = "Yu-Gi-Oh!", d = "Monster Hunter", correct = 1 }
+    , { id = 208, theme = "games"
+      , text = "Qual plataforma de PC é a loja de jogos da Valve?"
+      , a = "Epic Games", b = "Steam", c = "Origin", d = "GOG", correct = 1 }
+    , { id = 209, theme = "games"
+      , text = "Qual é o nome do herói de \"The Legend of Zelda\"?"
+      , a = "Zelda", b = "Link", c = "Ganon", d = "Navi", correct = 1 }
+    , { id = 210, theme = "games"
+      , text = "Em \"Pac-Man\", o que o personagem come pelo labirinto?"
+      , a = "Frutas", b = "Pastilhas", c = "Moedas", d = "Anéis", correct = 1 }
+    , { id = 211, theme = "games"
+      , text = "Qual console da Nintendo é híbrido (portátil e de mesa)?"
+      , a = "Wii", b = "Switch", c = "3DS", d = "GameCube", correct = 1 }
+    , { id = 212, theme = "games"
+      , text = "Qual jogo de tiro da Valve divide os times em \"Counter-Terrorists\" e \"Terrorists\"?"
+      , a = "Valorant", b = "Counter-Strike", c = "Call of Duty", d = "Overwatch", correct = 1 }
+    , { id = 213, theme = "games"
+      , text = "De que cor é o fantasma \"Blinky\", em Pac-Man?"
+      , a = "Azul", b = "Vermelho", c = "Rosa", d = "Laranja", correct = 1 }
+    , { id = 214, theme = "games"
+      , text = "Qual jogo de blocos coloridos que caem foi criado por Alexey Pajitnov?"
+      , a = "Tetris", b = "Candy Crush", c = "Bejeweled", d = "Puyo Puyo", correct = 0 }
+    , { id = 215, theme = "games"
+      , text = "Em qual série você joga como Kratos, o deus da guerra?"
+      , a = "God of War", b = "Devil May Cry", c = "Bayonetta", d = "Dark Souls", correct = 0 }
+    , { id = 216, theme = "games"
+      , text = "Qual empresa criou o personagem Mario?"
+      , a = "Sega", b = "Nintendo", c = "Sony", d = "Atari", correct = 1 }
+    , { id = 217, theme = "games"
+      , text = "Qual dinossauro verde é o companheiro do Mario?"
+      , a = "Bowser", b = "Yoshi", c = "Toad", d = "Goomba", correct = 1 }
+    , { id = 218, theme = "games"
+      , text = "Qual é o principal vilão da série Super Mario?"
+      , a = "Wario", b = "Bowser", c = "Ganon", d = "Dr. Eggman", correct = 1 }
+    , { id = 219, theme = "games"
+      , text = "Qual jogo de fazenda e mineração foi criado por ConcernedApe?"
+      , a = "Stardew Valley", b = "Terraria", c = "Harvest Moon", d = "Animal Crossing", correct = 0 }
+    , { id = 220, theme = "games"
+      , text = "Qual é o modo de jogo mais famoso de Fortnite?"
+      , a = "Corrida", b = "Battle Royale", c = "Luta", d = "Cartas", correct = 1 }
+    , { id = 221, theme = "games"
+      , text = "Junto de qual console foi lançado o jogo Wii Sports?"
+      , a = "Nintendo Wii", b = "PlayStation 3", c = "Xbox 360", d = "GameCube", correct = 0 }
+    , { id = 222, theme = "games"
+      , text = "Qual irmão do Mario caça fantasmas com um aspirador?"
+      , a = "Mario", b = "Luigi", c = "Wario", d = "Toad", correct = 1 }
+    , { id = 223, theme = "games"
+      , text = "Qual criatura verde explode ao chegar perto do jogador em Minecraft?"
+      , a = "Zumbi", b = "Creeper", c = "Esqueleto", d = "Aranha", correct = 1 }
+    , { id = 224, theme = "games"
+      , text = "Qual série de jogos de luta tem os personagens Ryu e Ken?"
+      , a = "Mortal Kombat", b = "Street Fighter", c = "Tekken", d = "The King of Fighters", correct = 1 }
+    , { id = 225, theme = "games"
+      , text = "Qual jogo de luta é famoso pelos golpes de finalização (Fatalities)?"
+      , a = "Street Fighter", b = "Mortal Kombat", c = "Tekken", d = "Smash Bros", correct = 1 }
+    , { id = 226, theme = "games"
+      , text = "Qual empresa é dona da franquia The Legend of Zelda?"
+      , a = "Sega", b = "Nintendo", c = "Sony", d = "Capcom", correct = 1 }
+    , { id = 227, theme = "games"
+      , text = "Em Among Us, qual papel sabota e elimina os outros jogadores?"
+      , a = "Tripulante", b = "Impostor", c = "Fantasma", d = "Capitão", correct = 1 }
+    , { id = 228, theme = "games"
+      , text = "Qual jogo de mundo em blocos foi comprado pela Microsoft?"
+      , a = "Roblox", b = "Minecraft", c = "Terraria", d = "Lego Worlds", correct = 1 }
+    , { id = 229, theme = "games"
+      , text = "Qual ouriço azul é o mascote da Sega?"
+      , a = "Tails", b = "Sonic", c = "Knuckles", d = "Shadow", correct = 1 }
+    , { id = 230, theme = "games"
+      , text = "Qual Pokémon elétrico é o mascote da franquia?"
+      , a = "Charizard", b = "Pikachu", c = "Bulbasaur", d = "Mewtwo", correct = 1 }
+    , { id = 231, theme = "games"
+      , text = "Qual jogo de tiro em equipe da Blizzard tem Tracer e Reinhardt?"
+      , a = "Valorant", b = "Overwatch", c = "Apex Legends", d = "Paladins", correct = 1 }
+    , { id = 232, theme = "games"
+      , text = "Qual controle é usado no PlayStation 5?"
+      , a = "Joy-Con", b = "DualSense", c = "Kinect", d = "Wiimote", correct = 1 }
+    , { id = 233, theme = "games"
+      , text = "Qual jogo de corrida da Nintendo tem cascos e cascas de banana como itens?"
+      , a = "Gran Turismo", b = "Mario Kart", c = "Forza", d = "Need for Speed", correct = 1 }
+    , { id = 234, theme = "games"
+      , text = "Qual empresa desenvolve a série de futebol FIFA / EA Sports FC?"
+      , a = "Konami", b = "EA", c = "Ubisoft", d = "Activision", correct = 1 }
+    , { id = 235, theme = "games"
+      , text = "Qual é o nome do protagonista de The Witcher 3?"
+      , a = "Geralt", b = "Ciri", c = "Yennefer", d = "Vesemir", correct = 0 }
+    , { id = 236, theme = "games"
+      , text = "Qual jogo online usa avatares de blocos e é muito popular entre crianças?"
+      , a = "Minecraft", b = "Roblox", c = "Fortnite", d = "Habbo", correct = 1 }
+    , { id = 237, theme = "games"
+      , text = "Qual é o nome do irmão do Mario?"
+      , a = "Wario", b = "Luigi", c = "Waluigi", d = "Toad", correct = 1 }
+    , { id = 238, theme = "games"
+      , text = "Qual série de terror tem zumbis, o vírus-T e o vilão Nemesis?"
+      , a = "Silent Hill", b = "Resident Evil", c = "Dead Space", d = "Outlast", correct = 1 }
+    , { id = 239, theme = "games"
+      , text = "Em qual jogo você encaixa blocos que caem para completar linhas?"
+      , a = "Tetris", b = "Puyo Puyo", c = "Columns", d = "Dr. Mario", correct = 0 }
+    , { id = 240, theme = "games"
+      , text = "Qual jogo mobile de 2016 usava realidade aumentada para capturar Pokémon?"
+      , a = "Pokémon GO", b = "Ingress", c = "Wizards Unite", d = "Jurassic World Alive", correct = 0 }
+    , { id = 241, theme = "games"
+      , text = "Qual item dourado o Mario coleta pelas fases?"
+      , a = "Anel", b = "Moeda", c = "Gema", d = "Diamante", correct = 1 }
+    , { id = 242, theme = "games"
+      , text = "Qual estúdio criou a série Grand Theft Auto (GTA)?"
+      , a = "Ubisoft", b = "Rockstar", c = "Bethesda", d = "EA", correct = 1 }
+    , { id = 243, theme = "games"
+      , text = "Qual série tem Nathan Drake caçando tesouros?"
+      , a = "Tomb Raider", b = "Uncharted", c = "Assassin's Creed", d = "Far Cry", correct = 1 }
+    , { id = 244, theme = "games"
+      , text = "Qual empresa francesa criou a série Assassin's Creed?"
+      , a = "Ubisoft", b = "EA", c = "Rockstar", d = "Capcom", correct = 0 }
+    , { id = 245, theme = "games"
+      , text = "Qual símbolo dourado de três triângulos concede poder em The Legend of Zelda?"
+      , a = "Rupia", b = "Triforce", c = "Master Sword", d = "Ocarina", correct = 1 }
+    , { id = 246, theme = "games"
+      , text = "Qual jogo de plataforma tem um marsupial laranja chamado Crash?"
+      , a = "Spyro", b = "Crash Bandicoot", c = "Rayman", d = "Sonic", correct = 1 }
+    , { id = 247, theme = "games"
+      , text = "Qual sigla descreve jogos de tiro em primeira pessoa como Call of Duty?"
+      , a = "RPG", b = "FPS", c = "MOBA", d = "RTS", correct = 1 }
+    , { id = 248, theme = "games"
+      , text = "Qual jogo MOBA de campeões é feito pela Riot Games?"
+      , a = "Dota 2", b = "League of Legends", c = "Heroes of the Storm", d = "Smite", correct = 1 }
+    , { id = 249, theme = "games"
+      , text = "Qual portátil da Nintendo foi febre nos anos 90 com tela esverdeada?"
+      , a = "Game Boy", b = "PSP", c = "Game Gear", d = "Nintendo DS", correct = 0 }
+    , { id = 250, theme = "games"
+      , text = "Em qual franquia de tiro você joga como o soldado Master Chief?"
+      , a = "Gears of War", b = "Halo", c = "Destiny", d = "Doom", correct = 1 }
+    , { id = 251, theme = "games"
+      , text = "Qual jogo de blocos é o mais vendido de todos os tempos?"
+      , a = "Tetris", b = "Minecraft", c = "Roblox", d = "Terraria", correct = 1 }
+    , { id = 252, theme = "games"
+      , text = "Qual empresa criou o console PlayStation?"
+      , a = "Microsoft", b = "Sony", c = "Nintendo", d = "Sega", correct = 1 }
+    , { id = 253, theme = "games"
+      , text = "Qual empresa criou o console Xbox?"
+      , a = "Sony", b = "Microsoft", c = "Nintendo", d = "Atari", correct = 1 }
+    , { id = 254, theme = "games"
+      , text = "Em Pokémon, qual é o Pokémon elétrico mascote da franquia?"
+      , a = "Charizard", b = "Pikachu", c = "Bulbasaur", d = "Squirtle", correct = 1 }
+    , { id = 255, theme = "games"
+      , text = "Em Among Us, como são chamados os jogadores que sabotam a nave?"
+      , a = "Tripulantes", b = "Impostores", c = "Zumbis", d = "Fantasmas", correct = 1 }
+    , { id = 256, theme = "games"
+      , text = "Qual é o nome do irmão do Mario, de roupa verde?"
+      , a = "Wario", b = "Luigi", c = "Toad", d = "Yoshi", correct = 1 }
+    , { id = 257, theme = "games"
+      , text = "Qual battle royale ficou famoso por permitir construir estruturas durante a partida?"
+      , a = "PUBG", b = "Fortnite", c = "Apex Legends", d = "Warzone", correct = 1 }
+    , { id = 258, theme = "games"
+      , text = "Qual é o nome do ouriço azul veloz da Sega?"
+      , a = "Tails", b = "Sonic", c = "Knuckles", d = "Shadow", correct = 1 }
+    , { id = 259, theme = "games"
+      , text = "Na série The Legend of Zelda, qual é o nome do herói?"
+      , a = "Zelda", b = "Link", c = "Ganon", d = "Epona", correct = 1 }
+    , { id = 260, theme = "games"
+      , text = "Qual jogo de tiro tático 5x5 com agentes é da Riot Games?"
+      , a = "Overwatch", b = "Valorant", c = "Counter-Strike", d = "Rainbow Six", correct = 1 }
+    , { id = 261, theme = "games"
+      , text = "Qual MOBA da Riot Games é jogado 5x5 em três rotas (lanes)?"
+      , a = "Dota 2", b = "League of Legends", c = "Smite", d = "Heroes of the Storm", correct = 1 }
+    , { id = 262, theme = "games"
+      , text = "Em Minecraft, qual criatura verde explode ao chegar perto do jogador?"
+      , a = "Zumbi", b = "Creeper", c = "Enderman", d = "Esqueleto", correct = 1 }
+    , { id = 263, theme = "games"
+      , text = "Qual console híbrido (portátil e de mesa) a Nintendo lançou em 2017?"
+      , a = "Wii U", b = "Nintendo Switch", c = "Nintendo 3DS", d = "GameCube", correct = 1 }
+    , { id = 264, theme = "games"
+      , text = "Qual série de mundo aberto se passa em cidades fictícias como Los Santos?"
+      , a = "Saints Row", b = "Grand Theft Auto", c = "Watch Dogs", d = "Mafia", correct = 1 }
+    , { id = 265, theme = "games"
+      , text = "Em Super Mario, qual é o vilão dragão-tartaruga que sequestra a princesa?"
+      , a = "Wario", b = "Bowser", c = "Donkey Kong", d = "King Boo", correct = 1 }
+    , { id = 266, theme = "games"
+      , text = "Qual jogo de terror indie se passa numa pizzaria com animatrônicos?"
+      , a = "Outlast", b = "Five Nights at Freddy's", c = "Bendy", d = "Poppy Playtime", correct = 1 }
+    , { id = 267, theme = "games"
+      , text = "Qual item o Sonic coleta pelas fases nos jogos clássicos?"
+      , a = "Moedas", b = "Anéis", c = "Estrelas", d = "Gemas", correct = 1 }
+    , { id = 268, theme = "games"
+      , text = "Qual jogo de plataforma tem um marsupial laranja como protagonista?"
+      , a = "Spyro", b = "Crash Bandicoot", c = "Rayman", d = "Jak and Daxter", correct = 1 }
+    , { id = 269, theme = "games"
+      , text = "Qual guerreiro é o protagonista da série God of War?"
+      , a = "Kratos", b = "Zeus", c = "Ares", d = "Atreus", correct = 0 }
+    , { id = 270, theme = "games"
+      , text = "Como o console NES da Nintendo é carinhosamente apelidado no Brasil?"
+      , a = "Master System", b = "Nintendinho", c = "Odyssey", d = "Mega Drive", correct = 1 }
+    , { id = 271, theme = "games"
+      , text = "Qual jogo de ritmo com dança usando o corpo é popular em festas?"
+      , a = "Guitar Hero", b = "Just Dance", c = "Dance Central", d = "StepMania", correct = 1 }
+    , { id = 272, theme = "games"
+      , text = "Em Pac-Man, o que o personagem come ao percorrer o labirinto?"
+      , a = "Frutas", b = "Pastilhas", c = "Moedas", d = "Fantasmas", correct = 1 }
+    , { id = 273, theme = "games"
+      , text = "Qual série de luta da Capcom tem Ryu e Ken lançando o golpe \"Hadouken\"?"
+      , a = "Mortal Kombat", b = "Street Fighter", c = "Tekken", d = "The King of Fighters", correct = 1 }
+    , { id = 274, theme = "games"
+      , text = "Qual empresa desenvolveu o jogo The Witcher 3 e a série Cyberpunk?"
+      , a = "Ubisoft", b = "CD Projekt Red", c = "Bethesda", d = "Rockstar", correct = 1 }
+      -- Games: extras fáceis (1050–1069)
+    , { id = 1050, theme = "games"
+      , text = "Qual empresa japonesa criou o Mario e o Zelda?"
+      , a = "Sega", b = "Nintendo", c = "Sony", d = "Capcom", correct = 1 }
+    , { id = 1051, theme = "games"
+      , text = "Qual jogo clássico tem peças que caem e você encaixa em linhas?"
+      , a = "Tetris", b = "Candy Crush", c = "Bejeweled", d = "Puyo Puyo", correct = 0 }
+    , { id = 1052, theme = "games"
+      , text = "Em Angry Birds, quem os pássaros tentam atingir?"
+      , a = "Gatos", b = "Porcos", c = "Cobras", d = "Macacos", correct = 1 }
+    , { id = 1053, theme = "games"
+      , text = "O que os personagens dirigem em Mario Kart?"
+      , a = "Motos", b = "Karts", c = "Barcos", d = "Aviões", correct = 1 }
+    , { id = 1054, theme = "games"
+      , text = "Qual princesa o Mario costuma resgatar?"
+      , a = "Zelda", b = "Princesa Peach", c = "Daisy", d = "Rosalina", correct = 1 }
+    , { id = 1055, theme = "games"
+      , text = "Qual é a cor principal da roupa do Mario?"
+      , a = "Verde", b = "Vermelho", c = "Azul", d = "Amarelo", correct = 1 }
+    , { id = 1056, theme = "games"
+      , text = "Em Pokémon, o que o treinador usa para capturar Pokémon?"
+      , a = "Rede", b = "Pokébola", c = "Armadilha", d = "Isca", correct = 1 }
+    , { id = 1057, theme = "games"
+      , text = "Qual franquia de corrida tem cascas de banana como armadilha na pista?"
+      , a = "Gran Turismo", b = "Mario Kart", c = "Forza", d = "Need for Speed", correct = 1 }
+    , { id = 1058, theme = "games"
+      , text = "Qual esporte é o tema da série de jogos FIFA / EA Sports FC?"
+      , a = "Basquete", b = "Futebol", c = "Tênis", d = "Automobilismo", correct = 1 }
+    , { id = 1059, theme = "games"
+      , text = "Além de jogar, o que os usuários podem fazer no Roblox?"
+      , a = "Apenas assistir", b = "Criar seus próprios jogos", c = "Nada", d = "Apenas conversar", correct = 1 }
+    , { id = 1060, theme = "games"
+      , text = "Qual jogo de tiro competitivo tem o nome abreviado \"CS\"?"
+      , a = "Call of Duty", b = "Counter-Strike", c = "Battlefield", d = "Doom", correct = 1 }
+    , { id = 1061, theme = "games"
+      , text = "Qual macaco é o protagonista de um clássico da Nintendo?"
+      , a = "Donkey Kong", b = "Diddy", c = "King Kong", d = "Bubbles", correct = 0 }
+    , { id = 1062, theme = "games"
+      , text = "Qual objeto é usado para jogar a maioria dos videogames de console?"
+      , a = "Mouse", b = "Controle", c = "Teclado numérico", d = "Volante", correct = 1 }
+    , { id = 1063, theme = "games"
+      , text = "Em Minecraft, qual ferramenta é usada para minerar pedras e minérios?"
+      , a = "Pá", b = "Picareta", c = "Machado", d = "Enxada", correct = 1 }
+    , { id = 1064, theme = "games"
+      , text = "O que o jogador controla no jogo The Sims?"
+      , a = "Carros", b = "A vida de pessoas virtuais", c = "Exércitos", d = "Fazendas", correct = 1 }
+    , { id = 1065, theme = "games"
+      , text = "Em Subway Surfers, o personagem corre fugindo de quem?"
+      , a = "De zumbis", b = "Do inspetor e seu cão", c = "De carros", d = "De monstros", correct = 1 }
+    , { id = 1066, theme = "games"
+      , text = "Em Tetris, o que acontece quando você completa uma linha horizontal?"
+      , a = "Ganha uma vida", b = "A linha desaparece", c = "O jogo acaba", d = "Nada", correct = 1 }
+    , { id = 1067, theme = "games"
+      , text = "O que o jogador treina e faz evoluir na série Pokémon?"
+      , a = "Cartas", b = "Monstrinhos", c = "Carros", d = "Robôs", correct = 1 }
+    , { id = 1068, theme = "games"
+      , text = "Qual console da Sega foi o grande rival do Super Nintendo?"
+      , a = "Atari 2600", b = "Mega Drive", c = "PlayStation", d = "Dreamcast", correct = 1 }
+    , { id = 1069, theme = "games"
+      , text = "Em Fall Guys, muitos jogadores disputam o quê até sobrar um?"
+      , a = "Corridas de carro", b = "Provas de obstáculos", c = "Tiroteios", d = "Partidas de cartas", correct = 1 }
+      -- Games: extras intermediárias (1070–1093)
+    , { id = 1070, theme = "games"
+      , text = "Qual designer japonês criou Mario, Zelda e Donkey Kong?"
+      , a = "Hideo Kojima", b = "Shigeru Miyamoto", c = "Satoru Iwata", d = "Gunpei Yokoi", correct = 1 }
+    , { id = 1071, theme = "games"
+      , text = "Qual série de RPG japonês tem o herói Cloud e as \"Materias\"?"
+      , a = "Dragon Quest", b = "Final Fantasy", c = "Chrono Trigger", d = "Kingdom Hearts", correct = 1 }
+    , { id = 1072, theme = "games"
+      , text = "Qual série de terror da Capcom tem zumbis e a Mansão Spencer?"
+      , a = "Silent Hill", b = "Resident Evil", c = "Dead Space", d = "The Evil Within", correct = 1 }
+    , { id = 1073, theme = "games"
+      , text = "Em qual série o caçador de tesouros Nathan Drake é o protagonista?"
+      , a = "Tomb Raider", b = "Uncharted", c = "Assassin's Creed", d = "Far Cry", correct = 1 }
+    , { id = 1074, theme = "games"
+      , text = "Qual jogo pós-apocalíptico tem os personagens Joel e Ellie?"
+      , a = "The Last of Us", b = "Days Gone", c = "Fallout", d = "Metro", correct = 0 }
+    , { id = 1075, theme = "games"
+      , text = "Qual empresa criou a franquia Assassin's Creed?"
+      , a = "Electronic Arts", b = "Ubisoft", c = "Activision", d = "Bethesda", correct = 1 }
+    , { id = 1076, theme = "games"
+      , text = "Qual personagem tem um dinossauro verde chamado Yoshi como companheiro?"
+      , a = "Luigi", b = "Mario", c = "Wario", d = "Toad", correct = 1 }
+    , { id = 1077, theme = "games"
+      , text = "Qual jogo de faroeste em mundo aberto tem o protagonista Arthur Morgan?"
+      , a = "Red Dead Redemption 2", b = "GTA V", c = "Fallout", d = "Far Cry", correct = 0 }
+    , { id = 1078, theme = "games"
+      , text = "Qual foi o primeiro console lançado pela Sony?"
+      , a = "PlayStation", b = "PlayStation 2", c = "PSP", d = "PS Vita", correct = 0 }
+    , { id = 1079, theme = "games"
+      , text = "Qual clássico tem um encanador que pula em canos e come cogumelos?"
+      , a = "Sonic", b = "Super Mario Bros.", c = "Rayman", d = "Donkey Kong", correct = 1 }
+    , { id = 1080, theme = "games"
+      , text = "Qual série de luta é famosa pelos golpes finais chamados \"Fatalities\"?"
+      , a = "Tekken", b = "Mortal Kombat", c = "Street Fighter", d = "Soul Calibur", correct = 1 }
+    , { id = 1081, theme = "games"
+      , text = "Em qual jogo indie a personagem Madeline escala uma montanha?"
+      , a = "Hollow Knight", b = "Celeste", c = "Cuphead", d = "Ori and the Blind Forest", correct = 1 }
+    , { id = 1082, theme = "games"
+      , text = "Qual jogo cooperativo tem uma cozinha caótica onde a equipe prepara pratos?"
+      , a = "Overcooked", b = "Cooking Mama", c = "Diner Dash", d = "PlateUp", correct = 0 }
+    , { id = 1083, theme = "games"
+      , text = "Qual jogo de tiro por equipes da Blizzard tem a heroína Tracer?"
+      , a = "Team Fortress 2", b = "Overwatch", c = "Paladins", d = "Apex Legends", correct = 1 }
+    , { id = 1084, theme = "games"
+      , text = "Qual jogo de cartas colecionáveis digital é da Blizzard?"
+      , a = "Gwent", b = "Hearthstone", c = "Magic: Arena", d = "Legends of Runeterra", correct = 1 }
+    , { id = 1085, theme = "games"
+      , text = "A qual série pertence o jogo Skyrim, cheio de dragões?"
+      , a = "The Witcher", b = "The Elder Scrolls", c = "Dragon Age", d = "Dark Souls", correct = 1 }
+    , { id = 1086, theme = "games"
+      , text = "Qual jogo difícil da FromSoftware popularizou o gênero \"soulslike\"?"
+      , a = "Bloodborne", b = "Dark Souls", c = "Sekiro", d = "Elden Ring", correct = 1 }
+    , { id = 1087, theme = "games"
+      , text = "Qual é a protagonista arqueóloga da série Tomb Raider?"
+      , a = "Samus Aran", b = "Lara Croft", c = "Chun-Li", d = "Aloy", correct = 1 }
+    , { id = 1088, theme = "games"
+      , text = "Qual jogo de fazenda foi criado sozinho por Eric Barone (ConcernedApe)?"
+      , a = "Harvest Moon", b = "Stardew Valley", c = "Terraria", d = "Slime Rancher", correct = 1 }
+    , { id = 1089, theme = "games"
+      , text = "Qual battle royale da Respawn tem \"lendas\" com habilidades especiais?"
+      , a = "Warzone", b = "Apex Legends", c = "Fortnite", d = "PUBG", correct = 1 }
+    , { id = 1090, theme = "games"
+      , text = "Qual franquia de tiro em primeira pessoa é abreviada como \"CoD\"?"
+      , a = "Battlefield", b = "Call of Duty", c = "Counter-Strike", d = "Halo", correct = 1 }
+    , { id = 1091, theme = "games"
+      , text = "Qual jogo de puzzle tem uma arma de portais e a IA GLaDOS?"
+      , a = "Portal", b = "The Talos Principle", c = "Antichamber", d = "Q.U.B.E.", correct = 0 }
+    , { id = 1092, theme = "games"
+      , text = "Qual série japonesa de RPG tem \"slimes\" azuis como monstro clássico?"
+      , a = "Final Fantasy", b = "Dragon Quest", c = "Persona", d = "Nier", correct = 1 }
+    , { id = 1093, theme = "games"
+      , text = "Qual jogo de ritmo em realidade virtual faz você cortar blocos com sabres de luz?"
+      , a = "Beat Saber", b = "Guitar Hero", c = "Rock Band", d = "Audica", correct = 0 }
+      -- Games: extras difíceis (1094–1099)
+    , { id = 1094, theme = "games"
+      , text = "Qual jogo de arcade de 1978, com uma nave contra alienígenas, foi um enorme sucesso?"
+      , a = "Pong", b = "Space Invaders", c = "Asteroids", d = "Galaxian", correct = 1 }
+    , { id = 1095, theme = "games"
+      , text = "Qual empresa lançou o Dreamcast, que foi o seu último console?"
+      , a = "Atari", b = "Sega", c = "NEC", d = "SNK", correct = 1 }
+    , { id = 1096, theme = "games"
+      , text = "Em que ano o primeiro Super Mario Bros. foi lançado no NES?"
+      , a = "1983", b = "1985", c = "1987", d = "1990", correct = 1 }
+    , { id = 1097, theme = "games"
+      , text = "Qual empresa produz a série Metal Gear, dirigida por Hideo Kojima?"
+      , a = "Capcom", b = "Konami", c = "Square Enix", d = "Sega", correct = 1 }
+    , { id = 1098, theme = "games"
+      , text = "Qual console da Nintendo, de 1996, popularizou os jogos em 3D poligonal?"
+      , a = "Super Nintendo", b = "Nintendo 64", c = "GameCube", d = "Virtual Boy", correct = 1 }
+    , { id = 1099, theme = "games"
+      , text = "Qual RPG de 1997 da Square marcou época e tem o vilão Sephiroth?"
+      , a = "Final Fantasy VI", b = "Final Fantasy VII", c = "Chrono Trigger", d = "Xenogears", correct = 1 }
+
+      -- ===== Geografia (300–374, extras 1100–1149) =====
+    , { id = 300, theme = "geografia"
+      , text = "Qual é a capital do Brasil?"
+      , a = "Rio de Janeiro", b = "São Paulo", c = "Brasília", d = "Salvador", correct = 2 }
+    , { id = 301, theme = "geografia"
+      , text = "Qual é o maior país do mundo em área territorial?"
+      , a = "Canadá", b = "China", c = "Estados Unidos", d = "Rússia", correct = 3 }
+    , { id = 302, theme = "geografia"
+      , text = "Qual é o maior oceano do mundo?"
+      , a = "Atlântico", b = "Pacífico", c = "Índico", d = "Ártico", correct = 1 }
+    , { id = 303, theme = "geografia"
+      , text = "Qual é a capital da França?"
+      , a = "Paris", b = "Londres", c = "Berlim", d = "Madri", correct = 0 }
+    , { id = 304, theme = "geografia"
+      , text = "Em qual continente fica o Egito?"
+      , a = "Ásia", b = "África", c = "Europa", d = "Oceania", correct = 1 }
+    , { id = 305, theme = "geografia"
+      , text = "Qual é a capital do Japão?"
+      , a = "Pequim", b = "Seul", c = "Tóquio", d = "Bangcoc", correct = 2 }
+    , { id = 306, theme = "geografia"
+      , text = "Qual país tem a maior população do mundo (2024)?"
+      , a = "China", b = "Índia", c = "Estados Unidos", d = "Indonésia", correct = 1 }
+    , { id = 307, theme = "geografia"
+      , text = "Qual é a montanha mais alta do mundo?"
+      , a = "K2", b = "Everest", c = "Aconcágua", d = "Kilimanjaro", correct = 1 }
+    , { id = 308, theme = "geografia"
+      , text = "De qual estado brasileiro Salvador é a capital?"
+      , a = "Bahia", b = "Pernambuco", c = "Ceará", d = "Sergipe", correct = 0 }
+    , { id = 309, theme = "geografia"
+      , text = "Qual é o menor país do mundo em área?"
+      , a = "Mônaco", b = "Vaticano", c = "Nauru", d = "San Marino", correct = 1 }
+    , { id = 310, theme = "geografia"
+      , text = "Qual é o maior deserto quente do mundo?"
+      , a = "Gobi", b = "Saara", c = "Atacama", d = "Kalahari", correct = 1 }
+    , { id = 311, theme = "geografia"
+      , text = "Qual é a capital da Argentina?"
+      , a = "Santiago", b = "Buenos Aires", c = "Montevidéu", d = "Lima", correct = 1 }
+    , { id = 312, theme = "geografia"
+      , text = "Que linha imaginária divide a Terra nos hemisférios Norte e Sul?"
+      , a = "Meridiano de Greenwich", b = "Trópico de Câncer", c = "Linha do Equador", d = "Trópico de Capricórnio", correct = 2 }
+    , { id = 313, theme = "geografia"
+      , text = "Qual país é conhecido como \"Terra do Sol Nascente\"?"
+      , a = "China", b = "Japão", c = "Coreia do Sul", d = "Tailândia", correct = 1 }
+    , { id = 314, theme = "geografia"
+      , text = "Qual é a maior floresta tropical do mundo?"
+      , a = "Floresta do Congo", b = "Amazônia", c = "Taiga", d = "Mata Atlântica", correct = 1 }
+    , { id = 315, theme = "geografia"
+      , text = "Qual é a capital da Itália?"
+      , a = "Milão", b = "Roma", c = "Veneza", d = "Nápoles", correct = 1 }
+    , { id = 316, theme = "geografia"
+      , text = "Qual é o rio mais extenso do Brasil?"
+      , a = "São Francisco", b = "Amazonas", c = "Paraná", d = "Tietê", correct = 1 }
+    , { id = 317, theme = "geografia"
+      , text = "Em qual continente fica a Austrália?"
+      , a = "Ásia", b = "Oceania", c = "África", d = "América", correct = 1 }
+    , { id = 318, theme = "geografia"
+      , text = "Qual é a capital dos Estados Unidos?"
+      , a = "Nova York", b = "Los Angeles", c = "Washington, D.C.", d = "Chicago", correct = 2 }
+    , { id = 319, theme = "geografia"
+      , text = "Qual país europeu tem o formato de uma bota?"
+      , a = "Grécia", b = "Itália", c = "Portugal", d = "Espanha", correct = 1 }
+    , { id = 320, theme = "geografia"
+      , text = "Qual é o maior país da América do Sul em área?"
+      , a = "Argentina", b = "Brasil", c = "Peru", d = "Colômbia", correct = 1 }
+    , { id = 321, theme = "geografia"
+      , text = "Qual oceano banha a costa do Brasil?"
+      , a = "Pacífico", b = "Atlântico", c = "Índico", d = "Ártico", correct = 1 }
+    , { id = 322, theme = "geografia"
+      , text = "Qual é a capital de Portugal?"
+      , a = "Porto", b = "Lisboa", c = "Coimbra", d = "Braga", correct = 1 }
+    , { id = 323, theme = "geografia"
+      , text = "Qual deserto do Chile é um dos mais secos do mundo?"
+      , a = "Saara", b = "Atacama", c = "Gobi", d = "Mojave", correct = 1 }
+    , { id = 324, theme = "geografia"
+      , text = "Quantos estados tem o Brasil?"
+      , a = "24", b = "25", c = "26", d = "27", correct = 2 }
+    , { id = 325, theme = "geografia"
+      , text = "Qual é a capital da Inglaterra?"
+      , a = "Manchester", b = "Londres", c = "Liverpool", d = "Birmingham", correct = 1 }
+    , { id = 326, theme = "geografia"
+      , text = "Qual é o país mais populoso da América do Sul?"
+      , a = "Argentina", b = "Brasil", c = "Colômbia", d = "Peru", correct = 1 }
+    , { id = 327, theme = "geografia"
+      , text = "Qual linha imaginária divide a Terra em hemisférios Leste e Oeste?"
+      , a = "Linha do Equador", b = "Meridiano de Greenwich", c = "Trópico de Câncer", d = "Trópico de Capricórnio", correct = 1 }
+    , { id = 328, theme = "geografia"
+      , text = "Qual é a capital da Alemanha?"
+      , a = "Munique", b = "Berlim", c = "Frankfurt", d = "Hamburgo", correct = 1 }
+    , { id = 329, theme = "geografia"
+      , text = "Qual é o país mais populoso da África?"
+      , a = "Egito", b = "Nigéria", c = "Etiópia", d = "África do Sul", correct = 1 }
+    , { id = 330, theme = "geografia"
+      , text = "Qual é o ponto mais alto do Brasil?"
+      , a = "Pico da Neblina", b = "Pico da Bandeira", c = "Monte Roraima", d = "Pico das Agulhas Negras", correct = 0 }
+    , { id = 331, theme = "geografia"
+      , text = "Qual é a capital da Espanha?"
+      , a = "Barcelona", b = "Madri", c = "Sevilha", d = "Valência", correct = 1 }
+    , { id = 332, theme = "geografia"
+      , text = "Em qual país fica a maior parte do rio Nilo e as pirâmides de Gizé?"
+      , a = "Egito", b = "Sudão", c = "Etiópia", d = "Líbia", correct = 0 }
+    , { id = 333, theme = "geografia"
+      , text = "Qual é o maior lago de água doce do mundo em área?"
+      , a = "Lago Vitória", b = "Lago Superior", c = "Lago Baikal", d = "Lago Titicaca", correct = 1 }
+    , { id = 334, theme = "geografia"
+      , text = "Qual é a capital do Canadá?"
+      , a = "Toronto", b = "Ottawa", c = "Montreal", d = "Vancouver", correct = 1 }
+    , { id = 335, theme = "geografia"
+      , text = "Em qual continente fica a Cordilheira dos Andes?"
+      , a = "América do Norte", b = "América do Sul", c = "Ásia", d = "Europa", correct = 1 }
+    , { id = 336, theme = "geografia"
+      , text = "Qual é a capital da Rússia?"
+      , a = "São Petersburgo", b = "Moscou", c = "Kiev", d = "Minsk", correct = 1 }
+    , { id = 337, theme = "geografia"
+      , text = "Qual é a maior ilha do mundo?"
+      , a = "Madagascar", b = "Groenlândia", c = "Bornéu", d = "Nova Guiné", correct = 1 }
+    , { id = 338, theme = "geografia"
+      , text = "Em qual país fica a cidade de Tóquio?"
+      , a = "China", b = "Japão", c = "Coreia do Sul", d = "Tailândia", correct = 1 }
+    , { id = 339, theme = "geografia"
+      , text = "Qual é o segundo país mais populoso do mundo, depois da Índia?"
+      , a = "China", b = "Estados Unidos", c = "Indonésia", d = "Brasil", correct = 0 }
+    , { id = 340, theme = "geografia"
+      , text = "Qual mar separa a Europa da África?"
+      , a = "Mar Vermelho", b = "Mar Mediterrâneo", c = "Mar Negro", d = "Mar Báltico", correct = 1 }
+    , { id = 341, theme = "geografia"
+      , text = "Qual é a capital do México?"
+      , a = "Guadalajara", b = "Cidade do México", c = "Cancún", d = "Monterrey", correct = 1 }
+    , { id = 342, theme = "geografia"
+      , text = "Quantos continentes existem, no modelo mais ensinado no Brasil?"
+      , a = "Cinco", b = "Seis", c = "Sete", d = "Oito", correct = 1 }
+    , { id = 343, theme = "geografia"
+      , text = "Qual país tem Amsterdã como capital e é famoso por seus canais?"
+      , a = "Bélgica", b = "Países Baixos", c = "Dinamarca", d = "Suíça", correct = 1 }
+    , { id = 344, theme = "geografia"
+      , text = "Em qual cidade fica a Torre Eiffel?"
+      , a = "Londres", b = "Paris", c = "Roma", d = "Berlim", correct = 1 }
+    , { id = 345, theme = "geografia"
+      , text = "Qual país tem o urso panda como símbolo nacional?"
+      , a = "Japão", b = "China", c = "Coreia do Sul", d = "Vietnã", correct = 1 }
+    , { id = 346, theme = "geografia"
+      , text = "Qual é a capital da China?"
+      , a = "Xangai", b = "Pequim", c = "Hong Kong", d = "Cantão", correct = 1 }
+    , { id = 347, theme = "geografia"
+      , text = "Qual é o menor continente do mundo em área?"
+      , a = "Europa", b = "Oceania", c = "Antártida", d = "América do Sul", correct = 1 }
+    , { id = 348, theme = "geografia"
+      , text = "Qual país tem Buenos Aires como capital?"
+      , a = "Chile", b = "Argentina", c = "Uruguai", d = "Paraguai", correct = 1 }
+    , { id = 349, theme = "geografia"
+      , text = "Qual grande deserto fica entre a Mongólia e a China?"
+      , a = "Kalahari", b = "Gobi", c = "Thar", d = "Kalaári", correct = 1 }
+    , { id = 350, theme = "geografia"
+      , text = "Qual é o maior país do mundo em área territorial?"
+      , a = "Canadá", b = "Rússia", c = "China", d = "Estados Unidos", correct = 1 }
+    , { id = 351, theme = "geografia"
+      , text = "Qual rio tem o maior volume de água do mundo?"
+      , a = "Nilo", b = "Amazonas", c = "Yangtzé", d = "Mississipi", correct = 1 }
+    , { id = 352, theme = "geografia"
+      , text = "Qual é a capital do Japão?"
+      , a = "Osaka", b = "Tóquio", c = "Kyoto", d = "Nagoya", correct = 1 }
+    , { id = 353, theme = "geografia"
+      , text = "Em qual continente fica majoritariamente o Egito?"
+      , a = "Ásia", b = "África", c = "Europa", d = "Oceania", correct = 1 }
+    , { id = 354, theme = "geografia"
+      , text = "Qual é o oceano mais extenso do planeta?"
+      , a = "Atlântico", b = "Pacífico", c = "Índico", d = "Ártico", correct = 1 }
+    , { id = 355, theme = "geografia"
+      , text = "Qual é a capital da Argentina?"
+      , a = "Córdoba", b = "Buenos Aires", c = "Rosário", d = "Mendoza", correct = 1 }
+    , { id = 356, theme = "geografia"
+      , text = "Qual país europeu tem o formato parecido com uma bota?"
+      , a = "Grécia", b = "Itália", c = "Espanha", d = "Portugal", correct = 1 }
+    , { id = 357, theme = "geografia"
+      , text = "Qual é a montanha mais alta do mundo?"
+      , a = "K2", b = "Monte Everest", c = "Aconcágua", d = "Kilimanjaro", correct = 1 }
+    , { id = 358, theme = "geografia"
+      , text = "Em qual país fica a Torre Eiffel?"
+      , a = "Itália", b = "França", c = "Bélgica", d = "Suíça", correct = 1 }
+    , { id = 359, theme = "geografia"
+      , text = "Qual é o menor continente do mundo em área?"
+      , a = "Europa", b = "Oceania", c = "Antártida", d = "América do Sul", correct = 1 }
+    , { id = 360, theme = "geografia"
+      , text = "Qual país passou a ser o mais populoso do mundo a partir de 2023?"
+      , a = "China", b = "Índia", c = "Estados Unidos", d = "Indonésia", correct = 1 }
+    , { id = 361, theme = "geografia"
+      , text = "Qual é a capital do Brasil?"
+      , a = "Rio de Janeiro", b = "Brasília", c = "São Paulo", d = "Salvador", correct = 1 }
+    , { id = 362, theme = "geografia"
+      , text = "Qual é o maior deserto quente do mundo, no norte da África?"
+      , a = "Gobi", b = "Saara", c = "Atacama", d = "Kalahari", correct = 1 }
+    , { id = 363, theme = "geografia"
+      , text = "Qual país é famoso pelas pirâmides de Gizé?"
+      , a = "México", b = "Egito", c = "Peru", d = "Sudão", correct = 1 }
+    , { id = 364, theme = "geografia"
+      , text = "Qual é a capital dos Estados Unidos?"
+      , a = "Nova York", b = "Washington, D.C.", c = "Los Angeles", d = "Chicago", correct = 1 }
+    , { id = 365, theme = "geografia"
+      , text = "Qual linha imaginária divide a Terra nos hemisférios norte e sul?"
+      , a = "Trópico de Câncer", b = "Linha do Equador", c = "Meridiano de Greenwich", d = "Trópico de Capricórnio", correct = 1 }
+    , { id = 366, theme = "geografia"
+      , text = "Qual é o maior país da América do Sul em área?"
+      , a = "Argentina", b = "Brasil", c = "Peru", d = "Colômbia", correct = 1 }
+    , { id = 367, theme = "geografia"
+      , text = "Qual mar banha as costas de Itália e Grécia, entre a Europa e a África?"
+      , a = "Mar Negro", b = "Mar Mediterrâneo", c = "Mar Vermelho", d = "Mar Báltico", correct = 1 }
+    , { id = 368, theme = "geografia"
+      , text = "Qual é a capital de Portugal?"
+      , a = "Porto", b = "Lisboa", c = "Braga", d = "Coimbra", correct = 1 }
+    , { id = 369, theme = "geografia"
+      , text = "Qual cordilheira atravessa o oeste da América do Sul?"
+      , a = "Alpes", b = "Cordilheira dos Andes", c = "Himalaia", d = "Montanhas Rochosas", correct = 1 }
+    , { id = 370, theme = "geografia"
+      , text = "Qual continente é o mais frio, coberto de gelo, no polo sul?"
+      , a = "Groenlândia", b = "Antártida", c = "Sibéria", d = "Islândia", correct = 1 }
+    , { id = 371, theme = "geografia"
+      , text = "Qual é a capital da Itália?"
+      , a = "Milão", b = "Roma", c = "Veneza", d = "Nápoles", correct = 1 }
+    , { id = 372, theme = "geografia"
+      , text = "Qual grande floresta tropical fica majoritariamente no Brasil?"
+      , a = "Mata Atlântica", b = "Floresta Amazônica", c = "Cerrado", d = "Floresta do Congo", correct = 1 }
+    , { id = 373, theme = "geografia"
+      , text = "Qual oceano banha toda a costa leste do Brasil?"
+      , a = "Pacífico", b = "Atlântico", c = "Índico", d = "Ártico", correct = 1 }
+    , { id = 374, theme = "geografia"
+      , text = "Qual país tem Camberra como capital?"
+      , a = "Nova Zelândia", b = "Austrália", c = "África do Sul", d = "Canadá", correct = 1 }
+      -- Geografia: extras fáceis (1100–1119)
+    , { id = 1100, theme = "geografia"
+      , text = "Qual é a capital da França?"
+      , a = "Paris", b = "Lyon", c = "Marselha", d = "Nice", correct = 0 }
+    , { id = 1101, theme = "geografia"
+      , text = "Qual é a capital do Reino Unido?"
+      , a = "Manchester", b = "Londres", c = "Liverpool", d = "Edimburgo", correct = 1 }
+    , { id = 1102, theme = "geografia"
+      , text = "Em qual continente fica o Brasil?"
+      , a = "América do Norte", b = "América do Sul", c = "Europa", d = "África", correct = 1 }
+    , { id = 1103, theme = "geografia"
+      , text = "Em qual cidade brasileira fica o Pelourinho, no centro histórico?"
+      , a = "Recife", b = "Salvador", c = "Fortaleza", d = "Natal", correct = 1 }
+    , { id = 1104, theme = "geografia"
+      , text = "Qual oceano separa a América da Europa?"
+      , a = "Pacífico", b = "Atlântico", c = "Índico", d = "Ártico", correct = 1 }
+    , { id = 1105, theme = "geografia"
+      , text = "Qual é a capital da Espanha?"
+      , a = "Barcelona", b = "Madri", c = "Sevilha", d = "Valência", correct = 1 }
+    , { id = 1106, theme = "geografia"
+      , text = "Qual é a capital da Alemanha?"
+      , a = "Munique", b = "Berlim", c = "Frankfurt", d = "Hamburgo", correct = 1 }
+    , { id = 1107, theme = "geografia"
+      , text = "Qual é o maior estado do Brasil em área?"
+      , a = "Pará", b = "Amazonas", c = "Mato Grosso", d = "Bahia", correct = 1 }
+    , { id = 1108, theme = "geografia"
+      , text = "Qual é a capital do México?"
+      , a = "Guadalajara", b = "Cidade do México", c = "Cancún", d = "Monterrey", correct = 1 }
+    , { id = 1109, theme = "geografia"
+      , text = "Qual país faz fronteira ao sul com os Estados Unidos?"
+      , a = "Canadá", b = "México", c = "Cuba", d = "Guatemala", correct = 1 }
+    , { id = 1110, theme = "geografia"
+      , text = "Qual é o principal rio que corta o Egito?"
+      , a = "Nilo", b = "Congo", c = "Amazonas", d = "Tâmisa", correct = 0 }
+    , { id = 1111, theme = "geografia"
+      , text = "Em qual país fica a Estátua da Liberdade?"
+      , a = "França", b = "Estados Unidos", c = "Inglaterra", d = "Canadá", correct = 1 }
+    , { id = 1112, theme = "geografia"
+      , text = "Qual é o maior país da América do Norte em área?"
+      , a = "Estados Unidos", b = "Canadá", c = "México", d = "Groenlândia", correct = 1 }
+    , { id = 1113, theme = "geografia"
+      , text = "Em qual continente fica a China?"
+      , a = "Ásia", b = "Europa", c = "África", d = "Oceania", correct = 0 }
+    , { id = 1114, theme = "geografia"
+      , text = "Qual cidade brasileira é conhecida como \"Cidade Maravilhosa\"?"
+      , a = "São Paulo", b = "Rio de Janeiro", c = "Salvador", d = "Recife", correct = 1 }
+    , { id = 1115, theme = "geografia"
+      , text = "Qual é a capital da China?"
+      , a = "Xangai", b = "Pequim", c = "Hong Kong", d = "Cantão", correct = 1 }
+    , { id = 1116, theme = "geografia"
+      , text = "Qual país tem o Big Ben e o Palácio de Buckingham?"
+      , a = "França", b = "Reino Unido", c = "Alemanha", d = "Irlanda", correct = 1 }
+    , { id = 1117, theme = "geografia"
+      , text = "Quantos oceanos existem no planeta, na classificação atual?"
+      , a = "Três", b = "Cinco", c = "Sete", d = "Dois", correct = 1 }
+    , { id = 1118, theme = "geografia"
+      , text = "Qual monumento antigo em Roma era uma arena de gladiadores?"
+      , a = "Partenon", b = "Coliseu", c = "Panteão", d = "Acrópole", correct = 1 }
+    , { id = 1119, theme = "geografia"
+      , text = "Qual é a capital do Canadá?"
+      , a = "Toronto", b = "Ottawa", c = "Montreal", d = "Vancouver", correct = 1 }
+      -- Geografia: extras intermediárias (1120–1143)
+    , { id = 1120, theme = "geografia"
+      , text = "Qual é o menor país do mundo, sede da Igreja Católica?"
+      , a = "Mônaco", b = "Vaticano", c = "San Marino", d = "Malta", correct = 1 }
+    , { id = 1121, theme = "geografia"
+      , text = "Qual estreito separa a Espanha do Marrocos, entre a Europa e a África?"
+      , a = "Bósforo", b = "Estreito de Gibraltar", c = "Canal da Mancha", d = "Estreito de Bering", correct = 1 }
+    , { id = 1122, theme = "geografia"
+      , text = "Qual país cruza 11 fusos horários em terra contínua?"
+      , a = "China", b = "Rússia", c = "Estados Unidos", d = "Canadá", correct = 1 }
+    , { id = 1123, theme = "geografia"
+      , text = "Qual meridiano de longitude 0° passa pela cidade de Greenwich?"
+      , a = "Linha do Equador", b = "Meridiano de Greenwich", c = "Trópico de Câncer", d = "Linha de Data", correct = 1 }
+    , { id = 1124, theme = "geografia"
+      , text = "Qual é a capital da Rússia?"
+      , a = "São Petersburgo", b = "Moscou", c = "Kiev", d = "Minsk", correct = 1 }
+    , { id = 1125, theme = "geografia"
+      , text = "Qual país dos Alpes é famoso por relógios e chocolates?"
+      , a = "Áustria", b = "Suíça", c = "Bélgica", d = "Países Baixos", correct = 1 }
+    , { id = 1126, theme = "geografia"
+      , text = "Em qual mar tão salgado uma pessoa boia com facilidade?"
+      , a = "Mar Vermelho", b = "Mar Morto", c = "Mar Cáspio", d = "Mar Negro", correct = 1 }
+    , { id = 1127, theme = "geografia"
+      , text = "Qual é o maior país da África em área?"
+      , a = "Sudão", b = "Argélia", c = "Egito", d = "Nigéria", correct = 1 }
+    , { id = 1128, theme = "geografia"
+      , text = "Qual cordilheira, na Ásia, é a mais alta do mundo?"
+      , a = "Andes", b = "Himalaia", c = "Alpes", d = "Cáucaso", correct = 1 }
+    , { id = 1129, theme = "geografia"
+      , text = "Qual país sul-americano tem Lima como capital?"
+      , a = "Chile", b = "Peru", c = "Equador", d = "Bolívia", correct = 1 }
+    , { id = 1130, theme = "geografia"
+      , text = "Qual é a maior ilha do mundo?"
+      , a = "Nova Guiné", b = "Groenlândia", c = "Madagascar", d = "Bornéu", correct = 1 }
+    , { id = 1131, theme = "geografia"
+      , text = "Qual país tem o formato de uma longa e estreita faixa no oeste da América do Sul?"
+      , a = "Argentina", b = "Chile", c = "Peru", d = "Equador", correct = 1 }
+    , { id = 1132, theme = "geografia"
+      , text = "Qual é o maior lago de água doce da América do Norte?"
+      , a = "Lago Michigan", b = "Lago Superior", c = "Lago Huron", d = "Grande Lago Salgado", correct = 1 }
+    , { id = 1133, theme = "geografia"
+      , text = "Qual país europeu tem Amsterdã como capital, famoso por moinhos e tulipas?"
+      , a = "Bélgica", b = "Países Baixos", c = "Dinamarca", d = "Alemanha", correct = 1 }
+    , { id = 1134, theme = "geografia"
+      , text = "Qual é o maior deserto do mundo em área (considerando o frio)?"
+      , a = "Saara", b = "Deserto Antártico", c = "Gobi", d = "Atacama", correct = 1 }
+    , { id = 1135, theme = "geografia"
+      , text = "Em qual país fica a Grande Muralha?"
+      , a = "China", b = "Japão", c = "Mongólia", d = "Coreia do Sul", correct = 0 }
+    , { id = 1136, theme = "geografia"
+      , text = "Qual é a capital administrativa mais alta do mundo, nos Andes da Bolívia?"
+      , a = "Quito", b = "La Paz", c = "Bogotá", d = "Cusco", correct = 1 }
+    , { id = 1137, theme = "geografia"
+      , text = "Qual país fica entre a França e Portugal, na Península Ibérica?"
+      , a = "Itália", b = "Espanha", c = "Andorra", d = "Marrocos", correct = 1 }
+    , { id = 1138, theme = "geografia"
+      , text = "Em qual país ficam as Cataratas do Niágara, na fronteira com os EUA?"
+      , a = "México", b = "Canadá", c = "Cuba", d = "Groenlândia", correct = 1 }
+    , { id = 1139, theme = "geografia"
+      , text = "Qual é a moeda usada por muitos países da União Europeia?"
+      , a = "Dólar", b = "Euro", c = "Libra", d = "Franco", correct = 1 }
+    , { id = 1140, theme = "geografia"
+      , text = "Em qual continente fica o deserto do Saara?"
+      , a = "Ásia", b = "África", c = "Oceania", d = "América", correct = 1 }
+    , { id = 1141, theme = "geografia"
+      , text = "Qual país nórdico é famoso pelos fiordes e tem Oslo como capital?"
+      , a = "Suécia", b = "Noruega", c = "Finlândia", d = "Dinamarca", correct = 1 }
+    , { id = 1142, theme = "geografia"
+      , text = "Qual país é o país de origem da pizza e do espaguete?"
+      , a = "Grécia", b = "Itália", c = "Espanha", d = "França", correct = 1 }
+    , { id = 1143, theme = "geografia"
+      , text = "Qual rio brasileiro é carinhosamente chamado de \"Velho Chico\"?"
+      , a = "Rio Amazonas", b = "Rio São Francisco", c = "Rio Tietê", d = "Rio Paraná", correct = 1 }
+      -- Geografia: extras difíceis (1144–1149)
+    , { id = 1144, theme = "geografia"
+      , text = "Qual é a capital do Cazaquistão?"
+      , a = "Almaty", b = "Astana", c = "Bishkek", d = "Tashkent", correct = 1 }
+    , { id = 1145, theme = "geografia"
+      , text = "Qual é o ponto mais profundo dos oceanos, no Pacífico?"
+      , a = "Fossa do Peru", b = "Fossa das Marianas", c = "Fossa de Java", d = "Fossa de Porto Rico", correct = 1 }
+    , { id = 1146, theme = "geografia"
+      , text = "Qual país africano tem Adis Abeba como capital e é a nascente do Nilo Azul?"
+      , a = "Quênia", b = "Etiópia", c = "Sudão", d = "Somália", correct = 1 }
+    , { id = 1147, theme = "geografia"
+      , text = "Qual estreito separa a Ásia da América do Norte?"
+      , a = "Estreito de Gibraltar", b = "Estreito de Bering", c = "Estreito de Magalhães", d = "Bósforo", correct = 1 }
+    , { id = 1148, theme = "geografia"
+      , text = "Qual é o maior país situado inteiramente dentro da Europa?"
+      , a = "França", b = "Ucrânia", c = "Espanha", d = "Alemanha", correct = 1 }
+    , { id = 1149, theme = "geografia"
+      , text = "Qual planalto asiático, no Tibete, é chamado de \"teto do mundo\"?"
+      , a = "Andes", b = "Planalto do Tibete", c = "Cáucaso", d = "Montanhas Rochosas", correct = 1 }
+
+      -- ===== Ciência (400–474, extras 1150–1199) =====
+    , { id = 400, theme = "ciencia"
+      , text = "Qual planeta é conhecido como o \"Planeta Vermelho\"?"
+      , a = "Vênus", b = "Marte", c = "Júpiter", d = "Saturno", correct = 1 }
+    , { id = 401, theme = "ciencia"
+      , text = "Qual é a fórmula química da água?"
+      , a = "O₂", b = "CO₂", c = "H₂O", d = "NaCl", correct = 2 }
+    , { id = 402, theme = "ciencia"
+      , text = "Quantos planetas há no Sistema Solar?"
+      , a = "Sete", b = "Oito", c = "Nove", d = "Dez", correct = 1 }
+    , { id = 403, theme = "ciencia"
+      , text = "Qual gás as plantas absorvem do ar durante a fotossíntese?"
+      , a = "Oxigênio", b = "Gás carbônico", c = "Nitrogênio", d = "Hidrogênio", correct = 1 }
+    , { id = 404, theme = "ciencia"
+      , text = "Qual é o maior planeta do Sistema Solar?"
+      , a = "Saturno", b = "Júpiter", c = "Netuno", d = "Terra", correct = 1 }
+    , { id = 405, theme = "ciencia"
+      , text = "Qual órgão do corpo humano bombeia o sangue?"
+      , a = "Pulmão", b = "Fígado", c = "Coração", d = "Rim", correct = 2 }
+    , { id = 406, theme = "ciencia"
+      , text = "Qual cientista propôs a Teoria da Relatividade?"
+      , a = "Isaac Newton", b = "Albert Einstein", c = "Galileu Galilei", d = "Charles Darwin", correct = 1 }
+    , { id = 407, theme = "ciencia"
+      , text = "Qual astro está no centro do Sistema Solar?"
+      , a = "A Lua", b = "O Sol", c = "A Terra", d = "Marte", correct = 1 }
+    , { id = 408, theme = "ciencia"
+      , text = "Qual metal é líquido à temperatura ambiente?"
+      , a = "Ferro", b = "Mercúrio", c = "Chumbo", d = "Alumínio", correct = 1 }
+    , { id = 409, theme = "ciencia"
+      , text = "Qual é a velocidade aproximada da luz no vácuo?"
+      , a = "300 km/s", b = "3.000 km/s", c = "300.000 km/s", d = "30 milhões de km/s", correct = 2 }
+    , { id = 410, theme = "ciencia"
+      , text = "Quantos ossos tem, aproximadamente, o corpo humano adulto?"
+      , a = "106", b = "206", c = "306", d = "406", correct = 1 }
+    , { id = 411, theme = "ciencia"
+      , text = "Qual gás é essencial à respiração humana?"
+      , a = "Nitrogênio", b = "Oxigênio", c = "Hidrogênio", d = "Hélio", correct = 1 }
+    , { id = 412, theme = "ciencia"
+      , text = "Qual partícula do átomo tem carga elétrica negativa?"
+      , a = "Próton", b = "Nêutron", c = "Elétron", d = "Fóton", correct = 2 }
+    , { id = 413, theme = "ciencia"
+      , text = "Qual planeta é famoso por seus anéis proeminentes?"
+      , a = "Júpiter", b = "Saturno", c = "Marte", d = "Vênus", correct = 1 }
+    , { id = 414, theme = "ciencia"
+      , text = "Qual cientista é considerado o pai da Teoria da Evolução?"
+      , a = "Gregor Mendel", b = "Charles Darwin", c = "Louis Pasteur", d = "Lamarck", correct = 1 }
+    , { id = 415, theme = "ciencia"
+      , text = "Qual gás as plantas liberam durante a fotossíntese?"
+      , a = "Gás carbônico", b = "Oxigênio", c = "Nitrogênio", d = "Hidrogênio", correct = 1 }
+    , { id = 416, theme = "ciencia"
+      , text = "Qual é o planeta mais próximo do Sol?"
+      , a = "Vênus", b = "Mercúrio", c = "Terra", d = "Marte", correct = 1 }
+    , { id = 417, theme = "ciencia"
+      , text = "Qual é o símbolo químico do ouro?"
+      , a = "Ag", b = "Au", c = "Gd", d = "Or", correct = 1 }
+    , { id = 418, theme = "ciencia"
+      , text = "Qual órgão filtra o sangue e produz a urina?"
+      , a = "Fígado", b = "Rim", c = "Pâncreas", d = "Baço", correct = 1 }
+    , { id = 419, theme = "ciencia"
+      , text = "Quantos são os três estados físicos principais da matéria?"
+      , a = "Dois", b = "Três", c = "Quatro", d = "Cinco", correct = 1 }
+    , { id = 420, theme = "ciencia"
+      , text = "Qual cientista formulou as leis do movimento e da gravitação?"
+      , a = "Albert Einstein", b = "Isaac Newton", c = "Galileu Galilei", d = "Johannes Kepler", correct = 1 }
+    , { id = 421, theme = "ciencia"
+      , text = "Qual é o maior órgão do corpo humano?"
+      , a = "Fígado", b = "Pele", c = "Pulmão", d = "Intestino", correct = 1 }
+    , { id = 422, theme = "ciencia"
+      , text = "A que temperatura a água ferve ao nível do mar (em graus Celsius)?"
+      , a = "90", b = "100", c = "110", d = "80", correct = 1 }
+    , { id = 423, theme = "ciencia"
+      , text = "Qual é o gás mais abundante na atmosfera da Terra?"
+      , a = "Oxigênio", b = "Nitrogênio", c = "Gás carbônico", d = "Hidrogênio", correct = 1 }
+    , { id = 424, theme = "ciencia"
+      , text = "Qual é a estrela mais próxima da Terra?"
+      , a = "Alfa Centauri", b = "O Sol", c = "Sirius", d = "Polaris", correct = 1 }
+    , { id = 425, theme = "ciencia"
+      , text = "Em qual parte da célula fica o DNA?"
+      , a = "Membrana", b = "Núcleo", c = "Citoplasma", d = "Mitocôndria", correct = 1 }
+    , { id = 426, theme = "ciencia"
+      , text = "A que temperatura a água congela (em graus Celsius)?"
+      , a = "0", b = "-10", c = "5", d = "10", correct = 0 }
+    , { id = 427, theme = "ciencia"
+      , text = "Qual é o menor planeta do Sistema Solar?"
+      , a = "Marte", b = "Mercúrio", c = "Vênus", d = "Terra", correct = 1 }
+    , { id = 428, theme = "ciencia"
+      , text = "Qual cientista descobriu a penicilina?"
+      , a = "Louis Pasteur", b = "Alexander Fleming", c = "Robert Koch", d = "Edward Jenner", correct = 1 }
+    , { id = 429, theme = "ciencia"
+      , text = "Qual é o processo em que a água passa de líquida para gasosa?"
+      , a = "Condensação", b = "Evaporação", c = "Solidificação", d = "Fusão", correct = 1 }
+    , { id = 430, theme = "ciencia"
+      , text = "Quantos cromossomos tem uma célula humana normal?"
+      , a = "23", b = "46", c = "48", d = "44", correct = 1 }
+    , { id = 431, theme = "ciencia"
+      , text = "Qual é a unidade básica da vida?"
+      , a = "Átomo", b = "Célula", c = "Molécula", d = "Tecido", correct = 1 }
+    , { id = 432, theme = "ciencia"
+      , text = "Qual planeta é chamado de Estrela D'Alva por brilhar no céu?"
+      , a = "Marte", b = "Vênus", c = "Júpiter", d = "Mercúrio", correct = 1 }
+    , { id = 433, theme = "ciencia"
+      , text = "Qual gás dos combustíveis é o principal causador do efeito estufa?"
+      , a = "Oxigênio", b = "Gás carbônico", c = "Hélio", d = "Argônio", correct = 1 }
+    , { id = 434, theme = "ciencia"
+      , text = "O que a escala Richter mede?"
+      , a = "Temperatura", b = "Terremotos", c = "Vento", d = "Chuva", correct = 1 }
+    , { id = 435, theme = "ciencia"
+      , text = "Qual vitamina o corpo produz ao se expor ao sol?"
+      , a = "Vitamina A", b = "Vitamina C", c = "Vitamina D", d = "Vitamina K", correct = 2 }
+    , { id = 436, theme = "ciencia"
+      , text = "Qual tipo sanguíneo é o doador universal?"
+      , a = "AB positivo", b = "O negativo", c = "A positivo", d = "B negativo", correct = 1 }
+    , { id = 437, theme = "ciencia"
+      , text = "Qual gás é essencial para o fogo queimar (a combustão)?"
+      , a = "Oxigênio", b = "Nitrogênio", c = "Gás carbônico", d = "Hélio", correct = 0 }
+    , { id = 438, theme = "ciencia"
+      , text = "Quantos pulmões tem o ser humano?"
+      , a = "Um", b = "Dois", c = "Três", d = "Quatro", correct = 1 }
+    , { id = 439, theme = "ciencia"
+      , text = "Qual é o satélite natural da Terra?"
+      , a = "Fobos", b = "A Lua", c = "Titã", d = "Europa", correct = 1 }
+    , { id = 440, theme = "ciencia"
+      , text = "Qual instrumento é usado para observar estrelas e planetas distantes?"
+      , a = "Microscópio", b = "Telescópio", c = "Periscópio", d = "Estetoscópio", correct = 1 }
+    , { id = 441, theme = "ciencia"
+      , text = "Qual é o osso mais longo do corpo humano?"
+      , a = "Úmero", b = "Fêmur", c = "Tíbia", d = "Rádio", correct = 1 }
+    , { id = 442, theme = "ciencia"
+      , text = "Qual planeta é o terceiro a partir do Sol?"
+      , a = "Vênus", b = "Terra", c = "Marte", d = "Mercúrio", correct = 1 }
+    , { id = 443, theme = "ciencia"
+      , text = "Como se chama o processo das plantas produzirem alimento com a luz?"
+      , a = "Respiração", b = "Fotossíntese", c = "Digestão", d = "Transpiração", correct = 1 }
+    , { id = 444, theme = "ciencia"
+      , text = "Qual é o símbolo químico do oxigênio?"
+      , a = "O", b = "Ox", c = "Og", d = "Oc", correct = 0 }
+    , { id = 445, theme = "ciencia"
+      , text = "Qual órgão é o centro do sistema nervoso?"
+      , a = "Coração", b = "Cérebro", c = "Fígado", d = "Estômago", correct = 1 }
+    , { id = 446, theme = "ciencia"
+      , text = "Qual é o maior animal do mundo, que vive nos oceanos?"
+      , a = "Elefante", b = "Baleia-azul", c = "Tubarão-branco", d = "Golfinho", correct = 1 }
+    , { id = 447, theme = "ciencia"
+      , text = "De qual elemento o Sol é feito em sua maior parte?"
+      , a = "Ferro", b = "Hidrogênio", c = "Oxigênio", d = "Carbono", correct = 1 }
+    , { id = 448, theme = "ciencia"
+      , text = "Qual força puxa os objetos para o centro da Terra?"
+      , a = "Magnetismo", b = "Gravidade", c = "Atrito", d = "Eletricidade", correct = 1 }
+    , { id = 449, theme = "ciencia"
+      , text = "Quantas patas tem um inseto adulto?"
+      , a = "Quatro", b = "Seis", c = "Oito", d = "Dez", correct = 1 }
+    , { id = 450, theme = "ciencia"
+      , text = "Qual planeta é conhecido como o Planeta Vermelho?"
+      , a = "Vênus", b = "Marte", c = "Júpiter", d = "Saturno", correct = 1 }
+    , { id = 451, theme = "ciencia"
+      , text = "Qual gás os seres humanos precisam respirar para viver?"
+      , a = "Gás carbônico", b = "Oxigênio", c = "Hidrogênio", d = "Hélio", correct = 1 }
+    , { id = 452, theme = "ciencia"
+      , text = "Qual é o planeta mais próximo do Sol?"
+      , a = "Vênus", b = "Mercúrio", c = "Terra", d = "Marte", correct = 1 }
+    , { id = 453, theme = "ciencia"
+      , text = "Qual órgão do corpo humano bombeia o sangue?"
+      , a = "Pulmão", b = "Coração", c = "Fígado", d = "Rim", correct = 1 }
+    , { id = 454, theme = "ciencia"
+      , text = "Qual é o maior planeta do Sistema Solar?"
+      , a = "Saturno", b = "Júpiter", c = "Netuno", d = "Terra", correct = 1 }
+    , { id = 455, theme = "ciencia"
+      , text = "Qual é a fórmula química da água?"
+      , a = "CO2", b = "H2O", c = "O2", d = "NaCl", correct = 1 }
+    , { id = 456, theme = "ciencia"
+      , text = "Qual cientista propôs a teoria da relatividade?"
+      , a = "Isaac Newton", b = "Albert Einstein", c = "Galileu Galilei", d = "Nikola Tesla", correct = 1 }
+    , { id = 457, theme = "ciencia"
+      , text = "Qual astro ilumina a Terra durante o dia?"
+      , a = "Lua", b = "Sol", c = "Marte", d = "Vênus", correct = 1 }
+    , { id = 458, theme = "ciencia"
+      , text = "Quantos ossos tem, aproximadamente, o corpo humano adulto?"
+      , a = "106", b = "206", c = "306", d = "406", correct = 1 }
+    , { id = 459, theme = "ciencia"
+      , text = "Qual processo as plantas usam para produzir alimento com a luz do Sol?"
+      , a = "Respiração", b = "Fotossíntese", c = "Digestão", d = "Transpiração", correct = 1 }
+    , { id = 460, theme = "ciencia"
+      , text = "Qual metal é líquido à temperatura ambiente?"
+      , a = "Ferro", b = "Mercúrio", c = "Alumínio", d = "Cobre", correct = 1 }
+    , { id = 461, theme = "ciencia"
+      , text = "Qual é a maior velocidade conhecida no universo?"
+      , a = "A velocidade do som", b = "A velocidade da luz", c = "A velocidade da Terra", d = "A velocidade do vento", correct = 1 }
+    , { id = 462, theme = "ciencia"
+      , text = "Qual gás as plantas absorvem do ar para a fotossíntese?"
+      , a = "Oxigênio", b = "Gás carbônico", c = "Nitrogênio", d = "Hélio", correct = 1 }
+    , { id = 463, theme = "ciencia"
+      , text = "Qual é o satélite natural da Terra?"
+      , a = "Sol", b = "Lua", c = "Marte", d = "Fobos", correct = 1 }
+    , { id = 464, theme = "ciencia"
+      , text = "Qual parte da célula guarda o material genético (DNA)?"
+      , a = "Membrana", b = "Núcleo", c = "Citoplasma", d = "Mitocôndria", correct = 1 }
+    , { id = 465, theme = "ciencia"
+      , text = "Qual é o maior órgão do corpo humano?"
+      , a = "Fígado", b = "Pele", c = "Intestino", d = "Pulmão", correct = 1 }
+    , { id = 466, theme = "ciencia"
+      , text = "Qual cientista formulou a lei da gravitação universal?"
+      , a = "Albert Einstein", b = "Isaac Newton", c = "Johannes Kepler", d = "Charles Darwin", correct = 1 }
+    , { id = 467, theme = "ciencia"
+      , text = "Em qual estado físico a água se encontra quando congela?"
+      , a = "Líquido", b = "Sólido", c = "Gasoso", d = "Plasma", correct = 1 }
+    , { id = 468, theme = "ciencia"
+      , text = "Quantos planetas há no Sistema Solar após a reclassificação de Plutão?"
+      , a = "7", b = "8", c = "9", d = "10", correct = 1 }
+    , { id = 469, theme = "ciencia"
+      , text = "Qual é o gás mais abundante na atmosfera da Terra?"
+      , a = "Oxigênio", b = "Nitrogênio", c = "Gás carbônico", d = "Hidrogênio", correct = 1 }
+    , { id = 470, theme = "ciencia"
+      , text = "Qual é o maior animal do mundo, que vive nos oceanos?"
+      , a = "Elefante", b = "Baleia-azul", c = "Tubarão-branco", d = "Golfinho", correct = 1 }
+    , { id = 471, theme = "ciencia"
+      , text = "Qual instrumento é usado para observar estrelas e planetas distantes?"
+      , a = "Microscópio", b = "Telescópio", c = "Bússola", d = "Termômetro", correct = 1 }
+    , { id = 472, theme = "ciencia"
+      , text = "Qual naturalista propôs a teoria da evolução por seleção natural?"
+      , a = "Gregor Mendel", b = "Charles Darwin", c = "Louis Pasteur", d = "Isaac Newton", correct = 1 }
+    , { id = 473, theme = "ciencia"
+      , text = "Qual é o osso mais longo do corpo humano?"
+      , a = "Úmero", b = "Fêmur", c = "Tíbia", d = "Rádio", correct = 1 }
+    , { id = 474, theme = "ciencia"
+      , text = "Qual planeta é mais famoso por seus anéis visíveis?"
+      , a = "Júpiter", b = "Saturno", c = "Urano", d = "Netuno", correct = 1 }
+      -- Ciência: extras fáceis (1150–1169)
+    , { id = 1150, theme = "ciencia"
+      , text = "Quantas patas tem uma aranha adulta?"
+      , a = "Seis", b = "Oito", c = "Dez", d = "Quatro", correct = 1 }
+    , { id = 1151, theme = "ciencia"
+      , text = "Qual animal é tradicionalmente chamado de \"melhor amigo do homem\"?"
+      , a = "Gato", b = "Cachorro", c = "Cavalo", d = "Papagaio", correct = 1 }
+    , { id = 1152, theme = "ciencia"
+      , text = "Qual órgão do corpo humano usamos para enxergar?"
+      , a = "Ouvidos", b = "Olhos", c = "Nariz", d = "Boca", correct = 1 }
+    , { id = 1153, theme = "ciencia"
+      , text = "Qual é a estrela mais próxima da Terra?"
+      , a = "Sirius", b = "Sol", c = "Alpha Centauri", d = "Polaris", correct = 1 }
+    , { id = 1154, theme = "ciencia"
+      , text = "Quantas cores costumamos ver em um arco-íris?"
+      , a = "Cinco", b = "Sete", c = "Nove", d = "Três", correct = 1 }
+    , { id = 1155, theme = "ciencia"
+      , text = "Qual parte da planta geralmente fica embaixo da terra?"
+      , a = "Folha", b = "Raiz", c = "Flor", d = "Fruto", correct = 1 }
+    , { id = 1156, theme = "ciencia"
+      , text = "Qual é a principal função dos pulmões?"
+      , a = "Bombear sangue", b = "Permitir a respiração", c = "Digerir alimentos", d = "Filtrar a urina", correct = 1 }
+    , { id = 1157, theme = "ciencia"
+      , text = "Qual é o maior animal terrestre?"
+      , a = "Girafa", b = "Elefante", c = "Rinoceronte", d = "Hipopótamo", correct = 1 }
+    , { id = 1158, theme = "ciencia"
+      , text = "Ao ferver, a água se transforma em quê?"
+      , a = "Gelo", b = "Vapor", c = "Neve", d = "Poça", correct = 1 }
+    , { id = 1159, theme = "ciencia"
+      , text = "Qual sentido usamos para perceber cheiros?"
+      , a = "Tato", b = "Olfato", c = "Paladar", d = "Audição", correct = 1 }
+    , { id = 1160, theme = "ciencia"
+      , text = "Qual animal põe ovos e faz \"cocoricó\"?"
+      , a = "Pato", b = "Galinha", c = "Pombo", d = "Ganso", correct = 1 }
+    , { id = 1161, theme = "ciencia"
+      , text = "Quantas pernas tem um ser humano?"
+      , a = "Duas", b = "Quatro", c = "Seis", d = "Uma", correct = 0 }
+    , { id = 1162, theme = "ciencia"
+      , text = "Em qual planeta nós vivemos?"
+      , a = "Marte", b = "Terra", c = "Vênus", d = "Lua", correct = 1 }
+    , { id = 1163, theme = "ciencia"
+      , text = "Qual é a cor do céu em um dia limpo e ensolarado?"
+      , a = "Verde", b = "Azul", c = "Vermelho", d = "Amarelo", correct = 1 }
+    , { id = 1164, theme = "ciencia"
+      , text = "O que a abelha produz e guarda na colmeia?"
+      , a = "Leite", b = "Mel", c = "Seda", d = "Azeite", correct = 1 }
+    , { id = 1165, theme = "ciencia"
+      , text = "Qual órgão é o centro do pensamento e comanda o corpo?"
+      , a = "Coração", b = "Cérebro", c = "Estômago", d = "Fígado", correct = 1 }
+    , { id = 1166, theme = "ciencia"
+      , text = "Qual astro vemos brilhar à noite e muda de fase (cheia, nova...)?"
+      , a = "Sol", b = "Lua", c = "Marte", d = "Cometa", correct = 1 }
+    , { id = 1167, theme = "ciencia"
+      , text = "Quantos dentes de leite uma criança costuma ter?"
+      , a = "20", b = "28", c = "32", d = "16", correct = 0 }
+    , { id = 1168, theme = "ciencia"
+      , text = "Qual gás forma as bolhas do refrigerante?"
+      , a = "Oxigênio", b = "Gás carbônico", c = "Hidrogênio", d = "Hélio", correct = 1 }
+    , { id = 1169, theme = "ciencia"
+      , text = "Qual animal marinho é famoso por ter oito tentáculos?"
+      , a = "Estrela-do-mar", b = "Polvo", c = "Água-viva", d = "Caranguejo", correct = 1 }
+      -- Ciência: extras intermediárias (1170–1193)
+    , { id = 1170, theme = "ciencia"
+      , text = "Qual é o menor planeta do Sistema Solar?"
+      , a = "Marte", b = "Mercúrio", c = "Vênus", d = "Netuno", correct = 1 }
+    , { id = 1171, theme = "ciencia"
+      , text = "Qual gás liberado por carros é o principal responsável pelo efeito estufa?"
+      , a = "Oxigênio", b = "Gás carbônico", c = "Nitrogênio", d = "Hélio", correct = 1 }
+    , { id = 1172, theme = "ciencia"
+      , text = "Qual órgão filtra o sangue e produz a urina?"
+      , a = "Fígado", b = "Rins", c = "Baço", d = "Pâncreas", correct = 1 }
+    , { id = 1173, theme = "ciencia"
+      , text = "Quantos corações tem um polvo?"
+      , a = "Um", b = "Dois", c = "Três", d = "Quatro", correct = 2 }
+    , { id = 1174, theme = "ciencia"
+      , text = "Qual é a unidade básica da vida?"
+      , a = "Átomo", b = "Célula", c = "Molécula", d = "Tecido", correct = 1 }
+    , { id = 1175, theme = "ciencia"
+      , text = "Qual cientista descobriu a penicilina?"
+      , a = "Louis Pasteur", b = "Alexander Fleming", c = "Marie Curie", d = "Robert Koch", correct = 1 }
+    , { id = 1176, theme = "ciencia"
+      , text = "Qual é o planeta mais quente do Sistema Solar, por causa do efeito estufa?"
+      , a = "Mercúrio", b = "Vênus", c = "Marte", d = "Júpiter", correct = 1 }
+    , { id = 1177, theme = "ciencia"
+      , text = "Qual é o processo em que a lagarta se transforma em borboleta?"
+      , a = "Fotossíntese", b = "Metamorfose", c = "Fermentação", d = "Mitose", correct = 1 }
+    , { id = 1178, theme = "ciencia"
+      , text = "Qual vitamina o corpo produz ao tomar sol?"
+      , a = "Vitamina A", b = "Vitamina D", c = "Vitamina C", d = "Vitamina K", correct = 1 }
+    , { id = 1179, theme = "ciencia"
+      , text = "Qual conjunto de ossos protege o cérebro?"
+      , a = "A coluna", b = "O crânio", c = "As costelas", d = "A mandíbula", correct = 1 }
+    , { id = 1180, theme = "ciencia"
+      , text = "Qual tipo sanguíneo é considerado o doador universal?"
+      , a = "A positivo", b = "O negativo", c = "AB positivo", d = "B negativo", correct = 1 }
+    , { id = 1181, theme = "ciencia"
+      , text = "Qual força mantém os objetos presos à superfície da Terra?"
+      , a = "Magnetismo", b = "Gravidade", c = "Atrito", d = "Eletricidade", correct = 1 }
+    , { id = 1182, theme = "ciencia"
+      , text = "Qual metal é bastante usado nos fios elétricos por conduzir bem eletricidade?"
+      , a = "Ouro", b = "Cobre", c = "Ferro", d = "Chumbo", correct = 1 }
+    , { id = 1183, theme = "ciencia"
+      , text = "Qual é o maior planeta rochoso do Sistema Solar?"
+      , a = "Marte", b = "Terra", c = "Vênus", d = "Mercúrio", correct = 1 }
+    , { id = 1184, theme = "ciencia"
+      , text = "Quais células do sangue transportam o oxigênio pelo corpo?"
+      , a = "Plaquetas", b = "Hemácias", c = "Glóbulos brancos", d = "Plasma", correct = 1 }
+    , { id = 1185, theme = "ciencia"
+      , text = "Qual cientista ganhou dois prêmios Nobel estudando a radioatividade?"
+      , a = "Marie Curie", b = "Rosalind Franklin", c = "Ada Lovelace", d = "Jane Goodall", correct = 0 }
+    , { id = 1186, theme = "ciencia"
+      , text = "Qual camada da atmosfera protege a Terra dos raios ultravioleta?"
+      , a = "Estratosfera", b = "Camada de ozônio", c = "Ionosfera", d = "Troposfera", correct = 1 }
+    , { id = 1187, theme = "ciencia"
+      , text = "Qual órgão produz a insulina no corpo humano?"
+      , a = "Fígado", b = "Pâncreas", c = "Rim", d = "Baço", correct = 1 }
+    , { id = 1188, theme = "ciencia"
+      , text = "Qual é a velocidade aproximada da luz no vácuo?"
+      , a = "30 mil km/s", b = "300 mil km/s", c = "3 mil km/s", d = "3 milhões de km/s", correct = 1 }
+    , { id = 1189, theme = "ciencia"
+      , text = "Qual planeta gira quase \"deitado\", com o eixo muito inclinado?"
+      , a = "Netuno", b = "Urano", c = "Saturno", d = "Júpiter", correct = 1 }
+    , { id = 1190, theme = "ciencia"
+      , text = "Aproximadamente quantos ossos um bebê tem ao nascer?"
+      , a = "206", b = "300", c = "150", d = "400", correct = 1 }
+    , { id = 1191, theme = "ciencia"
+      , text = "Qual gás as plantas liberam para o ar durante a fotossíntese?"
+      , a = "Gás carbônico", b = "Oxigênio", c = "Nitrogênio", d = "Metano", correct = 1 }
+    , { id = 1192, theme = "ciencia"
+      , text = "Qual cientista formulou as três leis do movimento?"
+      , a = "Galileu Galilei", b = "Isaac Newton", c = "Johannes Kepler", d = "Albert Einstein", correct = 1 }
+    , { id = 1193, theme = "ciencia"
+      , text = "Qual é o maior órgão interno do corpo humano?"
+      , a = "Coração", b = "Fígado", c = "Pulmão", d = "Estômago", correct = 1 }
+      -- Ciência: extras difíceis (1194–1199)
+    , { id = 1194, theme = "ciencia"
+      , text = "Qual é o elemento químico mais abundante no universo?"
+      , a = "Hélio", b = "Hidrogênio", c = "Oxigênio", d = "Carbono", correct = 1 }
+    , { id = 1195, theme = "ciencia"
+      , text = "Qual cientista propôs o modelo heliocêntrico, com o Sol no centro?"
+      , a = "Ptolomeu", b = "Nicolau Copérnico", c = "Galileu Galilei", d = "Tycho Brahe", correct = 1 }
+    , { id = 1196, theme = "ciencia"
+      , text = "Qual partícula do átomo tem carga elétrica negativa?"
+      , a = "Próton", b = "Elétron", c = "Nêutron", d = "Fóton", correct = 1 }
+    , { id = 1197, theme = "ciencia"
+      , text = "Qual dupla descreveu a estrutura em dupla hélice do DNA, em 1953?"
+      , a = "Watson e Crick", b = "Mendel e Darwin", c = "Pasteur e Koch", d = "Curie e Becquerel", correct = 0 }
+    , { id = 1198, theme = "ciencia"
+      , text = "Qual lua de Júpiter é a maior lua do Sistema Solar?"
+      , a = "Europa", b = "Ganimedes", c = "Titã", d = "Io", correct = 1 }
+    , { id = 1199, theme = "ciencia"
+      , text = "Qual é o número atômico do hidrogênio, o elemento mais simples?"
+      , a = "1", b = "2", c = "8", d = "0", correct = 0 }
+
+      -- ===== Cinema (500–574, extras 1200–1249) =====
+    , { id = 500, theme = "cinema"
+      , text = "Em qual filme Jack Dawson viaja num navio que naufraga?"
+      , a = "Titanic", b = "Poseidon", c = "O Náufrago", d = "Pearl Harbor", correct = 0 }
+    , { id = 501, theme = "cinema"
+      , text = "Quem dirigiu o filme \"Jurassic Park\" (1993)?"
+      , a = "George Lucas", b = "Steven Spielberg", c = "James Cameron", d = "Ridley Scott", correct = 1 }
+    , { id = 502, theme = "cinema"
+      , text = "Em qual saga aparece o vilão Darth Vader?"
+      , a = "Star Trek", b = "Star Wars", c = "Duna", d = "Matrix", correct = 1 }
+    , { id = 503, theme = "cinema"
+      , text = "Qual estúdio criou o personagem Mickey Mouse?"
+      , a = "Pixar", b = "Disney", c = "Warner Bros.", d = "DreamWorks", correct = 1 }
+    , { id = 504, theme = "cinema"
+      , text = "Qual herói foi picado por uma aranha radioativa?"
+      , a = "Batman", b = "Homem-Aranha", c = "Super-Homem", d = "Hulk", correct = 1 }
+    , { id = 505, theme = "cinema"
+      , text = "No filme \"O Rei Leão\", qual é o nome do leão protagonista?"
+      , a = "Mufasa", b = "Simba", c = "Scar", d = "Nala", correct = 1 }
+    , { id = 506, theme = "cinema"
+      , text = "Em que escola de magia Harry Potter estuda?"
+      , a = "Hogwarts", b = "Beauxbatons", c = "Durmstrang", d = "Ilvermorny", correct = 0 }
+    , { id = 507, theme = "cinema"
+      , text = "Qual filme da Pixar mostra brinquedos que ganham vida?"
+      , a = "Toy Story", b = "Up", c = "Carros", d = "Procurando Nemo", correct = 0 }
+    , { id = 508, theme = "cinema"
+      , text = "Qual ator interpreta o Homem de Ferro no Universo Marvel?"
+      , a = "Chris Evans", b = "Robert Downey Jr.", c = "Chris Hemsworth", d = "Mark Ruffalo", correct = 1 }
+    , { id = 509, theme = "cinema"
+      , text = "Qual animação da Disney tem as irmãs Elsa e Anna?"
+      , a = "Enrolados", b = "Frozen", c = "Moana", d = "Valente", correct = 1 }
+    , { id = 510, theme = "cinema"
+      , text = "Qual arqueólogo aventureiro usa chapéu e chicote?"
+      , a = "Lara Croft", b = "Indiana Jones", c = "Alan Grant", d = "Nathan Drake", correct = 1 }
+    , { id = 511, theme = "cinema"
+      , text = "Em \"Matrix\", qual pílula Neo escolhe para descobrir a verdade?"
+      , a = "A azul", b = "A vermelha", c = "A verde", d = "A amarela", correct = 1 }
+    , { id = 512, theme = "cinema"
+      , text = "Qual diretor fez \"Titanic\" e \"Avatar\"?"
+      , a = "Steven Spielberg", b = "James Cameron", c = "Christopher Nolan", d = "Quentin Tarantino", correct = 1 }
+    , { id = 513, theme = "cinema"
+      , text = "Qual super-herói da DC nasceu no planeta Krypton?"
+      , a = "Batman", b = "Super-Homem", c = "Flash", d = "Aquaman", correct = 1 }
+    , { id = 514, theme = "cinema"
+      , text = "Em qual saga um anel precisa ser destruído em Mordor?"
+      , a = "Harry Potter", b = "O Senhor dos Anéis", c = "As Crônicas de Nárnia", d = "Game of Thrones", correct = 1 }
+    , { id = 515, theme = "cinema"
+      , text = "Qual filme tem um tubarão gigante aterrorizando uma praia?"
+      , a = "Tubarão", b = "Piranha", c = "Megatubarão", d = "Mar Aberto", correct = 0 }
+    , { id = 516, theme = "cinema"
+      , text = "Quem criou a saga Star Wars?"
+      , a = "Steven Spielberg", b = "George Lucas", c = "J.J. Abrams", d = "James Cameron", correct = 1 }
+    , { id = 517, theme = "cinema"
+      , text = "Qual animação da Pixar tem um robô compactador de lixo?"
+      , a = "Robôs", b = "WALL·E", c = "Big Hero 6", d = "Meu Malvado Favorito", correct = 1 }
+    , { id = 518, theme = "cinema"
+      , text = "Em Harry Potter, qual é o nome do vilão sem nariz?"
+      , a = "Snape", b = "Voldemort", c = "Malfoy", d = "Grindelwald", correct = 1 }
+    , { id = 519, theme = "cinema"
+      , text = "Qual super-herói veste um traje de morcego e protege Gotham City?"
+      , a = "Batman", b = "Coringa", c = "Robin", d = "Charada", correct = 0 }
+    , { id = 520, theme = "cinema"
+      , text = "Qual animação da Pixar mostra as emoções vivendo na cabeça de uma menina?"
+      , a = "Divertida Mente", b = "Up", c = "Valente", d = "Soul", correct = 0 }
+    , { id = 521, theme = "cinema"
+      , text = "Qual ator interpretou Jack Sparrow em Piratas do Caribe?"
+      , a = "Orlando Bloom", b = "Johnny Depp", c = "Brad Pitt", d = "Tom Cruise", correct = 1 }
+    , { id = 522, theme = "cinema"
+      , text = "Qual é o nome do peixe-palhaço procurado em uma animação da Pixar?"
+      , a = "Dory", b = "Nemo", c = "Marlin", d = "Bruce", correct = 1 }
+    , { id = 523, theme = "cinema"
+      , text = "Qual filme tem dinossauros clonados em um parque temático?"
+      , a = "Godzilla", b = "Jurassic Park", c = "King Kong", d = "A Era do Gelo", correct = 1 }
+    , { id = 524, theme = "cinema"
+      , text = "Qual super-herói da Marvel tem um martelo mágico chamado Mjölnir?"
+      , a = "Hulk", b = "Thor", c = "Gavião Arqueiro", d = "Capitão América", correct = 1 }
+    , { id = 525, theme = "cinema"
+      , text = "Qual franquia tem carros de corrida e o lema da família?"
+      , a = "Mad Max", b = "Velozes e Furiosos", c = "Rush", d = "Baby Driver", correct = 1 }
+    , { id = 526, theme = "cinema"
+      , text = "Qual animação da Disney tem um leão chamado Simba?"
+      , a = "Tarzan", b = "O Rei Leão", c = "Bambi", d = "Madagascar", correct = 1 }
+    , { id = 527, theme = "cinema"
+      , text = "Qual filme retrata o naufrágio de um transatlântico em 1912?"
+      , a = "Titanic", b = "Poseidon", c = "Pearl Harbor", d = "1917", correct = 0 }
+    , { id = 528, theme = "cinema"
+      , text = "Qual é o time de super-heróis da Marvel liderado por Nick Fury?"
+      , a = "Liga da Justiça", b = "Os Vingadores", c = "X-Men", d = "Quarteto Fantástico", correct = 1 }
+    , { id = 529, theme = "cinema"
+      , text = "Qual estúdio japonês produziu A Viagem de Chihiro?"
+      , a = "Studio Ghibli", b = "Toei", c = "Pixar", d = "Madhouse", correct = 0 }
+    , { id = 530, theme = "cinema"
+      , text = "Qual personagem verde e rabugento é um ogro que vive num pântano?"
+      , a = "Hulk", b = "Shrek", c = "Grinch", d = "Yoda", correct = 1 }
+    , { id = 531, theme = "cinema"
+      , text = "Em De Volta para o Futuro, qual carro vira máquina do tempo?"
+      , a = "Ferrari", b = "DeLorean", c = "Fusca", d = "Cadillac", correct = 1 }
+    , { id = 532, theme = "cinema"
+      , text = "Qual super-herói é conhecido como o Homem de Aço?"
+      , a = "Homem de Ferro", b = "Super-Homem", c = "Batman", d = "Ciclope", correct = 1 }
+    , { id = 533, theme = "cinema"
+      , text = "Qual filme de animação tem os brinquedos Woody e Buzz Lightyear?"
+      , a = "Toy Story", b = "Vida de Inseto", c = "Monstros S.A.", d = "Carros", correct = 0 }
+    , { id = 534, theme = "cinema"
+      , text = "Quem criou o Mickey Mouse e fundou um famoso estúdio de animação?"
+      , a = "Walt Disney", b = "Stan Lee", c = "Steven Spielberg", d = "Hayao Miyazaki", correct = 0 }
+    , { id = 535, theme = "cinema"
+      , text = "Qual animação da Pixar tem uma casa que voa com muitos balões?"
+      , a = "Up", b = "Peter Pan", c = "Os Incríveis", d = "Bolt", correct = 0 }
+    , { id = 536, theme = "cinema"
+      , text = "Qual saga de filmes tem hobbits, elfos e um anel poderoso?"
+      , a = "Harry Potter", b = "O Senhor dos Anéis", c = "As Crônicas de Nárnia", d = "Percy Jackson", correct = 1 }
+    , { id = 537, theme = "cinema"
+      , text = "Qual filme de terror tem o palhaço Pennywise?"
+      , a = "It: A Coisa", b = "Halloween", c = "Sexta-Feira 13", d = "Invocação do Mal", correct = 0 }
+    , { id = 538, theme = "cinema"
+      , text = "Qual super-heroína da DC é uma princesa amazona?"
+      , a = "Viúva Negra", b = "Mulher-Maravilha", c = "Capitã Marvel", d = "Batgirl", correct = 1 }
+    , { id = 539, theme = "cinema"
+      , text = "Qual filme tem um menino deixado sozinho em casa enfrentando ladrões?"
+      , a = "Esqueceram de Mim", b = "Curtindo a Vida Adoidado", c = "Uma Babá Quase Perfeita", d = "Kevin, o Terrível", correct = 0 }
+    , { id = 540, theme = "cinema"
+      , text = "Qual animação tem um panda que se torna mestre de kung fu?"
+      , a = "Kung Fu Panda", b = "Turbo", c = "Madagascar", d = "Bee Movie", correct = 0 }
+    , { id = 541, theme = "cinema"
+      , text = "Qual diretor fez A Origem (Inception) e Interestelar?"
+      , a = "Quentin Tarantino", b = "Christopher Nolan", c = "Steven Spielberg", d = "James Cameron", correct = 1 }
+    , { id = 542, theme = "cinema"
+      , text = "Qual filme tem um extraterrestre que quer voltar para casa?"
+      , a = "E.T.", b = "Alien", c = "Contatos Imediatos", d = "Homens de Preto", correct = 0 }
+    , { id = 543, theme = "cinema"
+      , text = "Qual é o nome do fiel mordomo do Batman?"
+      , a = "Jarvis", b = "Alfred", c = "Lucius", d = "Gordon", correct = 1 }
+    , { id = 544, theme = "cinema"
+      , text = "Qual animação da Disney tem uma sereia chamada Ariel?"
+      , a = "A Pequena Sereia", b = "Moana", c = "Enrolados", d = "A Bela e a Fera", correct = 0 }
+    , { id = 545, theme = "cinema"
+      , text = "De qual saga é a frase: Que a Força esteja com você?"
+      , a = "Star Trek", b = "Star Wars", c = "Guardiões da Galáxia", d = "Duna", correct = 1 }
+    , { id = 546, theme = "cinema"
+      , text = "Qual ator ganhou o Oscar de 2020 interpretando o Coringa?"
+      , a = "Heath Ledger", b = "Joaquin Phoenix", c = "Jared Leto", d = "Jack Nicholson", correct = 1 }
+    , { id = 547, theme = "cinema"
+      , text = "Qual animação da Pixar tem o carro de corrida Relâmpago McQueen?"
+      , a = "Turbo", b = "Carros", c = "Toy Story", d = "WALL·E", correct = 1 }
+    , { id = 548, theme = "cinema"
+      , text = "Qual é o famoso espião britânico de código 007?"
+      , a = "Missão Impossível", b = "James Bond", c = "Jason Bourne", d = "Kingsman", correct = 1 }
+    , { id = 549, theme = "cinema"
+      , text = "Qual animação da Pixar tem um ratinho que quer ser chef em Paris?"
+      , a = "Ratatouille", b = "Bee Movie", c = "Vida de Inseto", d = "Meu Malvado Favorito", correct = 0 }
+    , { id = 550, theme = "cinema"
+      , text = "Em qual série de filmes um jovem bruxo estuda na escola de Hogwarts?"
+      , a = "O Senhor dos Anéis", b = "Harry Potter", c = "As Crônicas de Nárnia", d = "Percy Jackson", correct = 1 }
+    , { id = 551, theme = "cinema"
+      , text = "Em qual animação da Disney a rainha do gelo Elsa canta \"Let It Go\"?"
+      , a = "Enrolados", b = "Frozen", c = "Moana", d = "Encanto", correct = 1 }
+    , { id = 552, theme = "cinema"
+      , text = "Qual herói da Marvel usa uma armadura e foi vivido por Robert Downey Jr.?"
+      , a = "Capitão América", b = "Homem de Ferro", c = "Thor", d = "Hulk", correct = 1 }
+    , { id = 553, theme = "cinema"
+      , text = "Qual filme de James Cameron retrata o naufrágio de um navio em 1912?"
+      , a = "Titanic", b = "Poseidon", c = "Náufrago", d = "Pearl Harbor", correct = 0 }
+    , { id = 554, theme = "cinema"
+      , text = "Em Star Wars, qual vilão usa capa e máscara pretas e respira alto?"
+      , a = "Kylo Ren", b = "Darth Vader", c = "Imperador Palpatine", d = "Boba Fett", correct = 1 }
+    , { id = 555, theme = "cinema"
+      , text = "Qual animação da Disney tem um leãozinho chamado Simba?"
+      , a = "Bambi", b = "O Rei Leão", c = "Tarzan", d = "Madagascar", correct = 1 }
+    , { id = 556, theme = "cinema"
+      , text = "Qual filme tem dinossauros clonados em um parque temático?"
+      , a = "Jurassic Park", b = "King Kong", c = "Godzilla", d = "A Era do Gelo", correct = 0 }
+    , { id = 557, theme = "cinema"
+      , text = "Qual trilogia se passa na Terra-média, com hobbits e um anel mágico?"
+      , a = "Harry Potter", b = "O Senhor dos Anéis", c = "As Crônicas de Nárnia", d = "Game of Thrones", correct = 1 }
+    , { id = 558, theme = "cinema"
+      , text = "Qual estúdio de animação produziu Toy Story?"
+      , a = "DreamWorks", b = "Pixar", c = "Illumination", d = "Blue Sky", correct = 1 }
+    , { id = 559, theme = "cinema"
+      , text = "Qual é o nome do boneco caubói protagonista de Toy Story?"
+      , a = "Buzz", b = "Woody", c = "Jessie", d = "Rex", correct = 1 }
+    , { id = 560, theme = "cinema"
+      , text = "Qual herói é um bilionário que combate o crime em Gotham vestido de morcego?"
+      , a = "Superman", b = "Batman", c = "Coringa", d = "Flash", correct = 1 }
+    , { id = 561, theme = "cinema"
+      , text = "Em qual franquia Dominic Toretto lidera corridas e assaltos com carros?"
+      , a = "Need for Speed", b = "Velozes e Furiosos", c = "Baby Driver", d = "Rush", correct = 1 }
+    , { id = 562, theme = "cinema"
+      , text = "Qual animação da Pixar mostra as emoções dentro da cabeça de uma menina?"
+      , a = "Divertida Mente", b = "Up: Altas Aventuras", c = "Valente", d = "Soul", correct = 0 }
+    , { id = 563, theme = "cinema"
+      , text = "Qual filme de terror tem um palhaço assustador chamado Pennywise?"
+      , a = "Invocação do Mal", b = "It: A Coisa", c = "Sobrenatural", d = "Halloween", correct = 1 }
+    , { id = 564, theme = "cinema"
+      , text = "Qual arqueólogo aventureiro de chapéu e chicote foi vivido por Harrison Ford?"
+      , a = "Lara Croft", b = "Indiana Jones", c = "Nathan Drake", d = "Allan Quatermain", correct = 1 }
+    , { id = 565, theme = "cinema"
+      , text = "Qual equipe da Marvel reúne heróis como Homem de Ferro, Thor e Hulk?"
+      , a = "Liga da Justiça", b = "Os Vingadores", c = "Quarteto Fantástico", d = "Guardiões da Galáxia", correct = 1 }
+    , { id = 566, theme = "cinema"
+      , text = "Qual filme brasileiro retrata a vida na Cidade de Deus, no Rio de Janeiro?"
+      , a = "Tropa de Elite", b = "Cidade de Deus", c = "Central do Brasil", d = "Carandiru", correct = 1 }
+    , { id = 567, theme = "cinema"
+      , text = "Qual animação da DreamWorks tem um ogro verde mal-humorado?"
+      , a = "Shrek", b = "Monstros S.A.", c = "Como Treinar o Seu Dragão", d = "Trolls", correct = 0 }
+    , { id = 568, theme = "cinema"
+      , text = "Qual diretor dirigiu Tubarão, E.T. e Jurassic Park?"
+      , a = "James Cameron", b = "Steven Spielberg", c = "George Lucas", d = "Christopher Nolan", correct = 1 }
+    , { id = 569, theme = "cinema"
+      , text = "Em Star Wars, qual é o pequeno mestre Jedi verde e sábio?"
+      , a = "Yoda", b = "Chewbacca", c = "R2-D2", d = "Jabba", correct = 0 }
+    , { id = 570, theme = "cinema"
+      , text = "Qual filme da Pixar mostra um idoso que voa com a casa presa a balões?"
+      , a = "Wall-E", b = "Up: Altas Aventuras", c = "Procurando Nemo", d = "Ratatouille", correct = 1 }
+    , { id = 571, theme = "cinema"
+      , text = "Qual herói veio do planeta Krypton e usa uma capa vermelha?"
+      , a = "Batman", b = "Superman", c = "Homem-Aranha", d = "Shazam", correct = 1 }
+    , { id = 572, theme = "cinema"
+      , text = "Qual animação tem uma menina havaiana e um alienígena azul chamado Stitch?"
+      , a = "Lilo & Stitch", b = "Moana", c = "Vaiana", d = "Encanto", correct = 0 }
+    , { id = 573, theme = "cinema"
+      , text = "Qual saga de aventura tem o pirata Capitão Jack Sparrow?"
+      , a = "Peter Pan", b = "Piratas do Caribe", c = "Sindbad", d = "Hook", correct = 1 }
+    , { id = 574, theme = "cinema"
+      , text = "Qual herói da Marvel solta teias e é picado por uma aranha radioativa?"
+      , a = "Homem-Aranha", b = "Demolidor", c = "Pantera Negra", d = "Gavião Arqueiro", correct = 0 }
+      -- Cinema: extras fáceis (1200–1219)
+    , { id = 1200, theme = "cinema"
+      , text = "Qual animação da Disney tem o boneco de neve Olaf?"
+      , a = "Moana", b = "Frozen", c = "Enrolados", d = "Valente", correct = 1 }
+    , { id = 1201, theme = "cinema"
+      , text = "Qual filme tem um alienígena que quer \"telefonar para casa\"?"
+      , a = "E.T. — O Extraterrestre", b = "Alien", c = "Wall-E", d = "Homens de Preto", correct = 0 }
+    , { id = 1202, theme = "cinema"
+      , text = "Qual super-herói usa um escudo com uma estrela e as cores dos EUA?"
+      , a = "Thor", b = "Capitão América", c = "Homem de Ferro", d = "Hulk", correct = 1 }
+    , { id = 1203, theme = "cinema"
+      , text = "Qual herói fica verde e gigante quando sente muita raiva?"
+      , a = "Coisa", b = "Hulk", c = "Groot", d = "Abominável", correct = 1 }
+    , { id = 1204, theme = "cinema"
+      , text = "Qual animação da Pixar tem carros que falam e o piloto Relâmpago McQueen?"
+      , a = "Carros", b = "Toy Story", c = "Turbo", d = "Vida de Inseto", correct = 0 }
+    , { id = 1205, theme = "cinema"
+      , text = "Qual princesa perde o sapatinho de cristal à meia-noite?"
+      , a = "Branca de Neve", b = "Cinderela", c = "Bela", d = "Rapunzel", correct = 1 }
+    , { id = 1206, theme = "cinema"
+      , text = "Qual animação tem um peixinho-palhaço chamado Nemo que se perde no oceano?"
+      , a = "Procurando Nemo", b = "O Espanta Tubarões", c = "A Pequena Sereia", d = "Moana", correct = 0 }
+    , { id = 1207, theme = "cinema"
+      , text = "Qual animação tem o mamute Manny, a preguiça Sid e o tigre Diego?"
+      , a = "Madagascar", b = "A Era do Gelo", c = "Rio", d = "Kung Fu Panda", correct = 1 }
+    , { id = 1208, theme = "cinema"
+      , text = "Qual princesa tem cabelos mágicos e longos no filme \"Enrolados\"?"
+      , a = "Elsa", b = "Rapunzel", c = "Ariel", d = "Jasmine", correct = 1 }
+    , { id = 1209, theme = "cinema"
+      , text = "Qual animação tem um panda que se torna mestre de kung fu, chamado Po?"
+      , a = "Kung Fu Panda", b = "Turbo", c = "Bee Movie", d = "Rio", correct = 0 }
+    , { id = 1210, theme = "cinema"
+      , text = "Qual animação da Pixar tem um robozinho que junta lixo na Terra?"
+      , a = "Wall-E", b = "Robôs", c = "Big Hero 6", d = "Transformers", correct = 0 }
+    , { id = 1211, theme = "cinema"
+      , text = "Qual animação tem araras azuis se aventurando no Rio de Janeiro?"
+      , a = "Rio", b = "Up", c = "Zootopia", d = "Vaiana", correct = 0 }
+    , { id = 1212, theme = "cinema"
+      , text = "Qual super-heroína usa um laço da verdade e braceletes que desviam balas?"
+      , a = "Viúva Negra", b = "Mulher-Maravilha", c = "Capitã Marvel", d = "Gaviã Arqueira", correct = 1 }
+    , { id = 1213, theme = "cinema"
+      , text = "Qual animação tem monstros que assustam crianças para gerar energia?"
+      , a = "Monstros S.A.", b = "Shrek", c = "Hotel Transilvânia", d = "Os Incríveis", correct = 0 }
+    , { id = 1214, theme = "cinema"
+      , text = "Qual animação da Pixar tem uma família inteira de super-heróis?"
+      , a = "Os Incríveis", b = "Shazam", c = "Quarteto Fantástico", d = "Liga da Justiça", correct = 0 }
+    , { id = 1215, theme = "cinema"
+      , text = "Qual animação da Disney tem a jovem Moana navegando pelo oceano?"
+      , a = "Frozen", b = "Moana", c = "Valente", d = "Encanto", correct = 1 }
+    , { id = 1216, theme = "cinema"
+      , text = "Qual super-herói é rápido como um raio e veste um uniforme vermelho?"
+      , a = "Flash", b = "Mercúrio", c = "Ciclone", d = "Vento", correct = 0 }
+    , { id = 1217, theme = "cinema"
+      , text = "Qual animação da Disney tem a família Madrigal e uma casa mágica na Colômbia?"
+      , a = "Coco", b = "Encanto", c = "Vivo", d = "Luca", correct = 1 }
+    , { id = 1218, theme = "cinema"
+      , text = "Qual super-herói da Marvel é o rei de Wakanda, o \"Pantera Negra\"?"
+      , a = "Pantera Negra", b = "Blade", c = "Falcão", d = "Luke Cage", correct = 0 }
+    , { id = 1219, theme = "cinema"
+      , text = "Qual animação tem um garoto mexicano que visita a Terra dos Mortos cheia de música?"
+      , a = "Coco", b = "O Livro da Vida", c = "Encanto", d = "Vivo", correct = 0 }
+      -- Cinema: extras intermediárias (1220–1243)
+    , { id = 1220, theme = "cinema"
+      , text = "Qual diretor criou a franquia Star Wars, dirigindo a trilogia original?"
+      , a = "Steven Spielberg", b = "George Lucas", c = "James Cameron", d = "Ridley Scott", correct = 1 }
+    , { id = 1221, theme = "cinema"
+      , text = "Qual ator venceu o Oscar interpretando o Coringa no filme \"Coringa\" (2019)?"
+      , a = "Heath Ledger", b = "Joaquin Phoenix", c = "Jared Leto", d = "Jack Nicholson", correct = 1 }
+    , { id = 1222, theme = "cinema"
+      , text = "Qual ator interpretou o Coringa em \"Batman: O Cavaleiro das Trevas\" (2008)?"
+      , a = "Joaquin Phoenix", b = "Heath Ledger", c = "Jared Leto", d = "Jack Nicholson", correct = 1 }
+    , { id = 1223, theme = "cinema"
+      , text = "Qual diretor é conhecido por filmes como \"A Origem\" e \"Interestelar\"?"
+      , a = "Christopher Nolan", b = "Denis Villeneuve", c = "Quentin Tarantino", d = "David Fincher", correct = 0 }
+    , { id = 1224, theme = "cinema"
+      , text = "Qual animação do Studio Ghibli mostra uma menina no mundo dos espíritos?"
+      , a = "Meu Amigo Totoro", b = "A Viagem de Chihiro", c = "Ponyo", d = "O Castelo Animado", correct = 1 }
+    , { id = 1225, theme = "cinema"
+      , text = "Qual saga de cinema é baseada nos livros de fantasia de J.R.R. Tolkien?"
+      , a = "Harry Potter", b = "O Senhor dos Anéis", c = "As Crônicas de Nárnia", d = "Percy Jackson", correct = 1 }
+    , { id = 1226, theme = "cinema"
+      , text = "Qual ator interpretou o Capitão Jack Sparrow em Piratas do Caribe?"
+      , a = "Orlando Bloom", b = "Johnny Depp", c = "Brad Pitt", d = "Colin Farrell", correct = 1 }
+    , { id = 1227, theme = "cinema"
+      , text = "Qual filme de José Padilha tem o Capitão Nascimento e a polícia do Rio?"
+      , a = "Cidade de Deus", b = "Tropa de Elite", c = "Carandiru", d = "Ônibus 174", correct = 1 }
+    , { id = 1228, theme = "cinema"
+      , text = "Qual estúdio fez \"Meu Malvado Favorito\" e os Minions?"
+      , a = "Pixar", b = "Illumination", c = "DreamWorks", d = "Blue Sky", correct = 1 }
+    , { id = 1229, theme = "cinema"
+      , text = "Qual filme de James Cameron, de 2009, se passa no planeta Pandora?"
+      , a = "Avatar", b = "Prometheus", c = "Interestelar", d = "Guardiões da Galáxia", correct = 0 }
+    , { id = 1230, theme = "cinema"
+      , text = "Qual atriz interpretou Hermione Granger nos filmes de Harry Potter?"
+      , a = "Emma Stone", b = "Emma Watson", c = "Emma Roberts", d = "Anya Taylor-Joy", correct = 1 }
+    , { id = 1231, theme = "cinema"
+      , text = "Qual ator interpretou o mago Gandalf em O Senhor dos Anéis?"
+      , a = "Ian McKellen", b = "Patrick Stewart", c = "Christopher Lee", d = "Michael Gambon", correct = 0 }
+    , { id = 1232, theme = "cinema"
+      , text = "A qual universo de terror pertence a boneca assustadora Annabelle?"
+      , a = "Invocação do Mal", b = "Brinquedo Assassino", c = "A Órfã", d = "Premonição", correct = 0 }
+    , { id = 1233, theme = "cinema"
+      , text = "Qual série de filmes de espionagem tem o agente 007?"
+      , a = "Missão: Impossível", b = "007 — James Bond", c = "Bourne", d = "Kingsman", correct = 1 }
+    , { id = 1234, theme = "cinema"
+      , text = "Qual filme da Marvel, de 2019, encerrou de forma épica a Saga do Infinito?"
+      , a = "Vingadores: Guerra Infinita", b = "Vingadores: Ultimato", c = "Capitã Marvel", d = "Homem de Ferro 3", correct = 1 }
+    , { id = 1235, theme = "cinema"
+      , text = "Qual estúdio fez a animação \"Como Treinar o Seu Dragão\"?"
+      , a = "Pixar", b = "DreamWorks", c = "Illumination", d = "Walt Disney", correct = 1 }
+    , { id = 1236, theme = "cinema"
+      , text = "Qual saga de vampiros e lobisomens tem o casal Bella e Edward?"
+      , a = "Diários de um Vampiro", b = "Crepúsculo", c = "Entrevista com o Vampiro", d = "Blade", correct = 1 }
+    , { id = 1237, theme = "cinema"
+      , text = "Qual filme dirigido por Quentin Tarantino tem dois assassinos filosóficos?"
+      , a = "Pulp Fiction", b = "Cães de Aluguel", c = "Kill Bill", d = "Bastardos Inglórios", correct = 0 }
+    , { id = 1238, theme = "cinema"
+      , text = "Qual herói da Marvel é cego, mas tem sentidos super aguçados?"
+      , a = "Gavião Arqueiro", b = "Demolidor", c = "Motoqueiro Fantasma", d = "Justiceiro", correct = 1 }
+    , { id = 1239, theme = "cinema"
+      , text = "Qual filme dos anos 80 tem um carro DeLorean que viaja no tempo?"
+      , a = "De Volta para o Futuro", b = "O Exterminador do Futuro", c = "Efeito Borboleta", d = "Looper", correct = 0 }
+    , { id = 1240, theme = "cinema"
+      , text = "Quem dirigiu o clássico \"O Poderoso Chefão\"?"
+      , a = "Martin Scorsese", b = "Francis Ford Coppola", c = "Brian De Palma", d = "Sergio Leone", correct = 1 }
+    , { id = 1241, theme = "cinema"
+      , text = "Qual ator interpretou o Wolverine nos filmes dos X-Men por quase 20 anos?"
+      , a = "Hugh Jackman", b = "Ryan Reynolds", c = "Patrick Stewart", d = "James McAvoy", correct = 0 }
+    , { id = 1242, theme = "cinema"
+      , text = "Qual equipe da Marvel tem o Groot e o Senhor das Estrelas?"
+      , a = "Os Vingadores", b = "Guardiões da Galáxia", c = "Eternos", d = "Liga da Justiça", correct = 1 }
+    , { id = 1243, theme = "cinema"
+      , text = "Qual atriz interpretou a Viúva Negra nos filmes da Marvel?"
+      , a = "Scarlett Johansson", b = "Brie Larson", c = "Elizabeth Olsen", d = "Gal Gadot", correct = 0 }
+      -- Cinema: extras difíceis (1244–1249)
+    , { id = 1244, theme = "cinema"
+      , text = "Qual filme foi o primeiro falado em outra língua a vencer o Oscar de Melhor Filme (2020)?"
+      , a = "Roma", b = "Parasita", c = "O Tigre e o Dragão", d = "A Vida é Bela", correct = 1 }
+    , { id = 1245, theme = "cinema"
+      , text = "Qual diretor é conhecido como o \"mestre do suspense\" (Psicose, Os Pássaros)?"
+      , a = "Stanley Kubrick", b = "Alfred Hitchcock", c = "Orson Welles", d = "Roman Polanski", correct = 1 }
+    , { id = 1246, theme = "cinema"
+      , text = "Em qual filme de 1994 o protagonista atravessa correndo a história dos EUA?"
+      , a = "Forrest Gump", b = "Náufrago", c = "Uma Mente Brilhante", d = "O Curioso Caso de Benjamin Button", correct = 0 }
+    , { id = 1247, theme = "cinema"
+      , text = "Qual animação de 1995 foi o primeiro longa-metragem totalmente em computação gráfica?"
+      , a = "Shrek", b = "Toy Story", c = "Formiguinhaz", d = "A Fuga das Galinhas", correct = 1 }
+    , { id = 1248, theme = "cinema"
+      , text = "Qual ator interpretou Don Vito Corleone no filme \"O Poderoso Chefão\" (1972)?"
+      , a = "Al Pacino", b = "Marlon Brando", c = "Robert De Niro", d = "James Caan", correct = 1 }
+    , { id = 1249, theme = "cinema"
+      , text = "Qual filme de 1927 é considerado o primeiro longa com som sincronizado?"
+      , a = "Luzes da Cidade", b = "O Cantor de Jazz", c = "Metrópolis", d = "O Nascimento de uma Nação", correct = 1 }
+
+      -- ===== Música (600–674, extras 1250–1299) =====
+    , { id = 600, theme = "musica"
+      , text = "Qual instrumento tem 88 teclas?"
+      , a = "Violão", b = "Piano", c = "Harpa", d = "Acordeão", correct = 1 }
+    , { id = 601, theme = "musica"
+      , text = "Quantas cordas tem um violão tradicional?"
+      , a = "Quatro", b = "Cinco", c = "Seis", d = "Sete", correct = 2 }
+    , { id = 602, theme = "musica"
+      , text = "Qual banda britânica teve John, Paul, George e Ringo?"
+      , a = "Rolling Stones", b = "The Beatles", c = "Queen", d = "Pink Floyd", correct = 1 }
+    , { id = 603, theme = "musica"
+      , text = "Qual ritmo brasileiro é o grande símbolo do Carnaval do Rio?"
+      , a = "Forró", b = "Samba", c = "Sertanejo", d = "Funk", correct = 1 }
+    , { id = 604, theme = "musica"
+      , text = "Quem é conhecido como o \"Rei do Pop\"?"
+      , a = "Elvis Presley", b = "Michael Jackson", c = "Prince", d = "Freddie Mercury", correct = 1 }
+    , { id = 605, theme = "musica"
+      , text = "Qual destes é um instrumento de percussão?"
+      , a = "Violino", b = "Bateria", c = "Flauta", d = "Trompete", correct = 1 }
+    , { id = 606, theme = "musica"
+      , text = "Quantas notas musicais básicas existem (dó, ré, mi...)?"
+      , a = "Cinco", b = "Seis", c = "Sete", d = "Oito", correct = 2 }
+    , { id = 607, theme = "musica"
+      , text = "Qual ritmo nordestino é associado a Luiz Gonzaga e à sanfona?"
+      , a = "Samba", b = "Forró", c = "Frevo", d = "Maracatu", correct = 1 }
+    , { id = 608, theme = "musica"
+      , text = "Qual banda de rock tinha Freddie Mercury como vocalista?"
+      , a = "The Beatles", b = "Queen", c = "Led Zeppelin", d = "U2", correct = 1 }
+    , { id = 609, theme = "musica"
+      , text = "Qual destes é um instrumento de teclas?"
+      , a = "Violino", b = "Piano", c = "Bateria", d = "Violão", correct = 1 }
+    , { id = 610, theme = "musica"
+      , text = "\"Garota de Ipanema\" pertence a qual gênero musical brasileiro?"
+      , a = "Samba", b = "Bossa Nova", c = "Axé", d = "Choro", correct = 1 }
+    , { id = 611, theme = "musica"
+      , text = "Quem compôs a música de \"Garota de Ipanema\"?"
+      , a = "Chico Buarque", b = "Tom Jobim", c = "Caetano Veloso", d = "Gilberto Gil", correct = 1 }
+    , { id = 612, theme = "musica"
+      , text = "Qual destes é um instrumento de cordas?"
+      , a = "Trompete", b = "Violino", c = "Flauta", d = "Tambor", correct = 1 }
+    , { id = 613, theme = "musica"
+      , text = "Qual país é o berço do reggae e de Bob Marley?"
+      , a = "Cuba", b = "Jamaica", c = "Brasil", d = "Estados Unidos", correct = 1 }
+    , { id = 614, theme = "musica"
+      , text = "Quantos músicos formam um \"quarteto\"?"
+      , a = "Dois", b = "Três", c = "Quatro", d = "Cinco", correct = 2 }
+    , { id = 615, theme = "musica"
+      , text = "Qual instrumento de cordas é tocado com um arco, comum em orquestras?"
+      , a = "Violino", b = "Flauta", c = "Trompete", d = "Bateria", correct = 0 }
+    , { id = 616, theme = "musica"
+      , text = "Quantas cordas tem um violino?"
+      , a = "Quatro", b = "Cinco", c = "Seis", d = "Sete", correct = 0 }
+    , { id = 617, theme = "musica"
+      , text = "Qual banda britânica gravou o álbum \"The Dark Side of the Moon\"?"
+      , a = "The Beatles", b = "Pink Floyd", c = "Queen", d = "Rolling Stones", correct = 1 }
+    , { id = 618, theme = "musica"
+      , text = "Qual gênero musical tem Louis Armstrong como um de seus ícones?"
+      , a = "Blues", b = "Jazz", c = "Rock", d = "Country", correct = 1 }
+    , { id = 619, theme = "musica"
+      , text = "Qual cantora é conhecida como a \"Rainha do Pop\"?"
+      , a = "Beyoncé", b = "Madonna", c = "Lady Gaga", d = "Rihanna", correct = 1 }
+    , { id = 620, theme = "musica"
+      , text = "Qual instrumento é tocado soprando e tapando furos com os dedos?"
+      , a = "Tambor", b = "Flauta", c = "Violão", d = "Piano", correct = 1 }
+    , { id = 621, theme = "musica"
+      , text = "Qual ritmo nasceu na Bahia e é ligado ao Carnaval de Salvador?"
+      , a = "Samba", b = "Axé", c = "Forró", d = "Frevo", correct = 1 }
+    , { id = 622, theme = "musica"
+      , text = "Qual banda de rock tem Mick Jagger como vocalista?"
+      , a = "The Beatles", b = "Rolling Stones", c = "Led Zeppelin", d = "The Who", correct = 1 }
+    , { id = 623, theme = "musica"
+      , text = "Qual instrumento de percussão da roda de samba é redondo e tem plaquinhas?"
+      , a = "Pandeiro", b = "Berimbau", c = "Cavaquinho", d = "Sanfona", correct = 0 }
+    , { id = 624, theme = "musica"
+      , text = "Quantas teclas pretas há em uma oitava do piano?"
+      , a = "Três", b = "Cinco", c = "Sete", d = "Oito", correct = 1 }
+    , { id = 625, theme = "musica"
+      , text = "Qual instrumento de cordas da roda de samba é menor que o violão?"
+      , a = "Bandolim", b = "Cavaquinho", c = "Viola", d = "Contrabaixo", correct = 1 }
+    , { id = 626, theme = "musica"
+      , text = "Qual instrumento em forma de arco com cabaça é usado na capoeira?"
+      , a = "Atabaque", b = "Berimbau", c = "Pandeiro", d = "Agogô", correct = 1 }
+    , { id = 627, theme = "musica"
+      , text = "Qual banda irlandesa tem o vocalista Bono?"
+      , a = "Coldplay", b = "U2", c = "Oasis", d = "The Cranberries", correct = 1 }
+    , { id = 628, theme = "musica"
+      , text = "Qual cantor brasileiro é conhecido como o \"Rei\" da música romântica?"
+      , a = "Roberto Carlos", b = "Caetano Veloso", c = "Chico Buarque", d = "Gilberto Gil", correct = 0 }
+    , { id = 629, theme = "musica"
+      , text = "Qual gênero jamaicano tem Bob Marley como maior ícone?"
+      , a = "Ska", b = "Reggae", c = "Salsa", d = "Merengue", correct = 1 }
+    , { id = 630, theme = "musica"
+      , text = "Qual instrumento tem teclado e tubos e é comum em igrejas?"
+      , a = "Piano", b = "Órgão", c = "Acordeão", d = "Cravo", correct = 1 }
+    , { id = 631, theme = "musica"
+      , text = "Qual nota musical vem logo depois do \"dó\"?"
+      , a = "Ré", b = "Mi", c = "Fá", d = "Si", correct = 0 }
+    , { id = 632, theme = "musica"
+      , text = "Qual banda gravou a música \"Bohemian Rhapsody\"?"
+      , a = "The Beatles", b = "Queen", c = "Led Zeppelin", d = "Nirvana", correct = 1 }
+    , { id = 633, theme = "musica"
+      , text = "Qual instrumento tem pratos e tambores tocados com baquetas?"
+      , a = "Bateria", b = "Piano", c = "Violino", d = "Flauta", correct = 0 }
+    , { id = 634, theme = "musica"
+      , text = "Qual cantora pop lançou o álbum \"1989\" e a música \"Shake It Off\"?"
+      , a = "Katy Perry", b = "Taylor Swift", c = "Adele", d = "Ariana Grande", correct = 1 }
+    , { id = 635, theme = "musica"
+      , text = "Qual gênero brasileiro canta a vida no campo e o interior?"
+      , a = "Pagode", b = "Sertanejo", c = "Bossa Nova", d = "Choro", correct = 1 }
+    , { id = 636, theme = "musica"
+      , text = "Qual instrumento de cordas elétrico é símbolo do rock?"
+      , a = "Baixo", b = "Guitarra", c = "Teclado", d = "Bateria", correct = 1 }
+    , { id = 637, theme = "musica"
+      , text = "A qual família de instrumentos pertence o trompete?"
+      , a = "Cordas", b = "Sopro (metais)", c = "Percussão", d = "Teclas", correct = 1 }
+    , { id = 638, theme = "musica"
+      , text = "Qual compositor alemão ficou surdo e compôs a Nona Sinfonia?"
+      , a = "Mozart", b = "Beethoven", c = "Bach", d = "Chopin", correct = 1 }
+    , { id = 639, theme = "musica"
+      , text = "Qual estilo é tocado por DJs em festas com batidas eletrônicas?"
+      , a = "Jazz", b = "Música eletrônica", c = "Blues", d = "Ópera", correct = 1 }
+    , { id = 640, theme = "musica"
+      , text = "Qual instrumento de fole é típico do forró?"
+      , a = "Sanfona", b = "Zabumba", c = "Triângulo", d = "Pandeiro", correct = 0 }
+    , { id = 641, theme = "musica"
+      , text = "Qual banda de rock inglesa gravou \"Stairway to Heaven\"?"
+      , a = "Deep Purple", b = "Led Zeppelin", c = "Black Sabbath", d = "The Who", correct = 1 }
+    , { id = 642, theme = "musica"
+      , text = "Qual é o instrumento de cordas mais grave em uma banda de rock?"
+      , a = "Guitarra", b = "Baixo", c = "Violino", d = "Bandolim", correct = 1 }
+    , { id = 643, theme = "musica"
+      , text = "Qual artista brasileira ficou famosa cantando com frutas na cabeça?"
+      , a = "Elis Regina", b = "Carmen Miranda", c = "Gal Costa", d = "Marisa Monte", correct = 1 }
+    , { id = 644, theme = "musica"
+      , text = "Quantos músicos há em um \"trio\"?"
+      , a = "Dois", b = "Três", c = "Quatro", d = "Cinco", correct = 1 }
+    , { id = 645, theme = "musica"
+      , text = "Qual gênero urbano tem MCs que rimam sobre a realidade?"
+      , a = "Rap", b = "Country", c = "Ópera", d = "Bolero", correct = 0 }
+    , { id = 646, theme = "musica"
+      , text = "Qual instrumento de cordas da orquestra é o maior e se toca em pé?"
+      , a = "Violino", b = "Violoncelo", c = "Contrabaixo", d = "Viola", correct = 2 }
+    , { id = 647, theme = "musica"
+      , text = "Qual compositor austríaco, menino-prodígio, escreveu a \"Pequena Serenata Noturna\"?"
+      , a = "Mozart", b = "Beethoven", c = "Haydn", d = "Vivaldi", correct = 0 }
+    , { id = 648, theme = "musica"
+      , text = "Qual banda de rock brasileira teve Renato Russo como vocalista?"
+      , a = "Titãs", b = "Legião Urbana", c = "Paralamas do Sucesso", d = "Capital Inicial", correct = 1 }
+    , { id = 649, theme = "musica"
+      , text = "Qual é o nome de um conjunto de cinco músicos?"
+      , a = "Trio", b = "Quarteto", c = "Quinteto", d = "Sexteto", correct = 2 }
+    , { id = 650, theme = "musica"
+      , text = "Quantas teclas tem um piano de tamanho padrão?"
+      , a = "66", b = "76", c = "88", d = "100", correct = 2 }
+    , { id = 651, theme = "musica"
+      , text = "Qual banda britânica teve John Lennon e Paul McCartney?"
+      , a = "Rolling Stones", b = "The Beatles", c = "Queen", d = "Pink Floyd", correct = 1 }
+    , { id = 652, theme = "musica"
+      , text = "Qual instrumento de cordas é tocado com um arco, apoiado no ombro?"
+      , a = "Violão", b = "Violino", c = "Harpa", d = "Contrabaixo", correct = 1 }
+    , { id = 653, theme = "musica"
+      , text = "Qual cantora é conhecida como a \"Rainha do Pop\"?"
+      , a = "Beyoncé", b = "Madonna", c = "Lady Gaga", d = "Rihanna", correct = 1 }
+    , { id = 654, theme = "musica"
+      , text = "Qual ritmo brasileiro é celebrado no Carnaval pelas escolas de samba?"
+      , a = "Forró", b = "Samba", c = "Axé", d = "Frevo", correct = 1 }
+    , { id = 655, theme = "musica"
+      , text = "Qual artista é chamado de \"Rei do Pop\" e gravou \"Thriller\"?"
+      , a = "Prince", b = "Michael Jackson", c = "Elvis Presley", d = "James Brown", correct = 1 }
+    , { id = 656, theme = "musica"
+      , text = "Quantas cordas tem um violão comum?"
+      , a = "Quatro", b = "Seis", c = "Oito", d = "Doze", correct = 1 }
+    , { id = 657, theme = "musica"
+      , text = "Qual instrumento é formado por tambores e pratos tocados com baquetas?"
+      , a = "Bateria", b = "Piano", c = "Flauta", d = "Violino", correct = 0 }
+    , { id = 658, theme = "musica"
+      , text = "Qual banda tem Freddie Mercury como vocalista e gravou \"Bohemian Rhapsody\"?"
+      , a = "Led Zeppelin", b = "Queen", c = "The Who", d = "Deep Purple", correct = 1 }
+    , { id = 659, theme = "musica"
+      , text = "Qual gênero musical nasceu na Jamaica e tem Bob Marley como ícone?"
+      , a = "Blues", b = "Reggae", c = "Jazz", d = "Soul", correct = 1 }
+    , { id = 660, theme = "musica"
+      , text = "Qual instrumento de sopro de metal é bastante associado ao jazz?"
+      , a = "Flauta", b = "Saxofone", c = "Clarinete", d = "Gaita", correct = 1 }
+    , { id = 661, theme = "musica"
+      , text = "Qual ritmo nordestino é tocado com sanfona, zabumba e triângulo?"
+      , a = "Samba", b = "Forró", c = "Maracatu", d = "Bossa Nova", correct = 1 }
+    , { id = 662, theme = "musica"
+      , text = "Qual é o nome dado a um grupo de quatro músicos?"
+      , a = "Trio", b = "Quarteto", c = "Quinteto", d = "Dueto", correct = 1 }
+    , { id = 663, theme = "musica"
+      , text = "Qual cantor brasileiro é chamado de \"Rei\" e canta romances desde os anos 60?"
+      , a = "Caetano Veloso", b = "Roberto Carlos", c = "Chico Buarque", d = "Gilberto Gil", correct = 1 }
+    , { id = 664, theme = "musica"
+      , text = "Qual instrumento elétrico de seis cordas é símbolo do rock?"
+      , a = "Baixo", b = "Guitarra", c = "Banjo", d = "Bandolim", correct = 1 }
+    , { id = 665, theme = "musica"
+      , text = "Qual movimento brasileiro tem João Gilberto e a canção \"Garota de Ipanema\"?"
+      , a = "Tropicália", b = "Bossa Nova", c = "Jovem Guarda", d = "Manguebeat", correct = 1 }
+    , { id = 666, theme = "musica"
+      , text = "Como se chama a velocidade (rapidez) de uma música?"
+      , a = "Melodia", b = "Andamento", c = "Harmonia", d = "Timbre", correct = 1 }
+    , { id = 667, theme = "musica"
+      , text = "Qual banda britânica gravou o álbum \"The Dark Side of the Moon\"?"
+      , a = "The Beatles", b = "Pink Floyd", c = "Genesis", d = "Yes", correct = 1 }
+    , { id = 668, theme = "musica"
+      , text = "Quantas linhas tem a pauta (pentagrama) onde se escreve a música?"
+      , a = "Três", b = "Quatro", c = "Cinco", d = "Sete", correct = 2 }
+    , { id = 669, theme = "musica"
+      , text = "Qual cantora baiana é um ícone do axé e gravou o hit \"Festa\"?"
+      , a = "Daniela Mercury", b = "Ivete Sangalo", c = "Claudia Leitte", d = "Anitta", correct = 1 }
+    , { id = 670, theme = "musica"
+      , text = "Qual gênero de raízes afro-americanas deu origem ao rock, com B.B. King?"
+      , a = "Country", b = "Blues", c = "Gospel", d = "Folk", correct = 1 }
+    , { id = 671, theme = "musica"
+      , text = "Qual é o maior instrumento da família das cordas, tocado em pé?"
+      , a = "Violoncelo", b = "Contrabaixo", c = "Viola", d = "Violino", correct = 1 }
+    , { id = 672, theme = "musica"
+      , text = "Qual grupo sueco dos anos 70 gravou o hit \"Dancing Queen\"?"
+      , a = "Bee Gees", b = "ABBA", c = "Boney M.", d = "Village People", correct = 1 }
+    , { id = 673, theme = "musica"
+      , text = "Qual estilo musical nasceu nos anos 70 no Bronx, com rimas faladas?"
+      , a = "Funk", b = "Hip-hop", c = "Techno", d = "Disco", correct = 1 }
+    , { id = 674, theme = "musica"
+      , text = "Qual cantora norte-americana lançou os álbuns \"1989\" e \"Folklore\"?"
+      , a = "Katy Perry", b = "Taylor Swift", c = "Ariana Grande", d = "Adele", correct = 1 }
+      -- Música: extras fáceis (1250–1269)
+    , { id = 1250, theme = "musica"
+      , text = "Quantas cordas tem um violino?"
+      , a = "Quatro", b = "Seis", c = "Oito", d = "Duas", correct = 0 }
+    , { id = 1251, theme = "musica"
+      , text = "Qual instrumento é tocado apertando teclas pretas e brancas?"
+      , a = "Violão", b = "Piano", c = "Flauta", d = "Bateria", correct = 1 }
+    , { id = 1252, theme = "musica"
+      , text = "Qual instrumento de sopro pequeno, com furos, é comum nas escolas?"
+      , a = "Trompete", b = "Flauta doce", c = "Saxofone", d = "Gaita", correct = 1 }
+    , { id = 1253, theme = "musica"
+      , text = "Qual instrumento de percussão, batido com as mãos, é típico do samba?"
+      , a = "Pandeiro", b = "Piano", c = "Violino", d = "Flauta", correct = 0 }
+    , { id = 1254, theme = "musica"
+      , text = "Como é chamada a pessoa que rege uma orquestra?"
+      , a = "Maestro", b = "DJ", c = "Baterista", d = "Roadie", correct = 0 }
+    , { id = 1255, theme = "musica"
+      , text = "Qual instrumento de madeira e seis cordas é dedilhado no samba e no sertanejo?"
+      , a = "Violino", b = "Violão", c = "Harpa", d = "Cavaquinho", correct = 1 }
+    , { id = 1256, theme = "musica"
+      , text = "Qual equipamento um DJ usa para mixar músicas em festas?"
+      , a = "Violino", b = "Mesa de mixagem", c = "Bateria", d = "Piano", correct = 1 }
+    , { id = 1257, theme = "musica"
+      , text = "Qual país é o berço do samba e do carnaval?"
+      , a = "Portugal", b = "Brasil", c = "Argentina", d = "Cuba", correct = 1 }
+    , { id = 1258, theme = "musica"
+      , text = "Qual instrumento pequeno, de quatro cordas, é típico do Havaí?"
+      , a = "Ukulele", b = "Banjo", c = "Bandolim", d = "Cavaquinho", correct = 0 }
+    , { id = 1259, theme = "musica"
+      , text = "Qual artista americano é conhecido como o \"Rei do Rock\", dos anos 50?"
+      , a = "Elvis Presley", b = "Chuck Berry", c = "Little Richard", d = "Buddy Holly", correct = 0 }
+    , { id = 1260, theme = "musica"
+      , text = "Qual estilo brasileiro é cantado em duplas e fala da vida no campo?"
+      , a = "Samba", b = "Sertanejo", c = "Frevo", d = "Maracatu", correct = 1 }
+    , { id = 1261, theme = "musica"
+      , text = "Quantas cordas tem um baixo elétrico tradicional?"
+      , a = "Quatro", b = "Seis", c = "Oito", d = "Doze", correct = 0 }
+    , { id = 1262, theme = "musica"
+      , text = "Qual instrumento de cordas da orquestra é tocado com arco, apoiado entre as pernas?"
+      , a = "Violino", b = "Violoncelo", c = "Harpa", d = "Flauta", correct = 1 }
+    , { id = 1263, theme = "musica"
+      , text = "Qual gênero dançado em dupla nasceu na região do Rio da Prata (Argentina e Uruguai)?"
+      , a = "Salsa", b = "Tango", c = "Bolero", d = "Samba", correct = 1 }
+    , { id = 1264, theme = "musica"
+      , text = "Qual instrumento de sopro dourado, com bocal, é usado em bandas e no jazz?"
+      , a = "Trombone", b = "Trompete", c = "Tuba", d = "Clarinete", correct = 1 }
+    , { id = 1265, theme = "musica"
+      , text = "Qual cantora brasileira é chamada de \"Poderosa\" e canta funk e pop?"
+      , a = "Ivete Sangalo", b = "Anitta", c = "Ludmilla", d = "Iza", correct = 1 }
+    , { id = 1266, theme = "musica"
+      , text = "Como é chamada a música cantada por uma só pessoa?"
+      , a = "Dueto", b = "Solo", c = "Coral", d = "Trio", correct = 1 }
+    , { id = 1267, theme = "musica"
+      , text = "Qual instrumento de teclas, com tubos, é comum nas igrejas?"
+      , a = "Piano", b = "Órgão", c = "Acordeão", d = "Cravo", correct = 1 }
+    , { id = 1268, theme = "musica"
+      , text = "Como é chamado o grupo de muitas pessoas que cantam juntas?"
+      , a = "Solo", b = "Coral", c = "Dueto", d = "Trio", correct = 1 }
+    , { id = 1269, theme = "musica"
+      , text = "Qual instrumento de fole, conhecido como \"sanfona\", é usado no forró?"
+      , a = "Acordeão", b = "Gaita de fole", c = "Realejo", d = "Escaleta", correct = 0 }
+      -- Música: extras intermediárias (1270–1293)
+    , { id = 1270, theme = "musica"
+      , text = "Qual banda de rock britânica tem Mick Jagger como vocalista?"
+      , a = "The Who", b = "The Rolling Stones", c = "The Kinks", d = "Led Zeppelin", correct = 1 }
+    , { id = 1271, theme = "musica"
+      , text = "Qual compositor alemão criou a \"Nona Sinfonia\" já estando surdo?"
+      , a = "Mozart", b = "Beethoven", c = "Bach", d = "Chopin", correct = 1 }
+    , { id = 1272, theme = "musica"
+      , text = "Qual cantora britânica ficou famosa com a música \"Rolling in the Deep\"?"
+      , a = "Amy Winehouse", b = "Adele", c = "Dua Lipa", d = "Sia", correct = 1 }
+    , { id = 1273, theme = "musica"
+      , text = "Qual gênero eletrônico, de batidas repetitivas, é tocado em festas rave?"
+      , a = "Jazz", b = "Techno", c = "Bolero", d = "Blues", correct = 1 }
+    , { id = 1274, theme = "musica"
+      , text = "Qual banda irlandesa tem Bono como vocalista?"
+      , a = "Coldplay", b = "U2", c = "Oasis", d = "The Cranberries", correct = 1 }
+    , { id = 1275, theme = "musica"
+      , text = "Qual é o álbum mais vendido da história da música?"
+      , a = "Thriller", b = "Back in Black", c = "The Dark Side of the Moon", d = "21", correct = 0 }
+    , { id = 1276, theme = "musica"
+      , text = "Qual compositor austríaco, gênio desde criança, escreveu o \"Requiem\"?"
+      , a = "Beethoven", b = "Mozart", c = "Haydn", d = "Schubert", correct = 1 }
+    , { id = 1277, theme = "musica"
+      , text = "Qual banda de rock gravou o clássico \"Stairway to Heaven\"?"
+      , a = "Deep Purple", b = "Led Zeppelin", c = "Black Sabbath", d = "Pink Floyd", correct = 1 }
+    , { id = 1278, theme = "musica"
+      , text = "Qual instrumento grande, de muitas cordas dedilhadas, é comum na orquestra?"
+      , a = "Piano", b = "Harpa", c = "Contrabaixo", d = "Cravo", correct = 1 }
+    , { id = 1279, theme = "musica"
+      , text = "Qual cantora americana ficou famosa com \"...Baby One More Time\"?"
+      , a = "Christina Aguilera", b = "Britney Spears", c = "Jessica Simpson", d = "Mandy Moore", correct = 1 }
+    , { id = 1280, theme = "musica"
+      , text = "Qual dupla sertaneja gravou o clássico \"Evidências\"?"
+      , a = "Zezé di Camargo & Luciano", b = "Chitãozinho & Xororó", c = "Leandro & Leonardo", d = "Bruno & Marrone", correct = 1 }
+    , { id = 1281, theme = "musica"
+      , text = "Qual cantor britânico ficou famoso com \"Shape of You\" e \"Perfect\"?"
+      , a = "Sam Smith", b = "Ed Sheeran", c = "Harry Styles", d = "Lewis Capaldi", correct = 1 }
+    , { id = 1282, theme = "musica"
+      , text = "Qual cantor gravou os hits \"Uptown Funk\" e \"Just the Way You Are\"?"
+      , a = "Justin Timberlake", b = "Bruno Mars", c = "The Weeknd", d = "Usher", correct = 1 }
+    , { id = 1283, theme = "musica"
+      , text = "Qual gênero dos EUA usa violão e banjo e fala da vida no interior?"
+      , a = "Blues", b = "Country", c = "Jazz", d = "Gospel", correct = 1 }
+    , { id = 1284, theme = "musica"
+      , text = "Como se chama a combinação de várias notas tocadas ao mesmo tempo?"
+      , a = "Escala", b = "Acorde", c = "Melodia", d = "Ritmo", correct = 1 }
+    , { id = 1285, theme = "musica"
+      , text = "Qual banda britânica dos irmãos Gallagher gravou \"Wonderwall\"?"
+      , a = "Blur", b = "Oasis", c = "Coldplay", d = "Radiohead", correct = 1 }
+    , { id = 1286, theme = "musica"
+      , text = "Qual cantora é a \"Rainha do Soul\", famosa pela música \"Respect\"?"
+      , a = "Whitney Houston", b = "Aretha Franklin", c = "Diana Ross", d = "Tina Turner", correct = 1 }
+    , { id = 1287, theme = "musica"
+      , text = "Qual instrumento eletrônico de teclado imita vários sons e é muito usado no pop?"
+      , a = "Sintetizador", b = "Cravo", c = "Órgão de tubos", d = "Harpa", correct = 0 }
+    , { id = 1288, theme = "musica"
+      , text = "Qual estilo de rock rebelde dos anos 70 tem os Sex Pistols como ícones?"
+      , a = "Grunge", b = "Punk", c = "Heavy Metal", d = "Disco", correct = 1 }
+    , { id = 1289, theme = "musica"
+      , text = "Qual estilo brasileiro nasceu nas favelas cariocas, com batidas eletrônicas e MCs?"
+      , a = "Pagode", b = "Funk carioca", c = "Axé", d = "Frevo", correct = 1 }
+    , { id = 1290, theme = "musica"
+      , text = "Qual cantor pop canadense ficou famoso ainda adolescente com a música \"Baby\"?"
+      , a = "Shawn Mendes", b = "Justin Bieber", c = "Justin Timberlake", d = "Charlie Puth", correct = 1 }
+    , { id = 1291, theme = "musica"
+      , text = "Qual estilo dançante dos anos 70 é associado às boates e à bola de espelhos?"
+      , a = "Funk", b = "Disco", c = "House", d = "Soul", correct = 1 }
+    , { id = 1292, theme = "musica"
+      , text = "Qual banda de rock australiana gravou \"Highway to Hell\" e \"Thunderstruck\"?"
+      , a = "Guns N' Roses", b = "AC/DC", c = "Metallica", d = "Aerosmith", correct = 1 }
+    , { id = 1293, theme = "musica"
+      , text = "Qual cantora colombiana gravou o hit \"Waka Waka\" da Copa de 2010?"
+      , a = "Shakira", b = "Jennifer Lopez", c = "Rosalía", d = "Karol G", correct = 0 }
+      -- Música: extras difíceis (1294–1299)
+    , { id = 1294, theme = "musica"
+      , text = "Qual compositor italiano barroco criou \"As Quatro Estações\"?"
+      , a = "Antonio Vivaldi", b = "Johann Sebastian Bach", c = "Georg Handel", d = "Arcangelo Corelli", correct = 0 }
+    , { id = 1295, theme = "musica"
+      , text = "Qual guitarrista canhoto, morto em 1970, é considerado um dos maiores da história?"
+      , a = "Eric Clapton", b = "Jimi Hendrix", c = "Jimmy Page", d = "Chuck Berry", correct = 1 }
+    , { id = 1296, theme = "musica"
+      , text = "Qual cantora de jazz é chamada de \"First Lady of Song\", mestra do scat?"
+      , a = "Billie Holiday", b = "Ella Fitzgerald", c = "Nina Simone", d = "Sarah Vaughan", correct = 1 }
+    , { id = 1297, theme = "musica"
+      , text = "Qual maestro e compositor brasileiro criou as \"Bachianas Brasileiras\"?"
+      , a = "Tom Jobim", b = "Heitor Villa-Lobos", c = "Ernesto Nazareth", d = "Pixinguinha", correct = 1 }
+    , { id = 1298, theme = "musica"
+      , text = "Qual banda gravou o álbum conceitual \"The Wall\", de 1979?"
+      , a = "Genesis", b = "Pink Floyd", c = "Yes", d = "King Crimson", correct = 1 }
+    , { id = 1299, theme = "musica"
+      , text = "Quantas sinfonias completas Beethoven compôs?"
+      , a = "Cinco", b = "Nove", c = "Doze", d = "Quarenta", correct = 1 }
+    ]

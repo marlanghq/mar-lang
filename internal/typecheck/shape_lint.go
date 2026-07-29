@@ -75,6 +75,7 @@ const (
 	kindBool
 	kindTime
 	kindEnum
+	kindDecimal
 )
 
 func (k columnKind) String() string {
@@ -89,6 +90,8 @@ func (k columnKind) String() string {
 		return "Time"
 	case kindEnum:
 		return "enum"
+	case kindDecimal:
+		return "Decimal"
 	}
 	return "Unknown"
 }
@@ -393,11 +396,14 @@ func parseColumnType(e ast.Expr) (columnInfo, bool) {
 	if isQualified(app.Fn, "Entity", "timestamp") {
 		return columnInfo{kind: kindTime}, true
 	}
-	// Entity.enum [A, B] constraint
-	//   →  EApp { EApp { Entity.enum, list }, constraint }
+	// Entity.enum [A, B] constraint / Entity.decimal scale constraint
+	//   →  EApp { EApp { Entity.X, arg }, constraint }
 	if innerApp, ok := app.Fn.(*ast.EApp); ok {
 		if isQualified(innerApp.Fn, "Entity", "enum") {
 			return columnInfo{kind: kindEnum}, true
+		}
+		if isQualified(innerApp.Fn, "Entity", "decimal") {
+			return columnInfo{kind: kindDecimal}, true
 		}
 	}
 	return columnInfo{}, false
@@ -706,7 +712,7 @@ func checkValueAgainstKind(e ast.Expr, kind columnKind, ctx lintCtx) string {
 	// understand. Tell the two apart by re-inspecting the AST node;
 	// if it's NOT one of the literal types we handle, try inference.
 	switch e.(type) {
-	case *ast.EInt, *ast.EString, *ast.EFloat, *ast.ECtor:
+	case *ast.EInt, *ast.EString, *ast.ECtor:
 		// Literal already passed the check above.
 		return ""
 	}
@@ -742,6 +748,8 @@ func checkInferredAgainstKind(t Type, kind columnKind) string {
 			return ""
 		case kindTime:
 			return "got Int — timestamps require a Time value (e.g. Time.now)"
+		case kindDecimal:
+			return "got Int — decimal columns take a Decimal (write 12 as 12.0, or Decimal.fromInt)"
 		case kindString, kindBool, kindEnum:
 			return "got Int"
 		}
@@ -762,8 +770,11 @@ func checkInferredAgainstKind(t Type, kind columnKind) string {
 			return ""
 		}
 		return "got Time"
-	case "Float":
-		return "got Float"
+	case "Decimal":
+		if kind == kindDecimal {
+			return ""
+		}
+		return "got Decimal"
 	}
 	return "" // unknown constructor (Maybe, List, custom types) — skip
 }
@@ -791,8 +802,6 @@ func checkLiteralAgainstKind(e ast.Expr, kind columnKind) string {
 		default:
 			return fmt.Sprintf("got String literal %q", v.Value)
 		}
-	case *ast.EFloat:
-		return fmt.Sprintf("got Float literal %g", v.Value)
 	case *ast.ECtor:
 		switch kind {
 		case kindEnum:

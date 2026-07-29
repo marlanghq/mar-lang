@@ -1,0 +1,29 @@
+module Frontend.Routes exposing (home, signIn, verifyCode, nickname, partida, comoJogar)
+
+
+-- Every URL in Lendas, as typed paths. Nav.pushTo / Nav.replaceTo check
+-- params against the pattern at compile time.
+
+
+home : Path {}
+home = "/"
+
+
+signIn : Path {}
+signIn = "/entrar"
+
+
+verifyCode : Path { email : String }
+verifyCode = "/entrar/codigo/{email:String}"
+
+
+nickname : Path {}
+nickname = "/apelido"
+
+
+partida : Path { id : Int }
+partida = "/jogo/{id:Int}"
+
+
+comoJogar : Path {}
+comoJogar = "/como-jogar"

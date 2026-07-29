@@ -1,0 +1,17 @@
+module Frontend.Routes exposing (log, signIn, verifyCode)
+
+
+-- Every URL in the app, in one place. Typed paths let Nav.pushTo check at
+-- compile time that the params match the segments.
+
+
+log : Path {}
+log = "/"
+
+
+signIn : Path {}
+signIn = "/sign-in"
+
+
+verifyCode : Path { email : String }
+verifyCode = "/sign-in/verify/{email:String}"

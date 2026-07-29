@@ -312,7 +312,7 @@ func colorizeHint(body string) string {
 // Lines that ALREADY contain ANSI escape sequences are treated as
 // prose regardless of indent: those have been colored by the CLI
 // code that constructed the hint (e.g. embedded colorGreen("mar
-// fly deploy") inside a multi-line hintedError), and tokenizing
+// deploy") inside a multi-line hintedError), and tokenizing
 // them would split the escape sequences mid-word and dim-wrap the
 // fragments. Runtime-emitted hints (where colorizeHint actually
 // adds value — SQL code blocks marked by indentation alone) never

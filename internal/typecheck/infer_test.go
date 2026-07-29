@@ -30,7 +30,10 @@ func inferExprSrc(t *testing.T, exprSrc string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return tp.String(), nil
+	// Pretty, not String(): String() embeds raw variable IDs, so a
+	// constrained var reads `number9` and any change in inference order
+	// rewrites the expectation. Pretty prints the constraint itself.
+	return Pretty(tp), nil
 }
 
 func TestLitInt(t *testing.T) {
@@ -38,8 +41,8 @@ func TestLitInt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "Int" {
-		t.Fatalf("want Int, got %s", got)
+	if got != "number" {
+		t.Fatalf("want number, got %s", got)
 	}
 }
 
@@ -68,8 +71,8 @@ func TestArith(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "Int" {
-		t.Fatalf("want Int, got %s", got)
+	if got != "number" {
+		t.Fatalf("want number, got %s", got)
 	}
 }
 
@@ -105,8 +108,8 @@ func TestIf(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "Int" {
-		t.Fatalf("want Int, got %s", got)
+	if got != "number" {
+		t.Fatalf("want number, got %s", got)
 	}
 }
 
@@ -143,8 +146,8 @@ func TestLambdaApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "Int" {
-		t.Fatalf("want Int, got %s", got)
+	if got != "number" {
+		t.Fatalf("want number, got %s", got)
 	}
 }
 
@@ -201,8 +204,8 @@ func TestLetSimple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "Int" {
-		t.Fatalf("want Int, got %s", got)
+	if got != "number" {
+		t.Fatalf("want number, got %s", got)
 	}
 }
 
@@ -227,8 +230,8 @@ func TestList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "List Int" {
-		t.Fatalf("want List Int, got %s", got)
+	if got != "List number" {
+		t.Fatalf("want List number, got %s", got)
 	}
 }
 
@@ -244,7 +247,7 @@ func TestRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "name : String") || !strings.Contains(got, "age : Int") {
+	if !strings.Contains(got, "name : String") || !strings.Contains(got, "age : number") {
 		t.Fatalf("want record with name and age, got %s", got)
 	}
 }
@@ -284,8 +287,8 @@ func TestTuple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "(Int, String)" {
-		t.Fatalf("want (Int, String), got %s", got)
+	if got != "(number, String)" {
+		t.Fatalf("want (number, String), got %s", got)
 	}
 }
 
@@ -295,8 +298,8 @@ func TestPipe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "Int" {
-		t.Fatalf("want Int, got %s", got)
+	if got != "number" {
+		t.Fatalf("want number, got %s", got)
 	}
 }
 
@@ -315,8 +318,8 @@ func TestMaybeJust(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "Maybe Int" {
-		t.Fatalf("want Maybe Int, got %s", got)
+	if got != "Maybe number" {
+		t.Fatalf("want Maybe number, got %s", got)
 	}
 }
 
@@ -339,8 +342,8 @@ func TestCaseMaybe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "Int" {
-		t.Fatalf("want Int, got %s", got)
+	if got != "number" {
+		t.Fatalf("want number, got %s", got)
 	}
 }
 

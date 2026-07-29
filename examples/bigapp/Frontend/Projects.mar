@@ -5,9 +5,9 @@ import Shared
 import Frontend.Routes
 import UI exposing
     ( navigationStack, navigationTitle, topBarTrailing
-    , form, list, section, header, footer
-    , hstack, vstack
-    , title, subtitle, text, textField, textArea, button, navigationLink, empty, spacer, errorText
+    , list, section, header, footer
+    , vstack
+    , title, subtitle, text, textField, textArea, button, navigationLink, empty, errorText
     , submit, sheet, disabled
     )
 
@@ -181,7 +181,7 @@ projectsSection state =
                     [ subtitle "No projects yet. Tap “+ New” to create the first." ]
             else
                 section
-                    [ header ("Projects · " ++ String.fromInt (List.length items)) ]
+                    [ header ("Projects (" ++ String.fromInt (List.length items) ++ ")") ]
                     (List.map projectRow items)
 
 

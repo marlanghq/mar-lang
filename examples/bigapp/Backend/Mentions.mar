@@ -55,7 +55,7 @@ parseAndStoreMentions comment =
 
         distinctHandles =
             List.foldl
-                (\acc h ->
+                (\h acc ->
                     if List.member h acc then acc else acc ++ [h]
                 )
                 []

@@ -1,0 +1,200 @@
+module Frontend.NewChallenge exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing ( navigationStack, navigationTitle
+    , form, section, header, text, subtitle, picker, button, errorText, empty, disabled)
+
+
+-- Start a duel: pick a rival (from the roster of other players) and a
+-- theme, then fire createChallenge. On success we replace straight
+-- into the quiz runner — the challenger always answers first.
+
+
+type alias Model =
+    { players  : Maybe (List Shared.PlayerCard)
+    , themes   : Maybe (List Shared.ThemeCard)
+    , opponent : String
+    , theme    : String
+    , error    : Maybe String
+    , busy     : Bool
+    }
+
+
+type Msg
+    = PlayersFetched (Result Service.Error (List Shared.PlayerCard))
+    | ThemesFetched (Result Service.Error (List Shared.ThemeCard))
+    | OpponentChanged String
+    | ThemeChanged String
+    | Submitted
+    | Created (Result Service.Error Shared.CreateResult)
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { players = Nothing, themes = Nothing, opponent = "", theme = "", error = Nothing, busy = False }
+    , Cmd.batch
+        [ Service.call Shared.listPlayers () PlayersFetched
+        , Service.call Shared.listThemes () ThemesFetched
+        ]
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        PlayersFetched (Ok players) ->
+            -- Default the picker to the first rival so a submit without
+            -- touching the control still names a valid opponent.
+            ( { model | players = Just players, opponent = firstNick players model.opponent }
+            , Cmd.none
+            )
+
+        PlayersFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        ThemesFetched (Ok themes) ->
+            ( { model | themes = Just themes, theme = firstTheme themes model.theme }
+            , Cmd.none
+            )
+
+        ThemesFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        OpponentChanged nick ->
+            ( { model | opponent = nick }, Cmd.none )
+
+        ThemeChanged theme ->
+            ( { model | theme = theme }, Cmd.none )
+
+        Submitted ->
+            if model.busy || model.opponent == "" || model.theme == "" then
+                ( model, Cmd.none )
+
+            else
+                ( { model | busy = True, error = Nothing }
+                , Service.call Shared.createChallenge
+                    { opponentNick = model.opponent, theme = model.theme }
+                    Created
+                )
+
+        Created (Ok (Shared.DuelStarted id)) ->
+            ( { model | busy = False }, Nav.replaceTo Frontend.Routes.quiz { id = id } )
+
+        Created (Ok Shared.OpponentNotFound) ->
+            ( { model | busy = False, error = Just "Não encontramos esse jogador." }, Cmd.none )
+
+        Created (Ok Shared.InvalidTheme) ->
+            ( { model | busy = False, error = Just "Tema inválido." }, Cmd.none )
+
+        Created (Ok Shared.CannotSelfChallenge) ->
+            ( { model | busy = False, error = Just "Você não pode desafiar a si mesmo." }, Cmd.none )
+
+        Created (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+
+firstNick : List Shared.PlayerCard -> String -> String
+firstNick players current =
+    if current /= "" then
+        current
+
+    else
+        case List.head players of
+            Just p  -> p.nick
+            Nothing -> ""
+
+
+firstTheme : List Shared.ThemeCard -> String -> String
+firstTheme themes current =
+    if current /= "" then
+        current
+
+    else
+        case List.head themes of
+            Just t  -> t.name
+            Nothing -> ""
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    navigationStack [ navigationTitle "Novo desafio" ]
+        [ form
+            [ errorBlock model.error
+            , opponentSection model
+            , themeSection model
+            , section [] [ submitButton model ]
+            ]
+        ]
+
+
+errorBlock : Maybe String -> View Msg
+errorBlock maybeErr =
+    case maybeErr of
+        Just why ->
+            section [ header "Ops" ] [ errorText why ]
+
+        Nothing ->
+            empty
+
+
+opponentSection : Model -> View Msg
+opponentSection model =
+    case model.players of
+        Nothing ->
+            section [ header "Adversário" ] [ text [] "Carregando jogadores…" ]
+
+        Just players ->
+            if List.isEmpty players then
+                section [ header "Adversário" ]
+                    [ subtitle "Ninguém mais entrou ainda. Convide um amigo para criar um apelido e volte aqui." ]
+
+            else
+                section [ header "Adversário" ]
+                    [ picker []
+                        model.opponent
+                        (List.map (\p -> p.nick) players)
+                        (\nick -> nick)
+                        OpponentChanged
+                    ]
+
+
+themeSection : Model -> View Msg
+themeSection model =
+    case model.themes of
+        Nothing ->
+            section [ header "Tema" ] [ text [] "Carregando temas…" ]
+
+        Just themes ->
+            section [ header "Tema" ]
+                [ picker []
+                    model.theme
+                    (List.map (\t -> t.name) themes)
+                    Shared.themeLabel
+                    ThemeChanged
+                ]
+
+
+submitButton : Model -> View Msg
+submitButton model =
+    let
+        ready =
+            model.opponent /= "" && model.theme /= ""
+
+        label =
+            if model.busy then "Criando…" else "Desafiar"
+    in
+    button [ disabled (model.busy || (ready == False)) ] Submitted label
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/new"
+        , title  = "Novo desafio"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

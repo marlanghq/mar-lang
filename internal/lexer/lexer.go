@@ -62,28 +62,29 @@ const (
 	KindBackslash  Kind = "\\"
 
 	// Operators
-	KindEquals    Kind = "="
-	KindArrow     Kind = "->"
-	KindPipeRight Kind = "|>"
-	KindPipeLeft  Kind = "<|"
-	KindPipe      Kind = "|"
-	KindColon     Kind = ":"
-	KindDoubleCol Kind = "::"
-	KindBindArrow Kind = "<-"
-	KindEqualsEq  Kind = "=="
-	KindNotEq     Kind = "/="
-	KindLT        Kind = "<"
-	KindGT        Kind = ">"
-	KindLTE       Kind = "<="
-	KindGTE       Kind = ">="
-	KindAnd       Kind = "&&"
-	KindOr        Kind = "||"
-	KindPlus      Kind = "+"
-	KindMinus     Kind = "-"
-	KindStar      Kind = "*"
-	KindSlash     Kind = "/"
-	KindAppend    Kind = "++"
-	KindDot       Kind = "."
+	KindEquals     Kind = "="
+	KindArrow      Kind = "->"
+	KindPipeRight  Kind = "|>"
+	KindPipeLeft   Kind = "<|"
+	KindPipe       Kind = "|"
+	KindColon      Kind = ":"
+	KindDoubleCol  Kind = "::"
+	KindBindArrow  Kind = "<-"
+	KindEqualsEq   Kind = "=="
+	KindNotEq      Kind = "/="
+	KindLT         Kind = "<"
+	KindGT         Kind = ">"
+	KindLTE        Kind = "<="
+	KindGTE        Kind = ">="
+	KindAnd        Kind = "&&"
+	KindOr         Kind = "||"
+	KindPlus       Kind = "+"
+	KindMinus      Kind = "-"
+	KindStar       Kind = "*"
+	KindSlash      Kind = "/"
+	KindSlashSlash Kind = "//"
+	KindAppend     Kind = "++"
+	KindDot        Kind = "."
 
 	// Layout / structural
 	KindNewline Kind = "newline" // emitted only when meaningful for layout; not yet used
@@ -548,6 +549,11 @@ func (l *lexer) readPunctOrOperator() error {
 		l.advance()
 		l.advance()
 		l.emit(KindEqualsEq, "==")
+		return nil
+	case r == '/' && r2 == '/':
+		l.advance()
+		l.advance()
+		l.emit(KindSlashSlash, "//")
 		return nil
 	case r == '/' && r2 == '=':
 		l.advance()

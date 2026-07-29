@@ -1,0 +1,710 @@
+module Missions exposing (..)
+
+
+import Types exposing (..)
+import Balance exposing (..)
+import Maps exposing (..)
+import Sim exposing (..)
+
+
+-- IRON MERIDIAN: mission and skirmish setup. Maps are built from a
+-- textured base grid plus hand-placed stamps (ridges, chasms, ore
+-- fields, derelict extractors, start spots), then buildGame turns a
+-- MissionDef into a live Game: sides, starting bases, fog.
+--
+-- Mission scripting (timed waves, radio lines, objective checks) lives
+-- in Main; this module only owns the static setup.
+
+
+-- ===== textured base rows =====
+
+
+texChar : Int -> Int -> Int -> Char
+texChar biome x y =
+    let
+        h = modBy 31 (x * 7 + y * 13)
+    in
+    if h == 0 then
+        (if biome == 1 then 'i' else ',')
+    else if h == 7 && modBy 3 (x + y) == 0 then
+        'c'
+    else if h == 13 && modBy 7 (x * 3 + y) == 0 then
+        't'
+    else if biome == 1 then
+        'i'
+    else if biome == 2 then
+        'v'
+    else
+        '.'
+
+
+texRow : Int -> Int -> Int -> String
+texRow biome w y =
+    String.fromList
+        (List.map
+            (\x ->
+                if x < 2 || x >= w - 2 then '#' else texChar biome x y
+            )
+            (List.range 0 (w - 1)))
+
+
+baseRows : Int -> Int -> Int -> List String
+baseRows biome w h =
+    List.map
+        (\y ->
+            if y < 2 || y >= h - 2 then
+                String.repeat w "#"
+            else
+                texRow biome w y
+        )
+        (List.range 0 (h - 1))
+
+
+-- ===== stamps over the parsed grid =====
+
+
+stampRect : Int -> Int -> Int -> Int -> Int -> Parsed -> Parsed
+stampRect tile x0 y0 w h p =
+    List.foldl
+        (\y acc ->
+            List.foldl
+                (\x a2 -> { a2 | tiles = Dict.insert (idxOf p.w x y) tile a2.tiles })
+                acc
+                (List.range x0 (x0 + w - 1))
+        )
+        p
+        (List.range y0 (y0 + h - 1))
+
+
+-- a ferrite (rich=False) or azurite (rich=True) cluster around a point
+stampOre : Bool -> Int -> Int -> Int -> Parsed -> Parsed
+stampOre rich cx cy r p =
+    let
+        tile = if rich then tAzurite else tFerrite
+        value = if rich then azuriteValue else ferriteValue
+    in
+    List.foldl
+        (\y acc ->
+            List.foldl
+                (\x a2 ->
+                    if abs (x - cx) + abs (y - cy) <= r then
+                        let
+                            i = idxOf p.w x y
+                        in
+                        { a2
+                            | tiles = Dict.insert i tile a2.tiles
+                            , ore = Dict.insert i value a2.ore
+                        }
+                    else
+                        a2
+                )
+                acc
+                (List.range (cx - r) (cx + r))
+        )
+        p
+        (List.range (cy - r) (cy + r))
+
+
+stampExt : Int -> Int -> Parsed -> Parsed
+stampExt tx ty p =
+    { p | exts = List.concat [ p.exts, [ { side = 0, tx = tx, ty = ty } ] ] }
+
+
+stampStart : Int -> Int -> Int -> Parsed -> Parsed
+stampStart side tx ty p =
+    { p | starts = List.concat [ p.starts, [ { side = side, tx = tx, ty = ty } ] ] }
+
+
+-- clear a lane through anything (for ramps across chasm bands)
+stampLane : Int -> Int -> Int -> Int -> Parsed -> Parsed
+stampLane x0 y0 h w p =
+    stampRect tRamp x0 y0 w h p
+
+
+-- ===== definitions =====
+
+
+type alias SideDef =
+    { id : Int
+    , race : Race
+    , team : Int
+    , human : Bool
+    , aggro : Int
+    , credits : Int
+    , firstWave : Int        -- ticks until the bot's first wave window
+    }
+
+
+type alias BldSpawn =
+    { side : Int
+    , kind : BldKind
+    , tx : Int
+    , ty : Int
+    }
+
+
+type alias UnitSpawn =
+    { side : Int
+    , kind : UnitKind
+    , x : Int                -- px
+    , y : Int
+    }
+
+
+type alias MissionDef =
+    { id : Int
+    , name : String
+    , parsed : Parsed
+    , sides : List SideDef
+    , blds : List BldSpawn
+    , units : List UnitSpawn
+    , camTx : Int            -- opening camera center (tiles)
+    , camTy : Int
+    }
+
+
+px : Int -> Int
+px t = t * tileW + tileW // 2
+
+
+-- shared starter kits, offsets relative to an HQ top-left tile
+
+
+compactBase : Int -> Int -> Int -> List BldSpawn
+compactBase side tx ty =
+    [ { side = side, kind = Bastion, tx = tx, ty = ty }
+    , { side = side, kind = PowerStation, tx = tx + 4, ty = ty }
+    , { side = side, kind = Refinery, tx = tx - 1, ty = ty + 4 }
+    ]
+
+
+compactSquad : Int -> Int -> Int -> List UnitSpawn
+compactSquad side tx ty =
+    [ { side = side, kind = Hauler, x = px (tx + 1), y = px (ty + 6) }
+    , { side = side, kind = Sapper, x = px (tx + 4), y = px (ty + 4) }
+    , { side = side, kind = Rifle, x = px (tx + 5), y = px (ty + 5) }
+    , { side = side, kind = Rifle, x = px (tx + 6), y = px (ty + 4) }
+    ]
+
+
+combineBase : Int -> Int -> Int -> List BldSpawn
+combineBase side tx ty =
+    [ { side = side, kind = CrawlerHQ, tx = tx, ty = ty }
+    , { side = side, kind = JunkTurbine, tx = tx + 4, ty = ty }
+    , { side = side, kind = Smeltery, tx = tx - 1, ty = ty + 4 }
+    , { side = side, kind = RatDen, tx = tx + 4, ty = ty + 3 }
+    , { side = side, kind = SpikeNest, tx = tx - 2, ty = ty + 2 }
+    , { side = side, kind = SpikeNest, tx = tx + 7, ty = ty + 2 }
+    ]
+
+
+combineSquad : Int -> Int -> Int -> List UnitSpawn
+combineSquad side tx ty =
+    [ { side = side, kind = Reclaimer, x = px (tx + 1), y = px (ty + 6) }
+    , { side = side, kind = Scrapper, x = px (tx - 1), y = px (ty + 3) }
+    , { side = side, kind = Scrapper, x = px (tx + 5), y = px (ty + 5) }
+    , { side = side, kind = Spiker, x = px (tx + 6), y = px (ty + 3) }
+    , { side = side, kind = DuneBike, x = px (tx + 3), y = px (ty + 7) }
+    ]
+
+
+vessariBase : Int -> Int -> Int -> List BldSpawn
+vessariBase side tx ty =
+    [ { side = side, kind = GenesisFont, tx = tx, ty = ty }
+    , { side = side, kind = Spire, tx = tx + 4, ty = ty }
+    , { side = side, kind = Spire, tx = tx - 2, ty = ty + 2 }
+    , { side = side, kind = ExtractBloom, tx = tx - 1, ty = ty + 4 }
+    , { side = side, kind = Chrysalis, tx = tx + 4, ty = ty + 2 }
+    , { side = side, kind = PylonThorn, tx = tx - 2, ty = ty }
+    , { side = side, kind = PylonThorn, tx = tx + 6, ty = ty + 1 }
+    ]
+
+
+vessariSquad : Int -> Int -> Int -> List UnitSpawn
+vessariSquad side tx ty =
+    [ { side = side, kind = TitheDrone, x = px (tx + 1), y = px (ty + 6) }
+    , { side = side, kind = Lancer, x = px (tx - 1), y = px (ty + 3) }
+    , { side = side, kind = Lancer, x = px (tx + 5), y = px (ty + 5) }
+    , { side = side, kind = Nullifier, x = px (tx + 6), y = px (ty + 3) }
+    ]
+
+
+-- ===== the five campaign missions =====
+
+
+mission : Int -> MissionDef
+mission m =
+    case m of
+        1 ->
+            m1
+
+        2 ->
+            m2
+
+        3 ->
+            m3
+
+        4 ->
+            m4
+
+        _ ->
+            m5
+
+
+m1 : MissionDef
+m1 =
+    let
+        w = 62
+        h = 56
+
+        parsed =
+            parse (baseRows 0 w h)
+                |> stampRect tRock 14 25 14 6
+                |> stampRect tRock 36 25 14 6
+                |> stampRect tChasm 50 4 8 7
+                |> stampOre False 10 49 3
+                |> stampOre False 48 7 3
+                |> stampOre True 32 34 1
+                |> stampExt 22 20
+                |> stampExt 39 36
+    in
+    { id = 1
+    , name = "Dust and Iron"
+    , parsed = parsed
+    , sides =
+        [ { id = 1, race = Compact, team = 1, human = True, aggro = 100, credits = 2600, firstWave = 0 }
+        , { id = 2, race = Combine, team = 2, human = False, aggro = 70, credits = 2200, firstWave = 7200 }
+        ]
+    , blds =
+        List.concat
+            [ compactBase 1 8 41
+            , combineBase 2 46 6
+            ]
+    , units =
+        List.concat
+            [ compactSquad 1 8 41
+            , combineSquad 2 46 6
+            ]
+    , camTx = 11
+    , camTy = 43
+    }
+
+
+m2 : MissionDef
+m2 =
+    let
+        w = 78
+        h = 62
+
+        parsed =
+            parse (baseRows 0 w h)
+                |> stampRect tChasm 3 21 73 4
+                |> stampRect tChasm 3 38 73 4
+                |> stampLane 13 21 4 4
+                |> stampLane 38 21 4 4
+                |> stampLane 63 21 4 4
+                |> stampLane 13 38 4 4
+                |> stampLane 38 38 4 4
+                |> stampLane 63 38 4 4
+                |> stampOre False 14 55 3
+                |> stampOre False 64 7 3
+                |> stampOre True 39 29 1
+                |> stampExt 10 29
+                |> stampExt 28 29
+                |> stampExt 48 29
+                |> stampExt 67 29
+                |> stampExt 39 10
+    in
+    { id = 2
+    , name = "The Silo Gambit"
+    , parsed = parsed
+    , sides =
+        [ { id = 1, race = Compact, team = 1, human = True, aggro = 100, credits = 3000, firstWave = 0 }
+        , { id = 2, race = Combine, team = 2, human = False, aggro = 95, credits = 3400, firstWave = 5400 }
+        ]
+    , blds =
+        List.concat
+            [ compactBase 1 14 49
+            , combineBase 2 59 6
+            , [ { side = 2, kind = ChopShop, tx = 67, ty = 11 }
+              , { side = 2, kind = Bunkroom, tx = 55, ty = 11 }
+              ]
+            ]
+    , units =
+        List.concat
+            [ compactSquad 1 14 49
+            , [ { side = 1, kind = Sapper, x = px 18, y = px 56 }
+              , { side = 1, kind = Rocket, x = px 21, y = px 55 }
+              ]
+            , combineSquad 2 59 6
+            , [ { side = 2, kind = Warthog, x = px 62, y = px 15 } ]
+            ]
+    , camTx = 15
+    , camTy = 52
+    }
+
+
+m3 : MissionDef
+m3 =
+    let
+        w = 67
+        h = 62
+
+        parsed =
+            parse (baseRows 1 w h)
+                |> stampRect tRego 6 42 56 17     -- thawed southern shelf
+                |> stampRect tRock 25 28 17 4
+                |> stampRect tChasm 3 17 14 4
+                |> stampOre False 11 50 3
+                |> stampOre False 56 45 1
+                |> stampOre True 56 11 1
+                |> stampExt 17 34
+                |> stampExt 50 31
+    in
+    { id = 3
+    , name = "Static"
+    , parsed = parsed
+    , sides =
+        -- m3 is the campaign's difficulty spike: Vessari shields first appear
+        -- here (a Lancer soaks 160 to a Rifle's 95), and the warp surges are
+        -- free units on top. To keep it beatable by a beginner the opening now
+        -- tilts the player's way -- a 4200 / 2800 head start -- and the enemy
+        -- plays gentler (aggro 70) and wakes later (firstWave 7200). m4 and m5
+        -- are where the enemy takes the credit lead back.
+        [ { id = 1, race = Compact, team = 1, human = True, aggro = 100, credits = 4200, firstWave = 0 }
+        , { id = 2, race = Vessari, team = 2, human = False, aggro = 70, credits = 2800, firstWave = 7200 }
+        ]
+    , blds =
+        List.concat
+            [ compactBase 1 8 46
+            , [ { side = 1, kind = Watchtower, tx = 17, ty = 43 } ]
+            , vessariBase 2 53 7
+            , [ { side = 2, kind = AscendantGate, tx = 46, ty = 11 }
+              , { side = 2, kind = ForgeWomb, tx = 59, ty = 11 }
+              , { side = 2, kind = AegisNode, tx = 50, ty = 14 }
+              ]
+            ]
+    , units =
+        List.concat
+            [ compactSquad 1 8 46
+            , [ { side = 1, kind = Rocket, x = px 14, y = px 53 }
+              , { side = 1, kind = Rocket, x = px 17, y = px 53 }
+              ]
+            -- The stranded Erebus survivors, far from home. side = 0 is the
+            -- neutral team: they are NOT yours to command, they do not lift
+            -- the fog around them (mkUnit only reveals for side 1), and no
+            -- one is hostile to them (see `hostile`). So they sit unseen in
+            -- the dark until a Compact force reaches them, at which point
+            -- reliefM3 flips them to side 1 and they join you. Two Bulwark
+            -- tanks are dug in with them: the rescue is worth the march, and
+            -- a beginner who reaches the huddle walks away with real armor.
+            , [ { side = 0, kind = Rifle, x = px 56, y = px 42 }
+              , { side = 0, kind = Rifle, x = px 59, y = px 43 }
+              , { side = 0, kind = Rocket, x = px 57, y = px 45 }
+              , { side = 0, kind = Bulwark, x = px 55, y = px 44 }
+              , { side = 0, kind = Bulwark, x = px 58, y = px 46 }
+              ]
+            , vessariSquad 2 53 7
+            ]
+    , camTx = 11
+    , camTy = 49
+    }
+
+
+m4 : MissionDef
+m4 =
+    let
+        w = 78
+        h = 67
+
+        parsed =
+            parse (baseRows 0 w h)
+                |> stampRect tRock 34 17 6 34
+                |> stampLane 34 31 6 6
+                |> stampOre False 11 22 3
+                |> stampOre False 42 59 3
+                |> stampOre True 64 34 1
+                |> stampExt 25 50
+                |> stampExt 53 17
+    in
+    { id = 4
+    , name = "Scrap Truce"
+    , parsed = parsed
+    , sides =
+        [ { id = 1, race = Compact, team = 1, human = True, aggro = 100, credits = 3400, firstWave = 0 }
+        , { id = 2, race = Vessari, team = 2, human = False, aggro = 100, credits = 4200, firstWave = 4200 }
+        , { id = 3, race = Combine, team = 1, human = False, aggro = 90, credits = 3000, firstWave = 5400 }
+        ]
+    , blds =
+        List.concat
+            [ compactBase 1 34 56
+            , combineBase 3 8 28
+            , [ { side = 3, kind = ChopShop, tx = 17 , ty = 34 }
+              , { side = 3, kind = FlakRack, tx = 6, ty = 25 }
+              ]
+            , vessariBase 2 56 8
+            , vessariBase 2 59 48
+            , [ { side = 2, kind = AscendantGate, tx = 50, ty = 11 }
+              , { side = 2, kind = SkyCradle, tx = 64, ty = 53 }
+              ]
+            ]
+    , units =
+        List.concat
+            [ compactSquad 1 34 56
+            , [ { side = 1, kind = Bulwark, x = px 42, y = px 62 }
+              , { side = 1, kind = Rocket, x = px 39, y = px 63 }
+              ]
+            , combineSquad 3 8 28
+            -- the siege already at Kesk's walls
+            , [ { side = 2, kind = Lancer, x = px 20, y = px 25 }
+              , { side = 2, kind = Lancer, x = px 21, y = px 31 }
+              , { side = 2, kind = Nullifier, x = px 22, y = px 28 }
+              , { side = 2, kind = Sliver, x = px 20, y = px 35 }
+              , { side = 2, kind = Colossus, x = px 24, y = px 32 }
+              ]
+            , vessariSquad 2 56 8
+            , vessariSquad 2 59 48
+            ]
+    , camTx = 36
+    , camTy = 59
+    }
+
+
+m5 : MissionDef
+m5 =
+    let
+        w = 84
+        h = 73
+
+        parsed =
+            parse (baseRows 2 w h)
+                |> stampRect tChasm 56 25 20 20   -- the Engine pit
+                |> stampRect tRock 53 22 25 3
+                |> stampRect tRock 53 45 25 3
+                |> stampLane 53 31 6 3
+                |> stampOre False 11 62 3
+                |> stampOre False 14 14 3
+                |> stampOre True 39 39 1
+                |> stampExt 28 20
+                |> stampExt 31 56
+    in
+    { id = 5
+    , name = "Meridian Engine"
+    , parsed = parsed
+    , sides =
+        -- m5 is the finale and should feel like one, but this is a demo, not a
+        -- test of RTS skill. Two knobs were out of line with the rest of the
+        -- campaign: aggro 115 was the only value above 100 anywhere in the
+        -- game, and a first wave at 3600 (two minutes) landed earlier than any
+        -- other mission -- earlier than m4's 4200 -- on the biggest map in the
+        -- game, before a refinery is paying for itself. Both are pulled back
+        -- to campaign-normal. This also offsets the win condition getting its
+        -- teeth back: the Prime Conduit ring used to be beatable by killing a
+        -- single spire (see conduitCount in Main), and now costs all four.
+        [ { id = 1, race = Compact, team = 1, human = True, aggro = 100, credits = 4200, firstWave = 0 }
+        , { id = 2, race = Vessari, team = 2, human = False, aggro = 105, credits = 5200, firstWave = 5400 }
+        , { id = 3, race = Combine, team = 3, human = False, aggro = 100, credits = 3600, firstWave = 4800 }
+        ]
+    , blds =
+        List.concat
+            [ compactBase 1 8 62
+            , [ { side = 1, kind = Foundry, tx = 15, ty = 64 } ]
+            -- the Prime Conduit ring: four spires guarding the pit
+            , [ { side = 2, kind = Spire, tx = 52, ty = 28 }
+              , { side = 2, kind = Spire, tx = 52, ty = 39 }
+              , { side = 2, kind = Spire, tx = 77, ty = 28 }
+              , { side = 2, kind = Spire, tx = 77, ty = 39 }
+              ]
+            , vessariBase 2 62 6
+            , [ { side = 2, kind = AscendantGate, tx = 70, ty = 11 }
+              , { side = 2, kind = PurgeLens, tx = 56, ty = 14 }
+              , { side = 2, kind = SkyCradle, tx = 50, ty = 8 }
+              , { side = 2, kind = PylonThorn, tx = 53, ty = 27 }
+              , { side = 2, kind = PylonThorn, tx = 53, ty = 42 }
+              , { side = 2, kind = PylonThorn, tx = 76, ty = 27 }
+              , { side = 2, kind = PylonThorn, tx = 76, ty = 42 }
+              ]
+            , combineBase 3 62 59
+            , [ { side = 3, kind = ChopShop, tx = 70, ty = 62 }
+              , { side = 3, kind = FlakRack, tx = 59, ty = 56 }
+              ]
+            ]
+    , units =
+        List.concat
+            [ compactSquad 1 8 62
+            , [ { side = 1, kind = Bulwark, x = px 17, y = px 67 }
+              , { side = 1, kind = Bulwark, x = px 20, y = px 66 }
+              , { side = 1, kind = Rocket, x = px 14, y = px 69 }
+              ]
+            , vessariSquad 2 62 6
+            , [ { side = 2, kind = Colossus, x = px 64, y = px 34 } ]
+            , combineSquad 3 62 59
+            ]
+    , camTx = 11
+    , camTy = 64
+    }
+
+
+-- ===== skirmish =====
+
+
+skirmishDef : Race -> Race -> Int -> MissionDef
+skirmishDef playerRace enemyRace difficulty =
+    let
+        w = 70
+        h = 64
+
+        parsed =
+            parse (baseRows 0 w h)
+                |> stampRect tRock 31 20 8 6
+                |> stampRect tRock 31 39 8 6
+                |> stampChasmSides w h
+                |> stampOre False 13 53 3
+                |> stampOre False 57 10 3
+                |> stampOre True 35 31 1
+                |> stampOre False 13 11 1
+                |> stampOre False 57 53 1
+                |> stampExt 20 31
+                |> stampExt 50 31
+                |> stampExt 35 11
+                |> stampExt 35 53
+
+        aggro =
+            if difficulty == 0 then 70
+            else if difficulty == 1 then 100
+            else 130
+
+        firstWave =
+            if difficulty == 0 then 9000
+            else if difficulty == 1 then 6300
+            else 4500
+    in
+    { id = 0
+    , name = "Skirmish: Rust Basin"
+    , parsed = parsed
+    , sides =
+        [ { id = 1, race = playerRace, team = 1, human = True, aggro = 100, credits = 3000, firstWave = 0 }
+        , { id = 2, race = enemyRace, team = 2, human = False, aggro = aggro, credits = 3000, firstWave = firstWave }
+        ]
+    , blds =
+        List.concat
+            [ raceStartBlds playerRace 1 10 48
+            , raceStartBlds enemyRace 2 55 7
+            ]
+    , units =
+        List.concat
+            [ raceStartUnits playerRace 1 10 48
+            , raceStartUnits enemyRace 2 55 7
+            ]
+    , camTx = 13
+    , camTy = 50
+    }
+
+
+stampChasmSides : Int -> Int -> Parsed -> Parsed
+stampChasmSides w h p =
+    p
+        |> stampRect tChasm 2 (h // 2 - 2) 8 4
+        |> stampRect tChasm (w - 10) (h // 2 - 2) 8 4
+
+
+raceStartBlds : Race -> Int -> Int -> Int -> List BldSpawn
+raceStartBlds r side tx ty =
+    case r of
+        Compact -> compactBase side tx ty
+        Combine -> combineBase side tx ty
+        Vessari -> vessariBase side tx ty
+
+
+raceStartUnits : Race -> Int -> Int -> Int -> List UnitSpawn
+raceStartUnits r side tx ty =
+    case r of
+        Compact -> compactSquad side tx ty
+        Combine -> combineSquad side tx ty
+        Vessari -> vessariSquad side tx ty
+
+
+-- ===== building the live Game =====
+
+
+emptyGame : Game
+emptyGame =
+    { tick = 0
+    , seed = Random.initialSeed 20260715
+    , mapW = 4
+    , mapH = 4
+    , tiles = Dict.empty
+    , ore = Dict.empty
+    , units = []
+    , blds = []
+    , shots = []
+    , fxs = []
+    , scraps = []
+    , strikes = []
+    , sides = []
+    , flows = []
+    , fogVis = Dict.empty
+    , fogSeen = Dict.empty
+    , fogRows = Dict.empty
+    , fogDirty = Dict.empty
+    , nextId = 1
+    , alerts = []
+    , pings = []
+    , cues = []
+    , winner = 0
+    , msnPhase = 0
+    , msnTimer = 0
+    , flags = Dict.empty
+    , supStall = False
+    }
+
+
+buildGame : MissionDef -> Game
+buildGame def =
+    let
+        p = def.parsed
+
+        g0 =
+            { emptyGame
+                | mapW = p.w
+                , mapH = p.h
+                , tiles = p.tiles
+                , ore = p.ore
+                , sides =
+                    List.map
+                        (\sd ->
+                            let
+                                s = freshSide sd.id sd.race sd.team sd.human sd.aggro
+                            in
+                            { s
+                                | credits = sd.credits
+                                , mind = { mode = 0, thinkAt = 30, waveAt = sd.firstWave, waveSize = 0, buildIx = 0, targetX = 0, targetY = 0, scoutIx = 0 }
+                            }
+                        )
+                        def.sides
+            }
+
+        -- neutral derelict extractors from the map stamps
+        g1 =
+            List.foldl
+                (\e acc -> mkBld 0 Derelict e.tx e.ty 0 acc)
+                g0
+                p.exts
+
+        g2 =
+            List.foldl
+                (\b acc -> mkBld b.side b.kind b.tx b.ty 0 acc)
+                g1
+                def.blds
+
+        g3 =
+            List.foldl
+                (\u acc -> mkUnit u.side u.kind u.x u.y acc)
+                g2
+                def.units
+
+        -- finished bases: skip the unfold animation on mission start
+        g4 =
+            { g3 | blds = List.map (\b -> { b | prog = 0 }) g3.blds }
+    in
+    initFogRows g4

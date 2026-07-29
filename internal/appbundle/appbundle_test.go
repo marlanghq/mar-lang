@@ -243,3 +243,54 @@ func TestLoadReaderAt_FullRoundtrip(t *testing.T) {
 		t.Errorf("source mismatch after roundtrip: %q", b.Sources["Main.mar"])
 	}
 }
+
+// TestAssets_Roundtrip covers public/ assets making it through the whole
+// bundle pipeline — the gap that made a fullstack app's /logo.png work in
+// `mar dev` but 404 after `mar deploy`. Build with an asset, roundtrip
+// through the executable stamp, and confirm ExtractToDir lands it back
+// under public/ (where the runtime points SetPublicDir).
+func TestAssets_Roundtrip(t *testing.T) {
+	logo := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a}
+	payload, err := BuildPayload(BuildInput{
+		ManifestJSON: []byte(`{"name":"rt"}`),
+		Sources:      map[string][]byte{"Main.mar": []byte("main = 1")},
+		Assets: map[string][]byte{
+			"logo.png":     logo,
+			"img/hero.jpg": []byte("jpeg-bytes"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outPath := filepath.Join(t.TempDir(), "fake-binary")
+	if err := WriteExecutable([]byte("stub"), payload, outPath); err != nil {
+		t.Fatal(err)
+	}
+	b, err := LoadExecutable(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b.Assets["logo.png"]) != string(logo) {
+		t.Errorf("asset logo.png mismatch after roundtrip: %q", b.Assets["logo.png"])
+	}
+	if string(b.Assets["img/hero.jpg"]) != "jpeg-bytes" {
+		t.Errorf("nested asset mismatch after roundtrip: %q", b.Assets["img/hero.jpg"])
+	}
+
+	// ExtractToDir must place assets under destDir/public/ so the runtime
+	// serves them (SetPublicDir points at projectDir/public).
+	destDir := t.TempDir()
+	if err := ExtractToDir(b, destDir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(destDir, "public", "logo.png"))
+	if err != nil {
+		t.Fatalf("expected public/logo.png after extract: %v", err)
+	}
+	if string(got) != string(logo) {
+		t.Errorf("extracted logo bytes differ: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(destDir, "public", "img", "hero.jpg")); err != nil {
+		t.Errorf("expected public/img/hero.jpg after extract: %v", err)
+	}
+}

@@ -62,13 +62,14 @@ func TestDecodeTaggedNothing(t *testing.T) {
 func TestEncodeJustWrapsUnit(t *testing.T) {
 	// A `Just ()` value — Maybe wrapping the unit value — must stay
 	// distinguishable from `Nothing` on the wire. The encoding is
-	// {"__ctor":"Just","__args":[null]}: the inner null is the unit,
-	// and the outer __ctor tag prevents collision with bare Nothing.
+	// {"__args":[null],"__ctor":"Just"}: the inner null is the unit,
+	// and the __ctor tag prevents collision with bare Nothing. Keys come
+	// out sorted, which is why __args leads; see encodeValue.
 	got, err := encodeValue(VCtor{Tag: "Just", Args: []Value{VUnit{}}})
 	if err != nil {
 		t.Fatalf("encode Just (): %v", err)
 	}
-	want := `{"__ctor":"Just","__args":[null]}`
+	want := `{"__args":[null],"__ctor":"Just"}`
 	if got != want {
 		t.Fatalf("Just () encode: want %q, got %q", want, got)
 	}

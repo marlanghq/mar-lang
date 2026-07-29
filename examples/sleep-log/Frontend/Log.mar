@@ -1,0 +1,431 @@
+module Frontend.Log exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , hstack
+    , text, subtitle, button, datePicker, errorText, empty
+    , spacer, topBarTrailing
+    )
+
+
+-- The whole app in one screen: rate the night on top, read the last 30 below.
+
+
+type Nights
+    = Loading
+    | Loaded (List Shared.Night)
+    | Failed String
+
+
+type alias Model =
+    { nights : Nights
+    , today : Maybe Time    -- the clock, read once on mount
+    , date : Maybe Time     -- the night being rated; starts at today
+    , error : Maybe String  -- save failures, kept away from the loaded list
+    }
+
+
+type Msg
+    = NightsFetched (Result Service.Error (List Shared.Night))
+    | ClockRead Time
+    | DatePicked Time
+    | QualityPicked Shared.Quality
+    | NightLogged (Result Service.Error Shared.Night)
+    | ClearClicked
+    | NightCleared (Result Service.Error ())
+    | SignOutClicked
+    | SignedOut (Result String ())
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { nights = Loading, today = Nothing, date = Nothing, error = Nothing }
+    , Cmd.batch
+        [ Service.call Shared.listNights () NightsFetched
+        , Cmd.perform ClockRead Time.now
+        ]
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        NightsFetched (Ok loaded) ->
+            ( { model | nights = Loaded loaded }, Cmd.none )
+
+        NightsFetched (Err why) ->
+            ( { model | nights = Failed (Service.errorToString why) }, Cmd.none )
+
+        ClockRead now ->
+            -- Seeds both the report window and the date field, so the form
+            -- opens on today without the user choosing anything.
+            ( { model | today = Just now, date = Just now }, Cmd.none )
+
+        DatePicked picked ->
+            ( { model | date = Just picked }, Cmd.none )
+
+        QualityPicked quality ->
+            case model.date of
+                Just when ->
+                    ( { model | error = Nothing }
+                    , Service.call Shared.logNight { date = when, quality = quality } NightLogged
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        NightLogged (Ok _) ->
+            ( model, Service.call Shared.listNights () NightsFetched )
+
+        NightLogged (Err why) ->
+            -- A failed save must not wipe the list that is already on screen.
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        ClearClicked ->
+            case model.date of
+                Just when ->
+                    ( { model | error = Nothing }
+                    , Service.call Shared.clearNight { date = when } NightCleared
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        NightCleared (Ok _) ->
+            ( model, Service.call Shared.listNights () NightsFetched )
+
+        NightCleared (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        SignOutClicked ->
+            ( model, Auth.logout SignedOut )
+
+        SignedOut _ ->
+            -- Worked or not, send them to the sign-in screen: staying on a
+            -- protected page with a dead session helps nobody.
+            ( model, Nav.replaceTo Frontend.Routes.signIn {} )
+
+
+-- ===== reading the log =====
+
+
+dayKey : Time -> Int
+dayKey t =
+    Time.toMillis (Shared.startOfDay t)
+
+
+ratingFor : List Shared.Night -> Time -> Maybe Shared.Quality
+ratingFor logged when =
+    case List.head (List.filter (\n -> dayKey n.date == dayKey when) logged) of
+        Just night ->
+            Just night.quality
+
+        Nothing ->
+            Nothing
+
+
+-- 30 nights ending today, so "the last 30 days" is a fixed frame. Taking the
+-- last 30 ROWS instead would quietly stretch across a gap and call a month of
+-- silence a good month.
+inWindow : Time -> List Shared.Night -> List Shared.Night
+inWindow today logged =
+    let
+        first =
+            Time.toMillis (Time.addDays (Shared.startOfDay today) (0 - 29))
+    in
+    List.filter (\n -> Time.toMillis n.date >= first) logged
+
+
+countOf : Shared.Quality -> List Shared.Night -> Int
+countOf quality logged =
+    List.length (List.filter (\n -> n.quality == quality) logged)
+
+
+-- ===== view =====
+
+
+view : Shared.User -> Model -> View Msg
+view user model =
+    navigationStack
+        [ navigationTitle "Sleep Log"
+        , topBarTrailing (button [] SignOutClicked "Sign out")
+        ]
+        [ list []
+            (List.concat
+                [ [ rateSection model ]
+                , errorSection model
+                , reportSections model
+                , [ section [ footer ("Signed in as " ++ user.email) ] [] ]
+                ])
+        ]
+
+
+rateSection : Model -> View Msg
+rateSection model =
+    section [ header "How did you sleep?" ]
+        (case model.date of
+            Nothing ->
+                [ text [] "Reading the clock…" ]
+
+            Just when ->
+                List.concat
+                    [ [ datePicker [] when DatePicked ]
+                    , List.map (ratingRow model when) Shared.scale
+                    , clearRow model when
+                    ]
+        )
+
+
+-- Only offered for a date that HAS a rating: a clear button on an empty night
+-- is a control that cannot do anything, and an app this small should not have
+-- one.
+clearRow : Model -> Time -> List (View Msg)
+clearRow model when =
+    case model.nights of
+        Loaded items ->
+            case ratingFor items when of
+                Just _ ->
+                    [ button [] ClearClicked "Clear this night" ]
+
+                Nothing ->
+                    []
+
+        Loading ->
+            []
+
+        Failed _ ->
+            []
+
+
+ratingRow : Model -> Time -> Shared.Quality -> View Msg
+ratingRow model when quality =
+    let
+        logged =
+            case model.nights of
+                Loaded items ->
+                    ratingFor items when
+
+                Loading ->
+                    Nothing
+
+                Failed _ ->
+                    Nothing
+    in
+    hstack []
+        [ button [] (QualityPicked quality) (Shared.qualityLabel quality)
+        , spacer
+        , if logged == Just quality then
+            text [] "saved"
+
+          else
+            empty
+        ]
+
+
+errorSection : Model -> List (View Msg)
+errorSection model =
+    case model.error of
+        Just why ->
+            [ section [ header "Could not save" ] [ errorText why ] ]
+
+        Nothing ->
+            []
+
+
+reportSections : Model -> List (View Msg)
+reportSections model =
+    case (model.nights, model.today) of
+        (Loading, _) ->
+            [ section [] [ text [] "Loading…" ] ]
+
+        (Failed why, _) ->
+            [ section [ header "Last 30 nights" ] [ errorText why ] ]
+
+        (Loaded _, Nothing) ->
+            []
+
+        (Loaded items, Just today) ->
+            let
+                recent =
+                    inWindow today items
+            in
+            if List.isEmpty recent then
+                [ section [ header "Last 30 nights" ]
+                    [ text [] "Nothing logged yet. Rate a night above and it shows up here." ]
+                ]
+
+            else
+                [ summarySection today recent
+                , distributionSection recent
+                , nightlySection recent
+                ]
+
+
+summarySection : Time -> List Shared.Night -> View Msg
+summarySection today recent =
+    let
+        counted =
+            List.length recent
+
+        total =
+            List.foldl (\night sum -> sum + Shared.qualityScore night.quality) 0 recent
+    in
+    section [ header "Last 30 nights" ]
+        [ text [] (String.fromInt counted ++ " of 30 nights logged")
+        , subtitle ("Typical night: " ++ typicalLabel total counted)
+        , text [] (streakLine (goodRun today recent))
+        ]
+
+
+-- The run of consecutive nights rated Good or better, counting back from today.
+--
+-- Two decisions worth naming. It walks CALENDAR days, not the list, so a gap
+-- breaks the run instead of being skipped over — a week you did not log is not
+-- a week you slept well. And if today has no entry yet it starts from
+-- yesterday, because otherwise every morning would report a broken streak
+-- before you have had the chance to log anything.
+goodRun : Time -> List Shared.Night -> Int
+goodRun today logged =
+    let
+        start =
+            if isGood (ratingFor logged today) then
+                today
+
+            else
+                Time.addDays (Shared.startOfDay today) (0 - 1)
+    in
+    countBack logged start 0
+
+
+countBack : List Shared.Night -> Time -> Int -> Int
+countBack logged day acc =
+    -- 30 is the report window, and also a hard floor on the recursion.
+    if acc >= 30 then
+        acc
+
+    else if isGood (ratingFor logged day) then
+        countBack logged (Time.addDays (Shared.startOfDay day) (0 - 1)) (acc + 1)
+
+    else
+        acc
+
+
+isGood : Maybe Shared.Quality -> Bool
+isGood q =
+    case q of
+        Just quality ->
+            Shared.qualityScore quality >= 4
+
+        Nothing ->
+            False
+
+
+streakLine : Int -> String
+streakLine n =
+    if n == 0 then
+        "No good nights in a row right now."
+
+    else if n == 1 then
+        "1 good night in a row."
+
+    else
+        String.fromInt n ++ " good nights in a row." 
+
+
+-- Rounds the mean to the nearest step and names it, because "3.4 out of 5"
+-- says less than "Normal" to someone reading their own month.
+typicalLabel : Int -> Int -> String
+typicalLabel total counted =
+    if counted == 0 then
+        "nothing yet"
+
+    else
+        let
+            -- Scale by 10 first so the rounding stays in integers.
+            tenths =
+                total * 10 // counted
+
+            step =
+                (tenths + 5) // 10
+        in
+        if step <= 1 then
+            Shared.qualityLabel Shared.VeryBad
+
+        else if step == 2 then
+            Shared.qualityLabel Shared.Bad
+
+        else if step == 3 then
+            Shared.qualityLabel Shared.Normal
+
+        else if step == 4 then
+            Shared.qualityLabel Shared.Good
+
+        else
+            Shared.qualityLabel Shared.VeryGood
+
+
+distributionSection : List Shared.Night -> View Msg
+distributionSection recent =
+    section [ header "How the nights split" ]
+        (List.map (distributionRow recent) Shared.scale)
+
+
+distributionRow : List Shared.Night -> Shared.Quality -> View Msg
+distributionRow recent quality =
+    let
+        n =
+            countOf quality recent
+    in
+    hstack []
+        [ text [] (Shared.qualityLabel quality)
+        , spacer
+        , text [] (String.repeat n "█" ++ "  " ++ String.fromInt n)
+        ]
+
+
+nightlySection : List Shared.Night -> View Msg
+nightlySection recent =
+    section
+        [ header "Night by night"
+        , footer "Newest first."
+        ]
+        (List.map nightRow (List.reverse (List.sortBy (\n -> Time.toMillis n.date) recent)))
+
+
+nightRow : Shared.Night -> View Msg
+nightRow night =
+    hstack []
+        [ text [] (formatDay night.date)
+        , spacer
+        , text [] (Shared.qualityLabel night.quality)
+        ]
+
+
+formatDay : Time -> String
+formatDay t =
+    String.fromInt (Time.year t)
+        ++ "-"
+        ++ pad2 (Time.month t)
+        ++ "-"
+        ++ pad2 (Time.day t)
+
+
+pad2 : Int -> String
+pad2 n =
+    String.padLeft 2 '0' (String.fromInt n)
+
+
+page : Page
+page =
+    Page.protected
+        { path = "/"
+        , title = "Sleep Log"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ _ -> Sub.none
+        }

@@ -48,7 +48,7 @@ auth =
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.fullstack
         { services = Backend.services
@@ -129,12 +129,12 @@ entries =
 -- Service handlers. Each takes the authenticated User as its second
 -- arg. Auth.protect (below) injects it; missing/expired sessions
 -- return 401 before the handler runs.
-listMine : () -> Shared.User -> Effect (List Shared.Entry)
+listMine : () -> Shared.User -> Task (List Shared.Entry)
 listMine _ user =
     Repo.findBy entries { authorId = user.id }
 
 
-createMine : Shared.NewEntry -> Shared.User -> Effect Shared.Entry
+createMine : Shared.NewEntry -> Shared.User -> Task Shared.Entry
 createMine input user =
     Repo.create entries
         { body     = input.body
@@ -191,25 +191,25 @@ type Msg
     | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
-    ( AskEmail "" Nothing, Effect.none )
+    ( AskEmail "" Nothing, Cmd.none )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         -- Typing clears any pending error.
         DraftChanged value ->
             case model of
                 AskEmail _ _ ->
-                    ( AskEmail value Nothing, Effect.none )
+                    ( AskEmail value Nothing, Cmd.none )
 
                 AskCode email _ _ ->
-                    ( AskCode email value Nothing, Effect.none )
+                    ( AskCode email value Nothing, Cmd.none )
 
                 Submitting _ ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         Submitted ->
             case model of
@@ -224,32 +224,32 @@ update msg model =
                     )
 
                 Submitting _ ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         -- The code went out. Move to the code-entry screen.
         CodeRequested (Ok Auth.CodeSent) ->
             case model of
                 Submitting email ->
-                    ( AskCode email "" Nothing, Effect.none )
+                    ( AskCode email "" Nothing, Cmd.none )
 
                 _ ->
-                    ( model, Effect.none )
+                    ( model, Cmd.none )
 
         -- The request's domain outcomes park their explanation back on
         -- the email screen so the user can retry without retyping. The
         -- copy for each typed case belongs to this screen.
         CodeRequested (Ok Auth.InvalidEmail) ->
             ( requestFailed "That doesn't look like a valid email address." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeRequested (Ok Auth.RateLimited) ->
             ( requestFailed "Too many attempts. Wait a moment before trying again." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeRequested (Err why) ->
-            ( requestFailed (Service.errorToString why) model, Effect.none )
+            ( requestFailed (Service.errorToString why) model, Cmd.none )
 
         CodeVerified (Ok (Auth.SignedIn _)) ->
             -- Auth.completeSignIn redirects to wherever a 401 sent
@@ -261,16 +261,16 @@ update msg model =
         -- with the field cleared so the user can re-type cleanly.
         CodeVerified (Ok Auth.WrongCode) ->
             ( verifyFailed "That code didn't work. Check your email or request a new one." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeVerified (Ok Auth.TooManyAttempts) ->
             ( verifyFailed "Too many tries with this code. Request a new one." model
-            , Effect.none
+            , Cmd.none
             )
 
         CodeVerified (Err why) ->
-            ( verifyFailed (Service.errorToString why) model, Effect.none )
+            ( verifyFailed (Service.errorToString why) model, Cmd.none )
 
 
 -- requestFailed / verifyFailed place the failure copy on the step the
@@ -355,6 +355,7 @@ page =
         , init = init
         , update = update
         , view = view
+        , subscriptions = always Sub.none
         }
 `
 	files["Frontend/Home.mar"] = fmt.Sprintf(`module Frontend.Home exposing (page)
@@ -399,28 +400,28 @@ type Msg
     | SignedOut (Result String ())
 
 
-init : Shared.User -> (Model, Effect Msg)
+init : Shared.User -> (Model, Cmd Msg)
 init _ =
     ( { entries = Loading, draft = "" }
     , Service.call Shared.listMine () EntriesLoaded
     )
 
 
-update : Shared.User -> Msg -> Model -> (Model, Effect Msg)
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
         EntriesLoaded (Ok loaded) ->
-            ( { model | entries = Loaded loaded }, Effect.none )
+            ( { model | entries = Loaded loaded }, Cmd.none )
 
         EntriesLoaded (Err why) ->
-            ( { model | entries = Failed (Service.errorToString why) }, Effect.none )
+            ( { model | entries = Failed (Service.errorToString why) }, Cmd.none )
 
         DraftChanged value ->
-            ( { model | draft = value }, Effect.none )
+            ( { model | draft = value }, Cmd.none )
 
         AddClicked ->
             if String.trim model.draft == "" then
-                ( model, Effect.none )
+                ( model, Cmd.none )
             else
                 ( model
                 , Service.call Shared.createMine { body = model.draft } EntryCreated
@@ -432,7 +433,7 @@ update _ msg model =
             )
 
         EntryCreated (Err _) ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
         SignOutClicked ->
             ( model, Auth.logout SignedOut )
@@ -491,6 +492,7 @@ page =
         , init = init
         , update = update
         , view = view
+        , subscriptions = \_ _ -> Sub.none
         }
 `, name)
 	return files

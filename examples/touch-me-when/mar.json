@@ -1,0 +1,10 @@
+{
+  "name": "touch-me-when",
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "touch-me-when",
+      "account": "env:CLOUDFLARE_ACCOUNT_ID",
+      "apiToken": "env:CLOUDFLARE_API_TOKEN"
+    }
+  }
+}

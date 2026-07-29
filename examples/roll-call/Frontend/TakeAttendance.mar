@@ -1,0 +1,288 @@
+module Frontend.TakeAttendance exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import Frontend.Chrome exposing (sheetHeaderDone)
+import UI exposing
+    ( vstack, list, section, header, footer, subtitle
+    , hstack, spacer
+    , text, button, errorText, datePicker
+    )
+
+
+-- The hero screen: mark every student present / late / absent for a
+-- chosen day. Mounted at /classes/{id:Int}/attendance, and PRESENTED
+-- over the class it belongs to (Page.sheet) rather than pushed onto the
+-- stack — taking attendance is a task with a beginning and an end, not a
+-- place you browse into. It is still a real route: the URL works as a
+-- deep link, and opened cold it renders as a full screen.
+--
+-- The chosen day starts at today (read from the clock on entry) and
+-- is editable with a datePicker; changing it refetches that day's
+-- marks. Each tap on a status is optimistic — it updates the local
+-- `picks` immediately and fires an upsert (Shared.setMark) in the
+-- background, so marking a full class feels instant.
+--
+-- `picks` is the single source of truth the row controls read: one
+-- entry per student that's been marked, seeded from the server and
+-- overlaid by taps. It's a plain list of records (studentId + status)
+-- rather than a Dict — the roster is small, a linear lookup is
+-- nothing, and it keeps the model to types the runtime exercises
+-- everywhere.
+
+
+type alias Pick =
+    { studentId : Int
+    , status    : Int
+    }
+
+
+type alias Model =
+    { students : Maybe (List Shared.Student)
+    , day      : Maybe Time
+    , picks    : List Pick
+    , error    : Maybe String
+    }
+
+
+type Msg
+    = StudentsFetched (Result Service.Error (List Shared.Student))
+    | GotToday Time
+    | DayPicked Time
+    | MarksFetched (Result Service.Error (List Shared.AttendanceMark))
+    | SetStatus Int Shared.Status
+    | MarkSaved Int (Result Service.Error (Maybe Shared.AttendanceMark))
+    | Done
+
+
+init : Shared.User -> { id : Int } -> (Model, Cmd Msg)
+init _ params =
+    ( { students = Nothing, day = Nothing, picks = [], error = Nothing }
+    , Cmd.batch
+        [ Service.call Shared.listStudents { classId = params.id } StudentsFetched
+        , Cmd.perform GotToday Time.now
+        ]
+    )
+
+
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Cmd Msg)
+update _ params msg model =
+    case msg of
+        StudentsFetched (Ok students) ->
+            ( { model | students = Just students }, Cmd.none )
+
+        StudentsFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        GotToday now ->
+            -- The clock read seeds the day the sheet opens on; after
+            -- that, DayPicked is the only thing that refetches.
+            ( { model | day = Just now }, fetchMarks params.id now )
+
+        DayPicked picked ->
+            -- New day: clear the picks so we don't show yesterday's
+            -- marks for a beat, then load the chosen day's.
+            ( { model | day = Just picked, picks = [] }
+            , fetchMarks params.id picked
+            )
+
+        MarksFetched (Ok marks) ->
+            ( { model | picks = picksFromMarks marks }, Cmd.none )
+
+        MarksFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        SetStatus studentId status ->
+            case model.day of
+                Just day ->
+                    -- Optimistic: reflect the tap now, persist in the
+                    -- background. setMark is an upsert keyed on
+                    -- (student, day), so re-tapping just overwrites.
+                    ( { model | picks = setPick studentId (Shared.statusToInt status) model.picks }
+                    , Service.call Shared.setMark
+                        { studentId = studentId
+                        , classId   = params.id
+                        , day       = day
+                        , status    = Shared.statusToInt status
+                        }
+                        (MarkSaved studentId)
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        MarkSaved _ (Ok _) ->
+            ( model, Cmd.none )
+
+        MarkSaved _ (Err why) ->
+            -- The optimistic pick stays on screen; surface the error so
+            -- the teacher knows to re-tap if it didn't stick.
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        Done ->
+            -- Closes the presentation and reveals the class underneath.
+            -- Nothing to save on the way out: every tap already went to
+            -- the server.
+            ( model, Nav.dismiss )
+
+
+fetchMarks : Int -> Time -> Cmd Msg
+fetchMarks classId day =
+    Service.call Shared.listMarks
+        { classId = classId, dayKey = Shared.dayKeyOf day }
+        MarksFetched
+
+
+-- ===== picks: a tiny per-student status map, as a plain list =====
+
+
+picksFromMarks : List Shared.AttendanceMark -> List Pick
+picksFromMarks marks =
+    List.map (\m -> { studentId = m.studentId, status = m.status }) marks
+
+
+-- Upsert a pick: drop any existing entry for this student, prepend the
+-- new one. Order doesn't matter — lookups are by studentId.
+setPick : Int -> Int -> List Pick -> List Pick
+setPick studentId statusInt picks =
+    { studentId = studentId, status = statusInt }
+        :: List.filter (\p -> p.studentId /= studentId) picks
+
+
+lookupPick : Int -> List Pick -> Maybe Shared.Status
+lookupPick studentId picks =
+    List.foldl
+        (\p acc -> if p.studentId == studentId then Just (Shared.statusFromInt p.status) else acc)
+        Nothing
+        picks
+
+
+-- ===== VIEW =====
+
+
+-- No navigationStack here: a presented route has no bar of its own, so
+-- the header IS the chrome. One button, Done: every tap already saved,
+-- so there is nothing to cancel.
+view : Shared.User -> { id : Int } -> Model -> View Msg
+view _ _ model =
+    vstack []
+        [ sheetHeaderDone "Take attendance" Done
+        , list [] (sections model)
+        ]
+
+
+sections : Model -> List (View Msg)
+sections model =
+    case (model.day, model.students) of
+        (Just day, Just students) ->
+            List.concat
+                [ errorSection model
+                , [ daySection day students model.picks ]
+                , rosterSection students model.picks
+                ]
+
+        _ ->
+            -- Still loading — but never swallow an error while we wait,
+            -- or a failed fetch would spin forever with no explanation.
+            List.concat
+                [ errorSection model
+                , [ section [] [ text [] "Loading…" ] ]
+                ]
+
+
+errorSection : Model -> List (View Msg)
+errorSection model =
+    case model.error of
+        Just why ->
+            [ section [ header "Something went wrong" ] [ errorText why ] ]
+
+        Nothing ->
+            []
+
+
+daySection : Time -> List Shared.Student -> List Pick -> View Msg
+daySection day students picks =
+    section
+        [ header "Day"
+        , footer (summaryLine students picks)
+        ]
+        [ datePicker [] day DayPicked ]
+
+
+-- A one-line running tally, computed by folding the roster against the
+-- picks (element-first reducer: student in, counts accumulate).
+summaryLine : List Shared.Student -> List Pick -> String
+summaryLine students picks =
+    if List.isEmpty students then
+        "No students on the roster yet."
+    else
+        let
+            counts =
+                List.foldl
+                    (\s acc ->
+                        case lookupPick s.id picks of
+                            Just Shared.Present -> { acc | present = acc.present + 1 }
+                            Just Shared.Late    -> { acc | late = acc.late + 1 }
+                            Just Shared.Absent  -> { acc | absent = acc.absent + 1 }
+                            Nothing              -> { acc | notMarked = acc.notMarked + 1 }
+                    )
+                    { present = 0, late = 0, absent = 0, notMarked = 0 }
+                    students
+        in
+        String.fromInt counts.present ++ " present, "
+            ++ String.fromInt counts.late ++ " late, "
+            ++ String.fromInt counts.absent ++ " absent, "
+            ++ String.fromInt counts.notMarked ++ " to go"
+
+
+rosterSection : List Shared.Student -> List Pick -> List (View Msg)
+rosterSection students picks =
+    if List.isEmpty students then
+        [ section [ header "Roster" ]
+            [ subtitle "Add students on the class screen first." ]
+        ]
+    else
+        [ section [ header "Mark each student" ]
+            (List.map (studentRow picks) students)
+        ]
+
+
+studentRow : List Pick -> Shared.Student -> View Msg
+studentRow picks student =
+    let
+        current =
+            lookupPick student.id picks
+    in
+    hstack []
+        [ text [] student.name
+        , spacer
+        , statusButton student.id Shared.Present current
+        , statusButton student.id Shared.Late current
+        , statusButton student.id Shared.Absent current
+        ]
+
+
+-- One segment of the three-way control. A filled dot marks the chosen
+-- status; the others show hollow. Tapping sets that status.
+statusButton : Int -> Shared.Status -> Maybe Shared.Status -> View Msg
+statusButton studentId status current =
+    let
+        marker =
+            if current == Just status then "●" else "○"
+    in
+    button [] (SetStatus studentId status) (marker ++ " " ++ Shared.statusShort status)
+
+
+page : Page
+page =
+    Page.sheet
+        (Page.dynamicProtected
+            { path   = Frontend.Routes.takeAttendance
+            , title  = "Take attendance"
+            , init   = init
+            , update = update
+            , view   = view
+            , subscriptions = \_ _ _ -> Sub.none
+            }
+        )

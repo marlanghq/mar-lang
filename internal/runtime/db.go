@@ -176,21 +176,27 @@ func OpenSnapshotDB(path string) (*sql.DB, error) {
 //   - []byte → VString (assumed UTF-8)
 //   - bool   → VBool
 //   - nil    → VString "" (defensive — should be filtered by NotNull check)
-func goValueToScalar(v any) Value {
+func goValueToScalar(v any) (Value, error) {
 	if v == nil {
-		return VString{V: ""}
+		return VString{V: ""}, nil
 	}
 	switch x := v.(type) {
 	case int64:
-		return VInt{V: x}
+		// SQLite's INTEGER is 64 bits and Mar's Int is 53, so a stored value
+		// can be one the language has no way to represent. Refusing beats
+		// handing back a rounded number that reads as real.
+		if !inIntRange(x) {
+			return nil, intOutOfRange("the database", x)
+		}
+		return VInt{V: x}, nil
 	case float64:
-		return VFloat{V: x}
+		return VFloat{V: x}, nil
 	case bool:
-		return VBool{V: x}
+		return VBool{V: x}, nil
 	case string:
-		return VString{V: x}
+		return VString{V: x}, nil
 	case []byte:
-		return VString{V: string(x)}
+		return VString{V: string(x)}, nil
 	}
-	return VString{V: fmt.Sprintf("%v", v)}
+	return VString{V: fmt.Sprintf("%v", v)}, nil
 }

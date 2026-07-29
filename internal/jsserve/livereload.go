@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"sync"
+	"time"
 
 	"mar/internal/ast"
 	"mar/internal/runtime"
@@ -259,6 +260,12 @@ func (h *ReloadHub) ServeReload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+
+	// This SSE stream is intentionally long-lived. The HTTP server sets a
+	// global WriteTimeout (security-audit-2026-07-15.md #3); clear the write
+	// deadline for this connection so the event stream isn't cut off after a
+	// minute. Best-effort: harmless if the writer doesn't support it.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
 	c := h.subscribe()
 	defer h.unsubscribe(c)

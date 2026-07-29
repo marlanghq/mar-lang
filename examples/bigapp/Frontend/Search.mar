@@ -5,8 +5,7 @@ import Shared
 import Frontend.Routes
 import UI exposing
     ( navigationStack, navigationTitle
-    , form, list, section, header, footer
-    , hstack, vstack
+    , form, section, header, hstack, vstack
     , text, subtitle, textField, button, navigationLink, empty, spacer, errorText
     , submit
     )
@@ -78,8 +77,8 @@ resultRow issue =
             [ text [] (Shared.issueHandle issue)
             , subtitle
                 ( Shared.statusLabel issue.status
-                    ++ " · " ++ Shared.priorityLabel issue.priority
-                    ++ " · assigned " ++ issue.assigneeName
+                    ++ ", " ++ Shared.priorityLabel issue.priority
+                    ++ ", assigned to " ++ issue.assigneeName
                 )
             ])
 

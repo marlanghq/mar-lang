@@ -1,0 +1,207 @@
+module Backend.Students exposing (services, students, listAllForUser, deleteForClass, deleteAllForUser)
+
+
+import Shared
+import Backend.Attendance
+
+
+-- Students domain, server-side. Owns the students entity and the
+-- per-roster rules. Imports Attendance (a leaf) so deleting a student
+-- also sweeps that student's marks; never imports Classes, so the
+-- module graph stays acyclic.
+--
+-- Ownership: every query filters by `teacherId = caller.id`; every
+-- write stamps or re-checks it. A student is always bound to the
+-- caller, so a forged classId can only ever attach a row inside the
+-- caller's own space.
+
+
+students : Entity Shared.Student
+students =
+    Entity.define
+        { name = "students"
+        , columns =
+            { id        = Entity.serial
+            , name      = Entity.text Entity.notNull
+            , classId   = Entity.int Entity.notNull
+            , teacherId = Entity.int Entity.notNull
+            , position  = Entity.int Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ===== Read (GET) =====
+
+
+listStudentsImpl : { classId : Int } -> Shared.User -> Task (List Shared.Student)
+listStudentsImpl input user =
+    Repo.findBy students { teacherId = user.id, classId = input.classId }
+        |> Task.map sortByPosition
+
+
+getStudentImpl : { id : Int } -> Shared.User -> Task (Maybe Shared.Student)
+getStudentImpl input user =
+    Repo.findById students input.id
+        |> Task.map (ownedOrNothing user)
+
+
+-- Every student the teacher owns, across all classes. The Classes
+-- list screen calls this once and folds per-class counts out of it,
+-- so the roster overview is two queries total instead of one per
+-- class.
+listAllForUser : Shared.User -> Task (List Shared.Student)
+listAllForUser user =
+    Repo.findBy students { teacherId = user.id }
+
+
+-- ===== Create =====
+
+
+addStudentImpl : { classId : Int, name : String } -> Shared.User -> Task Shared.StudentOutcome
+addStudentImpl input user =
+    if String.trim input.name == "" then
+        Task.succeed Shared.StudentNameBlank
+    else
+        Repo.findBy students { teacherId = user.id, classId = input.classId }
+            |> Task.andThen
+                (\existing ->
+                    Repo.create students
+                        { name      = String.trim input.name
+                        , classId   = input.classId
+                        , teacherId = user.id
+                        , position  = nextPosition existing
+                        }
+                        |> Task.map Shared.StudentAdded
+                )
+
+
+-- ===== Update =====
+
+
+renameStudentImpl : { id : Int, name : String } -> Shared.User -> Task (Maybe Shared.Student)
+renameStudentImpl input user =
+    Repo.findById students input.id
+        |> Task.andThen
+            (\found ->
+                case found of
+                    Just student ->
+                        if student.teacherId == user.id && String.trim input.name /= "" then
+                            Repo.update students input.id { name = String.trim input.name }
+                        else
+                            Task.succeed Nothing
+
+                    Nothing ->
+                        Task.succeed Nothing
+            )
+
+
+deleteStudentImpl : { id : Int } -> Shared.User -> Task ()
+deleteStudentImpl input user =
+    Repo.findById students input.id
+        |> Task.andThen
+            (\found ->
+                case found of
+                    Just student ->
+                        if student.teacherId == user.id then
+                            -- Sweep the student's marks first, then the
+                            -- student row. A student who is gone should
+                            -- leave no attendance history behind.
+                            Backend.Attendance.deleteForStudent input.id user
+                                |> Task.andThen (\_ -> Repo.deleteById students input.id)
+                        else
+                            Task.succeed ()
+
+                    Nothing ->
+                        Task.succeed ()
+            )
+
+
+-- Persist a new roster order. The frontend sends the full re-ordered
+-- id list; we write position = index for each row we own.
+reorderStudentsImpl : { classId : Int, orderedIds : List Int } -> Shared.User -> Task ()
+reorderStudentsImpl input user =
+    Task.sequence
+        (List.indexedMap
+            (\idx id ->
+                Repo.findById students id
+                    |> Task.andThen
+                        (\found ->
+                            case found of
+                                Just student ->
+                                    if student.teacherId == user.id then
+                                        Repo.update students id { position = idx }
+                                            |> Task.map (\_ -> ())
+                                    else
+                                        Task.succeed ()
+
+                                Nothing ->
+                                    Task.succeed ()
+                        )
+            )
+            input.orderedIds
+        )
+        |> Task.map (\_ -> ())
+
+
+-- ===== Cascades =====
+--
+-- Row-only deletes (marks are handled by Attendance's own cascade,
+-- called alongside these by Classes / Account).
+
+
+deleteForClass : Int -> Shared.User -> Task ()
+deleteForClass classId user =
+    Repo.findBy students { teacherId = user.id, classId = classId }
+        |> Task.andThen deleteAll
+
+
+deleteAllForUser : Shared.User -> Task ()
+deleteAllForUser user =
+    Repo.findBy students { teacherId = user.id }
+        |> Task.andThen deleteAll
+
+
+deleteAll : List Shared.Student -> Task ()
+deleteAll rows =
+    Task.sequence (List.map (\s -> Repo.deleteById students s.id) rows)
+        |> Task.map (\_ -> ())
+
+
+-- ===== Helpers =====
+
+
+sortByPosition : List Shared.Student -> List Shared.Student
+sortByPosition rows =
+    List.sortBy (\s -> s.position) rows
+
+
+-- Next position appends at the end: one past the current maximum, or
+-- 0 for the first student. Using max+1 (not the row count) keeps new
+-- rows at the bottom even after deletions have left gaps.
+nextPosition : List Shared.Student -> Int
+nextPosition rows =
+    1 + List.foldl (\s acc -> if s.position > acc then s.position else acc) (0 - 1) rows
+
+
+ownedOrNothing : Shared.User -> Maybe Shared.Student -> Maybe Shared.Student
+ownedOrNothing user found =
+    case found of
+        Just student ->
+            if student.teacherId == user.id then Just student else Nothing
+
+        Nothing ->
+            Nothing
+
+
+-- ===== Service wiring =====
+
+
+services =
+    [ Auth.protect Shared.listStudents    listStudentsImpl
+    , Auth.protect Shared.getStudent      getStudentImpl
+    , Auth.protect Shared.addStudent      addStudentImpl
+    , Auth.protect Shared.renameStudent   renameStudentImpl
+    , Auth.protect Shared.deleteStudent   deleteStudentImpl
+    , Auth.protect Shared.reorderStudents reorderStudentsImpl
+    ]

@@ -133,7 +133,38 @@ type Migrator struct {
 // only for deterministic output — actual execution is independent
 // per-table.
 func NewMigrator(db *sql.DB, entities []VEntity) *Migrator {
-	return &Migrator{db: db, entities: entities}
+	return &Migrator{db: db, entities: ensureAuthIdentityUnique(entities)}
+}
+
+// ensureAuthIdentityUnique makes the login identity column (e.g. `email`)
+// on the Auth entity UNIQUE at the database level, even if the app didn't
+// declare `Entity.unique [...]` on it. Two concurrent request-code calls
+// for a new email would otherwise create two user rows (EnsureUser does a
+// non-atomic lookup-then-insert). The unique index closes that race in the
+// DB — the second insert fails instead of duplicating.
+// See docs/security-audit-2026-07-15.md #11.
+func ensureAuthIdentityUnique(entities []VEntity) []VEntity {
+	a := CurrentAuth()
+	if a == nil {
+		return entities
+	}
+	col, err := identifyColumn(*a)
+	if err != nil {
+		return entities // can't determine the column; leave the schema as-is
+	}
+	for i := range entities {
+		if entities[i].Table != a.Entity.Table {
+			continue
+		}
+		for _, idx := range entities[i].UniqueIndexes {
+			if len(idx) == 1 && idx[0] == col {
+				return entities // already covered by an explicit Entity.unique
+			}
+		}
+		entities[i].UniqueIndexes = append(entities[i].UniqueIndexes, []string{col})
+		return entities
+	}
+	return entities
 }
 
 // RunBootMigrations is the top-level entry point invoked by `mar dev`
@@ -882,10 +913,11 @@ func buildRecreateEmptySQL(e VEntity) string {
 }
 
 // sqlTypeForDDL returns the storage type to write into the CREATE /
-// ALTER statement. TIMESTAMP is conceptual — stored as INTEGER (Unix
-// ms) so SQLite can compare/sort numerically.
+// ALTER statement. TIMESTAMP and DECIMAL are conceptual — both stored
+// as INTEGER (Unix ms / scaled coefficient) so SQLite can compare and
+// sort numerically.
 func sqlTypeForDDL(marType string) string {
-	if strings.EqualFold(marType, "TIMESTAMP") {
+	if strings.EqualFold(marType, "TIMESTAMP") || strings.EqualFold(marType, "DECIMAL") {
 		return "INTEGER"
 	}
 	return marType

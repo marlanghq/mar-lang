@@ -1,0 +1,3744 @@
+module Main exposing (main)
+
+
+-- STAR CONDOR — a vertical shoot-em-up in the spirit of the cute 16-bit
+-- arcade shooters (TwinBee-class): bright colors, chunky sprites, bell-like
+-- powerups, bosses with big silly silhouettes. Built with ZERO language
+-- changes on the Mar Canvas draw-list.
+--
+-- STORY (an optimistic Latin America, played straight): the nations of the
+-- continent pooled their engineers into A.L.A.S. — the Alianza
+-- Latinoamericana del Espacio ("alas" = wings). When a swarm of derelict
+-- war-machines from a forgotten century wakes up over the continent's
+-- greatest places, A.L.A.S. launches its first defender: the CONDOR.
+-- Ten stages sweep the map — the Amazon, Iguazu, the Pampas, Patagonia,
+-- Atacama, Uyuni, Machu Picchu, Galapagos, Panama, Teotihuacan — each with
+-- its own parallax scenery, groove and boss. The ending does not blow the
+-- enemy up: A.L.A.S. rewires the old machine to watch the weather.
+--
+-- CONTROLS
+--   Keyboard: arrows / WASD move, SPACE fire (hold = autofire), M mute,
+--             ENTER pause.
+--   Gamepad:  stick or d-pad moves, A fires, Start pauses.
+--   Touch:    drag anywhere to fly (the ship follows your finger) —
+--             autofire is always on while touching.
+--
+-- POWERUPS (kept simple: color = weapon, gold = stronger):
+--   GOLD star  = power +1 (up to 3)      BLUE star = BEAM  (fast, narrow)
+--   RED star   = SPREAD (wide fan)       GREEN star = WAVE (weaving pair)
+--   PINK heart = +1 hull ENERGY
+--   Stars drop from the striped pinata drones — pop them!
+--
+-- PACING: the ship flies on 5 cells of ENERGY. A hit costs one cell, the
+-- ship keeps its position and blinks through a grace window — no snap-back.
+-- Everything moves deliberately (slow orbs in numbers, dodge the weave);
+-- enemies arrive in SCRIPTED FORMATIONS (V / row / column / pincer / arc)
+-- from a fixed per-stage battle plan, plus scrolling stone BARRIERS with a
+-- gap to thread (they also eat your shots). Stage intros and clears wait
+-- for a button (with a forced reading beat); the boss dies in a chained
+-- explosion sequence and the ship's own death is a slow fireball before
+-- the game over screen.
+--
+-- MUSIC: entirely world-driven (the pulse-runner lesson): the game loop
+-- fires one groove beat per 30 ticks (CBeat) plus one melody beat of two
+-- eighth notes (CMel), so the soundtrack pauses with the game and never
+-- drifts. Each stage carries TWO 8-beat phrases played A A B A over a
+-- 32-beat cycle whose backing walks Am F Dm G while the kit builds layer
+-- by layer (drums, hats, arps, open-hat accents) and closes every cycle
+-- with a snare fill. Three regional rhythm flavors rotate across stages;
+-- bosses switch to an Am/E double-kick drive.
+--
+-- PERFORMANCE: logical 320x240 canvas, Pixelated, letterboxed. The frame
+-- budget is the draw-list length: 3 parallax layers (~70 shapes), capped
+-- entities (16 foes / 40 player bullets / 36 enemy shots / 24 particles),
+-- everything culled off-screen. Comparable to mini-rpg, which holds 60fps.
+--
+-- Run: mar dev examples/star-condor   (port 3032)
+
+
+import Canvas exposing
+    ( canvas, rect, triangle, circle, group, rgb
+    , onTap, watchSize, onDrag, onRelease
+    )
+import Time
+
+
+-- ===== constants =====
+
+
+fps : Int
+fps = 60
+
+
+gameW : Int
+gameW = 320
+
+
+gameH : Int
+gameH = 240
+
+
+-- The whole HUD is one row deep at the top: score, hull cells, the shared
+-- centre slot, the weapon readout, the mute icon. Nothing sits at the
+-- bottom on purpose. In a vertical shmup the bottom strip is where the
+-- player actually lives, so spending it on a readout costs the fight; the
+-- ship gets the floor and the readouts get the sky, which is the half of
+-- the screen a player only visits.
+--
+-- Both bounds are derived from the sprite instead of eyeballed: the nose
+-- reaches 11px above the ship's centre and the engine flames 14px below it.
+-- So the ceiling clears the HUD row by one pixel, the floor puts the flame
+-- tips exactly on the bottom edge, and editing the HUD moves the ceiling
+-- with it.
+hudTopRow : Int
+hudTopRow = 13            -- lowest pixel of the HUD row (mute icon, boss bar)
+
+
+playTop : Int
+playTop = hudTopRow + 11 + 1
+
+
+playBot : Int
+playBot = gameH - 14 - 1
+
+
+fp : Int
+fp = 16                   -- fixed-point scale for entity positions
+
+
+stageTicks : Int
+stageTicks = 3600         -- waves end here (60s); the boss warning begins
+
+
+bossTick : Int
+bossTick = 3720           -- the boss flies in
+
+
+-- ===== small Int helpers (no Basics in Mar) =====
+
+
+
+
+iclamp : Int -> Int -> Int -> Int
+iclamp lo hi v = max lo (min hi v)
+
+
+absI : Int -> Int
+absI n = if n < 0 then 0 - n else n
+
+
+approach : Int -> Int -> Int -> Int
+approach current target amount =
+    if current < target then min target (current + amount)
+    else if current > target then max target (current - amount)
+    else current
+
+
+
+-- octagonal distance: cheap length approx for aiming shots
+octd : Int -> Int -> Int
+octd dx dy =
+    let
+        ax = absI dx
+        ay = absI dy
+    in
+    max ax ay + min ax ay // 2
+
+
+-- ===== types =====
+
+
+type Mode
+    = Title
+    | Story                  -- the opening: why the Condor flies
+    | Intro
+    | Play
+    | BossFall               -- the boss's death sequence (chained explosions)
+    | Dying                  -- the ship's death sequence before game over
+    | Clear
+    | Over
+    | Ending
+
+
+type Cue
+    = CBeat Int
+    | CMel Int Int           -- one melody beat: two eighth notes (hz; 0 = rest)
+    | CShot Int              -- weapon index
+    | CHit                   -- the boss took a hit
+    | CHitFoe                -- a tough enemy took a hit (damage feedback)
+    | CBoomK Int             -- an enemy died: explosion varies by kind
+    | CBigBoom
+    | CShipBoom              -- the player's ship goes down
+    | CStar
+    | CHeal
+    | CHurt
+    | CWarn
+    | CTurbineCharge
+    | CTurbineBeam
+    | CJIntro
+    | CJClear
+    | CJOver
+    | CJEnd
+    | CBlip
+
+
+type Msg
+    = Resized Int Int
+    | Tick
+    | Tapped Int Int
+    | Dragged Int Int
+    | Released Int Int
+    | KeysChanged { down : List Keyboard.Key }
+    | PadChanged { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button }
+    | DeviceChanged Device
+
+
+-- kinds: 0 drone (sway), 1 diver, 2 floater (shoots), 3 zig (bouncer),
+-- 4 pinata (carries the star kind in `gift`)
+-- movement modes (mv): 0 = by kind (straight/diver/floater/zig/pinata),
+-- 1 = sine wave crossing the screen, 2 = ring orbit around a sinking
+-- anchor, 3 = galaga loop then dive, 4 = snake weaving down a lane.
+-- For mv 1/2/4 `gift` doubles as amplitude/radius in px; ph is the phase.
+type alias Foe =
+    { kind : Int
+    , mv : Int
+    , x : Int, y : Int          -- fixed-point
+    , ax : Int, ay : Int        -- anchor / baseline (fixed-point)
+    , ph : Int
+    , vx : Int, vy : Int
+    , hp : Int
+    , t : Int
+    , gift : Int                -- pinata star kind / path amplitude
+    , hurtT : Int               -- white damage-flash ticks
+    }
+
+
+-- a scrolling stone barrier segment; rows leave one gap to fly through
+type alias Wall =
+    { x : Int, y : Int, w : Int }   -- x/w in px, y in fixed-point
+
+
+-- one entry of a stage's battle plan
+type alias WaveEv =
+    { t : Int, f : Int, x : Int, k : Int }
+
+
+type alias Bul =
+    { x : Int, y : Int, vx : Int, vy : Int, w : Int, t : Int }
+
+
+type alias Shot =
+    { x : Int, y : Int, vx : Int, vy : Int }
+
+
+-- star kinds: 0 gold power, 1 blue beam, 2 red spread, 3 green wave, 4 heart
+type alias Star =
+    { x : Int, y : Int, kind : Int, t : Int }
+
+
+type alias Part =
+    { x : Int, y : Int, vx : Int, vy : Int, t : Int, k : Int }
+
+
+type alias BossS =
+    { hp : Int, mx : Int, x : Int, y : Int, t : Int, ph : Int }
+
+
+type alias Model =
+    { w : Int
+    , h : Int
+    , mode : Mode
+    , stage : Int             -- 1..10
+    , tick : Int              -- global clock (menus blink)
+    , st : Int                -- ticks inside the current mode
+    , seed : Random.Seed
+    , px : Int, py : Int      -- player, plain pixels
+    , kU : Bool, kD : Bool, kL : Bool, kR : Bool
+    , firing : Bool
+    , fireT : Int
+    , padX : Int, padY : Int
+    , keysDown : List Keyboard.Key       -- raw held set (keyboard mirror)
+    , padDown : List Gamepad.Button      -- raw held set (gamepad mirror)
+    , dragOn : Bool
+    , ltx : Int, lty : Int    -- last touch point (logical px)
+    , weapon : Int            -- 0 beam, 1 spread, 2 wave
+    , power : Int             -- 1..3
+    , energy : Int            -- 0..5 hull energy (hits drain it, hearts heal)
+    , score : Int
+    , hi : Int
+    , buls : List Bul
+    , shots : List Shot
+    , foes : List Foe
+    , stars : List Star
+    , parts : List Part
+    , walls : List Wall
+    , boss : Maybe BossS
+    , invulnT : Int
+    , paused : Bool
+    , muted : Bool
+    , dev : Maybe Device
+    , sfx : List Cue
+    }
+
+
+-- ===== stage data: where we are, what it looks like, who guards it =====
+
+
+stagePlace : Int -> String
+stagePlace s =
+    case s of
+        1 -> "THE AMAZON - BRAZIL"
+        2 -> "IGUAZU FALLS - BRAZIL AND ARGENTINA"
+        3 -> "THE PAMPAS - ARGENTINA"
+        4 -> "PATAGONIA - ARGENTINA AND CHILE"
+        5 -> "ATACAMA DESERT - CHILE"
+        6 -> "SALAR DE UYUNI - BOLIVIA"
+        7 -> "MACHU PICCHU - PERU"
+        8 -> "GALAPAGOS ISLANDS - ECUADOR"
+        9 -> "THE CANAL COAST - PANAMA"
+        _ -> "TEOTIHUACAN - MEXICO"
+
+
+stageDesc1 : Int -> String
+stageDesc1 s =
+    case s of
+        1 -> "THE LARGEST RAINFOREST ON EARTH."
+        2 -> "NEARLY 275 FALLS ROAR ON THIS BORDER."
+        3 -> "GOLDEN PLAINS THAT FEED MILLIONS."
+        4 -> "GRANITE TOWERS OVER BLUE GLACIERS."
+        5 -> "THE DRIEST DESERT IN THE WORLD."
+        6 -> "THE LARGEST SALT FLAT ON EARTH."
+        7 -> "A STONE CITY ABOVE THE CLOUDS."
+        8 -> "VOLCANIC ISLES OF FEARLESS CREATURES."
+        9 -> "TWO OCEANS SHAKE HANDS AT THE LOCKS."
+        _ -> "THE CITY WHERE THE GODS WERE BORN."
+
+
+stageDesc2 : Int -> String
+stageDesc2 s =
+    case s of
+        1 -> "A RIVER SEA BREATHES UNDER THE CANOPY."
+        2 -> "RAINBOWS LIVE ALL DAY IN THE MIST."
+        3 -> "AT DUSK THE TANGO CITY LIGHTS UP."
+        4 -> "DOWN HERE THE WIND HAS NAMES."
+        5 -> "ITS CLEAR NIGHTS HOLD GIANT TELESCOPES."
+        6 -> "AFTER RAIN IT TURNS INTO A SKY MIRROR."
+        7 -> "INCA TERRACES STILL HOLD THE PEAKS."
+        8 -> "EVOLUTION TOOK ITS NOTES HERE."
+        9 -> "CARNIVAL COLORS RIDE EVERY WAVE."
+        _ -> "MARIGOLDS BLOOM UNDER THE PYRAMIDS."
+
+
+bossName : Int -> String
+bossName s =
+    case s of
+        1 -> "MECHA ANACONDA"
+        2 -> "TURBINE WARDEN"
+        3 -> "BANDONEON KING"
+        4 -> "FROST CONDOR"
+        5 -> "STARGAZER ORB"
+        6 -> "THE MIRROR TWINS"
+        7 -> "STONE SENTINEL"
+        8 -> "IRON TORTOISE"
+        9 -> "HARBOR KRAKEN"
+        _ -> "THE RELIC CORE"
+
+
+type alias Theme =
+    { skyA : Color, skyB : Color, skyC : Color
+    , far : Color, farD : Color
+    , mid : Color, midD : Color
+    , det : Color
+    , acc : Color
+    }
+
+
+theme : Int -> Theme
+theme s =
+    case s of
+        1 -> { skyA = rgb 12 40 38, skyB = rgb 16 56 44, skyC = rgb 24 74 52
+             , far = rgb 10 48 40, farD = rgb 7 36 32
+             , mid = rgb 28 96 56, midD = rgb 18 72 46
+             , det = rgb 62 132 196, acc = rgb 255 196 40 }
+        2 -> { skyA = rgb 34 48 66, skyB = rgb 52 72 92, skyC = rgb 84 110 128
+             , far = rgb 46 58 66, farD = rgb 34 44 52
+             , mid = rgb 150 190 214, midD = rgb 108 150 182
+             , det = rgb 232 240 248, acc = rgb 235 90 90 }
+        3 -> { skyA = rgb 46 22 60, skyB = rgb 120 50 70, skyC = rgb 214 120 60
+             , far = rgb 38 22 52, farD = rgb 28 16 40
+             , mid = rgb 178 140 52, midD = rgb 140 108 40
+             , det = rgb 255 220 120, acc = rgb 230 60 80 }
+        4 -> { skyA = rgb 18 30 52, skyB = rgb 34 56 84, skyC = rgb 70 104 132
+             , far = rgb 62 70 86, farD = rgb 44 50 64
+             , mid = rgb 130 190 210, midD = rgb 92 150 178
+             , det = rgb 240 248 252, acc = rgb 90 220 210 }
+        5 -> { skyA = rgb 6 8 22, skyB = rgb 12 14 36, skyC = rgb 30 22 46
+             , far = rgb 96 52 36, farD = rgb 70 38 28
+             , mid = rgb 130 78 50, midD = rgb 104 62 42
+             , det = rgb 240 240 255, acc = rgb 255 150 60 }
+        6 -> { skyA = rgb 120 150 190, skyB = rgb 170 190 216, skyC = rgb 224 232 244
+             , far = rgb 120 96 140, farD = rgb 94 74 112
+             , mid = rgb 238 242 246, midD = rgb 204 214 226
+             , det = rgb 168 198 226, acc = rgb 244 120 160 }
+        7 -> { skyA = rgb 40 66 74, skyB = rgb 74 108 104, skyC = rgb 130 164 142
+             , far = rgb 56 84 74, farD = rgb 42 64 58
+             , mid = rgb 84 128 76, midD = rgb 62 100 60
+             , det = rgb 160 160 152, acc = rgb 240 190 70 }
+        8 -> { skyA = rgb 10 44 74, skyB = rgb 14 74 104, skyC = rgb 26 118 134
+             , far = rgb 40 46 50, farD = rgb 28 34 38
+             , mid = rgb 44 130 96, midD = rgb 32 100 78
+             , det = rgb 214 240 244, acc = rgb 70 140 255 }
+        9 -> { skyA = rgb 20 60 96, skyB = rgb 24 110 140, skyC = rgb 44 170 176
+             , far = rgb 40 52 70, farD = rgb 30 40 54
+             , mid = rgb 34 140 158, midD = rgb 24 110 130
+             , det = rgb 236 244 246, acc = rgb 235 70 140 }
+        _ -> { skyA = rgb 40 20 60, skyB = rgb 96 42 74, skyC = rgb 196 110 60
+             , far = rgb 110 84 64, farD = rgb 86 64 50
+             , mid = rgb 208 120 40, midD = rgb 170 96 34
+             , det = rgb 244 200 90, acc = rgb 255 170 40 }
+
+
+-- per-stage melodies: TWO 16-slot phrases (8 beats x 2 eighths, 0 = rest),
+-- played A A B A across each 32-beat cycle so the tune breathes and returns
+melA : Int -> List Int
+melA s =
+    case s of
+        1 -> [ Sound.a 4, 0, Sound.c 5, Sound.d 5, Sound.e 5, 0, Sound.d 5, Sound.c 5, Sound.a 4, 0, Sound.g 4, Sound.a 4, Sound.c 5, 0, Sound.a 4, 0 ]
+        2 -> [ Sound.a 5, Sound.g 5, Sound.e 5, Sound.d 5, Sound.c 5, 0, Sound.d 5, Sound.e 5, Sound.a 5, Sound.g 5, Sound.e 5, Sound.d 5, Sound.c 5, Sound.d 5, Sound.e 5, 0 ]
+        3 -> [ Sound.a 4, 0, Sound.a 4, Sound.b 4, Sound.c 5, 0, Sound.b 4, Sound.a 4, Sound.e 5, 0, 0, Sound.e 5, Sound.f 5, Sound.e 5, Sound.c 5, Sound.b 4 ]
+        4 -> [ Sound.e 4, 0, 0, 0, Sound.a 4, 0, 0, Sound.c 5, Sound.b 4, 0, 0, 0, Sound.g 4, 0, Sound.a 4, 0 ]
+        5 -> [ Sound.a 4, 0, Sound.b 4, Sound.c 5, Sound.e 5, 0, Sound.g 5, Sound.e 5, Sound.d 5, 0, Sound.b 4, Sound.d 5, Sound.e 5, 0, Sound.b 4, 0 ]
+        6 -> [ Sound.a 4, Sound.c 5, Sound.e 5, Sound.g 5, Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.c 5, Sound.a 4, Sound.c 5, Sound.e 5, Sound.g 5, Sound.e 5, Sound.c 5, 0 ]
+        7 -> [ Sound.e 5, Sound.e 5, Sound.d 5, Sound.c 5, Sound.a 4, 0, Sound.c 5, Sound.d 5, Sound.e 5, Sound.e 5, Sound.g 5, Sound.e 5, Sound.d 5, Sound.c 5, Sound.a 4, 0 ]
+        8 -> [ Sound.c 5, 0, Sound.e 5, Sound.c 5, Sound.d 5, 0, Sound.g 5, 0, Sound.e 5, Sound.c 5, Sound.d 5, Sound.e 5, Sound.c 5, 0, Sound.g 4, 0 ]
+        9 -> [ 0, Sound.a 4, 0, Sound.c 5, Sound.d 5, 0, Sound.e 5, 0, 0, Sound.e 5, 0, Sound.d 5, Sound.c 5, Sound.d 5, Sound.e 5, 0 ]
+        _ -> [ Sound.a 4, 0, Sound.e 5, 0, Sound.d 5, Sound.e 5, Sound.g 5, 0, Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.d 5, 0, Sound.e 5, 0 ]
+
+
+melB : Int -> List Int
+melB s =
+    case s of
+        1 -> [ Sound.e 5, 0, Sound.g 5, Sound.e 5, Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.d 5, Sound.e 5, Sound.c 5, 0, Sound.a 4, Sound.c 5, Sound.d 5, 0 ]
+        2 -> [ Sound.c 6, 0, Sound.a 5, Sound.g 5, Sound.e 5, Sound.g 5, Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.d 5, Sound.c 5, Sound.d 5, Sound.e 5, Sound.c 5, 0 ]
+        3 -> [ Sound.d 5, 0, Sound.d 5, Sound.e 5, Sound.f 5, 0, Sound.e 5, Sound.d 5, Sound.gs 4, 0, Sound.b 4, Sound.d 5, Sound.e 5, 0, Sound.e 5, 0 ]
+        4 -> [ Sound.e 5, 0, 0, Sound.d 5, Sound.c 5, 0, Sound.b 4, 0, Sound.a 4, 0, Sound.e 4, Sound.g 4, Sound.a 4, 0, 0, 0 ]
+        5 -> [ Sound.a 5, 0, Sound.g 5, Sound.a 5, Sound.e 5, 0, Sound.d 5, Sound.e 5, Sound.b 4, 0, Sound.c 5, Sound.d 5, Sound.e 5, Sound.g 5, Sound.a 5, 0 ]
+        6 -> [ Sound.e 5, Sound.g 5, Sound.a 5, Sound.c 6, Sound.a 5, Sound.g 5, Sound.e 5, 0, Sound.c 5, Sound.e 5, Sound.g 5, Sound.a 5, Sound.g 5, Sound.e 5, Sound.c 5, 0 ]
+        7 -> [ Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.g 5, Sound.a 5, Sound.g 5, Sound.e 5, Sound.d 5, Sound.e 5, Sound.c 5, Sound.d 5, Sound.e 5, 0, Sound.e 5, 0 ]
+        8 -> [ Sound.g 5, 0, Sound.e 5, Sound.g 5, Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.d 5, 0, Sound.e 5, Sound.d 5, Sound.c 5, Sound.d 5, Sound.e 5, 0 ]
+        9 -> [ 0, Sound.a 5, 0, Sound.g 5, Sound.e 5, 0, Sound.d 5, Sound.c 5, 0, Sound.d 5, 0, Sound.e 5, Sound.g 5, Sound.e 5, Sound.d 5, 0 ]
+        _ -> [ Sound.a 5, 0, 0, Sound.g 5, Sound.e 5, Sound.d 5, Sound.e 5, 0, Sound.c 5, Sound.d 5, Sound.e 5, Sound.g 5, Sound.a 5, 0, 0, 0 ]
+
+
+bossMelA : List Int
+bossMelA =
+    [ Sound.a 3, Sound.a 3, Sound.c 4, 0, Sound.b 3, 0, Sound.gs 3, Sound.a 3, Sound.a 3, Sound.a 3, Sound.c 4, Sound.d 4, Sound.e 4, 0, Sound.gs 3, 0 ]
+
+
+bossMelB : List Int
+bossMelB =
+    [ Sound.a 4, 0, Sound.gs 4, 0, Sound.e 4, Sound.d 4, Sound.c 4, Sound.b 3, Sound.a 3, 0, Sound.b 3, Sound.c 4, Sound.d 4, Sound.ds 4, Sound.e 4, 0 ]
+
+
+nthI : Int -> List Int -> Int
+nthI i xs =
+    List.foldl
+        (\x acc -> { j = acc.j + 1, v = if acc.j == i then x else acc.v })
+        { j = 0, v = 440 }
+        xs
+        |> (\r -> r.v)
+
+
+-- ===== model =====
+
+
+freshModel : Model
+freshModel =
+    { w = 640
+    , h = 480
+    , mode = Title
+    , stage = 1
+    , tick = 0
+    , st = 0
+    , seed = Random.initialSeed 20260713
+    , px = 160
+    , py = 200
+    , kU = False, kD = False, kL = False, kR = False
+    , firing = False
+    , fireT = 0
+    , padX = 0, padY = 0
+    , keysDown = []
+    , padDown = []
+    , dragOn = False
+    , ltx = 0, lty = 0
+    , weapon = 0
+    , power = 1
+    , energy = 5
+    , score = 0
+    , hi = 0
+    , buls = []
+    , shots = []
+    , foes = []
+    , stars = []
+    , parts = []
+    , walls = []
+    , boss = Nothing
+    , invulnT = 0
+    , paused = False
+    , muted = False
+    , dev = Nothing
+    , sfx = []
+    }
+
+
+init : (Model, Cmd Msg)
+init =
+    ( freshModel, Cmd.none )
+
+
+-- ===== update =====
+
+
+emit : Model -> (Model, Cmd Msg)
+emit model =
+    if List.length model.sfx == 0 then
+        ( model, Cmd.none )
+    else
+        ( { model | sfx = [] }
+        , Cmd.batch (List.map (\c -> Sound.play (cueSound c)) model.sfx)
+        )
+
+
+-- enter a stage intro (and its jingle)
+toIntro : Int -> Model -> Model
+toIntro s m =
+    { m | mode = Intro, stage = s, st = 0, sfx = CJIntro :: m.sfx }
+
+
+-- start playing the current stage with a clean field
+toPlay : Model -> Model
+toPlay m =
+    { m
+        | mode = Play
+        , st = 0
+        , px = 160
+        , py = 200
+        , buls = []
+        , shots = []
+        , foes = []
+        , stars = []
+        , parts = []
+        , walls = []
+        , boss = Nothing
+        , invulnT = 90
+        , paused = False
+    }
+
+
+startGame : Model -> Model
+startGame m =
+    toIntro 1
+        { m
+            | energy = 5
+            , score = 0
+            , weapon = 0
+            , power = 1
+        }
+
+
+-- reading screens hold the button for a beat first, so nothing skips
+-- before it can be read — and nothing advances without a button press
+holdFor : Mode -> Int
+holdFor mode =
+    case mode of
+        Story -> 170
+        Intro -> 105
+        Clear -> 130
+        Over -> 70
+        Ending -> 300
+        _ -> 0
+
+
+-- one press of "the button" outside Play advances menus
+press : Model -> Model
+press m =
+    if m.st < holdFor m.mode then
+        m
+    else
+        case m.mode of
+            Title -> { m | mode = Story, st = 0, sfx = CBlip :: m.sfx }
+            Story -> startGame m
+            Intro -> toPlay m
+            Clear ->
+                if m.stage >= 10 then
+                    { m | mode = Ending, st = 0, sfx = CJEnd :: m.sfx }
+                else
+                    toIntro (m.stage + 1) m
+            Over -> toPlay { m | energy = 5, power = 1, sfx = CBlip :: m.sfx }
+            Ending -> { m | mode = Title, st = 0 }
+            _ -> m
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Resized w h ->
+            ( { model | w = w, h = h }, Cmd.none )
+
+        Tick ->
+            emit (stepMode { model | tick = model.tick + 1 })
+
+        Tapped x y ->
+            if inMuteZone model x y then
+                toggleMute model
+            else
+                let
+                    p = toLogical model x y
+                    m2 = { model | dragOn = True, ltx = p.x, lty = p.y }
+                in
+                emit (press m2)
+
+        Dragged x y ->
+            if model.dragOn && model.mode == Play then
+                let
+                    p = toLogical model x y
+                    dx = p.x - model.ltx
+                    dy = p.y - model.lty
+                in
+                ( { model
+                    | px = iclamp 10 (gameW - 10) (model.px + dx)
+                    , py = iclamp playTop playBot (model.py + dy)
+                    , ltx = p.x
+                    , lty = p.y
+                  }
+                , Cmd.none
+                )
+            else
+                ( model, Cmd.none )
+
+        Released _ _ ->
+            ( { model | dragOn = False }, Cmd.none )
+
+        KeysChanged st ->
+            -- held movement/fire is mirrored wholesale (syncHeld); menu
+            -- advances and the mute toggle fire on the press-edge (keys
+            -- newly in the held set)
+            let
+                pressed = List.filter (\k -> List.member k model.keysDown == False) st.down
+                base = syncHeld { model | keysDown = st.down }
+                stepped = List.foldl applyKeyPress base pressed
+                sounded = emit stepped
+                muteCmd =
+                    if stepped.muted == base.muted then
+                        Cmd.none
+                    else
+                        Sound.setMuted stepped.muted
+            in
+            ( Tuple.first sounded, Cmd.batch [ Tuple.second sounded, muteCmd ] )
+
+        PadChanged p ->
+            -- left stick + d-pad/A mirrored wholesale; Start/A press-edges
+            let
+                pressed = List.filter (\b -> List.member b model.padDown == False) p.down
+                base = syncHeld { model | padDown = p.down, padX = p.leftX, padY = p.leftY }
+                stepped = List.foldl applyPadPress base pressed
+            in
+            emit stepped
+
+        DeviceChanged d ->
+            ( { model | dev = Just d }, Cmd.none )
+
+
+-- recompute the shared held ledger from BOTH device mirrors: keyboard keys
+-- and the gamepad d-pad feed the same movement bools, Space and A the same
+-- fire bool. Releases fall out for free (a key/button just leaves the set).
+syncHeld : Model -> Model
+syncHeld m =
+    let
+        k = \key -> List.member key m.keysDown
+        p = \btn -> List.member btn m.padDown
+    in
+    { m
+        | kU = k Keyboard.ArrowUp || k Keyboard.KeyW || p Gamepad.Up
+        , kD = k Keyboard.ArrowDown || k Keyboard.KeyS || p Gamepad.Down
+        , kL = k Keyboard.ArrowLeft || k Keyboard.KeyA || p Gamepad.Left
+        , kR = k Keyboard.ArrowRight || k Keyboard.KeyD || p Gamepad.Right
+        , firing = k Keyboard.Space || p Gamepad.A
+    }
+
+
+-- keyboard press-edge (folded over newly-held keys; sfx/mute Cmds are
+-- gathered by the caller): M flips mute, Enter pauses during Play, and every
+-- other key advances a menu via press (a no-op during Play). press may queue
+-- a menu blip into sfx, which the caller flushes with emit.
+applyKeyPress : Keyboard.Key -> Model -> Model
+applyKeyPress key m =
+    if key == Keyboard.KeyM then
+        { m | muted = m.muted == False }
+    else if key == Keyboard.Enter && m.mode == Play then
+        { m | paused = m.paused == False }
+    else
+        press m
+
+
+-- gamepad press-edge: Start pauses during Play, Start/A otherwise advance a
+-- menu via press (A's fire is held state, set by syncHeld); the d-pad and any
+-- other button are held-only, no edge.
+applyPadPress : Gamepad.Button -> Model -> Model
+applyPadPress btn m =
+    if btn == Gamepad.Start && m.mode == Play then
+        { m | paused = m.paused == False }
+    else if btn == Gamepad.Start || btn == Gamepad.A then
+        press m
+    else
+        m
+
+
+toggleMute : Model -> (Model, Cmd Msg)
+toggleMute model =
+    let
+        m2 = model.muted == False
+    in
+    ( { model | muted = m2 }, Sound.setMuted m2 )
+
+
+-- ===== per-mode stepping =====
+
+
+stepMode : Model -> Model
+stepMode m =
+    case m.mode of
+        Play ->
+            if m.paused then m else stepPlay m
+
+        BossFall ->
+            stepBossFall { m | st = m.st + 1 }
+
+        Dying ->
+            stepDying { m | st = m.st + 1 }
+
+        _ ->
+            -- reading screens never auto-advance; they wait for the button
+            { m | st = m.st + 1 }
+
+
+-- the boss goes down in a chain of explosions before the clear screen
+stepBossFall : Model -> Model
+stepBossFall m =
+    let
+        m1 = stepParts m
+    in
+    case m1.boss of
+        Nothing ->
+            { m1 | mode = Clear, st = 0 }
+
+        Just b ->
+            if m1.st >= 150 then
+                { m1
+                    | boss = Nothing
+                    , mode = Clear
+                    , st = 0
+                    , parts = []
+                    , score = m1.score + 1500 + m1.stage * 500
+                    , hi = max m1.hi (m1.score + 1500 + m1.stage * 500)
+                    , sfx = CBigBoom :: CJClear :: m1.sfx
+                }
+            else if modBy 14 m1.st == 0 then
+                let
+                    ox = modBy 44 (m1.st * 73) - 22
+                    oy = modBy 32 (m1.st * 41) - 16
+                in
+                { m1
+                    | parts = List.concat [ burst (b.x + ox * fp) (b.y + oy * fp) (modBy 3 (m1.st // 14)), m1.parts ]
+                    , sfx = CBoomK (modBy 5 (m1.st // 14)) :: m1.sfx
+                }
+            else
+                m1
+
+
+-- the ship's last moment: staggered blasts, then the game over screen
+stepDying : Model -> Model
+stepDying m =
+    let
+        m1 = stepParts m
+        m2 =
+            if modBy 16 m1.st == 0 && m1.st < 80 then
+                { m1
+                    | parts = List.concat [ burst (m1.px * fp) (m1.py * fp) (modBy 3 (m1.st // 16)), m1.parts ]
+                    , sfx = CBoomK (modBy 5 (m1.st // 16)) :: m1.sfx
+                }
+            else
+                m1
+    in
+    if m2.st >= 130 then
+        { m2 | mode = Over, st = 0, hi = max m2.hi m2.score, sfx = CJOver :: m2.sfx }
+    else
+        m2
+
+
+-- ===== the play simulation =====
+
+
+stepPlay : Model -> Model
+stepPlay m0 =
+    let
+        m1 = { m0 | st = m0.st + 1, invulnT = max 0 (m0.invulnT - 1) }
+        m2 = movePlayer m1
+        m3 = firePlayer m2
+        m4 = spawnFoes m3
+        m5 = stepFoes m4
+        m6 = stepBoss m5
+        m7 = stepBullets m6
+        m8 = stepShots m7
+        m9 = stepStars m8
+        m10 = stepParts (stepWalls m9)
+        m11 = collideBullets m10
+        m12 = collidePlayer m11
+        m13 = musicTick m12
+    in
+    afterPlay m13
+
+
+movePlayer : Model -> Model
+movePlayer m =
+    let
+        kx = (if m.kR then 2 else 0) - (if m.kL then 2 else 0)
+        ky = (if m.kD then 2 else 0) - (if m.kU then 2 else 0)
+        sx = if absI m.padX > 25 then m.padX * 2 // 100 else 0
+        sy = if absI m.padY > 25 then m.padY * 2 // 100 else 0
+    in
+    { m
+        | px = iclamp 10 (gameW - 10) (m.px + kx + sx)
+        , py = iclamp playTop playBot (m.py + ky + sy)
+    }
+
+
+-- weapon fire: BEAM straight and fast, SPREAD fans out, WAVE weaves
+firePlayer : Model -> Model
+firePlayer m =
+    let
+        cooled = { m | fireT = max 0 (m.fireT - 1) }
+    in
+    if (cooled.firing || cooled.dragOn) && cooled.fireT == 0 && List.length cooled.buls < 26 then
+        let
+            bx = cooled.px * fp
+            by = (cooled.py - 8) * fp
+            mk = \vx vy -> { x = bx, y = by, vx = vx, vy = vy, w = cooled.weapon, t = 0 }
+            news =
+                if cooled.weapon == 0 then
+                    if cooled.power == 1 then [ mk 0 (0 - 62) ]
+                    else if cooled.power == 2 then [ mk 0 (0 - 66), { x = bx - 6 * fp, y = by, vx = 0, vy = 0 - 66, w = 0, t = 0 } ]
+                    else [ mk 0 (0 - 70), { x = bx - 7 * fp, y = by, vx = 0, vy = 0 - 70, w = 0, t = 0 }, { x = bx + 7 * fp, y = by, vx = 0, vy = 0 - 70, w = 0, t = 0 } ]
+                else if cooled.weapon == 1 then
+                    if cooled.power == 1 then [ mk (0 - 12) (0 - 48), mk 12 (0 - 48) ]
+                    else if cooled.power == 2 then [ mk 0 (0 - 52), mk (0 - 18) (0 - 46), mk 18 (0 - 46) ]
+                    else [ mk 0 (0 - 52), mk (0 - 14) (0 - 48), mk 14 (0 - 48), mk (0 - 28) (0 - 42), mk 28 (0 - 42) ]
+                else
+                    if cooled.power == 1 then [ mk 24 (0 - 54) ]
+                    else if cooled.power == 2 then [ mk 24 (0 - 54), mk (0 - 24) (0 - 54) ]
+                    else [ mk 24 (0 - 56), mk (0 - 24) (0 - 56), mk 0 (0 - 60) ]
+        in
+        { cooled
+            | buls = List.concat [ news, cooled.buls ]
+            , fireT = 18
+            , sfx = CShot cooled.weapon :: cooled.sfx
+        }
+    else
+        cooled
+
+
+-- ===== waves: deterministic spawns per stage tick, denser as you go =====
+
+
+mkF : Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Foe
+mkF kind mv x y ax ay ph vx vy gift =
+    { kind = kind, mv = mv, x = x * fp, y = y * fp, ax = ax * fp, ay = ay * fp
+    , ph = ph, vx = vx, vy = vy, hp = foeHp kind, t = 0, gift = gift, hurtT = 0 }
+
+
+mkFoe : Int -> Int -> Int -> Int -> Int -> Int -> Foe
+mkFoe kind x y vx vy gift =
+    mkF kind 0 x y 0 0 0 vx vy gift
+
+
+foeHp : Int -> Int
+foeHp kind =
+    if kind == 2 then 4
+    else if kind == 4 then 3
+    else if kind == 3 then 3
+    else 1
+
+
+ev : Int -> Int -> Int -> Int -> WaveEv
+ev t f x k =
+    { t = t, f = f, x = x, k = k }
+
+
+-- THE BATTLE PLAN: every stage flies a fixed, readable schedule of
+-- formations (nothing random). f: 0 V-of-five escort, 1 sine wave from the
+-- left, 2 snake weaving down a lane, 3 diver pincer, 4 SHOOTING RING that
+-- orbits while it sinks, 5 lone floater, 6 pinata (k = gift), 7 zig pair,
+-- 8 barrier row (x = the gap), 9 galaga loop-and-dive squadron, 10 sine
+-- wave from the right. Higher stages get extra squadrons.
+stageWaves : Int -> List WaveEv
+stageWaves s =
+    List.concat
+        [ -- act one: meet every dance move
+          [ ev 100 0 110 0
+          , ev 250 1 0 0
+          , ev 400 4 110 0
+          , ev 540 2 70 0
+          , ev 680 9 50 0
+          , ev 830 6 160 (modBy 3 s + 1)
+          , ev 950 10 0 0
+          , ev 1080 4 210 0
+          , ev 1120 8 90 0
+          ]
+        , if s >= 2 then [ ev 560 2 250 0, ev 1020 5 40 0 ] else []
+        , -- act two: pairs and crossfire, the heart pinata
+          [ ev 1300 3 0 0
+          , ev 1450 2 160 0
+          , ev 1550 9 230 0
+          , ev 1660 6 200 4
+          , ev 1800 8 230 0
+          , ev 1900 4 80 0
+          , ev 2000 10 0 0
+          , ev 2120 0 160 0
+          , ev 2300 8 60 0
+          ]
+        , if s >= 2 then [ ev 1360 1 0 0, ev 2200 5 280 0 ] else []
+        , if s >= 3 then [ ev 1520 7 0 0 ] else []
+        , if s >= 5 then [ ev 1905 4 240 0 ] else []
+        , -- act three: the storm
+          [ ev 2450 2 50 0
+          , ev 2455 2 270 0
+          , ev 2560 9 160 0
+          , ev 2650 1 0 0
+          , ev 2790 4 160 0
+          , ev 2840 6 120 0
+          , ev 2960 8 160 0
+          , ev 3050 3 0 0
+          , ev 3220 4 110 0
+          , ev 3300 9 90 0
+          , ev 3400 1 0 0
+          , ev 3440 0 160 0
+          ]
+        , if s >= 2 then [ ev 3120 5 160 0 ] else []
+        , if s >= 3 then [ ev 2700 10 0 0, ev 3500 7 0 0 ] else []
+        , if s >= 5 then [ ev 3140 2 160 0, ev 3360 8 250 0 ] else []
+        , if s >= 7 then [ ev 460 9 250 0, ev 1980 2 110 0, ev 2620 7 0 0, ev 3225 4 210 0 ] else []
+        ]
+
+
+-- turn one formation event into its squadron
+formFoes : Int -> Int -> Int -> List Foe
+formFoes f x k =
+    if f == 0 then
+        -- V of five: wingmates trail the leader, straight escort
+        List.map
+            (\i ->
+                let
+                    o = if i == 0 then 0 else if i == 1 then 0 - 24 else if i == 2 then 24 else if i == 3 then 0 - 48 else 48
+                in
+                mkF 0 0 (x + o) (0 - 12 - absI o * 2 // 3) 0 0 0 0 20 0)
+            (List.range 0 4)
+    else if f == 1 then
+        -- sine wave: a file of four surfs across from the left, guns ticking
+        List.map (\i -> mkF 0 1 (0 - 14 - i * 24) 60 0 60 (0 - i * 40) 26 6 20) (List.range 0 3)
+    else if f == 10 then
+        -- sine wave from the right
+        List.map (\i -> mkF 0 1 (334 + i * 24) 60 0 60 (i * 40) (0 - 26) 6 20) (List.range 0 3)
+    else if f == 2 then
+        -- snake: five weave down a lane nose-to-tail
+        List.map (\i -> mkF 0 4 x (0 - 12 - i * 24) x 0 (0 - i * 45) 0 22 26) (List.range 0 4)
+    else if f == 3 then
+        -- diver pincer from both shoulders
+        [ mkFoe 1 40 (0 - 12) 0 16 0
+        , mkFoe 1 70 (0 - 34) 0 16 0
+        , mkFoe 1 280 (0 - 12) 0 16 0
+        , mkFoe 1 250 (0 - 34) 0 16 0
+        ]
+    else if f == 4 then
+        -- THE RING: six orbit a sinking anchor and rain aimed fire
+        List.map (\i -> mkF 0 2 x (0 - 30) x (0 - 30) (i * 60) 4 7 30) (List.range 0 5)
+    else if f == 9 then
+        -- galaga squadron: file in, loop the loop, then dive
+        List.map (\i -> mkF 0 3 (x + i * 26) (0 - 16 - i * 24) (x + i * 26) 88 (52 + i * 16) 0 24 0) (List.range 0 3)
+    else if f == 5 then
+        [ mkFoe 2 x (0 - 14) 0 14 0 ]
+    else if f == 6 then
+        [ mkFoe 4 x (0 - 14) 8 10 k ]
+    else if f == 7 then
+        [ mkFoe 3 (0 - 8) 40 26 12 0
+        , mkFoe 3 328 90 (0 - 26) 12 0
+        ]
+    else
+        []
+
+
+-- a barrier row: two stone slabs with a 68px gap to thread
+wallRow : WaveEv -> List Wall
+wallRow e =
+    [ { x = 0, y = (0 - 8) * fp, w = max 0 (e.x - 34) }
+    , { x = e.x + 34, y = (0 - 8) * fp, w = max 0 (gameW - (e.x + 34)) }
+    ]
+
+
+spawnFoes : Model -> Model
+spawnFoes m =
+    if m.st >= stageTicks then
+        m
+    else
+        let
+            evs = List.filter (\e -> e.t == m.st) (stageWaves m.stage)
+            news =
+                List.concat
+                    (List.map
+                        (\e -> if e.f == 8 || List.length m.foes > 22 then [] else formFoes e.f e.x e.k)
+                        evs)
+            nwalls = List.concat (List.map wallRow (List.filter (\e -> e.f == 8) evs))
+        in
+        { m | foes = List.concat [ m.foes, news ], walls = List.concat [ m.walls, nwalls ] }
+
+
+stepFoes : Model -> Model
+stepFoes m =
+    let
+        stepOne =
+            \f ->
+                let
+                    t2 = f.t + 1
+                    ht = max 0 (f.hurtT - 1)
+                in
+                if f.mv == 1 then
+                    -- sine wave: surf across the screen on a sinking baseline
+                    { f | t = t2, hurtT = ht
+                        , x = f.x + f.vx
+                        , ay = f.ay + f.vy
+                        , y = f.ay + f.gift * fp * dirY (modBy 360 (t2 * 6 + f.ph)) // 1024 }
+                else if f.mv == 2 then
+                    -- ring: orbit a shared anchor while the whole wheel sinks
+                    let
+                        ang = modBy 360 (t2 * f.vx + f.ph)
+                    in
+                    { f | t = t2, hurtT = ht
+                        , ay = f.ay + f.vy
+                        , x = f.ax + f.gift * fp * dirX ang // 1024
+                        , y = f.ay + f.gift * fp * dirY ang // 1024 }
+                else if f.mv == 3 then
+                    -- galaga: file in, loop the loop, then dive away
+                    if t2 < f.ph then
+                        { f | t = t2, hurtT = ht, y = f.y + 24 }
+                    else if t2 - f.ph < 72 then
+                        let
+                            ang = modBy 360 (270 + (t2 - f.ph) * 5)
+                        in
+                        { f | t = t2, hurtT = ht
+                            , x = f.ax + 26 * fp * dirX ang // 1024
+                            , y = f.ay + 26 * fp * dirY ang // 1024 }
+                    else
+                        { f | t = t2, hurtT = ht, y = f.y + 30 }
+                else if f.mv == 4 then
+                    -- snake: weave down a lane nose-to-tail
+                    { f | t = t2, hurtT = ht
+                        , y = f.y + f.vy
+                        , x = f.ax + f.gift * fp * dirX (modBy 360 (t2 * 8 + f.ph)) // 1024 }
+                else if f.kind == 0 then
+                    -- plain escort: holds its slot, drifts straight down
+                    { f | t = t2, hurtT = ht, x = f.x + f.vx, y = f.y + f.vy }
+                else if f.kind == 1 then
+                    -- diver: slow entry, then one committed dive at the player
+                    if f.y < 56 * fp then
+                        { f | t = t2, hurtT = ht, y = f.y + 18 }
+                    else
+                        let
+                            dx = m.px * fp - f.x
+                        in
+                        { f | t = t2, hurtT = ht, y = f.y + 42, x = f.x + iclamp (0 - 20) 20 (dx // 34) }
+                else if f.kind == 2 then
+                    -- floater: sink to a perch, hover and volley, leave late
+                    if f.y < 62 * fp then
+                        { f | t = t2, hurtT = ht, y = f.y + 14 }
+                    else if t2 > 520 then
+                        { f | t = t2, hurtT = ht, y = f.y + 16 }
+                    else
+                        { f | t = t2, hurtT = ht, x = f.x + (if modBy 2 (t2 // 52) == 0 then 8 else 0 - 8) }
+                else if f.kind == 3 then
+                    -- zig: bounce off the side walls
+                    let
+                        nx = f.x + f.vx
+                        bounce = nx < 8 * fp || nx > (gameW - 8) * fp
+                    in
+                    { f | t = t2, hurtT = ht, x = if bounce then f.x else nx
+                        , vx = if bounce then 0 - f.vx else f.vx
+                        , y = f.y + f.vy }
+                else
+                    -- pinata: gentle sway, slow fall
+                    { f | t = t2, hurtT = ht, y = f.y + f.vy
+                        , x = f.x + (if modBy 2 (t2 // 40) == 0 then f.vx else 0 - f.vx) }
+
+        moved = List.map stepOne m.foes
+        kept =
+            List.filter
+                (\f ->
+                    f.y < (gameH + 20) * fp
+                        && f.y > (0 - 140) * fp
+                        && f.x > (0 - 60) * fp
+                        && f.x < (gameW + 60) * fp)
+                moved
+
+        onScreen = \f -> f.y > 4 * fp && f.x > 4 * fp && f.x < (gameW - 4) * fp
+
+        -- the crossfire: floaters volley (3-way fan from stage 4), rings
+        -- rain staggered aimed orbs, sine surfers pot-shot mid-flight, and
+        -- galaga divers fire one parting shot out of the loop
+        newShots =
+            if List.length m.shots > 44 then
+                []
+            else
+                List.concat
+                    [ List.concat
+                        (List.map
+                            (\f ->
+                                if m.stage >= 4 then
+                                    [ aimedShot f.x f.y (m.px * fp) (m.py * fp) 30
+                                    , aimedShot f.x f.y ((m.px - 44) * fp) (m.py * fp) 30
+                                    , aimedShot f.x f.y ((m.px + 44) * fp) (m.py * fp) 30
+                                    ]
+                                else
+                                    [ aimedShot f.x f.y (m.px * fp) (m.py * fp) 30 ]
+                            )
+                            (List.filter (\f -> f.kind == 2 && f.y >= 62 * fp && modBy 84 f.t == 60) kept))
+                    , List.map
+                        (\f -> aimedShot f.x f.y (m.px * fp) (m.py * fp) 30)
+                        (List.filter (\f -> f.mv == 2 && onScreen f && modBy 100 (f.t + f.ph) == 80) kept)
+                    , List.map
+                        (\f -> aimedShot f.x f.y (m.px * fp) (m.py * fp) 28)
+                        (List.filter (\f -> f.mv == 1 && onScreen f && modBy 140 (f.t + absI f.ph) == 90) kept)
+                    , List.map
+                        (\f -> aimedShot f.x f.y (m.px * fp) (m.py * fp) 34)
+                        (List.filter (\f -> f.mv == 3 && f.t - f.ph == 76) kept)
+                    ]
+    in
+    { m | foes = kept, shots = List.concat [ m.shots, newShots ] }
+
+
+aimedShot : Int -> Int -> Int -> Int -> Int -> Shot
+aimedShot x y tx ty spd =
+    let
+        dx = tx - x
+        dy = ty - y
+        d = max 1 (octd dx dy)
+    in
+    { x = x, y = y, vx = dx * spd // d, vy = dy * spd // d }
+
+
+-- ===== the boss =====
+
+
+wardenCycle : BossS -> Int
+wardenCycle boss =
+    modBy 240 boss.t
+
+
+wardenCharging : BossS -> Bool
+wardenCharging boss =
+    let cycle = wardenCycle boss
+    in cycle >= 72 && cycle < 140
+
+
+-- The core is exposed twice per 240-tick cycle: while the mega-flow charges
+-- (risky, the beam is coming) and while it recovers afterwards (the safe
+-- punish). The recovery window was 176-206, which with the core's small
+-- hitbox left the core open 37% of the cycle and turned stage 2 into a
+-- ~70s grind against an 82-hp wall, three times the length of stage 1's
+-- boss. The punish now runs to 236: 49% open, and the extra room lands on
+-- the SAFE window rather than the charge, so you are not paid for standing
+-- under a beam that is about to fire.
+--
+-- The charge window still starts at 82, not earlier: gateShift ramps the
+-- gates open across ticks 72-81 and only then locks at 10, so opening the
+-- core sooner would make the gates jump mid-animation.
+wardenVulnerable : BossS -> Bool
+wardenVulnerable boss =
+    let cycle = wardenCycle boss
+    in (cycle >= 82 && cycle < 140) || (cycle >= 176 && cycle < 236)
+
+
+wardenBeamActive : BossS -> Bool
+wardenBeamActive boss =
+    let cycle = wardenCycle boss
+    in cycle >= 140 && cycle < 176
+
+
+bossCycleAt : Int -> Int -> Int
+bossCycleAt stage ticks =
+    let span =
+            case stage of
+                1 -> 180
+                2 -> 240
+                3 -> 168
+                4 -> 190
+                5 -> 210
+                6 -> 180
+                7 -> 220
+                8 -> 200
+                9 -> 190
+                _ -> 240
+    in
+    modBy span ticks
+
+
+radialShots : Int -> Int -> Int -> Int -> Int -> Int -> List Shot
+radialShots x y first step count speed =
+    List.map
+        (\i ->
+            let angle = modBy 360 (first + i * step)
+            in
+            { x = x, y = y
+            , vx = dirX angle * speed // 1024
+            , vy = dirY angle * speed // 1024
+            })
+        (List.range 0 (count - 1))
+
+
+tortoiseOpen : BossS -> Bool
+tortoiseOpen boss =
+    let cycle = bossCycleAt 8 boss.t
+    in (cycle >= 36 && cycle < 94) || (boss.ph == 2 && cycle >= 142 && cycle < 176)
+
+
+stepBoss : Model -> Model
+stepBoss m =
+    case m.boss of
+        Nothing ->
+            if m.st == stageTicks then
+                { m | sfx = CWarn :: m.sfx }
+            else if m.st == bossTick then
+                let
+                    hp = 50 + m.stage * 16 + (if m.stage == 10 then 60 else 0)
+                in
+                { m
+                    | boss = Just { hp = hp, mx = hp, x = 160 * fp, y = (0 - 40) * fp, t = 0, ph = 1 }
+                    , sfx = CWarn :: m.sfx
+                }
+            else
+                m
+
+        Just b ->
+            let
+                t2 = b.t + 1
+                targY = 52 * fp
+                ph2 = if b.hp * 2 < b.mx then 2 else b.ph
+                px = m.px * fp
+                py = m.py * fp
+                cycle = bossCycleAt m.stage t2
+                waveX = 160 * fp + dirX (modBy 360 (t2 * 2)) * (if ph2 == 2 then 100 else 82) * fp // 1024
+                slowX = 160 * fp + dirX (modBy 360 t2) * 58 * fp // 1024
+                desiredX =
+                    case m.stage of
+                        1 -> waveX
+                        2 -> if cycle < 72 then px else b.x
+                        3 -> slowX
+                        4 -> 160 * fp + dirX (modBy 360 (t2 * 2)) * 108 * fp // 1024
+                        5 -> if cycle < 76 then px else b.x
+                        6 -> 160 * fp
+                        7 -> 160 * fp + dirX (modBy 360 t2) * 36 * fp // 1024
+                        8 -> 160 * fp + dirX (modBy 360 (t2 * 2)) * 92 * fp // 1024
+                        9 -> 160 * fp + dirX (modBy 360 t2) * 30 * fp // 1024
+                        _ -> 160 * fp + dirX (modBy 360 (t2 * 3)) * (if ph2 == 2 then 82 else 58) * fp // 1024
+                moveX = if m.stage == 2 || m.stage == 5 then (if ph2 == 2 then 26 else 19) else if m.stage == 4 then 42 else 28
+                nx = approach b.x desiredX moveX
+                diveY =
+                    if cycle >= 60 && cycle < 100 then (52 + (cycle - 60) * 2) * fp
+                    else if cycle >= 100 && cycle < 140 then (132 - (cycle - 100) * 2) * fp
+                    else targY
+                desiredY = if m.stage == 4 then diveY else if m.stage == 9 then (52 + dirY (modBy 360 (t2 * 2)) * 16 // 1024) * fp else targY
+                ny = if b.y < targY then min targY (b.y + 30) else approach b.y desiredY (if m.stage == 4 then 60 else 22)
+                b2 = { b | t = t2, x = iclamp 48 (gameW * fp - 48) nx, y = ny, ph = ph2 }
+                ready = b2.y >= 46 * fp && b.t > 30
+                left = b2.x - 30 * fp
+                right = b2.x + 30 * fp
+                gap = 26 + modBy 10 (b2.t // 10)
+                twinL = b2.x - gap * fp
+                twinR = b2.x + gap * fp
+                armAngle = modBy 360 (b2.t * 3)
+                armX = b2.x + dirX armAngle * 30 * fp // 1024
+                armY = b2.y + dirY armAngle * 30 * fp // 1024
+                bossShots =
+                    if ready == False then []
+                    else
+                        case m.stage of
+                            1 ->
+                                List.concat
+                                    [ if cycle == 20 then
+                                        [ aimedShot (b2.x + 34 * fp) b2.y px py 32
+                                        , aimedShot (b2.x + 34 * fp) b2.y (px - 34 * fp) py 32
+                                        , aimedShot (b2.x + 34 * fp) b2.y (px + 34 * fp) py 32
+                                        ]
+                                      else []
+                                    , if cycle >= 62 && cycle < 98 && modBy 7 cycle == 0 then
+                                        [ aimedShot (b2.x + (if modBy 2 cycle == 0 then 22 else 0 - 22) * fp) b2.y px py 34 ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 124 then radialShots b2.x b2.y t2 45 8 28 else []
+                                    ]
+
+                            2 ->
+                                let auxY = b2.y + 7 * fp
+                                    leftAux = b2.x - 46 * fp
+                                    rightAux = b2.x + 46 * fp
+                                in
+                                List.concat
+                                    [ if cycle == 14 then [ aimedShot leftAux auxY px py 30 ] else []
+                                    , if cycle == 38 then [ aimedShot rightAux auxY px py 30 ] else []
+                                    , if b2.ph == 2 && cycle == 26 then
+                                        [ aimedShot leftAux auxY (px + 24 * fp) py 32
+                                        , aimedShot rightAux auxY (px - 24 * fp) py 32
+                                        ]
+                                      else []
+                                    , if cycle == 206 then
+                                        [ aimedShot leftAux auxY (px - 30 * fp) py 31
+                                        , aimedShot rightAux auxY (px + 30 * fp) py 31
+                                        ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 226 then
+                                        [ aimedShot leftAux auxY px py 34
+                                        , aimedShot rightAux auxY px py 34
+                                        ]
+                                      else []
+                                    ]
+
+                            3 ->
+                                List.concat
+                                    [ if cycle == 20 then radialShots left b2.y 55 18 5 30 else []
+                                    , if cycle == 44 then radialShots right b2.y 107 18 5 30 else []
+                                    , if cycle == 68 then [ aimedShot left b2.y px py 34, aimedShot right b2.y px py 34 ] else []
+                                    , if cycle == 104 || cycle == 118 || cycle == 132 then
+                                        [ { x = left, y = b2.y, vx = (0 - 16), vy = 30 }
+                                        , { x = right, y = b2.y, vx = 16, vy = 30 }
+                                        ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 150 then radialShots b2.x b2.y 15 30 12 30 else []
+                                    ]
+
+                            4 ->
+                                List.concat
+                                    [ if cycle == 30 then
+                                        [ aimedShot left b2.y (px - 44 * fp) py 32
+                                        , aimedShot left b2.y px py 32
+                                        , aimedShot right b2.y px py 32
+                                        , aimedShot right b2.y (px + 44 * fp) py 32
+                                        ]
+                                      else []
+                                    , if cycle >= 70 && cycle < 126 && modBy 14 cycle == 0 then
+                                        [ { x = left, y = b2.y, vx = (0 - 18), vy = 36 }
+                                        , { x = right, y = b2.y, vx = 18, vy = 36 }
+                                        ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 154 then radialShots b2.x b2.y 15 30 12 34 else []
+                                    ]
+
+                            5 ->
+                                let podA = modBy 360 (cycle * 3)
+                                    podX = b2.x + dirX podA * 34 * fp // 1024
+                                    podY = b2.y + dirY podA * 24 * fp // 1024
+                                in
+                                List.concat
+                                    [ if cycle == 30 || cycle == 50 || cycle == 70 then [ aimedShot podX podY px py 36 ] else []
+                                    , if cycle == 102 then radialShots b2.x b2.y 55 10 8 33 else []
+                                    , if cycle == 126 then radialShots b2.x b2.y 95 10 8 33 else []
+                                    , if b2.ph == 2 && (cycle == 154 || cycle == 168 || cycle == 182) then
+                                        [ aimedShot podX podY (px - 26 * fp) py 38
+                                        , aimedShot (2 * b2.x - podX) (2 * b2.y - podY) (px + 26 * fp) py 38
+                                        ]
+                                      else []
+                                    ]
+
+                            6 ->
+                                List.concat
+                                    [ if cycle == 20 then
+                                        [ aimedShot twinL b2.y (px + 36 * fp) py 34
+                                        , aimedShot twinR b2.y (px - 36 * fp) py 34
+                                        ]
+                                      else []
+                                    , if cycle == 56 then List.concat [ radialShots twinL b2.y 55 18 5 30, radialShots twinR b2.y 107 18 5 30 ] else []
+                                    , if cycle == 96 then
+                                        [ { x = twinL, y = b2.y, vx = 0 - 12, vy = 35 }
+                                        , { x = twinL, y = b2.y, vx = 12, vy = 35 }
+                                        , { x = twinR, y = b2.y, vx = 0 - 12, vy = 35 }
+                                        , { x = twinR, y = b2.y, vx = 12, vy = 35 }
+                                        ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 136 then List.concat [ radialShots twinL b2.y 15 60 6 32, radialShots twinR b2.y 45 60 6 32 ] else []
+                                    ]
+
+                            7 ->
+                                List.concat
+                                    [ if cycle == 28 || cycle == 48 || cycle == 68 then radialShots b2.x b2.y (t2 * 4) 90 4 32 else []
+                                    , if cycle == 120 then
+                                        [ aimedShot (b2.x - 6 * fp) (b2.y - 6 * fp) (px - 34 * fp) py 36
+                                        , aimedShot (b2.x + 6 * fp) (b2.y - 6 * fp) (px + 34 * fp) py 36
+                                        ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 184 then radialShots b2.x b2.y 15 30 12 34 else []
+                                    ]
+
+                            8 ->
+                                List.concat
+                                    [ if tortoiseOpen b2 && (cycle == 48 || cycle == 64 || cycle == 80 || cycle == 152 || cycle == 166) then
+                                        [ aimedShot b2.x (b2.y + 25 * fp) px py 36 ]
+                                      else []
+                                    , if cycle == 112 then radialShots b2.x b2.y t2 45 8 32 else []
+                                    , if b2.ph == 2 && cycle == 128 then
+                                        [ { x = b2.x - 18 * fp, y = b2.y, vx = 28, vy = 30 }
+                                        , { x = b2.x + 18 * fp, y = b2.y, vx = 0 - 28, vy = 30 }
+                                        ]
+                                      else []
+                                    ]
+
+                            9 ->
+                                List.concat
+                                    [ if cycle == 20 || cycle == 42 || cycle == 64 || cycle == 86 then [ aimedShot armX armY px py 35 ] else []
+                                    , if cycle == 116 then
+                                        List.concat
+                                            [ [ aimedShot (b2.x - 30 * fp) b2.y (px - 48 * fp) py 36
+                                              , aimedShot (b2.x + 30 * fp) b2.y (px + 48 * fp) py 36
+                                              ]
+                                            , radialShots b2.x b2.y 45 90 4 30
+                                            ]
+                                      else []
+                                    , if b2.ph == 2 && cycle >= 138 && cycle < 178 && modBy 10 cycle == 8 then [ aimedShot armX armY px py 40 ] else []
+                                    ]
+
+                            _ ->
+                                let podA = modBy 360 (cycle * 4)
+                                    podX = b2.x + dirX podA * 34 * fp // 1024
+                                    podY = b2.y + dirY podA * 30 * fp // 1024
+                                in
+                                if b2.ph == 1 then
+                                    List.concat
+                                        [ if cycle == 24 || cycle == 48 || cycle == 72 || cycle == 96 then [ aimedShot podX podY px py 38 ] else []
+                                        , if cycle == 132 then radialShots b2.x b2.y 15 30 12 34 else []
+                                        , if cycle == 180 then
+                                            [ aimedShot (b2.x - 34 * fp) b2.y (px + 40 * fp) py 40
+                                            , aimedShot (b2.x + 34 * fp) b2.y (px - 40 * fp) py 40
+                                            ]
+                                          else []
+                                        ]
+                                else
+                                    List.concat
+                                        [ if cycle == 20 || cycle == 100 then radialShots b2.x b2.y (cycle + t2) 20 18 35 else []
+                                        , if cycle == 58 || cycle == 74 || cycle == 90 then
+                                            [ aimedShot podX podY (px - 45 * fp) py 42
+                                            , aimedShot (2 * b2.x - podX) (2 * b2.y - podY) px py 42
+                                            , aimedShot b2.x b2.y (px + 45 * fp) py 42
+                                            ]
+                                          else []
+                                        , if cycle == 154 then radialShots b2.x b2.y 10 30 12 40 else []
+                                        , if cycle == 202 then [ aimedShot b2.x b2.y px py 48 ] else []
+                                        ]
+                gapX = iclamp 48 272 (m.px + if modBy 2 cycle == 0 then 18 else 0 - 18)
+                newWalls =
+                    if m.stage == 7 && (cycle == 92 || (b2.ph == 2 && cycle == 164)) then
+                        [ { x = 0, y = (0 - 8) * fp, w = max 0 (gapX - 36) }
+                        , { x = gapX + 36, y = (0 - 8) * fp, w = max 0 (gameW - gapX - 36) }
+                        ]
+                    else if m.stage == 9 && b2.ph == 2 && cycle == 104 then
+                        [ { x = 0, y = (0 - 8) * fp, w = 64 }
+                        , { x = 112, y = (0 - 8) * fp, w = 96 }
+                        , { x = 256, y = (0 - 8) * fp, w = 64 }
+                        ]
+                    else []
+                bossCue =
+                    if m.stage == 2 && ready && cycle == 72 then [ CTurbineCharge ]
+                    else if m.stage == 2 && ready && cycle == 140 then [ CTurbineBeam ]
+                    else []
+            in
+            { m
+                | boss = Just b2
+                , shots = if List.length m.shots > 44 then m.shots else List.concat [ m.shots, bossShots ]
+                , walls = List.concat [ m.walls, newWalls ]
+                , sfx = List.concat [ bossCue, m.sfx ]
+            }
+
+
+-- direction table in 15-degree steps (cos * 1024) — fine enough for the
+-- rings, loops and snakes the squadrons fly
+dirX : Int -> Int
+dirX a =
+    let
+        k = modBy 24 (a // 15)
+    in
+    if k == 0 then 1024 else if k == 1 then 989 else if k == 2 then 887
+    else if k == 3 then 724 else if k == 4 then 512 else if k == 5 then 265
+    else if k == 6 then 0 else if k == 7 then 0 - 265 else if k == 8 then 0 - 512
+    else if k == 9 then 0 - 724 else if k == 10 then 0 - 887 else if k == 11 then 0 - 989
+    else if k == 12 then 0 - 1024 else if k == 13 then 0 - 989 else if k == 14 then 0 - 887
+    else if k == 15 then 0 - 724 else if k == 16 then 0 - 512 else if k == 17 then 0 - 265
+    else if k == 18 then 0 else if k == 19 then 265 else if k == 20 then 512
+    else if k == 21 then 724 else if k == 22 then 887 else 989
+
+
+dirY : Int -> Int
+dirY a =
+    dirX (a + 270)
+
+
+-- ===== entity streams =====
+
+
+stepBullets : Model -> Model
+stepBullets m =
+    let
+        stepped =
+            List.map
+                (\b ->
+                    let
+                        -- WAVE bullets weave: flip sideways speed on a period
+                        nvx = if b.w == 2 && modBy 12 b.t == 11 then 0 - b.vx else b.vx
+                    in
+                    { b | x = b.x + nvx, y = b.y + b.vy, vx = nvx, t = b.t + 1 }
+                )
+                m.buls
+        -- barriers eat player fire: shoot through the gap or reposition
+        inWall =
+            \b ->
+                List.any
+                    (\w -> b.x // fp > w.x && b.x // fp < w.x + w.w && absI (b.y // fp - (w.y // fp + 7)) < 9)
+                    m.walls
+    in
+    { m | buls = List.filter (\b -> b.y > (0 - 12) * fp && b.x > (0 - 12) * fp && b.x < (gameW + 12) * fp && inWall b == False) stepped }
+
+
+stepWalls : Model -> Model
+stepWalls m =
+    let
+        moved = List.map (\w -> { w | y = w.y + 12 }) m.walls
+    in
+    { m | walls = List.filter (\w -> w.y < (gameH + 6) * fp) moved }
+
+
+stepShots : Model -> Model
+stepShots m =
+    let
+        ricochet =
+            case m.boss of
+                Just _ -> m.stage == 8
+                Nothing -> False
+        stepOne =
+            \s ->
+                let nx = s.x + s.vx
+                    bounce = ricochet && (nx < 8 * fp || nx > (gameW - 8) * fp)
+                in
+                { s
+                    | x = if bounce then s.x - s.vx else nx
+                    , y = s.y + s.vy
+                    , vx = if bounce then 0 - s.vx else s.vx
+                }
+        stepped = List.map stepOne m.shots
+    in
+    { m | shots = List.filter (\s -> s.y < (gameH + 12) * fp && s.y > (0 - 20) * fp && s.x > (0 - 20) * fp && s.x < (gameW + 20) * fp) stepped }
+
+
+stepStars : Model -> Model
+stepStars m =
+    let
+        stepped =
+            List.map
+                (\s ->
+                    { s | t = s.t + 1, y = s.y + 22
+                        , x = s.x + (if modBy 2 (s.t // 26) == 0 then 8 else 0 - 8) })
+                m.stars
+    in
+    { m | stars = List.filter (\s -> s.y < (gameH + 12) * fp) stepped }
+
+
+stepParts : Model -> Model
+stepParts m =
+    let
+        stepped =
+            List.map
+                (\p -> { p | x = p.x + p.vx, y = p.y + p.vy, vy = p.vy + 3, t = p.t + 1 })
+                m.parts
+    in
+    { m | parts = List.filter (\p -> p.t < 26) stepped }
+
+
+burst : Int -> Int -> Int -> List Part
+burst x y k =
+    List.map
+        (\i ->
+            { x = x, y = y
+            , vx = dirX (i * 45) * 40 // 1024
+            , vy = dirY (i * 45) * 40 // 1024 - 20
+            , t = modBy 3 i
+            , k = k
+            })
+        (List.range 0 7)
+
+
+-- ===== collisions =====
+
+
+collideBullets : Model -> Model
+collideBullets m =
+    let
+        -- fold bullets through the foe list: each bullet hits at most one foe
+        hitFoes =
+            List.foldl
+                (\b acc ->
+                    let
+                        hit =
+                            List.foldl
+                                (\f ha ->
+                                    if ha.found == False
+                                        && absI (f.x - b.x) < 11 * fp
+                                        && absI (f.y - b.y) < 11 * fp
+                                        && List.any (\d -> d.x == f.x && d.y == f.y && d.t == f.t) acc.dead == False
+                                    then
+                                        { found = True, foe = Just f }
+                                    else
+                                        ha
+                                )
+                                { found = False, foe = Nothing }
+                                acc.foes
+                    in
+                    case hit.foe of
+                        Just f ->
+                            { acc
+                                | dead = f :: acc.dead
+                                , foes = acc.foes
+                                , spent = b :: acc.spent
+                            }
+
+                        Nothing ->
+                            acc
+                )
+                { foes = m.foes, dead = [], spent = [] }
+                m.buls
+
+        wasSpent = \b -> List.any (\s -> s.x == b.x && s.y == b.y) hitFoes.spent
+        wasHit = \f -> List.any (\d -> d.x == f.x && d.y == f.y && d.t == f.t) hitFoes.dead
+
+        damaged =
+            List.map (\f -> if wasHit f then { f | hp = f.hp - 1, hurtT = 6 } else f) m.foes
+        alive = List.filter (\f -> f.hp > 0) damaged
+        killed = List.filter (\f -> f.hp <= 0) damaged
+
+        -- pinatas drop their star; everything scores
+        drops =
+            List.map
+                (\f -> { x = f.x, y = f.y, kind = f.gift, t = 0 })
+                (List.filter (\f -> f.kind == 4) killed)
+        gained =
+            List.foldl
+                (\f acc -> acc + (if f.kind == 4 then 300 else if f.kind == 2 then 200 else if f.kind == 1 then 150 else 100))
+                0
+                killed
+        booms = List.concat (List.map (\f -> burst f.x f.y 0) killed)
+
+        -- boss damage
+        bossHits =
+            case m.boss of
+                Just b ->
+                    List.filter
+                        (\bl ->
+                            let vulnerable =
+                                    if m.stage == 2 then wardenVulnerable b
+                                    else if m.stage == 8 then tortoiseOpen b
+                                    else True
+                                shapeHit =
+                                    if m.stage == 1 then
+                                        absI (b.x - bl.x) < 48 * fp && absI (b.y - bl.y) < 20 * fp
+                                    else if m.stage == 6 then
+                                        let gap = (26 + modBy 10 (b.t // 10)) * fp
+                                        in
+                                        (absI (b.x - gap - bl.x) < 16 * fp || absI (b.x + gap - bl.x) < 16 * fp)
+                                            && absI (b.y - bl.y) < 16 * fp
+                                    else if m.stage == 8 then
+                                        absI (b.x - bl.x) < 12 * fp && absI (b.y + 25 * fp - bl.y) < 11 * fp
+                                    else
+                                        -- The Warden's core is a small target on
+                                        -- purpose, but 13 was tighter than the
+                                        -- gates look open: shots that visually
+                                        -- entered the core missed. 20 still asks
+                                        -- for real aim (generic bosses are 26)
+                                        -- and lets a spread land more than one.
+                                        absI (b.x - bl.x) < (if m.stage == 2 then 20 * fp else 26 * fp)
+                                            && absI (b.y - bl.y) < (if m.stage == 2 then 16 * fp else 20 * fp)
+                            in
+                            wasSpent bl == False && vulnerable && shapeHit)
+                        m.buls
+
+                Nothing ->
+                    []
+        bossBlocks =
+            case m.boss of
+                Just b ->
+                    if m.stage == 2 && wardenVulnerable b == False then
+                        List.filter
+                            (\bl -> wasSpent bl == False && absI (b.x - bl.x) < 31 * fp && absI (b.y - bl.y) < 22 * fp)
+                            m.buls
+                    else if m.stage == 8 && tortoiseOpen b == False then
+                        List.filter
+                            (\bl -> wasSpent bl == False && absI (b.x - bl.x) < 24 * fp && absI (b.y - bl.y) < 23 * fp)
+                            m.buls
+                    else []
+
+                Nothing ->
+                    []
+        boss2 =
+            case m.boss of
+                Just b -> Just { b | hp = b.hp - List.length bossHits }
+                Nothing -> Nothing
+        spentAll = \b -> wasSpent b || List.any (\h -> h.x == b.x && h.y == b.y) (List.concat [ bossHits, bossBlocks ])
+        shieldSparks = List.concat (List.map (\bl -> burst bl.x bl.y 2) bossBlocks)
+    in
+    { m
+        | foes = alive
+        , buls = List.filter (\b -> spentAll b == False) m.buls
+        , stars = List.concat [ m.stars, drops ]
+        , parts = List.concat [ m.parts, booms, shieldSparks ]
+        , boss = boss2
+        , score = m.score + gained
+        , sfx =
+            List.concat
+                [ List.map (\f -> CBoomK f.kind) killed
+                , if List.any wasHit alive then [ CHitFoe ] else []
+                , if List.length bossBlocks > 0 then [ CHitFoe ] else []
+                , if List.length bossHits > 0 then [ CHit ] else []
+                , m.sfx
+                ]
+    }
+
+
+collidePlayer : Model -> Model
+collidePlayer m =
+    let
+        px = m.px * fp
+        py = m.py * fp
+
+        -- collect stars first (generous radius)
+        got = List.filter (\s -> absI (s.x - px) < 13 * fp && absI (s.y - py) < 13 * fp) m.stars
+        rest = List.filter (\s -> absI (s.x - px) < 13 * fp && absI (s.y - py) < 13 * fp |> (\hitS -> hitS == False)) m.stars
+        m2 =
+            List.foldl
+                (\s acc ->
+                    if s.kind == 0 then
+                        { acc | power = min 3 (acc.power + 1), score = acc.score + 200, sfx = CStar :: acc.sfx }
+                    else if s.kind == 4 then
+                        { acc | energy = min 5 (acc.energy + 1), score = acc.score + 200, sfx = CHeal :: acc.sfx }
+                    else
+                        { acc | weapon = s.kind - 1, score = acc.score + 200, sfx = CStar :: acc.sfx }
+                )
+                { m | stars = rest }
+                got
+
+        -- then the dangerous stuff (small core hitbox: forgiving)
+        shotHit = List.any (\s -> absI (s.x - px) < 6 * fp && absI (s.y - py) < 6 * fp) m2.shots
+        foeHit = List.any (\f -> absI (f.x - px) < 10 * fp && absI (f.y - py) < 10 * fp) m2.foes
+        wallHit = List.any (\w -> m.px + 7 > w.x && m.px - 7 < w.x + w.w && absI (m.py - (w.y // fp + 7)) < 13) m2.walls
+        beamHit =
+            case m2.boss of
+                Just b ->
+                    let bx = b.x // fp
+                        belowEmitter = m2.py > b.y // fp + 18
+                        central = absI (m2.px - bx) < (if b.ph == 2 then 13 else 11)
+                        leftAux = b.ph == 2 && absI (m2.px - (bx - 46)) < 7
+                        rightAux = b.ph == 2 && absI (m2.px - (bx + 46)) < 7
+                    in m2.stage == 2 && wardenBeamActive b && belowEmitter && (central || leftAux || rightAux)
+
+                Nothing ->
+                    False
+        bossBodyHit =
+            case m2.boss of
+                Just b ->
+                    m2.stage == 4
+                        && bossCycleAt 4 b.t >= 60
+                        && bossCycleAt 4 b.t < 140
+                        && absI (b.x // fp - m2.px) < 20
+                        && absI (b.y // fp - m2.py) < 20
+
+                Nothing ->
+                    False
+        hurt = m2.invulnT == 0 && (shotHit || foeHit || wallHit || beamHit || bossBodyHit)
+    in
+    if hurt == False then
+        m2
+    else
+        -- one energy cell down: the ship HOLDS its ground, blinks through a
+        -- grace window, and the nearby volley is swept so it can breathe
+        { m2
+            | energy = m2.energy - 1
+            , invulnT = 100
+            , parts = List.concat [ burst px py 1, m2.parts ]
+            , shots = List.filter (\s -> absI (s.x - px) < 26 * fp && absI (s.y - py) < 26 * fp |> (\h -> h == False)) m2.shots
+            , sfx = CHurt :: m2.sfx
+        }
+
+
+-- fire the soundtrack + settle deaths / clears
+musicTick : Model -> Model
+musicTick m =
+    let
+        beat =
+            if modBy 30 m.st == 0 then
+                let
+                    b = m.st // 30
+                    inBoss = case m.boss of
+                        Just _ -> True
+                        Nothing -> False
+                    bar = modBy 4 (b // 8)
+                    tbl =
+                        if inBoss then
+                            if bar == 2 then bossMelB else bossMelA
+                        else if bar == 2 then
+                            melB m.stage
+                        else
+                            melA m.stage
+                    slot = modBy 8 b * 2
+                in
+                [ CBeat (modBy 1000 b + (if inBoss then 100000 else 0) + m.stage * 1000)
+                , CMel (nthI slot tbl) (nthI (slot + 1) tbl)
+                ]
+            else
+                []
+    in
+    { m | sfx = List.concat [ beat, m.sfx ] }
+
+
+afterPlay : Model -> Model
+afterPlay m =
+    let
+        bossDead =
+            case m.boss of
+                Just b -> b.hp <= 0
+                Nothing -> False
+    in
+    if m.energy <= 0 then
+        -- the ship goes down: hand over to the death sequence
+        { m
+            | mode = Dying
+            , st = 0
+            , buls = []
+            , shots = []
+            , sfx = CShipBoom :: m.sfx
+        }
+    else if bossDead then
+        -- the boss starts its fall: the field clears for the spectacle
+        { m
+            | mode = BossFall
+            , st = 0
+            , buls = []
+            , shots = []
+            , foes = []
+            , stars = []
+            , walls = []
+        }
+    else
+        m
+
+
+-- ===== sound: cells + one groove beat per CBeat =====
+
+
+drKick : Sound
+drKick =
+    Sound.sequence
+        [ Sound.chord
+            [ Sound.volume 62 (Sound.sweep 42 (Sound.tone Sound.Triangle 160 85))
+            , Sound.volume 18 (Sound.tone Sound.Noise 0 25)
+            ]
+        , Sound.rest 165
+        ]
+
+
+drSnare : Sound
+drSnare =
+    Sound.sequence
+        [ Sound.chord
+            [ Sound.volume 38 (Sound.tone Sound.Noise 0 90)
+            , Sound.volume 18 (Sound.sweep 120 (Sound.tone Sound.Triangle 200 45))
+            ]
+        , Sound.rest 160
+        ]
+
+
+drGhost : Sound
+drGhost =
+    Sound.sequence [ Sound.volume 12 (Sound.tone Sound.Noise 0 40), Sound.rest 210 ]
+
+
+drHat : Sound
+drHat =
+    Sound.sequence [ Sound.volume 12 (Sound.tone Sound.Noise 0 28), Sound.rest 222 ]
+
+
+drHat2 : Sound
+drHat2 =
+    Sound.sequence
+        [ Sound.volume 12 (Sound.tone Sound.Noise 0 28), Sound.rest 97
+        , Sound.volume 9 (Sound.tone Sound.Noise 0 24), Sound.rest 101
+        ]
+
+
+drOpen : Sound
+drOpen =
+    Sound.sequence [ Sound.volume 14 (Sound.tone Sound.Noise 0 120), Sound.rest 130 ]
+
+
+-- end-of-cycle snare fill: three rising hits into the next bar
+drFill : Sound
+drFill =
+    Sound.sequence
+        [ Sound.volume 26 (Sound.tone Sound.Noise 0 55), Sound.rest 70
+        , Sound.volume 32 (Sound.tone Sound.Noise 0 55), Sound.rest 70
+        , Sound.volume 40 (Sound.sweep 110 (Sound.tone Sound.Triangle 230 55)), Sound.rest 195
+        ]
+
+
+r8 : Sound
+r8 =
+    Sound.rest 250
+
+
+bassC : Int -> Sound
+bassC hz =
+    Sound.sequence
+        [ Sound.chord
+            [ Sound.volume 30 (Sound.tone Sound.Triangle hz 205)
+            , Sound.volume 8 (Sound.tone Sound.Sawtooth hz 205)
+            ]
+        , Sound.rest 45
+        ]
+
+
+arpC : Int -> Int -> Int -> Sound
+arpC hz third fifth =
+    Sound.sequence
+        [ Sound.volume 10 (Sound.arp [ third, fifth ] (Sound.duty 25 (Sound.tone Sound.Square hz 470)))
+        , Sound.rest 30
+        ]
+
+
+p2 : Sound -> Sound -> Sound
+p2 a b =
+    Sound.sequence [ a, b ]
+
+
+-- one beat of backing groove. The 32-beat cycle walks bars Am F Dm G, the
+-- kit BUILDS a layer every 32 beats (drums -> hats -> arp+ghosts -> open
+-- hats), and every cycle ends on a snare fill — the track evolves instead
+-- of looping one bar. Boss: Am/E drive, double kick, no arp.
+grooveBeat : Int -> Sound
+grooveBeat key =
+    let
+        inBoss = key >= 100000
+        b = modBy 1000 key
+        stage = modBy 100 (key // 1000)
+        style = modBy 3 stage
+        k = modBy 4 b
+        bar = modBy 4 (b // 8)
+        build = min 3 (b // 32)
+        fill = modBy 32 b == 31
+        root =
+            if inBoss then
+                if modBy 2 bar == 0 then Sound.a 2 else Sound.e 2
+            else if bar == 0 then Sound.a 2
+            else if bar == 1 then Sound.f 2
+            else if bar == 2 then Sound.d 3
+            else Sound.g 2
+        rootO =
+            if inBoss then
+                if modBy 2 bar == 0 then Sound.a 3 else Sound.e 3
+            else if bar == 0 then Sound.a 3
+            else if bar == 1 then Sound.f 3
+            else if bar == 2 then Sound.d 4
+            else Sound.g 3
+        third =
+            if bar == 0 then Sound.c 4 else if bar == 1 then Sound.a 3 else if bar == 2 then Sound.f 4 else Sound.b 3
+        fifth =
+            if bar == 0 then Sound.e 4 else if bar == 1 then Sound.c 4 else if bar == 2 then Sound.a 4 else Sound.d 4
+        kick =
+            if inBoss then
+                if k == 0 || k == 2 then p2 drKick drKick else p2 r8 drKick
+            else if style == 0 then
+                -- cumbia lean: kick 1 and 3
+                if k == 0 || k == 2 then p2 drKick r8 else p2 r8 r8
+            else if style == 1 then
+                -- syncopated: 1, and-2, and-4
+                if k == 0 then p2 drKick r8
+                else if k == 1 || k == 3 then p2 r8 drKick
+                else p2 r8 r8
+            else
+                -- highland stomp: 1, 3, and-3
+                if k == 0 then p2 drKick r8
+                else if k == 2 then p2 drKick drKick
+                else p2 r8 r8
+        snare =
+            if fill then
+                drFill
+            else if inBoss then
+                if k == 1 || k == 3 then p2 drSnare (if build >= 3 then drGhost else r8) else p2 r8 r8
+            else if style == 2 then
+                if k == 2 then p2 drSnare r8
+                else if k == 3 && build >= 2 then p2 r8 drGhost
+                else p2 r8 r8
+            else if k == 1 || k == 3 then
+                p2 drSnare (if build >= 2 && k == 3 then drGhost else r8)
+            else
+                p2 r8 r8
+        hat =
+            if build == 0 && inBoss == False then
+                p2 r8 r8
+            else if k == 3 && (build >= 3 || inBoss) then
+                p2 drHat drOpen
+            else if style == 0 then
+                p2 r8 drHat2
+            else if style == 1 then
+                p2 drHat2 drHat2
+            else
+                p2 drHat drHat
+        bass =
+            if inBoss then
+                p2 (bassC root) (bassC (if modBy 2 b == 1 then rootO else root))
+            else if style == 0 then
+                -- offbeat bass: the cumbia bounce
+                if k == 3 then p2 (bassC rootO) (bassC root) else p2 r8 (bassC root)
+            else if k == 0 then
+                p2 (bassC root) r8
+            else if k == 2 then
+                p2 (bassC root) (bassC rootO)
+            else
+                p2 r8 (bassC rootO)
+        arps =
+            if inBoss == False && build >= 2 then
+                [ arpC rootO third fifth ]
+            else
+                []
+    in
+    Sound.chord (List.concat [ [ kick, snare, hat, bass ], arps ])
+
+
+-- one eighth of lead melody: singing triangle + square edge (0 = rest)
+melNote : Int -> Sound
+melNote hz =
+    if hz == 0 then
+        Sound.rest 250
+    else
+        Sound.sequence
+            [ Sound.chord
+                [ Sound.vibrato 10 5 (Sound.volume 24 (Sound.tone Sound.Triangle hz 235))
+                , Sound.volume 8 (Sound.duty 50 (Sound.tone Sound.Square hz 120))
+                ]
+            , Sound.rest 15
+            ]
+
+
+cueSound : Cue -> Sound
+cueSound cue =
+    case cue of
+        CBeat key ->
+            grooveBeat key
+
+        CMel hzA hzB ->
+            Sound.sequence [ melNote hzA, melNote hzB ]
+
+        CShot w ->
+            if w == 0 then
+                Sound.chord
+                    [ Sound.volume 15 (Sound.sweep 900 (Sound.duty 25 (Sound.tone Sound.Square 1300 70)))
+                    , Sound.volume 6 (Sound.sweep 500 (Sound.tone Sound.Triangle 2400 45))
+                    ]
+            else if w == 1 then
+                Sound.chord
+                    [ Sound.volume 15 (Sound.sweep 260 (Sound.duty 12 (Sound.tone Sound.Square 680 85)))
+                    , Sound.volume 7 (Sound.tone Sound.Noise 0 30)
+                    ]
+            else
+                Sound.chord
+                    [ Sound.volume 14 (Sound.sweep 620 (Sound.tone Sound.Triangle 340 95))
+                    , Sound.volume 5 (Sound.vibrato 35 10 (Sound.tone Sound.Square 510 80))
+                    ]
+
+        CHit ->
+            Sound.chord
+                [ Sound.volume 28 (Sound.tone Sound.Noise 0 45)
+                , Sound.volume 14 (Sound.sweep 300 (Sound.duty 25 (Sound.tone Sound.Square 900 35)))
+                ]
+
+        CHitFoe ->
+            -- the "I am doing damage" tick for tough enemies
+            Sound.chord
+                [ Sound.volume 18 (Sound.tone Sound.Noise 0 30)
+                , Sound.volume 12 (Sound.sweep 480 (Sound.duty 25 (Sound.tone Sound.Square 1500 35)))
+                ]
+
+        CBoomK k ->
+            if k == 0 then
+                -- drone: the classic mid pop
+                Sound.chord
+                    [ Sound.volume 34 (Sound.tone Sound.Noise 0 180)
+                    , Sound.volume 26 (Sound.sweep 40 (Sound.tone Sound.Triangle 250 160))
+                    ]
+            else if k == 1 then
+                -- diver: sharp crack with a falling whistle
+                Sound.chord
+                    [ Sound.volume 30 (Sound.tone Sound.Noise 0 90)
+                    , Sound.volume 20 (Sound.sweep 90 (Sound.tone Sound.Sawtooth 900 260))
+                    ]
+            else if k == 2 then
+                -- floater: deep slow whomp
+                Sound.chord
+                    [ Sound.volume 40 (Sound.tone Sound.Noise 0 260)
+                    , Sound.volume 32 (Sound.sweep 30 (Sound.tone Sound.Triangle 160 320))
+                    , Sound.volume 12 (Sound.sweep 45 (Sound.tone Sound.Sawtooth 90 240))
+                    ]
+            else if k == 3 then
+                -- zig: metallic clank
+                Sound.chord
+                    [ Sound.volume 26 (Sound.tone Sound.Noise 0 120)
+                    , Sound.volume 16 (Sound.arp [ 620, 480 ] (Sound.duty 25 (Sound.tone Sound.Square 830 180)))
+                    , Sound.volume 16 (Sound.sweep 60 (Sound.tone Sound.Triangle 300 160))
+                    ]
+            else
+                -- pinata: a festive crack and rising sparkle
+                Sound.chord
+                    [ Sound.volume 30 (Sound.tone Sound.Noise 0 120)
+                    , Sound.sequence
+                        [ Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 50))
+                        , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 50))
+                        , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 6) 50))
+                        , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square 2093 140))
+                        ]
+                    ]
+
+        CShipBoom ->
+            -- the Condor goes down: rolling multi-blast with a deep floor
+            Sound.chord
+                [ Sound.volume 60 (Sound.tone Sound.Noise 0 700)
+                , Sound.volume 46 (Sound.sweep 24 (Sound.tone Sound.Triangle 190 620))
+                , Sound.volume 30 (Sound.sweep 36 (Sound.tone Sound.Sawtooth 130 480))
+                , Sound.sequence [ Sound.rest 180, Sound.volume 40 (Sound.tone Sound.Noise 0 420) ]
+                , Sound.sequence [ Sound.rest 360, Sound.volume 30 (Sound.tone Sound.Noise 0 320) ]
+                , Sound.sequence [ Sound.rest 90, Sound.volume 24 (Sound.tone Sound.Triangle 62 600) ]
+                ]
+
+        CBigBoom ->
+            Sound.chord
+                [ Sound.volume 58 (Sound.tone Sound.Noise 0 520)
+                , Sound.volume 42 (Sound.sweep 30 (Sound.tone Sound.Triangle 220 480))
+                , Sound.volume 26 (Sound.sweep 45 (Sound.tone Sound.Sawtooth 150 380))
+                , Sound.sequence [ Sound.rest 140, Sound.volume 34 (Sound.tone Sound.Noise 0 300) ]
+                , Sound.sequence [ Sound.rest 60, Sound.volume 20 (Sound.tone Sound.Triangle (Sound.a 2) 400) ]
+                ]
+
+        CStar ->
+            Sound.sequence
+                [ Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 55))
+                , Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 55))
+                , Sound.chord
+                    [ Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 6) 150))
+                    , Sound.volume 10 (Sound.vibrato 14 6 (Sound.tone Sound.Triangle (Sound.e 6) 160))
+                    ]
+                ]
+
+        CHeal ->
+            -- an energy cell hums back to life
+            Sound.chord
+                [ Sound.volume 22 (Sound.arp [ Sound.e 5, Sound.a 5, Sound.cs 6 ] (Sound.tone Sound.Triangle (Sound.a 4) 340))
+                , Sound.volume 10 (Sound.sweep 900 (Sound.duty 50 (Sound.tone Sound.Square 320 240)))
+                ]
+
+        CHurt ->
+            Sound.chord
+                [ Sound.volume 40 (Sound.tone Sound.Noise 0 220)
+                , Sound.volume 34 (Sound.sweep 55 (Sound.tone Sound.Sawtooth 340 280))
+                , Sound.volume 16 (Sound.sweep 70 (Sound.duty 25 (Sound.tone Sound.Square 190 240)))
+                ]
+
+        CWarn ->
+            Sound.sequence
+                [ Sound.chord
+                    [ Sound.volume 30 (Sound.duty 50 (Sound.tone Sound.Square 145 190))
+                    , Sound.volume 16 (Sound.tone Sound.Triangle 73 190)
+                    ]
+                , Sound.rest 90
+                , Sound.chord
+                    [ Sound.volume 30 (Sound.duty 50 (Sound.tone Sound.Square 145 190))
+                    , Sound.volume 16 (Sound.tone Sound.Triangle 73 190)
+                    ]
+                , Sound.rest 90
+                , Sound.volume 34 (Sound.sweep 60 (Sound.duty 50 (Sound.tone Sound.Square 190 320)))
+                ]
+
+        CTurbineCharge ->
+            Sound.chord
+                [ Sound.volume 24 (Sound.sweep 940 (Sound.vibrato 22 7 (Sound.tone Sound.Sawtooth 120 900)))
+                , Sound.volume 14 (Sound.sweep 520 (Sound.tone Sound.Triangle 70 900))
+                , Sound.sequence
+                    [ Sound.rest 380
+                    , Sound.volume 18 (Sound.arp [ 440, 554, 659 ] (Sound.duty 25 (Sound.tone Sound.Square 330 500)))
+                    ]
+                ]
+
+        CTurbineBeam ->
+            Sound.chord
+                [ Sound.volume 34 (Sound.tone Sound.Noise 0 520)
+                , Sound.volume 32 (Sound.sweep 90 (Sound.tone Sound.Sawtooth 760 650))
+                , Sound.volume 24 (Sound.vibrato 35 10 (Sound.tone Sound.Triangle 92 700))
+                ]
+
+        CJIntro ->
+            Sound.sequence
+                [ Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 4) 95))
+                , Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.cs 5) 95))
+                , Sound.chord
+                    [ Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 240))
+                    , Sound.volume 12 (Sound.tone Sound.Triangle (Sound.a 3) 260)
+                    ]
+                ]
+
+        CJClear ->
+            Sound.chord
+                [ Sound.sequence
+                    [ Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 5) 120))
+                    , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 120))
+                    , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 120))
+                    , Sound.vibrato 16 6 (Sound.volume 26 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 450)))
+                    ]
+                , Sound.sequence
+                    [ Sound.volume 18 (Sound.tone Sound.Triangle (Sound.c 3) 240)
+                    , Sound.volume 18 (Sound.tone Sound.Triangle (Sound.g 3) 240)
+                    , Sound.volume 20 (Sound.tone Sound.Triangle (Sound.a 3) 420)
+                    ]
+                ]
+
+        CJOver ->
+            Sound.chord
+                [ Sound.sequence
+                    [ Sound.volume 22 (Sound.duty 12 (Sound.tone Sound.Square (Sound.e 4) 180))
+                    , Sound.volume 22 (Sound.duty 12 (Sound.tone Sound.Square (Sound.c 4) 180))
+                    , Sound.vibrato 8 4 (Sound.volume 24 (Sound.duty 12 (Sound.tone Sound.Square (Sound.a 3) 420)))
+                    ]
+                , Sound.sequence
+                    [ Sound.rest 360
+                    , Sound.volume 20 (Sound.tone Sound.Triangle (Sound.a 2) 430)
+                    ]
+                ]
+
+        CJEnd ->
+            Sound.chord
+                [ Sound.sequence
+                    [ Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 4) 200))
+                    , Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.c 5) 200))
+                    , Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.e 5) 200))
+                    , Sound.vibrato 14 5 (Sound.volume 28 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 5) 800)))
+                    ]
+                , Sound.sequence
+                    [ Sound.volume 24 (Sound.tone Sound.Triangle (Sound.a 2) 700)
+                    , Sound.volume 24 (Sound.tone Sound.Triangle (Sound.e 3) 700)
+                    ]
+                , Sound.sequence
+                    [ Sound.rest 600
+                    , Sound.volume 12 (Sound.arp [ Sound.c 6, Sound.e 6 ] (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 500)))
+                    ]
+                ]
+
+        CBlip ->
+            Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 60))
+
+
+-- ===== pixel font (3x5 glyphs — the shared Mar canvas-game table) =====
+
+
+pixText : Int -> Int -> Int -> Color -> String -> List Shape
+pixText x y s color str =
+    List.concat
+        (List.indexedMap
+            (\i ch -> glyphShapes (x + i * 4 * s) y s color ch)
+            (String.toList str))
+
+
+pixTextC : Int -> Int -> Int -> Color -> String -> List Shape
+pixTextC x y s color str =
+    pixText (x - pixW (String.length str) s // 2) y s color str
+
+
+pixTextR : Int -> Int -> Int -> Color -> String -> List Shape
+pixTextR x y s color str =
+    pixText (x - pixW (String.length str) s) y s color str
+
+
+pixW : Int -> Int -> Int
+pixW n s =
+    n * 4 * s - s
+
+
+glyphShapes : Int -> Int -> Int -> Color -> Char -> List Shape
+glyphShapes gx gy s color ch =
+    List.concat
+        (List.indexedMap
+            (\r bits -> rowShapes gx (gy + r * s) s color bits)
+            (glyph ch))
+
+
+rowShapes : Int -> Int -> Int -> Color -> Int -> List Shape
+rowShapes rx ry s color bits =
+    List.concat
+        [ if bitOn bits 4 then [ rect rx ry s s color ] else []
+        , if bitOn bits 2 then [ rect (rx + s) ry s s color ] else []
+        , if bitOn bits 1 then [ rect (rx + 2 * s) ry s s color ] else []
+        ]
+
+
+bitOn : Int -> Int -> Bool
+bitOn bits bit =
+    modBy 2 (bits // bit) == 1
+
+
+glyph : Char -> List Int
+glyph ch =
+    case ch of
+        'A' -> [ 7, 5, 7, 5, 5 ]
+        'B' -> [ 6, 5, 6, 5, 6 ]
+        'C' -> [ 7, 4, 4, 4, 7 ]
+        'D' -> [ 6, 5, 5, 5, 6 ]
+        'E' -> [ 7, 4, 7, 4, 7 ]
+        'F' -> [ 7, 4, 7, 4, 4 ]
+        'G' -> [ 7, 4, 5, 5, 7 ]
+        'H' -> [ 5, 5, 7, 5, 5 ]
+        'I' -> [ 7, 2, 2, 2, 7 ]
+        'J' -> [ 1, 1, 1, 5, 7 ]
+        'K' -> [ 5, 6, 4, 6, 5 ]
+        'L' -> [ 4, 4, 4, 4, 7 ]
+        'M' -> [ 5, 7, 7, 5, 5 ]
+        'N' -> [ 7, 5, 5, 5, 5 ]
+        'O' -> [ 7, 5, 5, 5, 7 ]
+        'P' -> [ 7, 5, 7, 4, 4 ]
+        'Q' -> [ 7, 5, 5, 7, 1 ]
+        'R' -> [ 7, 5, 7, 6, 5 ]
+        'S' -> [ 7, 4, 7, 1, 7 ]
+        'T' -> [ 7, 2, 2, 2, 2 ]
+        'U' -> [ 5, 5, 5, 5, 7 ]
+        'V' -> [ 5, 5, 5, 5, 2 ]
+        'W' -> [ 5, 5, 7, 7, 5 ]
+        'X' -> [ 5, 5, 2, 5, 5 ]
+        'Y' -> [ 5, 5, 2, 2, 2 ]
+        'Z' -> [ 7, 1, 2, 4, 7 ]
+        '0' -> [ 7, 5, 5, 5, 7 ]
+        '1' -> [ 2, 6, 2, 2, 7 ]
+        '2' -> [ 7, 1, 7, 4, 7 ]
+        '3' -> [ 7, 1, 7, 1, 7 ]
+        '4' -> [ 5, 5, 7, 1, 1 ]
+        '5' -> [ 7, 4, 7, 1, 7 ]
+        '6' -> [ 7, 4, 7, 5, 7 ]
+        '7' -> [ 7, 1, 2, 2, 2 ]
+        '8' -> [ 7, 5, 7, 5, 7 ]
+        '9' -> [ 7, 5, 7, 1, 7 ]
+        ':' -> [ 0, 2, 0, 2, 0 ]
+        '-' -> [ 0, 0, 7, 0, 0 ]
+        '.' -> [ 0, 0, 0, 0, 2 ]
+        '!' -> [ 2, 2, 2, 0, 2 ]
+        '/' -> [ 1, 1, 2, 4, 4 ]
+        _ -> [ 0, 0, 0, 0, 0 ]
+
+
+-- ===== layout / view plumbing =====
+
+
+type alias Layout =
+    { scale : Int, ox : Int, oy : Int }
+
+
+layout : Model -> Layout
+layout model =
+    let
+        s = max 60 (min (model.w * 100 // gameW) (model.h * 100 // gameH))
+    in
+    { scale = s
+    , ox = (model.w - gameW * s // 100) // 2
+    , oy = (model.h - gameH * s // 100) // 2
+    }
+
+
+-- Opaque strips over the four letterbox margins, drawn AFTER the world
+-- group. The scaled group is not clipped, and the game constantly draws
+-- outside the 320x240 stage (foes spawn at y = -16, parallax bands wrap
+-- past the edges): on a desktop canvas the playfield ends exactly at the
+-- canvas border so none of it shows, but on a tall phone screen the
+-- margins expose everything. Same color as the page backdrop, so the
+-- stage reads as a framed arcade screen.
+matteShapes : Model -> Layout -> List Shape
+matteShapes m lay =
+    let
+        pw = gameW * lay.scale // 100
+        ph = gameH * lay.scale // 100
+        bg = rgb 6 6 10
+    in
+    [ rect 0 0 m.w (max 0 lay.oy) bg
+    , rect 0 (lay.oy + ph) m.w (max 0 (m.h - lay.oy - ph)) bg
+    , rect 0 0 (max 0 lay.ox) m.h bg
+    , rect (lay.ox + pw) 0 (max 0 (m.w - lay.ox - pw)) m.h bg
+    ]
+
+
+toLogical : Model -> Int -> Int -> { x : Int, y : Int }
+toLogical model x y =
+    let
+        lay = layout model
+    in
+    { x = (x - lay.ox) * 100 // max 1 lay.scale
+    , y = (y - lay.oy) * 100 // max 1 lay.scale
+    }
+
+
+inMuteZone : Model -> Int -> Int -> Bool
+inMuteZone model x y =
+    let
+        p = toLogical model x y
+    in
+    p.x > 294 && p.y < 18
+
+
+muteIcon : Model -> List Shape
+muteIcon m =
+    let
+        c = rgb 150 156 176
+    in
+    List.concat
+        [ [ rect 300 6 3 5 c
+          , rect 303 4 2 9 c
+          ]
+        , if m.muted then [ rect 297 3 14 2 (rgb 220 70 70) ] else [ rect 308 6 2 5 c ]
+        ]
+
+
+-- ===== backgrounds: 3 parallax layers per stage =====
+
+
+bgShapes : Model -> List Shape
+bgShapes m =
+    let
+        th = theme m.stage
+        t = m.st + m.tick // 4
+        farS = t // 6
+        midS = t // 2
+        detS = t * 2
+    in
+    List.concat
+        [ [ rect 0 0 gameW 90 th.skyA
+          , rect 0 90 gameW 80 th.skyB
+          , rect 0 170 gameW 70 th.skyC
+          ]
+        -- Aerial perspective: the further a layer is, the more air sits
+        -- between it and the Condor, so the more sky bleeds through it. The
+        -- far silhouettes read as haze, the canopies as closer but still
+        -- airy, and the detail layer stays solid because it is right under
+        -- the wing. Depth used to be carried by parallax speed alone.
+        --
+        -- One Alpha group per LAYER, not per shape: that is one composite
+        -- per layer per frame (cheap), and it is the only way the overlapping
+        -- puffs inside a layer come out evenly translucent instead of showing
+        -- every circle's seam where they cross.
+        , [ group [ Canvas.Alpha 62 ] (farLayer m.stage th farS) ]
+        , [ group [ Canvas.Alpha 84 ] (midLayer m.stage th midS) ]
+        , detLayer m.stage th detS
+        ]
+
+
+-- big slow silhouettes: one band of features that wraps vertically
+farLayer : Int -> Theme -> Int -> List Shape
+farLayer s th scroll =
+    List.concat
+        (List.map
+            (\i ->
+                let
+                    y = modBy (gameH + 120) (i * 96 + scroll) - 100
+                    x = 20 + modBy 240 (i * 137 + s * 61)
+                in
+                if s == 2 then
+                    -- basalt shelf of the falls
+                    [ rect 0 y gameW 20 th.far
+                    , rect 0 (y + 20) gameW 4 th.farD
+                    ]
+                else if s == 5 then
+                    -- dune ridges under the star sky
+                    [ triangle x (y + 40) (x + 90) (y + 40) (x + 45) y th.far
+                    , triangle (x + 60) (y + 40) (x + 150) (y + 40) (x + 105) (y + 12) th.farD
+                    ]
+                else if s == 7 then
+                    -- terraced peak
+                    [ triangle x (y + 52) (x + 76) (y + 52) (x + 38) y th.far
+                    , rect (x + 8) (y + 34) 60 4 th.farD
+                    , rect (x + 16) (y + 22) 44 4 th.farD
+                    ]
+                else if s == 10 then
+                    -- stepped pyramid
+                    [ rect (x + 6) (y + 30) 68 14 th.far
+                    , rect (x + 16) (y + 18) 48 14 th.farD
+                    , rect (x + 26) (y + 6) 28 14 th.far
+                    ]
+                else if s == 3 then
+                    -- city blocks on the dusk horizon
+                    [ rect x y 14 40 th.far
+                    , rect (x + 20) (y + 10) 10 30 th.farD
+                    , rect (x + 36) (y + 4) 12 36 th.far
+                    ]
+                else if s == 9 then
+                    -- harbor cranes
+                    [ rect x y 4 40 th.far
+                    , rect x y 30 4 th.far
+                    , rect (x + 26) y 3 12 th.farD
+                    ]
+                else
+                    -- generic mountains / volcano cones
+                    [ triangle x (y + 48) (x + 84) (y + 48) (x + 42) y th.far
+                    , triangle (x + 50) (y + 48) (x + 118) (y + 48) (x + 84) (y + 14) th.farD
+                    ]
+            )
+            (List.range 0 3))
+
+
+-- mid features: trees, floes, reeds, waves — per-stage shapes
+midLayer : Int -> Theme -> Int -> List Shape
+midLayer s th scroll =
+    List.concat
+        (List.map
+            (\i ->
+                let
+                    y = modBy (gameH + 80) (i * 60 + scroll) - 60
+                    x = 10 + modBy 290 (i * 197 + s * 89)
+                in
+                if s == 1 then
+                    -- canopy puffs + the river ribbon
+                    List.concat
+                        [ [ circle x y 12 th.mid
+                          , circle (x + 12) (y + 4) 9 th.midD
+                          ]
+                        , if modBy 3 i == 0 then [ rect 0 (y + 30) gameW 10 th.det ] else []
+                        ]
+                else if s == 2 then
+                    -- falling water columns with foam heads
+                    [ rect (modBy 300 (x * 3)) y 12 44 th.mid
+                    , rect (modBy 300 (x * 3)) (y + 40) 12 6 th.det
+                    , rect (modBy 300 (x * 3) + 3) (y + 8) 3 26 th.midD
+                    ]
+                else if s == 4 then
+                    -- drifting ice floes
+                    [ rect x y 26 8 th.mid
+                    , rect (x + 4) (y - 4) 14 4 th.det
+                    ]
+                else if s == 5 then
+                    -- observatory domes on ridges
+                    [ circle x y 8 th.det
+                    , rect (x - 9) y 18 6 th.mid
+                    ]
+                else if s == 6 then
+                    -- salt polygons + a flamingo fleck
+                    List.concat
+                        [ [ rect x y 22 2 th.midD
+                          , rect (x + 6) (y + 8) 18 2 th.midD
+                          ]
+                        , if modBy 4 i == 0 then [ circle (x + 14) (y - 4) 2 th.acc ] else []
+                        ]
+                else if s == 8 then
+                    -- island humps + surf
+                    [ circle x y 14 th.mid
+                    , rect (x - 14) (y + 8) 30 4 th.det
+                    ]
+                else if s == 9 then
+                    -- waves + a cargo hull
+                    List.concat
+                        [ [ rect x y 30 3 th.det ]
+                        , if modBy 3 i == 1 then [ rect (x + 4) (y - 8) 22 7 th.far ] else []
+                        ]
+                else if s == 10 then
+                    -- marigold beds
+                    [ rect x y 24 6 th.mid
+                    , circle (x + 6) y 3 th.acc
+                    , circle (x + 16) (y + 3) 3 th.acc
+                    ]
+                else
+                    -- pampas grass / generic scrub
+                    [ rect x y 18 4 th.mid
+                    , rect (x + 4) (y - 4) 4 4 th.midD
+                    ]
+            )
+            (List.range 0 6))
+
+
+-- near dust: fast small particles set the speed feeling
+detLayer : Int -> Theme -> Int -> List Shape
+detLayer s th scroll =
+    List.concat
+        (List.map
+            (\i ->
+                let
+                    y = modBy (gameH + 20) (i * 34 + scroll) - 10
+                    x = modBy gameW (i * 173 + s * 31)
+                in
+                [ rect x y 2 (if s == 2 || s == 4 then 6 else 2) th.det ]
+            )
+            (List.range 0 11))
+
+
+-- ===== entity drawing =====
+
+
+-- the Condor: swept delta wings, cockpit up front, tail fins, twin engines
+shipShapes : Model -> List Shape
+shipShapes m =
+    let
+        x = m.px
+        y = m.py
+        flame = if modBy 2 (m.tick // 3) == 0 then 5 else 8
+        flame2 = if modBy 2 (m.tick // 3) == 0 then 8 else 5
+        body =
+            List.concat
+            [ -- twin engine flames at the wing roots
+              [ triangle (x - 5) (y + 6) (x - 2) (y + 6) (x - 3) (y + 6 + flame) (rgb 255 170 40)
+              , triangle (x + 2) (y + 6) (x + 5) (y + 6) (x + 4) (y + 6 + flame2) (rgb 255 170 40)
+              , triangle (x - 4) (y + 6) (x - 3) (y + 6) (x - 3) (y + 3 + flame) (rgb 255 240 170)
+              , triangle (x + 3) (y + 6) (x + 4) (y + 6) (x + 4) (y + 3 + flame2) (rgb 255 240 170)
+              ]
+            , -- swept delta wings, gold tipped
+              [ triangle (x - 12) (y + 5) (x - 2) (y - 3) (x - 2) (y + 5) (rgb 205 214 228)
+              , triangle (x + 12) (y + 5) (x + 2) (y - 3) (x + 2) (y + 5) (rgb 205 214 228)
+              , rect (x - 12) (y + 3) 3 2 (rgb 240 190 70)
+              , rect (x + 9) (y + 3) 3 2 (rgb 240 190 70)
+              ]
+            , -- tail fins
+              [ triangle (x - 7) (y + 7) (x - 2) (y + 3) (x - 2) (y + 7) (rgb 160 170 188)
+              , triangle (x + 7) (y + 7) (x + 2) (y + 3) (x + 2) (y + 7) (rgb 160 170 188)
+              ]
+            , -- fuselage: nose cone, crest stripe, canopy, engine bar
+              [ rect (x - 2) (y - 6) 4 13 (rgb 235 240 248)
+              , triangle (x - 2) (y - 6) (x + 2) (y - 6) x (y - 11) (rgb 235 240 248)
+              , rect (x - 1) (y - 9) 2 3 (rgb 230 60 80)
+              , rect (x - 1) (y - 4) 2 4 (rgb 70 140 255)
+              , rect (x - 2) (y + 3) 4 2 (rgb 160 170 188)
+              ]
+            ]
+    in
+    if m.mode == Play && m.invulnT > 0 then
+        -- Post-hit invulnerability used to blink the ship out of existence
+        -- every 4 ticks. That is a 15Hz strobe, and it deleted the one thing
+        -- you need after taking a hit: knowing where you are. Now the Condor
+        -- PHASES instead, breathing between 35% and 55% twice a second. Same
+        -- signal, no flicker, and the plane never leaves the screen.
+        --
+        -- Alpha, not rgba on each part: the sprite is fifteen overlapping
+        -- shapes, so fading them one by one would show the wings through the
+        -- fuselage and the canopy through the nose. Alpha composites the ship
+        -- first and fades the result, so it stays a plane.
+        [ group [ Canvas.Alpha (35 + modBy 2 (m.invulnT // 15) * 20) ] body ]
+    else
+        body
+
+
+foeShapes : Model -> List Shape
+foeShapes m =
+    let
+        th = theme m.stage
+    in
+    List.concat
+        (List.map
+            (\f ->
+                let
+                    x = f.x // fp
+                    y = f.y // fp
+                    body =
+                        if f.kind == 0 then
+                            [ circle x y 6 th.acc
+                            , rect (x - 9) (y - 1) 18 3 th.farD
+                            , circle x (y - 2) 2 (rgb 20 20 30)
+                            ]
+                        else if f.kind == 1 then
+                            [ triangle (x - 6) (y - 6) (x + 6) (y - 6) x (y + 8) (rgb 220 80 70)
+                            , rect (x - 2) (y - 6) 4 4 (rgb 40 24 30)
+                            ]
+                        else if f.kind == 2 then
+                            [ circle x y 8 th.midD
+                            , circle x y 5 th.mid
+                            , circle x (y + 2) 2 (rgb 255 120 90)
+                            , rect (x - 10) (y - 2) 3 4 th.farD
+                            , rect (x + 7) (y - 2) 3 4 th.farD
+                            ]
+                        else if f.kind == 3 then
+                            [ group [ Canvas.Translate x y, Canvas.Rotate (modBy 360 (f.t * 6)) ]
+                                [ rect (0 - 5) (0 - 5) 10 10 th.acc
+                                , rect (0 - 2) (0 - 2) 4 4 (rgb 20 20 30)
+                                ]
+                            ]
+                        else
+                            -- the pinata: striped diamond, hinting its gift color
+                            [ triangle (x - 8) y (x + 8) y x (y - 11) (starColor f.gift)
+                            , triangle (x - 8) y (x + 8) y x (y + 11) (rgb 240 240 244)
+                            , rect (x - 7) (y - 3) 14 2 (rgb 240 190 70)
+                            , rect (x - 5) (y + 3) 10 2 (starColor f.gift)
+                            ]
+                    -- white damage flash: unmistakable "you ARE hurting it"
+                    flash =
+                        if f.hurtT > 0 then
+                            [ circle x y 5 (rgb 255 255 255) ]
+                        else
+                            []
+                in
+                List.concat [ body, flash ]
+            )
+            m.foes)
+
+
+-- repeat a decoration across a barrier segment, padded off both ends
+across : Int -> Int -> Int -> (Int -> List Shape) -> List Shape
+across x0 wid step f =
+    if wid < step + 8 then
+        []
+    else
+        List.concat
+            (List.map (\i -> f (x0 + 4 + i * step)) (List.range 0 ((wid - 8) // step - 1)))
+
+
+-- barriers WEAR the stage instead of being generic walls: a canopy line,
+-- a falls lip, a fence with silos, an ice ridge, a dune crest, salt crust,
+-- an inca terrace, a lava reef, a canal lock gate, a pyramid step
+wallShapes : Model -> List Shape
+wallShapes m =
+    let
+        th = theme m.stage
+        s = m.stage
+    in
+    List.concat
+        (List.map
+            (\w ->
+                if w.w <= 0 then
+                    []
+                else
+                    let
+                        y = w.y // fp
+                    in
+                    if s == 1 then
+                        -- Amazon: an unbroken treetop line with trunks below
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 24 74 46)
+                              , rect w.x (y + 11) w.w 3 (rgb 12 40 26)
+                              ]
+                            , across w.x w.w 13 (\x -> [ circle x (y + 3) 5 (rgb 34 96 54) ])
+                            , across w.x w.w 26 (\x -> [ circle (x + 7) (y + 5) 4 th.midD ])
+                            , across w.x w.w 36 (\x -> [ rect x (y + 8) 4 6 (rgb 92 62 38) ])
+                            ]
+                    else if s == 2 then
+                        -- Iguazu: a basalt ledge, water spilling off its lip
+                        List.concat
+                            [ [ rect w.x y w.w 14 th.far
+                              , rect w.x y w.w 3 th.det
+                              ]
+                            , across w.x w.w 11 (\x -> [ rect x (y + 14) 3 (4 + modBy 5 x) th.mid ])
+                            ]
+                    else if s == 3 then
+                        -- Pampas: fence rails, posts and little red silos
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 150 118 48)
+                              , rect w.x (y + 4) w.w 2 (rgb 110 84 36)
+                              , rect w.x (y + 9) w.w 2 (rgb 110 84 36)
+                              ]
+                            , across w.x w.w 16 (\x -> [ rect x y 2 14 (rgb 86 64 30) ])
+                            , across w.x w.w 72
+                                (\x ->
+                                    [ rect x (y + 2) 8 12 (rgb 176 60 54)
+                                    , triangle (x - 1) (y + 2) (x + 9) (y + 2) (x + 4) (y - 3) (rgb 140 46 42)
+                                    ])
+                            ]
+                    else if s == 4 then
+                        -- Patagonia: a drifting ice ridge, spiked and cracked
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 168 208 224)
+                              , rect w.x (y + 12) w.w 2 (rgb 90 140 170)
+                              ]
+                            , across w.x w.w 15 (\x -> [ triangle x y (x + 10) y (x + 5) (y - 6) th.det ])
+                            , across w.x w.w 23 (\x -> [ rect x (y + 4) 1 8 (rgb 120 168 196) ])
+                            ]
+                    else if s == 5 then
+                        -- Atacama: a dune crest with sun-baked rocks
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 128 78 48) ]
+                            , across w.x w.w 17 (\x -> [ triangle x y (x + 14) y (x + 7) (y - 5) (rgb 150 96 58) ])
+                            , across w.x w.w 29 (\x -> [ rect x (y + 8) 3 3 (rgb 70 42 30) ])
+                            ]
+                    else if s == 6 then
+                        -- Uyuni: raised salt crust, cracked into polygons
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 226 232 238)
+                              , rect w.x y w.w 2 th.det
+                              ]
+                            , across w.x w.w 19
+                                (\x ->
+                                    [ rect x (y + 4) 12 2 (rgb 190 200 212)
+                                    , rect (x + 6) (y + 9) 10 2 (rgb 190 200 212)
+                                    ])
+                            ]
+                    else if s == 7 then
+                        -- Machu Picchu: an inca terrace, grass lip over masonry
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 134 134 126)
+                              , rect w.x y w.w 3 th.mid
+                              ]
+                            , across w.x w.w 15
+                                (\x ->
+                                    [ rect x (y + 4) 2 5 (rgb 104 104 96)
+                                    , rect (x + 7) (y + 9) 2 5 (rgb 104 104 96)
+                                    ])
+                            ]
+                    else if s == 8 then
+                        -- Galapagos: a lava reef breaking the surf
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 46 42 46) ]
+                            , across w.x w.w 13 (\x -> [ circle x (y + 2) 4 (rgb 66 60 64) ])
+                            , across w.x w.w 21 (\x -> [ rect x (y - 2) 6 2 th.det ])
+                            ]
+                    else if s == 9 then
+                        -- Panama: a steel lock gate; hazard stripes mark the gap
+                        let
+                            sx = if w.x == 0 then w.x + w.w - 12 else w.x
+                        in
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 56 66 84)
+                              , rect w.x (y + 1) w.w 2 (rgb 96 110 132)
+                              , rect w.x (y + 11) w.w 2 (rgb 96 110 132)
+                              ]
+                            , across w.x w.w 13
+                                (\x ->
+                                    [ rect x (y + 1) 2 12 (rgb 36 44 58)
+                                    , rect (x + 6) (y + 2) 1 1 th.det
+                                    , rect (x + 6) (y + 11) 1 1 th.det
+                                    ])
+                            , List.map
+                                (\i -> rect (sx + i * 3) (y + 3) 3 8 (if modBy 2 i == 0 then rgb 232 190 70 else rgb 30 30 36))
+                                (List.range 0 3)
+                            ]
+                    else
+                        -- Teotihuacan: a pyramid step, marigolds on the ledge
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 170 100 42)
+                              , rect w.x (y + 8) w.w 6 (rgb 140 80 34)
+                              , rect w.x y w.w 4 (rgb 196 122 52)
+                              ]
+                            , across w.x w.w 11 (\x -> [ circle x (y + 2) 2 th.acc ])
+                            ]
+            )
+            m.walls)
+
+
+starColor : Int -> Color
+starColor k =
+    if k == 0 then rgb 255 210 60
+    else if k == 1 then rgb 80 150 255
+    else if k == 2 then rgb 240 80 80
+    else if k == 3 then rgb 90 220 120
+    else rgb 250 130 180
+
+
+starShapes : Model -> List Shape
+starShapes m =
+    List.concat
+        (List.map
+            (\s ->
+                let
+                    x = s.x // fp
+                    y = s.y // fp
+                    c = starColor s.kind
+                    r = if modBy 2 (s.t // 8) == 0 then 5 else 6
+                in
+                if s.kind == 4 then
+                    [ circle (x - 2) (y - 1) 3 c
+                    , circle (x + 2) (y - 1) 3 c
+                    , triangle (x - 5) y (x + 5) y x (y + 6) c
+                    ]
+                else
+                    [ triangle (x - r) (y + 2) (x + r) (y + 2) x (y - r) c
+                    , triangle (x - r) (y - 2) (x + r) (y - 2) x (y + r) c
+                    ]
+            )
+            m.stars)
+
+
+bulShapes : Model -> List Shape
+bulShapes m =
+    List.concat
+        (List.map
+            (\b ->
+                let
+                    x = b.x // fp
+                    y = b.y // fp
+                in
+                if b.w == 0 then
+                    [ rect (x - 1) (y - 6) 2 10 (rgb 140 200 255)
+                    , rect (x - 1) (y - 8) 2 3 (rgb 235 245 255)
+                    ]
+                else if b.w == 1 then
+                    [ circle x y 2 (rgb 255 150 90)
+                    , circle x (y - 2) 1 (rgb 255 230 160)
+                    ]
+                else
+                    [ circle x y 3 (rgb 110 230 140)
+                    , circle x y 1 (rgb 230 255 230)
+                    ]
+            )
+            m.buls)
+
+
+shotShapes : Model -> List Shape
+shotShapes m =
+    List.concat
+        (List.map
+            (\s ->
+                let
+                    x = s.x // fp
+                    y = s.y // fp
+                in
+                case m.stage of
+                    1 ->
+                        [ circle x y 4 (rgb 46 110 70)
+                        , circle x y 2 (rgb 255 205 70)
+                        ]
+
+                    2 ->
+                        [ circle x y 3 (rgb 70 180 230)
+                        , circle x y 1 (rgb 235 250 255)
+                        ]
+
+                    3 ->
+                        [ circle x y 4 (rgb 80 35 90)
+                        , circle x y 2 (rgb 255 205 105)
+                        ]
+
+                    4 ->
+                        [ triangle (x - 4) y x (y - 5) x (y + 5) (rgb 110 220 240)
+                        , triangle (x + 4) y x (y - 5) x (y + 5) (rgb 235 255 255)
+                        ]
+
+                    5 ->
+                        [ rect (x - 1) (y - 5) 2 10 (rgb 255 170 70)
+                        , rect (x - 5) (y - 1) 10 2 (rgb 255 235 170)
+                        , circle x y 2 (rgb 255 255 240)
+                        ]
+
+                    6 ->
+                        [ triangle (x - 4) y x (y - 4) x (y + 4) (rgb 244 120 160)
+                        , triangle (x + 4) y x (y - 4) x (y + 4) (rgb 220 240 255)
+                        ]
+
+                    7 ->
+                        [ rect (x - 3) (y - 3) 6 6 (rgb 116 112 102)
+                        , rect (x - 1) (y - 2) 2 2 (rgb 240 190 70)
+                        ]
+
+                    8 ->
+                        [ circle x y 4 (rgb 30 38 42)
+                        , circle (x - 1) (y - 1) 2 (rgb 110 160 120)
+                        , rect (x - 1) (y - 3) 2 2 (rgb 225 245 230)
+                        ]
+
+                    9 ->
+                        [ rect (x - 4) (y - 3) 8 6 (rgb 235 70 140)
+                        , rect (x - 2) (y - 1) 4 2 (rgb 245 235 120)
+                        ]
+
+                    _ ->
+                        [ triangle (x - 5) y x (y - 5) x (y + 5) (rgb 255 130 50)
+                        , triangle (x + 5) y x (y - 5) x (y + 5) (rgb 255 225 100)
+                        , circle x y 2 (rgb 255 255 235)
+                        ]
+            )
+            m.shots)
+
+
+partColor : Int -> Color
+partColor k =
+    if k == 0 then rgb 255 190 80
+    else if k == 1 then rgb 255 110 80
+    else rgb 250 240 200
+
+
+-- Sparks are LIGHT, so they go in an Add group: each one adds to the sky
+-- instead of covering it, and where several land on the same pixel the
+-- channels saturate one at a time — the core of a burst goes orange, then
+-- gold, then white, without a single one of those colours being drawn. Over
+-- the dark sky it reads as heat. (No layer: Blend without Alpha is free.)
+partShapes : Model -> List Shape
+partShapes m =
+    [ group [ Canvas.Blend Canvas.Add ]
+        (List.concat
+            (List.map
+                (\p ->
+                    let
+                        sz = if p.t < 10 then 3 else 2
+                    in
+                    [ rect (p.x // fp) (p.y // fp) sz sz (partColor p.k) ]
+                )
+                m.parts))
+    ]
+
+
+-- ===== bosses: ten silhouettes =====
+
+
+bossShapes : Model -> List Shape
+bossShapes m =
+    case m.boss of
+        Nothing ->
+            []
+
+        Just b ->
+            let
+                x = b.x // fp
+                y = b.y // fp
+                th = theme m.stage
+                wob = if modBy 2 (b.t // 12) == 0 then 2 else 0 - 2
+                hurtC = if b.ph == 2 then rgb 255 110 80 else th.acc
+                body =
+                    case m.stage of
+                        1 ->
+                            -- MECHA ANACONDA: coil chain + fanged head
+                            [ circle (x - 34) (y + wob) 9 th.mid
+                            , circle (x - 18) (y - wob) 10 th.midD
+                            , circle (x + 0) (y + wob) 11 th.mid
+                            , circle (x + 18) (y - wob) 10 th.midD
+                            , circle (x + 34) (y + wob) 12 th.mid
+                            , circle (x + 34) (y + wob - 4) 3 (rgb 255 220 90)
+                            , triangle (x + 30) (y + wob + 8) (x + 34) (y + wob + 8) (x + 32) (y + wob + 14) (rgb 240 240 244)
+                            , triangle (x + 36) (y + wob + 8) (x + 40) (y + wob + 8) (x + 38) (y + wob + 14) (rgb 240 240 244)
+                            ]
+
+                        2 ->
+                            -- TURBINE WARDEN: a shielded central plant fed by
+                            -- two visible auxiliary turbines. Its gates expose
+                            -- the core while the mega-flow beam charges.
+                            let
+                                cycle = wardenCycle b
+                                open = wardenVulnerable b
+                                charging = wardenCharging b
+                                beamOn = wardenBeamActive b
+                                gateShift = if open then 10 else if charging then iclamp 0 9 (cycle - 72) else 0
+                                beamTop = y + 17
+                                beamH = max 0 (gameH - beamTop)
+                                spin = modBy 360 (b.t * (if b.ph == 2 then 8 else 5))
+                                auxSpin = modBy 360 (b.t * (if b.ph == 2 then 11 else 7))
+                                leftX = x - 46
+                                rightX = x + 46
+                                auxY = y + 7
+                                aux =
+                                    \ax turn ->
+                                        [ circle ax auxY 13 th.farD
+                                        , circle ax auxY 10 th.far
+                                        , group [ Canvas.Translate ax auxY, Canvas.Rotate turn ]
+                                            [ rect (0 - 2) (0 - 10) 4 20 th.det
+                                            , rect (0 - 10) (0 - 2) 20 4 th.det
+                                            ]
+                                        , circle ax auxY 3 (if charging || beamOn then rgb 255 220 110 else th.acc)
+                                        ]
+                                centralTelegraph =
+                                    List.map
+                                        (\i -> rect (x - 1) (beamTop + i * 20) 2 10 (if open then rgb 255 220 110 else th.det))
+                                        (List.range 0 8)
+                                auxTelegraphs =
+                                    if b.ph == 2 then
+                                        List.concat
+                                            [ List.map (\i -> rect (leftX - 1) (beamTop + i * 20) 2 9 th.det) (List.range 0 8)
+                                            , List.map (\i -> rect (rightX - 1) (beamTop + i * 20) 2 9 th.det) (List.range 0 8)
+                                            ]
+                                    else []
+                                beamShapes =
+                                    if beamOn then
+                                        List.concat
+                                            [ [ rect (x - (if b.ph == 2 then 13 else 11)) beamTop (if b.ph == 2 then 26 else 22) beamH (rgb 70 180 230)
+                                              , rect (x - (if b.ph == 2 then 8 else 6)) beamTop (if b.ph == 2 then 16 else 12) beamH (rgb 205 245 255)
+                                              , rect (x - 2) beamTop 4 beamH (rgb 255 255 235)
+                                              ]
+                                            , if b.ph == 2 then
+                                                [ rect (leftX - 7) beamTop 14 beamH (rgb 70 180 230)
+                                                , rect (leftX - 3) beamTop 6 beamH (rgb 220 250 255)
+                                                , rect (rightX - 7) beamTop 14 beamH (rgb 70 180 230)
+                                                , rect (rightX - 3) beamTop 6 beamH (rgb 220 250 255)
+                                                ]
+                                              else []
+                                            ]
+                                    else if charging then List.concat [ centralTelegraph, auxTelegraphs ]
+                                    else []
+                                status =
+                                    if beamOn then pixTextC x (y + 35) 1 (rgb 210 245 255) "MEGA FLOW"
+                                    else if open then pixTextC x (y + 35) 1 (rgb 255 225 100) "CORE OPEN"
+                                    else if charging then pixTextC x (y + 35) 1 th.det "VENTING"
+                                    else pixTextC x (y + 35) 1 (rgb 140 150 170) "ARMORED"
+                            in
+                            List.concat
+                                [ beamShapes
+                                , [ rect (leftX + 11) (auxY - 3) 24 6 th.farD
+                                  , rect (x + 11) (auxY - 3) 24 6 th.farD
+                                  ]
+                                , aux leftX auxSpin
+                                , aux rightX (0 - auxSpin)
+                                , [ rect (x - 31) (y - 18) 62 36 th.farD
+                                  , rect (x - 27) (y - 14) 54 28 th.mid
+                                  , triangle (x - 27) (y + 14) (x - 15) (y + 25) (x - 3) (y + 14) (rgb 70 180 230)
+                                  , triangle (x + 3) (y + 14) (x + 15) (y + 25) (x + 27) (y + 14) (rgb 70 180 230)
+                                  , circle x y 16 th.far
+                                  , group [ Canvas.Translate x y, Canvas.Rotate spin ]
+                                        [ rect (0 - 2) (0 - 15) 4 30 th.det
+                                        , rect (0 - 15) (0 - 2) 30 4 th.det
+                                        , triangle (0 - 4) (0 - 13) 4 (0 - 13) 0 (0 - 20) th.det
+                                        , triangle 13 (0 - 4) 13 4 20 0 th.det
+                                        ]
+                                  , circle x y 8 (if open then rgb 255 225 100 else th.farD)
+                                  , circle x y 4 (if open then rgb 255 250 220 else hurtC)
+                                  , rect (x - 25 - gateShift) (y - 11) 13 22 (if open then th.far else th.det)
+                                  , rect (x + 12 + gateShift) (y - 11) 13 22 (if open then th.far else th.det)
+                                  , rect (x - 30) (y - 18) 60 3 (if charging then rgb 255 225 100 else th.det)
+                                  ]
+                                , [ rect (x - 35) (y + 29) 70 12 th.farD ]
+                                , status
+                                ]
+
+                        3 ->
+                            -- BANDONEON KING: breathing bellows + bow tie
+                            let
+                                cycle = bossCycleAt 3 b.t
+                                sq = 10 + modBy 8 (b.t // 8)
+                                chord = cycle >= 100 && cycle < 140
+                            in
+                            List.concat
+                                [ [ rect (x - sq - 12) (y - 14) 12 28 (rgb 58 26 66)
+                                  , rect (x + sq) (y - 14) 12 28 (rgb 58 26 66)
+                                  , rect (x - sq) (y - 10) (sq * 2) 20 hurtC
+                                  , rect (x - sq + 3) (y - 10) 2 20 (rgb 40 20 40)
+                                  , rect (x - 2) (y - 10) 4 20 (rgb 255 205 105)
+                                  , rect (x + sq - 5) (y - 10) 2 20 (rgb 40 20 40)
+                                  , triangle (x - 5) (y - 16) x (y - 11) (x + 5) (y - 16) (rgb 230 60 80)
+                                  , circle (x - sq - 6) y 3 (if chord then rgb 255 225 120 else rgb 240 240 244)
+                                  , circle (x + sq + 6) y 3 (if chord then rgb 255 225 120 else rgb 240 240 244)
+                                  ]
+                                , if chord then
+                                    [ circle (x - sq - 18) (y - 8) 3 (rgb 255 205 105)
+                                    , rect (x - sq - 15) (y - 17) 2 9 (rgb 255 205 105)
+                                    , circle (x + sq + 18) (y + 7) 3 (rgb 255 205 105)
+                                    , rect (x + sq + 19) (y - 2) 2 9 (rgb 255 205 105)
+                                    , rect (x - 29) (y + 24) 58 11 th.farD
+                                    ]
+                                  else []
+                                , if chord then pixTextC x (y + 28) 1 (rgb 255 220 120) "CHORD WAVE" else []
+                                ]
+
+                        4 ->
+                            -- FROST CONDOR: rival bird, flapping ice wings
+                            let
+                                cycle = bossCycleAt 4 b.t
+                                diving = cycle >= 60 && cycle < 140
+                                warning = cycle >= 48 && cycle < 60
+                                fl = if diving then 12 else if modBy 2 (b.t // 14) == 0 then 0 - 8 else 6
+                            in
+                            List.concat
+                                [ [ triangle (x - 38) (y + fl) (x - 5) (y - 5) (x - 5) (y + 9) th.mid
+                                  , triangle (x + 38) (y + fl) (x + 5) (y - 5) (x + 5) (y + 9) th.mid
+                                  , triangle (x - 38) (y + fl) (x - 26) (y + fl - 3) (x - 29) (y + fl + 8) th.det
+                                  , triangle (x + 38) (y + fl) (x + 26) (y + fl - 3) (x + 29) (y + fl + 8) th.det
+                                  , rect (x - 6) (y - 11) 12 24 th.det
+                                  , triangle (x - 6) (y + 13) (x + 6) (y + 13) x (y + 22) th.det
+                                  , triangle (x - 4) (y - 11) (x + 4) (y - 11) x (y - 18) hurtC
+                                  , circle (x - 3) (y - 4) 1 (rgb 20 20 30)
+                                  , circle (x + 3) (y - 4) 1 (rgb 20 20 30)
+                                  ]
+                                , if warning then
+                                    List.concat
+                                        [ List.map (\i -> rect (x - 1) (y + 28 + i * 16) 2 8 (rgb 120 230 245)) (List.range 0 7)
+                                        , pixTextC x (y + 24) 1 (rgb 210 250 255) "DIVE!"
+                                        ]
+                                  else []
+                                ]
+
+                        5 ->
+                            -- STARGAZER ORB: dome + slit eye that tracks you
+                            let
+                                cycle = bossCycleAt 5 b.t
+                                angle = modBy 360 (cycle * 3)
+                                podX = x + dirX angle * 34 // 1024
+                                podY = y + dirY angle * 24 // 1024
+                                locked = cycle >= 76 && cycle < 102
+                            in
+                            List.concat
+                                [ [ circle x y 21 th.farD
+                                  , circle x y 18 (rgb 230 234 244)
+                                  , rect (x - 21) (y + 10) 42 9 th.far
+                                  , rect (x - 15) (y - 5) 30 9 (rgb 22 20 46)
+                                  , circle (iclamp (x - 11) (x + 11) m.px) (y - 1) 4 (if locked then rgb 255 230 120 else hurtC)
+                                  , circle podX podY 5 th.acc
+                                  , circle (2 * x - podX) (2 * y - podY) 5 th.det
+                                  ]
+                                , if locked then
+                                    List.concat
+                                        [ List.map (\i -> rect (x - 1) (y + 24 + i * 19) 2 9 (rgb 255 170 60)) (List.range 0 8)
+                                        , [ rect (x - 31) (y + 25) 62 11 th.farD ]
+                                        , pixTextC x (y + 29) 1 (rgb 255 210 110) "ORBIT LOCK"
+                                        ]
+                                  else []
+                                ]
+
+                        6 ->
+                            -- THE MIRROR TWINS: two orbs breathing in mirror
+                            let
+                                gap = 26 + modBy 10 (b.t // 10)
+                                cycle = bossCycleAt 6 b.t
+                                crossfire = cycle >= 88 && cycle < 108
+                            in
+                            List.concat
+                                [ [ circle (x - gap) y 14 th.midD
+                                  , circle (x - gap) y 9 th.det
+                                  , triangle (x - gap - 4) y (x - gap + 4) (y - 6) (x - gap + 4) (y + 6) hurtC
+                                  , circle (x + gap) y 14 th.midD
+                                  , circle (x + gap) y 9 th.det
+                                  , triangle (x + gap + 4) y (x + gap - 4) (y - 6) (x + gap - 4) (y + 6) hurtC
+                                  , rect (x - gap + 14) (y - 1) (gap * 2 - 28) 3 (if crossfire then rgb 244 120 160 else rgb 220 240 255)
+                                  , circle x y 5 th.farD
+                                  ]
+                                , if crossfire then
+                                    List.concat
+                                        [ [ rect (x - 32) (y + 21) 64 11 th.farD ]
+                                        , pixTextC x (y + 25) 1 (rgb 255 180 210) "MIRROR BURST"
+                                        ]
+                                  else []
+                                ]
+
+                        7 ->
+                            -- STONE SENTINEL: masonry head + rotating sun disc
+                            let
+                                cycle = bossCycleAt 7 b.t
+                                gateWarn = (cycle >= 78 && cycle < 94) || (b.ph == 2 && cycle >= 150 && cycle < 166)
+                            in
+                            List.concat
+                                [ [ group [ Canvas.Translate x (y - 2), Canvas.Rotate (modBy 360 (b.t * 4)) ]
+                                        [ rect (0 - 30) (0 - 2) 60 4 (rgb 240 190 70)
+                                        , rect (0 - 2) (0 - 30) 4 60 (rgb 240 190 70)
+                                        , circle 0 (0 - 28) 4 th.acc
+                                        , circle 0 28 4 th.acc
+                                        ]
+                                  , rect (x - 17) (y - 15) 34 31 (rgb 116 114 108)
+                                  , rect (x - 14) (y - 12) 28 25 (rgb 146 142 132)
+                                  , rect (x - 14) (y - 2) 28 3 (rgb 92 90 86)
+                                  , rect (x - 10) (y + 7) 20 3 (rgb 92 90 86)
+                                  , rect (x - 9) (y - 9) 6 5 hurtC
+                                  , rect (x + 3) (y - 9) 6 5 hurtC
+                                  ]
+                                , if gateWarn then
+                                    List.concat
+                                        [ [ rect (x - 33) (y + 22) 66 11 th.farD ]
+                                        , pixTextC x (y + 26) 1 (rgb 250 205 90) "STONE GATE"
+                                        ]
+                                  else []
+                                ]
+
+                        8 ->
+                            -- IRON TORTOISE: shell tank, head peeks to fire
+                            let
+                                open = tortoiseOpen b
+                                headY = y + (if open then 25 else 13)
+                            in
+                            List.concat
+                                [ [ circle x y 24 th.farD
+                                  , circle x (y - 3) 20 th.midD
+                                  , circle x (y - 5) 15 th.mid
+                                  , rect (x - 12) (y - 9) 8 7 th.farD
+                                  , rect (x + 4) (y - 9) 8 7 th.farD
+                                  , rect (x - 20) (y + 12) 9 7 th.far
+                                  , rect (x + 11) (y + 12) 9 7 th.far
+                                  , rect (x - 5) (y + 10) 10 (if open then 16 else 7) (rgb 80 118 88)
+                                  , circle x headY 7 (if open then rgb 112 164 112 else th.farD)
+                                  , circle (x - 2) (headY + 1) 1 (rgb 240 245 220)
+                                  , circle (x + 2) (headY + 1) 1 (rgb 240 245 220)
+                                  , rect (x - 3) (headY + 5) 6 3 hurtC
+                                  , rect (x - 30) (y + 31) 60 11 th.farD
+                                  ]
+                                , pixTextC x (y + 35) 1
+                                    (if open then rgb 170 245 170 else rgb 130 150 140)
+                                    (if open then "HEAD EXPOSED" else "SHELL LOCK")
+                                ]
+
+                        9 ->
+                            -- HARBOR KRAKEN: container body + crane tentacles
+                            let
+                                cycle = bossCycleAt 9 b.t
+                                lifting = b.ph == 2 && cycle >= 88 && cycle < 106
+                                turn = modBy 360 (b.t * 3)
+                            in
+                            List.concat
+                                [ [ group [ Canvas.Translate x y, Canvas.Rotate turn ]
+                                        [ rect (0 - 34) (0 - 3) 22 6 th.farD
+                                        , rect 12 (0 - 3) 22 6 th.farD
+                                        , rect (0 - 3) (0 - 34) 6 22 th.farD
+                                        , rect (0 - 3) 12 6 22 th.farD
+                                        , circle (0 - 30) 0 5 th.acc
+                                        , circle 30 0 5 th.acc
+                                        , circle 0 (0 - 30) 5 th.acc
+                                        , circle 0 30 5 th.acc
+                                        ]
+                                  , rect (x - 19) (y - 13) 38 26 (rgb 34 58 72)
+                                  , rect (x - 16) (y - 10) 32 20 th.acc
+                                  , rect (x - 16) (y - 3) 32 3 (rgb 30 40 54)
+                                  , rect (x - 11) (y - 8) 3 16 (rgb 245 130 175)
+                                  , rect (x + 8) (y - 8) 3 16 (rgb 245 130 175)
+                                  , circle x (y - 2) 5 (rgb 240 240 244)
+                                  , circle x (y - 2) 2 (rgb 20 20 30)
+                                  ]
+                                , if lifting then
+                                    List.concat
+                                        [ [ rect (x - 34) (y + 25) 68 11 th.farD ]
+                                        , pixTextC x (y + 29) 1 (rgb 255 150 200) "CARGO DROP"
+                                        ]
+                                  else []
+                                ]
+
+                        _ ->
+                            -- THE RELIC CORE: diamond heart + orbiting pods
+                            let
+                                turn = modBy 360 (b.t * (if b.ph == 2 then 6 else 3))
+                                pulse = 25 + modBy 5 (b.t // 8)
+                            in
+                            List.concat
+                                [ if b.ph == 2 then
+                                    [ circle x y pulse (rgb 255 120 35)
+                                    , circle x y (pulse - 4) th.skyA
+                                    , circle x y (pulse - 9) (rgb 95 35 65)
+                                    ]
+                                  else []
+                                , [ group [ Canvas.Translate x y, Canvas.Rotate turn ]
+                                        [ triangle (0 - 18) 0 18 0 0 (0 - 25) (rgb 225 220 220)
+                                        , triangle (0 - 18) 0 18 0 0 25 (rgb 160 164 180)
+                                        , circle 0 0 8 hurtC
+                                        , circle 0 0 3 (rgb 255 245 180)
+                                        ]
+                                  , group [ Canvas.Translate x y, Canvas.Rotate (0 - turn) ]
+                                        [ circle (0 - 38) 0 7 th.farD
+                                        , circle 38 0 7 th.farD
+                                        , circle 0 (0 - 34) 7 th.farD
+                                        , circle 0 34 7 th.farD
+                                        , rect (0 - 38) (0 - 1) 76 2 (rgb 255 190 70)
+                                        , rect (0 - 1) (0 - 34) 2 68 (rgb 255 190 70)
+                                        ]
+                                  , rect (x - 32) (y + 42) 64 11 th.farD
+                                  ]
+                                , pixTextC x (y + 46) 1
+                                    (if b.ph == 2 then rgb 255 170 70 else rgb 245 210 120)
+                                    (if b.ph == 2 then "CORE OVERLOAD" else "RELIC ARRAY")
+                                ]
+            in
+            body
+
+
+-- The middle of the HUD row is a slot two readouts take turns in: the stage
+-- counter while you fly there, the boss's health while you fight it, with
+-- the name sitting ON the bar instead of above it. Sharing the slot is what
+-- keeps the HUD one row deep even mid-boss, which is what lets the ship keep
+-- the whole floor when the fight matters most.
+centerSlot : Model -> List Shape
+centerSlot m =
+    case m.boss of
+        Nothing ->
+            pixTextC 160 4 1 (rgb 120 128 150)
+                ("STAGE " ++ String.fromInt m.stage ++ "/10")
+
+        Just b ->
+            let
+                w = iclamp 0 120 (b.hp * 120 // max 1 b.mx)
+            in
+            List.concat
+                [ [ rect 100 3 120 10 (rgb 28 16 22)
+                  , rect 100 3 w 10 (rgb 200 60 60)
+                  ]
+                , pixTextC 160 6 1 (rgb 255 240 230) (bossName m.stage)
+                ]
+
+
+-- ===== HUD =====
+
+
+hudShapes : Model -> List Shape
+hudShapes m =
+    let
+        wName = if m.weapon == 0 then "BEAM" else if m.weapon == 1 then "SPREAD" else "WAVE"
+        wCol = if m.weapon == 0 then rgb 140 200 255 else if m.weapon == 1 then rgb 255 150 90 else rgb 110 230 140
+        pips =
+            List.concat
+                (List.map
+                    (\i ->
+                        [ rect (272 + i * 6) 5 4 4 (if i < m.power then wCol else rgb 50 54 70) ])
+                    (List.range 0 2))
+        -- hull energy: five cells, red when down to the last one. The word
+        -- ENERGY is gone with the bottom row: five cells that drain and turn
+        -- red say it without a label, and the label cost play area.
+        energyCells =
+            List.concat
+                (List.map
+                    (\i ->
+                        [ rect (36 + i * 9) 4 7 7
+                            (if i < m.energy then
+                                (if m.energy <= 1 then rgb 240 80 70 else rgb 92 214 120)
+                             else
+                                rgb 42 46 60)
+                        ])
+                    (List.range 0 4))
+    in
+    List.concat
+        [ pixText 4 5 1 (rgb 235 238 245) (String.fromInt m.score)
+        , energyCells
+        , centerSlot m
+        , pixTextR 268 5 1 wCol wName
+        , pips
+        , muteIcon m
+        , if m.st >= stageTicks && m.st < bossTick && modBy 2 (m.st // 15) == 0 then
+            pixTextC 160 110 2 (rgb 235 90 80) "WARNING!"
+          else
+            []
+        , if m.paused then
+            List.concat
+                [ [ rect 100 104 120 30 (rgb 12 12 20) ]
+                , pixTextC 160 116 2 (rgb 235 238 245) "PAUSED"
+                ]
+          else
+            []
+        ]
+
+
+-- ===== screens =====
+
+
+titleShapes : Model -> List Shape
+titleShapes m =
+    let
+        blink = modBy 60 m.tick < 36
+        bob = if modBy 2 (m.tick // 20) == 0 then 0 else 2
+        stars =
+            List.concat
+                (List.map
+                    (\i ->
+                        [ rect (modBy gameW (i * 89)) (modBy gameH (i * 53 + m.tick // 8)) 2 2 (rgb 120 130 160) ])
+                    (List.range 0 17))
+        touch =
+            case m.dev of
+                Just d -> Device.touchOnly d
+                Nothing -> False
+    in
+    List.concat
+        [ [ rect 0 0 gameW gameH (rgb 14 16 34) ]
+        , stars
+        , -- andes silhouette
+          [ triangle 0 200 90 200 40 150 (rgb 30 34 56)
+          , triangle 60 200 180 200 120 138 (rgb 24 28 48)
+          , triangle 150 200 270 200 210 148 (rgb 30 34 56)
+          , triangle 240 200 340 200 300 156 (rgb 24 28 48)
+          , rect 0 198 gameW 42 (rgb 18 20 38)
+          ]
+        , pixTextC 163 43 4 (rgb 40 24 30) "STAR"
+        , pixTextC 160 40 4 (rgb 240 190 70) "STAR"
+        , pixTextC 163 73 4 (rgb 40 24 30) "CONDOR"
+        , pixTextC 160 70 4 (rgb 235 240 248) "CONDOR"
+        , pixTextC 160 104 1 (rgb 130 140 170) "AN A.L.A.S. MISSION OVER LATIN AMERICA"
+        , -- the Condor, bobbing over the peaks
+          [ triangle 148 (167 + bob) 158 (159 + bob) 158 (167 + bob) (rgb 205 214 228)
+          , triangle 172 (167 + bob) 162 (159 + bob) 162 (167 + bob) (rgb 205 214 228)
+          , rect 148 (165 + bob) 3 2 (rgb 240 190 70)
+          , rect 169 (165 + bob) 3 2 (rgb 240 190 70)
+          , triangle 153 (169 + bob) 158 (165 + bob) 158 (169 + bob) (rgb 160 170 188)
+          , triangle 167 (169 + bob) 162 (165 + bob) 162 (169 + bob) (rgb 160 170 188)
+          , rect 158 (156 + bob) 4 13 (rgb 235 240 248)
+          , triangle 158 (156 + bob) 162 (156 + bob) 160 (151 + bob) (rgb 235 240 248)
+          , rect 159 (153 + bob) 2 3 (rgb 230 60 80)
+          , rect 159 (158 + bob) 2 4 (rgb 70 140 255)
+          , triangle 155 (169 + bob) 158 (169 + bob) 157 (174 + bob) (rgb 255 170 40)
+          , triangle 162 (169 + bob) 165 (169 + bob) 163 (174 + bob) (rgb 255 170 40)
+          ]
+        , if blink then
+            pixTextC 160 214 1 (rgb 235 238 245)
+                (if touch then "TAP TO FLY" else "PRESS SPACE TO FLY")
+          else
+            []
+        , pixTextC 160 228 1 (rgb 96 104 130)
+            (if touch then "DRAG TO MOVE. POP PINATAS FOR POWER." else "ARROWS MOVE. SPACE FIRES. M MUTES.")
+        , if m.hi > 0 then pixTextC 160 128 1 (rgb 240 190 70) ("HI " ++ String.fromInt m.hi) else []
+        , muteIcon m
+        ]
+
+
+-- the opening crawl: the premise the ending pays off
+storyShapes : Model -> List Shape
+storyShapes m =
+    let
+        showLine = \at ln y -> if m.st >= at then pixTextC 160 y 1 (rgb 210 214 226) ln else []
+    in
+    List.concat
+        [ [ rect 0 0 gameW gameH (rgb 8 8 16)
+          , rect 0 52 gameW 2 (rgb 240 190 70)
+          , rect 0 186 gameW 2 (rgb 240 190 70)
+          ]
+        , pixTextC 160 30 2 (rgb 240 190 70) "THE STORY"
+        , showLine 20 "WAR MACHINES OF A FORGOTTEN CENTURY" 70
+        , showLine 20 "ARE WAKING OVER LATIN AMERICA." 82
+        , showLine 60 "TWENTY NATIONS POOLED THEIR ENGINEERS" 104
+        , showLine 60 "INTO A.L.A.S. AND BUILT ONE DEFENDER." 116
+        , showLine 110 "YOU FLY THE CONDOR." 140
+        , showLine 110 "SILENCE THE MACHINES. SPARE THE LAND." 152
+        , if m.st >= holdFor Story && modBy 2 (m.st // 15) == 0 then
+            pixTextC 160 208 1 (rgb 240 190 70) "PRESS FIRE"
+          else
+            []
+        , muteIcon m
+        ]
+
+
+introShapes : Model -> List Shape
+introShapes m =
+    let
+        th = theme m.stage
+    in
+    List.concat
+        [ [ rect 0 0 gameW gameH (rgb 10 10 18)
+          , rect 0 90 gameW 60 th.skyB
+          , rect 0 148 gameW 4 th.acc
+          , rect 0 88 gameW 2 th.acc
+          ]
+        , pixTextC 160 60 2 (rgb 235 238 245) ("STAGE " ++ String.fromInt m.stage)
+        , pixTextC 160 98 1 (rgb 250 235 200) (stagePlace m.stage)
+        , pixTextC 160 114 1 (rgb 196 200 214) (stageDesc1 m.stage)
+        , pixTextC 160 126 1 (rgb 196 200 214) (stageDesc2 m.stage)
+        , -- no timer: the stage waits for the pilot, once the card is read
+          if m.st >= holdFor Intro && modBy 2 (m.st // 15) == 0 then
+            pixTextC 160 172 1 (rgb 240 190 70) "PRESS FIRE TO LAUNCH"
+          else
+            []
+        , muteIcon m
+        ]
+
+
+clearShapes : Model -> List Shape
+-- the story beat after each guardian falls: one hopeful line per region
+stageClear : Int -> String
+stageClear s =
+    case s of
+        1 -> "THE RIVERS RUN FREE. ON TO THE FALLS."
+        2 -> "THE TURBINES SPIN FOR THE CITIES AGAIN."
+        3 -> "THE PAMPAS HARVEST IS SAFE."
+        4 -> "THE GLACIERS SLEEP IN PEACE."
+        5 -> "THE TELESCOPES SEE THE STARS AGAIN."
+        6 -> "THE SALT MIRROR REFLECTS ONLY SKY."
+        7 -> "THE OLD STONES STAND UNBROKEN."
+        8 -> "THE ISLANDS BELONG TO THE CREATURES."
+        9 -> "THE LOCKS OPEN. TRADE FLOWS AGAIN."
+        _ -> "THE LAST MACHINE AWAITS ITS NEW HEART."
+
+
+clearShapes m =
+    List.concat
+        [ bgShapes m
+        , shipShapes m
+        , [ rect 36 76 248 92 (rgb 10 12 22)
+          , rect 36 76 248 2 (rgb 240 190 70)
+          , rect 36 166 248 2 (rgb 240 190 70)
+          ]
+        , pixTextC 160 88 2 (rgb 240 190 70) "STAGE CLEAR!"
+        , pixTextC 160 112 1 (rgb 235 238 245) ("BONUS " ++ String.fromInt (1500 + m.stage * 500))
+        , pixTextC 160 128 1 (rgb 196 200 214) (stageClear m.stage)
+        , pixTextC 160 142 1 (rgb 130 140 170)
+            (if m.stage >= 10 then "ONE FLIGHT REMAINS..." else "THE CONDOR FLIES ON")
+        , if m.st >= holdFor Clear && modBy 2 (m.st // 15) == 0 then
+            pixTextC 160 178 1 (rgb 240 190 70) "PRESS FIRE"
+          else
+            []
+        , muteIcon m
+        ]
+
+
+overShapes : Model -> List Shape
+overShapes m =
+    List.concat
+        [ bgShapes m
+        , [ rect 40 84 240 78 (rgb 10 10 16)
+          , rect 40 84 240 2 (rgb 235 90 80)
+          ]
+        , pixTextC 160 98 2 (rgb 235 90 80) "GAME OVER"
+        , pixTextC 160 122 1 (rgb 235 238 245) ("SCORE " ++ String.fromInt m.score)
+        , pixTextC 160 134 1 (rgb 240 190 70) ("HI " ++ String.fromInt m.hi)
+        , if m.st >= holdFor Over && modBy 2 (m.st // 15) == 0 then
+            pixTextC 160 150 1 (rgb 130 140 170) "PRESS FIRE TO CONTINUE"
+          else
+            []
+        , muteIcon m
+        ]
+
+
+-- the boss's fall: the field is clear, the machine burns and blows apart
+bossFallShapes : Model -> List Shape
+bossFallShapes m =
+    List.concat
+        [ bgShapes m
+        , if modBy 2 (m.st // 4) == 0 then bossShapes m else []
+        , shipShapes m
+        , partShapes m
+        , hudShapes m
+        ]
+
+
+-- the ship's death: a flash, an expanding fireball, debris — then quiet
+dyingShapes : Model -> List Shape
+dyingShapes m =
+    List.concat
+        [ bgShapes m
+        , foeShapes m
+        , wallShapes m
+        , if m.st < 22 then shipShapes m else []
+        , if m.st < 18 then [ circle m.px m.py (6 + m.st * 3) (rgb 255 220 150) ] else []
+        , if m.st >= 6 && m.st < 26 then [ circle m.px m.py (m.st * 3 - 14) (rgb 150 50 34) ] else []
+        , partShapes m
+        , hudShapes m
+        ]
+
+
+-- the finale: sunrise over the continent, the Condor flies home
+endingShapes : Model -> List Shape
+endingShapes m =
+    let
+        t = m.st
+        sun = iclamp 0 70 (t // 6)
+        shipX = modBy (gameW + 120) (t * 2) - 60
+        lines =
+            [ { at = 80, s = "THE RELIC CORE POWERS DOWN." }
+            , { at = 220, s = "THE OLD MACHINE IS NOT DESTROYED." }
+            , { at = 360, s = "A.L.A.S. REWIRES IT TO WATCH THE WEATHER." }
+            , { at = 500, s = "NOW IT WARNS THE HARVESTS AND THE PORTS." }
+            , { at = 660, s = "FROM PATAGONIA TO THE RIO GRANDE" }
+            , { at = 740, s = "THE LIGHTS STAY ON. THE SKY IS OURS." }
+            , { at = 900, s = "ONE SKY. MANY NATIONS. ONE CONDOR." }
+            ]
+        fw =
+            if t > 600 then
+                List.concat
+                    (List.map
+                        (\i ->
+                            let
+                                cx = 40 + modBy 240 (i * 97 + t // 40 * 53)
+                                cy = 30 + modBy 70 (i * 61)
+                                r = modBy 40 (t + i * 17) // 3
+                            in
+                            if r < 10 then
+                                [ circle cx cy r (starColor (modBy 5 i)) ]
+                            else
+                                []
+                        )
+                        (List.range 0 5))
+            else
+                []
+    in
+    List.concat
+        [ [ rect 0 0 gameW 80 (rgb 40 20 60)
+          , rect 0 80 gameW 60 (rgb 120 50 70)
+          , rect 0 140 gameW 40 (rgb 214 120 60)
+          , circle 160 (150 - sun) 18 (rgb 255 220 120)
+          ]
+        , -- the continent, stylized and proud
+          [ rect 0 180 gameW 60 (rgb 16 34 40)
+          , triangle 60 180 130 180 95 150 (rgb 22 46 50)
+          , triangle 110 180 230 180 170 142 (rgb 18 40 46)
+          , triangle 210 180 300 180 255 152 (rgb 22 46 50)
+          , rect 120 196 12 3 (rgb 255 220 120)
+          , rect 200 206 12 3 (rgb 255 220 120)
+          , rect 70 214 12 3 (rgb 255 220 120)
+          , rect 250 190 12 3 (rgb 255 220 120)
+          ]
+        , fw
+        , -- the Condor crossing home
+          [ triangle (shipX - 11) 121 (shipX - 1) 113 (shipX - 1) 121 (rgb 235 240 248)
+          , triangle (shipX + 11) 121 (shipX + 1) 113 (shipX + 1) 121 (rgb 235 240 248)
+          , rect (shipX - 11) 119 3 2 (rgb 240 190 70)
+          , rect (shipX + 8) 119 3 2 (rgb 240 190 70)
+          , rect (shipX - 2) 109 4 13 (rgb 235 240 248)
+          , triangle (shipX - 2) 109 (shipX + 2) 109 shipX 104 (rgb 235 240 248)
+          , rect (shipX - 1) 112 2 4 (rgb 70 140 255)
+          , triangle (shipX - 4) 122 (shipX - 1) 122 (shipX - 2) 127 (rgb 255 170 40)
+          , triangle (shipX + 1) 122 (shipX + 4) 122 (shipX + 3) 127 (rgb 255 170 40)
+          ]
+        , List.concat
+            (List.map
+                (\ln -> if t > ln.at && t < ln.at + 200 then pixTextC 160 54 1 (rgb 250 240 220) ln.s else [])
+                lines)
+        , if t > 1000 then pixTextC 160 90 2 (rgb 240 190 70) "THE END" else []
+        , if t > 1100 && modBy 2 (m.tick // 20) == 0 then
+            pixTextC 160 226 1 (rgb 130 140 170) "PRESS FIRE"
+          else
+            []
+        , muteIcon m
+        ]
+
+
+playShapes : Model -> List Shape
+playShapes m =
+    List.concat
+        [ bgShapes m
+        , wallShapes m
+        , starShapes m
+        , foeShapes m
+        , bossShapes m
+        , bulShapes m
+        , shotShapes m
+        , shipShapes m
+        , partShapes m
+        , hudShapes m
+        ]
+
+
+view : Model -> View Msg
+view model =
+    let
+        lay = layout model
+        scene =
+            case model.mode of
+                Title -> titleShapes model
+                Story -> storyShapes model
+                Intro -> introShapes model
+                Play -> playShapes model
+                BossFall -> bossFallShapes model
+                Dying -> dyingShapes model
+                Clear -> clearShapes model
+                Over -> overShapes model
+                Ending -> endingShapes model
+    in
+    canvas Pixelated [ watchSize Resized, onTap Tapped, onDrag Dragged, onRelease Released ]
+        [ rect 0 0 model.w model.h (rgb 6 6 10)
+        , group [ Canvas.Translate lay.ox lay.oy, Canvas.Scale lay.scale lay.scale ] scene
+        , group [ Canvas.Translate 0 0 ] (matteShapes model lay)
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.batch
+        [ Time.every (Time.millis (1000 // fps)) (\_ -> Tick)
+        , Keyboard.watch KeysChanged
+        , Gamepad.watch PadChanged
+        , Device.watch DeviceChanged
+        -- the whole soundtrack is fired by the game loop (CBeat / CMel), so
+        -- it pauses with the game and never drifts — no Sound.loop here
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Star Condor"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]

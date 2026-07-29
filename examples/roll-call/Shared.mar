@@ -1,0 +1,296 @@
+module Shared exposing (..)
+
+
+-- Roll Call — attendance & roster for teachers.
+--
+-- A teacher signs in, keeps a roster of classes and the students in
+-- each, and takes daily attendance (present / late / absent). The app
+-- reports per-student attendance rates and present-streaks, plus a
+-- per-class daily summary.
+--
+-- This module is the contract both halves of the app agree on: the
+-- shared types, the sign-in user shape, the small `Status` vocabulary,
+-- and every Service (the typed request/response of each endpoint).
+-- Frontend never sees Backend's Entity definitions; Backend never
+-- imports Frontend's view code. What flows between them is exactly
+-- what's written here, and the compiler checks both sides against it.
+
+
+-- ===== Identity =====
+
+
+type alias User =
+    { id    : Int
+    , email : String
+    }
+
+
+-- ===== Roster =====
+--
+-- Every row a teacher owns carries an explicit `teacherId`. It's the
+-- ownership boundary: each read filters by `teacherId = caller.id`,
+-- each write sets or re-checks it. The frontend never reads the field
+-- (the server only ever returns the caller's rows) but it stays in
+-- the type because Repo.create writes it and Repo.findBy filters on
+-- it. `position` (Int) is the user-controlled display order, driven by
+-- the drag-to-reorder gesture.
+
+
+type alias SchoolClass =
+    { id        : Int
+    , name      : String
+    , teacherId : Int
+    , position  : Int
+    }
+
+
+-- A server-computed projection for the Classes screen: the class plus
+-- how many students are on its roster. Counting on the server keeps
+-- the list screen one round-trip instead of one-per-class, and the
+-- frontend never has to know how the count is derived.
+type alias ClassSummary =
+    { id           : Int
+    , name         : String
+    , position     : Int
+    , studentCount : Int
+    }
+
+
+type alias Student =
+    { id        : Int
+    , name      : String
+    , classId   : Int
+    , teacherId : Int
+    , position  : Int
+    }
+
+
+-- One attendance record: student X on day D had status S.
+--
+-- `day` is the Time for display; `dayKey` is that day normalized to
+-- midnight-millis (see dayKeyOf) and is what the database matches on.
+-- Storing both means the query key is a plain Int (fast, exact) while
+-- the screen can still print a real date. The (studentId, dayKey)
+-- pair is UNIQUE, so "mark today" is an upsert, not an ever-growing
+-- pile of duplicate rows for the same day.
+--
+-- `status` is the wire/storage form of the Status union below: 0
+-- present, 1 late, 2 absent. Entities store scalars, so the union
+-- lives in code and travels as an Int.
+type alias AttendanceMark =
+    { id        : Int
+    , studentId : Int
+    , classId   : Int
+    , day       : Time
+    , dayKey    : Int
+    , status    : Int
+    , teacherId : Int
+    }
+
+
+-- ===== Status vocabulary =====
+--
+-- Three states, named once. The union is what the frontend reasons
+-- with (exhaustive `case`, no magic numbers in view code); the Int
+-- mapping is only crossed at the storage/wire boundary via the two
+-- converters. `countedPresent` folds Late in with Present for the
+-- "did they show up" rate — a late student was still in the room.
+
+
+type Status
+    = Present
+    | Late
+    | Absent
+
+
+allStatuses : List Status
+allStatuses =
+    [ Present, Late, Absent ]
+
+
+statusToInt : Status -> Int
+statusToInt status =
+    case status of
+        Present -> 0
+        Late    -> 1
+        Absent  -> 2
+
+
+statusFromInt : Int -> Status
+statusFromInt n =
+    if n == 1 then
+        Late
+    else if n == 2 then
+        Absent
+    else
+        Present
+
+
+statusLabel : Status -> String
+statusLabel status =
+    case status of
+        Present -> "Present"
+        Late    -> "Late"
+        Absent  -> "Absent"
+
+
+statusShort : Status -> String
+statusShort status =
+    case status of
+        Present -> "P"
+        Late    -> "L"
+        Absent  -> "A"
+
+
+countedPresent : Status -> Bool
+countedPresent status =
+    case status of
+        Present -> True
+        Late    -> True
+        Absent  -> False
+
+
+-- How a set of marks breaks down. Every screen that shows attendance
+-- shows this same three-way split — today's roll on the class screen,
+-- a whole term on the student screen — so the fold lives here once
+-- rather than being retyped per page.
+type alias Tally =
+    { present : Int, late : Int, absent : Int }
+
+
+tally : List AttendanceMark -> Tally
+tally marks =
+    List.foldl
+        (\m acc ->
+            case statusFromInt m.status of
+                Present -> { acc | present = acc.present + 1 }
+                Late    -> { acc | late = acc.late + 1 }
+                Absent  -> { acc | absent = acc.absent + 1 }
+        )
+        { present = 0, late = 0, absent = 0 }
+        marks
+
+
+-- ===== Shared date math =====
+--
+-- Both halves must agree on what "a day" is, or the unique index and
+-- the day-lookup would drift apart. So the normalization lives here
+-- and is called from BOTH sides: the frontend computes `dayKeyOf` to
+-- ask for a given day's marks, and the backend computes the same key
+-- when it stores one. Same code, same answer, no timezone surprises
+-- sneaking between client and server.
+
+
+startOfDay : Time -> Time
+startOfDay t =
+    Time.fromYMD (Time.year t) (Time.month t) (Time.day t)
+
+
+dayKeyOf : Time -> Int
+dayKeyOf t =
+    Time.toMillis (startOfDay t)
+
+
+-- ===== Typed outcomes =====
+--
+-- The one domain rule on create (no blank names) is a typed case the
+-- frontend matches, not a string smuggled through the error channel.
+-- The backend can only produce these shapes and the frontend's `case`
+-- is checked for exhaustiveness.
+
+
+type ClassOutcome
+    = ClassCreated SchoolClass
+    | ClassNameBlank
+
+
+type StudentOutcome
+    = StudentAdded Student
+    | StudentNameBlank
+
+
+-- ===== Service contracts =====
+--
+-- Each handler in the Backend is wrapped by Auth.protect, which
+-- injects the logged-in teacher as the second argument. A missing or
+-- expired session 401s before any handler runs, and the framework
+-- sends the client to /sign-in.
+
+
+-- Classes
+listClasses : Service () (List ClassSummary)
+listClasses = Service.declare GET "/api/classes"
+
+
+getClass : Service { id : Int } (Maybe SchoolClass)
+getClass = Service.declare GET "/api/classes/{id:Int}"
+
+
+createClass : Service { name : String } ClassOutcome
+createClass = Service.declare POST "/api/classes"
+
+
+renameClass : Service { id : Int, name : String } (Maybe SchoolClass)
+renameClass = Service.declare PATCH "/api/classes/{id:Int}"
+
+
+deleteClass : Service { id : Int } ()
+deleteClass = Service.declare DELETE "/api/classes/{id:Int}"
+
+
+reorderClasses : Service { orderedIds : List Int } ()
+reorderClasses = Service.declare POST "/api/classes/reorder"
+
+
+-- Students
+listStudents : Service { classId : Int } (List Student)
+listStudents = Service.declare GET "/api/classes/{classId:Int}/students"
+
+
+getStudent : Service { id : Int } (Maybe Student)
+getStudent = Service.declare GET "/api/students/{id:Int}"
+
+
+addStudent : Service { classId : Int, name : String } StudentOutcome
+addStudent = Service.declare POST "/api/classes/{classId:Int}/students"
+
+
+renameStudent : Service { id : Int, name : String } (Maybe Student)
+renameStudent = Service.declare PATCH "/api/students/{id:Int}"
+
+
+deleteStudent : Service { id : Int } ()
+deleteStudent = Service.declare DELETE "/api/students/{id:Int}"
+
+
+reorderStudents : Service { classId : Int, orderedIds : List Int } ()
+reorderStudents = Service.declare POST "/api/classes/{classId:Int}/students/reorder"
+
+
+-- Attendance
+--
+-- listMarks reads one class's marks for one day (dayKey in the path,
+-- an Int, so the whole request is addressable and cache-friendly).
+-- setMark is the upsert: mark student X for day D, replacing any prior
+-- mark for that same day. studentHistory returns every mark for one
+-- student, newest-first work happens on the client.
+listMarks : Service { classId : Int, dayKey : Int } (List AttendanceMark)
+listMarks = Service.declare GET "/api/classes/{classId:Int}/attendance/{dayKey:Int}"
+
+
+setMark : Service { studentId : Int, classId : Int, day : Time, status : Int } (Maybe AttendanceMark)
+setMark = Service.declare POST "/api/attendance"
+
+
+studentHistory : Service { studentId : Int } (List AttendanceMark)
+studentHistory = Service.declare GET "/api/students/{studentId:Int}/history"
+
+
+-- ===== Account =====
+--
+-- Irreversible account deletion (App Store guideline 5.1.1(v): an app
+-- that creates accounts must let you delete yours from inside it). The
+-- backend cascades the caller's classes, students, and marks, then
+-- removes the user row; the client signs out afterward.
+deleteAccount : Service () ()
+deleteAccount = Service.declare DELETE "/api/account"

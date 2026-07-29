@@ -247,7 +247,7 @@ The reason is §3.3's "DB-per-request session validation": the cookie is just a 
 
 ```
 t=0    edit mar.json (remove ops@example.com), commit
-t=1    mar fly deploy
+t=1    mar deploy
 t=2    fly stops old machine                    ← server is down, no requests served
 t=3    fly boots new machine, runs boot-sync:
          DELETE FROM _mar_admin_codes    WHERE email = 'ops@example.com'
@@ -261,7 +261,7 @@ Window during which `ops@example.com` retains access: **zero**. There's a downti
 **On multi-machine deploys** (rolling update, multiple replicas of the same app on a shared volume):
 
 ```
-t=0    edit mar.json, commit, mar fly deploy
+t=0    edit mar.json, commit, mar deploy
 t=1    fly boots new machine #2 alongside old machine #1
 t=2    new machine #2 runs sync → DELETE FROM _mar_admin_sessions WHERE email = 'ops@example.com'
        (machine #1 still up, still serving requests)
@@ -274,7 +274,7 @@ Window during which `ops@example.com` retains access: **bounded by the time betw
 
 **Edge case: in-flight request at the moment of sync.** A request that started before the DELETE and is mid-handler when the DELETE runs continues to completion (Go's `http.Handler` doesn't abort on DB row changes). The next request from that admin hits 401. The window is one request, typically milliseconds.
 
-Conclusion: in practice, removing an admin via `mar fly deploy` revokes their access immediately for any meaningful definition of "immediately." The previous draft of this section described an "eventual consistency" window that doesn't actually exist once session validation is DB-per-request rather than cookie-trust.
+Conclusion: in practice, removing an admin via `mar deploy` revokes their access immediately for any meaningful definition of "immediately." The previous draft of this section described an "eventual consistency" window that doesn't actually exist once session validation is DB-per-request rather than cookie-trust.
 
 Dev (`mar dev`) is identical, file watcher triggers the same sync, same DELETE, same instant revocation on the next request.
 
@@ -385,7 +385,7 @@ The flow for the typical case:
 ```
 $ mar admin add me@example.com           # edits mar.json locally
 $ git add mar.json && git commit -m "admin: add me"
-$ mar fly deploy                         # ships new binary; on boot, _mar_admins is synced
+$ mar deploy                         # ships new binary; on boot, _mar_admins is synced
 $ open https://my-app.fly.dev/_mar/admin
   → enter email, get code via SMTP, sign in
 ```
@@ -413,7 +413,7 @@ last login:
 
 Shows both sides of the sync (config + DB) plus last-login data, exactly the bits that don't exist locally and that you actually need when debugging "wait, why can't this person log in?". Read-only.
 
-> **About `mar-runtime`.** The production binary that runs inside the deployed container (compiled by `mar build`, packaged by `mar fly deploy`), same binary that serves HTTP for the app. The proposal here is that it also exposes a single `admin list` CLI subcommand operating on the local `mar.db`, used by `mar fly admin list` over SSH. The local `mar` CLI never opens the production DB; only `mar-runtime` does, from inside the container.
+> **About `mar-runtime`.** The production binary that runs inside the deployed container (compiled by `mar build`, packaged by `mar deploy`), same binary that serves HTTP for the app. The proposal here is that it also exposes a single `admin list` CLI subcommand operating on the local `mar.db`, used by `mar fly admin list` over SSH. The local `mar` CLI never opens the production DB; only `mar-runtime` does, from inside the container.
 
 ### 6.2 Why no runtime add/remove
 
@@ -698,7 +698,7 @@ Silent clamping prioritizes "the app boots no matter what" over "the user gets t
 | `database.autoBackup.intervalHours`| 6       | `1` … `168` (1h…1 week)                | compile |
 | `database.autoBackup.retentionCount` | 28    | `2` … `100`                            | compile |
 | `rateLimit.requestsPerMinute`      | 600     | `1` … `100000` (≈1/min … ~1667 req/s)  | compile |
-| `rateLimit.burst`                  | 30      | `1` … `10000`                          | compile |
+| `rateLimit.burst`                  | 60      | `1` … `10000`                          | compile |
 | `server.maxBodyBytes`              | 1048576 (1 MiB) | `1024` (1 KiB) … `33554432` (32 MiB)   | compile |
 | `server.trustedProxies`            | loopback + private ranges | list of CIDRs (`[]` = trust none) | compile |
 | `ios.serverUrl`                    |,       | https:// URL (or http://localhost for QA) | compile |

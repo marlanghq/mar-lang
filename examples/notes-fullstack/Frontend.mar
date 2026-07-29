@@ -4,9 +4,9 @@ module Frontend exposing (page)
 import Shared
 import UI exposing
     ( navigationStack, navigationTitle
-    , form, list, section, header
+    , list, section, header
     , hstack
-    , text, textField, button, centered, errorText
+    , text, textField, button, errorText
     , submit
     )
 

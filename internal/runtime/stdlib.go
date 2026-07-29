@@ -2,10 +2,20 @@ package runtime
 
 import (
 	"fmt"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
 )
+
+// maxBuiltinExpansion bounds how many elements (or output bytes) a single
+// stdlib call may materialize. List.range / List.repeat / String.repeat take
+// a caller-controlled count, so without a cap a request can ask for a
+// multi-gigabyte result and exhaust memory — and List.range could spin
+// forever on Int overflow (i++ past MaxInt64 wraps negative and never passes
+// `to`). See docs/security-audit-2026-07-15.md #2. The eval-level step budget
+// is the deeper defense; this is the cheap, targeted guard.
+const maxBuiltinExpansion = 10_000_000
 
 // extendBaseEnv augments env with stdlib functions: List.*, String.*, Maybe.*, etc.
 //
@@ -74,11 +84,11 @@ func stdlib() map[string]Value {
 				return nil, fmt.Errorf("listFoldl: third arg not a list")
 			}
 			for _, e := range l.Elements {
-				partial, err := apply(fn, acc)
+				partial, err := apply(fn, e)
 				if err != nil {
 					return nil, err
 				}
-				next, err := apply(partial, e)
+				next, err := apply(partial, acc)
 				if err != nil {
 					return nil, err
 				}
@@ -86,30 +96,32 @@ func stdlib() map[string]Value {
 			}
 			return acc, nil
 		}),
-		"listSum": nativeFn(1, func(args []Value) (Value, error) {
-			l, ok := args[0].(VList)
-			if !ok {
-				return nil, fmt.Errorf("listSum: not a list")
-			}
-			var sum int64 = 0
-			for _, e := range l.Elements {
-				iv, ok := e.(VInt)
-				if !ok {
-					return nil, fmt.Errorf("listSum: element not Int")
-				}
-				sum += iv.V
-			}
-			return VInt{V: sum}, nil
-		}),
+		"listSum":        nativeFn(1, numericFold("listSum", decAdd, addInts, VInt{V: 0})),
+		"listSumDecimal": nativeFn(1, numericFold("listSum", decAdd, addInts, decimalZero())),
 		"listRange": nativeFn(2, func(args []Value) (Value, error) {
 			from, ok1 := args[0].(VInt)
 			to, ok2 := args[1].(VInt)
 			if !ok1 || !ok2 {
 				return nil, fmt.Errorf("listRange: expected Int args")
 			}
-			var out []Value
-			for i := from.V; i <= to.V; i++ {
+			if from.V > to.V {
+				return VList{Elements: nil}, nil
+			}
+			// Reject a huge span up front, overflow-safe: to-from goes
+			// negative exactly when the true span exceeds MaxInt64 (that
+			// wrap is also the old infinite-loop bug — i++ past MaxInt64
+			// would never pass `to`). Either way, bail before allocating.
+			if span := to.V - from.V; span < 0 || span >= maxBuiltinExpansion {
+				return nil, fmt.Errorf("List.range: too many elements (limit %d)", maxBuiltinExpansion)
+			}
+			out := make([]Value, 0, to.V-from.V+1)
+			// Break exactly at `to` before incrementing so `i++` can never
+			// wrap; the span check above bounds the count.
+			for i := from.V; ; i++ {
 				out = append(out, VInt{V: i})
+				if i >= to.V {
+					break
+				}
 			}
 			return VList{Elements: out}, nil
 		}),
@@ -347,6 +359,9 @@ func stdlib() map[string]Value {
 			if k <= 0 {
 				return VList{Elements: nil}, nil
 			}
+			if n.V > maxBuiltinExpansion {
+				return nil, fmt.Errorf("List.repeat: count too large (limit %d)", maxBuiltinExpansion)
+			}
 			out := make([]Value, k)
 			for i := 0; i < k; i++ {
 				out[i] = args[1]
@@ -491,22 +506,9 @@ func stdlib() map[string]Value {
 			}
 			return VCtor{Tag: "Just", Args: []Value{best}}, nil
 		}),
-		// listProduct : List Int -> Int — mirrors listSum's shape.
-		"listProduct": nativeFn(1, func(args []Value) (Value, error) {
-			l, ok := args[0].(VList)
-			if !ok {
-				return nil, fmt.Errorf("listProduct: not a list")
-			}
-			var p int64 = 1
-			for _, e := range l.Elements {
-				iv, ok := e.(VInt)
-				if !ok {
-					return nil, fmt.Errorf("listProduct: element not Int")
-				}
-				p *= iv.V
-			}
-			return VInt{V: p}, nil
-		}),
+		// listProduct : List number -> number — mirrors listSum's shape.
+		"listProduct":        nativeFn(1, numericFold("listProduct", decMul, mulInts, VInt{V: 1})),
+		"listProductDecimal": nativeFn(1, numericFold("listProduct", decMul, mulInts, decimalOne())),
 		// listSort : List a -> List a — comparable elements via the
 		// shared compareValues. Mirrors Elm: stable sort.
 		"listSort": nativeFn(1, func(args []Value) (Value, error) {
@@ -902,6 +904,102 @@ func stdlib() map[string]Value {
 			return args[0], nil
 		}),
 
+		// not : Bool -> Bool — Elm's Basics.not. Mar has no prefix
+		// operator, so boolean negation is an ordinary function.
+		"not": nativeFn(1, func(args []Value) (Value, error) {
+			b, ok := args[0].(VBool)
+			if !ok {
+				return nil, fmt.Errorf("not expects a Bool")
+			}
+			return VBool{V: !b.V}, nil
+		}),
+
+		// The numeric kit. max/min/clamp go through compareValues, the
+		// same ordering `<` uses, so Comparable means one definition of
+		// order across Int, Decimal, String and Char.
+		"max": nativeFn(2, func(args []Value) (Value, error) {
+			c, err := compareValues(args[0], args[1])
+			if err != nil {
+				return nil, fmt.Errorf("max: %w", err)
+			}
+			if c >= 0 {
+				return args[0], nil
+			}
+			return args[1], nil
+		}),
+		"min": nativeFn(2, func(args []Value) (Value, error) {
+			c, err := compareValues(args[0], args[1])
+			if err != nil {
+				return nil, fmt.Errorf("min: %w", err)
+			}
+			if c <= 0 {
+				return args[0], nil
+			}
+			return args[1], nil
+		}),
+		// clamp low high x. Bounds crossed (low > high) is the caller's
+		// bug, not ours to guess at: pin to low and stay total.
+		"clamp": nativeFn(3, func(args []Value) (Value, error) {
+			low, high, x := args[0], args[1], args[2]
+			cl, err := compareValues(x, low)
+			if err != nil {
+				return nil, fmt.Errorf("clamp: %w", err)
+			}
+			if cl <= 0 {
+				return low, nil
+			}
+			ch, err := compareValues(x, high)
+			if err != nil {
+				return nil, fmt.Errorf("clamp: %w", err)
+			}
+			if ch >= 0 {
+				return high, nil
+			}
+			return x, nil
+		}),
+		"abs": nativeFn(1, func(args []Value) (Value, error) {
+			switch v := args[0].(type) {
+			case VInt:
+				if v.V < 0 {
+					return VInt{V: -v.V}, nil
+				}
+				return v, nil
+			case VDecimal:
+				return VDecimal{Coef: new(big.Int).Abs(v.Coef), Scale: v.Scale}, nil
+			}
+			return nil, fmt.Errorf("abs expects a number (Int or Decimal)")
+		}),
+		// modBy d n — floor modulo, result takes the divisor's sign, so
+		// `modBy 8 (-1) == 7`. Total: divisor 0 yields 0, matching how
+		// `//` refuses to trap.
+		"modBy": nativeFn(2, func(args []Value) (Value, error) {
+			d, n, err := twoInts("modBy", args)
+			if err != nil {
+				return nil, err
+			}
+			if d == 0 {
+				return VInt{V: 0}, nil
+			}
+			r := n % d
+			if r != 0 && (r < 0) != (d < 0) {
+				r += d
+			}
+			return VInt{V: r}, nil
+		}),
+		// remainderBy d n — truncated remainder, result takes the
+		// dividend's sign, so `remainderBy 8 (-1) == -1` and it stays in
+		// step with `//`.
+		"remainderBy": nativeFn(2, func(args []Value) (Value, error) {
+			d, n, err := twoInts("remainderBy", args)
+			if err != nil {
+				return nil, err
+			}
+			if d == 0 {
+				return VInt{V: 0}, nil
+			}
+			return VInt{V: n % d}, nil
+		}),
+
 		// Tuple — minimal ops on 2-element tuples. Mar tuples are
 		// VTuple values; these helpers normalize the most common
 		// access / construction patterns.
@@ -1021,33 +1119,15 @@ func stdlib() map[string]Value {
 			if !ok {
 				return nil, fmt.Errorf("stringToInt: expected String")
 			}
+			// A number too big to BE an Int is a parse failure like any other,
+			// not an error: the type already says this text might not be a
+			// number, so `Nothing` is the answer that fits. Arithmetic raises
+			// instead, because there the caller had no way to ask.
 			n, err := strconv.ParseInt(strings.TrimSpace(s.V), 10, 64)
-			if err != nil {
+			if err != nil || !inIntRange(n) {
 				return VCtor{Tag: "Nothing"}, nil
 			}
 			return VCtor{Tag: "Just", Args: []Value{VInt{V: n}}}, nil
-		}),
-		// stringToFloat : String -> Maybe Float
-		"stringToFloat": nativeFn(1, func(args []Value) (Value, error) {
-			s, ok := args[0].(VString)
-			if !ok {
-				return nil, fmt.Errorf("stringToFloat: expected String")
-			}
-			f, err := strconv.ParseFloat(strings.TrimSpace(s.V), 64)
-			if err != nil {
-				return VCtor{Tag: "Nothing"}, nil
-			}
-			return VCtor{Tag: "Just", Args: []Value{VFloat{V: f}}}, nil
-		}),
-		// stringFromFloat : Float -> String — uses Go's shortest
-		// round-trip representation; preserves enough precision to
-		// recover the same Float on parse.
-		"stringFromFloat": nativeFn(1, func(args []Value) (Value, error) {
-			f, ok := args[0].(VFloat)
-			if !ok {
-				return nil, fmt.Errorf("stringFromFloat: expected Float")
-			}
-			return VString{V: strconv.FormatFloat(f.V, 'g', -1, 64)}, nil
 		}),
 		// stringReplace : String needle -> String replacement -> String s -> String
 		"stringReplace": nativeFn(3, func(args []Value) (Value, error) {
@@ -1068,6 +1148,11 @@ func stdlib() map[string]Value {
 			}
 			if n.V <= 0 {
 				return VString{V: ""}, nil
+			}
+			// Bound total output bytes (n * len(s)); divide to avoid the
+			// multiply overflowing. See maxBuiltinExpansion.
+			if len(s.V) > 0 && n.V > int64(maxBuiltinExpansion)/int64(len(s.V)) {
+				return nil, fmt.Errorf("String.repeat: result too large (limit %d bytes)", maxBuiltinExpansion)
 			}
 			return VString{V: strings.Repeat(s.V, int(n.V))}, nil
 		}),
@@ -1137,4 +1222,75 @@ func padString(s string, width int, pad string, left bool) string {
 		return filler + s
 	}
 	return s + filler
+}
+
+// numericFold builds the body of List.sum / List.product, which are one name
+// over two element types. A non-empty list carries its own answer — every
+// element has the same type, so the first one decides — and that is why the
+// runtime is not merely obeying the checker here: it stays right even if a
+// call site was never elaborated.
+//
+// The empty list is the case that cannot be decided from the values, because
+// there are none. Its answer arrives as `empty`, chosen by the typechecker
+// when it wrote ast.EQualified.Impl and picked listSum over listSumDecimal.
+func numericFold(
+	who string,
+	dec func(a, b VDecimal) (VDecimal, error),
+	ints func(a, b int64) (int64, error),
+	empty Value,
+) func(args []Value) (Value, error) {
+	return func(args []Value) (Value, error) {
+		l, ok := args[0].(VList)
+		if !ok {
+			return nil, fmt.Errorf("%s: not a list", who)
+		}
+		if len(l.Elements) == 0 {
+			return empty, nil
+		}
+		switch first := l.Elements[0].(type) {
+		case VInt:
+			acc := first.V
+			for _, e := range l.Elements[1:] {
+				iv, ok := e.(VInt)
+				if !ok {
+					return nil, fmt.Errorf("%s: mixed element types", who)
+				}
+				var err error
+				if acc, err = ints(acc, iv.V); err != nil {
+					return nil, err
+				}
+			}
+			return VInt{V: acc}, nil
+		case VDecimal:
+			acc := first
+			for _, e := range l.Elements[1:] {
+				dv, ok := e.(VDecimal)
+				if !ok {
+					return nil, fmt.Errorf("%s: mixed element types", who)
+				}
+				var err error
+				if acc, err = dec(acc, dv); err != nil {
+					return nil, err
+				}
+			}
+			return acc, nil
+		default:
+			return nil, fmt.Errorf("%s: element is not a number", who)
+		}
+	}
+}
+
+func decimalZero() VDecimal { return VDecimal{Coef: big.NewInt(0), Scale: 0} }
+func decimalOne() VDecimal  { return VDecimal{Coef: big.NewInt(1), Scale: 0} }
+
+// twoInts unpacks the (divisor, dividend) pair modBy / remainderBy take. The
+// order matches Elm's — divisor first — so `modBy 8` partially applies to the
+// wrapping function a game actually wants.
+func twoInts(who string, args []Value) (d, n int64, err error) {
+	dv, ok1 := args[0].(VInt)
+	nv, ok2 := args[1].(VInt)
+	if !ok1 || !ok2 {
+		return 0, 0, fmt.Errorf("%s expects two Ints", who)
+	}
+	return dv.V, nv.V, nil
 }

@@ -1,0 +1,263 @@
+module Backend.Bot exposing (botMove, botDeck)
+
+
+import Shared exposing (CType(..), Keyword(..), Efeito(..))
+
+
+-- The solo-play opponent. `botMove` is a PURE function of the game state:
+-- given the board on the bot's turn, it picks ONE legal move. The server
+-- (Backend.Games) applies it through the same `Shared.applyMoveBy` every
+-- human move goes through, appends it to the log, and calls again until the
+-- bot ends its turn ("E"). So the bot is just another source of moves in the
+-- log — the client animates its turn exactly like a rival's, and it can't
+-- cheat. See BOT.md.
+--
+-- The bot is ALWAYS player B (you challenge it, so you are A). It only ever
+-- proposes moves that are legal by construction (affordable, board room,
+-- valid target, ready attacker, Guardião respected); the engine is the
+-- backstop regardless.
+
+
+-- Which deck the bot brings, chosen from the game seed so replays are stable.
+botDeck : Int -> String
+botDeck seed =
+    Maybe.withDefault "floresta"
+        (Shared.nth (Shared.imodP seed (List.length Shared.deckKeys)) Shared.deckKeys)
+
+
+botMove : Shared.GState -> String
+botMove st =
+    let
+        me = st.b
+        foe = st.a
+    in
+    case bestDeploy me foe of
+        Just mv ->
+            mv
+
+        Nothing ->
+            case bestAttack me foe of
+                Just mv ->
+                    mv
+
+                Nothing ->
+                    "E"
+
+
+-- ===== deploy: play the highest-value affordable card =====
+
+
+bestDeploy : Shared.Side -> Shared.Side -> Maybe String
+bestDeploy me foe =
+    pickBest
+        (List.filterMap (\m -> m)
+            (List.indexedMap
+                (\i cid -> deployOption i (Shared.cardOf cid) me foe)
+                me.hand))
+
+
+deployOption : Int -> Shared.Card -> Shared.Side -> Shared.Side -> Maybe { value : Int, move : String }
+deployOption i card me foe =
+    if card.custo > me.energy then
+        Nothing
+
+    else if card.tipo == Criatura then
+        if List.length me.board >= 5 then
+            Nothing
+
+        else
+            -- creatures come first (base 100): board presence is king
+            Just { value = 100 + card.atk + card.hp, move = playMove i "-" }
+
+    else
+        spellOption i card me foe
+
+
+-- A spell is only worth casting when its effect actually lands. Targeted
+-- spells (DanoAlvo/Adormecer) skip themselves when there is no target.
+spellOption : Int -> Shared.Card -> Shared.Side -> Shared.Side -> Maybe { value : Int, move : String }
+spellOption i card me foe =
+    case card.fx of
+        DanoAlvo n ->
+            Maybe.map
+                (\t -> { value = 60 + n * 5, move = playMove i (String.fromInt t) })
+                (damageTarget n foe.board)
+
+        Adormecer ->
+            Maybe.map
+                (\t -> { value = 50, move = playMove i (String.fromInt t) })
+                (biggestThreat foe.board)
+
+        DanoTodos n ->
+            if killableCount n foe.board >= 2 || List.length foe.board >= 3 then
+                Just { value = 75, move = playMove i "-" }
+
+            else
+                Nothing
+
+        CurarHeroi _ ->
+            if me.life <= 12 then Just { value = 40, move = playMove i "-" } else Nothing
+
+        CurarComprar _ _ ->
+            if me.life <= 14 then Just { value = 45, move = playMove i "-" } else Nothing
+
+        Comprar _ ->
+            if List.length me.hand <= 3 then Just { value = 30, move = playMove i "-" } else Nothing
+
+        DanoHeroi n ->
+            Just { value = 35 + n * 3, move = playMove i "-" }
+
+        SemEfeito ->
+            Nothing
+
+
+-- ===== attack: swing one ready creature (loop calls again for the rest) =====
+
+
+bestAttack : Shared.Side -> Shared.Side -> Maybe String
+bestAttack me foe =
+    case highestReadyAttacker me.board of
+        Nothing ->
+            Nothing
+
+        Just s ->
+            case Shared.nth s me.board of
+                Just mine ->
+                    Just (attackMove s (chooseTarget (Shared.cardOf mine.cid).atk mine.hp foe.board))
+
+                Nothing ->
+                    Nothing
+
+
+chooseTarget : Int -> Int -> List Shared.Slot -> String
+chooseTarget myAtk myHp foeBoard =
+    if List.length foeBoard == 0 then
+        "h"
+
+    else if List.length (guardSlots foeBoard) > 0 then
+        -- a Guardião must be dealt with first (the engine forces it)
+        String.fromInt (Maybe.withDefault 0 (guardTarget myAtk foeBoard))
+
+    else
+        case cleanTrade myAtk myHp foeBoard of
+            Just t ->
+                String.fromInt t
+
+            Nothing ->
+                "h"
+
+
+-- ===== targeting helpers (each returns a foe board index) =====
+
+
+guardSlots : List Shared.Slot -> List Shared.Slot
+guardSlots board =
+    List.filter (\sl -> (Shared.cardOf sl.cid).kw == Guardiao) board
+
+
+-- damage-spell target: prefer a creature this kills, then a Guardião, then
+-- the highest attack.
+damageTarget : Int -> List Shared.Slot -> Maybe Int
+damageTarget n board =
+    argmaxIdx
+        (\sl ->
+            (if sl.hp <= n then 1000 else 0)
+                + (if (Shared.cardOf sl.cid).kw == Guardiao then 200 else 0)
+                + (Shared.cardOf sl.cid).atk)
+        board
+
+
+biggestThreat : List Shared.Slot -> Maybe Int
+biggestThreat board =
+    argmaxIdx (\sl -> (Shared.cardOf sl.cid).atk) board
+
+
+guardTarget : Int -> List Shared.Slot -> Maybe Int
+guardTarget myAtk board =
+    argmaxIdx
+        (\sl ->
+            if (Shared.cardOf sl.cid).kw == Guardiao then
+                (if sl.hp <= myAtk then 1000 else 0) + 100 - sl.hp
+
+            else
+                0 - 1000)
+        board
+
+
+-- a trade where I kill it AND survive its counter; prefer the biggest threat.
+cleanTrade : Int -> Int -> List Shared.Slot -> Maybe Int
+cleanTrade myAtk myHp board =
+    argmaxIdxIf
+        (\sl -> sl.hp <= myAtk && (Shared.cardOf sl.cid).atk < myHp)
+        (\sl -> (Shared.cardOf sl.cid).atk)
+        board
+
+
+highestReadyAttacker : List Shared.Slot -> Maybe Int
+highestReadyAttacker board =
+    argmaxIdxIf (\sl -> sl.ready) (\sl -> (Shared.cardOf sl.cid).atk) board
+
+
+killableCount : Int -> List Shared.Slot -> Int
+killableCount n board =
+    List.length (List.filter (\sl -> sl.hp <= n) board)
+
+
+-- ===== generic argmax over a board, by an integer score =====
+
+
+argmaxIdx : (Shared.Slot -> Int) -> List Shared.Slot -> Maybe Int
+argmaxIdx score board =
+    case List.indexedMap (\i sl -> { idx = i, s = score sl }) board of
+        [] ->
+            Nothing
+
+        first :: rest ->
+            let
+                winner =
+                    List.foldl (\c best -> if c.s > best.s then c else best) first rest
+            in
+            Just winner.idx
+
+
+-- argmax among the slots that satisfy pred; Nothing if none match.
+argmaxIdxIf : (Shared.Slot -> Bool) -> (Shared.Slot -> Int) -> List Shared.Slot -> Maybe Int
+argmaxIdxIf pred score board =
+    case argmaxIdx (\sl -> if pred sl then score sl else 0 - 100000) board of
+        Just i ->
+            case Shared.nth i board of
+                Just sl ->
+                    if pred sl then Just i else Nothing
+
+                Nothing ->
+                    Nothing
+
+        Nothing ->
+            Nothing
+
+
+-- ===== tiny helpers =====
+
+
+playMove : Int -> String -> String
+playMove i target =
+    "J " ++ String.fromInt i ++ " " ++ target
+
+
+attackMove : Int -> String -> String
+attackMove s target =
+    "A " ++ String.fromInt s ++ " " ++ target
+
+
+pickBest : List { value : Int, move : String } -> Maybe String
+pickBest opts =
+    case opts of
+        [] ->
+            Nothing
+
+        first :: rest ->
+            let
+                winner =
+                    List.foldl (\c best -> if c.value > best.value then c else best) first rest
+            in
+            Just winner.move

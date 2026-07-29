@@ -240,7 +240,7 @@ func TestFprintHint_MultiLineContinuation(t *testing.T) {
 // indent.
 //
 // Without this guard, a 6-space-indented continuation line like
-// `      After it succeeds, re-run <green>mar fly deploy<reset>.`
+// `      After it succeeds, re-run <green>mar deploy<reset>.`
 // got tokenized as code: each whitespace-delimited token wrapped
 // with colorDim, which split mid-escape and left only the first
 // token (`mar`) visibly green while the rest rendered dim.
@@ -253,7 +253,7 @@ func TestColorizeHint_PreservesEmbeddedANSI(t *testing.T) {
 	// 6-space-indented continuation. Both reference a colorGreen
 	// runnable command.
 	hint := "run " + colorGreen("mar fly provision") + " first.\n" +
-		"      After it succeeds, re-run " + colorGreen("mar fly deploy") + "."
+		"      After it succeeds, re-run " + colorGreen("mar deploy") + "."
 
 	got := colorizeHint(hint)
 
@@ -262,7 +262,7 @@ func TestColorizeHint_PreservesEmbeddedANSI(t *testing.T) {
 	// for colorGreen is `ansiBoldGreen`; the trailing reset is
 	// `ansiReset`.
 	wantA := ansiBoldGreen + "mar fly provision" + ansiReset
-	wantB := ansiBoldGreen + "mar fly deploy" + ansiReset
+	wantB := ansiBoldGreen + "mar deploy" + ansiReset
 	if !strings.Contains(got, wantA) {
 		t.Errorf("first green span missing or broken; got: %q", got)
 	}

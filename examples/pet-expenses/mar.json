@@ -1,8 +1,5 @@
 {
   "name": "pet-expenses",
-  "database": {
-    "path": "./pet-expenses.db"
-  },
   "auth": {
     "sessionSecret": "env:SESSION_SECRET"
   },

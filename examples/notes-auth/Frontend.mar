@@ -6,7 +6,7 @@ import UI exposing
     ( navigationStack, navigationTitle, topBarTrailing
     , form, list, section, header
     , hstack
-    , title, subtitle, text, textField, button, centered, empty, errorText
+    , title, text, textField, button, centered, errorText
     , submit, width, chars
     )
 

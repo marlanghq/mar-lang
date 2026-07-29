@@ -1,0 +1,122 @@
+module Shared exposing
+    ( User, Quality(..), Night
+    , qualityLabel, qualityScore, scale
+    , startOfDay
+    , listNights, logNight, clearNight
+    )
+
+
+-- What both halves agree on: who you are, the scale, the record, and the two
+-- contracts. Nothing here touches the database, so the browser can hold all of
+-- it.
+
+
+-- The smallest user record Auth.config accepts: an id for the session lookup
+-- and an email for the one-time code.
+type alias User =
+    { id : Int
+    , email : String
+    }
+
+
+-- ===== the scale =====
+
+
+type Quality
+    = VeryBad
+    | Bad
+    | Normal
+    | Good
+    | VeryGood
+
+
+qualityLabel : Quality -> String
+qualityLabel q =
+    case q of
+        VeryBad ->
+            "Very bad"
+
+        Bad ->
+            "Bad"
+
+        Normal ->
+            "Normal"
+
+        Good ->
+            "Good"
+
+        VeryGood ->
+            "Very good"
+
+
+-- 1..5, so a stretch of nights can be averaged and compared.
+qualityScore : Quality -> Int
+qualityScore q =
+    case q of
+        VeryBad ->
+            1
+
+        Bad ->
+            2
+
+        Normal ->
+            3
+
+        Good ->
+            4
+
+        VeryGood ->
+            5
+
+
+-- Worst first, so the report reads like a scale rather than a ranking.
+scale : List Quality
+scale =
+    [ VeryBad, Bad, Normal, Good, VeryGood ]
+
+
+-- ===== the record =====
+
+
+type alias Night =
+    { id : Int
+    , date : Time
+    , quality : Quality
+    , userId : Int
+    }
+
+
+-- Midnight of the day a Time falls on. A date crosses the wire as a full
+-- timestamp, so this is what turns "some moment on the 3rd" into "the 3rd" —
+-- without it a morning entry and an evening entry are two different days.
+-- Both halves need the same answer, which is why it lives here: the server
+-- keys its unique index on it, the screen groups the log by it.
+startOfDay : Time -> Time
+startOfDay t =
+    Time.fromYMD (Time.year t) (Time.month t) (Time.day t)
+
+
+-- ===== service contracts =====
+--
+-- Neither one takes a user: the caller is the session, never a parameter the
+-- client gets to choose. Auth.protect injects it on the server side, so there
+-- is no field a malicious client could set to read someone else's nights.
+
+
+listNights : Service () (List Night)
+listNights =
+    Service.declare GET "/nights"
+
+
+logNight : Service { date : Time, quality : Quality } Night
+logNight =
+    Service.declare POST "/nights"
+
+
+-- Undo a rating. Keyed by DATE, not by row id, for the same reason the unique
+-- index is: the date is what identifies a night, and it is the only handle the
+-- screen has ever needed. It also means a client cannot name a row it does not
+-- own, because the id never crosses the wire.
+clearNight : Service { date : Time } ()
+clearNight =
+    Service.declare DELETE "/nights"

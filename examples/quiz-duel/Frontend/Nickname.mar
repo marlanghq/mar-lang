@@ -1,0 +1,113 @@
+module Frontend.Nickname exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, text, textField, button, errorText
+    , empty, disabled, submit, width, chars
+    )
+
+
+-- One-time onboarding gate. Home redirects here whenever `me` reports
+-- NoProfile; once a nick is chosen we replace back to Home (replace,
+-- not push, so Back can't return to this gate).
+
+
+type alias Model =
+    { draft : String
+    , error : Maybe String
+    , busy  : Bool
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | Created (Result Service.Error Shared.ProfileResult)
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { draft = "", error = Nothing, busy = False }, Cmd.none )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        DraftChanged value ->
+            ( { model | draft = value, error = Nothing }, Cmd.none )
+
+        Submitted ->
+            if model.busy then
+                ( model, Cmd.none )
+
+            else
+                -- Client-side gate: same Shared.nickProblem the server
+                -- uses, so a bad nick never round-trips.
+                case Shared.nickProblem model.draft of
+                    Just reason ->
+                        ( { model | error = Just reason }, Cmd.none )
+
+                    Nothing ->
+                        ( { model | busy = True, error = Nothing }
+                        , Service.call Shared.createProfile { nick = model.draft } Created
+                        )
+
+        Created (Ok (Shared.ProfileCreated _)) ->
+            ( { model | busy = False }, Nav.replaceTo Frontend.Routes.home {} )
+
+        Created (Ok Shared.NickTaken) ->
+            ( { model | busy = False, error = Just "Esse apelido já está em uso. Tente outro." }
+            , Cmd.none
+            )
+
+        Created (Ok Shared.InvalidNick) ->
+            ( { model | busy = False, error = Just "O apelido precisa ter de 3 a 16 caracteres." }
+            , Cmd.none
+            )
+
+        Created (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }
+            , Cmd.none
+            )
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    navigationStack [ navigationTitle "Escolha seu apelido" ]
+        [ form
+            [ section []
+                [ text [] "Este é o nome que seus adversários verão nos duelos."
+                , textField
+                    [ submit Submitted, width (chars 20) ]
+                    "Apelido" model.draft DraftChanged
+                , errorView model.error
+                ]
+            , section []
+                [ button [ disabled model.busy ] Submitted "Começar" ]
+            ]
+        ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            errorText msg
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/nickname"
+        , title  = "Apelido"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

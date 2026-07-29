@@ -1,0 +1,19 @@
+{
+  "name": "sleep-log",
+  "deploy": {
+    "fly": {
+      "app": "mar-sleep-log",
+      "region": "gru",
+      "memory": "256mb"
+    }
+  },
+  "auth": {
+    "sessionSecret": "env:SESSION_SECRET"
+  },
+  "mail": {
+    "from": "no-reply@segunda.tech",
+    "smtpHost": "smtp.resend.com",
+    "smtpUsername": "resend",
+    "smtpPassword": "env:SMTP_PASSWORD"
+  }
+}

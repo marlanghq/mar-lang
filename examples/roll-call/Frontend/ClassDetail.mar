@@ -1,0 +1,430 @@
+module Frontend.ClassDetail exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import Frontend.Chrome exposing (sheetHeader)
+import UI exposing ( navigationStack, navigationTitle, topBarTrailing
+    , list, keyedList, keyed, section, header, subtitle
+    , hstack, vstack
+    , text, textField, button, errorText
+    , submit, disabled, onMove, onDelete
+    , sheet, confirm, empty, navigationLink
+    , width, fill)
+
+
+-- One class: a link into today's attendance with a live summary, and
+-- the class roster. Mounted at /classes/{id:Int} (dynamic +
+-- protected), so init/update/view receive the signed-in teacher AND
+-- the class id.
+--
+-- On entry it fires three calls at once: the class row (for the
+-- title), the roster, and — after reading the clock — today's marks
+-- for the summary line. The clock read is a Cmd (Time.now) because
+-- "today" is only knowable at runtime.
+
+
+type alias Model =
+    { klass            : Maybe (Maybe Shared.SchoolClass)  -- outer: fetched? inner: found?
+    , students         : Maybe (List Shared.Student)
+    , today            : Maybe Time
+    , todayMarks       : List Shared.AttendanceMark
+    , error            : Maybe String
+    , editing          : Bool
+    , showAdd          : Bool
+    , draft            : String
+    , busy             : Bool
+    , confirmingDelete : Maybe Shared.Student
+    }
+
+
+type Msg
+    = ClassFetched (Result Service.Error (Maybe Shared.SchoolClass))
+    | StudentsFetched (Result Service.Error (List Shared.Student))
+    | GotToday Time
+    | TodayMarksFetched (Result Service.Error (List Shared.AttendanceMark))
+    | EditClicked
+    | DoneEditingClicked
+    | AddClicked
+    | AddDismissed
+    | DraftChanged String
+    | CreateSubmitted
+    | StudentCreated (Result Service.Error Shared.StudentOutcome)
+    | TakeAttendanceClicked
+    | DeleteRowAt Int
+    | DeleteConfirmed
+    | DeleteCancelled
+    | StudentDeleted (Result Service.Error ())
+    | StudentMoved Int Int
+    | StudentsReordered (Result Service.Error ())
+
+
+init : Shared.User -> { id : Int } -> (Model, Cmd Msg)
+init _ params =
+    ( { klass = Nothing
+      , students = Nothing
+      , today = Nothing
+      , todayMarks = []
+      , error = Nothing
+      , editing = False
+      , showAdd = False
+      , draft = ""
+      , busy = False
+      , confirmingDelete = Nothing
+      }
+    , Cmd.batch
+        [ Service.call Shared.getClass { id = params.id } ClassFetched
+        , Service.call Shared.listStudents { classId = params.id } StudentsFetched
+        , Cmd.perform GotToday Time.now
+        ]
+    )
+
+
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Cmd Msg)
+update _ params msg model =
+    case msg of
+        ClassFetched (Ok found) ->
+            ( { model | klass = Just found }, Cmd.none )
+
+        ClassFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        StudentsFetched (Ok students) ->
+            ( { model | students = Just students }, Cmd.none )
+
+        StudentsFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        GotToday now ->
+            -- Clock read landed: remember today and ask the server for
+            -- this class's marks on that day (dayKey computed by the
+            -- SAME Shared.dayKeyOf the backend stores with).
+            ( { model | today = Just now }
+            , Service.call Shared.listMarks
+                { classId = params.id, dayKey = Shared.dayKeyOf now }
+                TodayMarksFetched
+            )
+
+        TodayMarksFetched (Ok marks) ->
+            ( { model | todayMarks = marks }, Cmd.none )
+
+        TodayMarksFetched (Err _) ->
+            -- The summary line is a nicety; if it fails, drop it
+            -- silently rather than shouting over the roster.
+            ( model, Cmd.none )
+
+        EditClicked ->
+            ( { model | editing = True }, Cmd.none )
+
+        DoneEditingClicked ->
+            ( { model | editing = False, confirmingDelete = Nothing }, Cmd.none )
+
+        AddClicked ->
+            ( { model | showAdd = True, draft = "", error = Nothing }, Cmd.none )
+
+        AddDismissed ->
+            ( { model | showAdd = False, draft = "" }, Cmd.none )
+
+        DraftChanged value ->
+            ( { model | draft = value }, Cmd.none )
+
+        CreateSubmitted ->
+            if String.trim model.draft == "" || model.busy then
+                ( model, Cmd.none )
+            else
+                ( { model | busy = True }
+                , Service.call Shared.addStudent
+                    { classId = params.id, name = model.draft }
+                    StudentCreated
+                )
+
+        StudentCreated (Ok (Shared.StudentAdded _)) ->
+            ( { model | busy = False, draft = "", showAdd = False }
+            , Service.call Shared.listStudents { classId = params.id } StudentsFetched
+            )
+
+        StudentCreated (Ok Shared.StudentNameBlank) ->
+            ( { model | busy = False, error = Just "A student needs a name." }, Cmd.none )
+
+        StudentCreated (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        TakeAttendanceClicked ->
+            ( model, Nav.pushTo Frontend.Routes.takeAttendance { id = params.id } )
+
+        DeleteRowAt idx ->
+            case model.students of
+                Just students ->
+                    case List.head (List.drop idx students) of
+                        Just student ->
+                            ( { model | confirmingDelete = Just student }, Cmd.none )
+
+                        Nothing ->
+                            ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        DeleteConfirmed ->
+            case model.confirmingDelete of
+                Just student ->
+                    ( { model
+                        | students = Maybe.map (List.filter (\s -> s.id /= student.id)) model.students
+                        , confirmingDelete = Nothing
+                      }
+                    , Service.call Shared.deleteStudent { id = student.id } StudentDeleted
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        DeleteCancelled ->
+            ( { model | confirmingDelete = Nothing }, Cmd.none )
+
+        StudentDeleted (Ok ()) ->
+            ( model, Cmd.none )
+
+        StudentDeleted (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }
+            , Service.call Shared.listStudents { classId = params.id } StudentsFetched
+            )
+
+        StudentMoved from to ->
+            case model.students of
+                Just students ->
+                    let
+                        reordered = List.move from to students
+                    in
+                    ( { model | students = Just reordered }
+                    , Service.call Shared.reorderStudents
+                        { classId = params.id, orderedIds = List.map (\s -> s.id) reordered }
+                        StudentsReordered
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        StudentsReordered (Ok ()) ->
+            ( model, Cmd.none )
+
+        StudentsReordered (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+
+-- ===== VIEW =====
+
+
+view : Shared.User -> { id : Int } -> Model -> View Msg
+view _ params model =
+    navigationStack (navBar model)
+        [ list [] (sections params model)
+        , addSheet model
+        , deleteDialog model
+        ]
+
+
+-- Title plus a trailing Edit/Done + New pair, shown only once the
+-- class is loaded and present (nothing to manage on a missing class).
+navBar : Model -> List (Attr NavStack)
+navBar model =
+    case model.klass of
+        Just (Just cls) ->
+            let
+                editAffordance =
+                    case model.students of
+                        Just students ->
+                            if model.editing then
+                                button [] DoneEditingClicked "Done"
+                            else if List.isEmpty students then
+                                empty
+                            else
+                                button [] EditClicked "Edit"
+
+                        Nothing ->
+                            empty
+            in
+            [ navigationTitle cls.name
+            , topBarTrailing
+                (hstack []
+                    [ editAffordance
+                    -- "Add student", not "New": this screen holds two
+                    -- different things (today's attendance and the
+                    -- roster), so a bare "New" doesn't say which one it
+                    -- makes. On the Classes screen there is only one
+                    -- kind of thing, so "New" is unambiguous there.
+                    , button [] AddClicked "Add student"
+                    ]
+                )
+            ]
+
+        _ ->
+            [ navigationTitle (className model) ]
+
+
+className : Model -> String
+className model =
+    case model.klass of
+        Just (Just cls) -> cls.name
+        _               -> "Class"
+
+
+sections : { id : Int } -> Model -> List (View Msg)
+sections params model =
+    case model.klass of
+        Nothing ->
+            [ section [] [ text [] "Loading…" ] ]
+
+        Just Nothing ->
+            [ section [ header "Not found" ]
+                [ subtitle "This class no longer exists." ]
+            ]
+
+        Just (Just _) ->
+            List.concat
+                [ errorSection model
+                , [ attendanceSection params model ]
+                , studentsSection model
+                ]
+
+
+errorSection : Model -> List (View Msg)
+errorSection model =
+    case model.error of
+        Just why ->
+            [ section [ header "Something went wrong" ] [ errorText why ] ]
+
+        Nothing ->
+            []
+
+
+-- The attendance entry point + a live one-line summary of today.
+--
+-- A button, not a navigationLink: taking attendance opens as a sheet, and a
+-- row with a chevron promises the opposite — that it pushes a screen you
+-- come back from. The affordance has to match what actually happens.
+attendanceSection : { id : Int } -> Model -> View Msg
+attendanceSection params model =
+    section [ header "Today" ]
+        [ subtitle (todaySummary model)
+        , button [] TakeAttendanceClicked "Take attendance"
+        ]
+
+
+todaySummary : Model -> String
+todaySummary model =
+    case (model.today, model.students) of
+        (Just _, Just students) ->
+            let
+                counts =
+                    Shared.tally model.todayMarks
+
+                total =
+                    List.length students
+
+                marked =
+                    counts.present + counts.late + counts.absent
+
+                notMarked =
+                    total - marked
+            in
+            if total == 0 then
+                "No students on the roster yet."
+            else
+                String.fromInt counts.present ++ " present, "
+                    ++ String.fromInt counts.late ++ " late, "
+                    ++ String.fromInt counts.absent ++ " absent, "
+                    ++ String.fromInt notMarked ++ " not marked"
+
+        _ ->
+            "Reading today…"
+
+
+studentsSection : Model -> List (View Msg)
+studentsSection model =
+    case model.students of
+        Nothing ->
+            [ section [ header "Students" ] [ text [] "Loading…" ] ]
+
+        Just students ->
+            if List.isEmpty students then
+                [ section [ header "Students" ]
+                    [ subtitle "No students yet. Tap Add student to build the roster." ]
+                ]
+            else
+                [ keyedList
+                    [ header (rosterHeader model students)
+                    , onMove model.editing StudentMoved
+                    , onDelete model.editing DeleteRowAt
+                    ]
+                    (List.map (studentRow model) students)
+                ]
+
+
+rosterHeader : Model -> List Shared.Student -> String
+rosterHeader model students =
+    if model.editing then
+        "Students"
+    else
+        let
+            n = List.length students
+        in
+        if n == 1 then "1 student" else String.fromInt n ++ " students"
+
+
+studentRow : Model -> Shared.Student -> KeyedView Msg
+studentRow model student =
+    keyed (String.fromInt student.id)
+        (if model.editing then
+            text [] student.name
+         else
+            navigationLink [ width fill ] Frontend.Routes.studentDetail
+                { classId = student.classId, studentId = student.id }
+                (text [] student.name)
+        )
+
+
+addSheet : Model -> View Msg
+addSheet model =
+    sheet
+        { open      = model.showAdd
+        , onDismiss = AddDismissed
+        , outlet    = "add-student"
+        }
+        [ vstack []
+            [ sheetHeader "Cancel" "New student" AddDismissed
+                (button [ disabled model.busy ] CreateSubmitted "Add")
+            , section []
+                [ textField
+                    [ submit CreateSubmitted, width fill, disabled model.busy ]
+                    "e.g. Ada Lovelace" model.draft DraftChanged
+                ]
+            ]
+        ]
+
+
+deleteDialog : Model -> View Msg
+deleteDialog model =
+    case model.confirmingDelete of
+        Just student ->
+            confirm
+                { title        = "Remove \"" ++ student.name ++ "\"?"
+                , confirmLabel = "Remove"
+                , destructive  = True
+                , onConfirm    = DeleteConfirmed
+                , onCancel     = DeleteCancelled
+                }
+
+        Nothing ->
+            empty
+
+
+page : Page
+page =
+    Page.dynamicProtected
+        { path   = Frontend.Routes.classDetail
+        , title  = "Class"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ _ -> Sub.none
+        }

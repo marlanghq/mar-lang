@@ -832,7 +832,7 @@ func TestCheckSecrets_APITokenObligatesEnv(t *testing.T) {
 		apiToken  string
 		wantError bool
 	}{
-		{"env-ref", "env:CF_API_TOKEN", false},
+		{"env-ref", "env:CLOUDFLARE_API_TOKEN", false},
 		{"literal-rejected", "abc123-secret-token", true},
 		{"empty-allowed", "", false}, // missing handled by Validate, not checkSecrets
 	}

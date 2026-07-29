@@ -35,18 +35,80 @@ func TestIOSBuiltinsCoverClientStdlib(t *testing.T) {
 		t.Fatalf("reading Swift builtins: %v", err)
 	}
 
+	// The ~100 Keyboard.Key constructors aren't qualified aliases, so they never
+	// enter this required set at all; the input mirrors (Keyboard.watch /
+	// Gamepad.watch / Canvas.watchPointers / Canvas.watchSize) ARE qualified
+	// aliases and are defined natively in the Swift bundle, so they're required
+	// and present — nothing to exempt.
+	// The web-first subsystems (Canvas, Sound, Gamepad, Keyboard, Device) used
+	// to be deferred here — implemented in the JS runtime, absent on iOS. They
+	// are now all native: MarCanvas (SwiftUI Canvas draw-list), MarSound
+	// (AVAudioEngine chip synth), MarInput (GameController Gamepad + GCKeyboard
+	// + trait/scene Device), wired through MarPageRuntime's generalized sub
+	// reconciler. So nothing is deferred. The map stays (empty) so re-deferring
+	// a future web-first builtin is a one-line change.
+	iosDeferred := map[string]bool{}
+
 	var missing []string
 	for name := range required {
-		if typecheck.IsBackendOnlyBuiltin(name) {
+		if typecheck.IsBackendOnlyBuiltin(name) || iosDeferred[name] {
 			continue
 		}
 		if !defined[name] {
 			missing = append(missing, name)
 		}
 	}
+	t.Logf("iOS canvas is deferred (web-first): %d Canvas builtins exempt from the Swift coverage check", len(iosDeferred))
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		t.Fatalf("MarBuiltins.swift is missing %d builtin(s) reachable from frontend code:\n  %s\n\nFix: implement each in internal/iosbundle/template/Sources/MarBuiltins.swift, mirroring the Go runtime's semantics.",
+			len(missing), strings.Join(missing, "\n  "))
+	}
+}
+
+// TestIOSCoversQualifiedUnionCtors closes a hole the coverage test above
+// cannot see. That test's source of truth, BaseQualifiedSymbols(), reports
+// only builtins carrying BOTH a bare and a dotted name (the qualifiedAliases
+// mapping). Union constructors are dotted-ONLY — `Canvas.Alpha` is a direct
+// key in baseBindings() — so they never enter the required set, and deleting
+// one from the Swift bundle passes every other test in the tree (verified by
+// deleting Canvas.Multiply, 2026-07-15; 146 names were invisible this way).
+//
+// The requirement here is derived from the union tables themselves (every
+// CustomType with a Module), which are also what internal/ctorgen generates
+// MarBuiltinCtors.swift from — so this is the belt to that generator's
+// braces: ctorgen's staleness test proves the generated file matches the
+// tables, and this test proves the names actually sit in the Swift bundle
+// (catching, say, a deleted generated file that something still compiles
+// without).
+func TestIOSCoversQualifiedUnionCtors(t *testing.T) {
+	defined, err := readSwiftBuiltinNames()
+	if err != nil {
+		t.Fatalf("reading Swift builtins: %v", err)
+	}
+
+	var missing []string
+	checked := 0
+	for union, ct := range typecheck.BaseCustomTypes() {
+		if ct.Module == "" {
+			continue
+		}
+		if len(ct.CtorOrder) == 0 {
+			t.Fatalf("builtin union %q has Module %q but no CtorOrder; nothing would be checked", union, ct.Module)
+		}
+		for _, ctor := range ct.CtorOrder {
+			checked++
+			if name := ct.Module + "." + ctor; !defined[name] {
+				missing = append(missing, name)
+			}
+		}
+	}
+	if checked < 130 {
+		t.Fatalf("only %d qualified union ctors checked — the Module fields on the builtin unions look stale", checked)
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		t.Fatalf("Swift bundle is missing %d qualified union constructor(s):\n  %s\n\nFix: go generate ./internal/ctorgen (they are emitted into MarBuiltinCtors.swift). Swift has no bare-tag fallback — an unregistered name throws at runtime on device.",
 			len(missing), strings.Join(missing, "\n  "))
 	}
 }
@@ -65,7 +127,14 @@ func readSwiftBuiltinNames() (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
+	// `env.define("name", ...)` binds one key. `env.defineFn("bare",
+	// "dotted", ...)` — the two-key convenience the web-first subsystems
+	// (Sound / Canvas / Gamepad / Keyboard / Device) use — binds BOTH the bare
+	// desugared name and the dotted user-facing name, so capture both string
+	// literals there. The dotted (2nd) arg is the qualified symbol the drift
+	// coverage check looks for.
 	re := regexp.MustCompile(`env\.define\(\s*"([^"]+)"`)
+	reFn := regexp.MustCompile(`env\.defineFn\(\s*"([^"]+)"\s*,\s*"([^"]+)"`)
 	out := make(map[string]bool)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".swift") {
@@ -78,6 +147,37 @@ func readSwiftBuiltinNames() (map[string]bool, error) {
 		for _, m := range re.FindAllSubmatch(data, -1) {
 			out[string(m[1])] = true
 		}
+		for _, m := range reFn.FindAllSubmatch(data, -1) {
+			out[string(m[1])] = true
+			out[string(m[2])] = true
+		}
 	}
 	return out, nil
+}
+
+// TestSwiftDeclarationStubsAreComplete — the iOS half of the same hole
+// the web test describes. `Entity.*` is backend-only for CALLING, but a
+// module that declares an entity still has to EVALUATE on the client,
+// so every schema helper needs a stub here too. Both client runtimes
+// were missing exactly `Entity.enum` until 2026-07-20.
+func TestSwiftDeclarationStubsAreComplete(t *testing.T) {
+	defined, err := readSwiftBuiltinNames()
+	if err != nil {
+		t.Fatalf("reading Swift builtins: %v", err)
+	}
+
+	var missing []string
+	for name := range typecheck.BaseQualifiedSymbols() {
+		if !strings.HasPrefix(name, "Entity.") {
+			continue
+		}
+		if !defined[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		t.Fatalf("MarBuiltins.swift is missing %d Entity stub(s) that a shared module would need to evaluate:\n  %s\n\nFix: add an `env.define(\"Entity.x\", ...)` stub next to the others. It does no work — it only has to exist.",
+			len(missing), strings.Join(missing, "\n  "))
+	}
 }

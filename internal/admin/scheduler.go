@@ -79,7 +79,7 @@ func runScheduler(ctx context.Context, cfg SchedulerConfig) {
 	if log == nil {
 		log = func(s string) { fmt.Fprintln(os.Stderr, "[mar auto-backup] "+s) }
 	}
-	if err := os.MkdirAll(cfg.CatalogDir, 0o755); err != nil {
+	if err := ensureBackupDir(cfg.CatalogDir); err != nil {
 		log(fmt.Sprintf("could not create catalog dir %s: %v", cfg.CatalogDir, err))
 		return
 	}

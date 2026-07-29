@@ -13,7 +13,15 @@ import (
 func timeBuiltins() map[string]Value {
 	return map[string]Value{
 		// Duration constructors (unit-named so the call site documents
-		// the unit and arithmetic is centralized here).
+		// the unit and arithmetic is centralized here). millis divides
+		// rather than multiplies so `Time.millis 1500` is exactly 1.5s.
+		"timeMillis": nativeFn(1, func(args []Value) (Value, error) {
+			n, ok := args[0].(VInt)
+			if !ok {
+				return nil, fmt.Errorf("Time.millis: expected Int (got %T)", args[0])
+			}
+			return VDuration{Seconds: float64(n.V) / 1000}, nil
+		}),
 		"timeSeconds": nativeFn(1, makeUnitConstructor("Time.seconds", 1)),
 		"timeMinutes": nativeFn(1, makeUnitConstructor("Time.minutes", 60)),
 		"timeHours":   nativeFn(1, makeUnitConstructor("Time.hours", 60*60)),
@@ -25,7 +33,7 @@ func timeBuiltins() map[string]Value {
 			if !ok {
 				return nil, fmt.Errorf("Time.toSeconds: expected Duration (got %T)", args[0])
 			}
-			return VInt{V: d.Seconds}, nil
+			return VInt{V: int64(d.Seconds)}, nil
 		}),
 
 		// Absolute time. Time.now reads the wall clock — wrapped as
@@ -60,7 +68,7 @@ func timeBuiltins() map[string]Value {
 			if !ok1 || !ok2 {
 				return nil, fmt.Errorf("Time.add: expected (Time, Duration) (got %T, %T)", args[0], args[1])
 			}
-			return VTime{Millis: t.Millis + d.Seconds*1000}, nil
+			return VTime{Millis: t.Millis + int64(d.Seconds*1000)}, nil
 		}),
 		"timeSub": nativeFn(2, func(args []Value) (Value, error) {
 			t, ok1 := args[0].(VTime)
@@ -68,7 +76,7 @@ func timeBuiltins() map[string]Value {
 			if !ok1 || !ok2 {
 				return nil, fmt.Errorf("Time.sub: expected (Time, Duration) (got %T, %T)", args[0], args[1])
 			}
-			return VTime{Millis: t.Millis - d.Seconds*1000}, nil
+			return VTime{Millis: t.Millis - int64(d.Seconds*1000)}, nil
 		}),
 
 		// Time.diff a b returns the Duration FROM a TO b. Negative if
@@ -80,7 +88,7 @@ func timeBuiltins() map[string]Value {
 			if !ok1 || !ok2 {
 				return nil, fmt.Errorf("Time.diff: expected (Time, Time) (got %T, %T)", args[0], args[1])
 			}
-			return VDuration{Seconds: (b.Millis - a.Millis) / 1000}, nil
+			return VDuration{Seconds: float64(b.Millis-a.Millis) / 1000}, nil
 		}),
 
 		"timeBefore": nativeFn(2, timeCompare("Time.before", func(a, b int64) bool { return a < b })),
@@ -190,14 +198,14 @@ func makeCalendarShift(name string, yearMul, monthMul, dayMul int) func([]Value)
 
 // makeUnitConstructor returns a builder for one of the unit-named
 // Duration constructors. The multiplier is the number of seconds in
-// one of the named units.
-func makeUnitConstructor(name string, multiplier int64) func([]Value) (Value, error) {
+// one of the named units (fractional for Time.millis = 1/1000).
+func makeUnitConstructor(name string, multiplier float64) func([]Value) (Value, error) {
 	return func(args []Value) (Value, error) {
 		n, ok := args[0].(VInt)
 		if !ok {
 			return nil, fmt.Errorf("%s: expected Int (got %T)", name, args[0])
 		}
-		return VDuration{Seconds: n.V * multiplier}, nil
+		return VDuration{Seconds: float64(n.V) * multiplier}, nil
 	}
 }
 

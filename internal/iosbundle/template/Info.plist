@@ -22,6 +22,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>MarAppName</key>
+	<string>__MAR_PROJECT_NAME__</string>
 	<key>MarBaseURL</key>
 	<string>__MAR_DEFAULT_BASE_URL__</string>
 	<key>NSAppTransportSecurity</key>

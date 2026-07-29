@@ -118,6 +118,18 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 		}
 		status, _ := resp.Fields["status"].(runtime.VInt)
 		rbody, _ := resp.Fields["body"].(runtime.VString)
+		// Service responses are JSON. Declaring the type explicitly and
+		// forbidding MIME sniffing stops the browser from treating a body
+		// that happens to start with HTML (e.g. user-controlled text in an
+		// Effect.fail, fetched by navigating straight to a GET service) as
+		// text/html and rendering it — reflected XSS. It also fixes the
+		// content-type for well-behaved JSON clients.
+		// See docs/security-audit-2026-07-15.md #7.
+		h := w.Header()
+		if h.Get("Content-Type") == "" {
+			h.Set("Content-Type", "application/json; charset=utf-8")
+		}
+		h.Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(int(status.V))
 		_, _ = io.WriteString(w, rbody.V)
 		return true

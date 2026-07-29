@@ -1,6 +1,9 @@
 package typecheck
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // TypeEnv maps names to types (or schemes). Implemented as an immutable
 // linked list of frames so that scoping works naturally.
@@ -13,6 +16,25 @@ type TypeEnv struct {
 	bindings map[string]Type
 	parent   *TypeEnv
 	customs  map[string]CustomType // populated only on the root frame
+}
+
+// Names returns every binding visible from this frame, sorted and deduped.
+// Exported for the cross-runtime conformance gate, which needs the list of
+// things whose meaning the Go, JS and Swift runtimes must agree on in order to
+// tell "not tested yet" apart from "tested".
+func (e *TypeEnv) Names() []string {
+	seen := map[string]bool{}
+	for f := e; f != nil; f = f.parent {
+		for n := range f.bindings {
+			seen[n] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // NewEnv returns an empty top-level environment.
@@ -134,6 +156,26 @@ func BaseQualifiedSymbols() map[string]Type {
 	return qualifiedAliases(baseBindings())
 }
 
+// BareGlobals returns the user-facing builtins that live in no module —
+// the handful spelled without a qualifier, like Elm's Basics. It is the
+// bare-name counterpart to ExportsOf, and exists so tooling that walks
+// the stdlib module by module (the /reference generator) can still see
+// these; without it they are invisible to any module-shaped traversal.
+//
+// The set is derived, not listed: a name is a bare global exactly when
+// the user-facing alias table binds it without a dot. Add one there and
+// it shows up here, which is what makes the reference's coverage test
+// able to fail on an undocumented addition.
+func BareGlobals() map[string]Type {
+	out := map[string]Type{}
+	for name, t := range qualifiedAliases(baseBindings()) {
+		if !strings.Contains(name, ".") {
+			out[name] = t
+		}
+	}
+	return out
+}
+
 // IsBackendOnlyBuiltin reports whether a qualified-name builtin
 // (e.g. "Repo.create") is intentionally never reachable from frontend
 // code. These are the names that exist in BaseEnv() but should be
@@ -143,13 +185,21 @@ func BaseQualifiedSymbols() map[string]Type {
 //
 // Covers server topology (App.fullstack), persistence (Repo, Entity,
 // Db), auth wiring evaluated at server boot (Auth.config / .protect /
-// .authorize / .requireRole / .requireOwner), and service declaration
-// on the server side (Service.declare / .implement).
+// .authorize / .requireRole / .requireOwner), and service handlers
+// (Service.implement).
 //
 // Adding a new entry here is a deliberate statement: "this builtin
 // runs server-only; clients don't need to implement it." Don't add a
 // name just to silence a coverage test — first confirm frontend code
 // can't reach it.
+//
+// `Service.declare` used to be on this list and does not belong: the
+// contract it builds carries the verb and path the BROWSER fetches, so
+// every runtime implements it and every page reaches it. Listing it
+// meant the drift tests stood ready to excuse a client runtime that
+// dropped it — the opposite of what this function is for. It was found
+// by wiring the list to an enforcement point (apphost's prune pass)
+// instead of using it only to excuse gaps.
 func IsBackendOnlyBuiltin(name string) bool {
 	for _, prefix := range []string{
 		"Repo.",   // SQLite repository
@@ -164,7 +214,7 @@ func IsBackendOnlyBuiltin(name string) bool {
 	switch name {
 	case "Auth.config", "Auth.protect",
 		"Auth.authorize", "Auth.requireOwner", "Auth.requireRole",
-		"Service.declare", "Service.implement",
+		"Service.implement",
 		"App.frontend", "App.backend", "App.fullstack":
 		return true
 	}
@@ -242,17 +292,20 @@ func builtinCustomTypes() map[string]CustomType {
 		},
 		// Service.Error — the failure a Service.call delivers in its Err.
 		// A union so the frontend cases on it (Offline shows a retry,
-		// Unauthorized redirects to sign-in, ServerError shows the
-		// message) instead of matching strings.
+		// Unauthorized redirects to sign-in, RateLimited asks the user to
+		// slow down, ServerError shows the message) instead of matching
+		// strings.
 		"Service.Error": {
 			Name:   "Service.Error",
+			Module: "Service",
 			Params: nil,
 			Constructors: map[string]CustomCtor{
 				"Offline":      {Result: TServiceError},
 				"Unauthorized": {Result: TServiceError},
+				"RateLimited":  {Result: TServiceError},
 				"ServerError":  {Args: []Type{TString}, Result: TServiceError},
 			},
-			CtorOrder: []string{"Offline", "Unauthorized", "ServerError"},
+			CtorOrder: []string{"Offline", "Unauthorized", "RateLimited", "ServerError"},
 		},
 		// Auth.RequestOutcome / Auth.VerifyOutcome — per-endpoint domain
 		// outcomes for the auth flow. Each endpoint declares only the
@@ -261,6 +314,7 @@ func builtinCustomTypes() map[string]CustomType {
 		// holds: CodeSent never reveals whether the email has an account.
 		"Auth.RequestOutcome": {
 			Name:   "Auth.RequestOutcome",
+			Module: "Auth",
 			Params: nil,
 			Constructors: map[string]CustomCtor{
 				"CodeSent":     {Result: TAuthRequestOutcome},
@@ -271,6 +325,7 @@ func builtinCustomTypes() map[string]CustomType {
 		},
 		"Auth.VerifyOutcome": {
 			Name:   "Auth.VerifyOutcome",
+			Module: "Auth",
 			Params: []string{"user"},
 			Constructors: map[string]CustomCtor{
 				"SignedIn":        {Args: []Type{tva}, Result: TAuthVerifyOutcome(tva)},
@@ -279,6 +334,109 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"SignedIn", "WrongCode", "TooManyAttempts"},
 		},
+		// Canvas.Transform — what a group does to its children: the matrix ops
+		// (translate / scale / rotate) applied in declaration order, plus the
+		// two compositing modifiers (Alpha, Blend) that are not matrix ops at
+		// all — the renderers pull those out before walking the rest. Reachable
+		// only as `Canvas.Translate` etc.: `import Canvas exposing
+		// (Transform(..))` parses but does NOT bind the bare names, since
+		// open-exposing of a BUILTIN union is still unimplemented (verified
+		// 2026-07-15). Registered here so `case t of Translate ...` is
+		// exhaustive and so that gap can be closed from one place.
+		"Transform": {
+			Name:   "Transform",
+			Module: "Canvas",
+			Params: nil,
+			Constructors: map[string]CustomCtor{
+				"Translate": {Args: []Type{TInt, TInt}, Result: TTransform},
+				"Scale":     {Args: []Type{TInt, TInt}, Result: TTransform},
+				"Rotate":    {Args: []Type{TInt}, Result: TTransform},
+				"Alpha":     {Args: []Type{TInt}, Result: TTransform},
+				"Blend":     {Args: []Type{TBlend}, Result: TTransform},
+			},
+			CtorOrder: []string{"Translate", "Scale", "Rotate", "Alpha", "Blend"},
+		},
+		// Canvas.Blend — the compositing mode of a group (see TBlend). Same
+		// exposing rule as Align and for a sharper reason: a game writing
+		// `type Op = Add | Sub` must not collide with a rendering mode.
+		"Rounding": {
+			Name:   "Rounding",
+			Module: "Decimal",
+			Params: nil,
+			Constructors: map[string]CustomCtor{
+				"HalfEven": {Result: TRounding},
+				"HalfUp":   {Result: TRounding},
+				"Down":     {Result: TRounding},
+				"Up":       {Result: TRounding},
+				"Floor":    {Result: TRounding},
+				"Ceiling":  {Result: TRounding},
+			},
+			CtorOrder: []string{"HalfEven", "HalfUp", "Down", "Up", "Floor", "Ceiling"},
+		},
+		"Blend": {
+			Name:   "Blend",
+			Module: "Canvas",
+			Params: nil,
+			Constructors: map[string]CustomCtor{
+				"Normal":   {Result: TBlend},
+				"Add":      {Result: TBlend},
+				"Multiply": {Result: TBlend},
+				"Screen":   {Result: TBlend},
+				"Erase":    {Result: TBlend},
+			},
+			CtorOrder: []string{"Normal", "Add", "Multiply", "Screen", "Erase"},
+		},
+		// Canvas.Align — horizontal text anchor. Same exposing rule as
+		// Transform; the constructors are NOT global (unlike Order/Method)
+		// precisely so a game can still write `type Direction = Left | Right`
+		// without importing Canvas.
+		"Align": {
+			Name:   "Align",
+			Module: "Canvas",
+			Params: nil,
+			Constructors: map[string]CustomCtor{
+				"Left":   {Result: TAlign},
+				"Center": {Result: TAlign},
+				"Right":  {Result: TAlign},
+			},
+			CtorOrder: []string{"Left", "Center", "Right"},
+		},
+		// Pointer — the precision of the PRIMARY input, inside a Device record
+		// (Device.watch). Coarse = finger / TV remote, Fine = mouse / trackpad /
+		// stylus. Constructors ARE global (like Order / Method, unlike Align):
+		// `d.pointer == Coarse` reads naturally and the two names are distinctive
+		// enough not to collide with a game's own union.
+		"Pointer": {
+			Name:   "Pointer",
+			Params: nil,
+			Constructors: map[string]CustomCtor{
+				"Coarse": {Result: TPointer},
+				"Fine":   {Result: TPointer},
+			},
+			CtorOrder: []string{"Coarse", "Fine"},
+		},
+		// CanvasMode — the mandatory first argument of `canvas`. Pixelated =
+		// 1× buffer, nearest-neighbour (60 fps action games); Crisp = retina
+		// buffer, sharp text (turn-based / text). Global constructors (bare
+		// `Pixelated` / `Crisp`), like Pointer — distinctive, no collision.
+		"CanvasMode": {
+			Name:   "CanvasMode",
+			Params: nil,
+			Constructors: map[string]CustomCtor{
+				"Pixelated": {Result: TCanvasMode},
+				"Crisp":     {Result: TCanvasMode},
+			},
+			CtorOrder: []string{"Pixelated", "Crisp"},
+		},
+		// Keyboard.Key — a physical key (Keyboard.watch delivers the held set).
+		// ~100 constructors mirroring the DOM event.code set of a US keyboard,
+		// built from the shared list in keyboard.go. Qualified-only (like
+		// Service.Error) so the ~100 names don't pollute the global scope.
+		"Keyboard.Key":   keyboardKeyCustomType(),
+		"Gamepad.Button": gamepadButtonCustomType(),
+		// Sound.Wave — chip-audio waveforms (Square/Triangle/Sawtooth/Noise) from
+		// sound.go. Qualified-only, like the other web-first input/output unions.
+		"Sound.Wave": soundWaveCustomType(),
 	}
 }
 
@@ -298,12 +456,26 @@ func baseBindings() map[string]Type {
 
 	out := map[string]Type{}
 
-	// Arithmetic operators (monomorphic to Int; numeric type classes
-	// would let these generalize across Int/Float).
-	out["+"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
-	out["-"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
-	out["*"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
-	out["/"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
+	// Arithmetic: forall n:number. n -> n -> n, where number is
+	// Int | Decimal (docs/proposals/decimal.md). Both sides unify to
+	// ONE member — mixing Int and Decimal is a type error whose fix
+	// (Decimal.fromInt, or writing the literal as 3.0) stays visible.
+	// These three are exact for Decimal: add/sub align scales, mul
+	// adds them; no rounding exists in any of them.
+	num := TVar{ID: -30, Constraint: KindNumber}
+	out["+"] = TForall{Vars: []int{num.ID}, Body: TArrow{From: num, To: TArrow{From: num, To: num}}}
+	out["-"] = TForall{Vars: []int{num.ID}, Body: TArrow{From: num, To: TArrow{From: num, To: num}}}
+	out["*"] = TForall{Vars: []int{num.ID}, Body: TArrow{From: num, To: TArrow{From: num, To: num}}}
+
+	// Integer division wears its truncation in its spelling — Elm's
+	// `//`, total (x // 0 == 0).
+	out["//"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
+
+	// Decimal division produces a QUESTION, not a number: the inert
+	// exact quotient. Only Decimal.rounded / withRemainder
+	// turn it into a value, and each one writes the precision at the
+	// use site. No implicit rounding anywhere in the language.
+	out["/"] = TArrow{From: TDecimal, To: TArrow{From: TDecimal, To: TDivision}}
 
 	// always : a -> b -> a — Elm's Basics.always. Ignores its second
 	// argument; `always x` is `\_ -> x`. The everyday use is a constant
@@ -347,6 +519,41 @@ func baseBindings() map[string]Type {
 	// Logical
 	out["&&"] = TArrow{From: TBool, To: TArrow{From: TBool, To: TBool}}
 	out["||"] = TArrow{From: TBool, To: TArrow{From: TBool, To: TBool}}
+
+	// not : Bool -> Bool — Elm's Basics.not, bare like `always`. Mar
+	// has no prefix operator, so negation is a function: `not model.busy`
+	// rather than `!model.busy`. It completes the boolean algebra —
+	// without it the complement of a predicate has to be spelled
+	// `if p x then False else True`.
+	out["not"] = TArrow{From: TBool, To: TBool}
+
+	// The numeric kit, bare and Elm-named. These are NOT here because
+	// they are short — `imax a b = if a > b then a else b` is one line.
+	// They are here because eleven shipped apps each wrote their own
+	// (871 call sites), which means the language was asking every author
+	// to re-derive the same answer, and because Int-only hand-rolls
+	// cannot serve Decimal at all.
+	//
+	// max/min/clamp ride Comparable, so they order Char and String too,
+	// not just numbers. `clamp` takes the bounds first, like Elm:
+	// `clamp low high x`.
+	out["max"] = TForall{Vars: []int{cmp.ID}, Body: TArrow{From: cmp, To: TArrow{From: cmp, To: cmp}}}
+	out["min"] = TForall{Vars: []int{cmp.ID}, Body: TArrow{From: cmp, To: TArrow{From: cmp, To: cmp}}}
+	out["clamp"] = TForall{Vars: []int{cmp.ID}, Body: TArrow{From: cmp, To: TArrow{From: cmp, To: TArrow{From: cmp, To: cmp}}}}
+
+	// abs rides number, so it covers Int and Decimal with one name.
+	// Decimal.abs stays as the explicit spelling in Decimal-only code.
+	out["abs"] = TForall{Vars: []int{num.ID}, Body: TArrow{From: num, To: num}}
+
+	// Two remainders, because they disagree on negatives and both uses
+	// are real. `modBy d n` follows the sign of the DIVISOR (floor
+	// modulo) — what wrapping a coordinate or an index needs, and what
+	// every game hand-rolled as `modI`. `remainderBy d n` follows the
+	// sign of the DIVIDEND, matching `//`'s truncation so that
+	// `(n // d) * d + remainderBy d n == n`. Divisor first in both,
+	// like Elm, so they partially apply as `modBy 8`.
+	out["modBy"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
+	out["remainderBy"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
 
 	// String/list append. `app` is Appendable-constrained — only
 	// String and List satisfy it — so `1 ++ 2` (or `True ++ False`)
@@ -411,10 +618,11 @@ func baseBindings() map[string]Type {
 	out["DELETE"] = TMethod
 
 	// Service.Error constructors — the transport failure a Service.call
-	// delivers in its Err. Offline / Unauthorized are nullary; ServerError
-	// carries the server's message.
+	// delivers in its Err. Offline / Unauthorized / RateLimited are nullary;
+	// ServerError carries the server's message.
 	out["Service.Offline"] = TServiceError
 	out["Service.Unauthorized"] = TServiceError
+	out["Service.RateLimited"] = TServiceError
 	out["Service.ServerError"] = TArrow{From: TString, To: TServiceError}
 
 	// Auth outcome constructors — qualified-only, like Service.Error.
@@ -425,6 +633,343 @@ func baseBindings() map[string]Type {
 	out["Auth.SignedIn"] = TForall{Vars: []int{a.ID}, Body: TArrow{From: a, To: TAuthVerifyOutcome(a)}}
 	out["Auth.WrongCode"] = TForall{Vars: []int{a.ID}, Body: TAuthVerifyOutcome(a)}
 	out["Auth.TooManyAttempts"] = TForall{Vars: []int{a.ID}, Body: TAuthVerifyOutcome(a)}
+
+	// Keyboard.Key constructors (Keyboard.KeyW, Keyboard.ArrowUp, Keyboard.Space,
+	// ...) — the ~100 physical keys from keyboard.go, qualified-only like
+	// Service.Error so the names don't leak into the global scope.
+	for name, ty := range keyboardKeyBindings() {
+		out[name] = ty
+	}
+	// Keyboard.watch : ({ down : List Keyboard.Key } -> msg) -> Sub msg — the
+	// held-key MIRROR. Fires the whole current set on subscribe and on every
+	// change; OS auto-repeat emits nothing (the set is unchanged) and window
+	// blur clears it. "A key just went down" is derived by the app diffing the
+	// new set against the previous one. There is no per-event key subscription:
+	// held keys are state, so they arrive as state.
+	out["keyboardWatch"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TArrow{From: TKeyboardStateRecord(), To: b}, To: TSub(b)}}
+
+	// Gamepad.Button constructors (Gamepad.A, Gamepad.Up, ...) — the standard
+	// controller buttons from gamepad.go, qualified-only like Keyboard.Key.
+	for name, ty := range gamepadButtonBindings() {
+		out[name] = ty
+	}
+	// Gamepad.watch : (pad -> msg) -> Sub msg — the full-pad MIRROR: connection,
+	// both analog sticks (x/y in -100..100 with a deadzone), and the held
+	// buttons, as one snapshot that re-fires on change. Web-first (JS polls
+	// getGamepads()). Like the keyboard, the pad is state, so it arrives as state
+	// — no per-button or per-stick event subscription.
+	out["gamepadWatch"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TArrow{From: TGamepadStateRecord(), To: b}, To: TSub(b)}}
+
+	// === Sound — chip-audio SFX + looping music (docs/proposals/sound.md) ===
+	//
+	// Sound.Wave constructors (Sound.Square, ...) come from soundWaveBindings
+	// (used as VALUES, the first arg to tone). The builders are monomorphic
+	// (Sound in, Sound out); play yields a Cmd and music a Sub, both parametric
+	// in the page msg. The JS runtime does the WebAudio synthesis; Go is inert.
+	for name, ty := range soundWaveBindings() {
+		out[name] = ty
+	}
+	// Sound.tone : Sound.Wave -> Int -> Int -> Sound  (wave, freq Hz, ms)
+	out["soundTone"] = TArrow{From: TSoundWave, To: TArrow{From: TInt, To: TArrow{From: TInt, To: TSound}}}
+	// Sound.volume / Sound.sweep : Int -> Sound -> Sound  (0..100 / end freq Hz)
+	out["soundVolume"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	out["soundSweep"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	// Tone shaping: cut everything below / above a frequency. Two separate
+	// combinators rather than one band-pass because you usually want only one
+	// end (wind wants a low cut, a muffled sound wants a high cut), and a single
+	// two-argument form would force a sentinel value for "don't cut this side".
+	out["soundLowCut"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	out["soundHighCut"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	// Sound.holdPitch : Int -> Sound -> Sound  (hold the pitch flat for ms, then sweep)
+	out["soundHoldPitch"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	// The ENVELOPE, in ms. It belongs to the voice, not to the Sub that plays it:
+	// before this, `once`/`loop` attacked in 8ms while `ambient` faded in over
+	// 400, so swapping one Sub for another silently changed how a sound speaks —
+	// a value could not say "arrive now" or "arrive slowly". Both paths read
+	// these, so the note decides and the lifetime is all the Sub decides.
+	// (docs/proposals/sound-envelope.md)
+	out["soundAttack"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	out["soundRelease"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	// Expressiveness pack — the chip-character modifiers.
+	// Sound.duty : Int -> Sound -> Sound  (pulse width % for Square: 12/25/50/75).
+	out["soundDuty"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	// Sound.vibrato : Int -> Int -> Sound -> Sound  (depth in cents, rate in Hz).
+	out["soundVibrato"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}}
+	// Sound.arp : List Int -> Sound -> Sound  (cycle the pitch fast through these Hz
+	//   plus the base — the classic chiptune arpeggio "chord" on one voice).
+	out["soundArp"] = TArrow{From: TList(TInt), To: TArrow{From: TSound, To: TSound}}
+	// Sound.chord / Sound.sequence : List Sound -> Sound  (layer / string together)
+	out["soundChord"] = TArrow{From: TList(TSound), To: TSound}
+	out["soundSequence"] = TArrow{From: TList(TSound), To: TSound}
+	// Sound.rest : Int -> Sound  (silence of `ms`; occupies time inside a sequence)
+	out["soundRest"] = TArrow{From: TInt, To: TSound}
+	// Sound.play : Sound -> Cmd msg (fire once).
+	// Sound.loop : Sound -> Sub msg (replay the sound seamlessly while subscribed —
+	//   melodies / background music). Sound.hold : Sound -> Sub msg (hold each
+	//   voice as one steady node — crowd / wind / drone, no re-trigger).
+	// Sound.once : Sound -> Sub msg (play the sound ONE time while subscribed —
+	//   a death dirge, a stinger — and cut it off if the sub goes away first;
+	//   the cancellable middle ground between play and loop).
+	out["soundPlay"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TSound, To: TCmd(b)}}
+	out["soundLoop"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TSound, To: TSub(b)}}
+	out["soundHold"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TSound, To: TSub(b)}}
+	out["soundOnce"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TSound, To: TSub(b)}}
+	// Note helpers : Int -> Int  (octave -> Hz, equal temperament, C4 = middle C,
+	// A4 = 440). Kills the magic-Hz table: Sound.tone Sound.Square (Sound.e 5) dur.
+	for _, n := range soundNoteNames {
+		out["soundPitch_"+n] = TArrow{From: TInt, To: TInt}
+	}
+	// App-owned audio controls (the game gets a real mute button / volume slider,
+	// instead of hand-gating every play/sub on its own model.muted).
+	// Sound.setMuted : Bool -> Cmd msg ; Sound.master : Int -> Cmd msg (0..100).
+	out["soundSetMuted"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TBool, To: TCmd(b)}}
+	out["soundMaster"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TInt, To: TCmd(b)}}
+
+	// === Canvas (v0.0.7) — the 2D draw-list vocabulary ===
+	//
+	// `canvas` is a View that reports its own box size (onResize) and taps
+	// (onTap); shapes are positional and re-issued every frame, so a game
+	// lays them out from the live width/height (reflow) and nothing has to
+	// distort. The shape builders are monomorphic — they carry no msg; the
+	// msg rides only on the canvas attrs, exactly like uiOnMove. Color is
+	// opaque (built only by `rgb`); Shape is opaque (rect / circle /
+	// canvasText / group). Transform / Align are the two user-facing unions
+	// (constructors registered in builtinCustomTypes + qualified below).
+
+	// rgb : Int -> Int -> Int -> Color
+	out["rgb"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TInt, To: TColor}}}
+
+	// rgba : Int -> Int -> Int -> Int -> Color   (r g b alpha, alpha 0-100)
+	// Alpha is a percent int like Canvas.Scale, since Mar has no floats.
+	out["rgba"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TInt,
+		To: TArrow{From: TInt, To: TColor}}}}
+
+	// rect : Int -> Int -> Int -> Int -> Color -> Shape   (x y w h color)
+	out["rect"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TInt,
+		To: TArrow{From: TInt, To: TArrow{From: TColor, To: TShape}}}}}
+
+	// circle : Int -> Int -> Int -> Color -> Shape   (cx cy r color)
+	out["circle"] = TArrow{From: TInt, To: TArrow{From: TInt,
+		To: TArrow{From: TInt, To: TArrow{From: TColor, To: TShape}}}}
+
+	// triangle : Int -> Int -> Int -> Int -> Int -> Int -> Color -> Shape
+	//   (x1 y1 x2 y2 x3 y3 color) — a filled triangle from three points
+	out["triangle"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TInt,
+		To: TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TInt,
+			To: TArrow{From: TColor, To: TShape}}}}}}}
+
+	// Canvas.text : Int -> Int -> Int -> Align -> Color -> String -> Shape
+	// (x y size align color str). Bare key `canvasText` leaves the bare name
+	// `text` free for whichever module a file actually exposes it from.
+	out["canvasText"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TInt,
+		To: TArrow{From: TAlign, To: TArrow{From: TColor, To: TArrow{From: TString, To: TShape}}}}}}
+
+	// group : List Transform -> List Shape -> Shape
+	out["group"] = TArrow{From: TList(TTransform), To: TArrow{From: TList(TShape), To: TShape}}
+
+	// canvas : CanvasMode -> List (Attr Canvas) -> List Shape -> View a
+	// The mode is mandatory (no silent default): Pixelated for 60 fps action
+	// games, Crisp for sharp text on turn-based / text-heavy canvases.
+	out["canvas"] = TForall{
+		Vars: []int{a.ID},
+		Body: TArrow{
+			From: TCanvasMode,
+			To: TArrow{
+				From: TList(TAttr(TAttrCanvasHost())),
+				To:   TArrow{From: TList(TShape), To: TView(a)},
+			},
+		},
+	}
+
+	// onTap : (Int -> Int -> msg) -> Attr Canvas
+	// Same msg-threading shape as uiOnMove: the handler's msg generalizes
+	// per use and the enclosing canvas unifies it with the page's Msg.
+	out["onTap"] = TForall{
+		Vars: []int{a.ID},
+		Body: TArrow{
+			From: TArrow{From: TInt, To: TArrow{From: TInt, To: a}},
+			To:   TAttr(TAttrCanvasHost()),
+		},
+	}
+	// watchSize : (Int -> Int -> msg) -> Attr Canvas — the element-box MIRROR
+	// (w, h in CSS px, the model's coordinate space). Seeds the current size on
+	// mount, re-fires on resize. It is a state mirror (the size persists), hence
+	// `watch`, not `on`; it stays a canvas attr, not a Sub, because the box is
+	// the element's, not the viewport's (Device.watch carries the viewport).
+	out["watchSize"] = TForall{
+		Vars: []int{a.ID},
+		Body: TArrow{
+			From: TArrow{From: TInt, To: TArrow{From: TInt, To: a}},
+			To:   TAttr(TAttrCanvasHost()),
+		},
+	}
+	// watchPointers : (List { id : Int, x : Int, y : Int } -> msg) -> Attr Canvas
+	// — the pointer MIRROR: every finger / pressed mouse on this canvas, in
+	// canvas CSS-pixel coordinates, as one snapshot that re-fires on change
+	// (coalesced per frame; self-heals on pointercancel / blur). `id` is a small
+	// stable integer per pointer. This is the multi-touch state channel; the
+	// discrete onTap/onRelease/onDrag remain for genuine pointer occurrences.
+	out["watchPointers"] = TForall{
+		Vars: []int{a.ID},
+		Body: TArrow{
+			From: TArrow{From: TList(TCanvasPointerRecord()), To: a},
+			To:   TAttr(TAttrCanvasHost()),
+		},
+	}
+	// onRelease : (Int -> Int -> msg) -> Attr Canvas — the pointer-up companion
+	// to onTap (which is pointer-down). Together they enable hold-to-move
+	// controls: onTap starts, onRelease stops. Same msg-threading shape.
+	out["onRelease"] = TForall{
+		Vars: []int{a.ID},
+		Body: TArrow{
+			From: TArrow{From: TInt, To: TArrow{From: TInt, To: a}},
+			To:   TAttr(TAttrCanvasHost()),
+		},
+	}
+	// onDrag : (Int -> Int -> msg) -> Attr Canvas — pointer MOVE while pressed.
+	// Fires (x, y) as the finger/mouse drags across the canvas between an onTap
+	// (down) and onRelease (up). Enables an on-screen joystick you can steer.
+	out["onDrag"] = TForall{
+		Vars: []int{a.ID},
+		Body: TArrow{
+			From: TArrow{From: TInt, To: TArrow{From: TInt, To: a}},
+			To:   TAttr(TAttrCanvasHost()),
+		},
+	}
+	// Desktop-input trio (opt-in, null on touch). onHover : (Int -> Int -> msg)
+	// -> Attr Canvas — pointer MOVE with NO button (edge-scroll, placement
+	// ghost, hover tooltips). onAltTap : (Int -> Int -> msg) -> Attr Canvas —
+	// right-click / two-finger tap, contextmenu preventDefault'd (SC2-style
+	// orders). Both share onDrag's msg-threading shape.
+	out["onHover"] = TForall{
+		Vars: []int{a.ID},
+		Body: TArrow{
+			From: TArrow{From: TInt, To: TArrow{From: TInt, To: a}},
+			To:   TAttr(TAttrCanvasHost()),
+		},
+	}
+	out["onAltTap"] = TForall{
+		Vars: []int{a.ID},
+		Body: TArrow{
+			From: TArrow{From: TInt, To: TArrow{From: TInt, To: a}},
+			To:   TAttr(TAttrCanvasHost()),
+		},
+	}
+	// onWheel : (Int -> Int -> msg) -> Attr Canvas — scroll delta as (dx, dy);
+	// signs are stable across devices. Horizontal (dx) enables lateral scroll on
+	// trackpads; keyboard callers can ignore whichever axis they don't use.
+	out["onWheel"] = TForall{
+		Vars: []int{a.ID},
+		Body: TArrow{
+			From: TArrow{From: TInt, To: TArrow{From: TInt, To: a}},
+			To:   TAttr(TAttrCanvasHost()),
+		},
+	}
+
+	// Transform / Align / Blend constructors — qualified-only bindings. These
+	// dotted names are the ONLY way to reach them: open-exposing a builtin
+	// union is unimplemented, so `exposing (Transform(..))` parses and then
+	// leaves `Translate` unbound.
+	out["Canvas.Translate"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TTransform}}
+	// Scale takes percent ints (100 = 1×, 150 = 1.5×); Rotate takes whole
+	// degrees. Mar has no Float, so continuous transforms are integer-encoded
+	// and the renderer divides Scale by 100.
+	out["Canvas.Scale"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TTransform}}
+	out["Canvas.Rotate"] = TArrow{From: TInt, To: TTransform}
+	// Alpha takes a percent int too (100 = opaque). It fades the group as ONE
+	// composited image, not shape by shape: a sprite built from overlapping
+	// parts fades as a whole instead of turning into glass, and a cloud drawn
+	// from overlapping puffs comes out evenly translucent instead of showing
+	// its seams. Reach for `rgba` when a single shape is translucent; reach
+	// for Alpha when a group of them has to fade together.
+	out["Canvas.Alpha"] = TArrow{From: TInt, To: TTransform}
+	// Canvas.Blend : Blend -> Transform. Governs how the group's pixels land,
+	// on each other AND on what is below. Absent = Normal, which is exactly
+	// what every group already did, so this is inert for existing code. Add
+	// sums light (stacked explosion discs climb orange → gold → white on their
+	// own); Multiply darkens by the backdrop (one grey reads as a shadow over
+	// ANY background, instead of a hand-picked "background × 0.7" constant
+	// that breaks the moment it crosses a line); Screen lightens without
+	// clipping; Erase punches holes — and Erase alone always composites the
+	// group as one stamp, so overlapping erasers cut a single clean silhouette
+	// instead of eating the seam twice.
+	out["Canvas.Blend"] = TArrow{From: TBlend, To: TTransform}
+	// === Decimal (docs/proposals/decimal.md) — exact base-10 numbers ===
+	//
+	// Rounding-mode constructors are qualified-only (Decimal.HalfEven):
+	// Up / Down / Floor / Ceiling are far too ordinary to reserve as
+	// bare global names — half the app unions ever written use them.
+	out["Decimal.HalfEven"] = TRounding
+	out["Decimal.HalfUp"] = TRounding
+	out["Decimal.Down"] = TRounding
+	out["Decimal.Up"] = TRounding
+	out["Decimal.Floor"] = TRounding
+	out["Decimal.Ceiling"] = TRounding
+
+	// Conversions and arithmetic helpers. round uses banker's
+	// (HalfEven) — Mar's round exists mostly for money; toIntWith
+	// covers the other modes.
+	out["Decimal.fromInt"] = TArrow{From: TInt, To: TDecimal}
+	out["Decimal.fromCents"] = TArrow{From: TInt, To: TDecimal}
+	out["Decimal.toCents"] = TArrow{From: TDecimal, To: TInt}
+	out["Decimal.truncate"] = TArrow{From: TDecimal, To: TInt}
+	out["Decimal.round"] = TArrow{From: TDecimal, To: TInt}
+	out["Decimal.floor"] = TArrow{From: TDecimal, To: TInt}
+	out["Decimal.ceiling"] = TArrow{From: TDecimal, To: TInt}
+	out["Decimal.toIntWith"] = TArrow{From: TRounding, To: TArrow{From: TDecimal, To: TInt}}
+	out["Decimal.toScale"] = TArrow{From: TRounding, To: TArrow{From: TInt, To: TArrow{From: TDecimal, To: TDecimal}}}
+	out["Decimal.abs"] = TArrow{From: TDecimal, To: TDecimal}
+	out["Decimal.negate"] = TArrow{From: TDecimal, To: TDecimal}
+	out["Decimal.compare"] = TArrow{From: TDecimal, To: TArrow{From: TDecimal, To: TOrder}}
+	out["Decimal.zero"] = TDecimal
+	out["Decimal.fromString"] = TArrow{From: TString, To: TMaybe(TDecimal)}
+	out["Decimal.toString"] = TArrow{From: TDecimal, To: TString}
+
+	// Division resolvers — the ONLY exits from Decimal.Division, and
+	// the place the rounding decision is written. withRemainder is the
+	// lossless one: quotient truncated to the scale plus the exact
+	// remainder (q * b + r == a), for the split-the-bill class of
+	// problem where no cent may be invented or lost.
+	out["Decimal.rounded"] = TArrow{From: TRounding, To: TArrow{From: TInt, To: TArrow{From: TDivision, To: TDecimal}}}
+	out["Decimal.withRemainder"] = TArrow{From: TInt, To: TArrow{From: TDivision, To: TRecord{
+		Fields: map[string]Type{"quotient": TDecimal, "remainder": TDecimal},
+		Order:  []string{"quotient", "remainder"},
+	}}}
+
+	out["Canvas.Normal"] = TBlend
+	out["Canvas.Add"] = TBlend
+	out["Canvas.Multiply"] = TBlend
+	out["Canvas.Screen"] = TBlend
+	out["Canvas.Erase"] = TBlend
+	out["Canvas.Left"] = TAlign
+	out["Canvas.Center"] = TAlign
+	out["Canvas.Right"] = TAlign
+
+	// === Device (docs/proposals/device.md) — capabilities, not identities ===
+	//
+	// Device.watch : (Device -> msg) -> Sub msg. Fires immediately with the
+	// current device record on subscribe (Canvas.onResize's precedent), then a
+	// fresh record whenever ANY axis changes — window resize, tablet rotation,
+	// split-view, a mouse getting plugged into an iPad, dark mode flipping at
+	// sunset. Everything is read from CSS media queries (pointer / any-pointer /
+	// hover / prefers-color-scheme / prefers-reduced-motion) + the viewport
+	// size, NEVER a user-agent string (iPadOS lies and reports macOS). The
+	// `Device` record shape is a builtin alias (builtinTypeAliases) so an app
+	// can store it as `dev : Device`. Web-first; iOS deferred (iosDeferred).
+	out["deviceWatch"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TArrow{From: TDeviceRecord(), To: b}, To: TSub(b)}}
+	// Device.touchOnly : Device -> Bool — finger-only hardware (coarse pointer,
+	//   nothing fine attached, no hover). iPhone yes, iPad yes; iPad+trackpad NO,
+	//   touch-laptop NO. The blessed replacement for seasons-gp's usedTouch guess.
+	// Device.canHover : Device -> Bool — a real hover story exists (tooltips and
+	//   hover-reveal buttons are usable).
+	out["deviceTouchOnly"] = TArrow{From: TDeviceRecord(), To: TBool}
+	out["deviceCanHover"] = TArrow{From: TDeviceRecord(), To: TBool}
+	// Pointer constructors — global (like Order's LT / Method's GET), so a game
+	// writes `d.pointer == Coarse` without an import.
+	out["Coarse"] = TPointer
+	out["Fine"] = TPointer
+	out["Pixelated"] = TCanvasMode
+	out["Crisp"] = TCanvasMode
 
 	// --- stdlib (List, String, Maybe) ---
 	for k, v := range stdlibBindings() {
@@ -446,6 +991,10 @@ func stdlibBindings() map[string]Type {
 	dictK := TVar{ID: -20, Constraint: KindComparable}
 	setJ := TVar{ID: -21, Constraint: KindComparable}
 
+	// Number-constrained var for List.sum / List.product, same reasoning
+	// and the same untaken ID range.
+	num := TVar{ID: -22, Constraint: KindNumber}
+
 	return map[string]Type{
 		// List
 		"listLength": TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(a), To: TInt}},
@@ -466,14 +1015,17 @@ func stdlibBindings() map[string]Type {
 		"listFoldl": TForall{
 			Vars: []int{a.ID, b.ID},
 			Body: TArrow{
-				From: TArrow{From: b, To: TArrow{From: a, To: b}},
+				From: TArrow{From: a, To: TArrow{From: b, To: b}},
 				To: TArrow{
 					From: b,
 					To:   TArrow{From: TList(a), To: b},
 				},
 			},
 		},
-		"listSum":     TArrow{From: TList(TInt), To: TInt},
+		// listSum : List number -> number. Two native implementations sit
+		// behind this one name; the elaboration pass tells each call site
+		// which. See ast.EQualified.Impl.
+		"listSum":     TForall{Vars: []int{num.ID}, Body: TArrow{From: TList(num), To: num}},
 		"listRange":   TArrow{From: TInt, To: TArrow{From: TInt, To: TList(TInt)}},
 		"listReverse": TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(a), To: TList(a)}},
 		"listHead":    TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(a), To: TMaybe(a)}},
@@ -584,8 +1136,8 @@ func stdlibBindings() map[string]Type {
 			Vars: []int{a.ID},
 			Body: TArrow{From: TList(a), To: TMaybe(a)},
 		},
-		// listProduct : List Int -> Int (same shape as listSum)
-		"listProduct": TArrow{From: TList(TInt), To: TInt},
+		// listProduct : List number -> number (same shape as listSum)
+		"listProduct": TForall{Vars: []int{num.ID}, Body: TArrow{From: TList(num), To: num}},
 		// listSort : List a -> List a
 		"listSort": TForall{
 			Vars: []int{a.ID},
@@ -771,13 +1323,11 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 		// String extras
-		"stringSplit":     TArrow{From: TString, To: TArrow{From: TString, To: TList(TString)}},
-		"stringJoin":      TArrow{From: TString, To: TArrow{From: TList(TString), To: TString}},
-		"stringTrim":      TArrow{From: TString, To: TString},
-		"stringEndsWith":  TArrow{From: TString, To: TArrow{From: TString, To: TBool}},
-		"stringToInt":     TArrow{From: TString, To: TMaybe(TInt)},
-		"stringToFloat":   TArrow{From: TString, To: TMaybe(TFloat)},
-		"stringFromFloat": TArrow{From: TFloat, To: TString},
+		"stringSplit":    TArrow{From: TString, To: TArrow{From: TString, To: TList(TString)}},
+		"stringJoin":     TArrow{From: TString, To: TArrow{From: TList(TString), To: TString}},
+		"stringTrim":     TArrow{From: TString, To: TString},
+		"stringEndsWith": TArrow{From: TString, To: TArrow{From: TString, To: TBool}},
+		"stringToInt":    TArrow{From: TString, To: TMaybe(TInt)},
 		"stringReplace": TArrow{
 			From: TString,
 			To:   TArrow{From: TString, To: TArrow{From: TString, To: TString}},
@@ -946,6 +1496,17 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TArrow{From: a, To: TArrow{From: b, To: TArrow{From: TVar{ID: -72}, To: TVar{ID: -73}}}}, To: TArrow{From: TGenerator(a), To: TArrow{From: TGenerator(b), To: TArrow{From: TGenerator(TVar{ID: -72}), To: TGenerator(TVar{ID: -73})}}}},
 		},
 		"randomAndThen": TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: TArrow{From: a, To: TGenerator(b)}, To: TArrow{From: TGenerator(a), To: TGenerator(b)}}},
+
+		// Pure stepping (Elm's Seed API). A Seed runs a Generator with no effect,
+		// so randomness works on ANY side and replays deterministically — which
+		// is why Random is usable on the server, not just the frontend.
+		//   Random.initialSeed : Int -> Seed
+		//   Random.step        : Generator a -> Seed -> (a, Seed)
+		"randomInitialSeed": TArrow{From: TInt, To: TSeed()},
+		"randomStep":        TForall{Vars: []int{a.ID}, Body: TArrow{From: TGenerator(a), To: TArrow{From: TSeed(), To: TTuple{Members: []Type{a, TSeed()}}}}},
+		// Real OS entropy → a Seed, as a Task (runs on client and server).
+		//   Random.seed : Task Seed
+		"randomSeed": TTask(TSeed()),
 		// Time — a small Duration type with unit-named smart constructors.
 		//
 		//   Time.seconds : Int -> Duration
@@ -963,6 +1524,7 @@ func stdlibBindings() map[string]Type {
 		// was seconds" bugs). Used by `Auth.config.sessionDuration`
 		// and anywhere else the framework or user code wants a
 		// time interval.
+		"timeMillis":    TArrow{From: TInt, To: TDuration},
 		"timeSeconds":   TArrow{From: TInt, To: TDuration},
 		"timeMinutes":   TArrow{From: TInt, To: TDuration},
 		"timeHours":     TArrow{From: TInt, To: TDuration},
@@ -1324,6 +1886,15 @@ func stdlibBindings() map[string]Type {
 		"entityInt":    TArrow{From: TConstraint(), To: TColumn(TInt)},
 		"entityText":   TArrow{From: TConstraint(), To: TColumn(TString)},
 		"entityBool":   TArrow{From: TConstraint(), To: TColumn(TBool)},
+		// Entity.decimal : Int -> Constraint -> Column Decimal
+		//
+		// Fixed-scale exact decimal. Stored as INTEGER in SQLite — the
+		// coefficient at the column's scale (scale 2 → cents), which
+		// makes the storage institutionalized cents rather than a
+		// lossy REAL. Writes with a finer scale than the column abort
+		// instead of silently rounding; coarser scales rescale
+		// exactly on the way in.
+		"entityDecimal": TArrow{From: TInt, To: TArrow{From: TConstraint(), To: TColumn(TDecimal)}},
 		// Entity.enum : List a -> Constraint -> Column a
 		//
 		// Stored as TEXT in SQLite (the ctor's tag) plus a CHECK
@@ -2491,6 +3062,34 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
+		// Page.sheet : Page -> Page
+		//
+		// Marks a page as PRESENTED rather than pushed: navigating to it
+		// keeps the page you came from on screen and lays this one over
+		// it in a sheet. The route is unchanged — same path, same history
+		// entry, same deep link — only the presentation differs. Back,
+		// Escape, and a tap outside dismiss it.
+		//
+		//   page = Page.sheet (Page.dynamicProtected { path = ..., ... })
+		//
+		// A decorator instead of six more constructors: `Page.sheet` wraps
+		// any of create / protected / dynamic / dynamicProtected without
+		// multiplying their names, and reads as what it is — a
+		// presentation choice layered on a page that already exists.
+		//
+		// Use it for a bounded task the user finishes or abandons (take
+		// attendance, compose, edit). Keep the push for places the user
+		// browses INTO, where going deeper is the point.
+		//
+		// Opened cold (deep link, reload, shared URL) there is no page
+		// underneath to lay it over, so it renders as an ordinary
+		// full-screen page. That is the graceful shape: the URL always
+		// resolves to something whole.
+		"pageSheet": TForall{
+			Vars: []int{},
+			Body: TArrow{From: TPage(), To: TPage()},
+		},
+
 		// Nav.push : String -> Effect e msg
 		// Pushes a URL onto the browser history and re-renders the
 		// matching Page. For dynamic pages prefer Nav.pushTo, which
@@ -2499,6 +3098,24 @@ func stdlibBindings() map[string]Type {
 		"navPush": TForall{
 			Vars: []int{a.ID, b.ID},
 			Body: TArrow{From: TString, To: TCmd(b)},
+		},
+
+		// Nav.dismiss : Effect e msg
+		//
+		// Closes a route that is being PRESENTED (see Page.sheet): the
+		// verb a sheet's own Cancel / Done button needs, matching what
+		// the backdrop, Escape and Back already do.
+		//
+		// With nothing presented it steps back one entry inside the app,
+		// and at the app's first entry it does nothing — so a sheet route
+		// opened cold (full-screen, nothing behind it) cannot walk the
+		// reader out of the site.
+		//
+		// Deliberately not a general `Nav.back`: it goes one step, never
+		// N, and never past where the app began.
+		"navDismiss": TForall{
+			Vars: []int{b.ID},
+			Body: TCmd(b),
 		},
 
 		// Nav.replace : String -> Effect e msg
@@ -2716,16 +3333,17 @@ func stdlibBindings() map[string]Type {
 
 		// Auth.requireRole : role -> ExposedService -> ExposedService
 		//
-		// PROPOSAL — see docs/authorization-proposal.md.
-		// Decorator that adds an RBAC gate. The session must already
-		// be valid (Auth.protect ran first) AND the user's role must
-		// match. The role argument's type unifies with whatever
-		// `Auth.config.role` returns, so misspelled enum values
-		// fail at compile time.
+		// See docs/authorization-proposal.md. Decorator that adds an RBAC
+		// gate. The role argument's type unifies with whatever
+		// `Auth.config.role` returns, so misspelled enum values fail at
+		// compile time.
 		//
-		// Today this is a no-op pass-through: the example type-checks
-		// and runs, but no enforcement happens. Enforcement lands in
-		// the future PR per the proposal.
+		// Enforcement is live: the runtime decorator marks the service
+		// RequiresUser=true and the dispatcher (ExposedServiceToRoute)
+		// checks the role before invoking the handler. Applying this to a
+		// raw `Service.implement` (not an `Auth.protect`ed one) now still
+		// requires auth — the decorator sets RequiresUser itself, so a
+		// role-gated service can never serve public.
 		"authRequireRole": TForall{
 			Vars: []int{-30},
 			Body: TArrow{
@@ -2743,9 +3361,10 @@ func stdlibBindings() map[string]Type {
 		//   -> ExposedService
 		//   -> ExposedService
 		//
-		// PROPOSAL. ABAC decorator. Loads the resource (Maybe lifts
-		// to 404 on Nothing in the future), runs the policy; rejects
-		// 403 on False. Today: no-op pass-through.
+		// ABAC decorator. Loads the resource (Nothing → 404), runs the
+		// policy; rejects 403 on False. Enforcement is live and the
+		// decorator marks the service RequiresUser=true (a policy gate
+		// implies an authenticated user), so it can never serve public.
 		"authAuthorize": TForall{
 			Vars: []int{-31, -32, -33},
 			Body: TArrow{
@@ -2780,9 +3399,10 @@ func stdlibBindings() map[string]Type {
 		//   -> ExposedService
 		//   -> ExposedService
 		//
-		// PROPOSAL. Sugar for the common ABAC case "this resource has
-		// an ownerId field that must equal user.id". Today: no-op
-		// pass-through.
+		// Sugar for the common ABAC case "this resource has an ownerId
+		// field that must equal user.id". Enforcement is live and the
+		// decorator marks the service RequiresUser=true, so it can never
+		// serve public.
 		"authRequireOwner": TForall{
 			Vars: []int{-34, -35, -36},
 			Body: TArrow{
@@ -2896,23 +3516,39 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"String.startsWith": "stringStartsWith",
 		"String.endsWith":   "stringEndsWith",
 		"String.fromInt":    "stringFromInt",
-		"String.toInt":      "stringToInt",
-		"String.fromFloat":  "stringFromFloat",
-		"String.toFloat":    "stringToFloat",
-		"String.toUpper":    "stringToUpper",
-		"String.toLower":    "stringToLower",
-		"String.replace":    "stringReplace",
-		"String.repeat":     "stringRepeat",
-		"String.padLeft":    "stringPadLeft",
-		"String.padRight":   "stringPadRight",
-		"String.indexes":    "stringIndexes",
-		"String.toList":     "stringToList",
-		"String.fromList":   "stringFromList",
-		"String.cons":       "stringCons",
-		"String.map":        "stringMap",
-		"String.filter":     "stringFilter",
-		"String.foldl":      "stringFoldl",
-		"String.any":        "stringAny",
+
+		"Decimal.fromInt":       "decimalFromInt",
+		"Decimal.fromCents":     "decimalFromCents",
+		"Decimal.toCents":       "decimalToCents",
+		"Decimal.truncate":      "decimalTruncate",
+		"Decimal.round":         "decimalRound",
+		"Decimal.floor":         "decimalFloor",
+		"Decimal.ceiling":       "decimalCeiling",
+		"Decimal.toIntWith":     "decimalToIntWith",
+		"Decimal.toScale":       "decimalToScale",
+		"Decimal.abs":           "decimalAbs",
+		"Decimal.negate":        "decimalNegate",
+		"Decimal.compare":       "decimalCompare",
+		"Decimal.zero":          "decimalZero",
+		"Decimal.fromString":    "decimalFromString",
+		"Decimal.toString":      "decimalToString",
+		"Decimal.rounded":       "decimalRounded",
+		"Decimal.withRemainder": "decimalWithRemainder",
+		"String.toInt":          "stringToInt",
+		"String.toUpper":        "stringToUpper",
+		"String.toLower":        "stringToLower",
+		"String.replace":        "stringReplace",
+		"String.repeat":         "stringRepeat",
+		"String.padLeft":        "stringPadLeft",
+		"String.padRight":       "stringPadRight",
+		"String.indexes":        "stringIndexes",
+		"String.toList":         "stringToList",
+		"String.fromList":       "stringFromList",
+		"String.cons":           "stringCons",
+		"String.map":            "stringMap",
+		"String.filter":         "stringFilter",
+		"String.foldl":          "stringFoldl",
+		"String.any":            "stringAny",
 		// Char
 		"Char.toCode":        "charToCode",
 		"Char.fromCode":      "charFromCode",
@@ -2965,6 +3601,10 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Random.map2":        "randomMap2",
 		"Random.map3":        "randomMap3",
 		"Random.andThen":     "randomAndThen",
+		"Random.initialSeed": "randomInitialSeed",
+		"Random.step":        "randomStep",
+		"Random.seed":        "randomSeed",
+		"Time.millis":        "timeMillis",
 		"Time.seconds":       "timeSeconds",
 		"Time.minutes":       "timeMinutes",
 		"Time.hours":         "timeHours",
@@ -2973,6 +3613,43 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Time.toSeconds":     "timeToSeconds",
 		"Time.now":           "timeNow",
 		"Time.every":         "timeEvery",
+		"Keyboard.watch":     "keyboardWatch",
+		"Gamepad.watch":      "gamepadWatch",
+		"Device.watch":       "deviceWatch",
+		"Device.touchOnly":   "deviceTouchOnly",
+		"Device.canHover":    "deviceCanHover",
+		"Sound.tone":         "soundTone",
+		"Sound.volume":       "soundVolume",
+		"Sound.sweep":        "soundSweep",
+		"Sound.lowCut":       "soundLowCut",
+		"Sound.highCut":      "soundHighCut",
+		"Sound.holdPitch":    "soundHoldPitch",
+		"Sound.attack":       "soundAttack",
+		"Sound.release":      "soundRelease",
+		"Sound.duty":         "soundDuty",
+		"Sound.vibrato":      "soundVibrato",
+		"Sound.arp":          "soundArp",
+		"Sound.rest":         "soundRest",
+		"Sound.chord":        "soundChord",
+		"Sound.sequence":     "soundSequence",
+		"Sound.play":         "soundPlay",
+		"Sound.loop":         "soundLoop",
+		"Sound.hold":         "soundHold",
+		"Sound.once":         "soundOnce",
+		"Sound.setMuted":     "soundSetMuted",
+		"Sound.master":       "soundMaster",
+		"Sound.c":            "soundPitch_c",
+		"Sound.cs":           "soundPitch_cs",
+		"Sound.d":            "soundPitch_d",
+		"Sound.ds":           "soundPitch_ds",
+		"Sound.e":            "soundPitch_e",
+		"Sound.f":            "soundPitch_f",
+		"Sound.fs":           "soundPitch_fs",
+		"Sound.g":            "soundPitch_g",
+		"Sound.gs":           "soundPitch_gs",
+		"Sound.a":            "soundPitch_a",
+		"Sound.as_":          "soundPitch_as_",
+		"Sound.b":            "soundPitch_b",
 		"Time.add":           "timeAdd",
 		"Time.sub":           "timeSub",
 		"Time.diff":          "timeDiff",
@@ -3001,6 +3678,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Entity.int":       "entityInt",
 		"Entity.text":      "entityText",
 		"Entity.bool":      "entityBool",
+		"Entity.decimal":   "entityDecimal",
 		"Entity.enum":      "entityEnum",
 		"Entity.timestamp": "entityTimestamp",
 		"Entity.notNull":   "entityNotNull",
@@ -3081,13 +3759,33 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"UI.bottom":   "uiBottom",
 		// Image sizing: px builds a Pixels value; size/fit/cover are
 		// Image-hosted attrs.
-		"UI.px":         "uiPx",
-		"UI.size":       "uiSize",
-		"UI.fit":        "uiFit",
-		"UI.cover":      "uiCover",
-		"App.frontend":  "appFrontend",
-		"App.backend":   "appBackend",
-		"App.fullstack": "appFullstack",
+		"UI.px":    "uiPx",
+		"UI.size":  "uiSize",
+		"UI.fit":   "uiFit",
+		"UI.cover": "uiCover",
+		// Canvas (v0.0.7) — the 2D draw-list module. Functions only; the
+		// Color / Shape / Transform / Align type names resolve globally as
+		// opaque TCons, and the Transform / Align constructors come in via
+		// `exposing (Transform(..), Align(..))`.
+		"Canvas.canvas":        "canvas",
+		"Canvas.rect":          "rect",
+		"Canvas.circle":        "circle",
+		"Canvas.triangle":      "triangle",
+		"Canvas.text":          "canvasText",
+		"Canvas.group":         "group",
+		"Canvas.rgb":           "rgb",
+		"Canvas.rgba":          "rgba",
+		"Canvas.onTap":         "onTap",
+		"Canvas.watchSize":     "watchSize",
+		"Canvas.watchPointers": "watchPointers",
+		"Canvas.onRelease":     "onRelease",
+		"Canvas.onDrag":        "onDrag",
+		"Canvas.onHover":       "onHover",
+		"Canvas.onAltTap":      "onAltTap",
+		"Canvas.onWheel":       "onWheel",
+		"App.frontend":         "appFrontend",
+		"App.backend":          "appBackend",
+		"App.fullstack":        "appFullstack",
 		// Service: typed RPC contracts.
 		"Service.declare":            "serviceDeclare",
 		"Service.implement":          "serviceImplement",
@@ -3099,6 +3797,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Page.dynamic":               "pageDynamic",
 		"Page.dynamicProtected":      "pageDynamicProtected",
 		"Page.dynamicAdminProtected": "pageDynamicAdminProtected",
+		"Page.sheet":                 "pageSheet",
 		"Mar.Admin.serverInfo":       "marAdminServerInfo",
 		"Mar.Admin.dbStats":          "marAdminDbStats",
 		"Mar.Admin.recentRequests":   "marAdminRecentRequests",
@@ -3110,6 +3809,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Mar.Admin.signOut":          "marAdminSignOut",
 		"Nav.push":                   "navPush",
 		"Nav.replace":                "navReplace",
+		"Nav.dismiss":                "navDismiss",
 		"Auth.completeSignIn":        "authCompleteSignIn",
 		"Nav.pushTo":                 "navPushTo",
 		"Nav.replaceTo":              "navReplaceTo",
@@ -3120,6 +3820,15 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"linkTo": "linkTo",
 		// always : a -> b -> a — Elm's Basics.always (bare, no module).
 		"always": "always",
+		// not : Bool -> Bool — Elm's Basics.not (bare, no module).
+		"not": "not",
+		// The numeric kit, also bare and also Elm-named.
+		"max":         "max",
+		"min":         "min",
+		"clamp":       "clamp",
+		"abs":         "abs",
+		"modBy":       "modBy",
+		"remainderBy": "remainderBy",
 		// Auth: passwordless email-code authentication.
 		"Auth.config":       "authConfig",
 		"Auth.protect":      "authProtect",

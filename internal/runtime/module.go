@@ -26,6 +26,9 @@ type Module struct {
 // Custom-type constructors are registered as VCtor (for nullary) or VFn
 // (for those with payload).
 func LoadModule(mod *ast.Module) (*Module, error) {
+	if err := requireElaborated(mod); err != nil {
+		return nil, err
+	}
 	env := BaseEnv()
 
 	// Pass 1: register custom-type constructors. Also opportunistically
@@ -114,4 +117,24 @@ func (m *Module) Get(name string) (Value, error) {
 		return nil, fmt.Errorf("module %s: no value named %q", m.Name, name)
 	}
 	return v, nil
+}
+
+// requireElaborated refuses a tree the typechecker has not finished with.
+//
+// This package deliberately cannot import the typechecker — types are erased
+// at this boundary — so it cannot re-derive what elaboration decided: which
+// literals are Decimals, which reference means which implementation, what
+// order the values evaluate in. Running such a tree does not fail loudly; it
+// produces a confident wrong answer. Refusing is the only honest option.
+func requireElaborated(mod *ast.Module) error {
+	if mod == nil {
+		return fmt.Errorf("load module: nil module")
+	}
+	if !mod.IsElaborated() {
+		return fmt.Errorf(
+			"load module %s: the typechecker has not elaborated this tree; "+
+				"call typecheck.CheckModule (or CheckModuleWith) before evaluating",
+			joinName(mod.Name, ""))
+	}
+	return nil
 }

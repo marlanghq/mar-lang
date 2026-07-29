@@ -6,8 +6,7 @@ import Frontend.Routes
 import UI exposing
     ( navigationStack, navigationTitle
     , list, section, header, footer
-    , vstack, hstack
-    , text, subtitle, navigationLink, errorText
+    , vstack, text, subtitle, navigationLink, errorText
     , button
     )
 
@@ -54,7 +53,7 @@ update _ msg model =
         ToggleFilterClicked ->
             let
                 flipped =
-                    if model.onlyUnseen then False else True
+                    not model.onlyUnseen
             in
             ( { model | onlyUnseen = flipped, items = Nothing }
             , Service.call Shared.listMyMentions { onlyUnseen = flipped } MentionsFetched
@@ -93,7 +92,7 @@ mentionRow m =
                 "(unknown issue)"
 
         unreadTag =
-            if m.seen then "" else " · NEW"
+            if m.seen then "" else " (new)"
 
         title =
             m.authorName ++ " mentioned you in " ++ issueRef ++ unreadTag
@@ -129,7 +128,7 @@ filterSection : Model -> List (View Msg)
 filterSection model =
     let
         cta =
-            if model.onlyUnseen then "Showing unread · Show all" else "Showing all · Show unread"
+            if model.onlyUnseen then "Show all" else "Show only unread"
     in
     [ section [ header "Filter" ]
         [ button [] ToggleFilterClicked cta ]
@@ -160,7 +159,7 @@ renderBody model =
                         ]
                     else
                         [ section
-                            [ header ("Mentions · " ++ String.fromInt (List.length items))
+                            [ header ("Mentions (" ++ String.fromInt (List.length items) ++ ")")
                             , footer "Newest first. Tap an entry to mark it read."
                             ]
                             (List.map mentionRow items)

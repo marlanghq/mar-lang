@@ -143,6 +143,15 @@ final class AppContext {
         pages = xs
     }
 
+    /// Close the top entry of the stack: what Nav.dismiss does, and what
+    /// a presented route's own Cancel / Done button needs. Never pops the
+    /// last entry — at the app's first screen there is nothing to close,
+    /// and popping it would leave the renderer with no route at all.
+    func dismissTop() {
+        guard navPath.count > 1 else { return }
+        navPath.removeLast()
+    }
+
     /// Mutate the navigation stack. `replace` clears history and lands
     /// the user on `path` as the only entry (logout, sign-in landing,
     /// auth-expired redirect). `replace: false` appends, letting the
@@ -181,9 +190,14 @@ final class AppContext {
     ///   - `__ProtectedPage`         : auth-gated, static path
     ///   - `__DynamicPage`           : public, `:param` pattern path
     ///   - `__DynamicProtectedPage`  : auth-gated, `:param` pattern path
+    ///
+    /// A seventh ctor arg (set by `Page.sheet`) marks the page as
+    /// PRESENTED rather than pushed; it is orthogonal to the four tags,
+    /// which is why it rides as an arg instead of multiplying them.
     func decodedPages() -> [DecodedPage] {
         pages.compactMap { v in
             guard case .ctor(let tag, let args, _) = v else { return nil }
+            let isSheet = args.count >= 7 && boolOf(args[6]) == true
             switch tag {
             case "__Page":
                 guard args.count >= 4 else { return nil }
@@ -195,7 +209,8 @@ final class AppContext {
                     viewFn: args[3],
                     subscriptionsFn: args.count >= 6 ? args[5] : .unit,
                     isProtected: false,
-                    isDynamic: false
+                    isDynamic: false,
+                    isSheet: isSheet
                 )
             case "__ProtectedPage":
                 guard args.count >= 5 else { return nil }
@@ -207,7 +222,8 @@ final class AppContext {
                     viewFn: args[3],
                     subscriptionsFn: args.count >= 6 ? args[5] : .unit,
                     isProtected: true,
-                    isDynamic: false
+                    isDynamic: false,
+                    isSheet: isSheet
                 )
             case "__DynamicPage":
                 guard args.count >= 5 else { return nil }
@@ -219,7 +235,8 @@ final class AppContext {
                     viewFn: args[3],
                     subscriptionsFn: args.count >= 6 ? args[5] : .unit,
                     isProtected: false,
-                    isDynamic: true
+                    isDynamic: true,
+                    isSheet: isSheet
                 )
             case "__DynamicProtectedPage":
                 guard args.count >= 5 else { return nil }
@@ -231,7 +248,8 @@ final class AppContext {
                     viewFn: args[3],
                     subscriptionsFn: args.count >= 6 ? args[5] : .unit,
                     isProtected: true,
-                    isDynamic: true
+                    isDynamic: true,
+                    isSheet: isSheet
                 )
             default:
                 return nil
@@ -243,6 +261,11 @@ final class AppContext {
         if case .string(let s) = v { return s }
         return nil
     }
+
+    private func boolOf(_ v: MarValue) -> Bool? {
+        if case .bool(let b) = v { return b }
+        return nil
+    }
 }
 
 /// One Page ready for mounting — its ctor args destructured into named
@@ -250,7 +273,8 @@ final class AppContext {
 /// `AppContext.signInPath` at render time (set by the Auth.config
 /// builtin), not from the page itself. `isDynamic` indicates the
 /// path is a `:param` pattern that the renderer matches at navigation
-/// time.
+/// time. `isSheet` (Page.sheet) says this route is PRESENTED over the
+/// screen it was reached from instead of pushed onto the stack.
 struct DecodedPage: Identifiable {
     let path: String
     let title: String
@@ -260,6 +284,7 @@ struct DecodedPage: Identifiable {
     let subscriptionsFn: MarValue
     let isProtected: Bool
     let isDynamic: Bool
+    let isSheet: Bool
 
     var id: String { path }
 

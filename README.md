@@ -19,8 +19,10 @@ compiler emits the right output for each.
   pages, services, routes, and schemas.
 - **One small binary** that runs, types, formats, and ships your
   project.
-- **Over-the-air updates**: deploy on the server, clients pick up the
-  new version without app store waits.
+
+Being explored: over-the-air updates, deploying on the server and having
+clients pick up the new version without app store waits. Early, and not
+ready yet.
 
 ## Quick start
 

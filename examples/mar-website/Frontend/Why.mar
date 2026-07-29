@@ -5,7 +5,7 @@ import UI exposing
     ( navigationStack, navigationTitle
     , list, section, header, footer
     , vstack
-    , title, subtitle, text
+    , title, text
     , paragraph, span
     , bold, italic, code
     )
@@ -38,10 +38,8 @@ view _ =
     navigationStack [ navigationTitle "Why Mar" ]
         [ list []
             [ section
-                [ header "Foundation: Joinery, not glue"
-                , footer "Sashimono: Japanese joinery without nails, screws, or glue."
-                ]
-                [ title "Built like sashimono"
+                [ header "Foundation" ]
+                [ title "Joinery, not glue"
                 , paragraph
                     [ span [] "Mar is built on the idea of "
                     , span [italic] "sashimono"
@@ -55,33 +53,35 @@ view _ =
                     [ span [bold] "There's no glue to fail because there is no glue."
                     ]
                 ]
-            , section [ header "Pillar 1: One language, four runtimes" ]
+            , section [ header "Pillar 1" ]
                 [ title "One codebase, four targets."
-                , text [] "You write your app once. Mar's compiler produces every output you need: a web bundle, native iOS and Android apps, and a server binary."
+                , text [] "You write your app once. Mar's compiler produces every output you need: a web bundle, a native iOS app, and a server binary (native Android coming soon)."
                 ]
-            , section [ header "Pillar 2: Batteries included" ]
-                [ title "Authentication, authorization, admin panel, migrations, database, backups, and rate limiting, all in the box."
-                , text [] "Every full-stack app rebuilds the same scaffolding before it does anything new. Mar treats that scaffolding as part of the language: the layers every app needs are already chosen, already integrated, and already type-safe. You spend day one writing the part that's actually yours."
+            , section [ header "Pillar 2" ]
+                [ title "Batteries included"
+                , text [] "Every full-stack app rebuilds the same scaffolding before it does anything new. Mar ships that scaffolding in the box: authentication, authorization, an admin panel, migrations, database, backups, and rate limiting, already integrated and already type-safe. You spend day one writing the part that's actually yours."
                 ]
-            , section [ header "Pillar 3: One UI vocabulary, every platform" ]
-                [ title "UI primitives, built into the language."
+            , section [ header "Pillar 3" ]
+                [ title "One UI vocabulary for every platform"
                 , paragraph
                     [ span [] "Mar's UI vocabulary is built into the language: you don't write HTML, CSS, Swift, or Kotlin. You compose Mar primitives like "
                     , span [code] "list"
                     , span [] ", "
-                    , span [code] "sheet"
-                    , span [] ", and "
                     , span [code] "navigationStack"
-                    , span [] ", and the compiler renders them natively on web, iOS, and Android. No drift."
+                    , span [] ", "
+                    , span [code] "textField"
+                    , span [] ", and "
+                    , span [code] "datePicker"
+                    , span [] ", and the compiler renders them natively on web and iOS, with Android on the way. No drift."
                     ]
                 ]
-            , section [ header "Pillar 4: Type-safe end-to-end" ]
+            , section [ header "Pillar 4" ]
                 [ title "The compiler has your back."
                 , text [] "Rename a page's URL and Mar points you to every link that needs updating. Change what a service expects and it points you to every place that calls it. Add a field to your data and it writes the database migration for you. Mistakes that other stacks only catch in production, Mar catches before you run it."
                 , text [] "You don't have to write types everywhere: Mar figures most of them out on its own. And you rarely think about it day to day. It's just there in the background, catching things before they break."
                 ]
-            , section [ header "Pillar 5: Painless deploys" ]
-                [ title "One binary, simple to deploy."
+            , section [ header "Pillar 5" ]
+                [ title "Painless deploys"
                 , text [] "Mar compiles your entire fullstack app into a single self-contained executable: your code, the runtime, a built-in SQLite engine, and all static assets, in one file. Drop it on any server and run it. No Dockerfile to write, no deploy config to maintain."
                 ]
             , section

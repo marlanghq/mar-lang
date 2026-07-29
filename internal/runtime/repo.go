@@ -3,6 +3,7 @@ package runtime
 import (
 	"database/sql"
 	"fmt"
+	"math/big"
 	"strings"
 )
 
@@ -450,6 +451,17 @@ func marValueToSQLForField(field *EntityField, v Value) (any, error) {
 		}
 		return t.Millis, nil
 	}
+	if field != nil && field.SQLType == "DECIMAL" {
+		d, ok := v.(VDecimal)
+		if !ok {
+			return nil, fmt.Errorf("decimal column %q: expected Decimal (got %T)", field.Name, v)
+		}
+		coef, err := decimalCoefficientAtScale(d, field.DecimalScale)
+		if err != nil {
+			return nil, fmt.Errorf("decimal column %q: %w", field.Name, err)
+		}
+		return coef, nil
+	}
 	switch x := v.(type) {
 	case VInt:
 		return x.V, nil
@@ -483,7 +495,11 @@ func scanRow(rows *sql.Rows, entity VEntity) (VRecord, error) {
 	order := make([]string, len(entity.Fields))
 	for i, f := range entity.Fields {
 		order[i] = f.Name
-		fields[f.Name] = decodeColumn(f, vals[i])
+		v, err := decodeColumn(f, vals[i])
+		if err != nil {
+			return VRecord{}, fmt.Errorf("column %s: %w", f.Name, err)
+		}
+		fields[f.Name] = v
 	}
 	return VRecord{Fields: fields, Order: order}, nil
 }
@@ -491,43 +507,66 @@ func scanRow(rows *sql.Rows, entity VEntity) (VRecord, error) {
 // decodeColumn maps a raw SQL value into a runtime Value typed per the
 // entity's column declaration. NULL on a NOT NULL column is treated as
 // the zero value (defensive — schema should prevent this in practice).
-func decodeColumn(f EntityField, raw any) Value {
+//
+// It can fail for exactly one reason: SQLite's INTEGER is 64 bits wide and
+// Mar's Int is 53, so a row can hold a number the language cannot represent.
+// That is not a bad request from anyone — it is our own storage disagreeing
+// with the language, whether from data written before the bound existed, a
+// restore from another tool, or an external 64-bit id — so it raises rather
+// than rounding, and reaches the caller as a failed request.
+//
+// TIMESTAMP and DECIMAL are deliberately not bounded: they decode to VTime
+// and to an arbitrary-precision coefficient, neither of which is an Int.
+func decodeColumn(f EntityField, raw any) (Value, error) {
 	if raw == nil {
 		// All declared columns are NOT NULL today, so NULL shouldn't
 		// happen if migrations were applied correctly. Return the
 		// zero value rather than crash.
 		switch f.SQLType {
 		case "INTEGER":
-			return VInt{V: 0}
+			return VInt{V: 0}, nil
 		case "BOOLEAN":
-			return VBool{V: false}
+			return VBool{V: false}, nil
 		default:
-			return VString{V: ""}
+			return VString{V: ""}, nil
 		}
 	}
 	switch f.SQLType {
 	case "INTEGER":
 		switch x := raw.(type) {
 		case int64:
-			return VInt{V: x}
+			if !inIntRange(x) {
+				return nil, intOutOfRange("the database", x)
+			}
+			return VInt{V: x}, nil
 		case float64:
-			return VInt{V: int64(x)}
+			return VInt{V: int64(x)}, nil
 		}
 	case "TIMESTAMP":
 		// Stored as INTEGER under the hood; rehydrate to VTime so
 		// the user's record has `createdAt : Time`, not Int.
 		switch x := raw.(type) {
 		case int64:
-			return VTime{Millis: x}
+			return VTime{Millis: x}, nil
 		case float64:
-			return VTime{Millis: int64(x)}
+			return VTime{Millis: int64(x)}, nil
+		}
+	case "DECIMAL":
+		// Stored as an INTEGER coefficient at the column's fixed
+		// scale; rehydrate to a Decimal so `amount : Decimal` reads
+		// back as 12.34, never a bare 1234.
+		switch x := raw.(type) {
+		case int64:
+			return VDecimal{Coef: big.NewInt(x), Scale: f.DecimalScale}, nil
+		case float64:
+			return VDecimal{Coef: big.NewInt(int64(x)), Scale: f.DecimalScale}, nil
 		}
 	case "BOOLEAN":
 		switch x := raw.(type) {
 		case bool:
-			return VBool{V: x}
+			return VBool{V: x}, nil
 		case int64:
-			return VBool{V: x != 0}
+			return VBool{V: x != 0}, nil
 		}
 	case "TEXT":
 		var s string
@@ -547,14 +586,14 @@ func decodeColumn(f EntityField, raw any) Value {
 		if f.AcceptedCtors != nil {
 			for _, accepted := range f.AcceptedCtors {
 				if accepted == s {
-					return VCtor{Tag: s}
+					return VCtor{Tag: s}, nil
 				}
 			}
 			// Unknown value: still return as a ctor so pattern-matches
 			// can detect it. Caller can choose how to handle.
-			return VCtor{Tag: s}
+			return VCtor{Tag: s}, nil
 		}
-		return VString{V: s}
+		return VString{V: s}, nil
 	}
 	// Fallback: best-effort scalar conversion.
 	return goValueToScalar(raw)

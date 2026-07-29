@@ -1,0 +1,67 @@
+module Main exposing (main)
+
+
+import Backend.Users
+import Backend.Profiles
+import Backend.Challenges
+import Frontend.SignIn
+import Frontend.VerifyCode
+import Frontend.Nickname
+import Frontend.Home
+import Frontend.NewChallenge
+import Frontend.Quiz
+import Frontend.Result
+import Frontend.Rivals
+
+
+-- Quiz Duel — an async 1v1 trivia game and the fullstack showcase for
+-- Mar: email-code Auth, REST services, SQLite entities, and an App UI,
+-- all in one app. Backend modules own the tables + service handlers;
+-- Frontend modules are the pages. Shared is the contract between them.
+--
+-- Open with:  mar dev examples/quiz-duel
+-- Dev magic-codes print to the server log (no SMTP needed). Open two
+-- browser sessions with different emails to play a full duel.
+
+
+auth : Auth { id : Int, email : String }
+auth =
+    Auth.config
+        { entity     = Backend.Users.users
+        , identify   = \u -> u.email
+        , signInPage = Frontend.SignIn.page
+        , email      =
+            -- `body` overrides the framework's default (English) email
+            -- body — same generic transactional message, in pt-BR. It's
+            -- a `code -> minutes -> String` function.
+            { subject = "Seu código de acesso ao Quiz Duel"
+            , body =
+                \code minutes ->
+                    "Seu código de acesso é " ++ code ++ ".\n\n"
+                        ++ "Ele expira em " ++ String.fromInt minutes ++ " minutos. "
+                        ++ "Se você não solicitou este código, pode ignorar este e-mail.\n"
+            }
+        , signup     = \userEmail -> { email = userEmail }
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Cmd ()
+main =
+    App.fullstack
+        { services =
+            List.concat
+                [ Backend.Profiles.services
+                , Backend.Challenges.services
+                ]
+        , pages =
+            [ Frontend.SignIn.page
+            , Frontend.VerifyCode.page
+            , Frontend.Nickname.page
+            , Frontend.Home.page
+            , Frontend.NewChallenge.page
+            , Frontend.Quiz.page
+            , Frontend.Result.page
+            , Frontend.Rivals.page
+            ]
+        }

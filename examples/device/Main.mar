@@ -1,0 +1,127 @@
+module Main exposing (main)
+
+
+import UI exposing (navigationStack, navigationTitle, form, section, text)
+
+
+-- Device (docs/proposals/device.md, ADR-0002) gives a truthful, LIVE answer to
+-- "what is this app running on?", read from CSS media queries (never a
+-- user-agent string, which iPadOS lies about). It ships the axes separately
+-- (pointer precision, hover, viewport, OS preferences), because the devices
+-- that matter refuse to be one thing: an iPad is a coarse (finger) pointer on a
+-- big screen, and grows a fine pointer the moment a trackpad attaches. A single
+-- `isMobile` flag would have to lie to somebody; here the app composes the axes.
+--
+-- `Device.watch` is a SUBSCRIPTION: it fires the current record immediately on
+-- subscribe, then a fresh one on every change. Try it live: resize the window,
+-- toggle your OS dark mode, or plug in a mouse, and every row below updates.
+--
+-- Open with: mar dev examples/device
+
+
+type alias Model =
+    { dev : Maybe Device }
+
+
+type Msg
+    = DeviceChanged Device
+
+
+init : (Model, Cmd Msg)
+init =
+    ({ dev = Nothing }, Cmd.none)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        DeviceChanged d ->
+            ({ dev = Just d }, Cmd.none)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Device.watch DeviceChanged
+
+
+-- ----- deriving human answers from the axes (this is the point of the API) -----
+
+
+yesNo : Bool -> String
+yesNo b =
+    if b then "yes" else "no"
+
+
+pointerLabel : Pointer -> String
+pointerLabel p =
+    case p of
+        Coarse -> "coarse (finger)"
+        Fine -> "fine (mouse / trackpad / stylus)"
+
+
+-- Compose the axes into a plain-language guess. Note it never claims an
+-- identity ("iPhone"); it describes capabilities, which is all the web knows.
+summary : Device -> String
+summary d =
+    if Device.touchOnly d then
+        "a touch device (phone or tablet), best with finger-sized controls"
+    else if d.pointer == Coarse then
+        "touch-first, with a fine pointer also attached (e.g. iPad + trackpad)"
+    else if Device.canHover d then
+        "a desktop or laptop, where hover and click are available"
+    else
+        "a fine-pointer device without hover"
+
+
+-- Raw width in v1 (the proposal deliberately doesn't freeze a breakpoint yet);
+-- an app picks its own, like this.
+sizeClass : Int -> String
+sizeClass w =
+    if w < 600 then "compact"
+    else if w < 1000 then "medium"
+    else "wide"
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Device" ]
+        [ form
+            (case model.dev of
+                Nothing ->
+                    [ section [] [ text [] "Waiting for the first Device event..." ] ]
+
+                Just d ->
+                    [ section []
+                        [ text [] ("This looks like " ++ summary d ++ ".") ]
+                    , section []
+                        [ text [] ("pointer: " ++ pointerLabel d.pointer)
+                        , text [] ("any fine pointer present: " ++ yesNo d.anyFine)
+                        , text [] ("can hover: " ++ yesNo d.supportsHover)
+                        , text [] ("viewport: " ++ String.fromInt d.width ++ " x " ++ String.fromInt d.height ++ " (" ++ sizeClass d.width ++ ")")
+                        , text [] ("prefers dark: " ++ yesNo d.prefersDark)
+                        , text [] ("prefers reduced motion: " ++ yesNo d.prefersReducedMotion)
+                        ]
+                    , section []
+                        [ text [] ("Device.touchOnly: " ++ yesNo (Device.touchOnly d))
+                        , text [] ("Device.canHover: " ++ yesNo (Device.canHover d))
+                        ]
+                    ]
+            )
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Device"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]

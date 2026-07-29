@@ -66,3 +66,61 @@ func readJSBuiltinNames() (map[string]bool, error) {
 	}
 	return out, nil
 }
+
+// TestJSDeclarationStubsAreComplete closes the hole that let
+// `Entity.enum` ship missing for as long as it did.
+//
+// IsBackendOnlyBuiltin skips the whole `Entity.` prefix above, and for
+// CALLING that is right: no schema helper ever runs in a browser. But
+// "never runs on the client" is not "never evaluated on the client".
+// Top-level values evaluate eagerly, so a module that DECLARES an
+// entity has to evaluate `Entity.define`, `Entity.text` and friends
+// wherever it is loaded — including in the page bundle when the entity
+// shares a module with frontend code. That is why runtime.js already
+// carried stubs for eight of the nine column types: each was added by
+// hand the day someone tripped over it, with nothing pinning the set.
+// The ninth (enum) typechecked and then died in the browser with
+// "unbound name: Entity.enum".
+//
+// That whole situation is gone, and this test now pins its absence. The
+// bundler ships only the declarations a page reaches (ADR 0019), so a schema
+// never arrives in the browser and never needs to evaluate there. The stubs
+// were what kept a bundling mistake quiet; without them, one surfaces as an
+// unbound name — and PickFrontMods refuses the build before that anyway.
+//
+// So the invariant flipped: Entity.* and Repo.* must NOT be defined in the
+// client runtime. Re-adding one would be re-adding the silence.
+func TestJSDefinesNoServerOnlyBuiltins(t *testing.T) {
+	defined, err := readJSBuiltinNames()
+	if err != nil {
+		t.Fatalf("reading JS builtins: %v", err)
+	}
+
+	// The DATA layer only. `App.*`, `Auth.*` and `Service.implement` are also
+	// server-only by IsBackendOnlyBuiltin, and the client still binds them:
+	// the synthetic `__entry` module calls appFrontend, and a shared module
+	// may declare a service beside its implementation. Whether those can be
+	// pruned away too is a separate question nobody has measured, so this
+	// test does not pretend to have an answer for them.
+	serverOnlyData := []string{"Entity.", "Repo.", "Db.", "Server."}
+	var present []string
+	for name := range typecheck.BaseQualifiedSymbols() {
+		inData := false
+		for _, p := range serverOnlyData {
+			if strings.HasPrefix(name, p) {
+				inData = true
+				break
+			}
+		}
+		if inData && defined[name] {
+			present = append(present, name)
+		}
+	}
+	if len(present) > 0 {
+		sort.Strings(present)
+		t.Fatalf("runtime.js defines %d server-only builtin(s) the browser can no longer reach:\n  %s\n\n"+
+			"These were stubs from before the bundler pruned to page-reachable declarations.\n"+
+			"Keeping them turns a bundling regression into a silent no-op instead of an error.",
+			len(present), strings.Join(present, "\n  "))
+	}
+}

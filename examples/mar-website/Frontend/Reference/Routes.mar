@@ -1,0 +1,28 @@
+module Frontend.Reference.Routes exposing
+    ( home, moduleDoc, detail )
+
+
+-- URL surface for the function reference sub-section. Lives under
+-- `/reference` so it composes inside the main site without colliding
+-- with the top-level pages. The bridge from the main site to here is
+-- `Frontend.Routes.reference`.
+--
+-- Three routes, and none of them names a module: which modules exist lives in
+-- the generated data, so adding one costs nothing here.
+
+
+home : Path {}
+home = "/reference"
+
+
+-- One module's page (e.g. /reference/List). The name is spelled the way the
+-- data spells it, which is also how the detail route below spells it.
+moduleDoc : Path { moduleName : String }
+moduleDoc = "/reference/{moduleName:String}"
+
+
+-- One function's detail page, addressed by module + name (e.g.
+-- /reference/List/map). The module pages link here; the page reads the two
+-- segments and looks the function up in the generated data.
+detail : Path { moduleName : String, fn : String }
+detail = "/reference/{moduleName:String}/{fn:String}"

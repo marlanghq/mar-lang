@@ -17,7 +17,7 @@
 //  9. Cleanup tmp on success — keep + print path on failure for
 //     post-mortem
 //
-// Currently invoked via `mar fly deploy --new` so the old flow stays
+// Currently invoked via `mar deploy --new` so the old flow stays
 // the default until this is proven end-to-end. P7 will swap the
 // default and delete the old code.
 
@@ -37,7 +37,7 @@ import (
 	"mar/internal/scaffold"
 )
 
-// runFlyDeploy is the entry point for `mar fly deploy`. Returns a
+// runFlyDeploy is the entry point for `mar deploy`. Returns a
 // process exit code (0 = success).
 //
 // noOpen skips the post-success browser open. CI environments
@@ -46,7 +46,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 	// === 1. Manifest load + validate ===
 	// Going through resolveFlyApp (vs raw loadFlyManifest +
 	// ValidateDeployFly) so the region-validity check
-	// (invalid-region) fires for `mar fly deploy` exactly like it
+	// (invalid-region) fires for `mar deploy` exactly like it
 	// does for the sibling subcommands (preview, logs, status,
 	// secrets, destroy). Without this, a typo like region="gr"
 	// would slip past validation and only fail one minute into
@@ -56,7 +56,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 		if _, ok := err.(*project.DeployFlyError); ok {
 			printDeployFlyError(err)
 		} else {
-			printManifestError("mar fly deploy", err)
+			printManifestError("mar deploy", err)
 		}
 		return 1
 	}
@@ -66,7 +66,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 	// compile errors / missing config BEFORE any Fly interaction) ===
 	topo, err := scaffold.Topology(projectDir)
 	if err != nil {
-		printError("mar fly deploy", err)
+		printError("mar deploy", err)
 		return 1
 	}
 	flyTopo := flyTopology(topo)
@@ -81,7 +81,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 		if errors.As(err, &pcErr) {
 			printProductionConfigError(pcErr)
 		} else {
-			printError("mar fly deploy", err)
+			printError("mar deploy", err)
 		}
 		return 1
 	}
@@ -108,7 +108,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 	// success; one-shot lines on non-TTY).
 	progressStep("Fly authentication", func() {
 		if err := ensureFlyAuth(); err != nil {
-			fprintError("mar fly deploy: %v", err)
+			fprintError("mar deploy: %v", err)
 			os.Exit(1)
 		}
 	})
@@ -151,7 +151,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 		}
 
 		if err := createFlyApp(fly.App); err != nil {
-			fprintError("mar fly deploy: %v", err)
+			fprintError("mar deploy: %v", err)
 			return 1
 		}
 		fmt.Printf("  %s created Fly app %s\n", colorGreen("✓"), colorCyan(fly.App))
@@ -160,7 +160,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 	// === 6. Volume creation (backend / fullstack only) ===
 	if flyTopo == flyTopologyBackend || flyTopo == flyTopologyFullstack {
 		if err := ensureFlyVolume(fly.App, fly.Region); err != nil {
-			fprintError("mar fly deploy: %v", err)
+			fprintError("mar deploy: %v", err)
 			return 1
 		}
 	}
@@ -174,7 +174,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 		if len(missing) > 0 {
 			if !interactive {
 				fprintError(
-					"mar fly deploy: %s missing on Fly app %s: %s",
+					"mar deploy: %s missing on Fly app %s: %s",
 					pluralizeSecrets(len(missing)),
 					colorCyan(fly.App),
 					colorMagenta(strings.Join(missing, ", ")))
@@ -183,7 +183,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 			}
 			sessionVar := manifestSessionSecretVar(manifest)
 			if err := promptAndSetFlySecrets(fly.App, missing, sessionVar); err != nil {
-				fprintError("mar fly deploy: %v", err)
+				fprintError("mar deploy: %v", err)
 				return 1
 			}
 		}
@@ -194,7 +194,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 	// failure so the operator can inspect what was about to deploy. ===
 	tmpDir, err := os.MkdirTemp("", "mar-fly-deploy-*")
 	if err != nil {
-		fprintError("mar fly deploy: create tmp dir: %v", err)
+		fprintError("mar deploy: create tmp dir: %v", err)
 		return 1
 	}
 	success := false
@@ -213,32 +213,32 @@ func runFlyDeploy(path string, noOpen bool) int {
 		buildTarget = "linux-amd64"
 	}
 
-	fmt.Printf("[mar fly deploy] building %s → %s\n", colorCyan(manifest.Name), colorMagenta(distDir))
+	fmt.Printf("[mar deploy] building %s → %s\n", colorCyan(manifest.Name), colorMagenta(distDir))
 	if err := scaffold.Build(projectDir, distDir, buildTarget); err != nil {
-		printError("mar fly deploy", err)
+		printError("mar deploy", err)
 		return 1
 	}
 
 	dockerfile := generateDockerfile(flyTopo, manifest.Name, manifestPort(manifest))
 	if err := os.WriteFile(filepath.Join(tmpDir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
-		fprintError("mar fly deploy: write Dockerfile: %v", err)
+		fprintError("mar deploy: write Dockerfile: %v", err)
 		return 1
 	}
 	flyToml := generateFlyToml(manifest, flyTopo)
 	if err := os.WriteFile(filepath.Join(tmpDir, "fly.toml"), []byte(flyToml), 0o644); err != nil {
-		fprintError("mar fly deploy: write fly.toml: %v", err)
+		fprintError("mar deploy: write fly.toml: %v", err)
 		return 1
 	}
 
 	// === 9. fly deploy from the tmp dir ===
-	fmt.Printf("[mar fly deploy] running %s\n", colorGreen("fly deploy"))
+	fmt.Printf("[mar deploy] running %s\n", colorGreen("fly deploy"))
 	cmd := exec.Command("fly", "deploy")
 	cmd.Dir = tmpDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
-		fprintError("mar fly deploy: fly deploy failed: %v", err)
+		fprintError("mar deploy: fly deploy failed: %v", err)
 		return 1
 	}
 
@@ -267,7 +267,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 func printDeployFlyError(err error) {
 	dfe, ok := err.(*project.DeployFlyError)
 	if !ok {
-		printError("mar fly deploy", err)
+		printError("mar deploy", err)
 		return
 	}
 	switch dfe.Kind {
@@ -294,7 +294,7 @@ func printDeployFlyError(err error) {
 		regionsBlock := formatRegionsBlock()
 
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "%s mar fly deploy: %s has no %s block.\n",
+		fmt.Fprintf(os.Stderr, "%s mar deploy: %s has no %s block.\n",
 			colorRed("Error:"), colorMagenta("mar.json"), colorMagenta("deploy.fly"))
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintf(os.Stderr, "%s %s:\n", colorBold("Add this to"), colorMagenta("mar.json"))
@@ -324,7 +324,7 @@ func printDeployFlyError(err error) {
 		fmt.Fprint(os.Stderr, regionsBlock)
 		fmt.Fprint(os.Stderr, formatMemoryHelp())
 	case "missing-app":
-		fprintError("mar fly deploy: %s is missing %s.",
+		fprintError("mar deploy: %s is missing %s.",
 			colorMagenta("mar.json"), colorMagenta("deploy.fly.app"))
 		fprintHint("%s is the globally-unique Fly app name; it becomes\n"+
 			"      %s and must not collide with another Fly user's app.\n"+
@@ -348,7 +348,7 @@ func printDeployFlyError(err error) {
 		// Pre-compute the regions block to avoid the mid-print pause
 		// (same rationale as the missing-block branch).
 		regionsBlock := formatRegionsBlock()
-		fprintError("mar fly deploy: %s is missing %s.",
+		fprintError("mar deploy: %s is missing %s.",
 			colorMagenta("mar.json"), colorMagenta("deploy.fly.region"))
 		fprintHint("pick a Fly region close to your users, paste the 3-letter\n" +
 			"      code into the manifest.")
@@ -362,17 +362,17 @@ func printDeployFlyError(err error) {
 		// block so the live-fetch fallback (when bundled\'s "no" is
 		// rechecked against live) doesn\'t pause mid-print.
 		regionsBlock := formatRegionsBlock()
-		fprintError("mar fly deploy: %s = %s is not a valid Fly region.",
+		fprintError("mar deploy: %s = %s is not a valid Fly region.",
 			colorMagenta("deploy.fly.region"), colorRed(fmt.Sprintf("%q", dfe.BadValue)))
 		fprintHint("pick a 3-letter code from the list below.")
 		fmt.Fprint(os.Stderr, regionsBlock)
 	case "missing-memory":
-		fprintError("mar fly deploy: %s is missing %s.",
+		fprintError("mar deploy: %s is missing %s.",
 			colorMagenta("mar.json"), colorMagenta("deploy.fly.memory"))
 		fprintHint("pick a machine size based on workload:")
 		fmt.Fprint(os.Stderr, formatMemoryHelp())
 	case "invalid-memory":
-		fprintError("mar fly deploy: %s = %s is not a valid Fly machine size.",
+		fprintError("mar deploy: %s = %s is not a valid Fly machine size.",
 			colorMagenta("deploy.fly.memory"), colorRed(fmt.Sprintf("%q", dfe.BadValue)))
 		fprintHint("pick one of the sizes below.")
 		fmt.Fprint(os.Stderr, formatMemoryHelp())
@@ -380,7 +380,7 @@ func printDeployFlyError(err error) {
 		// Fallback for any future Kind we forget to handle. Plain
 		// printError keeps the line readable even if the structured
 		// renderer doesn\'t know it.
-		printError("mar fly deploy", err)
+		printError("mar deploy", err)
 	}
 }
 

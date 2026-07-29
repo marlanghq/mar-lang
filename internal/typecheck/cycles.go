@@ -1,6 +1,8 @@
 package typecheck
 
 import (
+	"sort"
+
 	"mar/internal/ast"
 )
 
@@ -12,30 +14,22 @@ type declInfo struct {
 	pos        ast.Pos
 }
 
-// checkValueCycles detects illegal dependency cycles between top-level
-// value declarations. Functions can recurse freely (their bodies are
-// closures, evaluated lazily on call); a non-function value can't.
-//
-//	a = a + 1                  -- error: self-cycle
-//	a = b; b = a + 1            -- error: a -> b -> a
-//	a = f 5; f x = a + x        -- error: cycle goes through f, but a
-//	                                       can't be evaluated without
-//	                                       calling f, which reads a's
-//	                                       placeholder
-//	even n = ... odd ...        -- ok: only functions in the cycle
-//	odd  n = ... even ...
-//
-// Returns the first cycle found as an InferError pointing at the
-// declaration position, or nil if no illegal cycle exists.
-func checkValueCycles(mod *ast.Module) error {
-	decls := map[string]declInfo{}
-	deps := map[string][]string{} // name -> top-level names referenced
+// valueGraph is the dependency graph over a module's top-level values:
+// who each one is, and which other top-level names its body reads.
+// Both the cycle check and the evaluation ordering run off it.
+type valueGraph struct {
+	decls map[string]declInfo
+	deps  map[string][]string // name -> top-level names referenced
+}
+
+func buildValueGraph(mod *ast.Module) valueGraph {
+	g := valueGraph{decls: map[string]declInfo{}, deps: map[string][]string{}}
 	for _, d := range mod.Decls {
 		v, ok := d.(*ast.ValueDecl)
 		if !ok {
 			continue
 		}
-		decls[v.Name] = declInfo{isFunction: len(v.Params) > 0, pos: v.Pos}
+		g.decls[v.Name] = declInfo{isFunction: len(v.Params) > 0, pos: v.Pos}
 	}
 	// Walk each value's body collecting top-level refs. Local variables
 	// (let / lambda params / pattern binds) shadow top-level names —
@@ -51,13 +45,23 @@ func checkValueCycles(mod *ast.Module) error {
 			collectPatternBinds(p, locals)
 		}
 		seen := map[string]bool{}
-		collectTopLevelRefs(v.Body, decls, locals, seen)
+		collectTopLevelRefs(v.Body, g.decls, locals, seen)
 		out := make([]string, 0, len(seen))
 		for n := range seen {
 			out = append(out, n)
 		}
-		deps[v.Name] = out
+		// `seen` is a map, so its range order changes run to run. Sort
+		// before storing: orderValueDecls walks these to build the
+		// evaluation order, and that order has to be reproducible.
+		sort.Strings(out)
+		g.deps[v.Name] = out
 	}
+	return g
+}
+
+func checkValueCycles(mod *ast.Module) error {
+	g := buildValueGraph(mod)
+	decls, deps := g.decls, g.deps
 
 	// For each non-function value, DFS to see if it depends back on
 	// itself transitively.
@@ -105,6 +109,83 @@ func findCycle(start string, deps map[string][]string) []string {
 		}
 	}
 	return nil
+}
+
+// orderValueDecls rewrites the module's value declarations into an order
+// the runtimes can evaluate straight through, so a value may reference a
+// value written further down the file.
+//
+// Every runtime evaluates top-level values eagerly, in the order the
+// declarations appear. That made source order load-bearing: `total` reading
+// a `nums` declared below it saw the pre-bind placeholder instead of the
+// list, and blew up later inside a builtin — on a program that typechecks.
+// Fixing it here rather than in each runtime means the Go, JS and Swift
+// evaluators need to know nothing about it; they still walk the list in
+// order, and the list is now in the right order.
+//
+// Two groups, in this order:
+//
+//  1. Functions, keeping source order. A function declaration only builds a
+//     closure over the shared module environment, so it reads nothing and
+//     can be mutually recursive with any other function. Putting them all
+//     first is what lets a value call a function declared below it.
+//  2. Non-function values, dependencies first. checkValueCycles has already
+//     rejected cycles here, so a topological order always exists. Ties keep
+//     source order, so the result is stable and diffs stay readable.
+//
+// Declarations that are not values (types, aliases) keep their slots.
+func orderValueDecls(mod *ast.Module) {
+	g := buildValueGraph(mod)
+
+	slots := []int{}
+	for i, d := range mod.Decls {
+		if _, ok := d.(*ast.ValueDecl); ok {
+			slots = append(slots, i)
+		}
+	}
+	if len(slots) < 2 {
+		return
+	}
+
+	byName := map[string]*ast.ValueDecl{}
+	var funcs, values []*ast.ValueDecl
+	for _, i := range slots {
+		v := mod.Decls[i].(*ast.ValueDecl)
+		byName[v.Name] = v
+		if len(v.Params) > 0 {
+			funcs = append(funcs, v)
+		} else {
+			values = append(values, v)
+		}
+	}
+
+	ordered := make([]*ast.ValueDecl, 0, len(slots))
+	ordered = append(ordered, funcs...)
+
+	// Post-order DFS: emit a value only after everything it reads.
+	done := map[string]bool{}
+	var visit func(v *ast.ValueDecl)
+	visit = func(v *ast.ValueDecl) {
+		if done[v.Name] {
+			return
+		}
+		done[v.Name] = true // set first: a cycle would otherwise spin
+		for _, dep := range g.deps[v.Name] {
+			if info, ok := g.decls[dep]; ok && !info.isFunction {
+				if d := byName[dep]; d != nil {
+					visit(d)
+				}
+			}
+		}
+		ordered = append(ordered, v)
+	}
+	for _, v := range values {
+		visit(v)
+	}
+
+	for n, i := range slots {
+		mod.Decls[i] = ordered[n]
+	}
 }
 
 func joinCycle(path []string) string {
@@ -182,7 +263,7 @@ func collectTopLevelRefs(e ast.Expr, decls map[string]declInfo, locals map[strin
 		collectTopLevelRefs(n.Record, decls, locals, out)
 	case *ast.ENegate:
 		collectTopLevelRefs(n.Inner, decls, locals, out)
-		// EInt, EFloat, EString, EUnit, EFieldAccessor, EQualified, ECtor:
+		// EInt, EString, EUnit, EFieldAccessor, EQualified, ECtor:
 		// no top-level refs to collect.
 	}
 }

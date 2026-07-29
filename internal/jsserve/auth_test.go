@@ -28,7 +28,10 @@ func authTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
 	runtime.SetDBPath(dbPath)
-	SetAuthRuntime("test-secret", auth.SMTPConfig{}) // empty SMTP → stdout sink
+	// No SMTP, stdout sink explicitly allowed — the `mar dev` shape.
+	// The flag is required: a zero-value SMTPConfig now refuses to
+	// deliver rather than printing a code (audit finding #6).
+	SetAuthRuntime("test-secret", auth.SMTPConfig{AllowStdoutSink: true})
 
 	// User entity: { id : Serial, email : Text NotNull }.
 	users := runtime.VEntity{

@@ -1,0 +1,42 @@
+module Frontend.Routes exposing
+    ( home, signIn, verifyCode, nickname, newChallenge, quiz, result, rivals )
+
+
+-- Every URL in Quiz Duel, as typed paths. Nav.pushTo / Nav.replaceTo
+-- check the params against the pattern at compile time, so a route
+-- rename breaks its callers instead of 404-ing at runtime.
+
+
+home : Path {}
+home = "/"
+
+
+signIn : Path {}
+signIn = "/sign-in"
+
+
+verifyCode : Path { email : String }
+verifyCode = "/sign-in/verify/{email:String}"
+
+
+-- One-time gate: a signed-in user with no profile picks a nick here.
+nickname : Path {}
+nickname = "/nickname"
+
+
+newChallenge : Path {}
+newChallenge = "/new"
+
+
+-- The quiz runner for a duel. Distinct from `result` so the URL says
+-- whether you're playing or reviewing.
+quiz : Path { id : Int }
+quiz = "/duel/{id:Int}/play"
+
+
+result : Path { id : Int }
+result = "/duel/{id:Int}"
+
+
+rivals : Path {}
+rivals = "/rivals"

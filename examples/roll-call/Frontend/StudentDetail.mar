@@ -1,0 +1,323 @@
+module Frontend.StudentDetail exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import Frontend.Chrome exposing (sheetHeader)
+import UI exposing ( navigationStack, navigationTitle, topBarTrailing
+    , list, section, header, footer, subtitle
+    , hstack, vstack, spacer
+    , text, textField, button, errorText
+    , submit, disabled, sheet, width, fill)
+
+
+-- One student's attendance record. Mounted at
+-- /classes/{classId:Int}/students/{studentId:Int}.
+--
+-- This is where the numbers get computed on the client from the raw
+-- marks: an attendance RATE (a Decimal percentage, exact base-10, no
+-- float drift), a present-streak, and a present/late/absent
+-- breakdown, plus a recent day-by-day log. The teacher can rename the
+-- student from a sheet.
+
+
+type alias Model =
+    { student    : Maybe (Maybe Shared.Student)
+    , history    : Maybe (List Shared.AttendanceMark)
+    , error      : Maybe String
+    , showRename : Bool
+    , draft      : String
+    , busy       : Bool
+    }
+
+
+type Msg
+    = StudentFetched (Result Service.Error (Maybe Shared.Student))
+    | HistoryFetched (Result Service.Error (List Shared.AttendanceMark))
+    | RenameClicked
+    | RenameDismissed
+    | DraftChanged String
+    | RenameSubmitted
+    | Renamed (Result Service.Error (Maybe Shared.Student))
+
+
+init : Shared.User -> { classId : Int, studentId : Int } -> (Model, Cmd Msg)
+init _ params =
+    ( { student = Nothing, history = Nothing, error = Nothing, showRename = False, draft = "", busy = False }
+    , Cmd.batch
+        [ Service.call Shared.getStudent { id = params.studentId } StudentFetched
+        , Service.call Shared.studentHistory { studentId = params.studentId } HistoryFetched
+        ]
+    )
+
+
+update : Shared.User -> { classId : Int, studentId : Int } -> Msg -> Model -> (Model, Cmd Msg)
+update _ params msg model =
+    case msg of
+        StudentFetched (Ok found) ->
+            ( { model | student = Just found }, Cmd.none )
+
+        StudentFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        HistoryFetched (Ok history) ->
+            ( { model | history = Just history }, Cmd.none )
+
+        HistoryFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        RenameClicked ->
+            let
+                currentName =
+                    case model.student of
+                        Just (Just s) -> s.name
+                        _             -> ""
+            in
+            ( { model | showRename = True, draft = currentName, error = Nothing }, Cmd.none )
+
+        RenameDismissed ->
+            ( { model | showRename = False }, Cmd.none )
+
+        DraftChanged value ->
+            ( { model | draft = value }, Cmd.none )
+
+        RenameSubmitted ->
+            if String.trim model.draft == "" || model.busy then
+                ( model, Cmd.none )
+            else
+                ( { model | busy = True }
+                , Service.call Shared.renameStudent
+                    { id = params.studentId, name = model.draft }
+                    Renamed
+                )
+
+        Renamed (Ok (Just updated)) ->
+            ( { model | busy = False, showRename = False, student = Just (Just updated) }, Cmd.none )
+
+        Renamed (Ok Nothing) ->
+            ( { model | busy = False, error = Just "Could not rename this student." }, Cmd.none )
+
+        Renamed (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+
+-- ===== Stats =====
+
+
+-- Attendance rate as an exact base-10 percentage, rounded to one
+-- decimal only at the very end. "Showed up" folds Late in with
+-- Present. Multiply before dividing so the ratio keeps its precision;
+-- `/` yields a Decimal.Division (a held quotient) that Decimal.rounded
+-- resolves with an explicit mode + scale — no silent float rounding.
+ratePercent : Int -> Int -> String
+ratePercent showedUp total =
+    if total == 0 then
+        "—"
+    else
+        Decimal.toString
+            (Decimal.rounded Decimal.HalfEven 1
+                (Decimal.fromInt (showedUp * 100) / Decimal.fromInt total)
+            )
+            ++ "%"
+
+
+-- Consecutive recorded days, most recent first, that the student
+-- showed up (present or late). Stops at the first absence. Walks a
+-- date-descending list, so it's a genuine "current run", not a total.
+currentStreak : List Shared.AttendanceMark -> Int
+currentStreak sortedDesc =
+    case sortedDesc of
+        [] ->
+            0
+
+        m :: rest ->
+            if Shared.countedPresent (Shared.statusFromInt m.status) then
+                1 + currentStreak rest
+            else
+                0
+
+
+sortByDayDesc : List Shared.AttendanceMark -> List Shared.AttendanceMark
+sortByDayDesc marks =
+    List.reverse (List.sortBy (\m -> m.dayKey) marks)
+
+
+-- ===== VIEW =====
+
+
+view : Shared.User -> { classId : Int, studentId : Int } -> Model -> View Msg
+view _ _ model =
+    navigationStack (navBar model)
+        [ list [] (sections model)
+        , renameSheet model
+        ]
+
+
+navBar : Model -> List (Attr NavStack)
+navBar model =
+    case model.student of
+        Just (Just student) ->
+            [ navigationTitle student.name
+            , topBarTrailing (button [] RenameClicked "Rename")
+            ]
+
+        _ ->
+            [ navigationTitle "Student" ]
+
+
+sections : Model -> List (View Msg)
+sections model =
+    case (model.student, model.history) of
+        (Just Nothing, _) ->
+            [ section [ header "Not found" ] [ subtitle "This student is no longer on the roster." ] ]
+
+        (Just (Just _), Just history) ->
+            List.concat
+                [ errorSection model
+                , [ summarySection history ]
+                , [ breakdownSection history ]
+                , recentSection history
+                ]
+
+        _ ->
+            [ section [] [ text [] "Loading…" ] ]
+
+
+errorSection : Model -> List (View Msg)
+errorSection model =
+    case model.error of
+        Just why ->
+            [ section [ header "Something went wrong" ] [ errorText why ] ]
+
+        Nothing ->
+            []
+
+
+summarySection : List Shared.AttendanceMark -> View Msg
+summarySection history =
+    let
+        counts =
+            Shared.tally history
+
+        total =
+            List.length history
+
+        showedUp =
+            counts.present + counts.late
+
+        streak =
+            currentStreak (sortByDayDesc history)
+    in
+    section
+        [ header "Attendance"
+        , footer (recordedLabel total)
+        ]
+        [ statRow "Attendance rate" (ratePercent showedUp total)
+        , statRow "Current streak" (streakLabel streak)
+        ]
+
+
+statRow : String -> String -> View Msg
+statRow label value =
+    hstack []
+        [ text [] label
+        , spacer
+        , text [] value
+        ]
+
+
+recordedLabel : Int -> String
+recordedLabel n =
+    if n == 1 then "1 day recorded" else String.fromInt n ++ " days recorded"
+
+
+streakLabel : Int -> String
+streakLabel n =
+    if n == 0 then
+        "None right now"
+    else if n == 1 then
+        "1 day"
+    else
+        String.fromInt n ++ " days"
+
+
+breakdownSection : List Shared.AttendanceMark -> View Msg
+breakdownSection history =
+    let
+        counts =
+            Shared.tally history
+    in
+    section [ header "Breakdown" ]
+        [ statRow "Present" (String.fromInt counts.present)
+        , statRow "Late" (String.fromInt counts.late)
+        , statRow "Absent" (String.fromInt counts.absent)
+        ]
+
+
+recentSection : List Shared.AttendanceMark -> List (View Msg)
+recentSection history =
+    if List.isEmpty history then
+        [ section [ header "Recent days" ]
+            [ subtitle "No attendance recorded yet." ]
+        ]
+    else
+        [ section
+            [ header "Recent days"
+            , footer "Newest first."
+            ]
+            (List.map dayRow (List.take 14 (sortByDayDesc history)))
+        ]
+
+
+dayRow : Shared.AttendanceMark -> View Msg
+dayRow mark =
+    hstack []
+        [ text [] (formatDay mark.day)
+        , spacer
+        , text [] (Shared.statusLabel (Shared.statusFromInt mark.status))
+        ]
+
+
+formatDay : Time -> String
+formatDay t =
+    String.fromInt (Time.year t)
+        ++ "-"
+        ++ pad2 (Time.month t)
+        ++ "-"
+        ++ pad2 (Time.day t)
+
+
+pad2 : Int -> String
+pad2 n =
+    String.padLeft 2 '0' (String.fromInt n)
+
+
+renameSheet : Model -> View Msg
+renameSheet model =
+    sheet
+        { open      = model.showRename
+        , onDismiss = RenameDismissed
+        , outlet    = "rename-student"
+        }
+        [ vstack []
+            [ sheetHeader "Cancel" "Rename student" RenameDismissed
+                (button [ disabled model.busy ] RenameSubmitted "Save")
+            , section []
+                [ textField
+                    [ submit RenameSubmitted, width fill, disabled model.busy ]
+                    "Name" model.draft DraftChanged
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.dynamicProtected
+        { path   = Frontend.Routes.studentDetail
+        , title  = "Student"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ _ -> Sub.none
+        }

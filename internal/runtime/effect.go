@@ -248,6 +248,8 @@ func serviceErrorString(v Value) string {
 		return "Can't reach the server. Check your connection and try again."
 	case "Unauthorized":
 		return "Your session has expired. Please sign in again."
+	case "RateLimited":
+		return "Too many requests. Wait a moment and try again."
 	case "ServerError":
 		if len(c.Args) == 1 {
 			if s, ok := c.Args[0].(VString); ok {

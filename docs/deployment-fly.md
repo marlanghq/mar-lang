@@ -1,8 +1,9 @@
 # Deploying to Fly.io
 
-`mar fly` wraps the full Fly.io deployment lifecycle behind a single
-command. You configure the app once in `mar.json`; every subsequent
-operation reads from there.
+`mar deploy` ships a fullstack app to Fly.io; `mar fly` wraps the
+surrounding lifecycle (preview, logs, secrets, database, destroy).
+You configure the app once in `mar.json`; every operation reads from
+there.
 
 Fly's edge proxy terminates TLS for free, so HTTPS is automatic. No
 reverse proxy or cert management to configure on your side.
@@ -52,8 +53,8 @@ All three fields are required:
 | `region` | One of Fly's region codes (`gru`, `iad`, `fra`, `nrt`, …). Pick close to your users. |
 | `memory` | Machine size, `256mb`, `512mb`, `1gb`, `2gb`, `4gb`, or `8gb`.            |
 
-If the block is missing or malformed, `mar fly deploy` (or any
-other `mar fly *`) prints a paste-ready snippet plus the full list
+If the block is missing or malformed, `mar deploy` (or any
+`mar fly *` command) prints a paste-ready snippet plus the full list
 of valid regions and memory sizes.
 
 ## First deploy
@@ -61,7 +62,7 @@ of valid regions and memory sizes.
 From your project directory (the one containing `mar.json`):
 
 ```sh
-mar fly deploy
+mar deploy
 ```
 
 That's it. The single command:
@@ -91,7 +92,7 @@ deploys are seconds.
 
 ```sh
 git pull          # or just edit
-mar fly deploy
+mar deploy
 ```
 
 The volume + secrets persist across deploys; only the binary layer
@@ -100,7 +101,7 @@ rebuilds.
 To skip the auto-open-in-browser step (CI / SSH / headless):
 
 ```sh
-mar fly deploy --no-open
+mar deploy --no-open
 ```
 
 `CI=true` in the environment also disables the auto-open.
@@ -128,7 +129,7 @@ output; per-request data lives in the admin panel at `/_mar/admin`.
 
 ## Managing secrets
 
-`mar fly deploy` handles bulk secret pushing automatically. For
+`mar deploy` handles bulk secret pushing automatically. For
 targeted rotation / inspection:
 
 ```sh
@@ -162,13 +163,13 @@ mar fly admin list
 ```
 
 Read-only view of production's `_mar_admins` table. Adding /
-removing admins happens via `mar.json` + `mar fly deploy` (the
+removing admins happens via `mar.json` + `mar deploy` (the
 committed config is the source of truth).
 
 ## Migrations
 
 Schema migrations run automatically on every boot. If you add an
-entity field, the next `mar fly deploy` will:
+entity field, the next `mar deploy` will:
 
 1. Build with the new schema.
 2. Boot the new container.
@@ -205,7 +206,7 @@ mar fly destroy
 Asks for confirmation twice, first a yes/no, then it makes you
 type the app name. Destroys both the app and its volume; data is
 lost. The `deploy.fly` block in `mar.json` stays put; re-run
-`mar fly deploy` to recreate.
+`mar deploy` to recreate.
 
 ## Frontend-only deploys
 
@@ -217,7 +218,7 @@ the static bundle is portable to any of them, built with
 
 ## Topology and Docker, under the hood
 
-Mar abstracts Docker entirely. Every `mar fly deploy` regenerates
+Mar abstracts Docker entirely. Every `mar deploy` regenerates
 the Dockerfile + `fly.toml` in `/tmp/mar-fly-<random>/`, runs
 `fly deploy` from there, and deletes the temp dir on success
 (preserves on failure for debugging).

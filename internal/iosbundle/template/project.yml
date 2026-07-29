@@ -2,13 +2,19 @@ name: __MAR_APP_NAME__
 options:
   minimumXcodeGenVersion: 2.38.0
 attributes:
-  # Marks the .pbxproj as "last validated against Xcode 16.x". Without
-  # this, Xcode 16+ shows the yellow "Update to recommended settings"
+  # Marks the .pbxproj as "last validated against Xcode 26". Without
+  # this, Xcode shows the yellow "Update to recommended settings"
   # warning every time the project opens. The value is a 4-digit
-  # encoding: 1600 = Xcode 16.0, 1620 = 16.2, 1700 = 17.0. We track
-  # a few versions behind cutting-edge — there's no harm in being
-  # conservative, and bumping it later is a one-line change.
-  LastUpgradeCheck: "1620"
+  # encoding: 1600 = Xcode 16.0, 1620 = 16.2, 2600 = 26.0. Keep it at
+  # the Xcode major that generated projects are actually opened with;
+  # when a new Xcode ships, vet its recommended-settings list and bump
+  # this in the same change. Xcode 26's new recommendations (the
+  # Approachable Concurrency / MemberImportVisibility upcoming
+  # features) were reviewed and deliberately NOT adopted: the runtime
+  # holds interpreter closures under `targeted` strict concurrency and
+  # opting into new isolation inference wholesale would change
+  # semantics we rely on without a device-verified win.
+  LastUpgradeCheck: "2600"
 settings:
   base:
     # iOS 18 deployment target lets us use the Observation framework
@@ -49,6 +55,25 @@ settings:
     CLANG_WARN__DUPLICATE_METHOD_MATCH: YES
     CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION: YES_AGGRESSIVE
     CLANG_ANALYZER_NONNULL: YES
+  configs:
+    # Debug builds OPTIMIZED. Xcode's ▶ Run uses the Debug config, and
+    # this app's hot path is the Mar tree-walking interpreter: at the
+    # default -Onone it runs 10-30x slower (every ARC retain/release,
+    # enum match and Dictionary probe unelided), which turns 60fps
+    # canvas games into a slideshow. The generated project is a build
+    # artifact — nobody step-debugs its Swift — so we trade debugger
+    # fidelity for the interpreter running at full speed out of the
+    # box. #if DEBUG paths (Bonjour discovery, localhost fallback) are
+    # untouched: SWIFT_ACTIVE_COMPILATION_CONDITIONS still carries
+    # DEBUG; optimization level is independent of that flag.
+    # wholemodule lets Eval/Env/MarValue inline across files, which is
+    # where the interpreter's win actually comes from. Testability off
+    # because it blocks internal-symbol optimization and the template
+    # has no test target.
+    debug:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      SWIFT_COMPILATION_MODE: wholemodule
+      ENABLE_TESTABILITY: NO
 targets:
   __MAR_APP_NAME__:
     type: application
@@ -109,6 +134,13 @@ targets:
         # Set `ios.serverUrl` in mar.json and run
         # `mar build --target ios` to change it.
         MarBaseURL: __MAR_DEFAULT_BASE_URL__
+
+        # MarAppName is the raw mar.json `name` — exactly what
+        # `mar dev` advertises as its mDNS instance name. The DEBUG
+        # Bonjour auto-connect only adopts servers whose name matches,
+        # so another project's dev server on the same LAN can't hijack
+        # this app's backend.
+        MarAppName: __MAR_PROJECT_NAME__
 
         # Bonjour / mDNS discovery — the backend publishes
         # `_mar._tcp` when it starts (jsserve.publishBonjour); the

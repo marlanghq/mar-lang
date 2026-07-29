@@ -1,0 +1,20 @@
+module Backend.Users exposing (users)
+
+
+import Shared
+
+
+-- The framework's user table. Auth owns its lifecycle: Auth.config (in
+-- Main) reads this entity and the email-code flow inserts a row on the
+-- first sign-in. A player's game identity (nick, W/L record) lives in
+-- the separate `players` entity, joined by userId.
+users : Entity Shared.User
+users =
+    Entity.define
+        { name = "users"
+        , columns =
+            { id    = Entity.serial
+            , email = Entity.text Entity.notNull
+            }
+        , uniques = []
+        }

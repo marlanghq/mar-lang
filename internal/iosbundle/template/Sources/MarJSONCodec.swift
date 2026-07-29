@@ -35,7 +35,18 @@ enum MarJSONCodec {
             if CFGetTypeID(n) == CFBooleanGetTypeID() {
                 return .bool(n.boolValue)
             }
-            return .int(n.intValue)
+            let d = n.doubleValue
+            if d == d.rounded(.towardZero) && abs(d) < 9_007_199_254_740_992 {
+                return .int(n.intValue)
+            }
+            // A fractional JSON number decodes into a Decimal via its
+            // shortest-round-trip digits (Swift renders 19.99 as
+            // "19.99"), matching the Go and JS decoders. Exponent
+            // forms / overflows fall back to .float interop.
+            if let dec = DecMath.parseDecimalString("\(d)") {
+                return .decimal(dec)
+            }
+            return .float(d)
         }
         if let s = any as? String { return .string(s) }
         if let b = any as? Bool { return .bool(b) }
@@ -65,6 +76,13 @@ enum MarJSONCodec {
                     return .char(scalar)
                 }
                 return .char(Unicode.Scalar(0xFFFD)!)
+            }
+            // Decimal round-trip — `{__dec: "1.50"}`. Rebuilt textually
+            // so the exact coefficient + scale survive; same convention
+            // as the Go and JS decoders.
+            if let s = dict["__dec"] as? String, dict.count == 1,
+               let dec = DecMath.parseDecimalString(s) {
+                return .decimal(dec)
             }
             // Time round-trip — `{__time: "ISO 8601"}` rebuilds a
             // VTime so user code typed as `createdAt : Time`
@@ -114,10 +132,18 @@ enum MarJSONCodec {
         switch v {
         case .int(let n): return n
         case .float(let f): return f
+        // The value rides as a STRING under the __dec marker so no
+        // JSON parser on any side routes the digits through binary
+        // floating point.
+        case .decimal(let d): return ["__dec": DecMath.decString(d)] as [String: Any]
+        // Division never crosses a boundary (typed code can't ship
+        // it); this codec is non-throwing, so degrade to null rather
+        // than crash.
+        case .division: return NSNull()
         case .string(let s): return s
         case .bool(let b): return b
         case .unit: return NSNull()
-        case .duration(let s): return s     // Duration → seconds (Int)
+        case .duration(let s): return s     // Duration → seconds (whole renders as int, sub-second keeps the fraction)
         case .time(let ms):
             let d = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
             let f = ISO8601DateFormatter()
@@ -252,6 +278,9 @@ enum MarJSONCodec {
         switch kind {
         case "EInt":
             return .int(intOf(dict["value"]))
+        case "EDecimal":
+            return .decimal(coef: stringOf(dict["coef"]),
+                            scale: intOf(dict["scale"]))
         case "EFloat":
             if let d = dict["value"] as? Double { return .float(d) }
             return .float(Double(intOf(dict["value"])))
@@ -266,11 +295,13 @@ enum MarJSONCodec {
         case "EUnit":
             return .unit
         case "EVar":
+            if let impl = elaboratedImpl(dict) { return .var(impl) }
             return .var(stringOf(dict["name"]))
         case "ECtor":
             return .ctor(module: stringList(dict["module"]),
                          name: stringOf(dict["name"]))
         case "EQualified":
+            if let impl = elaboratedImpl(dict) { return .var(impl) }
             return .qualified(module: stringList(dict["module"]),
                               name: stringOf(dict["name"]))
         case "ENegate":
@@ -380,6 +411,17 @@ enum MarJSONCodec {
     }
     private static func stringList(_ v: Any?) -> [String] {
         v as? [String] ?? []
+    }
+
+    /// `impl` is the native implementation the typechecker chose for this
+    /// reference (ast.EVar.Impl / ast.EQualified.Impl) — today only a
+    /// Decimal List.sum / List.product, whose empty-list zero the values
+    /// cannot reveal. The Go runtime reads the flag off the shared AST; the
+    /// wire has no shared AST, so this side resolves the reference at decode
+    /// and hands the evaluator a plain name. Same decision, one step earlier.
+    private static func elaboratedImpl(_ dict: [String: Any]) -> String? {
+        guard let impl = dict["impl"] as? String, !impl.isEmpty else { return nil }
+        return impl
     }
 
     /// Build a Unicode.Scalar from an Int code point, substituting

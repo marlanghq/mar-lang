@@ -1,0 +1,62 @@
+module Frontend.Reference.ModuleDoc exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, text
+    )
+import Frontend.Reference.Data exposing (modules)
+import Frontend.Reference.Render exposing (moduleDoc)
+import Frontend.Reference.Routes
+
+
+-- One module's page, for every module at once. This used to be one near-identical
+-- file per module (ListDoc, StringDoc, MaybeDoc), which meant a new module in the
+-- reference cost a file here, an import, a route and a registration — four edits
+-- to say something the generated data already knew. It is a dynamic route now, so
+-- adding a module is purely a content change in internal/refgen: the site learns
+-- about it for free.
+--
+-- The URL carries the module name as the data spells it (/reference/List), which
+-- also makes it agree with the detail route below it (/reference/List/map).
+
+
+type alias Params =
+    { moduleName : String }
+
+
+type alias Model = ()
+
+
+type Msg
+    = NoOp
+
+
+init : Params -> (Model, Cmd Msg)
+init _ = ((), Cmd.none)
+
+
+update : Params -> Msg -> Model -> (Model, Cmd Msg)
+update _ _ model = ( model, Cmd.none )
+
+
+view : Params -> Model -> View Msg
+view params _ =
+    if List.member params.moduleName modules then
+        moduleDoc params.moduleName
+
+    else
+        navigationStack [ navigationTitle "Reference" ]
+            [ list [] [ section [] [ text [] "That module is not in the reference." ] ] ]
+
+
+page : Page
+page =
+    Page.dynamic
+        { path = Frontend.Reference.Routes.moduleDoc
+        , title = "Reference"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ _ -> Sub.none
+        }

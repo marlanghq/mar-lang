@@ -86,10 +86,12 @@ view _ =
                 [ header "Helping out"
                 , footer "Pull requests are not accepted yet. The language and runtime are still moving too fast."
                 ]
-                [ text [] "The most useful things right now:"
-                , text [] "• Try Mar on a real side project and share what worked or didn't."
-                , text [] "• Report bugs and rough edges as you find them."
-                , text [] "• Help spread the word."
+                [ vstack []
+                    [ text [] "The most useful things right now:"
+                    , text [] "• Try Mar on a real side project and share what worked or didn't."
+                    , text [] "• Report bugs and rough edges as you find them."
+                    , text [] "• Help spread the word."
+                    ]
                 , paragraph
                     [ span [] "Channels: "
                     , span [link "https://github.com/marlanghq/mar-lang/issues"] "GitHub issues"
@@ -102,10 +104,6 @@ view _ =
                 [ paragraph
                     [ span [] "Repository: "
                     , span [link "https://github.com/marlanghq/mar-lang"] "github.com/marlanghq/mar-lang"
-                    ]
-                , paragraph
-                    [ span [] "Release binaries: "
-                    , span [link "https://github.com/marlanghq/mar-lang/releases"] "github.com/marlanghq/mar-lang/releases"
                     ]
                 ]
             , section [ header "Copyright" ]

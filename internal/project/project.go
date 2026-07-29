@@ -209,7 +209,7 @@ func Load(root string) (*Project, error) {
 // keeps bare names module-local; cross-module references must use
 // `Module.name`, which the parser/typechecker already enforce except
 // for explicit `exposing` imports.
-func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByName map[string]*ast.Module) error {
+func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByName map[string]*ast.Module, types map[string]typecheck.Type) error {
 	modEnv := runtime.NewChildEnv(rEnv)
 
 	// Record type aliases double as positional constructors (Elm-style; see
@@ -333,7 +333,10 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByNa
 		if svc, ok := val.(runtime.VService); ok && svc.OriginName == "" {
 			svc.OriginModule = modName
 			svc.OriginName = v.Name
-			val = svc
+			// And the declared request shape, so the dispatcher can turn a
+			// malformed body into a 422 naming the field rather than letting
+			// it reach a handler that was checked assuming otherwise.
+			val = stampServiceShape(svc, types[v.Name])
 		}
 		modEnv.Define(v.Name, val)
 		rEnv.Define(modName+"."+v.Name, val)

@@ -26,7 +26,7 @@ listMyMentions input user =
                 let
                     filtered =
                         if input.onlyUnseen then
-                            List.filter (\m -> if m.seen then False else True) rows
+                            List.filter (\m -> not m.seen) rows
                         else
                             rows
 

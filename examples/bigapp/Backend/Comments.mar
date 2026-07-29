@@ -224,7 +224,7 @@ summarizeReactions viewerId rows =
         -- order across calls.
         distinctEmojis =
             List.foldl
-                (\acc r ->
+                (\r acc ->
                     if List.member r.emoji acc then
                         acc
                     else

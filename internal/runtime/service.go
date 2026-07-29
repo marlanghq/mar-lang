@@ -51,6 +51,14 @@ type VService struct {
 	RequireRole  Value
 	LoadResource Value
 	Policy       Value
+
+	// InputShape is the declared request type, reduced to what checking a
+	// decoded JSON value needs. It is stamped by the project loader (which
+	// can see both the checker's types and this package) rather than derived
+	// here, because types are erased at this boundary — see wire.go and
+	// ADR 0016. Nil means "not stamped", and then nothing is checked: the
+	// admin panel and the tests build services by hand.
+	InputShape *WireShape
 }
 
 func (VService) isValue() {}
@@ -132,6 +140,14 @@ func serviceBuiltins() map[string]Value {
 // before any user code runs.
 func ExposedServiceToRoute(es VExposedService) Value {
 	svc := es.Service
+	// Defense in depth (security-audit-2026-07-15.md #1): any authorization
+	// gate is meaningless without an authenticated user, so treat the
+	// presence of a role/resource/policy gate as implying RequiresUser. Even
+	// if a decorator ever forgot to set it, a gated service can never serve
+	// public through this path.
+	if svc.RequireRole != nil || svc.LoadResource != nil || svc.Policy != nil {
+		svc.RequiresUser = true
+	}
 	wrapped := VFn{
 		Arity: 1,
 		Native: func(args []Value) (Value, error) {
@@ -148,6 +164,15 @@ func ExposedServiceToRoute(es VExposedService) Value {
 					input, err := assembleServiceInput(svc, reqPath, query, body)
 					if err != nil {
 						return makeResp(422, fmt.Sprintf("invalid request: %v", err)), nil
+					}
+					// The one value in the program the type system did not
+					// produce. Everything downstream was checked assuming it
+					// is a `req`, so it has to be made one here or the
+					// mismatch surfaces as a 500 from inside a builtin.
+					if svc.InputShape != nil {
+						if err := CheckWire(input, *svc.InputShape); err != nil {
+							return makeResp(422, fmt.Sprintf("invalid request: %v", err)), nil
+						}
 					}
 					handler := svc.Handler
 					if svc.RequiresUser {

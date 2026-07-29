@@ -29,8 +29,8 @@ runtime stubs + iOS xcodeproj (requires `xcodegen`).
 
 ## Repository layout
 
-- `cmd/mar` — the CLI (dev, build, check, init, migrate, fly,
-  cloudflare-pages, admin, completion, …).
+- `cmd/mar` — the CLI (dev, build, check, init, migrate, deploy, fly,
+  admin, completion, …).
 - `cmd/mar-runtime` — the standalone server runtime; cross-compiled into
   per-OS stubs that `make build` embeds into `./mar`.
 - `internal/lexer`, `internal/parser`, `internal/typecheck` — front end
@@ -126,7 +126,7 @@ native symbol sets, not `image`.
   `api/` `services/`. The check is `jsserve.ReservedPublicPath`, which
   lives next to the route handlers it mirrors — keep it in sync when
   adding a new top-level route.
-- **`mar cloudflare-pages deploy` auto-opens the per-deployment URL**, not
+- **`mar deploy` auto-opens the per-deployment URL**, not
   the production alias (the alias lags a few seconds and would show the
   previous version).
 

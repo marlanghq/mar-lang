@@ -3,14 +3,30 @@
   "name": "mar",
   "scopeName": "source.mar",
   "patterns": [
-    { "include": "#comments" },
-    { "include": "#strings" },
-    { "include": "#chars" },
-    { "include": "#keywords" },
-    { "include": "#types" },
-    { "include": "#operators" },
-    { "include": "#numbers" },
-    { "include": "#identifiers" }
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#chars"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#identifiers"
+    }
   ],
   "repository": {
     "comments": {
@@ -42,7 +58,9 @@
       "name": "string.quoted.single.mar",
       "match": "'(\\\\u\\{[0-9a-fA-F]+\\}|\\\\.|[^'\\\\])'",
       "captures": {
-        "0": { "name": "string.quoted.single.mar" }
+        "0": {
+          "name": "string.quoted.single.mar"
+        }
       }
     },
     "keywords": {
@@ -60,8 +78,9 @@
     "types": {
       "patterns": [
         {
+          "comment": "Builtin types. `Decimal` (not Float — Mar has no binary floats) and the Canvas/Sound/Device vocabulary belong here; anything absent still gets the generic capitalized-identifier rule below.",
           "name": "support.type.mar",
-          "match": "\\b(Int|Float|String|Bool|Char|List|Maybe|Result|Dict|Set|Time|Duration|Order|Task|Cmd|Sub|Generator|View|Page|Path|Attr|Width|Height|KeyedView|Inline|Service|ExposedService|Entity|Column|Constraint|Auth|Method)\\b"
+          "match": "\\b(Int|Decimal|String|Bool|Char|List|Maybe|Result|Dict|Set|Time|Duration|Order|Task|Cmd|Sub|View|KeyedView|Page|Path|Attr|Width|Height|Size|Inline|Canvas|Color|Shape|Transform|Align|Blend|Pointer|Device|Sound|Service|ExposedService|Entity|Column|Constraint|Auth|AdminSession|Method)\\b"
         },
         {
           "name": "constant.language.mar",
@@ -75,13 +94,15 @@
       ]
     },
     "operators": {
+      "comment": "`//` is integer division and must come before `/` (decimal division) so it lexes as one token, not two.",
       "name": "keyword.operator.mar",
-      "match": "(\\+\\+|->|<-|\\|>|<\\||==|/=|<=|>=|<|>|::|&&|\\|\\||\\+|-|\\*|/|=|\\\\)"
+      "match": "(\\+\\+|->|<-|\\|>|<\\||==|//|/=|<=|>=|<|>|::|&&|\\|\\||\\+|-|\\*|/|=|\\\\)"
     },
     "numbers": {
       "patterns": [
         {
-          "name": "constant.numeric.float.mar",
+          "comment": "Decimal literal — exact base-10, not a float. `/` on two of these yields a Decimal.Division that the caller resolves; `//` is the integer division.",
+          "name": "constant.numeric.decimal.mar",
           "match": "\\b\\d+\\.\\d+\\b"
         },
         {
@@ -96,9 +117,18 @@
           "comment": "Module-qualified identifier",
           "match": "\\b([A-Z][A-Za-z0-9_]*)\\.([a-z][A-Za-z0-9_]*)\\b",
           "captures": {
-            "1": { "name": "entity.name.namespace.mar" },
-            "2": { "name": "variable.other.mar" }
+            "1": {
+              "name": "entity.name.namespace.mar"
+            },
+            "2": {
+              "name": "variable.other.mar"
+            }
           }
+        },
+        {
+          "comment": "Bare globals — in scope everywhere with no import and no module prefix. They have no qualified spelling (`Basics.not` does not compile), so without this rule they read as ordinary local names.",
+          "name": "support.function.mar",
+          "match": "\\b(always|linkTo|not|max|min|clamp|abs|modBy|remainderBy)\\b"
         },
         {
           "name": "variable.other.mar",

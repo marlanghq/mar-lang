@@ -9,7 +9,7 @@ Estimated time: **~30 minutes**, plus deploy time for two builds.
 
 ## Prerequisites
 
-- [ ] A Fly app deployed via `mar fly deploy` (any small project,
+- [ ] A Fly app deployed via `mar deploy` (any small project,
       even the scaffolded starter works).
 - [ ] `mar.json` configured with at least one admin in `admins[]`
       (so you can log into the panel).
@@ -34,7 +34,7 @@ Estimated time: **~30 minutes**, plus deploy time for two builds.
 files to the volume.
 
 1. [ ] Deploy with the 1h-interval auto-backup config:
-       `mar fly deploy`
+       `mar deploy`
 2. [ ] Wait ~70 seconds (1s grace + a small slack).
 3. [ ] Check the catalog landed:
        `fly ssh console --app YOUR_APP -C "ls -la /data/backups/"`
@@ -123,7 +123,7 @@ backups instead of silently corrupting data.
        newTable = Entity.define { ... }
        ```
 
-       `mar fly deploy`
+       `mar deploy`
 
 3. [ ] Try to restore the older backup (taken BEFORE the new
        entity) with `mar-runtime restore-db` over SSH, as in

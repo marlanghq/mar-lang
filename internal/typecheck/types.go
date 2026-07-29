@@ -55,6 +55,13 @@ const (
 	// comparable+appendable into `compappend`; we keep the two kinds
 	// disjoint and reject the overlap (see mergeKinds).
 	KindAppendable Kind = 2
+
+	// KindNumber — restricted to Int / Decimal. Used by `+ - *` and
+	// negation, mirroring Elm's `number` constrained variable with
+	// Decimal in Float's chair. Both operands unify to ONE member;
+	// mixing Int and Decimal stays a type error (convert explicitly
+	// with Decimal.fromInt).
+	KindNumber Kind = 3
 )
 
 func (k Kind) String() string {
@@ -63,6 +70,8 @@ func (k Kind) String() string {
 		return "comparable"
 	case KindAppendable:
 		return "appendable"
+	case KindNumber:
+		return "number"
 	default:
 		return ""
 	}
@@ -96,6 +105,8 @@ func (v TVar) String() string {
 		return fmt.Sprintf("comparable%d", v.ID)
 	case KindAppendable:
 		return fmt.Sprintf("appendable%d", v.ID)
+	case KindNumber:
+		return fmt.Sprintf("number%d", v.ID)
 	}
 	return fmt.Sprintf("t%d", v.ID)
 }
@@ -260,7 +271,23 @@ func IsComparableType(t Type) bool {
 		return false
 	}
 	switch c.Name {
-	case "Int", "Float", "String", "Char":
+	case "Int", "String", "Char", "Decimal":
+		return len(c.Args) == 0
+	}
+	return false
+}
+
+// IsNumberType reports whether t is a built-in numeric type — the
+// members of the `number` constraint `+ - *` and negation accept.
+// Decimal.Division is deliberately NOT here: an unresolved division
+// has no numeric value until a resolver names its precision.
+func IsNumberType(t Type) bool {
+	c, ok := t.(TCon)
+	if !ok {
+		return false
+	}
+	switch c.Name {
+	case "Int", "Decimal":
 		return len(c.Args) == 0
 	}
 	return false
@@ -293,7 +320,6 @@ func IsAppendableType(t Type) bool {
 
 var (
 	TInt      = TCon{Name: "Int"}
-	TFloat    = TCon{Name: "Float"}
 	TString   = TCon{Name: "String"}
 	TBool     = TCon{Name: "Bool"}
 	TChar     = TCon{Name: "Char"}
@@ -312,6 +338,25 @@ var (
 	// first argument to Service.declare: it fixes the verb a service
 	// answers on, and the compiler holds GET handlers to read-only.
 	TMethod = TCon{Name: "Method"}
+	// TKeyboardKey — a physical keyboard key (Keyboard.watch delivers the held
+	// set as { down : List Key }). A union whose constructors mirror `event.code`
+	// values of a typical US keyboard (Keyboard.KeyW, Keyboard.ArrowUp,
+	// Keyboard.Space, ...), registered in builtinCustomTypes + baseBindings
+	// from the shared list in keyboard.go. Physical (layout-independent), so
+	// WASD works on any layout; the character typed is a separate concern.
+	TKeyboardKey = TCon{Name: "Keyboard.Key"}
+	// TGamepadButton — a game-controller button (Gamepad.watch delivers the held
+	// set in the pad record). A union whose constructors mirror the W3C gamepad
+	// (Gamepad.A, Gamepad.Up, Gamepad.Start, ...), registered from the shared
+	// list in gamepad.go. Web-first like Canvas / Keyboard.
+	TGamepadButton = TCon{Name: "Gamepad.Button"}
+	// TSound — an opaque chip-audio value assembled by Sound.tone/chord/sequence
+	// and consumed by Sound.play (a Cmd) / Sound.loop / Sound.hold (Subs). Data
+	// only; the JS runtime synthesises it via WebAudio. Frontend-first, iOS deferred.
+	TSound = TCon{Name: "Sound"}
+	// TSoundWave — a Sound.Wave constructor (Square/Triangle/Sawtooth/Noise), the
+	// argument to Sound.tone. A union, registered from the list in sound.go.
+	TSoundWave = TCon{Name: "Sound.Wave"}
 	// TServiceError — the failure a Service.call delivers to the frontend,
 	// in the Err of its Result. A union (Offline / Unauthorized /
 	// ServerError String) so transport failure is a value you case on, the
@@ -322,7 +367,110 @@ var (
 	// endpoint gets its OWN outcome union (never a shared auth catch-all):
 	// the email screen branches on these three and nothing else.
 	TAuthRequestOutcome = TCon{Name: "Auth.RequestOutcome"}
+	// Canvas draw-list types (v0.0.7). Color is built by `rgb`; Shape by
+	// Canvas.rect/circle/text/group; Transform and Align are user-facing
+	// unions (constructors in builtinCustomTypes + the runtimes). All
+	// opaque TCons, like the named types above.
+	TColor     = TCon{Name: "Color"}
+	TShape     = TCon{Name: "Shape"}
+	TTransform = TCon{Name: "Transform"}
+	TAlign     = TCon{Name: "Align"}
+	// TBlend — how a group's pixels combine with what is already on the
+	// canvas (docs/proposals/canvas-blend.md). Normal is the default and what
+	// every group did before this existed; Add sums light (explosions, glow),
+	// Multiply darkens (shadows, scene tints), Screen lightens without
+	// clipping, Erase punches holes. Rides in a group's Transform list via
+	// `Canvas.Blend`, qualified-only like Align — `Add` and `Normal` are far
+	// too ordinary to reserve as bare global names.
+	TBlend = TCon{Name: "Blend"}
+	// TDecimal — the exact base-10 number (docs/proposals/decimal.md):
+	// bounded coefficient (34 significant digits) plus a per-value
+	// scale. Sits next to Int in the `number` constraint; `+ - *` are
+	// exact and closed, division goes through TDivision.
+	TDecimal = TCon{Name: "Decimal"}
+	// TDivision — the inert exact quotient `/` produces. Opaque on
+	// purpose: no codec, no arithmetic, not Comparable. Only the three
+	// resolvers (Decimal.rounded / exact / withRemainder) turn it into
+	// a value, which is where the rounding decision gets written.
+	TDivision = TCon{Name: "Decimal.Division"}
+	// TRounding — the rounding-mode union the resolvers take
+	// (Decimal.HalfEven and friends; qualified-only constructors).
+	TRounding = TCon{Name: "Decimal.Rounding"}
+	// TCanvasMode — how a canvas renders, chosen explicitly per canvas (no
+	// silent default). Pixelated = 1 CSS px buffer + nearest-neighbour upscale,
+	// the cheap fill that holds 60 fps for games repainting every frame (see
+	// docs/adrs/0001). Crisp = devicePixelRatio buffer, sharp text and shapes
+	// on retina, for turn-based / text-heavy canvases that don't repaint hot.
+	// Global (bare) constructors like Pointer — the two names are distinctive.
+	TCanvasMode = TCon{Name: "CanvasMode"}
+	// TPointer — the precision of the PRIMARY input, delivered inside a Device
+	// record (Device.watch). A union (Coarse = a finger / TV remote, Fine =
+	// mouse / trackpad / stylus), registered in builtinCustomTypes + baseBindings
+	// like Order / Method. Read from `(pointer: coarse)` / `(pointer: fine)` CSS
+	// media queries in the JS runtime — a capability, never a user-agent guess.
+	TPointer = TCon{Name: "Pointer"}
 )
+
+// TDeviceRecord returns the closed record `Device.watch` delivers — the live,
+// truthful answer to "what is this app running on?" (docs/proposals/device.md).
+// Returned by a function (not a package var) so the field map is never shared
+// or mutated. `supports*` is a hardware capability, `prefers*` an OS-reported
+// user preference; `pointer`/`anyFine`/`width`/`height` are plain readings. The
+// `Device` type name is a builtin alias to this record (builtinTypeAliases).
+func TDeviceRecord() TRecord {
+	return TRecord{
+		Fields: map[string]Type{
+			"pointer":              TPointer,
+			"anyFine":              TBool,
+			"supportsHover":        TBool,
+			"width":                TInt,
+			"height":               TInt,
+			"prefersDark":          TBool,
+			"prefersReducedMotion": TBool,
+		},
+		Order: []string{"pointer", "anyFine", "supportsHover", "width", "height", "prefersDark", "prefersReducedMotion"},
+		Tail:  nil, // closed: the framework fills every field
+	}
+}
+
+// TKeyboardStateRecord is "{ down : List Keyboard.Key }" — the held-key mirror
+// delivered by Keyboard.watch. A fresh, closed record; the runtime fills it.
+func TKeyboardStateRecord() TRecord {
+	return TRecord{
+		Fields: map[string]Type{"down": TList(TKeyboardKey)},
+		Order:  []string{"down"},
+		Tail:   nil,
+	}
+}
+
+// TGamepadStateRecord is the full-pad mirror delivered by Gamepad.watch:
+// connection, both analog sticks (x/y in -100..100 with a deadzone), and the
+// currently-held buttons. One snapshot per change.
+func TGamepadStateRecord() TRecord {
+	return TRecord{
+		Fields: map[string]Type{
+			"connected": TBool,
+			"leftX":     TInt,
+			"leftY":     TInt,
+			"rightX":    TInt,
+			"rightY":    TInt,
+			"down":      TList(TGamepadButton),
+		},
+		Order: []string{"connected", "leftX", "leftY", "rightX", "rightY", "down"},
+		Tail:  nil,
+	}
+}
+
+// TCanvasPointerRecord is "{ id : Int, x : Int, y : Int }" — one active pointer
+// (finger / pressed mouse) in canvas CSS-pixel coordinates. Canvas.watchPointers
+// delivers a List of these: the full set of pointers currently down.
+func TCanvasPointerRecord() TRecord {
+	return TRecord{
+		Fields: map[string]Type{"id": TInt, "x": TInt, "y": TInt},
+		Order:  []string{"id", "x", "y"},
+		Tail:   nil,
+	}
+}
 
 // TAuthVerifyOutcome returns "Auth.VerifyOutcome user" — the domain outcome
 // of Auth.verifyCode, parameterized on the app's own user record (the
@@ -392,6 +540,16 @@ func TSub(a Type) TCon {
 // Msg (a Cmd). Frontend-managed randomness; the seed is the runtime's.
 func TGenerator(a Type) TCon {
 	return TCon{Name: "Random.Generator", Args: []Type{a}}
+}
+
+// TSeed returns the nullary "Random.Seed" — an opaque PRNG state. It is made by
+// Random.initialSeed / Random.seed and threaded by Random.step. The runtime
+// holds the state in its native 64-bit word (uint64 / BigInt / UInt64) and the
+// PCG algorithm is bit-identical across runtimes, so a stepped Seed yields the
+// same value everywhere — unlike a Generator run by Random.generate, whose
+// value comes from the ambient RNG and is not cross-runtime reproducible.
+func TSeed() TCon {
+	return TCon{Name: "Random.Seed"}
 }
 
 // TEntity returns the parameterized "Entity a" type — an entity describing
@@ -510,6 +668,10 @@ func TAttrInlineHost() Type { return TCon{Name: "Inline"} }
 // exists for the universal layout attrs (width / height), which are
 // polymorphic in their host and so fit here like anywhere else.
 func TAttrTextHost() Type { return TCon{Name: "Text"} }
+
+// TAttrCanvasHost is the host marker for canvas attrs (onTap, onResize),
+// valid only on the `canvas` draw-surface (v0.0.7).
+func TAttrCanvasHost() Type { return TCon{Name: "Canvas"} }
 
 // TInline returns the `Inline msg` type — a run of text inside a
 // paragraph. Distinct from `View msg` so `paragraph` can refuse

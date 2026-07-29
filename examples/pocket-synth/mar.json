@@ -1,0 +1,11 @@
+{
+  "name": "pocket-synth",
+  "server": { "port": 3035 },
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "mar-pocket-synth",
+      "account": "env:CLOUDFLARE_ACCOUNT_ID",
+      "apiToken": "env:CLOUDFLARE_API_TOKEN"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "device",
+  "server": {
+    "port": 3031
+  }
+}

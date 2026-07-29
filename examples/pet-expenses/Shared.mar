@@ -31,7 +31,7 @@ type alias Expense =
     { id       : Int
     , userId   : Int
     , category : String
-    , amount   : Int
+    , amount   : Decimal
     , note     : String
     , petId    : Int
     , spentAt  : Time
@@ -41,7 +41,7 @@ type alias Expense =
 -- One row of the per-category breakdown on the home screen.
 type alias CategoryTotal =
     { category : String
-    , total    : Int
+    , total    : Decimal
     }
 
 
@@ -50,7 +50,7 @@ type alias CategoryTotal =
 type alias MonthTotal =
     { key   : Int
     , label : String
-    , total : Int
+    , total : Decimal
     }
 
 
@@ -80,7 +80,7 @@ type AddExpenseOutcome
 -- amount > 0; the backend re-checks it as a typed outcome. `spentAt` is
 -- `Nothing` when the user didn't touch the date picker (the backend
 -- stamps "now"); `Just t` carries a date they chose.
-addExpense : Service { petId : Int, category : String, amount : Int, note : String, spentAt : Maybe Time } AddExpenseOutcome
+addExpense : Service { petId : Int, category : String, amount : Decimal, note : String, spentAt : Maybe Time } AddExpenseOutcome
 addExpense = Service.declare POST "/expenses"
 
 
@@ -132,12 +132,19 @@ categories =
     [ "Food", "Litter", "Vet", "Grooming", "Toys", "Medication", "Insurance", "Other" ]
 
 
--- Money is stored as a whole currency unit (Int), formatted as `$N`.
--- That keeps totals exact and the example small; a production app would
--- store cents and format with a locale-aware currency formatter.
-formatAmount : Int -> String
+-- Money is a Decimal stored at scale 2 (Entity.decimal 2 — literally
+-- cents in SQLite). `+` on Decimals is exact, so totals never drift;
+-- Decimal.toScale pads sums back to two places for display ($12.50,
+-- never $12.5).
+formatAmount : Decimal -> String
 formatAmount amount =
-    "$" ++ String.fromInt amount
+    "$" ++ Decimal.toString (Decimal.toScale Decimal.HalfEven 2 amount)
+
+
+-- Exact total of a list of expenses.
+sumAmounts : List Expense -> Decimal
+sumAmounts items =
+    List.sum (List.map .amount items)
 
 
 -- Human label for an expense's pet tag, given the pet list.

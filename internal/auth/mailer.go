@@ -18,28 +18,64 @@ type Email struct {
 	Body    string
 }
 
-// SMTPConfig mirrors the mar.json `mail` block. When Host is empty the
-// stdout sink is used (see Send below).
+// SMTPConfig mirrors the mar.json `mail` block, plus one field that does
+// not come from the manifest: AllowStdoutSink.
 type SMTPConfig struct {
 	Host     string
 	Port     int
 	Username string
 	Password string
+
+	// AllowStdoutSink permits Send to print the email (sign-in CODE
+	// included) to stdout when SMTP is incomplete. It is the dev-server
+	// convenience that lets `mar dev` work with zero mail setup.
+	//
+	// It defaults to FALSE on purpose, and only `mar dev` sets it. In
+	// production stdout is the log stream: Fly, journald and friends
+	// capture it, so printing there means anyone who can read the logs
+	// can read a valid one-time code. Security audit 2026-07-15, finding
+	// #6 — an admin-only project could boot without SMTP and leak admin
+	// OTPs into production logs.
+	//
+	// A zero-value SMTPConfig is therefore safe by construction: a new
+	// caller that forgets this field gets the refusal, not the leak.
+	AllowStdoutSink bool
 }
 
-// Send delivers the email — via SMTP if the config is complete,
-// otherwise to stdout (so `mar dev` works without any SMTP setup;
-// the developer can grab the code from the terminal).
+// Complete reports whether the config can actually authenticate against
+// a provider. Both Host AND Password are needed: providers (Resend,
+// SendGrid, …) reject anonymous SMTP, so a bare Host cannot deliver.
+// This is the single definition of "SMTP is usable" — Send routes on it
+// and the boot guard checks it, so the two can never disagree.
+func (c SMTPConfig) Complete() bool {
+	return c.Host != "" && c.Password != ""
+}
+
+// Send delivers the email via SMTP when the config is complete.
 //
-// "Complete" means both Host AND Password are present. A bare Host
-// without a Password can't authenticate against the provider (Resend,
-// SendGrid, etc.) — providers reject anonymous SMTP. `mar dev` ends
-// up here when the operator uses an `env:SMTP_PASSWORD` ref but
-// hasn't exported the variable in their shell: the manifest loader's
-// dev-mode tolerance leaves Password empty, and we route to the
-// stdout sink instead of throwing a confusing auth error.
+// When it is not complete there are two outcomes, and which one you get
+// is decided by cfg.AllowStdoutSink, never inferred:
+//
+//   - allowed (`mar dev`): print to stdout, so the developer can grab
+//     the code from the terminal with no mail setup at all. `mar dev`
+//     also lands here when the operator used an `env:SMTP_PASSWORD` ref
+//     but never exported the variable.
+//   - not allowed (production): return an error WITHOUT printing. The
+//     sign-in request fails loudly instead of quietly writing a valid
+//     one-time code into the log stream.
+//
+// In practice production never reaches the second case, because
+// ServeLive refuses to boot when a mail-sending surface is mounted with
+// incomplete SMTP. This is the backstop for any future path that skips
+// that check.
 func Send(cfg SMTPConfig, msg Email) error {
-	if cfg.Host == "" || cfg.Password == "" {
+	if !cfg.Complete() {
+		if !cfg.AllowStdoutSink {
+			return fmt.Errorf(
+				"auth.Send: refusing to deliver a sign-in code with no SMTP configured " +
+					"(printing it would write the code to the log stream); " +
+					"set mail.smtpHost and mail.smtpPassword in mar.json")
+		}
 		writeStdoutSink(msg)
 		return nil
 	}

@@ -1,0 +1,6 @@
+{
+  "name": "soundboard",
+  "server": {
+    "port": 3026
+  }
+}

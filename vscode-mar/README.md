@@ -1,6 +1,6 @@
 # vscode-mar
 
-Language support for the [mar](../) programming language.
+Language support for the [Mar](https://mar-lang.dev) programming language.
 
 ## Features
 
@@ -51,5 +51,5 @@ activate it.
 npm install
 npm run compile
 npm run package    # produces mar-language-support-X.Y.Z.vsix
-code --install-extension mar-language-support-0.0.6.vsix
+code --install-extension mar-language-support-0.0.7.vsix
 ```

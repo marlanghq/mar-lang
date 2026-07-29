@@ -1,0 +1,974 @@
+module Backend.Challenges exposing (challenges, answers, services)
+
+
+import Backend.Bank
+import Backend.Profiles
+import Shared exposing (Status(..), Role(..), Outcome(..))
+
+
+-- The heart of Quiz Duel: the duel + per-answer tables and every
+-- service that drives a match. Timing and scoring are entirely
+-- server-authoritative — the client's countdown is cosmetic. `serve`
+-- stamps when a question was shown (idempotently, so a refresh can't
+-- reset the clock); `answer` measures elapsed against that stamp and
+-- clamps it to the limit, so a slow network or a timeout can never
+-- beat an honest fast answer.
+
+
+-- ====================================================================
+-- ENTITIES
+-- ====================================================================
+
+
+challenges : Entity Shared.Challenge
+challenges =
+    Entity.define
+        { name = "challenges"
+        , columns =
+            { id             = Entity.serial
+            , challengerId   = Entity.int  Entity.notNull
+            , opponentId     = Entity.int  Entity.notNull
+            , theme          = Entity.text Entity.notNull
+            , qids           = Entity.text Entity.notNull
+            , status         = Entity.enum [ Draft, Pending, Accepted, Declined, Done ] Entity.notNull
+            , chScore        = Entity.int  Entity.notNull
+            , chTime         = Entity.int  Entity.notNull
+            , opScore        = Entity.int  Entity.notNull
+            , opTime         = Entity.int  Entity.notNull
+            , outcome        = Entity.enum [ Undecided, ChallengerWon, OpponentWon, Drew ] Entity.notNull
+            , challengerSeen = Entity.bool Entity.notNull
+            , createdAt      = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+answers : Entity Shared.Answer
+answers =
+    Entity.define
+        { name = "answers"
+        , columns =
+            { id          = Entity.serial
+            , challengeId = Entity.int  Entity.notNull
+            , role        = Entity.enum [ AsChallenger, AsOpponent ] Entity.notNull
+            , qIndex      = Entity.int  Entity.notNull
+            , qid         = Entity.int  Entity.notNull
+            , servedAt    = Entity.timestamp Entity.notNull
+            , answered    = Entity.bool Entity.notNull
+            , chosen      = Entity.int  Entity.notNull
+            , correct     = Entity.bool Entity.notNull
+            , elapsed     = Entity.int  Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ====================================================================
+-- SMALL HELPERS
+-- ====================================================================
+
+
+qidsToList : String -> List Int
+qidsToList csv =
+    String.split "," csv |> List.filterMap String.toInt
+
+
+listToQids : List Int -> String
+listToQids ids =
+    String.join "," (List.map String.fromInt ids)
+
+
+-- List index accessor (Mar's List has no `get`): drop then head.
+nth : Int -> List a -> Maybe a
+nth i xs =
+    List.head (List.drop i xs)
+
+
+-- The calling user's role in a duel, or Nothing if they're a bystander.
+roleOf : Shared.Challenge -> Int -> Maybe Shared.Role
+roleOf c userId =
+    if userId == c.challengerId then
+        Just AsChallenger
+
+    else if userId == c.opponentId then
+        Just AsOpponent
+
+    else
+        Nothing
+
+
+-- Whose turn is it? The challenger answers while the duel is a Draft;
+-- the opponent answers only after they've Accepted. Any other pairing
+-- means "not your move right now".
+canPlay : Shared.Status -> Shared.Role -> Bool
+canPlay status role =
+    case role of
+        AsChallenger ->
+            status == Draft
+
+        AsOpponent ->
+            status == Accepted
+
+
+answersFor : Int -> Shared.Role -> Task (List Shared.Answer)
+answersFor challengeId role =
+    Repo.findBy answers { challengeId = challengeId, role = role }
+
+
+findAt : Int -> List Shared.Answer -> Maybe Shared.Answer
+findAt idx list =
+    List.head (List.filter (\a -> a.qIndex == idx) list)
+
+
+-- Used when a bank id somehow can't be resolved (shouldn't happen for
+-- stored duels) so downstream code always has a question to show.
+fallbackQ : Backend.Bank.BankQ
+fallbackQ =
+    { id = 0, theme = "", text = "Pergunta indisponível"
+    , a = "-", b = "-", c = "-", d = "-", correct = 0 }
+
+
+-- ====================================================================
+-- listThemes  (GET /themes)
+-- ====================================================================
+
+
+listThemesImpl : () -> Shared.User -> Task (List Shared.ThemeCard)
+listThemesImpl _ _ =
+    Task.succeed (Backend.Bank.themeCards ())
+
+
+-- ====================================================================
+-- createChallenge  (POST /challenges)
+-- ====================================================================
+
+
+createChallengeImpl : { opponentNick : String, theme : String } -> Shared.User -> Task Shared.CreateResult
+createChallengeImpl input user =
+    if Backend.Bank.themeExists input.theme then
+        findByNick input.opponentNick
+            |> Task.andThen
+                (\maybeOpp ->
+                    case maybeOpp of
+                        Nothing ->
+                            Task.succeed Shared.OpponentNotFound
+
+                        Just opp ->
+                            if opp.userId == user.id then
+                                Task.succeed Shared.CannotSelfChallenge
+
+                            else
+                                startDuel user opp.userId input.theme
+                )
+
+    else
+        Task.succeed Shared.InvalidTheme
+
+
+startDuel : Shared.User -> Int -> String -> Task Shared.CreateResult
+startDuel user opponentId theme =
+    Time.now
+        |> Task.andThen
+            (\now ->
+                let
+                    -- Seed the shuffle from wall-clock ms + the caller's
+                    -- id: two duels born the same instant still diverge.
+                    seed =
+                        Time.toMillis now + user.id
+
+                    qids =
+                        Backend.Bank.sampleQids theme seed
+                in
+                Repo.create challenges
+                    { challengerId   = user.id
+                    , opponentId     = opponentId
+                    , theme          = theme
+                    , qids           = listToQids qids
+                    , status         = Draft
+                    , chScore        = 0
+                    , chTime         = 0
+                    , opScore        = 0
+                    , opTime         = 0
+                    , outcome        = Undecided
+                    , challengerSeen = False
+                    , createdAt      = now
+                    }
+                    |> Task.map (\c -> Shared.DuelStarted c.id)
+            )
+
+
+findByNick : String -> Task (Maybe Shared.Profile)
+findByNick nick =
+    let
+        target =
+            String.toLower nick
+    in
+    Repo.all Backend.Profiles.profiles
+        |> Task.map
+            (\all ->
+                List.head (List.filter (\p -> String.toLower p.nick == target) all)
+            )
+
+
+-- ====================================================================
+-- serve  (POST /challenges/{id}/serve)
+-- ====================================================================
+
+
+serveImpl : { id : Int } -> Shared.User -> Task Shared.ServeResult
+serveImpl input user =
+    Repo.findById challenges input.id
+        |> Task.andThen
+            (\maybeC ->
+                case maybeC of
+                    Nothing ->
+                        Task.succeed Shared.ServeNotYours
+
+                    Just c ->
+                        case roleOf c user.id of
+                            Nothing ->
+                                Task.succeed Shared.ServeNotYours
+
+                            Just role ->
+                                if canPlay c.status role then
+                                    serveNext c role
+
+                                else
+                                    Task.succeed Shared.ServeNotYours
+            )
+
+
+serveNext : Shared.Challenge -> Shared.Role -> Task Shared.ServeResult
+serveNext c role =
+    answersFor c.id role
+        |> Task.andThen
+            (\rows ->
+                let
+                    index =
+                        List.length (List.filter (\a -> a.answered) rows)
+                in
+                if index >= Shared.questionsPerDuel then
+                    Task.succeed Shared.QuizFinished
+
+                else
+                    let
+                        qid =
+                            Maybe.withDefault 0 (nth index (qidsToList c.qids))
+                    in
+                    case findAt index rows of
+                        Just existing ->
+                            -- Already served this index (a refresh): keep
+                            -- the original servedAt so the clock doesn't
+                            -- restart.
+                            Time.now
+                                |> Task.map
+                                    (\now ->
+                                        Shared.NextQuestion (buildQuestion index qid now existing.servedAt)
+                                    )
+
+                        Nothing ->
+                            Time.now
+                                |> Task.andThen
+                                    (\now ->
+                                        Repo.create answers
+                                            { challengeId = c.id
+                                            , role        = role
+                                            , qIndex      = index
+                                            , qid         = qid
+                                            , servedAt    = now
+                                            , answered    = False
+                                            , chosen      = -1
+                                            , correct     = False
+                                            , elapsed     = 0
+                                            }
+                                            |> Task.map
+                                                (\_ ->
+                                                    Shared.NextQuestion (buildQuestion index qid now now)
+                                                )
+                                    )
+            )
+
+
+buildQuestion : Int -> Int -> Time -> Time -> Shared.Question
+buildQuestion index qid now servedAt =
+    let
+        q =
+            Maybe.withDefault fallbackQ (Backend.Bank.byId qid)
+
+        elapsed =
+            Shared.max 0 (Time.toMillis now - Time.toMillis servedAt)
+
+        remaining =
+            Shared.max 0 (Shared.questionLimitMs - elapsed)
+    in
+    { index       = index
+    , total       = Shared.questionsPerDuel
+    , text        = q.text
+    , a           = q.a
+    , b           = q.b
+    , c           = q.c
+    , d           = q.d
+    , remainingMs = remaining
+    }
+
+
+-- ====================================================================
+-- answer  (POST /challenges/{id}/answer)
+-- ====================================================================
+
+
+answerImpl : { id : Int, chosen : Int } -> Shared.User -> Task Shared.AnswerResult
+answerImpl input user =
+    Repo.findById challenges input.id
+        |> Task.andThen
+            (\maybeC ->
+                case maybeC of
+                    Nothing ->
+                        Task.succeed Shared.AnswerNotYours
+
+                    Just c ->
+                        case roleOf c user.id of
+                            Nothing ->
+                                Task.succeed Shared.AnswerNotYours
+
+                            Just role ->
+                                if canPlay c.status role then
+                                    judge c role input.chosen
+
+                                else
+                                    Task.succeed Shared.AnswerNotYours
+            )
+
+
+judge : Shared.Challenge -> Shared.Role -> Int -> Task Shared.AnswerResult
+judge c role chosen =
+    answersFor c.id role
+        |> Task.andThen
+            (\rows ->
+                let
+                    answered =
+                        List.filter (\a -> a.answered) rows
+
+                    index =
+                        List.length answered
+                in
+                if index >= Shared.questionsPerDuel then
+                    Task.succeed Shared.AlreadyAnswered
+
+                else
+                    case findAt index rows of
+                        Nothing ->
+                            -- No served question at this index: the client
+                            -- must serve before answering.
+                            Task.succeed Shared.AnswerNotYours
+
+                        Just current ->
+                            Time.now
+                                |> Task.andThen
+                                    (\now -> scoreAnswer c role chosen answered current now)
+            )
+
+
+scoreAnswer : Shared.Challenge -> Shared.Role -> Int -> List Shared.Answer -> Shared.Answer -> Time -> Task Shared.AnswerResult
+scoreAnswer c role chosen answered current now =
+    let
+        q =
+            Maybe.withDefault fallbackQ (Backend.Bank.byId current.qid)
+
+        correctIndex =
+            q.correct
+
+        isCorrect =
+            chosen >= 0 && chosen == correctIndex
+
+        measured =
+            Shared.min Shared.questionLimitMs
+                (Shared.max 0 (Time.toMillis now - Time.toMillis current.servedAt))
+
+        -- A timeout (chosen = -1) always costs the full limit; an
+        -- honest answer costs the measured, clamped time.
+        elapsed =
+            if chosen < 0 then
+                Shared.questionLimitMs
+
+            else
+                measured
+
+        priorScore =
+            List.length (List.filter (\a -> a.correct) answered)
+
+        priorTime =
+            List.sum (List.map .elapsed answered)
+
+        newScore =
+            priorScore + (if isCorrect then 1 else 0)
+
+        newTime =
+            priorTime + elapsed
+
+        index =
+            List.length answered
+
+        nextIndex =
+            index + 1
+
+        done =
+            nextIndex >= Shared.questionsPerDuel
+    in
+    Repo.update answers current.id
+        { answered = True, chosen = chosen, correct = isCorrect, elapsed = elapsed }
+        |> Task.andThen (\_ -> applyScore c role newScore newTime)
+        |> Task.andThen (\_ -> finalizeIfDone c role done newScore newTime)
+        |> Task.map
+            (\_ ->
+                Shared.Judged
+                    { correct      = isCorrect
+                    , correctIndex = correctIndex
+                    , chosen       = chosen
+                    , elapsedMs    = elapsed
+                    , nextIndex    = nextIndex
+                    , done         = done
+                    }
+            )
+
+
+applyScore : Shared.Challenge -> Shared.Role -> Int -> Int -> Task ()
+applyScore c role score time =
+    case role of
+        AsChallenger ->
+            Repo.update challenges c.id { chScore = score, chTime = time }
+                |> Task.map (\_ -> ())
+
+        AsOpponent ->
+            Repo.update challenges c.id { opScore = score, opTime = time }
+                |> Task.map (\_ -> ())
+
+
+-- On the final answer, advance the duel's lifecycle:
+--   challenger done → Pending (drops into the opponent's inbox)
+--   opponent   done → Done   (compute outcome, bump both records)
+finalizeIfDone : Shared.Challenge -> Shared.Role -> Bool -> Int -> Int -> Task ()
+finalizeIfDone c role done score time =
+    if done then
+        case role of
+            AsChallenger ->
+                Repo.update challenges c.id { status = Pending }
+                    |> Task.map (\_ -> ())
+
+            AsOpponent ->
+                let
+                    outcome =
+                        computeOutcome c.chScore c.chTime score time
+                in
+                Repo.update challenges c.id { status = Done, outcome = outcome }
+                    |> Task.andThen
+                        (\_ -> Backend.Profiles.applyOutcome c.challengerId c.opponentId outcome)
+
+    else
+        Task.succeed ()
+
+
+-- More correct answers wins; a tie on score is broken by the lower
+-- total answer time; a tie on both is an honest draw.
+computeOutcome : Int -> Int -> Int -> Int -> Shared.Outcome
+computeOutcome chScore chTime opScore opTime =
+    if chScore > opScore then
+        ChallengerWon
+
+    else if opScore > chScore then
+        OpponentWon
+
+    else if chTime < opTime then
+        ChallengerWon
+
+    else if opTime < chTime then
+        OpponentWon
+
+    else
+        Drew
+
+
+-- ====================================================================
+-- accept / decline / markSeen
+-- ====================================================================
+
+
+acceptImpl : { id : Int } -> Shared.User -> Task Shared.Ack
+acceptImpl input user =
+    transitionByOpponent input.id user (\c -> c.status == Pending) Accepted
+
+
+declineImpl : { id : Int } -> Shared.User -> Task Shared.Ack
+declineImpl input user =
+    transitionByOpponent input.id user (\c -> c.status == Pending) Declined
+
+
+-- Shared guard for accept/decline: only the named opponent, only from
+-- the expected state, may flip the status. Anything else is a benign
+-- AckDenied (never reveals whether the id exists).
+transitionByOpponent : Int -> Shared.User -> (Shared.Challenge -> Bool) -> Shared.Status -> Task Shared.Ack
+transitionByOpponent id user ok newStatus =
+    Repo.findById challenges id
+        |> Task.andThen
+            (\maybeC ->
+                case maybeC of
+                    Just c ->
+                        if user.id == c.opponentId && ok c then
+                            Repo.update challenges c.id { status = newStatus }
+                                |> Task.map (\_ -> Shared.AckOk)
+
+                        else
+                            Task.succeed Shared.AckDenied
+
+                    Nothing ->
+                        Task.succeed Shared.AckDenied
+            )
+
+
+markSeenImpl : { id : Int } -> Shared.User -> Task ()
+markSeenImpl input user =
+    Repo.findById challenges input.id
+        |> Task.andThen
+            (\maybeC ->
+                case maybeC of
+                    Just c ->
+                        if user.id == c.challengerId then
+                            Repo.update challenges c.id { challengerSeen = True }
+                                |> Task.map (\_ -> ())
+
+                        else
+                            Task.succeed ()
+
+                    Nothing ->
+                        Task.succeed ()
+            )
+
+
+-- ====================================================================
+-- lobby  (GET /challenges)
+-- ====================================================================
+
+
+lobbyImpl : () -> Shared.User -> Task Shared.Lobby
+lobbyImpl _ user =
+    Repo.findBy challenges { challengerId = user.id }
+        |> Task.andThen
+            (\asCh ->
+                Repo.findBy challenges { opponentId = user.id }
+                    |> Task.andThen
+                        (\asOp ->
+                            let
+                                all =
+                                    List.concat [ asCh, asOp ]
+                            in
+                            Task.sequence (List.map (buildCard user) all)
+                                |> Task.map
+                                    (\cards ->
+                                        splitLobby (List.filterMap (\x -> x) cards)
+                                    )
+                        )
+            )
+
+
+-- Nothing = this duel must stay hidden from this viewer (the opponent
+-- can't see a challenge while the challenger is still in Draft).
+buildCard : Shared.User -> Shared.Challenge -> Task (Maybe Shared.DuelCard)
+buildCard user c =
+    let
+        iAmCh =
+            c.challengerId == user.id
+    in
+    if iAmCh then
+        buildVisibleCard c iAmCh
+
+    else if c.status == Draft then
+        Task.succeed Nothing
+
+    else
+        buildVisibleCard c iAmCh
+
+
+buildVisibleCard : Shared.Challenge -> Bool -> Task (Maybe Shared.DuelCard)
+buildVisibleCard c iAmCh =
+    let
+        otherId =
+            if iAmCh then c.opponentId else c.challengerId
+
+        showScores =
+            c.status == Done
+
+        myRawScore =
+            if iAmCh then c.chScore else c.opScore
+
+        theirRawScore =
+            if iAmCh then c.opScore else c.chScore
+    in
+    Backend.Profiles.nickForUser otherId
+        |> Task.map
+            (\nick ->
+                Just
+                    { id            = c.id
+                    , opponentNick  = nick
+                    , theme         = c.theme
+                    , iAmChallenger = iAmCh
+                    , status        = c.status
+                    , outcome       = c.outcome
+                    , myScore       = if showScores then myRawScore else 0
+                    , theirScore    = if showScores then theirRawScore else 0
+                    , isNew         = iAmCh && c.status == Done && (c.challengerSeen == False)
+                    }
+            )
+
+
+splitLobby : List Shared.DuelCard -> Shared.Lobby
+splitLobby cards =
+    { inbox   = sortNewest (List.filter isInbox cards)
+    , active  = sortNewest (List.filter isActive cards)
+    , waiting = sortNewest (List.filter isWaiting cards)
+    , results = sortNewest (List.filter isResult cards)
+    }
+
+
+isInbox : Shared.DuelCard -> Bool
+isInbox card =
+    (card.iAmChallenger == False) && card.status == Pending
+
+
+isActive : Shared.DuelCard -> Bool
+isActive card =
+    (card.iAmChallenger && card.status == Draft)
+        || ((card.iAmChallenger == False) && card.status == Accepted)
+
+
+isWaiting : Shared.DuelCard -> Bool
+isWaiting card =
+    card.iAmChallenger && (card.status == Pending || card.status == Accepted)
+
+
+isResult : Shared.DuelCard -> Bool
+isResult card =
+    card.status == Done || card.status == Declined
+
+
+-- Newest first: higher id = created later.
+sortNewest : List Shared.DuelCard -> List Shared.DuelCard
+sortNewest cards =
+    List.sortWith
+        (\a b ->
+            if a.id > b.id then LT
+            else if a.id < b.id then GT
+            else EQ
+        )
+        cards
+
+
+-- ====================================================================
+-- duelDetail  (GET /challenges/{id})
+-- ====================================================================
+
+
+duelDetailImpl : { id : Int } -> Shared.User -> Task Shared.DetailResult
+duelDetailImpl input user =
+    Repo.findById challenges input.id
+        |> Task.andThen
+            (\maybeC ->
+                case maybeC of
+                    Nothing ->
+                        Task.succeed Shared.DetailNotYours
+
+                    Just c ->
+                        case roleOf c user.id of
+                            Nothing ->
+                                Task.succeed Shared.DetailNotYours
+
+                            Just role ->
+                                if c.status == Done then
+                                    buildDetail user c role
+
+                                else
+                                    buildUnfinished c role
+            )
+
+
+buildUnfinished : Shared.Challenge -> Shared.Role -> Task Shared.DetailResult
+buildUnfinished c role =
+    let
+        otherId =
+            if role == AsChallenger then c.opponentId else c.challengerId
+    in
+    Backend.Profiles.nickForUser otherId
+        |> Task.map
+            (\nick ->
+                Shared.UnfinishedDetail
+                    { opponentNick = nick
+                    , theme        = c.theme
+                    , waitingOn    = waitLabel c role
+                    }
+            )
+
+
+waitLabel : Shared.Challenge -> Shared.Role -> String
+waitLabel c role =
+    case c.status of
+        Draft ->
+            "Você ainda está respondendo"
+
+        Pending ->
+            if role == AsChallenger then
+                "Aguardando o oponente aceitar"
+
+            else
+                "Aguardando você aceitar"
+
+        Accepted ->
+            if role == AsChallenger then
+                "O oponente está respondendo"
+
+            else
+                "Você ainda está respondendo"
+
+        Declined ->
+            "Desafio recusado"
+
+        Done ->
+            "Concluído"
+
+
+buildDetail : Shared.User -> Shared.Challenge -> Shared.Role -> Task Shared.DetailResult
+buildDetail user c role =
+    let
+        iAmCh =
+            role == AsChallenger
+
+        otherId =
+            if iAmCh then c.opponentId else c.challengerId
+    in
+    Backend.Profiles.nickForUser otherId
+        |> Task.andThen
+            (\nick ->
+                answersFor c.id AsChallenger
+                    |> Task.andThen
+                        (\chAns ->
+                            answersFor c.id AsOpponent
+                                |> Task.andThen
+                                    (\opAns ->
+                                        headToHead user.id otherId
+                                            |> Task.map
+                                                (\hh ->
+                                                    assembleDetail c iAmCh nick chAns opAns hh
+                                                )
+                                    )
+                        )
+            )
+
+
+assembleDetail : Shared.Challenge -> Bool -> String -> List Shared.Answer -> List Shared.Answer -> Tally -> Shared.DetailResult
+assembleDetail c iAmCh nick chAns opAns hh =
+    let
+        myAns =
+            if iAmCh then chAns else opAns
+
+        theirAns =
+            if iAmCh then opAns else chAns
+
+        qids =
+            qidsToList c.qids
+
+        reviews =
+            List.map
+                (\idx -> buildReview qids myAns theirAns idx)
+                (List.range 0 (Shared.questionsPerDuel - 1))
+    in
+    Shared.FinishedDetail
+        { id            = c.id
+        , opponentNick  = nick
+        , theme         = c.theme
+        , iAmChallenger = iAmCh
+        , myScore       = if iAmCh then c.chScore else c.opScore
+        , theirScore    = if iAmCh then c.opScore else c.chScore
+        , myTimeMs      = if iAmCh then c.chTime else c.opTime
+        , theirTimeMs   = if iAmCh then c.opTime else c.chTime
+        , outcome       = c.outcome
+        , reviews       = reviews
+        , h2hMine       = hh.mine
+        , h2hTheirs     = hh.theirs
+        , h2hDraws      = hh.draws
+        }
+
+
+buildReview : List Int -> List Shared.Answer -> List Shared.Answer -> Int -> Shared.Review
+buildReview qids myAns theirAns idx =
+    let
+        qid =
+            Maybe.withDefault 0 (nth idx qids)
+
+        q =
+            Maybe.withDefault fallbackQ (Backend.Bank.byId qid)
+
+        mine =
+            findAt idx myAns
+
+        theirs =
+            findAt idx theirAns
+    in
+    { text           = q.text
+    , correctIndex   = q.correct
+    , myChosen       = chosenOf mine
+    , theirChosen    = chosenOf theirs
+    , myElapsedMs    = elapsedOf mine
+    , theirElapsedMs = elapsedOf theirs
+    }
+
+
+chosenOf : Maybe Shared.Answer -> Int
+chosenOf m =
+    case m of
+        Just a  -> a.chosen
+        Nothing -> -1
+
+
+elapsedOf : Maybe Shared.Answer -> Int
+elapsedOf m =
+    case m of
+        Just a  -> a.elapsed
+        Nothing -> 0
+
+
+-- ====================================================================
+-- HEAD-TO-HEAD  (shared by duelDetail + listRivals)
+-- ====================================================================
+
+
+type alias Tally =
+    { mine : Int, theirs : Int, draws : Int }
+
+
+emptyTally : Tally
+emptyTally =
+    { mine = 0, theirs = 0, draws = 0 }
+
+
+headToHead : Int -> Int -> Task Tally
+headToHead meId otherId =
+    Repo.all challenges
+        |> Task.map
+            (\all ->
+                tallyBetween all meId otherId
+            )
+
+
+tallyBetween : List Shared.Challenge -> Int -> Int -> Tally
+tallyBetween duels meId otherId =
+    List.foldl
+        (\d acc ->
+            if d.status == Done && involves d meId otherId then
+                accumulate acc d meId
+
+            else
+                acc
+        )
+        emptyTally
+        duels
+
+
+involves : Shared.Challenge -> Int -> Int -> Bool
+involves d meId otherId =
+    (d.challengerId == meId && d.opponentId == otherId)
+        || (d.challengerId == otherId && d.opponentId == meId)
+
+
+-- Fold one finished duel into the tally from `meId`'s point of view.
+accumulate : Tally -> Shared.Challenge -> Int -> Tally
+accumulate acc d meId =
+    case d.outcome of
+        Drew ->
+            { acc | draws = acc.draws + 1 }
+
+        ChallengerWon ->
+            if d.challengerId == meId then
+                { acc | mine = acc.mine + 1 }
+
+            else
+                { acc | theirs = acc.theirs + 1 }
+
+        OpponentWon ->
+            if d.opponentId == meId then
+                { acc | mine = acc.mine + 1 }
+
+            else
+                { acc | theirs = acc.theirs + 1 }
+
+        Undecided ->
+            acc
+
+
+-- ====================================================================
+-- listRivals  (GET /rivals)
+-- ====================================================================
+
+
+listRivalsImpl : () -> Shared.User -> Task (List Shared.RivalCard)
+listRivalsImpl _ user =
+    Repo.all challenges
+        |> Task.andThen
+            (\all ->
+                let
+                    mine =
+                        List.filter
+                            (\d -> d.status == Done && (d.challengerId == user.id || d.opponentId == user.id))
+                            all
+
+                    rivalIds =
+                        distinct (List.map (\d -> otherOf d user.id) mine)
+                in
+                Task.sequence (List.map (\rid -> buildRival user.id rid mine) rivalIds)
+            )
+
+
+otherOf : Shared.Challenge -> Int -> Int
+otherOf d meId =
+    if d.challengerId == meId then d.opponentId else d.challengerId
+
+
+buildRival : Int -> Int -> List Shared.Challenge -> Task Shared.RivalCard
+buildRival meId rid duels =
+    let
+        hh =
+            tallyBetween duels meId rid
+    in
+    Backend.Profiles.nickForUser rid
+        |> Task.map
+            (\nick ->
+                { nick      = nick
+                , myWins    = hh.mine
+                , theirWins = hh.theirs
+                , draws     = hh.draws
+                }
+            )
+
+
+distinct : List Int -> List Int
+distinct xs =
+    List.foldl
+        (\x acc -> if List.member x acc then acc else acc ++ [ x ])
+        []
+        xs
+
+
+-- ====================================================================
+-- SERVICE MANIFEST
+-- ====================================================================
+
+
+services =
+    [ Auth.protect Shared.listThemes     listThemesImpl
+    , Auth.protect Shared.createChallenge createChallengeImpl
+    , Auth.protect Shared.serve          serveImpl
+    , Auth.protect Shared.answer         answerImpl
+    , Auth.protect Shared.accept         acceptImpl
+    , Auth.protect Shared.decline        declineImpl
+    , Auth.protect Shared.markSeen       markSeenImpl
+    , Auth.protect Shared.lobby          lobbyImpl
+    , Auth.protect Shared.duelDetail     duelDetailImpl
+    , Auth.protect Shared.listRivals     listRivalsImpl
+    ]

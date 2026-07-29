@@ -63,7 +63,7 @@ func openURL(url string) {
 //	mar dev --no-open examples/foo
 //	mar dev examples/foo --no-open
 //
-// Both work. Used by `mar dev` and `mar fly deploy` to suppress the
+// Both work. Used by `mar dev` and `mar deploy` to suppress the
 // auto-browser-open.
 func extractNoOpenFlag(args []string) (bool, []string) {
 	found := false
@@ -347,7 +347,12 @@ func colorJSONSuggestion(line string) string {
 //  4. The `open ...xcodeproj` command in green, the one thing the
 //     operator runs next.
 func printIOSBuildSummary(r scaffold.IOSBuildResult) {
-	if r.MissingServerURL {
+	// The serverUrl warning only makes sense when the app HAS a backend
+	// to reach. A pure App.frontend app is self-contained (renders from
+	// the embedded program, calls no Services), so a missing serverUrl
+	// is expected, not a problem — warning about "no production backend"
+	// would be noise. Backend / fullstack apps keep the warning.
+	if r.MissingServerURL && !r.FrontendOnly {
 		// Warn states the problem (what's missing, what falls back
 		// to defaults). Hint states the fix with paste-ready JSON
 		// for mar.json, formatted multi-line with key-per-line so
@@ -398,7 +403,7 @@ func printIOSBuildSummary(r scaffold.IOSBuildResult) {
 	// set — the warn block above already told the full story, this
 	// is just an unambiguous tag on the value the bundle carries.
 	baseURLNote := ""
-	if r.MissingServerURL {
+	if r.MissingServerURL && !r.FrontendOnly {
 		baseURLNote = colorDim(" (default)")
 	}
 	fmt.Printf("            app:      %s\n", colorCyan(r.AppName))
@@ -447,38 +452,44 @@ func printIOSBuildSummary(r scaffold.IOSBuildResult) {
 // already set serverUrl but forgot bundleId, we don't echo serverUrl
 // back at them (avoids implying they need to overwrite what's there).
 func printIOSConfigError(e *scaffold.IOSConfigError) {
+	// Error: names the problem. Each missing field is a config key, so
+	// color them magenta individually (plain commas between) rather than
+	// dyeing the whole "a, b, c" blob — matches how paths/keys are colored
+	// everywhere else per cli-style.md §3.
+	missing := make([]string, len(e.Missing))
+	for i, m := range e.Missing {
+		missing[i] = colorMagenta(m)
+	}
 	fprintError("%s is missing required fields in %s: %s.",
 		colorMagenta("ios"),
 		colorMagenta("mar.json"),
-		colorMagenta(strings.Join(e.Missing, ", ")))
-	fmt.Fprintln(os.Stderr,
-		"Paste the block below into "+colorMagenta("mar.json")+
-			" and adjust each value")
-	fmt.Fprintln(os.Stderr,
-		"to match your project.")
-	fmt.Fprintln(os.Stderr)
-	// Build the JSON suggestion. Each missing field becomes one line
-	// inside the `"ios": { ... }` block, in the canonical order
-	// (bundleId, displayName, marketingVersion, buildNumber) — even
-	// though e.Missing is already ordered, we re-walk a fixed list to
-	// keep the snippet stable regardless of which fields are missing.
-	fmt.Fprintln(os.Stderr, "  "+colorJSONSuggestion(`"ios": {`))
+		strings.Join(missing, ", "))
+
+	// Hint: states the fix as paste-ready JSON, one field per line in the
+	// canonical order (only the missing ones). Built as the Hint body so it
+	// gets the yellow "Hint:" label + the shared blank-line handling — the
+	// same shape as the ios.serverUrl hint above. The block sits 8 spaces
+	// in (under the Hint body), inner keys 2 deeper, so it reads as nested
+	// JSON and pastes straight into a `{ ... }`.
 	canonical := []string{"bundleId", "displayName", "marketingVersion", "buildNumber"}
-	var lines []string
+	var body strings.Builder
+	body.WriteString("paste into " + colorMagenta("mar.json") + " and set each value:\n")
+	body.WriteString("        " + colorJSONSuggestion(`"ios": {`) + "\n")
+	var kv []string
 	for _, k := range canonical {
 		if v, ok := e.Suggestions[k]; ok {
-			lines = append(lines, fmt.Sprintf(`  "%s": "%s"`, k, v))
+			kv = append(kv, fmt.Sprintf(`  "%s": "%s"`, k, v))
 		}
 	}
-	for i, line := range lines {
+	for i, line := range kv {
 		suffix := ","
-		if i == len(lines)-1 {
+		if i == len(kv)-1 {
 			suffix = ""
 		}
-		fmt.Fprintln(os.Stderr, "  "+colorJSONSuggestion(line+suffix))
+		body.WriteString("        " + colorJSONSuggestion(line+suffix) + "\n")
 	}
-	fmt.Fprintln(os.Stderr, "  "+colorJSONSuggestion(`}`))
-	fmt.Fprintln(os.Stderr)
+	body.WriteString("        " + colorJSONSuggestion(`}`))
+	fprintHint("%s", body.String())
 }
 
 // JSON suggestions are emitted multi-line so the operator can paste
@@ -523,7 +534,7 @@ func printProductionConfigError(e *scaffold.ProductionConfigError) {
 		colorMagenta("sessionSecret"), colorMagenta("smtpPassword"),
 		colorMagenta("env:VAR_NAME"))
 	fmt.Fprintf(os.Stderr, "    the actual values reach Fly automatically on the next %s.\n",
-		cmdSuggest("fly deploy"))
+		cmdSuggest("deploy"))
 	fmt.Fprintf(os.Stderr, "  - For %s: %s is %s, %s is\n",
 		colorCyan("Resend"), colorMagenta("smtpHost"),
 		colorCyan(`"smtp.resend.com"`), colorMagenta("smtpUsername"))
@@ -754,10 +765,10 @@ func main() {
 		os.Exit(runBuild(os.Args[2:]))
 	case "migrate":
 		os.Exit(runMigrate(os.Args[2:]))
+	case "deploy":
+		os.Exit(runDeploy(os.Args[2:]))
 	case "fly":
 		os.Exit(runFly(os.Args[2:]))
-	case "cloudflare-pages":
-		os.Exit(runCloudflarePages(os.Args[2:]))
 	case "admin":
 		os.Exit(runAdmin(os.Args[2:]))
 	case "completion":
@@ -775,13 +786,12 @@ func main() {
 		// command and exit non-zero so scripts notice.
 		arg := os.Args[1]
 		// Before treating arg as a path, check if it's a known
-		// sub-subcommand name (deploy, logs, status, secrets, ...).
-		// Suggesting `mar dev deploy` when the operator typed `mar
-		// deploy` is actively misleading — it implies a top-level
-		// `deploy` exists, and on top of that the looksLikePath
-		// check can return true just because a directory named
-		// "deploy" happens to exist in the cwd (very common).
-		// Surface the real path (`mar fly deploy`) instead.
+		// sub-subcommand name (logs, status, secrets, ...) that lives
+		// under a parent command. Suggesting `mar dev logs` when the
+		// operator typed `mar logs` is actively misleading — and the
+		// looksLikePath check can return true just because a directory
+		// named "logs" happens to exist in the cwd (very common).
+		// Surface the real path (`mar fly logs`) instead.
 		if parent := parentForSubcommand(arg); parent != "" {
 			fprintError("mar: %q is not a top-level command.", arg)
 			fprintHint("did you mean %s?", cmdSuggest(parent+" "+arg))
@@ -798,24 +808,18 @@ func main() {
 	}
 }
 
-// parentForSubcommand maps a sub-subcommand name (e.g. "deploy",
-// "logs") to the top-level command it lives under (e.g. "fly"), so
-// `mar deploy` can suggest the real path `mar fly deploy` instead
-// of either "unknown command" or the misleading "run as a project"
-// hint. Returns "" when the name isn't a known sub-subcommand.
+// parentForSubcommand maps a sub-subcommand name (e.g. "logs",
+// "status") to the top-level command it lives under (e.g. "fly"), so
+// `mar logs` can suggest the real path `mar fly logs` instead of
+// either "unknown command" or the misleading "run as a project" hint.
+// Returns "" when the name isn't a known sub-subcommand.
 //
 // Kept in lockstep with the dispatchers in fly.go / fly_database.go /
-// fly_secrets.go / cloudflarepages.go / admin.go / migrate.go — if a
-// new sub is added there, mirror it here so the typo hint stays
-// useful.
-//
-// `deploy` is the only sub shared by two parents (fly + cloudflare-
-// pages); pickDeployParent peeks at ./mar.json to suggest whichever
-// one the project is configured for. The rest are unambiguous.
+// fly_secrets.go / admin.go / migrate.go — if a new sub is added
+// there, mirror it here so the typo hint stays useful. (`deploy` is a
+// top-level command now, so it's dispatched directly, not routed here.)
 func parentForSubcommand(name string) string {
 	switch name {
-	case "deploy":
-		return pickDeployParent()
 	case "preview", "destroy", "logs", "status", "secrets":
 		return "fly"
 	case "backup", "backups":
@@ -826,24 +830,6 @@ func parentForSubcommand(name string) string {
 		return "migrate"
 	}
 	return ""
-}
-
-// pickDeployParent peeks at ./mar.json to decide whether `mar deploy`
-// should suggest `mar fly deploy` or `mar cloudflare-pages deploy`.
-// Returns "cloudflare-pages" only when the manifest declares the
-// cloudflare-pages block AND not the fly block. Every other case
-// (no manifest, both blocks, only fly, neither block) falls back to
-// "fly" — fly is the older deploy target and the safer default when
-// intent is ambiguous.
-func pickDeployParent() string {
-	m, err := project.LoadManifestStructure(".")
-	if err != nil || m == nil || m.Deploy == nil {
-		return "fly"
-	}
-	if m.Deploy.CloudflarePages != nil && m.Deploy.Fly == nil {
-		return "cloudflare-pages"
-	}
-	return "fly"
 }
 
 // looksLikePath reports whether `s` looks like a path attempt —
@@ -909,8 +895,8 @@ func usage() {
 		{"format", "[--check] <file>...", "Reformat .mar files in place"},
 		{"config", "<dir>", "Print " + path("mar.json")},
 		{"migrate", "<plan|status> [path]", "Show pending / applied schema migrations (read-only)"},
-		{"fly", "<init|provision|deploy|destroy|logs|status|admin|database> [path]", "Full Fly.io deployment workflow"},
-		{"cloudflare-pages", "deploy [path]", "Deploy a static App.frontend bundle to Cloudflare Pages"},
+		{"deploy", "[path] [--no-open]", "Ship the app to its configured target (Fly VM or Cloudflare Pages)"},
+		{"fly", "<preview|logs|status|secrets|destroy|admin|database> [path]", "Lower-level Fly.io app workflow"},
 		{"admin", "<add|remove|list> [args]", "Manage admin panel access (" + path("mar.json") + " admins list)"},
 		{"repl", "", "Interactive REPL"},
 		{"lsp", "", "Language server over stdio"},
@@ -1012,6 +998,22 @@ func runCheck(path string) int {
 	return 0
 }
 
+// topologyNeedsDB reports whether `mar dev` should provision a SQLite
+// database for a project, given the result of scaffold.Topology.
+//
+// Only a KNOWN server app (App.backend / App.fullstack) gets one. A
+// frontend app has no server-side state, so it gets nothing — no file, no
+// advisory lock, no /_mar/admin. Crucially, an UNKNOWN topology (topoErr
+// set because `main` doesn't compile yet) ALSO provisions nothing: a
+// non-compiling app serves nothing, so eagerly opening a DB there would
+// just drop stray .db / .db.lock files next to a frontend app that will
+// never use them. A backend app started with a typo still recovers — the
+// dev server's compile() wires the DB path once its entities register on
+// the first good reload.
+func topologyNeedsDB(topo string, topoErr error) bool {
+	return topoErr == nil && topo != "frontend"
+}
+
 // runDev evaluates `main` in dev mode. Path can be a .mar file (single-file
 // app) or a directory containing Main.mar. Defaults to "." when called with
 // no arguments.
@@ -1057,12 +1059,21 @@ func runDev(path string, noOpen bool) int {
 		port = manifest.Server.Port
 	}
 
+	// Decide whether to provision a SQLite database. A frontend app has no
+	// server-side state, so it gets none (no file, no advisory lock, no
+	// /_mar/admin). We learn the topology by evaluating `main` once up
+	// front — see topologyNeedsDB for why an UNKNOWN topology (main not
+	// compiling yet) also provisions nothing.
+	provisionDB := topologyNeedsDB(scaffold.Topology(projectDir))
+
 	// Wire the SQLite path into the runtime — Repo.* lazy-opens this on
 	// first use. ResolveDatabasePath honors MAR_DATABASE_PATH (override
 	// for production deploys) and resolves relative paths against the
-	// project directory so `./notes.db` lands next to Main.mar.
+	// project directory so `./notes.db` lands next to Main.mar. Skipped
+	// for a frontend app: with no path set, bootAdminPanel and the
+	// migrator both no-op, so no `.db` file is ever created.
 	dbPath, _ := project.ResolveDatabasePath(manifest, projectDir)
-	if dbPath != "" {
+	if provisionDB && dbPath != "" {
 		runtime.SetDBPath(dbPath)
 	}
 
@@ -1076,7 +1087,14 @@ func runDev(path string, noOpen bool) int {
 		return 1
 	}
 	if secret != "" {
-		jsserve.SetAuthRuntime(secret, project.ToSMTPConfig(manifest))
+		// `mar dev` is the ONE place allowed to print a sign-in code to
+		// the terminal instead of emailing it — that is what makes the
+		// auth flow usable with zero mail setup. Production leaves this
+		// false (see auth.SMTPConfig.AllowStdoutSink) and refuses to boot
+		// rather than write codes to its log stream.
+		smtpCfg := project.ToSMTPConfig(manifest)
+		smtpCfg.AllowStdoutSink = true
+		jsserve.SetAuthRuntime(secret, smtpCfg)
 		_ = secretSrc // available for diagnostics if we want to log it later
 		if manifest != nil && manifest.Mail != nil {
 			jsserve.SetAdminMailFrom(manifest.Mail.From)
@@ -1139,7 +1157,7 @@ func runDev(path string, noOpen bool) int {
 	// database configured. Runs in dev too so the developer sees
 	// the catalog grow alongside their app — same code path as
 	// production, no surprises at deploy time.
-	if dbPath != "" {
+	if provisionDB && dbPath != "" {
 		// The scheduler gets its OWN connection (not the app's
 		// single-connection pool) so VACUUM INTO runs concurrently
 		// under WAL without stalling request handlers.
@@ -1156,7 +1174,8 @@ func runDev(path string, noOpen bool) int {
 		// is in use. Released by the kernel on exit.
 		if err := runtime.HoldDBLock(dbPath); err != nil {
 			if errors.Is(err, runtime.ErrDBLocked) {
-				fprintError("mar dev: database %s is locked by another process (another `mar dev` running against this project? a restore in progress?)", dbPath)
+				fprintError("mar dev: database %s is locked by another process.", dbPath)
+				fprintHint("another %s may already be running against this project, or a restore is in progress. Stop it, then try again.", cmdSuggest("dev"))
 			} else {
 				fprintError("mar dev: database lock: %v", err)
 			}
@@ -1225,6 +1244,15 @@ func runDev(path string, noOpen bool) int {
 		// user's main.
 		if _, err := eff.Run(); err != nil {
 			return err
+		}
+		// If we deferred the DB at startup because the topology was
+		// unknown (main didn't compile then), wire the path now that we
+		// have a valid program WITH entities — so a backend app started
+		// with a typo recovers on its first good reload, no restart. A
+		// frontend app registers no entities, so this stays a no-op for
+		// it and never creates a file.
+		if dbPath != "" && runtime.CurrentDBPath() == "" && len(runtime.RegisteredEntities()) > 0 {
+			runtime.SetDBPath(dbPath)
 		}
 		// Apply any pending schema migrations before the listener
 		// accepts traffic. Hot-reloads also pass through here, so

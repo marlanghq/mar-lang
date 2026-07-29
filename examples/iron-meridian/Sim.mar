@@ -1,0 +1,2329 @@
+module Sim exposing (..)
+
+
+import Types exposing (..)
+import Balance exposing (..)
+import Maps exposing (..)
+
+
+-- IRON MERIDIAN: the simulation. One entry pair:
+--
+--   applyAct : Act -> Game -> Game     (player input, bot decisions)
+--   tick     : Game -> Game            (one 30 Hz step)
+--
+-- Everything is deterministic: the LCG seed lives in the Game and every
+-- random draw threads it. Fog bookkeeping is incremental: any code that
+-- creates, moves, kills or flips a PLAYER thing must keep its sight
+-- stamp balanced (mkUnit/mkBld stamp, killers unstamp, tile crossings
+-- move the stamp). fogDirty rows get their draw runs rebuilt once per
+-- tick at the end.
+
+
+-- ===== spawning =====
+
+
+freshMind : BotMind
+freshMind =
+    { mode = 0, thinkAt = 0, waveAt = 0, waveSize = 0
+    , buildIx = 0, targetX = 0, targetY = 0, scoutIx = 0 }
+
+
+freshSide : Int -> Race -> Int -> Bool -> Int -> Side
+freshSide id race team human aggro =
+    { id = id, race = race, team = team, human = human
+    , credits = startCredits, supUse = 0, supMax = 0
+    , powUse = 0, powMade = 0
+    , sQueue = [], sProg = 0, sReady = 0 - 1
+    , uQueue = [], uProg = 0
+    , superCd = 0, aggro = aggro, mind = freshMind, alive = True }
+
+
+-- mkUnit: spawn at a px position (fog-stamped when the player's)
+mkUnit : Int -> UnitKind -> Int -> Int -> Game -> Game
+mkUnit side kind px py g =
+    let
+        u =
+            { id = g.nextId, side = side, kind = kind
+            , x = px * fxs, y = py * fxs
+            , hp = uHp kind, sh = uShield kind
+            , cd = 0, stun = 0, lastHit = 0 - 1000
+            , face = 4, ord = OIdle, tgt = TNone
+            , flowKey = 0 - 1, stuck = 0, carry = 0 }
+
+        g2 = { g | units = u :: g.units, nextId = g.nextId + 1 }
+    in
+    if side == 1 then
+        fogDelta 1 (px // tileW) (py // tileW) (uSight kind) g2
+    else
+        g2
+
+
+-- mkBld: spawn a finished building (unfold animation only)
+-- prog is the initial build countdown: 0 = operational at once (starting base,
+-- captured derelicts), bBuild kind = a construction site that rises on the map
+-- over its build time (player/bot placement).
+mkBld : Int -> BldKind -> Int -> Int -> Int -> Game -> Game
+mkBld side kind tx ty prog g =
+    let
+        b =
+            { id = g.nextId, side = side, kind = kind
+            , tx = tx, ty = ty, hp = bHp kind
+            , prog = max 0 prog
+            , rally = (tx + bW kind // 2) * tileW + tileW // 2
+            , rallyY = (ty + bH kind + 1) * tileW + tileW // 2
+            , capPts = 0, cd = 0, stun = 0, lastHit = 0 - 1000 }
+
+        g2 =
+            dropFlows { g | blds = b :: g.blds, nextId = g.nextId + 1 }
+    in
+    if side == 1 then
+        fogDelta 1 (tx + bW kind // 2) (ty + bH kind // 2) (bSight kind) g2
+    else
+        g2
+
+
+-- ===== tiny queries =====
+
+
+unitById : Game -> Int -> Maybe Unit
+unitById g id =
+    List.head (List.filter (\u -> u.id == id) g.units)
+
+
+bldById : Game -> Int -> Maybe Bld
+bldById g id =
+    List.head (List.filter (\b -> b.id == id) g.blds)
+
+
+sideOf : Game -> Int -> Side
+sideOf g id =
+    -- Kept as a `case` rather than Maybe.withDefault: Mar is strict, and
+    -- this runs per unit per tick — the fallback side would be built on
+    -- every hit, not just on the miss.
+    case List.head (List.filter (\s -> s.id == id) g.sides) of
+        Just s -> s
+        Nothing -> freshSide id Compact id False 100
+
+
+mapSide : Int -> (Side -> Side) -> Game -> Game
+mapSide id f g =
+    { g | sides = List.map (\s -> if s.id == id then f s else s) g.sides }
+
+
+teamOf : Game -> Int -> Int
+teamOf g sideId =
+    if sideId == 0 then 0 else (sideOf g sideId).team
+
+
+hostile : Game -> Int -> Int -> Bool
+hostile g a b =
+    a /= 0 && b /= 0 && teamOf g a /= teamOf g b
+
+
+armorOfUnit : UnitKind -> Int
+armorOfUnit k =
+    if uFly k then 3
+    else if uClass k == 0 then 0
+    else 1
+
+
+cue : Cue -> Game -> Game
+cue c g =
+    { g | cues = c :: g.cues }
+
+
+alertAt : String -> Int -> Int -> Game -> Game
+alertAt msg x y g =
+    { g
+        | alerts = List.take 5 ({ t = g.tick, msg = msg, x = x, y = y } :: g.alerts)
+        , pings = List.take 7 ({ x = x, y = y, t = g.tick } :: g.pings)
+    }
+
+
+-- notify: a text-only message in the alert feed, with no map ping (used
+-- for UI feedback like "Requires Foundry" where there is no location).
+notify : String -> Game -> Game
+notify msg g =
+    { g | alerts = List.take 5 ({ t = g.tick, msg = msg, x = 0 - 1, y = 0 - 1 } :: g.alerts) }
+
+
+-- prerequisite helpers: does this side have a live building of some kind,
+-- and what is the first missing prerequisite for a unit/structure?
+hasBldOf : Game -> Int -> BldKind -> Bool
+hasBldOf g sid k =
+    List.any (\b -> b.side == sid && b.prog == 0 && b.kind == k) g.blds
+
+
+firstMissing : Game -> Int -> List BldKind -> Maybe BldKind
+firstMissing g sid needs =
+    List.head (List.filter (\k -> bnot (hasBldOf g sid k)) needs)
+
+
+supBldName : Race -> String
+supBldName r =
+    case r of
+        Compact -> "Billet"
+        Combine -> "Bunkroom"
+        Vessari -> "Spire"
+
+
+-- ===== applying commands =====
+
+
+applyAct : Act -> Game -> Game
+applyAct act g =
+    case act of
+        AMove ids x y ->
+            orderUnits ids (OMove x y) g
+
+        AAtkMove ids x y ->
+            orderUnits ids (OAtkMove x y) g
+
+        AAttack ids tgt ->
+            orderUnits ids (OAttack tgt) g
+
+        AStop ids ->
+            mapUnits ids (\u -> { u | ord = OIdle, tgt = TNone, flowKey = 0 - 1 }) g
+
+        AHold ids ->
+            mapUnits ids (\u -> { u | ord = OHold, tgt = TNone, flowKey = 0 - 1 }) g
+
+        AHarvest ids idx ->
+            mapUnits ids
+                (\u -> if uWorker u.kind then { u | ord = OHarvest idx, tgt = TNone, flowKey = 0 - 1 } else u)
+                g
+
+        ACapture ids bid ->
+            mapUnits ids
+                (\u -> if uCapturer u.kind then { u | ord = OCapture bid, tgt = TNone, flowKey = 0 - 1 } else u)
+                g
+
+        AQueueUnit sid kind ->
+            queueUnit sid kind g
+
+        AQueueBld sid kind ->
+            queueBld sid kind g
+
+        APlaceBld sid tx ty ->
+            placeBld sid tx ty g
+
+        ACancelBld sid ->
+            cancelBld sid g
+
+        ACancelUnit sid kind ->
+            cancelUnit sid kind g
+
+        ASetRally bid x y ->
+            { g
+                | blds =
+                    List.map
+                        (\b -> if b.id == bid then { b | rally = x, rallyY = y } else b)
+                        g.blds
+            }
+
+        ADemolish bid ->
+            demolishBld bid g
+
+        ASuper sid x y ->
+            fireSuper sid x y g
+
+
+mapUnits : List Int -> (Unit -> Unit) -> Game -> Game
+mapUnits ids f g =
+    { g
+        | units =
+            List.map
+                (\u -> if List.member u.id ids then f u else u)
+                g.units
+    }
+
+
+orderUnits : List Int -> Duty -> Game -> Game
+orderUnits ids d g =
+    mapUnits ids
+        (\u ->
+            if uWorker u.kind then
+                -- workers accept plain moves; combat orders fall back to move
+                case d of
+                    OMove x y -> { u | ord = OMove x y, tgt = TNone, flowKey = 0 - 1 }
+                    OAtkMove x y -> { u | ord = OMove x y, tgt = TNone, flowKey = 0 - 1 }
+                    _ -> { u | ord = d, tgt = TNone, flowKey = 0 - 1 }
+            else
+                { u | ord = d, tgt = TNone, flowKey = 0 - 1 }
+        )
+        g
+
+
+-- supply already committed to units waiting in the production queue
+queuedSupply : Side -> Int
+queuedSupply s =
+    List.foldl (\k a -> a + uSupply k) 0 s.uQueue
+
+
+queueUnit : Int -> UnitKind -> Game -> Game
+queueUnit sid kind g =
+    let
+        s = sideOf g sid
+        cost = uCost kind
+    in
+    case firstMissing g sid (uNeeds kind) of
+        Just miss ->
+            -- no producer/tech building yet: never charge, say what's needed
+            if sid == 1 then
+                notify ("Requires " ++ bName miss ++ ".") (cue CError g)
+            else
+                g
+
+        Nothing ->
+    if s.credits < cost then
+        if sid == 1 then notify "Not enough credits." (cue CNoFunds g) else g
+    else if s.supUse + queuedSupply s + uSupply kind > s.supMax then
+        -- count units already queued, not just the live ones, so you can't pile
+        -- up (and pay for) a queue you have no supply to ever spawn
+        if sid == 1 then notify ("Supply capped. Build another " ++ supBldName s.race ++ " to raise it.") (cue CError g) else g
+    else
+        let
+            wasEmpty = List.isEmpty s.uQueue
+        in
+        mapSide sid
+            (\s2 ->
+                { s2
+                    | credits = s2.credits - cost
+                    , uQueue = List.concat [ s2.uQueue, [ kind ] ]
+                    , uProg = if wasEmpty then uBuild kind else s2.uProg
+                }
+            )
+            (if sid == 1 then cue CClick g else g)
+
+
+queueBld : Int -> BldKind -> Game -> Game
+queueBld sid kind g =
+    let
+        s = sideOf g sid
+        cost = bCost kind
+    in
+    case firstMissing g sid (bNeeds kind) of
+        Just miss ->
+            if sid == 1 then
+                notify ("Requires " ++ bName miss ++ ".") (cue CError g)
+            else
+                g
+
+        Nothing ->
+    if s.credits < cost then
+        if sid == 1 then notify "Not enough credits." (cue CNoFunds g) else g
+    else
+        -- Arm placement right away (StarCraft/AoE style): you pick the spot
+        -- first, then placeBld charges and raises the construction site on the
+        -- map. No sidebar build timer. Clicking another structure re-arms;
+        -- credits are only spent when you actually place (placeBld).
+        mapSide sid (\s2 -> { s2 | sReady = bldCode kind }) (if sid == 1 then cue CClick g else g)
+
+
+placeBld : Int -> Int -> Int -> Game -> Game
+placeBld sid tx ty g =
+    let
+        s = sideOf g sid
+    in
+    if s.sReady < 0 then
+        g
+    else
+        let
+            kind = bldFromCode s.sReady
+            cost = bCost kind
+        in
+        if s.credits < cost then
+            if sid == 1 then notify "Not enough credits." (cue CNoFunds g) else g
+        else if canPlaceAt g sid kind tx ty then
+            -- pay now and drop a construction site that builds up on the map
+            mkBld sid kind tx ty (bBuild kind)
+                (mapSide sid (\s2 -> { s2 | sReady = 0 - 1, credits = s2.credits - cost }) g)
+                |> cue CPlace
+        else if sid == 1 then
+            cue CError g
+        else
+            g
+
+
+cancelBld : Int -> Game -> Game
+cancelBld sid g =
+    -- Nothing is charged until placement (placeBld pays), so cancelling never
+    -- refunds: disarm an armed placement, or scrap the blueprint still being
+    -- drawn up (the sQueue head ticking down in the sidebar).
+    mapSide sid
+        (\s2 ->
+            if s2.sReady >= 0 then
+                { s2 | sReady = 0 - 1 }
+            else
+                { s2 | sQueue = [], sProg = 0 }
+        )
+        g
+
+
+-- drop the FIRST occurrence of a kind from a queue
+removeFirstK : UnitKind -> List UnitKind -> List UnitKind
+removeFirstK kind xs =
+    case List.head xs of
+        Nothing ->
+            []
+
+        Just x ->
+            if x == kind then
+                List.drop 1 xs
+            else
+                x :: removeFirstK kind (List.drop 1 xs)
+
+
+-- drop the LAST occurrence (cancelling removes the newest order first)
+removeLastK : UnitKind -> List UnitKind -> List UnitKind
+removeLastK kind xs =
+    List.reverse (removeFirstK kind (List.reverse xs))
+
+
+-- cancel the LAST queued unit of a kind and refund it in full (units are
+-- charged when queued). If the cancelled copy was the one training, the
+-- timer restarts on whatever trains next. supStall resets so a queue that
+-- is still supply-blocked announces itself again.
+cancelUnit : Int -> UnitKind -> Game -> Game
+cancelUnit sid kind g =
+    let
+        s = sideOf g sid
+    in
+    if bnot (List.member kind s.uQueue) then
+        g
+    else
+        let
+            newQueue = removeLastK kind s.uQueue
+
+            headChanged =
+                case ( List.head newQueue, List.head s.uQueue ) of
+                    ( Just a, Just b ) -> a /= b
+                    ( Nothing, Nothing ) -> False
+                    _ -> True
+
+            prog2 =
+                if headChanged then
+                    case List.head newQueue of
+                        Just nk -> uBuild nk
+                        Nothing -> 0
+                else
+                    s.uProg
+
+            g2 =
+                if sid == 1 then
+                    notify (uName kind ++ " cancelled. Refunded $" ++ String.fromInt (uCost kind) ++ ".")
+                        (cue CClick g)
+                else
+                    g
+        in
+        mapSide sid
+            (\s2 ->
+                { s2
+                    | uQueue = newQueue
+                    , uProg = prog2
+                    , credits = s2.credits + uCost kind
+                }
+            )
+            { g2 | supStall = False }
+
+
+-- sell a finished structure: it vanishes and half its cost comes back. The HQ
+-- can't be sold (that would just be a lose button). Supply/power recompute from
+-- the building list each tick, so removing it settles on its own.
+demolishBld : Int -> Game -> Game
+demolishBld bid g =
+    case List.head (List.filter (\b -> b.id == bid) g.blds) of
+        Just b ->
+            if bIsHQ b.kind then
+                g
+            else
+                mapSide b.side
+                    (\s2 -> { s2 | credits = s2.credits + bCost b.kind // 2 })
+                    { g
+                        | blds = List.filter (\x -> x.id /= bid) g.blds
+                        , fxs = { x = bpx b, y = bpy b, t = 0, ttl = 18, kind = FxBoom, a = 22, b = 0 } :: g.fxs
+                    }
+                    |> cue CBoomSmall
+
+        Nothing ->
+            g
+
+
+-- superweapons: schedule strikes; the building must exist and be ready
+fireSuper : Int -> Int -> Int -> Game -> Game
+fireSuper sid x y g =
+    let
+        s = sideOf g sid
+
+        hasIt =
+            List.any
+                (\b -> b.side == sid && b.prog == 0 && bIsSuper b.kind)
+                g.blds
+    in
+    if bnot hasIt || s.superCd > 0 then
+        g
+    else
+        let
+            g2 = mapSide sid (\s2 -> { s2 | superCd = superCooldown }) g
+            g3 = cue CSuperFire g2
+        in
+        case s.race of
+            Compact ->
+                -- artillery barrage: telegraph ring, then 8 shells over 3s
+                let
+                    ring = { x = x, y = y, t = 0, ttl = 85, kind = FxRing, a = 78, b = 0 }
+
+                    folded =
+                        List.foldl
+                            (\i acc ->
+                                let
+                                    r1 = rnd acc.seed 120
+                                in
+                                case r1 of
+                                    ( s1, ox ) ->
+                                        let
+                                            r2 = rnd s1 120
+                                        in
+                                        case r2 of
+                                            ( sd2, oy ) ->
+                                                { seed = sd2
+                                                , out =
+                                                    { at = g3.tick + 90 + i * 11
+                                                    , x = x + ox - 60
+                                                    , y = y + oy - 60
+                                                    , side = sid
+                                                    , kind = 0
+                                                    } :: acc.out
+                                                }
+                            )
+                            { seed = g3.seed, out = [] }
+                            (List.range 0 7)
+                in
+                case folded of
+                    fr ->
+                        alertAt "Artillery barrage inbound." x y
+                            { g3
+                                | strikes = List.concat [ fr.out, g3.strikes ]
+                                , fxs = ring :: g3.fxs
+                                , seed = fr.seed
+                            }
+
+            Combine ->
+                alertAt "EMP burst detected." x y
+                    { g3
+                        | strikes = { at = g3.tick + 60, x = x, y = y, side = sid, kind = 1 } :: g3.strikes
+                        , fxs = { x = x, y = y, t = 0, ttl = 58, kind = FxRing, a = 96, b = 1 } :: g3.fxs
+                    }
+
+            Vessari ->
+                alertAt "Purge lens charging." x y
+                    { g3
+                        | strikes = { at = g3.tick + 90, x = x, y = y, side = sid, kind = 2 } :: g3.strikes
+                        , fxs = { x = x, y = y, t = 0, ttl = 88, kind = FxRing, a = 64, b = 2 } :: g3.fxs
+                    }
+
+
+-- ===== the tick =====
+
+
+tick : Game -> Game
+tick g0 =
+    let
+        g1 = { g0 | tick = g0.tick + 1, cues = [] }
+    in
+    g1
+        |> tickQueues
+        |> tickUnits
+        |> tickBlds
+        |> tickShots
+        |> tickStrikes
+        |> tickDeaths
+        |> tickEcon
+        |> tickFx
+        |> refreshFogRows
+
+
+-- ----- production queues, supply, superweapon cooldowns -----
+
+
+tickQueues : Game -> Game
+tickQueues g =
+    List.foldl (\s acc -> tickSideQueue s.id acc) g g.sides
+
+
+tickSideQueue : Int -> Game -> Game
+tickSideQueue sid g =
+    let
+        s = sideOf g sid
+
+        low = s.powUse > s.powMade
+
+        -- low power: only 3 of every 5 ticks make progress
+        working =
+            bnot low || modBy 5 g.tick < 3
+
+        g1 =
+            mapSide sid (\s2 -> { s2 | superCd = max 0 (s2.superCd - 1) }) g
+    in
+    if bnot s.alive then
+        g1
+    else
+        g1 |> stepStructQueue sid working |> stepUnitQueue sid working
+
+
+stepStructQueue : Int -> Bool -> Game -> Game
+stepStructQueue sid working g =
+    let
+        s = sideOf g sid
+    in
+    case List.head s.sQueue of
+        Nothing ->
+            g
+
+        Just kind ->
+            if s.sReady >= 0 then
+                g
+            else if bnot working then
+                g
+            else if s.sProg > 1 then
+                mapSide sid (\s2 -> { s2 | sProg = s2.sProg - 1 }) g
+            else
+                let
+                    g2 =
+                        mapSide sid
+                            (\s2 -> { s2 | sQueue = [], sProg = 0, sReady = bldCode kind })
+                            g
+                in
+                if sid == 1 then
+                    cue CBuilt g2
+                else
+                    -- bots place immediately near their HQ
+                    botAutoPlace sid kind g2
+
+
+botAutoPlace : Int -> BldKind -> Game -> Game
+botAutoPlace sid kind g =
+    let
+        hq =
+            List.head (List.filter (\b -> b.side == sid && bIsHQ b.kind) g.blds)
+    in
+    case hq of
+        Nothing ->
+            mapSide sid (\s2 -> { s2 | sReady = 0 - 1 }) g
+
+        Just b ->
+            let
+                spot = findSpot g sid kind (b.tx + 1) (b.ty + 1)
+            in
+            if spot.ok then
+                placeBld sid spot.tx spot.ty g
+            else
+                -- refund and forget: no room
+                mapSide sid
+                    (\s2 -> { s2 | sReady = 0 - 1, credits = s2.credits + bCost kind })
+                    g
+
+
+stepUnitQueue : Int -> Bool -> Game -> Game
+stepUnitQueue sid working g =
+    let
+        s = sideOf g sid
+    in
+    case List.head s.uQueue of
+        Nothing ->
+            g
+
+        Just kind ->
+            if bnot working then
+                g
+            else if s.uProg > 1 then
+                mapSide sid (\s2 -> { s2 | uProg = s2.uProg - 1 }) g
+            else if s.supUse + uSupply kind > s.supMax then
+                -- trained but no room to spawn: supply shrank after this unit
+                -- was queued (a Billet died, or units arrived outside the
+                -- queue's accounting). Hold until supply frees, and tell the
+                -- player ONCE, or all they see is a full bar doing nothing.
+                if sid == 1 && bnot g.supStall then
+                    notify
+                        (uName kind
+                            ++ " ready but supply is full. Build a "
+                            ++ supBldName s.race
+                            ++ " or right-click its button to cancel.")
+                        (cue CError { g | supStall = True })
+                else
+                    g
+            else
+                spawnTrained sid kind (if sid == 1 then { g | supStall = False } else g)
+
+
+spawnTrained : Int -> UnitKind -> Game -> Game
+spawnTrained sid kind g =
+    let
+        producer =
+            List.head
+                (List.filter
+                    (\b -> b.side == sid && b.prog == 0 && bProduces b.kind == uClass kind)
+                    g.blds)
+    in
+    case producer of
+        Nothing ->
+            -- producer died mid-train: refund, drop the item
+            mapSide sid
+                (\s2 ->
+                    { s2
+                        | uQueue = List.drop 1 s2.uQueue
+                        , uProg =
+                            case List.head (List.drop 1 s2.uQueue) of
+                                Just nk -> uBuild nk
+                                Nothing -> 0
+                        , credits = s2.credits + uCost kind
+                    }
+                )
+                g
+
+        Just b ->
+            let
+                sx = bpx b
+                sy = (b.ty + bH b.kind) * tileW + tileW // 2
+
+                g2 = mkUnit sid kind sx sy g
+
+                g3 =
+                    mapSide sid
+                        (\s2 ->
+                            { s2
+                                | uQueue = List.drop 1 s2.uQueue
+                                , uProg =
+                                    case List.head (List.drop 1 s2.uQueue) of
+                                        Just nk -> uBuild nk
+                                        Nothing -> 0
+                            }
+                        )
+                        g2
+
+                g4 =
+                    orderUnits [ g3.nextId - 1 ]
+                        (OMove b.rally b.rallyY)
+                        g3
+            in
+            if sid == 1 then cue (CTrained kind) g4 else g4
+
+
+-- ----- units -----
+
+
+tickUnits : Game -> Game
+tickUnits g =
+    let
+        folded =
+            List.foldl
+                (\u acc -> stepUnit acc u)
+                { g = g, out = [] }
+                g.units
+    in
+    case folded of
+        r ->
+            let
+                g2 = r.g
+            in
+            unstickUnits (separateUnits g2 r.out)
+
+
+-- A building's footprint blocks movement, but placement (footprintFree) only
+-- checks other buildings, not units. So you can drop a structure on top of your
+-- own unit and trap it. Pop any unit caught inside a footprint out to the
+-- nearest walkable tile so it can never get permanently sealed in.
+unstickUnits : Game -> Game
+unstickUnits g =
+    let
+        folded =
+            List.foldl
+                (\u acc ->
+                    if modBy 3 (u.id + g.tick) == 0 && bldBlocks g (u.x // tileFx) (u.y // tileFx) then
+                        let
+                            spot = nearestWalkable g (u.x // tileFx) (u.y // tileFx)
+
+                            u2 = { u | x = spot.fx, y = spot.fy }
+
+                            g3 =
+                                if u.side == 1 then
+                                    fogDelta 1 (u2.x // tileFx) (u2.y // tileFx) (uSight u.kind)
+                                        (fogDelta (0 - 1) (u.x // tileFx) (u.y // tileFx) (uSight u.kind) acc.g)
+                                else
+                                    acc.g
+                        in
+                        { g = g3, out = u2 :: acc.out }
+                    else
+                        { acc | out = u :: acc.out }
+                )
+                { g = g, out = [] }
+                g.units
+
+        gg = folded.g
+    in
+    { gg | units = folded.out }
+
+
+-- spiral out from a tile to the nearest walkable, building-free tile centre
+nearestWalkable : Game -> Int -> Int -> { fx : Int, fy : Int }
+nearestWalkable g tx ty =
+    let
+        cand =
+            List.concatMap
+                (\dy -> List.map (\dx -> { dx = dx, dy = dy }) (List.range (0 - 6) 6))
+                (List.range (0 - 6) 6)
+
+        walkables =
+            List.filter
+                (\c -> walkableFx g ((tx + c.dx) * tileFx + tileFx // 2) ((ty + c.dy) * tileFx + tileFx // 2))
+                cand
+
+        sorted = List.sortBy (\c -> abs c.dx + abs c.dy) walkables
+    in
+    case List.head sorted of
+        Just c ->
+            { fx = (tx + c.dx) * tileFx + tileFx // 2, fy = (ty + c.dy) * tileFx + tileFx // 2 }
+
+        Nothing ->
+            { fx = tx * tileFx + tileFx // 2, fy = ty * tileFx + tileFx // 2 }
+
+
+-- gentle crowd separation: units that have stopped (idle / holding) drift
+-- apart when they pile onto the same spot, so a stack is selectable and stops
+-- z-fighting. Reads the stepped snapshot, nudges each unit's own position, and
+-- only commits the nudge onto walkable ground. Staggered per unit to stay cheap.
+sepGap : Int
+sepGap = 20 * fxs
+
+
+separateUnits : Game -> List Unit -> Game
+separateUnits g us =
+    let
+        folded =
+            List.foldl
+                (\u acc ->
+                    if crowdable u.ord && modBy 2 (u.id + g.tick) == 0 then
+                        let
+                            u2 = nudgeApart g u us
+
+                            -- a nudge that crosses a tile boundary must carry the
+                            -- unit's fog vision with it, or the unit drifts under
+                            -- unrevealed (black) fog
+                            g3 =
+                                if u.side == 1
+                                    && (u.x // tileFx /= u2.x // tileFx || u.y // tileFx /= u2.y // tileFx)
+                                then
+                                    fogDelta 1 (u2.x // tileFx) (u2.y // tileFx) (uSight u.kind)
+                                        (fogDelta (0 - 1) (u.x // tileFx) (u.y // tileFx) (uSight u.kind) acc.g)
+                                else
+                                    acc.g
+                        in
+                        { g = g3, out = u2 :: acc.out }
+                    else
+                        { acc | out = u :: acc.out }
+                )
+                { g = g, out = [] }
+                us
+
+        gg = folded.g
+    in
+    { gg | units = folded.out }
+
+
+crowdable : Duty -> Bool
+crowdable ord =
+    case ord of
+        OIdle -> True
+        OHold -> True
+        _ -> False
+
+
+nudgeApart : Game -> Unit -> List Unit -> Unit
+nudgeApart g u us =
+    let
+        push =
+            List.foldl
+                (\o acc ->
+                    if o.id == u.id || o.side /= u.side then
+                        acc
+                    else
+                        let
+                            dx = u.x - o.x
+                            dy = u.y - o.y
+                            d = abs dx + abs dy
+                        in
+                        if d >= sepGap then
+                            acc
+                        else if d == 0 then
+                            -- exact overlap: split deterministically by id
+                            if u.id > o.id then
+                                { x = acc.x + 20, y = acc.y - 8 }
+                            else
+                                { x = acc.x - 20, y = acc.y + 8 }
+                        else
+                            { x = acc.x + dx * 28 // d, y = acc.y + dy * 28 // d }
+                )
+                { x = 0, y = 0 }
+                us
+
+        nx = u.x + capNudge push.x
+
+        ny = u.y + capNudge push.y
+    in
+    if walkableFx g nx ny then
+        { u | x = nx, y = ny }
+    else if walkableFx g nx u.y then
+        { u | x = nx }
+    else if walkableFx g u.x ny then
+        { u | y = ny }
+    else
+        u
+
+
+capNudge : Int -> Int
+capNudge v =
+    if v > 56 then 56
+    else if v < 0 - 56 then 0 - 56
+    else v
+
+
+type alias UStep =
+    { g : Game
+    , out : List Unit
+    }
+
+
+stepUnit : UStep -> Unit -> UStep
+stepUnit acc u0 =
+    let
+        g = acc.g
+
+        u1 =
+            { u0
+                | cd = max 0 (u0.cd - 1)
+                , stun = max 0 (u0.stun - 1)
+            }
+
+        u2 = regenShield g u1
+    in
+    if u2.stun > 0 then
+        { acc | out = u2 :: acc.out }
+    else
+        case u2.ord of
+            OIdle ->
+                idleStep acc u2
+
+            OHold ->
+                holdStep acc u2
+
+            OMove x y ->
+                moveStep acc u2 x y False
+
+            OAtkMove x y ->
+                atkMoveStep acc u2 x y
+
+            OAttack tgt ->
+                attackStep acc u2 tgt
+
+            OHarvest idx ->
+                harvestStep acc u2 idx
+
+            OReturn ->
+                returnStep acc u2
+
+            OCapture bid ->
+                captureStep acc u2 bid
+
+
+regenShield : Game -> Unit -> Unit
+regenShield g u =
+    let
+        maxSh = uShield u.kind
+    in
+    if maxSh == 0 || u.sh >= maxSh then
+        u
+    else if g.tick - u.lastHit > shieldRegenDelay || nearAegis g u then
+        if modBy 3 (g.tick + u.id) == 0 then
+            { u | sh = min maxSh (u.sh + 1) }
+        else
+            u
+    else
+        u
+
+
+nearAegis : Game -> Unit -> Bool
+nearAegis g u =
+    List.any
+        (\b ->
+            b.side == u.side
+                && b.prog == 0
+                && (case b.kind of
+                        AegisNode -> True
+                        _ -> False)
+                && octd (bpx b - upx u) (bpy b - upy u) < 5 * tileW
+        )
+        g.blds
+
+
+-- idle: combat units auto-acquire a target; idle workers go find work
+-- (Reclaimers grab scrap, everyone falls back to mining the nearest ore).
+idleStep : UStep -> Unit -> UStep
+idleStep acc u =
+    if uDmg u.kind > 0 && modBy 8 (u.id + acc.g.tick) == 0 then
+        case acquire acc.g u (uSight u.kind * tileW) of
+            TNone ->
+                { acc | out = u :: acc.out }
+
+            t ->
+                { acc | out = { u | ord = OAttack t, tgt = t } :: acc.out }
+    else if uWorker u.kind && modBy 10 (u.id + acc.g.tick) == 0 then
+        workerSeek acc u
+    else
+        { acc | out = u :: acc.out }
+
+
+-- workerSeek: an idle worker finds something to do. Reclaimers eat nearby
+-- scrap first; every worker otherwise mines the nearest ore patch. This is
+-- what makes the economy start on its own — the player never has to hand-
+-- assign the first harvester.
+workerSeek : UStep -> Unit -> UStep
+workerSeek acc u =
+    let
+        scrapNear =
+            case u.kind of
+                Reclaimer -> hasScrapNear acc.g (upx u) (upy u)
+                _ -> False
+    in
+    if scrapNear then
+        reclaimStep acc u
+    else
+        case nearestOre acc.g (upx u) (upy u) of
+            Just idx ->
+                { acc | out = { u | ord = OHarvest idx, tgt = TNone, flowKey = 0 - 1 } :: acc.out }
+
+            Nothing ->
+                { acc | out = u :: acc.out }
+
+
+hasScrapNear : Game -> Int -> Int -> Bool
+hasScrapNear g px py =
+    List.any (\sc -> octd (sc.x - px) (sc.y - py) < 8 * tileW) g.scraps
+
+
+-- Combine salvage: an idle Reclaimer walks to nearby scrap and eats it
+reclaimStep : UStep -> Unit -> UStep
+reclaimStep acc u =
+    let
+        g = acc.g
+
+        best =
+            List.foldl
+                (\sc bacc ->
+                    let
+                        d = octd (sc.x - upx u) (sc.y - upy u)
+                    in
+                    if d < bacc.d then
+                        { d = d, x = sc.x, y = sc.y, ok = True }
+                    else
+                        bacc
+                )
+                { d = 8 * tileW, x = 0, y = 0, ok = False }
+                g.scraps
+    in
+    if bnot best.ok then
+        { acc | out = u :: acc.out }
+    else if best.d < 14 then
+        let
+            grabbed =
+                List.foldl
+                    (\sc v ->
+                        if sc.x == best.x && sc.y == best.y then v + sc.amount else v
+                    )
+                    0
+                    g.scraps
+
+            g2 =
+                mapSide u.side (\s -> { s | credits = s.credits + grabbed })
+                    { g
+                        | scraps = List.filter (\sc -> sc.x /= best.x || sc.y /= best.y) g.scraps
+                        , fxs = { x = best.x, y = best.y, t = 0, ttl = 12, kind = FxScrapGlow, a = 0, b = 0 } :: g.fxs
+                    }
+        in
+        { g = g2, out = u :: acc.out }
+    else
+        moveToward acc u best.x best.y
+
+
+holdStep : UStep -> Unit -> UStep
+holdStep acc u =
+    if uDmg u.kind > 0 && modBy 8 (u.id + acc.g.tick) == 0 then
+        case acquire acc.g u (uRange u.kind + 10) of
+            TNone ->
+                { acc | out = u :: acc.out }
+
+            t ->
+                fireAt acc { u | tgt = t } t
+
+    else
+        case u.tgt of
+            TNone ->
+                { acc | out = u :: acc.out }
+
+            t ->
+                fireAt acc u t
+
+
+-- acquire: nearest hostile inside `radius` px this unit can shoot
+acquire : Game -> Unit -> Int -> Tgt
+acquire g u radius =
+    let
+        best =
+            List.foldl
+                (\e acc ->
+                    let
+                        d = octd (upx e - upx u) (upy e - upy u)
+                    in
+                    if hostile g u.side e.side
+                        && d < acc.d
+                        && (if uFly e.kind then uAA u.kind else uGround u.kind)
+                        && visToSide g u.side (upx e) (upy e)
+                    then
+                        { d = d, t = TUnit e.id }
+                    else
+                        acc
+                )
+                { d = radius, t = TNone }
+                g.units
+
+        best2 =
+            List.foldl
+                (\b acc ->
+                    let
+                        d = octd (bpx b - upx u) (bpy b - upy u)
+                    in
+                    if hostile g u.side b.side
+                        && d < acc.d
+                        && uGround u.kind
+                        && visToSide g u.side (bpx b) (bpy b)
+                    then
+                        { d = d, t = TBld b.id }
+                    else
+                        acc
+                )
+                best
+                g.blds
+    in
+    best2.t
+
+
+-- bots see everything; the player's units only aim at what the fog shows
+visToSide : Game -> Int -> Int -> Int -> Bool
+visToSide g side px py =
+    if side /= 1 then
+        True
+    else
+        visAt g (px // tileW) (py // tileW) == 2
+
+
+tgtPos : Game -> Tgt -> Maybe { x : Int, y : Int, alive : Bool }
+tgtPos g t =
+    case t of
+        TNone ->
+            Nothing
+
+        TUnit id ->
+            case unitById g id of
+                Just u -> Just { x = upx u, y = upy u, alive = True }
+                Nothing -> Nothing
+
+        TBld id ->
+            case bldById g id of
+                Just b -> Just { x = bpx b, y = bpy b, alive = True }
+                Nothing -> Nothing
+
+
+attackStep : UStep -> Unit -> Tgt -> UStep
+attackStep acc u tgt =
+    case tgtPos acc.g tgt of
+        Nothing ->
+            { acc | out = { u | ord = OIdle, tgt = TNone, flowKey = 0 - 1 } :: acc.out }
+
+        Just p ->
+            let
+                d = octd (p.x - upx u) (p.y - upy u)
+
+                -- ram trucks detonate on contact
+                isRam =
+                    case u.kind of
+                        RamTruck -> True
+                        _ -> False
+            in
+            if isRam && d < 22 then
+                detonateRam acc u tgt
+            else if d <= uRange u.kind && u.kind /= RamTruck then
+                fireAt acc { u | tgt = tgt, face = faceOf (p.x - upx u) (p.y - upy u) } tgt
+            else
+                -- chase: straight when near, flow when far
+                moveToward acc { u | tgt = tgt } p.x p.y
+
+
+detonateRam : UStep -> Unit -> Tgt -> UStep
+detonateRam acc u tgt =
+    let
+        g = acc.g
+
+        -- the blast is a zero-flight splash shot: damage lands in the
+        -- shots phase, AFTER the units fold settles (same rule as beams)
+        g2 =
+            { g
+                | shots =
+                    { x = u.x, y = u.y, dx = 0, dy = 0
+                    , t = 1, side = u.side, dmg = uDmg u.kind, dt = 2
+                    , splash = 44, tgt = TNone, kind = 2
+                    } :: g.shots
+                , fxs = { x = upx u, y = upy u, t = 0, ttl = 26, kind = FxBoom, a = 40, b = 0 } :: g.fxs
+            }
+                |> cue CBoomBig
+    in
+    -- the truck itself dies in the blast: not re-added to the fold's out
+    { g = g2, out = acc.out }
+
+
+atkMoveStep : UStep -> Unit -> Int -> Int -> UStep
+atkMoveStep acc u x y =
+    case u.tgt of
+        TNone ->
+            if modBy 8 (u.id + acc.g.tick) == 0 then
+                case acquire acc.g u (uSight u.kind * tileW) of
+                    TNone ->
+                        moveStep acc u x y True
+
+                    t ->
+                        { acc | out = { u | tgt = t } :: acc.out }
+            else
+                moveStep acc u x y True
+
+        t ->
+            case tgtPos acc.g t of
+                Nothing ->
+                    moveStep acc { u | tgt = TNone } x y True
+
+                Just p ->
+                    let
+                        d = octd (p.x - upx u) (p.y - upy u)
+                    in
+                    if d <= uRange u.kind then
+                        fireAt acc { u | face = faceOf (p.x - upx u) (p.y - upy u) } t
+                    else
+                        moveToward acc u p.x p.y
+
+
+-- plain move; atk=True keeps the OAtkMove order on arrival cleanup
+moveStep : UStep -> Unit -> Int -> Int -> Bool -> UStep
+moveStep acc u x y atk =
+    let
+        d = octd (x - upx u) (y - upy u)
+    in
+    if d < 10 then
+        { acc | out = { u | ord = OIdle, flowKey = 0 - 1, tgt = TNone } :: acc.out }
+    else
+        moveToward acc u x y
+
+
+-- moveToward: air flies straight; ground follows the shared BFS field,
+-- falling back to straight-line when the field has no entry.
+moveToward : UStep -> Unit -> Int -> Int -> UStep
+moveToward acc u dx dy =
+    if uFly u.kind then
+        stepStraight acc u dx dy
+    else
+        let
+            g = acc.g
+            destKey = idxOf g.mapW (dx // tileW) (dy // tileW)
+            near = octd (dx - upx u) (dy - upy u) < 5 * tileW
+        in
+        if near then
+            stepStraight acc u dx dy
+        else
+            let
+                pair = flowFor g destKey
+            in
+            case pair of
+                ( g2, field ) ->
+                    stepFlow { acc | g = g2 } u field dx dy
+
+
+stepStraight : UStep -> Unit -> Int -> Int -> UStep
+stepStraight acc u dx dy =
+    let
+        g = acc.g
+        pdx = dx - upx u
+        pdy = dy - upy u
+        len = max 1 (octd pdx pdy)
+        sp = uSpeed u.kind
+        nx = u.x + pdx * sp // len
+        ny = u.y + pdy * sp // len
+
+        blocked =
+            bnot (uFly u.kind)
+                && bnot (walkableFx g nx ny)
+    in
+    if blocked then
+        slideAround acc u pdx pdy
+    else
+        finishMove acc u nx ny
+
+
+-- try sliding on one axis when the diagonal is blocked
+slideAround : UStep -> Unit -> Int -> Int -> UStep
+slideAround acc u pdx pdy =
+    let
+        g = acc.g
+        sp = uSpeed u.kind
+        len = max 1 (octd pdx pdy)
+        tryX = u.x + pdx * sp // len
+        tryY = u.y + pdy * sp // len
+    in
+    if walkableFx g tryX u.y then
+        finishMove acc u tryX u.y
+    else if walkableFx g u.x tryY then
+        finishMove acc u u.x tryY
+    else
+        { acc | out = { u | stuck = u.stuck + 1 } :: acc.out }
+
+
+walkableFx : Game -> Int -> Int -> Bool
+walkableFx g fx fy =
+    let
+        tx = fx // tileFx
+        ty = fy // tileFx
+    in
+    tx >= 0 && ty >= 0 && tx < g.mapW && ty < g.mapH
+        && tilePassable (tileAt g.tiles (idxOf g.mapW tx ty))
+        && bnot (bldBlocks g tx ty)
+
+
+bldBlocks : Game -> Int -> Int -> Bool
+bldBlocks g tx ty =
+    List.any
+        (\b ->
+            tx >= b.tx && tx < b.tx + bW b.kind
+                && ty >= b.ty && ty < b.ty + bH b.kind
+        )
+        g.blds
+
+
+flowDist : Dict Int Int -> Int -> Int
+flowDist field i =
+    Maybe.withDefault 99999 (Dict.get i field)
+
+
+stepFlow : UStep -> Unit -> Dict Int Int -> Int -> Int -> UStep
+stepFlow acc u field dx dy =
+    let
+        g = acc.g
+        ctx = upx u // tileW
+        cty = upy u // tileW
+        here = idxOf g.mapW ctx cty
+
+        best =
+            List.foldl
+                (\n bacc ->
+                    if flowDist field n < bacc.d then
+                        { d = flowDist field n, i = n }
+                    else
+                        bacc
+                )
+                { d = flowDist field here, i = here }
+                (neighbors4 g.mapW g.mapH here)
+    in
+    if flowDist field here >= 99999 && best.d >= 99999 then
+        -- unreachable: nudge straight and give up eventually
+        if u.stuck > 45 then
+            { acc | out = { u | ord = OIdle, flowKey = 0 - 1, stuck = 0 } :: acc.out }
+        else
+            stepStraight acc { u | stuck = u.stuck + 1 } dx dy
+    else if best.i == here then
+        stepStraight acc u dx dy
+    else
+        let
+            gx = (txOf g.mapW best.i) * tileW + tileW // 2
+            gy = (tyOf g.mapW best.i) * tileW + tileW // 2
+        in
+        stepStraight acc u (gx) (gy)
+
+
+-- finishMove: integrate the position, handle facing, tile-cross fog
+finishMove : UStep -> Unit -> Int -> Int -> UStep
+finishMove acc u nx ny =
+    let
+        g = acc.g
+        oldTx = u.x // tileFx
+        oldTy = u.y // tileFx
+        newTx = nx // tileFx
+        newTy = ny // tileFx
+
+        face2 =
+            if abs (nx - u.x) + abs (ny - u.y) > 4 then
+                faceOf (nx - u.x) (ny - u.y)
+            else
+                u.face
+
+        u2 = { u | x = nx, y = ny, face = face2, stuck = 0 }
+
+        g2 =
+            if u.side == 1 && (oldTx /= newTx || oldTy /= newTy) then
+                fogDelta 1 newTx newTy (uSight u.kind)
+                    (fogDelta (0 - 1) oldTx oldTy (uSight u.kind) g)
+            else
+                g
+    in
+    { g = g2, out = u2 :: acc.out }
+
+
+-- ----- firing -----
+
+
+fireAt : UStep -> Unit -> Tgt -> UStep
+fireAt acc u tgt =
+    if u.cd > 0 then
+        { acc | out = u :: acc.out }
+    else
+        case tgtPos acc.g tgt of
+            Nothing ->
+                { acc | out = { u | ord = OIdle, tgt = TNone } :: acc.out }
+
+            Just p ->
+                let
+                    g = acc.g
+                    dt = uDt u.kind
+                    dmg = uDmg u.kind
+
+                    muzzle =
+                        { x = upx u, y = upy u, t = 0, ttl = 5, kind = FxMuzzle, a = u.face, b = 0 }
+
+                    g2 =
+                        if dt == 3 then
+                            -- beams: the LINE is instant, the damage lands
+                            -- next tick via a zero-flight shot. Damage MUST
+                            -- NOT touch g.units inside the units fold: the
+                            -- fold rebuilds the list from its own snapshot,
+                            -- so inline hp edits would be overwritten.
+                            { g
+                                | shots =
+                                    { x = p.x * fxs, y = p.y * fxs, dx = 0, dy = 0
+                                    , t = 1, side = u.side, dmg = dmg, dt = 3
+                                    , splash = 0, tgt = tgt, kind = 3
+                                    } :: g.shots
+                                , fxs =
+                                    { x = upx u, y = upy u, t = 0, ttl = 4, kind = FxBeamLine, a = p.x, b = p.y }
+                                        :: muzzle :: g.fxs
+                            }
+                                |> shotCue u.side 3
+
+                        else
+                            let
+                                dist = max 1 (octd (p.x - upx u) (p.y - upy u))
+                                speed = if dt == 1 then 9 else 13
+                                ticks = max 2 (dist // speed)
+
+                                shot =
+                                    { x = u.x
+                                    , y = u.y
+                                    , dx = (p.x * fxs - u.x) // ticks
+                                    , dy = (p.y * fxs - u.y) // ticks
+                                    , t = ticks
+                                    , side = u.side
+                                    , dmg = dmg
+                                    , dt = dt
+                                    , splash = uSplash u.kind
+                                    , tgt = if dt == 1 then tgt else TNone
+                                    , kind =
+                                        case u.kind of
+                                            Scorcher -> 4
+                                            _ -> if dt == 1 then 1 else (if dt == 2 then 2 else 0)
+                                    }
+                            in
+                            { g | shots = shot :: g.shots, fxs = muzzle :: g.fxs }
+                                |> shotCue u.side dt
+                in
+                { g = g2, out = { u | cd = uCd u.kind } :: acc.out }
+
+
+-- only nearby-to-player shots make noise (the player side or aimed at it)
+shotCue : Int -> Int -> Game -> Game
+shotCue side dt g =
+    if side == 1 then
+        cue
+            (case dt of
+                0 -> CShotLight
+                1 -> CShotPierce
+                2 -> CShotBlast
+                4 -> CShotFlame
+                _ -> CShotBeam
+            )
+            g
+    else
+        g
+
+
+-- ----- harvesting -----
+
+
+harvestStep : UStep -> Unit -> Int -> UStep
+harvestStep acc u idx =
+    let
+        g = acc.g
+
+        full = u.carry >= harvestCarry
+    in
+    if full then
+        { acc | out = { u | ord = OReturn, flowKey = 0 - 1 } :: acc.out }
+    else
+        let
+            amount =
+                Maybe.withDefault 0 (Dict.get idx g.ore)
+        in
+        if amount <= 0 then
+            -- patch is dry: find another nearby, or give up
+            case nearestOre g (upx u) (upy u) of
+                Just next ->
+                    { acc | out = { u | ord = OHarvest next, flowKey = 0 - 1 } :: acc.out }
+
+                Nothing ->
+                    { acc | out = { u | ord = if u.carry > 0 then OReturn else OIdle } :: acc.out }
+        else
+            let
+                px = (txOf g.mapW idx) * tileW + tileW // 2
+                py = (tyOf g.mapW idx) * tileW + tileW // 2
+                d = octd (px - upx u) (py - upy u)
+            in
+            if d > 20 then
+                moveToward acc u px py
+            else if modBy 5 g.tick == 0 then
+                let
+                    take = min minePulse (min amount (harvestCarry - u.carry))
+                in
+                { acc
+                    | g = { g | ore = Dict.insert idx (amount - take) g.ore }
+                    , out = { u | carry = u.carry + take } :: acc.out
+                }
+            else
+                { acc | out = u :: acc.out }
+
+
+nearestOre : Game -> Int -> Int -> Maybe Int
+nearestOre g px py =
+    let
+        best =
+            List.foldl
+                (\pair acc ->
+                    case pair of
+                        ( idx, amount ) ->
+                            if amount <= 0 then
+                                acc
+                            else
+                                let
+                                    ox = (txOf g.mapW idx) * tileW
+                                    oy = (tyOf g.mapW idx) * tileW
+                                    d = octd (ox - px) (oy - py)
+                                in
+                                if d < acc.d then
+                                    { d = d, i = idx }
+                                else
+                                    acc
+                )
+                -- no search radius: when the near patches run dry the next
+                -- field may be on another mesa, and a capped search made the
+                -- hauler go idle there — the economy died until the player
+                -- noticed and re-tasked it by hand. Maps are small and this
+                -- only runs on transitions (patch dry / cargo dropped).
+                { d = 999999999, i = 0 - 1 }
+                (Dict.toList g.ore)
+    in
+    if best.i >= 0 then Just best.i else Nothing
+
+
+returnStep : UStep -> Unit -> UStep
+returnStep acc u =
+    let
+        g = acc.g
+
+        home =
+            List.foldl
+                (\b best ->
+                    if b.side == u.side && b.prog == 0 && bIsRefinery b.kind then
+                        let
+                            d = octd (bpx b - upx u) (bpy b - upy u)
+                        in
+                        if d < best.d then
+                            { d = d, x = bpx b, y = (b.ty + bH b.kind) * tileW + 10, ok = True }
+                        else
+                            best
+                    else
+                        best
+                )
+                { d = 999999, x = 0, y = 0, ok = False }
+                g.blds
+    in
+    if bnot home.ok then
+        { acc | out = { u | ord = OIdle } :: acc.out }
+    else if octd (home.x - upx u) (home.y - upy u) > 26 then
+        moveToward acc u home.x home.y
+    else
+        let
+            g2 =
+                mapSide u.side (\s -> { s | credits = s.credits + u.carry }) g
+
+            back =
+                case nearestOre g2 (upx u) (upy u) of
+                    Just idx -> OHarvest idx
+                    Nothing -> OIdle
+        in
+        { g = g2, out = { u | carry = 0, ord = back, flowKey = 0 - 1 } :: acc.out }
+
+
+-- ----- capture / repair channel -----
+
+
+captureStep : UStep -> Unit -> Int -> UStep
+captureStep acc u bid =
+    let
+        g = acc.g
+    in
+    case bldById g bid of
+        Nothing ->
+            { acc | out = { u | ord = OIdle } :: acc.out }
+
+        Just b ->
+            let
+                edgeD = octd (bpx b - upx u) (bpy b - upy u)
+                reach = (bW b.kind + 1) * tileW // 2 + 12
+            in
+            if edgeD > reach then
+                moveToward acc u (bpx b) ((b.ty + bH b.kind) * tileW + 8)
+            else if b.side == u.side then
+                -- own building: sappers repair it
+                repairPulse acc u b
+            else
+                capturePulse acc u b
+
+
+repairPulse : UStep -> Unit -> Bld -> UStep
+repairPulse acc u b =
+    let
+        g = acc.g
+        maxHp = bHp b.kind
+    in
+    if b.hp >= maxHp then
+        { acc | out = { u | ord = OIdle } :: acc.out }
+    else
+        { acc
+            | g =
+                { g
+                    | blds =
+                        List.map
+                            (\q -> if q.id == b.id then { q | hp = min maxHp (q.hp + 4) } else q)
+                            g.blds
+                }
+            , out = u :: acc.out
+        }
+
+
+capturePulse : UStep -> Unit -> Bld -> UStep
+capturePulse acc u b =
+    let
+        g = acc.g
+        pts = b.capPts + 2
+    in
+    if pts >= captureTicks then
+        let
+            oldSide = b.side
+
+            g2 =
+                { g
+                    | blds =
+                        List.map
+                            (\q ->
+                                if q.id == b.id then
+                                    { q | side = u.side, capPts = 0, hp = min (bHp q.kind) (q.hp + 200) }
+                                else
+                                    q
+                            )
+                            g.blds
+                }
+
+            -- fog stamps follow the flag
+            g3 =
+                if u.side == 1 then
+                    fogDelta 1 (b.tx + bW b.kind // 2) (b.ty + bH b.kind // 2) (bSight b.kind) g2
+                else if oldSide == 1 then
+                    fogDelta (0 - 1) (b.tx + bW b.kind // 2) (b.ty + bH b.kind // 2) (bSight b.kind) g2
+                else
+                    g2
+
+            g4 =
+                if u.side == 1 || oldSide == 1 then
+                    alertAt
+                        (if u.side == 1 then "Structure captured." else "Structure lost to capture.")
+                        (bpx b) (bpy b)
+                        (cue CCaptured g3)
+                else
+                    g3
+        in
+        -- the capturer is consumed
+        { g = { g4 | units = List.filter (\q -> q.id /= u.id) g4.units }
+        , out = acc.out
+        }
+    else
+        { acc
+            | g =
+                { g
+                    | blds =
+                        List.map (\q -> if q.id == b.id then { q | capPts = pts } else q) g.blds
+                }
+            , out = { u | face = faceOf (bpx b - upx u) (bpy b - upy u) } :: acc.out
+        }
+
+
+-- ----- damage plumbing -----
+
+
+damageTgt : Int -> Tgt -> Int -> Int -> Game -> Game
+damageTgt fromSide tgt dmg dt g =
+    case tgt of
+        TNone ->
+            g
+
+        TUnit id ->
+            hitUnit fromSide id dmg dt g
+
+        TBld id ->
+            hitBld fromSide id dmg dt g
+
+
+hitUnit : Int -> Int -> Int -> Int -> Game -> Game
+hitUnit fromSide id dmg dt g =
+    let
+        found = unitById g id
+    in
+    case found of
+        Nothing ->
+            g
+
+        Just u ->
+            let
+                mult = dmgMult dt (armorOfUnit u.kind)
+                raw = max 1 (dmg * mult // 100)
+
+                shPart = min u.sh raw
+                hpPart = raw - shPart
+
+                u2 =
+                    { u
+                        | sh = u.sh - shPart
+                        , hp = u.hp - hpPart
+                        , lastHit = g.tick
+                    }
+
+                g2 =
+                    { g
+                        | units = List.map (\q -> if q.id == id then u2 else q) g.units
+                        , fxs =
+                            if shPart > 0 then
+                                { x = upx u, y = upy u, t = 0, ttl = 7, kind = FxShield, a = 0, b = 0 } :: g.fxs
+                            else
+                                g.fxs
+                    }
+            in
+            underAttackPing (upx u) (upy u) u.side g2
+
+
+hitBld : Int -> Int -> Int -> Int -> Game -> Game
+hitBld fromSide id dmg dt g =
+    let
+        found = bldById g id
+    in
+    case found of
+        Nothing ->
+            g
+
+        Just b ->
+            let
+                mult = dmgMult dt 2
+                raw = max 1 (dmg * mult // 100)
+
+                g2 =
+                    { g
+                        | blds =
+                            List.map
+                                (\q -> if q.id == id then { q | hp = q.hp - raw, lastHit = g.tick } else q)
+                                g.blds
+                    }
+            in
+            underAttackPing (bpx b) (bpy b) b.side g2
+
+
+-- rate-limited "base under attack" for the player
+underAttackPing : Int -> Int -> Int -> Game -> Game
+underAttackPing x y side g =
+    if side /= 1 then
+        g
+    else
+        let
+            last =
+                Maybe.withDefault (0 - 1000) (Dict.get 9001 g.flags)
+        in
+        if g.tick - last > 150 then
+            alertAt "Forces under attack." x y
+                (cue CUnderAttack { g | flags = Dict.insert 9001 g.tick g.flags })
+        else
+            g
+
+
+splashDamage : Int -> Int -> Int -> Int -> Int -> Int -> Game -> Game
+splashDamage fromSide x y radius dmg dt g =
+    let
+        g2 =
+            List.foldl
+                (\u acc ->
+                    if hostile acc fromSide u.side
+                        && octd (upx u - x) (upy u - y) <= radius
+                        && bnot (uFly u.kind && dt == 2)
+                    then
+                        hitUnit fromSide u.id dmg dt acc
+                    else
+                        acc
+                )
+                g
+                g.units
+    in
+    List.foldl
+        (\b acc ->
+            if hostile acc fromSide b.side
+                && octd (bpx b - x) (bpy b - y) <= radius + tileW
+            then
+                hitBld fromSide b.id dmg dt acc
+            else
+                acc
+        )
+        g2
+        g2.blds
+
+
+-- ----- buildings tick -----
+
+
+tickBlds : Game -> Game
+tickBlds g =
+    let
+        -- a player building at prog 1 becomes operational this tick: chime once
+        justDone =
+            List.any (\b -> b.side == 1 && b.prog == 1) g.blds
+
+        g2 =
+            { g
+                | blds =
+                    List.map
+                        (\b ->
+                            { b
+                                | prog = max 0 (b.prog - 1)
+                                , cd = max 0 (b.cd - 1)
+                                , stun = max 0 (b.stun - 1)
+                                , capPts = max 0 (b.capPts - (if modBy 2 g.tick == 0 then 1 else 0))
+                            }
+                        )
+                        g.blds
+            }
+
+        g3 =
+            if justDone then cue CBuilt g2 else g2
+    in
+    List.foldl
+        (\b acc -> towerFire acc b)
+        g3
+        (List.filter
+            (\b ->
+                bDmg b.kind > 0
+                    && b.prog == 0
+                    && b.stun == 0
+                    && modBy 6 (b.id + g3.tick) == 0
+            )
+            g3.blds)
+
+
+towerFire : Game -> Bld -> Game
+towerFire g b =
+    let
+        fresh =
+            Maybe.withDefault b (bldById g b.id)
+    in
+    if fresh.cd > 0 then
+        g
+    else
+        let
+            range = bRange fresh.kind
+
+            best =
+                List.foldl
+                    (\u acc ->
+                        let
+                            d = octd (upx u - bpx fresh) (upy u - bpy fresh)
+                        in
+                        if hostile g fresh.side u.side
+                            && d < acc.d
+                            && (if uFly u.kind then bAA fresh.kind else bGroundW fresh.kind)
+                        then
+                            { d = d, t = TUnit u.id, x = upx u, y = upy u }
+                        else
+                            acc
+                    )
+                    { d = range, t = TNone, x = 0, y = 0 }
+                    g.units
+        in
+        case best.t of
+            TNone ->
+                g
+
+            t ->
+                let
+                    dt = bDt fresh.kind
+                    dmg = bDmg fresh.kind
+
+                    g2 =
+                        if dt == 3 then
+                            damageTgt fresh.side t dmg dt g
+                                |> (\gg ->
+                                        { gg
+                                            | fxs =
+                                                { x = bpx fresh, y = bpy fresh, t = 0, ttl = 4, kind = FxBeamLine, a = best.x, b = best.y }
+                                                    :: gg.fxs
+                                        }
+                                   )
+                        else
+                            let
+                                dist = max 1 (octd (best.x - bpx fresh) (best.y - bpy fresh))
+                                ticks = max 2 (dist // 12)
+                            in
+                            { g
+                                | shots =
+                                    { x = bpx fresh * fxs
+                                    , y = (bpy fresh - 8) * fxs
+                                    , dx = (best.x - bpx fresh) * fxs // ticks
+                                    , dy = (best.y - bpy fresh + 8) * fxs // ticks
+                                    , t = ticks
+                                    , side = fresh.side
+                                    , dmg = dmg
+                                    , dt = dt
+                                    , splash = 0
+                                    , tgt = t
+                                    , kind = if dt == 1 then 1 else 0
+                                    } :: g.shots
+                            }
+
+                    g3 = shotCue fresh.side dt g2
+                in
+                { g3
+                    | blds =
+                        List.map
+                            (\q -> if q.id == fresh.id then { q | cd = bCd fresh.kind * 6 } else q)
+                            g3.blds
+                }
+
+
+-- ----- shots -----
+
+
+tickShots : Game -> Game
+tickShots g =
+    let
+        folded =
+            List.foldl
+                (\s acc -> stepShot acc s)
+                { g = { g | shots = [] }, out = [] }
+                g.shots
+    in
+    case folded of
+        r ->
+            let
+                g2 = r.g
+            in
+            { g2 | shots = r.out }
+
+
+type alias SStep =
+    { g : Game
+    , out : List Shot
+    }
+
+
+stepShot : SStep -> Shot -> SStep
+stepShot acc s =
+    let
+        g = acc.g
+
+        -- homing shots re-aim at the live target
+        s2 =
+            case s.tgt of
+                TNone ->
+                    s
+
+                t ->
+                    case tgtPos g t of
+                        Nothing ->
+                            { s | tgt = TNone }
+
+                        Just p ->
+                            let
+                                ticks = max 1 s.t
+                            in
+                            { s
+                                | dx = (p.x * fxs - s.x) // ticks
+                                , dy = (p.y * fxs - s.y) // ticks
+                            }
+
+        s3 = { s2 | x = s2.x + s2.dx, y = s2.y + s2.dy, t = s2.t - 1 }
+    in
+    if s3.t > 0 then
+        { acc | out = s3 :: acc.out }
+    else
+        { acc | g = impact g s3 }
+
+
+impact : Game -> Shot -> Game
+impact g s =
+    let
+        px = s.x // fxs
+        py = s.y // fxs
+    in
+    if s.splash > 0 then
+        splashDamage s.side px py s.splash s.dmg s.dt g
+            |> (\gg ->
+                    { gg
+                        | fxs = { x = px, y = py, t = 0, ttl = 16, kind = FxBoom, a = max 14 s.splash, b = 0 } :: gg.fxs
+                    }
+               )
+            |> (\gg -> if s.side == 1 || nearPlayer gg px py then cue CBoomSmall gg else gg)
+    else
+        case s.tgt of
+            TNone ->
+                -- ballistic without homing: hit whatever hostile stands here
+                let
+                    victim =
+                        List.head
+                            (List.filter
+                                (\u -> hostile g s.side u.side && octd (upx u - px) (upy u - py) < 12)
+                                g.units)
+                in
+                case victim of
+                    Just u ->
+                        hitUnit s.side u.id s.dmg s.dt g
+                            |> addHitFx px py
+
+                    Nothing ->
+                        { g | fxs = { x = px, y = py, t = 0, ttl = 6, kind = FxSpark, a = 0, b = 0 } :: g.fxs }
+
+            t ->
+                damageTgt s.side t s.dmg s.dt g
+                    |> addHitFx px py
+
+
+addHitFx : Int -> Int -> Game -> Game
+addHitFx x y g =
+    { g | fxs = { x = x, y = y, t = 0, ttl = 8, kind = FxSpark, a = 0, b = 0 } :: g.fxs }
+
+
+nearPlayer : Game -> Int -> Int -> Bool
+nearPlayer g x y =
+    visAt g (x // tileW) (y // tileW) == 2
+
+
+-- ----- superweapon strikes -----
+
+
+tickStrikes : Game -> Game
+tickStrikes g =
+    let
+        due = List.filter (\s -> s.at <= g.tick) g.strikes
+        rest = List.filter (\s -> s.at > g.tick) g.strikes
+    in
+    List.foldl
+        (\s acc -> landStrike acc s)
+        { g | strikes = rest }
+        due
+
+
+landStrike : Game -> Strike -> Game
+landStrike g s =
+    case s.kind of
+        0 ->
+            -- one barrage shell
+            splashDamage s.side s.x s.y 40 90 2 g
+                |> (\gg ->
+                        { gg
+                            | fxs = { x = s.x, y = s.y, t = 0, ttl = 20, kind = FxBoom, a = 34, b = 0 } :: gg.fxs
+                        }
+                   )
+                |> cue CBoomBig
+
+        1 ->
+            -- EMP: stun enemy vehicles and defenses in the blast
+            let
+                g2 =
+                    { g
+                        | units =
+                            List.map
+                                (\u ->
+                                    if hostile g s.side u.side
+                                        && uClass u.kind /= 0
+                                        && octd (upx u - s.x) (upy u - s.y) < 100
+                                    then
+                                        { u | stun = 300 }
+                                    else
+                                        u
+                                )
+                                g.units
+                        , blds =
+                            List.map
+                                (\b ->
+                                    if hostile g s.side b.side
+                                        && bDmg b.kind > 0
+                                        && octd (bpx b - s.x) (bpy b - s.y) < 110
+                                    then
+                                        { b | stun = 300 }
+                                    else
+                                        b
+                                )
+                                g.blds
+                    }
+            in
+            { g2 | fxs = { x = s.x, y = s.y, t = 0, ttl = 24, kind = FxRing, a = 100, b = 1 } :: g2.fxs }
+                |> cue CBoomSmall
+
+        _ ->
+            -- purge beam: heavy flat damage in a tight circle
+            splashDamage s.side s.x s.y 60 130 3 g
+                |> (\gg ->
+                        { gg
+                            | fxs =
+                                { x = s.x, y = s.y - 300, t = 0, ttl = 18, kind = FxBeamLine, a = s.x, b = s.y }
+                                    :: { x = s.x, y = s.y, t = 0, ttl = 22, kind = FxBoom, a = 52, b = 2 }
+                                    :: gg.fxs
+                        }
+                   )
+                |> cue CBoomBig
+
+
+-- ----- deaths, scrap, win check -----
+
+
+tickDeaths : Game -> Game
+tickDeaths g =
+    let
+        deadU = List.filter (\u -> u.hp <= 0) g.units
+        liveU = List.filter (\u -> u.hp > 0) g.units
+
+        g2 =
+            List.foldl (\u acc -> unitDeath acc u) { g | units = liveU } deadU
+
+        deadB = List.filter (\b -> b.hp <= 0) g2.blds
+        liveB = List.filter (\b -> b.hp > 0) g2.blds
+
+        g3 =
+            List.foldl (\b acc -> bldDeath acc b) { g2 | blds = liveB } deadB
+    in
+    if List.isEmpty deadB then
+        g3
+    else
+        dropFlows g3
+
+
+unitDeath : Game -> Unit -> Game
+unitDeath g u =
+    let
+        boom =
+            { x = upx u, y = upy u, t = 0, ttl = 18
+            , kind = FxBoom, a = if uClass u.kind == 0 then 10 else 20, b = 0 }
+
+        g2 =
+            { g
+                | fxs = boom :: g.fxs
+                , scraps =
+                    if uClass u.kind == 1 && bnot (uWorker u.kind) then
+                        List.take 30 ({ x = upx u, y = upy u, amount = scrapShare (uCost u.kind) } :: g.scraps)
+                    else
+                        g.scraps
+            }
+
+        g3 =
+            if u.side == 1 then
+                fogDelta (0 - 1) (upx u // tileW) (upy u // tileW) (uSight u.kind) g2
+            else
+                g2
+    in
+    if u.side == 1 || nearPlayer g3 (upx u) (upy u) then
+        cue (if uClass u.kind == 0 then CBoomSmall else CBoomBig) g3
+    else
+        g3
+
+
+bldDeath : Game -> Bld -> Game
+bldDeath g b =
+    let
+        boom =
+            { x = bpx b, y = bpy b, t = 0, ttl = 26, kind = FxBoom, a = 34, b = 0 }
+
+        g2 = { g | fxs = boom :: g.fxs }
+
+        g3 =
+            if b.side == 1 then
+                fogDelta (0 - 1) (b.tx + bW b.kind // 2) (b.ty + bH b.kind // 2) (bSight b.kind) g2
+            else
+                g2
+
+        g4 =
+            if b.side == 1 then
+                alertAt "Structure lost." (bpx b) (bpy b) g3
+            else
+                g3
+    in
+    cue CBoomBig g4
+
+
+-- ----- economy + win -----
+
+
+tickEcon : Game -> Game
+tickEcon g =
+    if modBy 30 g.tick /= 0 then
+        g
+    else
+        let
+            g2 =
+                { g
+                    | sides = List.map (\s -> econOf g s) g.sides
+                }
+        in
+        checkWin g2
+
+
+econOf : Game -> Side -> Side
+econOf g s =
+    let
+        powMade =
+            List.foldl
+                (\b acc ->
+                    if b.side == s.id && b.prog == 0 && bPow b.kind > 0 then
+                        acc + bPow b.kind
+                    else
+                        acc
+                )
+                0
+                g.blds
+
+        powUse =
+            List.foldl
+                (\b acc ->
+                    if b.side == s.id && b.prog == 0 && bPow b.kind < 0 then
+                        acc - bPow b.kind
+                    else
+                        acc
+                )
+                0
+                g.blds
+
+        supMax =
+            List.foldl
+                (\b acc ->
+                    if b.side == s.id && b.prog == 0 then
+                        acc + bSup b.kind
+                    else
+                        acc
+                )
+                0
+                g.blds
+
+        supUse =
+            List.foldl
+                (\u acc -> if u.side == s.id then acc + uSupply u.kind else acc)
+                0
+                g.units
+
+        income =
+            List.foldl
+                (\b acc ->
+                    if b.side == s.id
+                        && b.prog == 0
+                        && (case b.kind of
+                                Derelict -> True
+                                _ -> False)
+                    then
+                        acc + extractorTrickle
+                    else
+                        acc
+                )
+                0
+                g.blds
+
+        hasAny =
+            List.any (\b -> b.side == s.id) g.blds
+                || List.any (\u -> u.side == s.id) g.units
+    in
+    { s
+        | powMade = powMade
+        , powUse = powUse
+        , supMax = min 60 supMax
+        , supUse = supUse
+        , credits = s.credits + income
+        , alive = hasAny
+    }
+
+
+-- what "destroy every enemy structure" counts: real base structures.
+-- Captured Derelict silos don't keep a team in the fight — the HUD
+-- objective already ignores them, and a bot squatting on one used to
+-- hold the match open forever after its base was razed.
+bCountsForWin : BldKind -> Bool
+bCountsForWin k =
+    case k of
+        Derelict -> False
+        _ -> True
+
+
+checkWin : Game -> Game
+checkWin g =
+    if g.winner /= 0 then
+        g
+    else
+        let
+            liveTeams =
+                List.foldl
+                    (\s acc ->
+                        if s.alive && List.any (\b -> b.side == s.id && bCountsForWin b.kind) g.blds then
+                            if List.member s.team acc then acc else s.team :: acc
+                        else
+                            acc
+                    )
+                    []
+                    g.sides
+        in
+        case liveTeams of
+            [ only ] ->
+                { g | winner = only }
+
+            _ ->
+                g
+
+
+-- ----- fx + alerts aging -----
+
+
+tickFx : Game -> Game
+tickFx g =
+    { g
+        | fxs =
+            List.filter (\f -> f.t < f.ttl)
+                (List.map (\f -> { f | t = f.t + 1 }) g.fxs)
+        , alerts = List.filter (\a -> g.tick - a.t < 240) g.alerts
+        , pings = List.filter (\p -> g.tick - p.t < 90) g.pings
+    }

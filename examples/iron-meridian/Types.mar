@@ -1,0 +1,610 @@
+module Types exposing (..)
+
+
+-- IRON MERIDIAN: shared types + integer math helpers.
+--
+-- Every module imports this one; it imports nothing. Positions are
+-- fixed-point px*16 Ints (fx). Tiles are Int codes in a Dict keyed by
+-- idx = ty * mapW + tx. Sides: 1 = player, 2 and 3 = AI (side 0 = the
+-- neutral world: derelict extractors). Teams make allies possible
+-- (mission 4): sides sharing a team never target each other.
+
+
+-- ===== small math (Mar has no builtin min/max/abs) =====
+
+
+
+
+abs : Int -> Int
+abs a = if a < 0 then 0 - a else a
+
+
+clampI : Int -> Int -> Int -> Int
+clampI lo hi v = max lo (min hi v)
+
+
+
+-- Returns (nextSeed, value in [0, n)). A thin adapter over the stdlib Random:
+-- value first out of Random.step, seed flipped to the front so the (seed, value)
+-- call sites across the sim stay unchanged.
+rnd : Random.Seed -> Int -> (Random.Seed, Int)
+rnd seed n =
+    let
+        (v, s2) = Random.step (Random.int 0 (max 1 n - 1)) seed
+    in
+    ( s2, v )
+
+
+-- octagonal length approximation, good enough for ranges
+octd : Int -> Int -> Int
+octd dx dy =
+    let
+        ax = abs dx
+        ay = abs dy
+    in
+    max ax ay + min ax ay // 2
+
+
+-- ===== 16-way facing =====
+-- Facing 0 points right, 4 down, 8 left, 12 up (y grows downward).
+-- dir16x/dir16y return per-mille components of the unit vector.
+
+
+dir16x : Int -> Int
+dir16x f =
+    case modBy 16 f of
+        0 -> 1000
+        1 -> 924
+        2 -> 707
+        3 -> 383
+        4 -> 0
+        5 -> 0 - 383
+        6 -> 0 - 707
+        7 -> 0 - 924
+        8 -> 0 - 1000
+        9 -> 0 - 924
+        10 -> 0 - 707
+        11 -> 0 - 383
+        12 -> 0
+        13 -> 383
+        14 -> 707
+        _ -> 924
+
+
+dir16y : Int -> Int
+dir16y f =
+    dir16x (modBy 16 (f - 4))
+
+
+-- faceOf: 16-way facing from a delta (dx, dy), for turret art.
+faceOf : Int -> Int -> Int
+faceOf dx dy =
+    let
+        ax = abs dx
+        ay = abs dy
+    in
+    if ax * 5 > ay * 12 then
+        (if dx > 0 then 0 else 8)
+    else if ay * 5 > ax * 12 then
+        (if dy > 0 then 4 else 12)
+    else if ax * 12 > ay * 29 then
+        (if dx > 0 then (if dy > 0 then 1 else 15) else (if dy > 0 then 7 else 9))
+    else if ay * 12 > ax * 29 then
+        (if dy > 0 then (if dx > 0 then 3 else 5) else (if dx > 0 then 13 else 11))
+    else
+        (if dx > 0 then (if dy > 0 then 2 else 14) else (if dy > 0 then 6 else 10))
+
+
+-- ===== world constants =====
+
+
+tileW : Int
+tileW = 24
+
+
+-- fixed-point scale: world coords are px * 16
+fxs : Int
+fxs = 16
+
+
+tileFx : Int
+tileFx = tileW * fxs
+
+
+-- tile codes (Dict Int Int values)
+tRego : Int
+tRego = 0
+
+tRego2 : Int
+tRego2 = 1
+
+tRock : Int
+tRock = 2
+
+tChasm : Int
+tChasm = 3
+
+tIce : Int
+tIce = 4
+
+tVerdant : Int
+tVerdant = 5
+
+tRamp : Int
+tRamp = 6
+
+tFerrite : Int
+tFerrite = 7
+
+tAzurite : Int
+tAzurite = 8
+
+tCrater : Int
+tCrater = 9
+
+tProp : Int
+tProp = 10
+
+
+tilePassable : Int -> Bool
+tilePassable t =
+    t /= tRock && t /= tChasm && t /= tProp
+
+
+-- ===== factions =====
+
+
+type Race
+    = Compact
+    | Combine
+    | Vessari
+
+
+-- ===== unit + building kinds =====
+
+
+type UnitKind
+    = Hauler
+    | Sapper
+    | Rifle
+    | Rocket
+    | ScoutCar
+    | Bulwark
+    | Thumper
+    | Kestrel
+    | Reclaimer
+    | Hijacker
+    | Scrapper
+    | Spiker
+    | DuneBike
+    | Scorcher
+    | Warthog
+    | Vulture
+    | RamTruck
+    | TitheDrone
+    | Attuner
+    | Lancer
+    | Nullifier
+    | Sliver
+    | Colossus
+    | RiftSkiff
+
+
+type BldKind
+    = Bastion
+    | PowerStation
+    | Refinery
+    | Billet
+    | Foundry
+    | MotorPool
+    | Airfield
+    | Watchtower
+    | FlakTower
+    | Armory
+    | ArtilleryBeacon
+    | CrawlerHQ
+    | JunkTurbine
+    | Smeltery
+    | Bunkroom
+    | RatDen
+    | ChopShop
+    | Roost
+    | SpikeNest
+    | FlakRack
+    | WarlordHall
+    | ScrapMagnet
+    | GenesisFont
+    | Spire
+    | ExtractBloom
+    | Chrysalis
+    | ForgeWomb
+    | SkyCradle
+    | PylonThorn
+    | AegisNode
+    | AscendantGate
+    | PurgeLens
+    | Derelict
+
+
+-- ===== orders and targets =====
+
+
+type Tgt
+    = TNone
+    | TUnit Int
+    | TBld Int
+
+
+type Duty
+    = OIdle
+    | OMove Int Int          -- destination px
+    | OAtkMove Int Int       -- move, engaging what appears
+    | OAttack Tgt            -- chase and kill a specific thing
+    | OHarvest Int           -- ore tile idx
+    | OReturn                -- carry the load home
+    | OCapture Int           -- building id
+    | OHold                  -- stand ground, still shoots
+
+
+-- ===== commands (player input and bot decisions share one language) =====
+
+
+type Act
+    = AMove (List Int) Int Int          -- unit ids, dest px
+    | AAtkMove (List Int) Int Int
+    | AAttack (List Int) Tgt
+    | AStop (List Int)
+    | AHold (List Int)
+    | AHarvest (List Int) Int           -- ore tile idx
+    | ACapture (List Int) Int           -- building id
+    | AQueueUnit Int UnitKind           -- side
+    | AQueueBld Int BldKind             -- side
+    | APlaceBld Int Int Int             -- side, tx, ty (places side.sReady)
+    | ACancelBld Int                    -- side (refund head of queue / ready)
+    | ACancelUnit Int UnitKind          -- side (drop last queued of kind, refund)
+    | ASetRally Int Int Int             -- building id, px
+    | ADemolish Int                     -- building id (sell for half)
+    | ASuper Int Int Int                -- side, target px
+
+
+-- a scheduled superweapon effect
+type alias Strike =
+    { at : Int               -- tick it lands
+    , x : Int                -- px
+    , y : Int
+    , side : Int
+    , kind : Int             -- 0 barrage shell, 1 emp, 2 purge beam
+    }
+
+
+-- ===== entities =====
+
+
+type alias Unit =
+    { id : Int
+    , side : Int
+    , kind : UnitKind
+    , x : Int                -- fx (px*16)
+    , y : Int
+    , hp : Int
+    , sh : Int               -- shield (vessari), 0 elsewhere
+    , cd : Int               -- attack cooldown ticks left
+    , stun : Int             -- EMP ticks left (no move, no fire)
+    , lastHit : Int          -- tick of last damage taken
+    , face : Int             -- 0..15
+    , ord : Duty
+    , tgt : Tgt              -- current engaged target
+    , flowKey : Int          -- BFS field key in flows, -1 none
+    , stuck : Int
+    , carry : Int            -- harvester load (credits)
+    }
+
+
+type alias Bld =
+    { id : Int
+    , side : Int
+    , kind : BldKind
+    , tx : Int               -- tile coords of the top-left footprint
+    , ty : Int
+    , hp : Int
+    , prog : Int             -- unfold ticks remaining after placement (0 = live)
+    , rally : Int            -- rally point x in px (production buildings)
+    , rallyY : Int
+    , capPts : Int           -- capture progress by an enemy capturer
+    , cd : Int               -- defense fire cooldown
+    , stun : Int             -- EMP ticks left (defenses stop firing)
+    , lastHit : Int
+    }
+
+
+type alias Shot =
+    { x : Int                -- fx
+    , y : Int
+    , dx : Int               -- fx per tick
+    , dy : Int
+    , t : Int                -- ticks to impact
+    , side : Int
+    , dmg : Int
+    , dt : Int               -- 0 light, 1 piercing, 2 blast, 3 beam
+    , splash : Int           -- px radius, 0 = single target
+    , tgt : Tgt              -- homing target (rockets), TNone = ballistic
+    , kind : Int             -- visual: 0 tracer, 1 rocket, 2 shell, 3 beam dot, 4 flame
+    }
+
+
+type FxKind
+    = FxBoom                 -- a = max radius px
+    | FxMuzzle               -- a = facing
+    | FxShield               -- shield hit shimmer
+    | FxSmoke
+    | FxSpark
+    | FxWarp                 -- vessari arrival
+    | FxRing                 -- telegraph ring, a = max radius
+    | FxBeamLine             -- a,b = dst px (beam visual)
+    | FxCapture
+    | FxScrapGlow
+    | FxTarget               -- red attack-order reticle
+    | FxMove                 -- green move-order reticle, a = start spread
+
+
+type alias Fx =
+    { x : Int
+    , y : Int
+    , t : Int                -- age ticks
+    , ttl : Int
+    , kind : FxKind
+    , a : Int
+    , b : Int
+    }
+
+
+type alias Scrap =
+    { x : Int                -- px
+    , y : Int
+    , amount : Int
+    }
+
+
+type alias Alert =
+    { t : Int                -- tick raised
+    , msg : String
+    , x : Int                -- world px for Space-jump, -1 = none
+    , y : Int
+    }
+
+
+-- ===== sound cues (drained by Main into Sound.play) =====
+
+
+type Cue
+    = CClick
+    | CError
+    | CVoice UnitKind Bool
+    | CPlace
+    | CBuilt
+    | CTrained UnitKind
+    | CLowPower
+    | CNoFunds
+    | CUnderAttack
+    | CShotLight
+    | CShotPierce
+    | CShotBlast
+    | CShotBeam
+    | CShotFlame
+    | CBoomSmall
+    | CBoomBig
+    | CCaptured
+    | CVictory
+    | CDefeat
+    | CSuperReady
+    | CSuperFire
+    | CMenuMove
+
+
+-- ===== per-side state =====
+
+
+type alias BotMind =
+    { mode : Int             -- 0 opening, 1 macro, 2 attack, 3 defend
+    , thinkAt : Int          -- next think tick
+    , waveAt : Int           -- next attack wave tick
+    , waveSize : Int
+    , buildIx : Int          -- opening build order index
+    , targetX : Int          -- current wave destination px
+    , targetY : Int
+    , scoutIx : Int
+    }
+
+
+type alias Side =
+    { id : Int
+    , race : Race
+    , team : Int             -- sides with equal team are allied
+    , human : Bool
+    , credits : Int
+    , supUse : Int
+    , supMax : Int
+    , powUse : Int
+    , powMade : Int
+    , sQueue : List BldKind  -- structures queue (head is building)
+    , sProg : Int            -- ticks left on head
+    , sReady : Int           -- BldKind ready to place, encoded via bldCode, -1 none
+    , uQueue : List UnitKind -- shared unit queue (head is training)
+    , uProg : Int
+    , superCd : Int          -- superweapon cooldown ticks left (0 = ready)
+    , aggro : Int            -- bot difficulty knob (100 = standard)
+    , mind : BotMind
+    , alive : Bool
+    }
+
+
+-- sReady stores a code because Maybe BldKind in a record plus equality
+-- checks stay simpler with a sentinel. -1 = nothing ready.
+bldCode : BldKind -> Int
+bldCode k =
+    case k of
+        Bastion -> 0
+        PowerStation -> 1
+        Refinery -> 2
+        Billet -> 3
+        Foundry -> 4
+        MotorPool -> 5
+        Airfield -> 6
+        Watchtower -> 7
+        FlakTower -> 8
+        Armory -> 9
+        ArtilleryBeacon -> 10
+        CrawlerHQ -> 11
+        JunkTurbine -> 12
+        Smeltery -> 13
+        Bunkroom -> 14
+        RatDen -> 15
+        ChopShop -> 16
+        Roost -> 17
+        SpikeNest -> 18
+        FlakRack -> 19
+        WarlordHall -> 20
+        ScrapMagnet -> 21
+        GenesisFont -> 22
+        Spire -> 23
+        ExtractBloom -> 24
+        Chrysalis -> 25
+        ForgeWomb -> 26
+        SkyCradle -> 27
+        PylonThorn -> 28
+        AegisNode -> 29
+        AscendantGate -> 30
+        PurgeLens -> 31
+        Derelict -> 32
+
+
+bldFromCode : Int -> BldKind
+bldFromCode c =
+    case c of
+        0 -> Bastion
+        1 -> PowerStation
+        2 -> Refinery
+        3 -> Billet
+        4 -> Foundry
+        5 -> MotorPool
+        6 -> Airfield
+        7 -> Watchtower
+        8 -> FlakTower
+        9 -> Armory
+        10 -> ArtilleryBeacon
+        11 -> CrawlerHQ
+        12 -> JunkTurbine
+        13 -> Smeltery
+        14 -> Bunkroom
+        15 -> RatDen
+        16 -> ChopShop
+        17 -> Roost
+        18 -> SpikeNest
+        19 -> FlakRack
+        20 -> WarlordHall
+        21 -> ScrapMagnet
+        22 -> GenesisFont
+        23 -> Spire
+        24 -> ExtractBloom
+        25 -> Chrysalis
+        26 -> ForgeWomb
+        27 -> SkyCradle
+        28 -> PylonThorn
+        29 -> AegisNode
+        30 -> AscendantGate
+        31 -> PurgeLens
+        _ -> Derelict
+
+
+-- ===== flow fields =====
+
+
+type alias Flow =
+    { key : Int              -- target tile idx
+    , field : Dict Int Int   -- tile idx -> BFS distance
+    }
+
+
+-- ===== render runs =====
+-- A horizontal strip of equal color, in TILE units. The main view scales
+-- runs by 24px, the minimap by its own tile size; both read one cache.
+
+
+type alias Run =
+    { x0 : Int
+    , w : Int
+    , c : Int                -- draw code (terrain palette idx, or fog 0/1)
+    }
+
+
+-- ===== camera =====
+
+
+type alias Cam =
+    { x : Int                -- world px of the view's top-left
+    , y : Int
+    , w : Int                -- view size px (canvas minus HUD)
+    , h : Int
+    }
+
+
+-- ===== minimap ping =====
+
+
+type alias Ping =
+    { x : Int                -- world px
+    , y : Int
+    , t : Int                -- tick raised
+    }
+
+
+-- ===== the whole simulation state =====
+
+
+type alias Game =
+    { tick : Int
+    , seed : Random.Seed
+    , mapW : Int
+    , mapH : Int
+    , tiles : Dict Int Int
+    , ore : Dict Int Int     -- tile idx -> credits left in the patch
+    , units : List Unit
+    , blds : List Bld
+    , shots : List Shot
+    , fxs : List Fx
+    , scraps : List Scrap
+    , strikes : List Strike
+    , sides : List Side
+    , flows : List Flow      -- MRU cache, newest first, capped
+    , fogVis : Dict Int Int  -- tile idx -> visibility counter (player side)
+    , fogSeen : Dict Int Int -- tile idx -> 1 once ever seen
+    , fogRows : Dict Int (List Run) -- row -> fog draw runs (rebuilt when dirty)
+    , fogDirty : Dict Int Int -- rows touched since the last fog-run rebuild
+    , nextId : Int
+    , alerts : List Alert
+    , pings : List Ping
+    , cues : List Cue        -- sound cues raised this tick, drained by Main
+    , winner : Int           -- 0 = ongoing, else winning TEAM id
+    , msnPhase : Int         -- mission trigger scratch, meaning is per mission
+    , msnTimer : Int
+    , flags : Dict Int Int   -- mission trigger flags
+    , supStall : Bool        -- player already warned that training waits on supply
+    }
+
+
+-- Mar has no builtin `not`; the codebase idiom is `== False`, wrapped
+-- here once so call sites read naturally.
+bnot : Bool -> Bool
+bnot b = b == False
+
+
+-- ===== entity positions in plain px =====
+-- (here, not in Sim, so render code can use them without importing Sim)
+
+
+upx : Unit -> Int
+upx u = u.x // fxs
+
+
+upy : Unit -> Int
+upy u = u.y // fxs

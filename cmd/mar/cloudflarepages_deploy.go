@@ -1,4 +1,4 @@
-// `mar cloudflare-pages deploy` — push a static App.frontend bundle
+// `mar deploy` — push a static App.frontend bundle
 // to Cloudflare Pages via the Direct Upload API.
 //
 // Flow (all wrapped in progressStep so the operator sees what's
@@ -55,13 +55,14 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 		if _, ok := err.(*project.DeployCloudflarePagesError); ok {
 			printDeployCloudflarePagesError(err)
 		} else {
-			printManifestError("mar cloudflare-pages deploy", err)
+			printManifestError("mar deploy", err)
 		}
 		return 1
 	}
 
 	// Banner up-front so the operator sees the target before any
-	// silent work. Matches the shape of the fly deploy banner.
+	// silent work. Matches the shape of the Fly deploy banner in
+	// fly_deploy.go.
 	printCloudflarePagesBanner(target.App, target.ProjectDir)
 
 	client := newCFClient(target.APIToken)
@@ -89,7 +90,7 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 	// like -1in to make it unique). We use it for the final success
 	// URL so the operator sees the address that actually serves
 	// their site.
-	projectInfo, err := ensureCloudflarePagesProjectExists(client, target.Account, target.App)
+	projectInfo, justCreated, err := ensureCloudflarePagesProjectExists(client, target.Account, target.App)
 	if err != nil {
 		if errors.Is(err, errCFProjectAborted) {
 			// Plain-text abort message (not via fprint helpers,
@@ -137,7 +138,7 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 	}
 
 	if len(files) == 0 {
-		fprintError("mar cloudflare-pages deploy: %s is empty after build.", colorMagenta(distDir))
+		fprintError("mar deploy: %s is empty after build.", colorMagenta(distDir))
 		fprintHint("This usually means the build silently produced no output.\n" +
 			"      Try running mar build directly to see what went wrong.")
 		return 1
@@ -221,7 +222,7 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 	}
 	prodURL := "https://" + prodHost
 	fmt.Println()
-	fmt.Printf("[mar cloudflare-pages deploy] %s Deployed.\n", colorGreen("✓"))
+	fmt.Printf("[mar deploy] %s Deployed.\n", colorGreen("✓"))
 	fmt.Println()
 	fmt.Printf("  %s  %s\n", colorBold("Production:"), colorCyan(prodURL))
 	if deployment != nil && deployment.URL != "" {
@@ -233,7 +234,7 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 	// The deployment URL (`<hash>.<app>.pages.dev`) is pinned to the
 	// bundle we just uploaded; the production alias only flips to this
 	// deploy a few seconds later. Same --no-open / CI=true gate as
-	// `mar fly deploy` and `mar dev`.
+	// `mar deploy` and `mar dev`.
 	//
 	// Even the pinned deployment URL serves Cloudflare's "Nothing is
 	// here yet" placeholder for the first few seconds after the
@@ -251,8 +252,14 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 		}
 		live := true
 		if expectedIndexKey != "" {
+			// A brand-new project needs longer to provision + propagate; a
+			// redeploy flips fast (and the poll returns the moment it does).
+			readyTimeout := cfDeployReadyTimeout
+			if justCreated {
+				readyTimeout = cfFirstDeployReadyTimeout
+			}
 			err := progressStepErr("Waiting for the deployment to go live", func() error {
-				if waitForCloudflarePagesLive(deployment.URL, expectedIndexKey) {
+				if waitForCloudflarePagesLive(deployment.URL, expectedIndexKey, readyTimeout) {
 					return nil
 				}
 				return errCFDeployNotLive
@@ -282,9 +289,16 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 var errCFDeployNotLive = errors.New("deployment not serving the new bundle yet")
 
 const (
-	// cfDeployReadyTimeout bounds how long we wait for a new deployment
-	// to start serving our bundle before opening the browser.
+	// cfDeployReadyTimeout bounds how long we wait for a REDEPLOY to start
+	// serving our bundle before opening the browser. Redeploys usually flip
+	// within seconds, and the poll returns the instant the hash matches, so
+	// this is really just the give-up point for a stuck one.
 	cfDeployReadyTimeout = 45 * time.Second
+	// cfFirstDeployReadyTimeout is the longer window for the VERY FIRST deploy
+	// to a brand-new project: Cloudflare provisions the project AND propagates
+	// it to the edge, which routinely runs past 45s. Redeploys keep the shorter
+	// window above so a genuinely stuck one still fails fast.
+	cfFirstDeployReadyTimeout = 150 * time.Second
 	// cfDeployReadyInterval is the gap between readiness polls.
 	cfDeployReadyInterval = 1500 * time.Millisecond
 	// cfMaxIndexBytes caps how much of the served document we read
@@ -300,9 +314,9 @@ const (
 // the index.html hash computed at upload time, so neither the
 // propagation placeholder nor a stale earlier deploy ever counts as
 // ready. Returns false if the deadline passes without a match.
-func waitForCloudflarePagesLive(deployURL, expectedIndexKey string) bool {
+func waitForCloudflarePagesLive(deployURL, expectedIndexKey string, timeout time.Duration) bool {
 	client := &http.Client{Timeout: 8 * time.Second}
-	deadline := time.Now().Add(cfDeployReadyTimeout)
+	deadline := time.Now().Add(timeout)
 	for {
 		if cfServesIndexHash(client, deployURL, expectedIndexKey) {
 			return true
@@ -478,7 +492,9 @@ var errCFProjectAborted = fmt.Errorf("operator declined to create the project")
 //
 // Idempotent: re-running after creation hits step 1's "exists"
 // branch and returns immediately.
-func ensureCloudflarePagesProjectExists(client *cfClient, account, projectName string) (*cfProjectInfo, error) {
+// The bool return is true only when this call CREATED the project (vs finding
+// it already there) — the first deploy waits longer for it to go live.
+func ensureCloudflarePagesProjectExists(client *cfClient, account, projectName string) (*cfProjectInfo, bool, error) {
 	var info *cfProjectInfo
 	if err := progressStepErr("Checking project", func() error {
 		got, err := client.cfGetProject(account, projectName)
@@ -491,10 +507,10 @@ func ensureCloudflarePagesProjectExists(client *cfClient, account, projectName s
 		info = got
 		return nil
 	}); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if info != nil {
-		return info, nil
+		return info, false, nil
 	}
 
 	// Project doesn't exist. Decide whether to create.
@@ -504,7 +520,7 @@ func ensureCloudflarePagesProjectExists(client *cfClient, account, projectName s
 		// silently creating a stray "mar-websitee" project, or
 		// failing loud with a clear "create it once locally"
 		// hint. The latter is easier to recover from.
-		fprintError("mar cloudflare-pages deploy: project %s does not exist on Cloudflare\n"+
+		fprintError("mar deploy: project %s does not exist on Cloudflare\n"+
 			"      and stdin is not a TTY (CI / piped).",
 			colorCyan(projectName))
 		fprintHint("Auto-create only runs interactively to prevent typos from\n"+
@@ -514,9 +530,9 @@ func ensureCloudflarePagesProjectExists(client *cfClient, account, projectName s
 			"          then re-run from CI for subsequent deploys.\n"+
 			"        • Or create it in the dashboard:\n"+
 			"          %s",
-			cmdSuggest("cloudflare-pages deploy"),
+			cmdSuggest("deploy"),
 			colorCyan("https://dash.cloudflare.com/?to=/:account/pages/new"))
-		return nil, errCFProjectAborted
+		return nil, false, errCFProjectAborted
 	}
 
 	// Interactive prompt. The Y/n line uses the same shape as
@@ -526,7 +542,7 @@ func ensureCloudflarePagesProjectExists(client *cfClient, account, projectName s
 	fmt.Printf("Project %s does not exist yet on Cloudflare.\n", colorCyan(projectName))
 	fmt.Println()
 	if !confirmPrompt(fmt.Sprintf("Create %s now?", colorCyan(projectName))) {
-		return nil, errCFProjectAborted
+		return nil, false, errCFProjectAborted
 	}
 	fmt.Println()
 
@@ -538,9 +554,9 @@ func ensureCloudflarePagesProjectExists(client *cfClient, account, projectName s
 		info = created
 		return nil
 	}); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return info, nil
+	return info, true, nil
 }
 
 // printCloudflarePagesBanner prints the target before any silent
@@ -562,7 +578,7 @@ func ensureCloudflarePagesProjectExists(client *cfClient, account, projectName s
 // than the raw input path. Two reasons: (1) identifies the
 // project unambiguously without flashing a full home-relative
 // path like /Users/<name>/dev/... in screencasts; (2) handles
-// the common `mar cloudflare-pages deploy .` case where the raw
+// the common `mar deploy .` case where the raw
 // input would just read "." — not useful for confirming the
 // target.
 //

@@ -33,6 +33,12 @@ type VPage struct {
 	IsAdmin bool // Page.adminProtected — gated by the framework admin
 	//             // session (mar.json["admins"]) instead of the app's user
 	//             // auth. Implies IsProtected.
+	IsSheet bool // Page.sheet — PRESENTED over the page you came from
+	//             // instead of replacing it. Orthogonal to the four
+	//             // dynamic × protected combinations: the route, the
+	//             // history entry and the deep link are unchanged, only
+	//             // the presentation differs. A cold load has nothing to
+	//             // present over, so it renders full-screen.
 	PathPattern []PathSegment // populated for dynamic pages; parsed once at
 	//                          // builder time so the bundle emit + matchers
 	//                          // don't re-parse the source string.
@@ -250,6 +256,26 @@ func appBuiltins() map[string]Value {
 			return page, nil
 		}),
 
+		// Page.sheet — presentation, not a new kind of page. Takes a
+		// page built by any of the constructors above and flips one
+		// flag: navigating to it lays it over the screen you came from
+		// instead of replacing it.
+		//
+		// A decorator rather than a `sheet` field on every constructor's
+		// record, because the record shapes are already the four
+		// combinations of dynamic × protected; adding presentation there
+		// would multiply them again. And a decorator rather than
+		// `Page.sheetDynamicProtected`, for the same reason from the
+		// other direction.
+		"pageSheet": nativeFn(1, func(args []Value) (Value, error) {
+			page, ok := args[0].(VPage)
+			if !ok {
+				return nil, fmt.Errorf("Page.sheet: expected a Page (got %T)", args[0])
+			}
+			page.IsSheet = true
+			return page, nil
+		}),
+
 		// Nav.* are browser-only effects. Server-side they evaluate
 		// but their Run errors out — same shape as Service.call.
 		"navPush": nativeFn(1, func(args []Value) (Value, error) {
@@ -260,6 +286,14 @@ func appBuiltins() map[string]Value {
 				},
 			}, nil
 		}),
+		// Nav.dismiss is a VALUE, not a function: it takes nothing.
+		"navDismiss": VEffect{
+			Tag: "navDismiss",
+			Run: func() (Value, error) {
+				return nil, fmt.Errorf("Nav.dismiss is only available in the browser runtime")
+			},
+		},
+
 		"navReplace": nativeFn(1, func(args []Value) (Value, error) {
 			return VEffect{
 				Tag: "navReplace",

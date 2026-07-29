@@ -9,11 +9,18 @@ package parser
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"mar/internal/ast"
 	"mar/internal/lexer"
 )
+
+// Int is 53 bits wide (see internal/runtime/intrange.go), so a literal past
+// that range is refused where it is READ rather than where it is used: a
+// program that cannot represent its own constants should not compile at all.
+// The bound was 64 bits while the runtimes disagreed about what an Int was.
+const maxIntLiteral int64 = 1<<53 - 1
 
 // Error carries position and message.
 type Error struct {
@@ -611,8 +618,11 @@ func (p *parser) parsePatternAtom() (ast.Pattern, error) {
 	case lexer.KindInt:
 		p.advance()
 		v, err := strconv.ParseInt(t.Value, 10, 64)
+		if err == nil && (v > maxIntLiteral || v < -maxIntLiteral) {
+			err = strconv.ErrRange
+		}
 		if err != nil {
-			return nil, &Error{Line: t.Line, Column: t.Column, Message: fmt.Sprintf("integer literal %s is out of range for Int (64-bit signed)", t.Value)}
+			return nil, &Error{Line: t.Line, Column: t.Column, Message: fmt.Sprintf("integer literal %s is out of range for Int (%d to %d)", t.Value, -maxIntLiteral, maxIntLiteral)}
 		}
 		return &ast.PInt{Pos: posOf(t), Value: v}, nil
 	case lexer.KindString:
@@ -793,6 +803,7 @@ var opTable = map[string]opInfo{
 	"-":  {6, false},
 	"*":  {7, false},
 	"/":  {7, false},
+	"//": {7, false},
 }
 
 func tokenToOp(t lexer.Token) (string, bool) {
@@ -829,6 +840,8 @@ func tokenToOp(t lexer.Token) (string, bool) {
 		return "*", true
 	case lexer.KindSlash:
 		return "/", true
+	case lexer.KindSlashSlash:
+		return "//", true
 	}
 	return "", false
 }
@@ -919,23 +932,47 @@ func (p *parser) parseExprAtom() (ast.Expr, error) {
 	return p.withEnd(e), nil
 }
 
+// decimalParts splits a decimal literal ("12.50") into its coefficient
+// digit string with the point removed ("1250") and its scale (2).
+// Leading zeros are trimmed from the coefficient (but "0.05" keeps the
+// significant "5": coef "5", scale 2; plain zero is coef "0"). The
+// 34-significant-digit bound (the language's decimal128-style cap) is
+// enforced here so an oversized literal fails at parse time with a
+// clear message instead of aborting at runtime.
+func decimalParts(lit string) (string, int, error) {
+	dot := strings.IndexByte(lit, '.')
+	intPart, fracPart := lit[:dot], lit[dot+1:]
+	coef := intPart + fracPart
+	trimmed := strings.TrimLeft(coef, "0")
+	if trimmed == "" {
+		trimmed = "0"
+	}
+	if len(trimmed) > 34 {
+		return "", 0, fmt.Errorf("decimal literal %s exceeds 34 significant digits (Decimal's maximum)", lit)
+	}
+	return trimmed, len(fracPart), nil
+}
+
 func (p *parser) parseExprAtomCore() (ast.Expr, error) {
 	t := p.peek()
 	switch t.Kind {
 	case lexer.KindInt:
 		p.advance()
 		v, err := strconv.ParseInt(t.Value, 10, 64)
+		if err == nil && (v > maxIntLiteral || v < -maxIntLiteral) {
+			err = strconv.ErrRange
+		}
 		if err != nil {
-			return nil, &Error{Line: t.Line, Column: t.Column, Message: fmt.Sprintf("integer literal %s is out of range for Int (64-bit signed)", t.Value)}
+			return nil, &Error{Line: t.Line, Column: t.Column, Message: fmt.Sprintf("integer literal %s is out of range for Int (%d to %d)", t.Value, -maxIntLiteral, maxIntLiteral)}
 		}
 		return &ast.EInt{Pos: posOf(t), Value: v}, nil
 	case lexer.KindFloat:
 		p.advance()
-		v, err := strconv.ParseFloat(t.Value, 64)
+		coef, scale, err := decimalParts(t.Value)
 		if err != nil {
-			return nil, &Error{Line: t.Line, Column: t.Column, Message: fmt.Sprintf("float literal %s is out of range for Float (64-bit)", t.Value)}
+			return nil, &Error{Line: t.Line, Column: t.Column, Message: err.Error()}
 		}
-		return &ast.EFloat{Pos: posOf(t), Value: v}, nil
+		return &ast.EDecimal{Pos: posOf(t), Coef: coef, Scale: scale}, nil
 	case lexer.KindString:
 		p.advance()
 		return &ast.EString{Pos: posOf(t), Value: t.Value}, nil

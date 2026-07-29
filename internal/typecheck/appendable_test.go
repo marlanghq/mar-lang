@@ -24,8 +24,8 @@ func TestAppendListsOK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "List Int" {
-		t.Fatalf("want List Int, got %s", got)
+	if got != "List number" {
+		t.Fatalf("want List number, got %s", got)
 	}
 }
 

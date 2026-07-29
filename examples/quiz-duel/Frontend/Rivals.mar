@@ -1,0 +1,99 @@
+module Frontend.Rivals exposing (page)
+
+
+import Shared
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , vstack, text, subtitle, errorText
+    )
+
+
+-- Head-to-head history: one row per rival the caller has finished a
+-- duel against, with the win/loss/draw split from the caller's side.
+
+
+type alias Model =
+    { items : Maybe (List Shared.RivalCard)
+    , error : Maybe String
+    }
+
+
+type Msg
+    = Fetched (Result Service.Error (List Shared.RivalCard))
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { items = Nothing, error = Nothing }
+    , Service.call Shared.listRivals () Fetched
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        Fetched (Ok items) ->
+            ( { model | items = Just items }, Cmd.none )
+
+        Fetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    navigationStack [ navigationTitle "Rivais" ]
+        [ list [] (body model) ]
+
+
+body : Model -> List (View Msg)
+body model =
+    case model.error of
+        Just why ->
+            [ section [ header "Erro" ] [ errorText why ] ]
+
+        Nothing ->
+            case model.items of
+                Nothing ->
+                    [ section [] [ text [] "Carregando…" ] ]
+
+                Just items ->
+                    if List.isEmpty items then
+                        [ section [ header "Sem rivais ainda" ]
+                            [ subtitle "Jogue alguns duelos para montar seu histórico de confrontos." ]
+                        ]
+
+                    else
+                        [ section
+                            [ header ("Confrontos (" ++ String.fromInt (List.length items) ++ ")")
+                            , footer "Placar do seu ponto de vista."
+                            ]
+                            (List.map rivalRow items)
+                        ]
+
+
+rivalRow : Shared.RivalCard -> View Msg
+rivalRow r =
+    vstack []
+        [ text [] r.nick
+        , subtitle
+            ( String.fromInt r.myWins
+                ++ " V, "
+                ++ String.fromInt r.theirWins
+                ++ " D, "
+                ++ String.fromInt r.draws
+                ++ " E"
+            )
+        ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/rivals"
+        , title  = "Rivais"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

@@ -4,9 +4,7 @@ module Frontend.Profile exposing (page)
 import Shared
 import Frontend.Routes
 import UI exposing
-    ( navigationStack, navigationTitle, topBarTrailing
-    , form, list, section, header
-    , hstack, vstack
+    ( navigationStack, navigationTitle, list, section, header
     , title, text, button, empty, errorText
     )
 
@@ -131,14 +129,14 @@ renderFound view busy =
     let
         countLine =
             text []
-                (   String.fromInt view.followers  ++ " followers · "
-                 ++ String.fromInt view.following  ++ " following · "
+                (   String.fromInt view.followers  ++ " followers, "
+                 ++ String.fromInt view.following  ++ " following, "
                  ++ String.fromInt view.tweetCount ++ " tweets"
                 )
     in
     list []
         [ section []
-            [ title (view.user.displayName ++ " · @" ++ view.user.handle)
+            [ title (view.user.displayName ++ " @" ++ view.user.handle)
             , if view.user.bio == "" then empty else text [] view.user.bio
             , countLine
             , followButton view busy

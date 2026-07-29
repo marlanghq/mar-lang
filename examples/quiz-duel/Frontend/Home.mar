@@ -1,0 +1,450 @@
+module Frontend.Home exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle, topBarTrailing
+    , list, section, header
+    , hstack, vstack, spacer, width, fill
+    , text, subtitle, title, button, navigationLink, errorText
+    , form, textField, submit, disabled, chars
+    , sheet, confirm, empty
+    )
+
+
+-- The hub. Loads the caller's profile (bouncing to the nickname gate
+-- if they have none) and their whole lobby, split into four buckets:
+--
+--   Caixa de entrada  — someone challenged you; accept or decline
+--   Sua vez           — a duel waiting on your answers; tap to play
+--   Aguardando        — you're done, the rival hasn't finished
+--   Resultados        — finished (or declined) duels, newest first
+--
+-- There's no realtime push in Mar, so we poll the lobby every few
+-- seconds to pick up a rival accepting or finishing WHILE you're looking
+-- at this screen. Returning to Home doesn't rely on the poll: Mar re-runs
+-- `init` on every navigation (including Back), so coming back refetches
+-- the lobby fresh — you never see a previous visit's stale list.
+
+
+type alias Model =
+    { profile           : Maybe Shared.Profile
+    , lobby             : Maybe Shared.Lobby
+    , error             : Maybe String
+    , showAccount       : Bool          -- the Conta sheet is up
+    , nickDraft         : String        -- editable nick inside the sheet
+    , nickError         : Maybe String  -- inline validation / server reason
+    , savingNick        : Bool
+    , confirmingSignOut : Bool
+    }
+
+
+type Msg
+    = Me (Result Service.Error Shared.MeResult)
+    | LobbyFetched (Result Service.Error Shared.Lobby)
+    | Tick Time
+    | AcceptClicked Int
+    | Accepted Int (Result Service.Error Shared.Ack)
+    | DeclineClicked Int
+    | Declined (Result Service.Error Shared.Ack)
+    | AccountOpened
+    | AccountDismissed
+    | NickDraftChanged String
+    | NickSaveClicked
+    | NickSaved (Result Service.Error Shared.NickResult)
+    | SignOutClicked
+    | SignOutConfirmed
+    | SignOutCancelled
+    | SignedOut (Result String ())
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    -- Fetch the profile FIRST; only load the lobby once we know the
+    -- caller has one. A no-profile user is redirected to the nickname
+    -- gate, so firing the lobby here would just waste a round-trip whose
+    -- result lands on another page.
+    ( { profile = Nothing, lobby = Nothing, error = Nothing
+      , showAccount = False, nickDraft = "", nickError = Nothing, savingNick = False
+      , confirmingSignOut = False
+      }
+    , Service.call Shared.me () Me
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        Me (Ok (Shared.HasProfile p)) ->
+            -- Seed the account editor's draft here too, so the Conta
+            -- sheet shows the current nick even if it's opened before
+            -- this resolves. AccountOpened re-seeds on each open.
+            ( { model | profile = Just p, nickDraft = p.nick }, Service.call Shared.lobby () LobbyFetched )
+
+        Me (Ok Shared.NoProfile) ->
+            -- Signed in but never onboarded: send them to pick a nick.
+            ( model, Nav.replaceTo Frontend.Routes.nickname {} )
+
+        Me (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        LobbyFetched (Ok lobby) ->
+            ( { model | lobby = Just lobby }, Cmd.none )
+
+        LobbyFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        Tick _ ->
+            ( model, Service.call Shared.lobby () LobbyFetched )
+
+        AcceptClicked id ->
+            ( model, Service.call Shared.accept { id = id } (\r -> Accepted id r) )
+
+        Accepted id (Ok Shared.AckOk) ->
+            -- Accepted: jump straight into the quiz for this duel.
+            ( model, Nav.pushTo Frontend.Routes.quiz { id = id } )
+
+        Accepted _ _ ->
+            -- Denied or transport error (duel changed under us): refresh.
+            ( model, Service.call Shared.lobby () LobbyFetched )
+
+        DeclineClicked id ->
+            ( model, Service.call Shared.decline { id = id } Declined )
+
+        Declined _ ->
+            ( model, Service.call Shared.lobby () LobbyFetched )
+
+        AccountOpened ->
+            let
+                currentNick =
+                    case model.profile of
+                        Just p  -> p.nick
+                        Nothing -> ""
+            in
+            ( { model | showAccount = True, nickDraft = currentNick, nickError = Nothing }
+            , Cmd.none
+            )
+
+        AccountDismissed ->
+            ( { model | showAccount = False }, Cmd.none )
+
+        NickDraftChanged value ->
+            ( { model | nickDraft = value, nickError = Nothing }, Cmd.none )
+
+        NickSaveClicked ->
+            let
+                currentNick =
+                    case model.profile of
+                        Just p  -> p.nick
+                        Nothing -> ""
+            in
+            -- No-op when busy or unchanged (mirrors the disabled Save
+            -- button; also covers Enter-to-submit on the field).
+            if model.savingNick || String.trim model.nickDraft == currentNick then
+                ( model, Cmd.none )
+
+            else
+                -- Same Shared.nickProblem the server enforces, so a bad
+                -- nick never leaves the client.
+                case Shared.nickProblem model.nickDraft of
+                    Just reason ->
+                        ( { model | nickError = Just reason }, Cmd.none )
+
+                    Nothing ->
+                        ( { model | savingNick = True, nickError = Nothing }
+                        , Service.call Shared.updateNick { nick = model.nickDraft } NickSaved
+                        )
+
+        NickSaved (Ok (Shared.NickUpdated p)) ->
+            -- Saved: refresh our copy of the profile and close the sheet.
+            ( { model | savingNick = False, showAccount = False, profile = Just p }, Cmd.none )
+
+        NickSaved (Ok Shared.NickUnavailable) ->
+            ( { model | savingNick = False, nickError = Just "Esse apelido já está em uso. Tente outro." }
+            , Cmd.none
+            )
+
+        NickSaved (Ok Shared.NickBad) ->
+            ( { model | savingNick = False, nickError = Just "Apelido inválido. Use apenas letras, números e símbolos simples, sem espaços." }
+            , Cmd.none
+            )
+
+        NickSaved (Err why) ->
+            ( { model | savingNick = False, nickError = Just (Service.errorToString why) }
+            , Cmd.none
+            )
+
+        SignOutClicked ->
+            -- Don't sign out on the first tap; arm the confirm dialog and
+            -- let the sibling `signOutDialog` render the "are you sure?".
+            ( { model | confirmingSignOut = True }, Cmd.none )
+
+        SignOutConfirmed ->
+            ( { model | confirmingSignOut = False }, Auth.logout SignedOut )
+
+        SignOutCancelled ->
+            ( { model | confirmingSignOut = False }, Cmd.none )
+
+        SignedOut _ ->
+            ( model, Nav.replaceTo Frontend.Routes.signIn {} )
+
+
+-- ====================================================================
+-- VIEW
+-- ====================================================================
+
+
+view : Shared.User -> Model -> View Msg
+view user model =
+    navigationStack
+        [ navigationTitle "Duelos"
+        , topBarTrailing (button [] AccountOpened "Conta")
+        ]
+        [ list [] (menuSection :: lobbyBody model)
+        , accountSheet user model
+        , signOutDialog model
+        ]
+
+
+-- accountSheet is the "Conta" panel: a bottom sheet (dismiss to close)
+-- with the signed-in e-mail, an editable nick, and sign-out. Its open
+-- state lives in the Model; the renderer floats it at window level.
+accountSheet : Shared.User -> Model -> View Msg
+accountSheet user model =
+    sheet
+        { open      = model.showAccount
+        , onDismiss = AccountDismissed
+        , outlet    = "account"
+        }
+        [ accountContent user model ]
+
+
+accountContent : Shared.User -> Model -> View Msg
+accountContent user model =
+    let
+        currentNick =
+            case model.profile of
+                Just p  -> p.nick
+                Nothing -> ""
+
+        -- Save is offered only once the (trimmed) draft differs from the
+        -- saved nick — a no-op rename can't be submitted.
+        unchanged =
+            String.trim model.nickDraft == currentNick
+    in
+    -- Header: a trailing "Concluído" (Apple's convention for an
+    -- account/edit sheet) with the title still centered. Two equal
+    -- `width fill` side columns balance each other, so "Conta" sits in
+    -- the middle regardless of the button's width; the button hugs the
+    -- right edge of its column. (Backdrop / swipe / Escape still
+    -- dismiss too.)
+    vstack []
+        [ hstack []
+            [ hstack [ width fill ] []
+            , title "Conta"
+            , hstack [ width fill ]
+                [ spacer
+                , button [] AccountDismissed "Concluído"
+                ]
+            ]
+        , form
+            [ section [ header "E-mail" ]
+                [ text [] user.email ]
+            , section [ header "Apelido" ]
+                [ textField
+                    [ submit NickSaveClicked, disabled model.savingNick, width (chars 20) ]
+                    "Apelido" model.nickDraft NickDraftChanged
+                , nickErrorView model.nickError
+                , button [ disabled (model.savingNick || unchanged) ] NickSaveClicked "Salvar apelido"
+                ]
+            , section []
+                [ hstack []
+                    [ spacer
+                    , button [] SignOutClicked "Sair da conta"
+                    , spacer
+                    ]
+                ]
+            ]
+        ]
+
+
+nickErrorView : Maybe String -> View Msg
+nickErrorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            errorText msg
+
+
+-- signOutDialog gates the "Sair" button behind a confirmation. It's
+-- `empty` until the button arms it, then a floating UI.confirm rendered
+-- as a sibling of the list. Signing out isn't destructive (you can log
+-- back in), so destructive = False keeps the confirm button on the
+-- accent color rather than red. The dialog's Cancel button label is
+-- supplied by the runtime and currently shows in English.
+signOutDialog : Model -> View Msg
+signOutDialog model =
+    if model.confirmingSignOut then
+        confirm
+            { title        = "Deseja sair da sua conta?"
+            , confirmLabel = "Sair"
+            , destructive  = False
+            , onConfirm    = SignOutConfirmed
+            , onCancel     = SignOutCancelled
+            }
+
+    else
+        empty
+
+
+menuSection : View Msg
+menuSection =
+    section []
+        [ navigationLink [ width fill ] Frontend.Routes.newChallenge {} (text [] "Novo desafio")
+        , navigationLink [ width fill ] Frontend.Routes.rivals {} (text [] "Rivais")
+        ]
+
+
+lobbyBody : Model -> List (View Msg)
+lobbyBody model =
+    case model.error of
+        Just why ->
+            [ section [ header "Erro" ] [ errorText why ] ]
+
+        Nothing ->
+            case model.lobby of
+                Nothing ->
+                    [ section [] [ text [] "Carregando duelos…" ] ]
+
+                Just lobby ->
+                    lobbySections lobby
+
+
+lobbySections : Shared.Lobby -> List (View Msg)
+lobbySections lobby =
+    let
+        secs =
+            List.concat
+                [ sectionIf "Caixa de entrada" (List.map inboxRow lobby.inbox)
+                , sectionIf "Sua vez" (List.map activeRow lobby.active)
+                , sectionIf "Aguardando o oponente" (List.map waitingRow lobby.waiting)
+                , sectionIf "Resultados" (List.map resultRow lobby.results)
+                ]
+    in
+    if List.isEmpty secs then
+        [ section [ header "Tudo tranquilo" ]
+            [ subtitle "Nenhum duelo por aqui ainda. Toque em “Novo desafio” para começar." ]
+        ]
+
+    else
+        secs
+
+
+sectionIf : String -> List (View Msg) -> List (View Msg)
+sectionIf title rows =
+    if List.isEmpty rows then
+        []
+
+    else
+        [ section [ header title ] rows ]
+
+
+inboxRow : Shared.DuelCard -> View Msg
+inboxRow card =
+    hstack []
+        [ vstack [ width fill ]
+            [ text [] (card.opponentNick ++ " desafiou você")
+            , subtitle (Shared.themeLabel card.theme)
+            ]
+        , button [] (AcceptClicked card.id) "Aceitar"
+        , button [] (DeclineClicked card.id) "Recusar"
+        ]
+
+
+activeRow : Shared.DuelCard -> View Msg
+activeRow card =
+    navigationLink [ width fill ] Frontend.Routes.quiz { id = card.id }
+        (vstack []
+            [ text [] (Shared.themeLabel card.theme ++ ", contra " ++ card.opponentNick)
+            , subtitle "Toque para jogar"
+            ]
+        )
+
+
+waitingRow : Shared.DuelCard -> View Msg
+waitingRow card =
+    vstack []
+        [ text [] (Shared.themeLabel card.theme ++ ", contra " ++ card.opponentNick)
+        , subtitle (waitingStatus card)
+        ]
+
+
+waitingStatus : Shared.DuelCard -> String
+waitingStatus card =
+    case card.status of
+        Shared.Pending ->
+            "Aguardando o oponente aceitar"
+
+        Shared.Accepted ->
+            "O oponente está jogando"
+
+        _ ->
+            "Aguardando"
+
+
+resultRow : Shared.DuelCard -> View Msg
+resultRow card =
+    navigationLink [ width fill ] Frontend.Routes.result { id = card.id }
+        (vstack []
+            [ text [] (badge card ++ resultTitle card)
+            , subtitle (resultSubtitle card)
+            ]
+        )
+
+
+badge : Shared.DuelCard -> String
+badge card =
+    if card.isNew then "🔴 " else ""
+
+
+resultTitle : Shared.DuelCard -> String
+resultTitle card =
+    case card.status of
+        Shared.Declined ->
+            if card.iAmChallenger then
+                card.opponentNick ++ " recusou o desafio"
+
+            else
+                "Você recusou"
+
+        _ ->
+            Shared.outcomeLabel card.iAmChallenger card.outcome ++ ", " ++ card.opponentNick
+
+
+resultSubtitle : Shared.DuelCard -> String
+resultSubtitle card =
+    case card.status of
+        Shared.Declined ->
+            Shared.themeLabel card.theme
+
+        _ ->
+            Shared.themeLabel card.theme
+                ++ ", "
+                ++ String.fromInt card.myScore
+                ++ "×"
+                ++ String.fromInt card.theirScore
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/"
+        , title  = "Quiz Duel"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Time.every (Time.seconds 5) Tick
+        }

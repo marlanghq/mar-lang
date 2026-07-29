@@ -17,9 +17,12 @@ import (
 // instead of being surprised by a wall of email-shaped log output
 // on the first sign-in attempt.
 //
+// `showAdmin` is true when the app has a database (backend / fullstack);
+// a frontend-only app has no /_mar/admin, so the banner omits that line.
+//
 // In CI / non-TTY contexts the output collapses to a single line so
 // log scrapers don't get blank lines or ANSI escapes.
-func printBanner(addr string, hub *ReloadHub, appName string, mailToStdout bool) {
+func printBanner(addr string, hub *ReloadHub, appName string, mailToStdout bool, showAdmin bool) {
 	tty := isStdoutTTY()
 	bold := wrapANSI(tty, "\x1b[1m", "\x1b[0m")
 	cyan := wrapANSI(tty, "\x1b[36m", "\x1b[0m")
@@ -66,7 +69,9 @@ func printBanner(addr string, hub *ReloadHub, appName string, mailToStdout bool)
 			hint = " (hot reload enabled)"
 		}
 		fmt.Printf("[mar] %s %s on %s%s\n", mode, appName, url, hint)
-		fmt.Printf("[mar] admin: %s\n", adminURL)
+		if showAdmin {
+			fmt.Printf("[mar] admin: %s\n", adminURL)
+		}
 		if mailToStdout {
 			fmt.Printf("[mar] mail: no SMTP configured — sign-in codes print to this log\n")
 		}
@@ -79,7 +84,9 @@ func printBanner(addr string, hub *ReloadHub, appName string, mailToStdout bool)
 
 	fmt.Printf("%s  %s\n", bold(mode), appName)
 	fmt.Printf("  %s %s\n", dim("Local:"), cyan(url))
-	fmt.Printf("  %s %s\n", dim("Admin:"), cyan(adminURL))
+	if showAdmin {
+		fmt.Printf("  %s %s\n", dim("Admin:"), cyan(adminURL))
+	}
 	if hub != nil {
 		// "Hot reload enabled." is descriptive status, not an
 		// identifier or link — kept dim so cyan stays reserved for

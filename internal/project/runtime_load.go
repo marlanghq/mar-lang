@@ -40,10 +40,11 @@ import (
 // `App.frontend` / `App.backend` to install their capture
 // callbacks before user code runs.
 //
-// Does not type-check. The build pipeline that produced the
-// embedded payload already validated types; re-checking at boot
-// would only catch a corrupted artifact (which would surface as
-// downstream evaluation errors anyway).
+// Type-checks on the way in. That is not about catching type errors
+// — the build pipeline already did — but about ELABORATION: the
+// checker writes decisions onto the tree that the evaluator cannot
+// re-derive, so a tree that skipped it is quietly wrong rather than
+// rejected. See ADR 0017.
 func LoadIntoEnvForRuntime(
 	entry string,
 	installBuiltins func(*runtime.Env, []*ast.Module),
@@ -52,13 +53,28 @@ func LoadIntoEnvForRuntime(
 	if err != nil {
 		return nil, nil, err
 	}
+	// Type-check before evaluating, and not for the type errors: checking is
+	// what ELABORATES the tree. A parse-only load hands the evaluator a tree
+	// with the checker's decisions missing — which literals became Decimals,
+	// which references named an implementation — and those do not fail
+	// loudly. `1 + 1.50` passes `mar check`, runs under `mar dev`, and dies
+	// here with `+: expected Int`. See ADR 0017.
+	byName := indexModules(mods)
+	checked, err := checkOrdered(mods,
+		func(m *ast.Module) string { return joinName(m.Name) },
+		func(module string) bool { _, ok := byName[module]; return ok },
+		nil,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	rEnv := runtime.BaseEnv()
 	if installBuiltins != nil {
 		installBuiltins(rEnv, mods)
 	}
-	byName := indexModules(mods)
 	for _, m := range mods {
-		if err := loadIntoEnv(m, joinName(m.Name), rEnv, byName); err != nil {
+		if err := loadIntoEnv(m, joinName(m.Name), rEnv, byName, declaredTypes(checked, m)); err != nil {
 			return nil, nil, err
 		}
 	}

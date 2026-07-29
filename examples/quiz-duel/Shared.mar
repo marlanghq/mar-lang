@@ -1,0 +1,475 @@
+module Shared exposing (..)
+
+
+-- Quiz Duel — the contract layer shared by Backend (which implements
+-- the services) and Frontend (which calls them). Every entity row,
+-- enum, DTO and Service.declare lives here so a field rename surfaces
+-- as a compile error on both sides at once.
+--
+-- The game: you challenge a rival on a theme, answer 10 timed
+-- multiple-choice questions, and the duel waits in their inbox until
+-- they accept and answer the SAME 10. Most correct wins; the faster
+-- total time breaks a tie. All copy is Brazilian Portuguese; code and
+-- comments stay English.
+
+
+-- ====================================================================
+-- USER + PROFILE
+-- ====================================================================
+
+
+-- The framework's user: id (session lookup) + email (magic-code
+-- recipient). Auth.config in Main reads the users entity built from
+-- this alias.
+type alias User =
+    { id    : Int
+    , email : String
+    }
+
+
+-- A player's public identity + denormalized overall record. `userId`
+-- is the User.id (a duel stores userIds, we join to nicks for
+-- display). W/L/D are bumped once, atomically with each duel's `done`
+-- transition — cheaper than counting finished duels on every read.
+type alias Profile =
+    { id     : Int
+    , userId : Int
+    , nick   : String
+    , wins   : Int
+    , losses : Int
+    , draws  : Int
+    }
+
+
+-- ====================================================================
+-- CHALLENGE (a duel)
+-- ====================================================================
+
+
+-- draft    — challenger is answering; the opponent can't see it yet
+-- pending  — challenger finished; sits in the opponent's inbox
+-- accepted — opponent accepted and is answering
+-- declined — opponent said no (terminal, no score effect)
+-- done     — both answered; outcome computed, records updated
+type Status
+    = Draft
+    | Pending
+    | Accepted
+    | Declined
+    | Done
+
+
+-- Who a given Answer row / turn belongs to.
+type Role
+    = AsChallenger
+    | AsOpponent
+
+
+-- The decided result of a finished duel (Undecided until `done`).
+type Outcome
+    = Undecided
+    | ChallengerWon
+    | OpponentWon
+    | Drew
+
+
+-- The stored duel row. `qids` is the 10 sampled bank ids as a CSV
+-- string ("17,3,88,…") because entities have no list columns. Scores
+-- fill in as answers land; `chTime`/`opTime` are total elapsed
+-- MILLISECONDS (the tiebreak metric). `challengerSeen` drives the NEW
+-- badge on the challenger's result card.
+type alias Challenge =
+    { id             : Int
+    , challengerId   : Int
+    , opponentId     : Int
+    , theme          : String
+    , qids           : String
+    , status         : Status
+    , chScore        : Int
+    , chTime         : Int
+    , opScore        : Int
+    , opTime         : Int
+    , outcome        : Outcome
+    , challengerSeen : Bool
+    , createdAt      : Time
+    }
+
+
+-- One answered (or served-but-pending) question, per player per duel.
+-- Created on `serve` (answered = False, servedAt stamped); finalized
+-- on `answer`. `elapsed` is milliseconds, clamped to the limit. A
+-- timeout stores chosen = -1, correct = False, elapsed = limit.
+type alias Answer =
+    { id          : Int
+    , challengeId : Int
+    , role        : Role
+    , qIndex      : Int
+    , qid         : Int
+    , servedAt    : Time
+    , answered    : Bool
+    , chosen      : Int
+    , correct     : Bool
+    , elapsed     : Int
+    }
+
+
+-- ====================================================================
+-- TUNABLES
+-- ====================================================================
+
+
+-- Questions per duel and seconds allowed per question. Shared so the
+-- client countdown and the server clamp agree.
+questionsPerDuel : Int
+questionsPerDuel = 10
+
+
+questionSeconds : Int
+questionSeconds = 15
+
+
+questionLimitMs : Int
+questionLimitMs = questionSeconds * 1000
+
+
+-- ====================================================================
+-- DTOs (what services hand to the frontend)
+-- ====================================================================
+
+
+-- GET /me: do I have a profile yet, or must I pick a nick?
+type MeResult
+    = HasProfile Profile
+    | NoProfile
+
+
+-- POST /profiles
+type ProfileResult
+    = ProfileCreated Profile
+    | NickTaken
+    | InvalidNick
+
+
+-- POST /profiles/nick — rename yourself from the Account sheet.
+type NickResult
+    = NickUpdated Profile   -- the profile, with its new nick
+    | NickUnavailable       -- someone else already has it
+    | NickBad               -- failed the shared validation rules
+
+
+-- One selectable opponent. Never includes the caller.
+type alias PlayerCard =
+    { nick   : String
+    , wins   : Int
+    , losses : Int
+    , draws  : Int
+    }
+
+
+-- One selectable theme + how many questions back it.
+type alias ThemeCard =
+    { name  : String
+    , count : Int
+    }
+
+
+-- POST /challenges
+type CreateResult
+    = DuelStarted Int
+    | OpponentNotFound
+    | InvalidTheme
+    | CannotSelfChallenge
+
+
+-- A served question. NEVER carries the correct index — correctness is
+-- judged server-side and only revealed in the answer feedback.
+-- `remainingMs` re-syncs the client countdown after a refresh (the
+-- server clamp is authoritative regardless).
+type alias Question =
+    { index       : Int
+    , total       : Int
+    , text        : String
+    , a           : String
+    , b           : String
+    , c           : String
+    , d           : String
+    , remainingMs : Int
+    }
+
+
+-- POST /challenges/{id}/serve
+type ServeResult
+    = NextQuestion Question
+    | QuizFinished
+    | ServeNotYours
+
+
+-- POST /challenges/{id}/answer
+type alias Feedback =
+    { correct      : Bool
+    , correctIndex : Int
+    , chosen       : Int
+    , elapsedMs    : Int
+    , nextIndex    : Int
+    , done         : Bool
+    }
+
+
+type AnswerResult
+    = Judged Feedback
+    | AnswerNotYours
+    | AlreadyAnswered
+
+
+-- POST accept / decline: a plain ack that also models "not your duel
+-- / wrong state".
+type Ack
+    = AckOk
+    | AckDenied
+
+
+-- One lobby card (inbox / waiting / results). The frontend renders by
+-- `status` + `iAmChallenger`. Scores are only meaningful (and only
+-- filled) for `done` cards — a pending/accepted card the OPPONENT sees
+-- carries the challenger's scores as 0, so their target stays hidden.
+type alias DuelCard =
+    { id           : Int
+    , opponentNick : String
+    , theme        : String
+    , iAmChallenger : Bool
+    , status       : Status
+    , outcome      : Outcome
+    , myScore      : Int
+    , theirScore   : Int
+    , isNew        : Bool
+    }
+
+
+-- GET /challenges (the whole lobby, split into sections).
+type alias Lobby =
+    { inbox   : List DuelCard   -- pending, I'm the opponent → accept/decline
+    , active  : List DuelCard   -- my turn to answer (a resumable draft/accepted)
+    , waiting : List DuelCard   -- I'm done, the rival hasn't finished
+    , results : List DuelCard   -- finished duels, newest first
+    }
+
+
+-- One row of the finished-duel breakdown table.
+type alias Review =
+    { text         : String
+    , correctIndex : Int
+    , myChosen     : Int
+    , theirChosen  : Int
+    , myElapsedMs  : Int
+    , theirElapsedMs : Int
+    }
+
+
+-- The finished-duel detail (result screen).
+type alias DuelDetail =
+    { id           : Int
+    , opponentNick : String
+    , theme        : String
+    , iAmChallenger : Bool
+    , myScore      : Int
+    , theirScore   : Int
+    , myTimeMs     : Int
+    , theirTimeMs  : Int
+    , outcome      : Outcome
+    , reviews      : List Review
+    , h2hMine      : Int   -- head-to-head vs this rival: my wins
+    , h2hTheirs    : Int
+    , h2hDraws     : Int
+    }
+
+
+-- GET /challenges/{id}: shaped by status. Only a `done` duel yields
+-- the full comparison; anything else returns a light status so the
+-- opponent never learns the challenger's score early.
+type DetailResult
+    = FinishedDetail DuelDetail
+    | UnfinishedDetail { opponentNick : String, theme : String, waitingOn : String }
+    | DetailNotYours
+
+
+-- One rival on the Rivals page: head-to-head vs the caller.
+type alias RivalCard =
+    { nick    : String
+    , myWins  : Int
+    , theirWins : Int
+    , draws   : Int
+    }
+
+
+-- ====================================================================
+-- SERVICE CONTRACTS
+-- ====================================================================
+--
+-- Every handler is wrapped in Auth.protect on the backend, which
+-- injects the calling User and 401s a missing session before any of
+-- our code runs. GETs are read-only (the compiler enforces it); every
+-- state change is a POST.
+
+
+me : Service () MeResult
+me = Service.declare GET "/me"
+
+
+createProfile : Service { nick : String } ProfileResult
+createProfile = Service.declare POST "/profiles"
+
+
+updateNick : Service { nick : String } NickResult
+updateNick = Service.declare POST "/profiles/nick"
+
+
+listPlayers : Service () (List PlayerCard)
+listPlayers = Service.declare GET "/players"
+
+
+listThemes : Service () (List ThemeCard)
+listThemes = Service.declare GET "/themes"
+
+
+createChallenge : Service { opponentNick : String, theme : String } CreateResult
+createChallenge = Service.declare POST "/challenges"
+
+
+-- serve MUTATES (stamps servedAt / creates the Answer row on first
+-- view), so it's a POST even though it reads a question.
+serve : Service { id : Int } ServeResult
+serve = Service.declare POST "/challenges/{id:Int}/serve"
+
+
+answer : Service { id : Int, chosen : Int } AnswerResult
+answer = Service.declare POST "/challenges/{id:Int}/answer"
+
+
+accept : Service { id : Int } Ack
+accept = Service.declare POST "/challenges/{id:Int}/accept"
+
+
+decline : Service { id : Int } Ack
+decline = Service.declare POST "/challenges/{id:Int}/decline"
+
+
+markSeen : Service { id : Int } ()
+markSeen = Service.declare POST "/challenges/{id:Int}/seen"
+
+
+lobby : Service () Lobby
+lobby = Service.declare GET "/challenges"
+
+
+duelDetail : Service { id : Int } DetailResult
+duelDetail = Service.declare GET "/challenges/{id:Int}"
+
+
+listRivals : Service () (List RivalCard)
+listRivals = Service.declare GET "/rivals"
+
+
+-- ====================================================================
+-- SHARED LABELS (pt-BR copy used on both sides)
+-- ====================================================================
+
+
+themeLabel : String -> String
+themeLabel key =
+    case key of
+        "futebol"   -> "Futebol"
+        "games"     -> "Video Games"
+        "geografia" -> "Geografia"
+        "ciencia"   -> "Ciência"
+        "cinema"    -> "Cinema"
+        "musica"    -> "Música"
+        _           -> key
+
+
+outcomeLabel : Bool -> Outcome -> String
+outcomeLabel iAmChallenger outcome =
+    case outcome of
+        Undecided ->
+            "Em andamento"
+
+        Drew ->
+            "Empate"
+
+        ChallengerWon ->
+            if iAmChallenger then "Você venceu" else "Você perdeu"
+
+        OpponentWon ->
+            if iAmChallenger then "Você perdeu" else "Você venceu"
+
+
+-- ====================================================================
+-- NICK RULES (validated identically on the client and the server)
+-- ====================================================================
+
+
+nickMinLen : Int
+nickMinLen = 3
+
+
+nickMaxLen : Int
+nickMaxLen = 16
+
+
+-- Punctuation allowed in a nick, beyond letters (accents included) and
+-- digits. Whitespace and brackets/braces are intentionally left out.
+nickSpecials : List Char
+nickSpecials =
+    String.toList "-_=+!@#$%^&*.()\"'?/><,;:~`|\\"
+
+
+nickAllowsChar : Char -> Bool
+nickAllowsChar c =
+    Char.isAlpha c || Char.isDigit c || List.member c nickSpecials
+
+
+-- Nothing when the trimmed nick is valid; otherwise Just <reason>
+-- (pt-BR) with the first problem found. The Nickname gate, the Account
+-- editor and both service handlers all funnel through this one function
+-- so the rule can never drift between client and server.
+nickProblem : String -> Maybe String
+nickProblem raw =
+    let
+        nick = String.trim raw
+        n    = String.length nick
+    in
+    if n < nickMinLen then
+        Just ("O apelido precisa ter ao menos " ++ String.fromInt nickMinLen ++ " caracteres.")
+
+    else if n > nickMaxLen then
+        Just ("O apelido pode ter no máximo " ++ String.fromInt nickMaxLen ++ " caracteres.")
+
+    else if String.any (\c -> nickAllowsChar c == False) nick then
+        Just "Use apenas letras, números e símbolos simples, sem espaços."
+
+    else
+        Nothing
+
+
+-- ====================================================================
+-- SMALL INT HELPERS (Basics has no min/max/mod; both halves reuse these)
+-- ====================================================================
+
+
+
+
+-- positive modulo (result in 0..m-1 for m > 0), used by the bank's
+-- deterministic question shuffle.
+imodP : Int -> Int -> Int
+imodP n m =
+    let r = n - (n // m) * m
+    in if r < 0 then r + m else r
+
+
+-- Render whole milliseconds as "s,t" seconds with one decimal, e.g.
+-- 2345 → "2,3s" (comma decimal, pt-BR). Int-only: no Float anywhere.
+fmtSeconds : Int -> String
+fmtSeconds ms =
+    String.fromInt (ms // 1000)
+        ++ ","
+        ++ String.fromInt (imodP (ms // 100) 10)
+        ++ "s"

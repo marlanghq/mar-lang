@@ -178,6 +178,55 @@ func viewBuiltins() map[string]Value {
 			return VView{Tag: "datePicker", Msg: onChange, Attrs: attrs}, nil
 		}),
 
+		// --- Canvas (v0.0.7): the 2D draw-list ---
+		//
+		// `canvas` is a View whose Children are Shape values (VCtor data,
+		// not VViews) re-issued every frame; the renderer draws them onto a
+		// <canvas> sized to its own box and reports taps / resizes back
+		// through the onTap / onResize attrs. The Shape / Color builders are
+		// pure data ctors; the Transform / Align ctors live in builtins.go.
+		// CanvasMode constructors — global (bare `Pixelated` / `Crisp`),
+		// nullary, like Pointer's Coarse / Fine. The renderers read the mode
+		// off the canvas node to choose the backing resolution.
+		"Pixelated": VCtor{Tag: "Pixelated"},
+		"Crisp":     VCtor{Tag: "Crisp"},
+		"canvas": nativeFn(3, func(args []Value) (Value, error) {
+			// arg 0: CanvasMode (Pixelated | Crisp), carried as a synthetic
+			// attr so the renderers read it without a new VView field.
+			mode := "pixelated"
+			if c, ok := args[0].(VCtor); ok && c.Tag == "Crisp" {
+				mode = "crisp"
+			}
+			attrs, err := collectAttrs(args[1], "Canvas.canvas")
+			if err != nil {
+				return nil, err
+			}
+			shapes, ok := args[2].(VList)
+			if !ok {
+				return nil, fmt.Errorf("Canvas.canvas: expected List Shape (got %T)", args[2])
+			}
+			attrs = append([]VAttr{{Name: "canvasMode", Value: VString{V: mode}}}, attrs...)
+			return VView{Tag: "canvas", Attrs: attrs, Children: shapes.Elements}, nil
+		}),
+		"rect":       nativeFn(5, shapeData("rect")),     // x y w h color
+		"circle":     nativeFn(4, shapeData("circle")),   // cx cy r color
+		"triangle":   nativeFn(7, shapeData("triangle")), // x1 y1 x2 y2 x3 y3 color
+		"canvasText": nativeFn(6, shapeData("text")),     // x y size align color str
+		"rgb":        nativeFn(3, shapeData("rgb")),      // r g b -> Color
+		"rgba":       nativeFn(4, shapeData("rgba")),     // r g b alpha(0-100) -> Color
+		"group": nativeFn(2, func(args []Value) (Value, error) {
+			// List Transform -> List Shape -> Shape
+			return VCtor{Tag: "group", Args: []Value{args[0], args[1]}}, nil
+		}),
+		"onTap":         nativeFn(1, func(args []Value) (Value, error) { return makeAttr("onTap", args[0]), nil }),
+		"watchSize":     nativeFn(1, func(args []Value) (Value, error) { return makeAttr("watchSize", args[0]), nil }),
+		"watchPointers": nativeFn(1, func(args []Value) (Value, error) { return makeAttr("watchPointers", args[0]), nil }),
+		"onRelease":     nativeFn(1, func(args []Value) (Value, error) { return makeAttr("onRelease", args[0]), nil }),
+		"onDrag":        nativeFn(1, func(args []Value) (Value, error) { return makeAttr("onDrag", args[0]), nil }),
+		"onHover":       nativeFn(1, func(args []Value) (Value, error) { return makeAttr("onHover", args[0]), nil }),
+		"onAltTap":      nativeFn(1, func(args []Value) (Value, error) { return makeAttr("onAltTap", args[0]), nil }),
+		"onWheel":       nativeFn(1, func(args []Value) (Value, error) { return makeAttr("onWheel", args[0]), nil }),
+
 		// Modifier attrs. Each produces a VAttr that the appropriate
 		// container reads from its attrs list. The renderer is the
 		// authoritative consumer — these are just labeled name/value
@@ -697,6 +746,16 @@ func containerCtor(tag string) func([]Value) (Value, error) {
 			return nil, fmt.Errorf("UI.%s: %v", tag, err)
 		}
 		return VView{Tag: tag, Children: children, Attrs: attrs}, nil
+	}
+}
+
+// shapeData builds a native that wraps its positional args as a Canvas
+// data value (a Shape or a Color) — VCtor{Tag, Args}. The web / iOS canvas
+// renderers read the tag + args to draw. Args are copied so a later
+// mutation of the caller's slice can't alter the value.
+func shapeData(tag string) func([]Value) (Value, error) {
+	return func(args []Value) (Value, error) {
+		return VCtor{Tag: tag, Args: append([]Value(nil), args...)}, nil
 	}
 }
 

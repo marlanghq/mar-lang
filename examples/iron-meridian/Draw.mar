@@ -1,0 +1,1347 @@
+module Draw exposing (..)
+
+
+import Types exposing (..)
+import Balance exposing (..)
+import Maps exposing (..)
+import Canvas exposing
+    ( rect, circle, triangle, group, rgb, rgba
+    )
+
+
+-- IRON MERIDIAN: world rendering. Everything is procedural shape art
+-- at 1x pixel scale: rust-red Mars, chunky C&C-style structures, tanks
+-- with rotating turrets, glow seams on the Vessari via additive blend.
+-- The draw is aggressively culled to the camera and pre-merged runs
+-- carry the terrain and the fog.
+--
+-- Team paint: side 1 steel blue, side 2 crimson, side 3 violet when
+-- hostile and amber when allied to the player, side 0 scavenger grey.
+
+
+type alias Rgb =
+    { r : Int, g : Int, b : Int }
+
+
+sidePaint : Game -> Int -> Rgb
+sidePaint g sid =
+    if sid == 1 then
+        { r = 74, g = 138, b = 205 }
+    else if sid == 0 then
+        { r = 128, g = 120, b = 108 }
+    else if teamOfV g sid == teamOfV g 1 then
+        { r = 218, g = 166, b = 66 }
+    else if sid == 2 then
+        { r = 205, g = 66, b = 56 }
+    else
+        { r = 158, g = 84, b = 196 }
+
+
+sideDark : Game -> Int -> Rgb
+sideDark g sid =
+    let
+        p = sidePaint g sid
+    in
+    { r = p.r * 55 // 100, g = p.g * 55 // 100, b = p.b * 55 // 100 }
+
+
+sideLight : Game -> Int -> Rgb
+sideLight g sid =
+    let
+        p = sidePaint g sid
+    in
+    { r = min 255 (p.r + 60), g = min 255 (p.g + 60), b = min 255 (p.b + 60) }
+
+
+-- View needs team lookups without importing Sim (layering)
+teamOfV : Game -> Int -> Int
+teamOfV g sid =
+    case List.head (List.filter (\s -> s.id == sid) g.sides) of
+        Just s -> s.team
+        Nothing -> sid
+
+
+col : Rgb -> Color
+col c = rgb c.r c.g c.b
+
+
+-- ===== terrain =====
+
+
+terraColor : Int -> Color
+terraColor code =
+    if code == tRego then rgb 148 74 52
+    else if code == tRego2 then rgb 138 68 48
+    else if code == tRock then rgb 84 58 52
+    else if code == tChasm then rgb 30 16 18
+    else if code == tIce then rgb 176 196 208
+    else if code == tVerdant then rgb 80 116 62
+    else if code == tRamp then rgb 168 100 70
+    else if code == tCrater then rgb 128 62 44
+    else rgb 96 66 56          -- props sit on a rocky base
+
+
+drawTerrain : Game -> Dict Int (List Run) -> Cam -> List Shape
+drawTerrain g runs cam =
+    let
+        row0 = max 0 (cam.y // tileW)
+        row1 = min (g.mapH - 1) ((cam.y + cam.h) // tileW + 1)
+        tx0 = cam.x // tileW - 1
+        tx1 = (cam.x + cam.w) // tileW + 1
+    in
+    List.concatMap
+        (\row ->
+            case Dict.get row runs of
+                Nothing ->
+                    []
+
+                Just rr ->
+                    List.filterMap
+                        (\run ->
+                            let
+                                a = max run.x0 tx0
+                                b = min (run.x0 + run.w) (tx1 + 1)
+                            in
+                            if b <= a then
+                                Nothing
+                            else
+                                Just (rect (a * tileW) (row * tileW) ((b - a) * tileW) tileW (terraColor run.c))
+                        )
+                        rr
+        )
+        (List.range row0 row1)
+
+
+-- decorative details for special tiles. Terrain is static per mission,
+-- so the shapes are built ONCE at launch into a per-row cache; per frame
+-- the visible rows just get concatenated (the tree-walker cannot afford
+-- re-deriving ~1400 tiles of detail art every frame).
+tileDetailArt : Int -> Int -> Int -> List Shape
+tileDetailArt t tx row =
+    let
+        px = tx * tileW
+        py = row * tileW
+    in
+    if t == tRock then
+        [ rect px py tileW 3 (rgb 104 74 64)
+        , rect (px + 3) (py + 8) 6 4 (rgb 66 44 40)
+        , rect (px + 14) (py + 15) 7 4 (rgb 66 44 40)
+        ]
+    else if t == tChasm then
+        [ rect px py tileW 3 (rgb 60 30 28) ]
+    else if t == tProp then
+        [ circle (px + 12) (py + 13) 8 (rgb 110 78 62)
+        , circle (px + 8) (py + 9) 4 (rgb 130 94 74)
+        , circle (px + 17) (py + 15) 4 (rgb 92 62 52)
+        ]
+    else if t == tCrater then
+        [ circle (px + 12) (py + 12) 9 (rgb 116 54 40)
+        , circle (px + 12) (py + 12) 5 (rgb 96 44 34)
+        ]
+    else if t == tRamp then
+        [ rect px (py + 5) tileW 2 (rgba 255 230 200 26)
+        , rect px (py + 15) tileW 2 (rgba 255 230 200 26)
+        ]
+    else if t == tIce && modBy 5 (tx * 7 + row * 13) == 0 then
+        [ rect (px + 4) (py + 6) 8 2 (rgba 255 255 255 70) ]
+    else if t == tVerdant && modBy 4 (tx * 11 + row * 5) == 0 then
+        [ circle (px + 7) (py + 8) 3 (rgb 64 96 50)
+        , circle (px + 16) (py + 14) 4 (rgb 58 88 46)
+        ]
+    else
+        []
+
+
+buildDetailRows : Dict Int Int -> Int -> Int -> Dict Int (List Shape)
+buildDetailRows tiles w h =
+    List.foldl
+        (\row acc ->
+            Dict.insert row
+                (List.concatMap
+                    (\tx -> tileDetailArt (tileAt tiles (idxOf w tx row)) tx row)
+                    (List.range 0 (w - 1)))
+                acc
+        )
+        Dict.empty
+        (List.range 0 (h - 1))
+
+
+drawTileDetail : Dict Int (List Shape) -> Game -> Cam -> List Shape
+drawTileDetail detailRows g cam =
+    let
+        row0 = max 0 (cam.y // tileW)
+        row1 = min (g.mapH - 1) ((cam.y + cam.h) // tileW + 1)
+    in
+    List.concatMap
+        (\row ->
+            Maybe.withDefault [] (Dict.get row detailRows)
+        )
+        (List.range row0 row1)
+
+
+-- ore crystals: clustered triangles, azurite in blue, with a sparkle
+drawOre : Game -> Cam -> List Shape
+drawOre g cam =
+    List.concatMap
+        (\pair ->
+            case pair of
+                ( idx, amount ) ->
+                    let
+                        tx = txOf g.mapW idx
+                        ty = tyOf g.mapW idx
+                        px = tx * tileW
+                        py = ty * tileW
+                    in
+                    if amount <= 0 then
+                        []
+                    else if px + tileW < cam.x || px > cam.x + cam.w || py + tileW < cam.y || py > cam.y + cam.h then
+                        []
+                    else
+                        let
+                            rich = tileAt g.tiles idx == tAzurite
+
+                            body =
+                                if rich then rgb 86 140 220 else rgb 224 120 48
+
+                            glint =
+                                if rich then rgb 170 210 255 else rgb 255 190 110
+
+                            big = amount > (if rich then azuriteValue else ferriteValue) // 2
+
+                            sparkle =
+                                modBy 11 (g.tick // 8 + tx * 3 + ty * 7) == 0
+                        in
+                        List.concat
+                            [ [ triangle (px + 4) (py + 20) (px + 9) (py + (if big then 5 else 11)) (px + 14) (py + 20) body
+                              , triangle (px + 11) (py + 21) (px + 16) (py + (if big then 8 else 13)) (px + 21) (py + 21) body
+                              , triangle (px + 8) (py + 22) (px + 11) (py + 15) (px + 15) (py + 22) glint
+                              ]
+                            , if sparkle then
+                                [ rect (px + 9) (py + 7) 2 2 (rgb 255 255 255) ]
+                              else
+                                []
+                            ]
+        )
+        (Dict.toList g.ore)
+
+
+-- ===== buildings =====
+
+
+bldVisible : Game -> Bld -> Bool
+bldVisible g b =
+    -- once seen, structures stay on the map (classic shroud memory)
+    List.any
+        (\packed ->
+            let
+                ax = modBy 100000 packed
+                ay = packed // 100000
+            in
+            visAt g ax ay >= 1
+        )
+        (bldTiles b)
+
+
+drawBlds : Game -> Cam -> List Int -> List Shape
+drawBlds g cam sel =
+    List.concatMap
+        (\b ->
+            let
+                px = b.tx * tileW
+                py = b.ty * tileW
+                w = bW b.kind * tileW
+                h = bH b.kind * tileW
+            in
+            if px + w < cam.x || px > cam.x + cam.w || py + h < cam.y || py > cam.y + cam.h then
+                []
+            else if bnotV (bldVisible g b) then
+                []
+            else
+                List.concat
+                    [ bldArt g b px py w h
+                    , if b.prog > 0 then
+                        -- construction site: a dark curtain that drops as prog
+                        -- counts from bBuild → 0, with a bright build-line on top.
+                        let
+                            fill = h * b.prog // max 1 (bBuild b.kind)
+                        in
+                        [ rect px py w fill (rgba 20 16 20 200)
+                        , rect px (py + fill - 2) w 2 (rgb 255 220 130)
+                        ]
+                      else
+                        []
+                    , damageSmoke g (px + w // 2) (py + h // 3) b.hp (bHp b.kind) b.id
+                    , if b.capPts > 0 then
+                        [ rect px (py - 6) (w * b.capPts // captureTicks) 3 (rgb 255 220 90) ]
+                      else
+                        []
+                    , if List.member b.id sel then
+                        selectRect px py w h (b.hp * 100 // bHp b.kind)
+                      else
+                        []
+                    ]
+        )
+        g.blds
+
+
+bnotV : Bool -> Bool
+bnotV b = b == False
+
+
+-- per-kind structure art. Base slab + race silhouette + team trim.
+bldArt : Game -> Bld -> Int -> Int -> Int -> Int -> List Shape
+bldArt g b px py w h =
+    let
+        paint = sidePaint g b.side
+        dark = sideDark g b.side
+        light = sideLight g b.side
+        blink = modBy 4 (g.tick // 15 + b.id) == 0
+        spin = modBy 360 (g.tick * 2 + b.id * 40)
+    in
+    case b.kind of
+        Bastion ->
+            List.concat
+                [ slab px py w h dark paint
+                , [ rect (px + 8) (py + 10) (w - 16) (h - 24) (col paint)
+                  , rect (px + 12) (py + 4) (w - 24) 10 (col light)
+                  , rect (px + w // 2 - 2) (py - 4) 4 12 (rgb 190 198 205)
+                  , group [ Canvas.Translate (px + w // 2) (py + 4), Canvas.Rotate spin ]
+                        [ rect (0 - 9) (0 - 1) 18 2 (rgb 220 228 235) ]
+                  , rect (px + 10) (py + h - 12) 10 6 (rgb 40 46 54)
+                  , rect (px + w - 20) (py + h - 12) 10 6 (rgb 40 46 54)
+                  ]
+                , windowRow (px + 12) (py + h - 22) 5 blink
+                ]
+
+        CrawlerHQ ->
+            List.concat
+                [ slab px py w h dark paint
+                , [ rect (px + 4) (py + h - 16) (w - 8) 10 (rgb 52 40 34)
+                  , rect (px + 6) (py + 8) (w - 12) (h - 28) (col paint)
+                  , rect (px + 10) (py + 2) 14 12 (rgb 96 78 60)
+                  , rect (px + w - 26) (py + 2) 16 14 (col dark)
+                  , circle (px + w - 18) (py + 8) 4 (if blink then rgb 255 200 90 else rgb 140 90 50)
+                  , rect (px + 30) (py - 5) 3 14 (rgb 120 100 80)
+                  ]
+                , smokePuff g.tick (px + 12) (py + 2) b.id
+                ]
+
+        GenesisFont ->
+            [ circle (px + w // 2) (py + h // 2) (w // 2 - 2) (col dark)
+            , circle (px + w // 2) (py + h // 2) (w // 2 - 8) (col paint)
+            , circle (px + w // 2) (py + h // 2 - 4) (w // 4) (rgb 40 32 66)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle (px + w // 2) (py + h // 2 - 4) (6 + modBy 4 (g.tick // 6)) (rgba 120 240 220 60)
+                , rect (px + 6) (py + h // 2 - 1) (w - 12) 2 (rgba 140 250 230 50)
+                ]
+            , triangle (px + w // 2 - 10) (py + 8) (px + w // 2) (py - 6) (px + w // 2 + 10) (py + 8) (col light)
+            ]
+
+        PowerStation ->
+            List.concat
+                [ slab px py w h dark paint
+                , [ rect (px + 5) (py + 4) 12 (h - 10) (rgb 96 110 122)
+                  , rect (px + w - 17) (py + 4) 12 (h - 10) (rgb 96 110 122)
+                  , rect (px + 7) (py + 2) 8 4 (rgb 60 70 80)
+                  , rect (px + w - 15) (py + 2) 8 4 (rgb 60 70 80)
+                  , rect (px + w // 2 - 3) (py + h // 2 - 2) 6 8 (if blink then rgb 150 255 170 else rgb 80 160 100)
+                  ]
+                ]
+
+        JunkTurbine ->
+            [ rect px (py + 6) w (h - 6) (col dark)
+            , rect (px + 3) (py + 9) (w - 6) (h - 12) (rgb 92 74 52)
+            , rect (px + w // 2 - 2) (py - 6) 4 16 (rgb 120 100 80)
+            , group [ Canvas.Translate (px + w // 2) (py - 2), Canvas.Rotate spin ]
+                [ rect (0 - 10) (0 - 1) 20 3 (rgb 180 160 130)
+                , rect (0 - 1) (0 - 10) 3 20 (rgb 180 160 130)
+                ]
+            , rect (px + 5) (py + h - 8) 8 4 (if blink then rgb 255 210 120 else rgb 120 90 50)
+            ]
+
+        Spire ->
+            [ triangle px (py + h) (px + w // 2) py (px + w) (py + h) (col paint)
+            , triangle (px + 4) (py + h) (px + w // 2) (py + 6) (px + w - 4) (py + h) (col dark)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ rect (px + w // 2 - 1) (py + 2) 2 (h - 4) (rgba 150 250 230 90)
+                , circle (px + w // 2) (py + 3) (2 + modBy 3 (g.tick // 10)) (rgba 140 240 220 70)
+                ]
+            ]
+
+        Refinery ->
+            List.concat
+                [ slab px py w h dark paint
+                , [ circle (px + 14) (py + 12) 10 (rgb 120 132 142)
+                  , circle (px + 14) (py + 12) 6 (rgb 88 98 108)
+                  , rect (px + 28) (py + 6) (w - 34) 12 (col paint)
+                  , rect (px + 28) (py + h - 14) (w - 34) 8 (rgb 70 62 54)
+                  , rect (px + w - 14) (py + 2) 6 10 (rgb 60 70 80)
+                  ]
+                , windowRow (px + 30) (py + 8) 3 blink
+                ]
+
+        Smeltery ->
+            List.concat
+                [ slab px py w h dark paint
+                , [ rect (px + 4) (py + 4) 14 (h - 8) (rgb 100 70 48)
+                  , triangle (px + 22) (py + h - 4) (px + 32) (py + 2) (px + 42) (py + h - 4) (rgb 88 66 46)
+                  , rect (px + w - 20) (py + 6) 12 (h - 12) (col paint)
+                  , circle (px + 32) (py + h - 10) 4 (if blink then rgb 255 140 60 else rgb 170 80 40)
+                  ]
+                , smokePuff g.tick (px + 32) py b.id
+                ]
+
+        ExtractBloom ->
+            [ circle (px + w // 2) (py + h // 2) (h // 2) (col dark)
+            , circle (px + w // 2) (py + h // 2) (h // 2 - 5) (col paint)
+            , circle (px + 12) (py + h // 2) 7 (rgb 54 44 84)
+            , circle (px + w - 12) (py + h // 2) 7 (rgb 54 44 84)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle (px + w // 2) (py + h // 2) (5 + modBy 5 (g.tick // 8)) (rgba 130 240 215 55) ]
+            ]
+
+        Billet ->
+            List.concat
+                [ slab px py w h dark paint
+                , [ rect (px + 4) (py + 6) (w - 8) (h - 12) (col paint) ]
+                , windowRow (px + 7) (py + 10) 4 blink
+                , [ rect (px + 6) (py + 2) (w - 12) 4 (col light) ]
+                ]
+
+        Bunkroom ->
+            [ rect px (py + 4) w (h - 4) (col dark)
+            , rect (px + 3) (py + 7) (w - 6) (h - 10) (rgb 104 84 58)
+            , rect (px + 6) py 10 8 (rgb 84 66 46)
+            , rect (px + w - 16) (py + 2) 10 6 (rgb 84 66 46)
+            , rect (px + 8) (py + h - 10) 6 6 (rgb 50 38 30)
+            , rect (px + w - 14) (py + h - 10) 6 6 (rgb 50 38 30)
+            ]
+
+        Foundry ->
+            List.concat
+                [ slab px py w h dark paint
+                , [ rect (px + 4) (py + 8) (w - 8) (h - 14) (col paint)
+                  , rect (px + 8) (py + h - 14) (w - 16) 8 (rgb 44 50 58)
+                  , rect (px + 10) (py + 3) 8 8 (rgb 60 70 80)
+                  ]
+                , windowRow (px + 8) (py + 11) 4 blink
+                ]
+
+        RatDen ->
+            [ rect px (py + 3) w (h - 3) (col dark)
+            , rect (px + 3) (py + 6) (w - 6) (h - 9) (rgb 96 74 50)
+            , triangle (px + 2) (py + 6) (px + w // 2) (py - 4) (px + w - 2) (py + 6) (rgb 78 60 42)
+            , rect (px + w // 2 - 5) (py + h - 12) 10 9 (rgb 40 30 24)
+            , circle (px + w - 8) (py + 4) 3 (if blink then rgb 255 200 90 else rgb 120 90 50)
+            ]
+
+        Chrysalis ->
+            [ circle (px + w // 2) (py + h // 2 + 2) (h // 2) (col dark)
+            , circle (px + w // 2) (py + h // 2) (h // 2 - 4) (col paint)
+            , triangle (px + 4) (py + h) (px + w // 2) (py + 2) (px + w - 4) (py + h) (rgba 60 48 96 120)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle (px + w // 2) (py + h // 2) (3 + modBy 4 (g.tick // 7)) (rgba 150 240 220 60) ]
+            ]
+
+        MotorPool ->
+            List.concat
+                [ slab px py w h dark paint
+                , [ rect (px + 4) (py + 10) (w - 8) (h - 16) (col paint)
+                  , rect (px + 8) (py + h - 18) (w - 16) 12 (rgb 38 42 50)
+                  , rect (px + 8) (py + h - 18) (w - 16) 3 (rgb 90 100 112)
+                  , rect (px + 6) (py + 3) 12 6 (col light)
+                  ]
+                ]
+
+        ChopShop ->
+            [ rect px (py + 4) w (h - 4) (col dark)
+            , rect (px + 3) (py + 7) (w - 6) (h - 10) (rgb 100 78 54)
+            , rect (px + 6) (py + h - 20) (w - 12) 14 (rgb 44 34 28)
+            , rect (px + w - 14) (py - 4) 4 12 (rgb 130 110 88)
+            , rect (px + w - 22) py 20 4 (rgb 130 110 88)
+            , circle (px + 8) (py + 4) 3 (if blink then rgb 255 190 80 else rgb 120 90 50)
+            ]
+
+        ForgeWomb ->
+            [ circle (px + w // 2) (py + h // 2 + 2) (h // 2 + 2) (col dark)
+            , circle (px + w // 2) (py + h // 2) (h // 2 - 3) (col paint)
+            , rect (px + 8) (py + h - 12) (w - 16) 8 (rgb 42 34 70)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ rect (px + 10) (py + h // 2 - 1) (w - 20) 2 (rgba 140 250 230 70)
+                , circle (px + w // 2) (py + 8) 4 (rgba 150 240 220 60)
+                ]
+            ]
+
+        Airfield ->
+            List.concat
+                [ slab px py w h dark paint
+                , [ rect (px + 6) (py + 8) (w - 12) (h - 14) (rgb 58 64 74)
+                  , rect (px + 10) (py + h // 2 - 1) (w - 20) 2 (rgb 210 214 220)
+                  , rect (px + 4) (py + 2) 10 8 (col paint)
+                  , circle (px + w - 10) (py + 6) 3 (if blink then rgb 120 255 150 else rgb 60 130 80)
+                  ]
+                ]
+
+        Roost ->
+            [ rect px (py + 6) w (h - 6) (col dark)
+            , rect (px + 4) (py + 9) (w - 8) (h - 12) (rgb 92 72 50)
+            , rect (px + 8) (py + 2) (w - 16) 8 (rgb 70 56 40)
+            , circle (px + w // 2) (py + h // 2 + 2) 8 (rgb 46 36 30)
+            , rect (px + 4) (py + 2) 3 10 (rgb 130 110 88)
+            ]
+
+        SkyCradle ->
+            [ circle (px + w // 2) (py + h // 2) (h // 2 + 1) (col dark)
+            , circle (px + w // 2) (py + h // 2) (h // 2 - 4) (col paint)
+            , rect (px + 8) (py + h // 2 - 6) (w - 16) 12 (rgb 46 38 76)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle (px + w // 2) (py + h // 2) (10 + modBy 4 (g.tick // 9)) (rgba 130 240 215 40) ]
+            ]
+
+        Watchtower ->
+            towerArt g b px py w h (rgb 120 130 142) 0
+
+        SpikeNest ->
+            [ rect (px + 2) (py + 10) (w - 4) (h - 10) (col dark)
+            , rect (px + 4) (py + 12) (w - 8) (h - 14) (rgb 96 74 50)
+            , triangle (px + 3) (py + 12) (px + 7) (py + 1) (px + 11) (py + 12) (rgb 150 128 100)
+            , triangle (px + 12) (py + 12) (px + 17) (py - 2) (px + 21) (py + 12) (rgb 170 146 116)
+            ]
+
+        PylonThorn ->
+            [ triangle (px + 2) (py + h) (px + w // 2) (py - 2) (px + w - 2) (py + h) (col paint)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle (px + w // 2) (py + 6) (3 + modBy 3 (g.tick // 5)) (rgba 150 250 230 90) ]
+            ]
+
+        FlakTower ->
+            towerArt g b px py w h (rgb 120 130 142) 1
+
+        FlakRack ->
+            [ rect (px + 2) (py + 8) (w - 4) (h - 8) (col dark)
+            , rect (px + 4) (py + 10) (w - 8) (h - 12) (rgb 96 74 50)
+            , rect (px + 5) py 3 10 (rgb 170 150 120)
+            , rect (px + 11) (py - 3) 3 13 (rgb 170 150 120)
+            , rect (px + 17) py 3 10 (rgb 170 150 120)
+            ]
+
+        Armory ->
+            List.concat
+                [ slab px py w h dark paint
+                , [ rect (px + 5) (py + 6) (w - 10) (h - 12) (col paint)
+                  , rect (px + w // 2 - 6) (py + 2) 12 8 (col light)
+                  , rect (px + 8) (py + h - 12) 8 6 (rgb 44 50 58)
+                  , rect (px + w - 16) (py + h - 12) 8 6 (rgb 44 50 58)
+                  ]
+                ]
+
+        WarlordHall ->
+            [ rect px (py + 4) w (h - 4) (col dark)
+            , rect (px + 3) (py + 7) (w - 6) (h - 10) (rgb 104 80 54)
+            , triangle px (py + 7) (px + w // 2) (py - 6) (px + w) (py + 7) (rgb 84 62 44)
+            , rect (px + w // 2 - 2) (py - 10) 3 10 (rgb 140 116 90)
+            , rect (px + w // 2 + 1) (py - 9) 7 4 (col (sidePaint g b.side))
+            ]
+
+        AscendantGate ->
+            [ rect (px + 2) (py + 4) (w - 4) (h - 4) (col dark)
+            , rect (px + 5) (py + 7) (w - 10) (h - 10) (col paint)
+            , circle (px + w // 2) (py + h // 2 + 1) 8 (rgb 40 32 66)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle (px + w // 2) (py + h // 2 + 1) (5 + modBy 4 (g.tick // 6)) (rgba 140 240 220 70) ]
+            ]
+
+        AegisNode ->
+            [ circle (px + w // 2) (py + h // 2) (h // 2) (col dark)
+            , circle (px + w // 2) (py + h // 2) (h // 2 - 4) (col paint)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle (px + w // 2) (py + h // 2) (h // 2 + 2 + modBy 3 (g.tick // 10)) (rgba 120 230 210 30) ]
+            ]
+
+        ArtilleryBeacon ->
+            [ rect (px + 2) (py + 6) (w - 4) (h - 6) (col dark)
+            , rect (px + 4) (py + 8) (w - 8) (h - 10) (col paint)
+            , rect (px + w // 2 - 2) (py - 6) 4 14 (rgb 190 198 205)
+            , circle (px + w // 2) (py - 6) 3 (if blink then rgb 255 120 90 else rgb 140 70 60)
+            ]
+
+        ScrapMagnet ->
+            [ rect (px + 2) (py + 8) (w - 4) (h - 8) (col dark)
+            , rect (px + 4) (py + 10) (w - 8) (h - 10) (rgb 96 74 50)
+            , circle (px + w // 2) (py + 4) 7 (rgb 140 120 96)
+            , circle (px + w // 2) (py + 4) 4 (if blink then rgb 150 220 255 else rgb 80 120 150)
+            ]
+
+        PurgeLens ->
+            [ rect (px + 2) (py + 8) (w - 4) (h - 8) (col dark)
+            , circle (px + w // 2) (py + 6) 8 (col paint)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle (px + w // 2) (py + 6) (4 + modBy 4 (g.tick // 4)) (rgba 160 250 235 80) ]
+            ]
+
+        Derelict ->
+            [ rect px (py + 4) w (h - 4) (rgb 92 86 78)
+            , rect (px + 3) (py + 7) (w - 6) (h - 10) (col (sidePaint g b.side))
+            , circle (px + 10) (py + 10) 6 (rgb 70 66 60)
+            , rect (px + w - 16) py 5 12 (rgb 120 114 104)
+            , rect (px + w - 15) (py + h - 10) 4 6 (rgb 60 56 50)
+            ]
+
+
+-- shared flat base with a race-tinted roofline
+slab : Int -> Int -> Int -> Int -> Rgb -> Rgb -> List Shape
+slab px py w h dark paint =
+    [ rect px (py + 3) w (h - 3) (col dark)
+    , rect (px + 2) (py + 5) (w - 4) (h - 7) (rgb 82 88 98)
+    , rect (px + 2) py (w - 4) 5 (col paint)
+    ]
+
+
+windowRow : Int -> Int -> Int -> Bool -> List Shape
+windowRow x y n blink =
+    List.map
+        (\i ->
+            rect (x + i * 7) y 4 5
+                (if blink && modBy 3 i == 0 then rgb 250 240 170 else rgb 226 232 150)
+        )
+        (List.range 0 (n - 1))
+
+
+towerArt : Game -> Bld -> Int -> Int -> Int -> Int -> Color -> Int -> List Shape
+towerArt g b px py w h steel aa =
+    let
+        spin =
+            if b.stun > 0 then 45 else modBy 360 (g.tick + b.id * 60)
+    in
+    List.concat
+        [ [ rect (px + 2) (py + 8) (w - 4) (h - 8) (col (sideDark g b.side))
+          , rect (px + 4) (py + 10) (w - 8) (h - 12) steel
+          , circle (px + w // 2) (py + 8) 7 (col (sidePaint g b.side))
+          ]
+        , [ group [ Canvas.Translate (px + w // 2) (py + 8), Canvas.Rotate spin ]
+                (if aa == 1 then
+                    [ rect 0 (0 - 2) 11 2 (rgb 40 46 54)
+                    , rect 0 1 11 2 (rgb 40 46 54)
+                    ]
+                 else
+                    [ rect 0 (0 - 1) 13 3 (rgb 40 46 54) ]
+                )
+          ]
+        , if b.stun > 0 then
+            [ circle (px + w // 2) py 3 (rgba 150 220 255 160) ]
+          else
+            []
+        ]
+
+
+smokePuff : Int -> Int -> Int -> Int -> List Shape
+smokePuff tick x y salt =
+    let
+        ph = modBy 20 (tick // 4 + salt * 7)
+    in
+    if ph < 12 then
+        [ circle (x + ph // 3) (y - ph // 2) (2 + ph // 4) (rgba 120 116 112 (90 - ph * 6)) ]
+    else
+        []
+
+
+damageSmoke : Game -> Int -> Int -> Int -> Int -> Int -> List Shape
+damageSmoke g x y hp maxHp salt =
+    if hp * 2 > maxHp then
+        []
+    else
+        let
+            ph = modBy 24 (g.tick // 3 + salt * 13)
+            fire = hp * 4 < maxHp
+        in
+        List.concat
+            [ [ circle (x + ph // 4 - 2) (y - ph // 2) (2 + ph // 5) (rgba 60 56 54 (140 - ph * 5)) ]
+            , if fire then
+                [ circle x (y + 2) (2 + modBy 3 (g.tick // 2 + salt)) (rgb 240 140 50) ]
+              else
+                []
+            ]
+
+
+-- ===== units =====
+
+
+drawUnits : Game -> Cam -> List Int -> List Shape
+drawUnits g cam sel =
+    List.concatMap
+        (\u ->
+            let
+                px = upx u
+                py = upy u
+            in
+            if px + 24 < cam.x || px - 24 > cam.x + cam.w || py + 24 < cam.y || py - 24 > cam.y + cam.h then
+                []
+            else if u.side /= 1 && visAt g (px // tileW) (py // tileW) /= 2 then
+                []
+            else
+                List.concat
+                    [ unitArt g u px py
+                    , if u.sh > 0 then
+                        [ group [ Canvas.Blend Canvas.Add ]
+                            [ circle px py 12 (rgba 120 220 255 (12 + u.sh * 14 // max 1 (uShield u.kind))) ]
+                        ]
+                      else
+                        []
+                    , if u.stun > 0 then
+                        [ circle px (py - 12) 2 (rgba 150 220 255 200)
+                        , circle (px + 4) (py - 10) 2 (rgba 150 220 255 140)
+                        ]
+                      else
+                        []
+                    , if List.member u.id sel then
+                        selectRing px py (unitHpPct u)
+                      else
+                        []
+                    ]
+        )
+        -- stable, depth-ordered draw: lower on screen paints last (in front),
+        -- ties broken by id. Without this the sim's per-tick fold order flips
+        -- and overlapping units swap layers every frame (the flicker).
+        (List.sortBy (\u -> upy u * 8192 + modBy 8192 u.id) g.units)
+
+
+unitHpPct : Unit -> Int
+unitHpPct u =
+    u.hp * 100 // max 1 (uHp u.kind)
+
+
+-- turret helper: a rotated group at the unit center
+turret : Int -> Int -> Int -> List Shape -> Shape
+turret px py face parts =
+    group [ Canvas.Translate px py, Canvas.Rotate (face * 225 // 10) ] parts
+
+
+unitArt : Game -> Unit -> Int -> Int -> List Shape
+unitArt g u px py =
+    let
+        paint = sidePaint g u.side
+        dark = sideDark g u.side
+        light = sideLight g u.side
+        walk = modBy 4 (g.tick // 3 + u.id)
+    in
+    case u.kind of
+        Rifle ->
+            squadArt px py paint dark walk 0
+
+        Rocket ->
+            squadArt px py paint dark walk 1
+
+        Sapper ->
+            [ rect (px - 3) (py - 4) 6 7 (rgb 226 200 120)
+            , rect (px - 3) (py - 4) 6 2 (col paint)
+            , circle px (py - 6) 2 (rgb 235 210 170)
+            , rect (px - 5) (py + 1) 3 3 (rgb 180 180 190)
+            ]
+
+        Hijacker ->
+            [ rect (px - 3) (py - 4) 6 7 (rgb 140 110 80)
+            , rect (px - 3) (py - 4) 6 2 (col paint)
+            , circle px (py - 6) 2 (rgb 220 190 160)
+            , rect (px + 2) (py - 2) 4 2 (rgb 90 70 50)
+            ]
+
+        Attuner ->
+            [ triangle (px - 4) (py + 3) px (py - 7) (px + 4) (py + 3) (col paint)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle px (py - 2) 3 (rgba 140 240 220 90) ]
+            ]
+
+        Scrapper ->
+            squadArt px py paint dark walk 2
+
+        Spiker ->
+            squadArt px py paint dark walk 1
+
+        Lancer ->
+            [ triangle (px - 5) (py + 4) px (py - 6) (px + 5) (py + 4) (col dark)
+            , triangle (px - 3) (py + 3) px (py - 4) (px + 3) (py + 3) (col paint)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ rect (px - 1) (py - 6) 2 4 (rgba 150 250 230 110) ]
+            ]
+
+        Nullifier ->
+            [ circle px py 5 (col dark)
+            , circle px (py - 1) 3 (col paint)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle px (py - 1) (2 + modBy 2 (g.tick // 5 + u.id)) (rgba 150 240 255 90) ]
+            ]
+
+        Hauler ->
+            [ rect (px - 9) (py - 6) 18 12 (col dark)
+            , rect (px - 7) (py - 4) 14 8 (col paint)
+            , rect (px - 9) (py - 7) 18 2 (rgb 60 66 74)
+            , rect (px - 9) (py + 5) 18 2 (rgb 60 66 74)
+            , rect (px + 3) (py - 3) 5 6 (rgb 44 50 58)
+            , if u.carry > 0 then
+                rect (px - 6) (py - 3) 7 5 (rgb 224 120 48)
+              else
+                rect (px - 6) (py - 3) 7 5 (rgb 70 76 84)
+            ]
+
+        Reclaimer ->
+            [ rect (px - 9) (py - 6) 18 12 (rgb 90 70 48)
+            , rect (px - 7) (py - 4) 14 8 (col paint)
+            , circle (px + 6) py 4 (rgb 140 120 96)
+            , rect (px - 9) (py - 7) 18 2 (rgb 56 44 34)
+            , rect (px - 9) (py + 5) 18 2 (rgb 56 44 34)
+            , if u.carry > 0 then rect (px - 6) (py - 3) 6 5 (rgb 224 120 48) else rect (px - 6) (py - 3) 6 5 (rgb 60 50 40)
+            ]
+
+        TitheDrone ->
+            [ circle px py 8 (col dark)
+            , circle px (py - 1) 6 (col paint)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle px (py - 1) (3 + modBy 3 (g.tick // 7 + u.id)) (rgba 130 240 220 60) ]
+            , if u.carry > 0 then circle px (py - 1) 3 (rgb 224 120 48) else circle px (py - 1) 2 (rgb 54 44 84)
+            ]
+
+        ScoutCar ->
+            [ rect (px - 7) (py - 4) 14 9 (col dark)
+            , rect (px - 5) (py - 3) 10 6 (col paint)
+            , circle (px - 4) (py + 5) 2 (rgb 30 30 34)
+            , circle (px + 4) (py + 5) 2 (rgb 30 30 34)
+            , rect (px - 1) (py - 6) 5 3 (col light)
+            ]
+
+        DuneBike ->
+            [ rect (px - 5) (py - 2) 10 4 (col paint)
+            , circle (px - 5) (py + 2) 3 (rgb 30 30 34)
+            , circle (px + 5) (py + 2) 3 (rgb 30 30 34)
+            , rect (px - 1) (py - 5) 3 4 (rgb 140 110 80)
+            ]
+
+        Bulwark ->
+            List.concat
+                [ tankBase px py dark paint
+                , [ turret px py u.face
+                        [ circle 0 0 5 (col light)
+                        , rect 2 (0 - 1) 11 3 (rgb 40 46 54)
+                        ]
+                  ]
+                ]
+
+        Warthog ->
+            List.concat
+                [ [ rect (px - 8) (py - 5) 16 11 (rgb 90 70 48)
+                  , rect (px - 6) (py - 4) 12 8 (col paint)
+                  , rect (px - 8) (py - 6) 16 2 (rgb 50 40 32)
+                  , rect (px - 8) (py + 5) 16 2 (rgb 50 40 32)
+                  ]
+                , [ turret px py u.face
+                        [ circle 0 0 4 (rgb 120 96 66)
+                        , rect 1 (0 - 1) 9 3 (rgb 40 34 28)
+                        ]
+                  ]
+                ]
+
+        Scorcher ->
+            [ rect (px - 7) (py - 5) 14 10 (rgb 90 70 48)
+            , rect (px - 5) (py - 4) 10 8 (col paint)
+            , circle (px + 5) py 3 (rgb 240 140 50)
+            , rect (px - 8) (py - 6) 16 2 (rgb 50 40 32)
+            , rect (px - 8) (py + 4) 16 2 (rgb 50 40 32)
+            ]
+
+        RamTruck ->
+            [ rect (px - 8) (py - 5) 16 11 (rgb 90 70 48)
+            , rect (px - 5) (py - 4) 12 8 (col paint)
+            , triangle (px + 6) (py - 6) (px + 12) py (px + 6) (py + 6) (rgb 150 128 100)
+            , circle (px - 4) (py - 1) 3 (rgb 240 200 90)
+            , rect (px - 8) (py - 6) 16 2 (rgb 50 40 32)
+            , rect (px - 8) (py + 5) 16 2 (rgb 50 40 32)
+            ]
+
+        Thumper ->
+            List.concat
+                [ tankBase px py dark paint
+                , [ turret px py u.face
+                        [ rect (0 - 2) (0 - 3) 6 6 (col light)
+                        , rect 2 (0 - 2) 14 4 (rgb 40 46 54)
+                        , rect 14 (0 - 3) 3 6 (rgb 60 66 74)
+                        ]
+                  ]
+                ]
+
+        Colossus ->
+            [ rect (px - 4) (py + 2) 3 8 (col dark)
+            , rect (px + 2) (py + 2) 3 8 (col dark)
+            , circle px (py - 3) 9 (col dark)
+            , circle px (py - 4) 7 (col paint)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ circle px (py - 4) 3 (rgba 150 250 230 110)
+                , rect (px - 8) (py - 5) 16 2 (rgba 140 240 220 50)
+                ]
+            ]
+
+        Sliver ->
+            [ triangle (px - 6) (py + 3) (px + 7) py (px - 6) (py - 3) (col paint)
+            , group [ Canvas.Blend Canvas.Add ]
+                [ rect (px - 8) (py - 1) 4 2 (rgba 150 240 220 100) ]
+            ]
+
+        Kestrel ->
+            airArt g u px py paint dark 0
+
+        Vulture ->
+            airArt g u px py paint dark 1
+
+        RiftSkiff ->
+            airArt g u px py paint dark 2
+
+
+squadArt : Int -> Int -> Rgb -> Rgb -> Int -> Int -> List Shape
+squadArt px py paint dark walk flavor =
+    let
+        bob = if walk == 1 then 1 else (if walk == 3 then 0 - 1 else 0)
+    in
+    List.concat
+        [ soldierArt (px - 5) (py + 2) bob paint flavor
+        , soldierArt (px + 4) py bob paint flavor
+        , soldierArt (px - 1) (py - 5) bob paint flavor
+        , if flavor == 2 then
+            [ rect (px - 7) (py + 5) 3 2 (rgb 150 128 100) ]
+          else
+            []
+        ]
+
+
+soldierArt : Int -> Int -> Int -> Rgb -> Int -> List Shape
+soldierArt sx sy bob paint flavor =
+    [ rect (sx - 2) (sy - 3 + bob) 4 5 (col paint)
+    , circle sx (sy - 5 + bob) 2 (rgb 224 194 158)
+    , rect (sx + 1) (sy - 2 + bob) 4 2
+        (if flavor == 1 then rgb 70 76 90 else rgb 46 50 58)
+    ]
+
+
+tankBase : Int -> Int -> Rgb -> Rgb -> List Shape
+tankBase px py dark paint =
+    [ rect (px - 9) (py - 6) 18 12 (col dark)
+    , rect (px - 7) (py - 5) 14 10 (col paint)
+    , rect (px - 10) (py - 7) 20 3 (rgb 46 52 60)
+    , rect (px - 10) (py + 4) 20 3 (rgb 46 52 60)
+    ]
+
+
+airArt : Game -> Unit -> Int -> Int -> Rgb -> Rgb -> Int -> List Shape
+airArt g u px py paint dark flavor =
+    let
+        hover = modBy 4 (g.tick // 6 + u.id) // 2
+        ay = py - 10 - hover
+        rotor = modBy 360 (g.tick * 6 + u.id * 30)
+    in
+    List.concat
+        [ [ circle (px + 4) (py + 6) 6 (rgba 20 12 12 60) ]
+        , case flavor of
+            0 ->
+                [ rect (px - 8) (ay - 3) 16 6 (col dark)
+                , rect (px - 6) (ay - 2) 12 4 (col paint)
+                , rect (px + 6) (ay - 1) 5 2 (col dark)
+                , group [ Canvas.Translate px (ay - 4), Canvas.Rotate rotor ]
+                    [ rect (0 - 9) (0 - 1) 18 1 (rgba 220 228 235 130) ]
+                ]
+
+            1 ->
+                [ rect (px - 7) (ay - 2) 14 5 (rgb 100 78 54)
+                , rect (px - 5) (ay - 1) 10 3 (col paint)
+                , group [ Canvas.Translate (px - 4) (ay - 3), Canvas.Rotate rotor ]
+                    [ rect (0 - 6) 0 12 1 (rgba 220 210 190 130) ]
+                , group [ Canvas.Translate (px + 4) (ay - 3), Canvas.Rotate (0 - rotor) ]
+                    [ rect (0 - 6) 0 12 1 (rgba 220 210 190 130) ]
+                ]
+
+            _ ->
+                [ triangle (px - 8) (ay + 3) (px + 8) ay (px - 8) (ay - 3) (col paint)
+                , group [ Canvas.Blend Canvas.Add ]
+                    [ circle (px - 6) ay (2 + modBy 2 (g.tick // 4 + u.id)) (rgba 150 240 220 100)
+                    , rect (px - 12) (ay - 1) 5 2 (rgba 150 240 220 70)
+                    ]
+                ]
+        ]
+
+
+-- ===== selection markers =====
+
+
+selectRing : Int -> Int -> Int -> List Shape
+selectRing px py hpPct =
+    let
+        c =
+            if hpPct > 60 then rgb 110 230 120
+            else if hpPct > 30 then rgb 240 210 90
+            else rgb 240 110 90
+    in
+    [ rect (px - 11) (py - 13) 6 2 (rgb 130 240 140)
+    , rect (px - 11) (py - 13) 2 5 (rgb 130 240 140)
+    , rect (px + 5) (py - 13) 6 2 (rgb 130 240 140)
+    , rect (px + 9) (py - 13) 2 5 (rgb 130 240 140)
+    , rect (px - 11) (py + 11) 6 2 (rgb 130 240 140)
+    , rect (px - 11) (py + 7) 2 5 (rgb 130 240 140)
+    , rect (px + 5) (py + 11) 6 2 (rgb 130 240 140)
+    , rect (px + 9) (py + 7) 2 5 (rgb 130 240 140)
+    , rect (px - 10) (py - 17) 20 2 (rgb 30 30 34)
+    , rect (px - 10) (py - 17) (20 * hpPct // 100) 2 c
+    ]
+
+
+selectRect : Int -> Int -> Int -> Int -> Int -> List Shape
+selectRect px py w h hpPct =
+    let
+        c =
+            if hpPct > 60 then rgb 110 230 120
+            else if hpPct > 30 then rgb 240 210 90
+            else rgb 240 110 90
+
+        g = rgb 130 240 140
+
+        arm = 8
+
+        x0 = px - 2
+
+        y0 = py - 2
+
+        x1 = px + w
+
+        y1 = py + h
+    in
+    -- corner brackets hug the footprint without boxing it in, so packed or
+    -- overlapping buildings stay readable (matches the unit selectRing look)
+    [ rect x0 y0 arm 2 g
+    , rect x0 y0 2 arm g
+    , rect (x1 - arm + 2) y0 arm 2 g
+    , rect x1 y0 2 arm g
+    , rect x0 y1 arm 2 g
+    , rect x0 (y1 - arm + 2) 2 arm g
+    , rect (x1 - arm + 2) y1 arm 2 g
+    , rect x1 (y1 - arm + 2) 2 arm g
+    , rect px (py - 7) w 3 (rgb 30 30 34)
+    , rect px (py - 7) (w * hpPct // 100) 3 c
+    ]
+
+
+-- ===== shots, scrap and fx =====
+
+
+drawShots : Game -> Cam -> List Shape
+drawShots g cam =
+    List.concatMap
+        (\s ->
+            let
+                px = s.x // fxs
+                py = s.y // fxs
+            in
+            if px < cam.x - 20 || px > cam.x + cam.w + 20 || py < cam.y - 20 || py > cam.y + cam.h + 20 then
+                []
+            else
+                case s.kind of
+                    0 ->
+                        [ rect (px - 1) (py - 1) 3 2 (rgb 255 240 170) ]
+
+                    1 ->
+                        [ rect (px - 2) (py - 1) 5 3 (rgb 210 214 220)
+                        , circle (px - 3) py 2 (rgb 255 170 90)
+                        ]
+
+                    2 ->
+                        [ circle px py 2 (rgb 60 60 66)
+                        , circle px (py - 1) 1 (rgb 230 230 236)
+                        ]
+
+                    4 ->
+                        [ circle px py (2 + modBy 3 (g.tick + s.t)) (rgba 250 150 60 190)
+                        , circle (px - 3) py 2 (rgba 250 200 90 150)
+                        ]
+
+                    _ ->
+                        [ circle px py 2 (rgb 170 250 235) ]
+        )
+        g.shots
+
+
+drawScrap : Game -> Cam -> List Shape
+drawScrap g cam =
+    List.concatMap
+        (\sc ->
+            if sc.x < cam.x - 20 || sc.x > cam.x + cam.w + 20 || sc.y < cam.y - 20 || sc.y > cam.y + cam.h + 20 then
+                []
+            else
+                [ rect (sc.x - 5) (sc.y - 2) 10 5 (rgb 106 96 84)
+                , rect (sc.x - 2) (sc.y - 5) 5 4 (rgb 128 116 100)
+                , rect (sc.x + 1) (sc.y - 1) 3 2 (rgb 224 170 90)
+                ]
+        )
+        g.scraps
+
+
+drawFx : Game -> Cam -> List Shape
+drawFx g cam =
+    List.concatMap
+        (\f ->
+            if isCmdFx f || f.x < cam.x - 120 || f.x > cam.x + cam.w + 120 || f.y < cam.y - 320 || f.y > cam.y + cam.h + 120 then
+                []
+            else
+                fxArt g f
+        )
+        g.fxs
+
+
+-- your own order feedback (move / attack reticles) must read even over fog, so
+-- it renders in a pass ABOVE drawFog rather than getting painted over by it
+isCmdFx : Fx -> Bool
+isCmdFx f =
+    case f.kind of
+        FxMove -> True
+        FxTarget -> True
+        _ -> False
+
+
+drawCmdFx : Game -> Cam -> List Shape
+drawCmdFx g cam =
+    List.concatMap
+        (\f ->
+            if bnot (isCmdFx f) || f.x < cam.x - 120 || f.x > cam.x + cam.w + 120 || f.y < cam.y - 320 || f.y > cam.y + cam.h + 120 then
+                []
+            else
+                fxArt g f
+        )
+        g.fxs
+
+
+fxArt : Game -> Fx -> List Shape
+fxArt g f =
+    let
+        ph = f.t * 100 // max 1 f.ttl
+    in
+    case f.kind of
+        FxBoom ->
+            let
+                r = 3 + f.a * ph // 100
+            in
+            List.concat
+                [ [ group [ Canvas.Blend Canvas.Add ]
+                        [ circle f.x f.y r (rgba 255 170 70 (160 - ph))
+                        , circle f.x f.y (r // 2) (rgba 255 240 170 (180 - ph))
+                        ]
+                  ]
+                , [ circle (f.x + r // 2) (f.y - r // 2) (r // 3 + 1) (rgba 90 84 80 (120 - ph)) ]
+                , if f.b == 2 then
+                    [ group [ Canvas.Blend Canvas.Add ]
+                        [ circle f.x f.y (r + 4) (rgba 150 240 220 (90 - ph)) ]
+                    ]
+                  else
+                    []
+                ]
+
+        FxMuzzle ->
+            [ group [ Canvas.Translate f.x f.y, Canvas.Rotate (f.a * 225 // 10), Canvas.Blend Canvas.Add ]
+                [ triangle 6 (0 - 3) 14 0 6 3 (rgba 255 230 150 200) ]
+            ]
+
+        FxShield ->
+            [ group [ Canvas.Blend Canvas.Add ]
+                [ circle f.x f.y (10 + f.t) (rgba 130 220 255 (120 - ph)) ]
+            ]
+
+        FxSmoke ->
+            [ circle f.x (f.y - f.t) (3 + f.t // 3) (rgba 110 106 102 (110 - ph)) ]
+
+        FxSpark ->
+            [ rect (f.x - 1) (f.y - 1) 2 2 (rgba 255 240 170 (220 - ph * 2))
+            , rect (f.x + 2) (f.y - 3) 1 1 (rgba 255 200 120 (180 - ph))
+            , rect (f.x - 3) (f.y + 2) 1 1 (rgba 255 200 120 (180 - ph))
+            ]
+
+        FxWarp ->
+            [ group [ Canvas.Blend Canvas.Add ]
+                [ circle f.x f.y (14 - f.t // 2) (rgba 150 240 220 (40 + f.t * 6))
+                , rect (f.x - 1) (f.y - 16 + f.t) 2 (32 - f.t * 2) (rgba 190 255 240 120)
+                ]
+            ]
+
+        FxMove ->
+            let
+                -- four brackets collapse inward onto the destination, then
+                -- fade. Plain green, no additive glow, so it reads as a move
+                -- order and never as an explosion.
+                d = 3 + (100 - ph) * f.a // 100
+
+                a = 210 - ph
+
+                col = rgba 120 240 150 a
+            in
+            [ rect (f.x - d - 3) (f.y - d) 4 2 col
+            , rect (f.x - d) (f.y - d - 3) 2 4 col
+            , rect (f.x + d - 1) (f.y - d) 4 2 col
+            , rect (f.x + d) (f.y - d - 3) 2 4 col
+            , rect (f.x - d - 3) (f.y + d - 1) 4 2 col
+            , rect (f.x - d) (f.y + d - 1) 2 4 col
+            , rect (f.x + d - 1) (f.y + d - 1) 4 2 col
+            , rect (f.x + d) (f.y + d - 1) 2 4 col
+            , rect (f.x - 1) (f.y - 1) 2 2 (rgba 200 255 210 a)
+            ]
+
+        FxRing ->
+            let
+                r = 6 + f.a * ph // 100
+
+                tint =
+                    if f.b == 1 then rgba 130 220 255 (150 - ph)
+                    else if f.b == 2 then rgba 150 240 220 (150 - ph)
+                    else rgba 255 150 90 (150 - ph)
+            in
+            [ group [ Canvas.Blend Canvas.Add ]
+                [ circle f.x f.y r tint
+                , circle f.x f.y (max 1 (r - 3)) (rgba 20 12 10 255)
+                ]
+            ]
+
+        FxBeamLine ->
+            [ group [ Canvas.Blend Canvas.Add ]
+                [ beamSeg f.x f.y f.a f.b (rgba 170 250 235 (200 - ph * 2)) ]
+            ]
+
+        FxCapture ->
+            [ group [ Canvas.Blend Canvas.Add ]
+                [ circle f.x f.y (4 + f.t) (rgba 255 230 120 (160 - ph)) ]
+            ]
+
+        FxScrapGlow ->
+            [ group [ Canvas.Blend Canvas.Add ]
+                [ circle f.x f.y (3 + f.t // 2) (rgba 255 210 120 (150 - ph)) ]
+            ]
+
+        FxTarget ->
+            let
+                r = 17 - 7 * ph // 100
+                red = rgba 255 80 66 255
+            in
+            [ group [ Canvas.Blend Canvas.Add ]
+                [ circle f.x f.y (r + 3) (rgba 255 90 74 (150 - ph))
+                , circle f.x f.y (max 1 (r + 1)) (rgba 20 12 10 255)
+                ]
+            , rect (f.x - r) (f.y - r) 6 2 red
+            , rect (f.x - r) (f.y - r) 2 6 red
+            , rect (f.x + r - 6) (f.y - r) 6 2 red
+            , rect (f.x + r - 2) (f.y - r) 2 6 red
+            , rect (f.x - r) (f.y + r - 2) 6 2 red
+            , rect (f.x - r) (f.y + r - 6) 2 6 red
+            , rect (f.x + r - 6) (f.y + r - 2) 6 2 red
+            , rect (f.x + r - 2) (f.y + r - 6) 2 6 red
+            ]
+
+
+-- a beam as a thin rotated rect from (x,y) to (a,b)
+beamSeg : Int -> Int -> Int -> Int -> Color -> Shape
+beamSeg x y bx by c =
+    let
+        dx = bx - x
+        dy = by - y
+        len = max 2 (octd dx dy)
+        face = faceOf dx dy
+    in
+    group [ Canvas.Translate x y, Canvas.Rotate (face * 225 // 10) ]
+        [ rect 0 (0 - 1) len 2 c ]
+
+
+-- ===== fog =====
+
+
+drawFog : Game -> Cam -> List Shape
+drawFog g cam =
+    let
+        row0 = max 0 (cam.y // tileW)
+        row1 = min (g.mapH - 1) ((cam.y + cam.h) // tileW + 1)
+        tx0 = cam.x // tileW - 1
+        tx1 = (cam.x + cam.w) // tileW + 1
+    in
+    List.concatMap
+        (\row ->
+            case Dict.get row g.fogRows of
+                Nothing ->
+                    []
+
+                Just rr ->
+                    List.filterMap
+                        (\run ->
+                            let
+                                a = max run.x0 tx0
+                                b2 = min (run.x0 + run.w) (tx1 + 1)
+                            in
+                            if b2 <= a then
+                                Nothing
+                            else if run.c == 0 then
+                                Just (rect (a * tileW) (row * tileW) ((b2 - a) * tileW) tileW (rgb 16 9 10))
+                            else
+                                -- explored-but-not-seen: dim it clearly so remembered
+                                -- terrain reads as memory, not live vision
+                                Just (rect (a * tileW) (row * tileW) ((b2 - a) * tileW) tileW (rgba 16 9 10 178))
+                        )
+                        rr
+        )
+        (List.range row0 row1)
+
+
+-- ===== rally + placement ghost =====
+
+
+drawRally : Game -> List Int -> List Shape
+drawRally g sel =
+    List.concatMap
+        (\b ->
+            if List.member b.id sel && bProduces b.kind >= 0 && b.side == 1 then
+                [ rect (b.rally - 1) (b.rallyY - 10) 2 10 (rgb 130 240 140)
+                , triangle b.rally (b.rallyY - 10) (b.rally + 7) (b.rallyY - 7) b.rally (b.rallyY - 4) (rgb 130 240 140)
+                ]
+            else
+                []
+        )
+        g.blds
+
+
+drawGhost : Game -> Int -> Int -> Int -> List Shape
+drawGhost g code tx ty =
+    if code < 0 then
+        []
+    else
+        let
+            kind = bldFromCode code
+            ok = canPlaceAt g 1 kind tx ty
+            w = bW kind * tileW
+            h = bH kind * tileW
+            px = tx * tileW
+            py = ty * tileW
+        in
+        [ rect px py w h (if ok then rgba 110 230 120 60 else rgba 240 110 90 70)
+        , rect px py w 2 (if ok then rgb 110 230 120 else rgb 240 110 90)
+        , rect px (py + h - 2) w 2 (if ok then rgb 110 230 120 else rgb 240 110 90)
+        , rect px py 2 h (if ok then rgb 110 230 120 else rgb 240 110 90)
+        , rect (px + w - 2) py 2 h (if ok then rgb 110 230 120 else rgb 240 110 90)
+        ]
+
+
+-- ===== the composed world =====
+
+
+drawWorld : Game -> Dict Int (List Run) -> Dict Int (List Shape) -> Cam -> List Int -> Int -> Int -> Int -> List Shape
+drawWorld g terrain detailRows cam sel ghostCode ghostTx ghostTy =
+    List.concat
+        [ drawTerrain g terrain cam
+        , drawTileDetail detailRows g cam
+        , drawOre g cam
+        , drawScrap g cam
+        , drawBlds g cam sel
+        , drawRally g sel
+        , drawUnits g cam sel
+        , drawShots g cam
+        , drawFx g cam
+        , drawFog g cam
+        , drawCmdFx g cam
+        -- the placement ghost sits ABOVE the fog: over never-seen black the
+        -- red "can't build here" square must always show, not hide under it
+        , drawGhost g ghostCode ghostTx ghostTy
+        ]

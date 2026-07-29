@@ -1,0 +1,266 @@
+module Frontend.Quiz exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, hstack, width, chars
+    , text, title, subtitle, button, disabled, centered, errorText, empty
+    )
+
+
+-- The quiz runner. Drives one player's 10 questions for a duel:
+--
+--   serve → Asking → (tap or timeout) → answer → Reviewing → Continue → serve …
+--
+-- Timing is the server's job. The on-screen countdown is cosmetic: at
+-- zero we auto-submit chosen = -1, but whatever the server measured
+-- against its own servedAt stamp is what counts. The same runner
+-- serves both roles — the challenger (duel is Draft) and, after they
+-- accept, the opponent (duel is Accepted).
+
+
+type Phase
+    = Loading
+    | Asking Shared.Question Int          -- question + seconds left on the cosmetic clock
+    | Reviewing Shared.Question Shared.Feedback
+    | Errored String
+
+
+type alias Model =
+    { phase     : Phase
+    , answering : Bool                    -- a submit is in flight; ignore taps/ticks
+    }
+
+
+type Msg
+    = Served (Result Service.Error Shared.ServeResult)
+    | Tick Time
+    | Choose Int
+    | Answered (Result Service.Error Shared.AnswerResult)
+    | Continue
+
+
+init : Shared.User -> { id : Int } -> (Model, Cmd Msg)
+init _ params =
+    ( { phase = Loading, answering = False }
+    , Service.call Shared.serve { id = params.id } Served
+    )
+
+
+update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Cmd Msg)
+update _ params msg model =
+    case msg of
+        Served (Ok (Shared.NextQuestion q)) ->
+            ( { model | phase = Asking q (ceilSeconds q.remainingMs), answering = False }
+            , Cmd.none
+            )
+
+        Served (Ok Shared.QuizFinished) ->
+            ( model, Nav.replaceTo Frontend.Routes.result { id = params.id } )
+
+        Served (Ok Shared.ServeNotYours) ->
+            ( { model | phase = Errored "Não é a sua vez neste duelo." }, Cmd.none )
+
+        Served (Err why) ->
+            ( { model | phase = Errored (Service.errorToString why) }, Cmd.none )
+
+        Tick _ ->
+            case model.phase of
+                Asking q left ->
+                    if model.answering then
+                        ( model, Cmd.none )
+
+                    else if left - 1 <= 0 then
+                        -- Time's up: lock the card and let the server
+                        -- record a timeout.
+                        ( { model | phase = Asking q 0, answering = True }
+                        , Service.call Shared.answer { id = params.id, chosen = -1 } Answered
+                        )
+
+                    else
+                        ( { model | phase = Asking q (left - 1) }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        Choose i ->
+            case model.phase of
+                Asking _ _ ->
+                    if model.answering then
+                        ( model, Cmd.none )
+
+                    else
+                        ( { model | answering = True }
+                        , Service.call Shared.answer { id = params.id, chosen = i } Answered
+                        )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        Answered (Ok (Shared.Judged fb)) ->
+            case model.phase of
+                Asking q _ ->
+                    ( { model | phase = Reviewing q fb, answering = False }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        Answered (Ok Shared.AlreadyAnswered) ->
+            -- The client and server disagree on where we are; re-serve
+            -- to resync onto the real current question.
+            ( { model | answering = False }
+            , Service.call Shared.serve { id = params.id } Served
+            )
+
+        Answered (Ok Shared.AnswerNotYours) ->
+            ( { model | phase = Errored "Não é a sua vez neste duelo.", answering = False }, Cmd.none )
+
+        Answered (Err why) ->
+            ( { model | phase = Errored (Service.errorToString why), answering = False }, Cmd.none )
+
+        Continue ->
+            case model.phase of
+                Reviewing _ fb ->
+                    if fb.done then
+                        ( model, Nav.replaceTo Frontend.Routes.result { id = params.id } )
+
+                    else
+                        ( { model | phase = Loading }
+                        , Service.call Shared.serve { id = params.id } Served
+                        )
+
+                _ ->
+                    ( model, Cmd.none )
+
+
+-- Milliseconds → whole seconds, rounded up, floored at 0.
+ceilSeconds : Int -> Int
+ceilSeconds ms =
+    Shared.max 0 ((ms + 999) // 1000)
+
+
+view : Shared.User -> { id : Int } -> Model -> View Msg
+view _ _ model =
+    navigationStack [ navigationTitle "Duelo" ]
+        [ case model.phase of
+            Loading ->
+                centered (text [] "Carregando…")
+
+            Errored why ->
+                centered (errorText why)
+
+            Asking q left ->
+                askingView q left model.answering
+
+            Reviewing q fb ->
+                reviewingView q fb
+        ]
+
+
+progressLabel : Shared.Question -> String
+progressLabel q =
+    "Pergunta " ++ String.fromInt (q.index + 1) ++ " de " ++ String.fromInt q.total
+
+
+askingView : Shared.Question -> Int -> Bool -> View Msg
+askingView q left answering =
+    let
+        clock =
+            if answering then "Enviando…" else String.fromInt left ++ "s"
+    in
+    form
+        [ section [ header (progressLabel q) ]
+            [ text [] q.text ]
+        , section [ header clock ]
+            [ optionButton 0 "A" q.a answering
+            , optionButton 1 "B" q.b answering
+            , optionButton 2 "C" q.c answering
+            , optionButton 3 "D" q.d answering
+            ]
+        ]
+
+
+optionButton : Int -> String -> String -> Bool -> View Msg
+optionButton i letter txt answering =
+    button [ disabled answering ] (Choose i) (letter ++ ") " ++ txt)
+
+
+reviewingView : Shared.Question -> Shared.Feedback -> View Msg
+reviewingView q fb =
+    let
+        -- Big, colour-cued verdict. Mar's App UI has no per-button
+        -- colour attr (it's a native/semantic layer), so the green/red
+        -- signal rides on the ✅/❌ emoji, which the system renders in
+        -- colour on every platform.
+        verdict =
+            if fb.correct then "✅  Acertou!"
+            else if fb.chosen < 0 then "⏱  Tempo esgotado!"
+            else "❌  Errou!"
+
+        timing =
+            if fb.chosen < 0 then empty
+            else subtitle ("Seu tempo: " ++ Shared.fmtSeconds fb.elapsedMs)
+
+        cta =
+            if fb.done then "Ver resultado" else "Próxima"
+    in
+    form
+        [ section [ header (progressLabel q) ]
+            [ text [] q.text ]
+        , section []
+            [ title verdict
+            , timing
+            , reviewRow 0 "A" q.a fb
+            , reviewRow 1 "B" q.b fb
+            , reviewRow 2 "C" q.c fb
+            , reviewRow 3 "D" q.d fb
+            ]
+        , section []
+            [ button [] Continue cta ]
+        ]
+
+
+-- Each option, marked: ✅ on the right answer (always), ❌ on your pick
+-- if it was wrong. The mark sits in its own fixed-width column so every
+-- row's letter lines up whether or not it carries an emoji (emoji and
+-- spaces have different widths in a proportional font, so padding a
+-- prefix string wouldn't align).
+reviewRow : Int -> String -> String -> Shared.Feedback -> View Msg
+reviewRow i letter txt fb =
+    hstack []
+        [ text [ width (chars 2) ] (markFor i fb)
+        , text [] (letter ++ ") " ++ txt)
+        ]
+
+
+markFor : Int -> Shared.Feedback -> String
+markFor i fb =
+    if i == fb.correctIndex then "✅"
+    else if i == fb.chosen then "❌"
+    else ""
+
+
+page : Page
+page =
+    Page.dynamicProtected
+        { path   = Frontend.Routes.quiz
+        , title  = "Duelo"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ model -> quizSub model
+        }
+
+
+-- Tick once a second only while a question is on screen; nothing to
+-- count during load, review, or an error.
+quizSub : Model -> Sub Msg
+quizSub model =
+    case model.phase of
+        Asking _ _ ->
+            Time.every (Time.seconds 1) Tick
+
+        _ ->
+            Sub.none

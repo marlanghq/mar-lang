@@ -33,7 +33,7 @@ import Frontend.Home
 import Frontend.About
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.fullstack
         { services = Backend.services
@@ -95,12 +95,12 @@ entries =
 
 
 -- Service handlers.
-listEntriesImpl : () -> Effect (List Shared.Entry)
+listEntriesImpl : () -> Task (List Shared.Entry)
 listEntriesImpl _ =
     Repo.all entries
 
 
-addEntryImpl : Shared.NewEntry -> Effect Shared.Entry
+addEntryImpl : Shared.NewEntry -> Task Shared.Entry
 addEntryImpl input =
     Repo.create entries input
 
@@ -164,27 +164,27 @@ type Msg
     | EntryAdded (Result Service.Error Shared.Entry)
 
 
-fetchEntries : Effect Msg
+fetchEntries : Cmd Msg
 fetchEntries =
     Service.call Shared.listEntries () EntriesFetched
 
 
-init : (Model, Effect Msg)
+init : (Model, Cmd Msg)
 init =
     ( { entries = Loading, draft = "" }, fetchEntries )
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         EntriesFetched (Ok loaded) ->
-            ( { model | entries = Loaded loaded }, Effect.none )
+            ( { model | entries = Loaded loaded }, Cmd.none )
 
         EntriesFetched (Err why) ->
-            ( { model | entries = Failed (Service.errorToString why) }, Effect.none )
+            ( { model | entries = Failed (Service.errorToString why) }, Cmd.none )
 
         DraftChanged value ->
-            ( { model | draft = value }, Effect.none )
+            ( { model | draft = value }, Cmd.none )
 
         AddClicked ->
             -- Stale-while-revalidate: keep the current list visible
@@ -197,7 +197,7 @@ update msg model =
             ( model, fetchEntries )
 
         EntryAdded (Err _) ->
-            ( model, Effect.none )
+            ( model, Cmd.none )
 
 
 view : Model -> View Msg
@@ -247,6 +247,7 @@ page =
         , init = init
         , update = update
         , view = view
+        , subscriptions = always Sub.none
         }
 `, name, name)
 	files["Frontend/About.mar"] = fmt.Sprintf(`module Frontend.About exposing (page)
@@ -270,12 +271,12 @@ type Msg
     = NoOp
 
 
-init : (Model, Effect Msg)
-init = ((), Effect.none)
+init : (Model, Cmd Msg)
+init = ((), Cmd.none)
 
 
-update : Msg -> Model -> (Model, Effect Msg)
-update _ _ = ((), Effect.none)
+update : Msg -> Model -> (Model, Cmd Msg)
+update _ _ = ((), Cmd.none)
 
 
 view : Model -> View Msg
@@ -305,6 +306,7 @@ page =
         , init = init
         , update = update
         , view = view
+        , subscriptions = always Sub.none
         }
 `, name)
 	return files

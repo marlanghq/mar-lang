@@ -1,0 +1,199 @@
+module Backend.Classes exposing (services, classes, deleteAllForUser)
+
+
+import Shared
+import Backend.Students
+import Backend.Attendance
+
+
+-- Classes domain, server-side. Top of the roster tree: a class owns
+-- students (Students) which own marks (Attendance). Deleting a class
+-- cascades down through both. Imports Students + Attendance; nothing
+-- imports Classes back, so the graph stays acyclic.
+
+
+classes : Entity Shared.SchoolClass
+classes =
+    Entity.define
+        { name = "classes"
+        , columns =
+            { id        = Entity.serial
+            , name      = Entity.text Entity.notNull
+            , teacherId = Entity.int Entity.notNull
+            , position  = Entity.int Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ===== Read (GET) =====
+--
+-- listClasses is the roster overview. It reads the teacher's classes
+-- and, in ONE more query, every student they own, then folds a
+-- per-class count out of that list. Two queries regardless of how
+-- many classes there are, and the frontend receives a ready-made
+-- ClassSummary (class + count) with no idea how the count was made.
+listClassesImpl : () -> Shared.User -> Task (List Shared.ClassSummary)
+listClassesImpl _ user =
+    Repo.findBy classes { teacherId = user.id }
+        |> Task.andThen
+            (\cls ->
+                Backend.Students.listAllForUser user
+                    |> Task.map
+                        (\studentRows ->
+                            List.map (toSummary studentRows) (sortByPosition cls)
+                        )
+            )
+
+
+getClassImpl : { id : Int } -> Shared.User -> Task (Maybe Shared.SchoolClass)
+getClassImpl input user =
+    Repo.findById classes input.id
+        |> Task.map (ownedOrNothing user)
+
+
+-- ===== Create =====
+
+
+createClassImpl : { name : String } -> Shared.User -> Task Shared.ClassOutcome
+createClassImpl input user =
+    if String.trim input.name == "" then
+        Task.succeed Shared.ClassNameBlank
+    else
+        Repo.findBy classes { teacherId = user.id }
+            |> Task.andThen
+                (\existing ->
+                    Repo.create classes
+                        { name      = String.trim input.name
+                        , teacherId = user.id
+                        , position  = nextPosition existing
+                        }
+                        |> Task.map Shared.ClassCreated
+                )
+
+
+-- ===== Update =====
+
+
+renameClassImpl : { id : Int, name : String } -> Shared.User -> Task (Maybe Shared.SchoolClass)
+renameClassImpl input user =
+    Repo.findById classes input.id
+        |> Task.andThen
+            (\found ->
+                case found of
+                    Just cls ->
+                        if cls.teacherId == user.id && String.trim input.name /= "" then
+                            Repo.update classes input.id { name = String.trim input.name }
+                        else
+                            Task.succeed Nothing
+
+                    Nothing ->
+                        Task.succeed Nothing
+            )
+
+
+deleteClassImpl : { id : Int } -> Shared.User -> Task ()
+deleteClassImpl input user =
+    Repo.findById classes input.id
+        |> Task.andThen
+            (\found ->
+                case found of
+                    Just cls ->
+                        if cls.teacherId == user.id then
+                            -- Cascade bottom-up: this class's marks,
+                            -- then its students, then the class row.
+                            Backend.Attendance.deleteForClass input.id user
+                                |> Task.andThen (\_ -> Backend.Students.deleteForClass input.id user)
+                                |> Task.andThen (\_ -> Repo.deleteById classes input.id)
+                        else
+                            Task.succeed ()
+
+                    Nothing ->
+                        Task.succeed ()
+            )
+
+
+reorderClassesImpl : { orderedIds : List Int } -> Shared.User -> Task ()
+reorderClassesImpl input user =
+    Task.sequence
+        (List.indexedMap
+            (\idx id ->
+                Repo.findById classes id
+                    |> Task.andThen
+                        (\found ->
+                            case found of
+                                Just cls ->
+                                    if cls.teacherId == user.id then
+                                        Repo.update classes id { position = idx }
+                                            |> Task.map (\_ -> ())
+                                    else
+                                        Task.succeed ()
+
+                                Nothing ->
+                                    Task.succeed ()
+                        )
+            )
+            input.orderedIds
+        )
+        |> Task.map (\_ -> ())
+
+
+-- Row-only delete of every class the caller owns. Account deletion
+-- calls this after marks + students are already gone.
+deleteAllForUser : Shared.User -> Task ()
+deleteAllForUser user =
+    Repo.findBy classes { teacherId = user.id }
+        |> Task.andThen
+            (\rows ->
+                Task.sequence (List.map (\c -> Repo.deleteById classes c.id) rows)
+                    |> Task.map (\_ -> ())
+            )
+
+
+-- ===== Helpers =====
+
+
+toSummary : List Shared.Student -> Shared.SchoolClass -> Shared.ClassSummary
+toSummary studentRows cls =
+    { id           = cls.id
+    , name         = cls.name
+    , position     = cls.position
+    , studentCount =
+        List.foldl
+            (\s acc -> if s.classId == cls.id then acc + 1 else acc)
+            0
+            studentRows
+    }
+
+
+sortByPosition : List Shared.SchoolClass -> List Shared.SchoolClass
+sortByPosition rows =
+    List.sortBy (\c -> c.position) rows
+
+
+nextPosition : List Shared.SchoolClass -> Int
+nextPosition rows =
+    1 + List.foldl (\c acc -> if c.position > acc then c.position else acc) (0 - 1) rows
+
+
+ownedOrNothing : Shared.User -> Maybe Shared.SchoolClass -> Maybe Shared.SchoolClass
+ownedOrNothing user found =
+    case found of
+        Just cls ->
+            if cls.teacherId == user.id then Just cls else Nothing
+
+        Nothing ->
+            Nothing
+
+
+-- ===== Service wiring =====
+
+
+services =
+    [ Auth.protect Shared.listClasses    listClassesImpl
+    , Auth.protect Shared.getClass       getClassImpl
+    , Auth.protect Shared.createClass    createClassImpl
+    , Auth.protect Shared.renameClass    renameClassImpl
+    , Auth.protect Shared.deleteClass    deleteClassImpl
+    , Auth.protect Shared.reorderClasses reorderClassesImpl
+    ]

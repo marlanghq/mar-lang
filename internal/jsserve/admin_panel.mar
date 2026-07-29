@@ -103,10 +103,10 @@ sizeWithUnit : Int -> Int -> String -> String
 sizeWithUnit bytes unit unitLabel =
     let
         tenths =
-            bytes * 10 / unit
+            bytes * 10 // unit
 
         whole =
-            tenths / 10
+            tenths // 10
 
         frac =
             tenths - whole * 10

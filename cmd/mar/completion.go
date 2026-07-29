@@ -59,10 +59,11 @@ const buildTargets = "darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-
 
 // flySubcommandList — kept in lockstep with runFly's switch in fly.go.
 // `db` is the alias for `database`; we list both so tab completes
-// either spelling. Order matches the typical lifecycle (preview →
-// deploy → ops); the -V flag in zsh / fish's natural declaration
-// order preserve it in the menu.
-const flySubcommandList = "preview deploy destroy logs status admin database db secrets"
+// either spelling. Shipping is the top-level `mar deploy` command, not
+// a fly subcommand. Order matches the typical lifecycle (preview →
+// ops); the -V flag in zsh / fish's natural declaration order
+// preserve it in the menu.
+const flySubcommandList = "preview destroy logs status admin database db secrets"
 
 // flySecretsSubs / flyDatabaseSubs / flyAdminSubs — third-level
 // subcommands under fly. Same lockstep contract: edit the
@@ -97,8 +98,8 @@ _mar() {
     'config:Print mar.json'
     'migrate:Show pending or applied schema migrations'
     'admin:Manage local admin emails in mar.json'
-    'fly:Deploy + operate a Fly.io app'
-    'cloudflare-pages:Deploy a frontend bundle to Cloudflare Pages'
+    'deploy:Ship the app to its configured target (Fly or Cloudflare Pages)'
+    'fly:Lower-level Fly.io app workflow'
     'repl:Interactive REPL'
     'lsp:Language server over stdio'
     'completion:Generate shell completion scripts'
@@ -200,13 +201,13 @@ _mar() {
       if (( CURRENT == 3 )); then
         local -a fly_subs
         # Order matches the natural lifecycle — preview shows what
-        # would happen, deploy ships, logs/status/admin/database/
-        # secrets are ops-on-running, destroy is the cleanup. Without
-        # the -V flag below, zsh's _describe would sort these
-        # alphabetically (admin first) which obscures the sequence.
+        # would happen, logs/status/admin/database/secrets are
+        # ops-on-running, destroy is the cleanup. (Shipping is the
+        # top-level "mar deploy" command.) Without the -V flag below,
+        # zsh's _describe would sort these alphabetically (admin first)
+        # which obscures the sequence.
         fly_subs=(
           'preview:Show what would be deployed (no side effects)'
-          'deploy:Build + ship to Fly (creates app/volume/secrets as needed)'
           'logs:Tail logs from the running machine(s)'
           'status:Show app + machine status'
           'admin:Read-only inspection of production _mar_admins'
@@ -251,13 +252,6 @@ _mar() {
             return
           fi
           ;;
-        deploy)
-          # deploy accepts --no-open in addition to a path.
-          if [[ "${PREFIX}" == -* ]]; then
-            _describe 'fly deploy flag' '--no-open:Skip auto-opening the browser'
-            return
-          fi
-          ;;
       esac
       if (( CURRENT == 4 )); then
         _path_files -/
@@ -275,23 +269,16 @@ _mar() {
           'ls:Alias for list'
       fi
       ;;
-    cloudflare-pages)
-      if (( CURRENT == 3 )); then
-        _describe -V 'mar-cfpages-subcommand' 'subcommand' \
-          'deploy:Build the static bundle and push it to Cloudflare Pages'
+    deploy)
+      # deploy accepts --no-open and a positional path; it routes to
+      # the target configured in mar.json (Fly VM or Cloudflare Pages).
+      if [[ "${PREFIX}" == -* ]]; then
+        _describe 'deploy flag' '--no-open:Skip auto-opening the browser'
         return
       fi
-      case "${words[3]}" in
-        deploy)
-          if [[ "${PREFIX}" == -* ]]; then
-            _describe 'cloudflare-pages deploy flag' '--no-open:Skip auto-opening the browser'
-            return
-          fi
-          if (( CURRENT == 4 )); then
-            _files -g '*.mar' || _path_files -/
-          fi
-          ;;
-      esac
+      if (( CURRENT == 3 )); then
+        _files -g '*.mar' || _path_files -/
+      fi
       ;;
     completion)
       if (( CURRENT == 3 )); then
@@ -325,7 +312,7 @@ func bashCompletion() string {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "dev build init check format config migrate admin fly cloudflare-pages repl lsp completion version help" -- "${cur}") )
+    COMPREPLY=( $(compgen -W "dev build init check format config migrate admin deploy fly repl lsp completion version help" -- "${cur}") )
     return 0
   fi
 
@@ -384,30 +371,23 @@ func bashCompletion() string {
         COMPREPLY=( $(compgen -W "` + adminSubs + ` rm ls" -- "${cur}") )
       fi
       ;;
-    cloudflare-pages)
-      if [[ ${COMP_CWORD} -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "deploy" -- "${cur}") )
+    deploy)
+      # deploy takes --no-open and a positional path; it routes to the
+      # target configured in mar.json (Fly VM or Cloudflare Pages).
+      if [[ "${cur}" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--no-open" -- "${cur}") )
         return 0
       fi
-      case "${COMP_WORDS[2]}" in
-        deploy)
-          if [[ "${cur}" == -* ]]; then
-            COMPREPLY=( $(compgen -W "--no-open" -- "${cur}") )
-            return 0
-          fi
-          if [[ ${COMP_CWORD} -eq 3 ]]; then
-            COMPREPLY=( $(compgen -f -X '!*.mar' -- "${cur}") $(compgen -d -- "${cur}") )
-          fi
-          ;;
-      esac
+      if [[ ${COMP_CWORD} -eq 2 ]]; then
+        COMPREPLY=( $(compgen -f -X '!*.mar' -- "${cur}") $(compgen -d -- "${cur}") )
+      fi
       ;;
     fly)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
         COMPREPLY=( $(compgen -W "` + flySubcommandList + `" -- "${cur}") )
         return 0
       fi
-      # Sub-subcommands for fly admin/database/secrets + --no-open
-      # flag for fly deploy.
+      # Sub-subcommands for fly admin/database/secrets.
       case "${COMP_WORDS[2]}" in
         admin)
           if [[ ${COMP_CWORD} -eq 3 ]]; then
@@ -422,11 +402,6 @@ func bashCompletion() string {
         secrets)
           if [[ ${COMP_CWORD} -eq 3 ]]; then
             COMPREPLY=( $(compgen -W "` + flySecretsSubs + `" -- "${cur}") )
-          fi
-          ;;
-        deploy)
-          if [[ "${cur}" == -* ]]; then
-            COMPREPLY=( $(compgen -W "--no-open" -- "${cur}") )
           fi
           ;;
       esac
@@ -453,8 +428,8 @@ complete -c mar -n '__fish_use_subcommand' -a format     -d 'Reformat .mar files
 complete -c mar -n '__fish_use_subcommand' -a config     -d 'Print mar.json'
 complete -c mar -n '__fish_use_subcommand' -a migrate    -d 'Show pending or applied schema migrations'
 complete -c mar -n '__fish_use_subcommand' -a admin      -d 'Manage local admin emails in mar.json'
-complete -c mar -n '__fish_use_subcommand' -a fly        -d 'Deploy + operate a Fly.io app'
-complete -c mar -n '__fish_use_subcommand' -a cloudflare-pages -d 'Deploy a frontend bundle to Cloudflare Pages'
+complete -c mar -n '__fish_use_subcommand' -a deploy     -d 'Ship the app to its configured target (Fly or Cloudflare Pages)'
+complete -c mar -n '__fish_use_subcommand' -a fly        -d 'Lower-level Fly.io app workflow'
 complete -c mar -n '__fish_use_subcommand' -a repl       -d 'Interactive REPL'
 complete -c mar -n '__fish_use_subcommand' -a lsp        -d 'Language server over stdio'
 complete -c mar -n '__fish_use_subcommand' -a completion -d 'Generate shell completion scripts'
@@ -492,11 +467,12 @@ complete -c mar -n '__fish_seen_subcommand_from admin' -a 'add remove rm list ls
 # fly-level slot; fish's contains-based completion makes that verbose.
 # We rely on fish narrowing automatically once a sub is typed.
 complete -c mar -n '__fish_seen_subcommand_from fly' \
-  -a 'preview deploy logs status admin database db secrets destroy'
+  -a 'preview logs status admin database db secrets destroy'
 
-# fly deploy: --no-open flag
-complete -c mar -n '__fish_seen_subcommand_from fly; and __fish_seen_subcommand_from deploy' \
-  -l no-open -d 'Skip auto-opening the browser'
+# deploy (top-level): --no-open flag + a .mar project path. Routes to
+# the target configured in mar.json (Fly VM or Cloudflare Pages).
+complete -c mar -n '__fish_seen_subcommand_from deploy' -l no-open -d 'Skip auto-opening the browser'
+complete -c mar -n '__fish_seen_subcommand_from deploy' -a '(__fish_complete_suffix .mar)'
 
 # fly admin sub
 complete -c mar -n '__fish_seen_subcommand_from fly; and __fish_seen_subcommand_from admin' \
@@ -509,15 +485,5 @@ complete -c mar -n '__fish_seen_subcommand_from fly; and __fish_seen_subcommand_
 # fly secrets sub
 complete -c mar -n '__fish_seen_subcommand_from fly; and __fish_seen_subcommand_from secrets' \
   -a 'set list ls unset rm'
-
-# cloudflare-pages: only deploy for now. The condition ANDs on the
-# top-level cloudflare-pages slot so we don't suggest "deploy" when
-# the user already typed e.g. "mar fly deploy".
-complete -c mar -n '__fish_seen_subcommand_from cloudflare-pages' \
-  -a 'deploy' -d 'Build the static bundle and push it to Cloudflare Pages'
-
-# cloudflare-pages deploy: --no-open flag
-complete -c mar -n '__fish_seen_subcommand_from cloudflare-pages; and __fish_seen_subcommand_from deploy' \
-  -l no-open -d 'Skip auto-opening the browser'
 `
 }

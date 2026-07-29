@@ -11,8 +11,8 @@ import (
 // TestDiscoverManifestEnvRefs covers the small regex-based scanner
 // that finds env:VAR references in mar.json. The scanner drives
 // secrets prompting + the pre-flight "missing on Fly" check inside
-// `mar fly deploy` — missing a ref means the secret never reaches
-// fly.
+// `mar deploy` (Fly path) — missing a ref means the secret never
+// reaches fly.
 func TestDiscoverManifestEnvRefs(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -94,7 +94,7 @@ func TestDiscoverManifestEnvRefs(t *testing.T) {
 // TestLoadFlyManifest_SkipsEnvResolution: the loader uses
 // LoadManifestStructure (not LoadManifest) so env:VAR refs in
 // mar.json don\'t need to be set in the operator\'s local shell.
-// Secrets live in Fly Secrets after `mar fly deploy` pushes them;
+// Secrets live in Fly Secrets after `mar deploy` pushes them;
 // requiring them locally first would be backwards.
 func TestLoadFlyManifest_SkipsEnvResolution(t *testing.T) {
 	dir := t.TempDir()

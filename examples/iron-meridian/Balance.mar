@@ -1,0 +1,1163 @@
+module Balance exposing (..)
+
+
+import Types exposing (..)
+
+
+-- IRON MERIDIAN: every stat table. Pure case tables over UnitKind and
+-- BldKind so the whole balance lives in one reviewable file. The sim
+-- runs at 30 ticks per second: every duration here is in sim ticks,
+-- every speed in fx (px*16) per tick, every range in plain px.
+--
+-- Damage types: 0 light, 1 piercing, 2 blast, 3 beam.
+-- Producer classes: 0 infantry, 1 vehicle, 2 air.
+
+
+-- ===== economy constants =====
+
+
+startCredits : Int
+startCredits = 3000
+
+
+ferriteValue : Int
+ferriteValue = 800
+
+
+azuriteValue : Int
+azuriteValue = 1600
+
+
+harvestCarry : Int
+harvestCarry = 400
+
+
+-- credits gained per mining pulse (every 5 ticks while on the patch)
+minePulse : Int
+minePulse = 25
+
+
+extractorTrickle : Int          -- credits per second to the owner
+extractorTrickle = 5
+
+
+captureTicks : Int
+captureTicks = 90
+
+
+superCooldown : Int
+superCooldown = 3600            -- 2 minutes
+
+
+shieldRegenDelay : Int
+shieldRegenDelay = 90
+
+
+lowPowerPercent : Int           -- production speed under low power
+lowPowerPercent = 60
+
+
+-- ===== damage vs armor =====
+-- Armor classes: 0 infantry, 1 vehicle, 2 building, 3 air.
+
+
+dmgMult : Int -> Int -> Int
+dmgMult dt armor =
+    case dt of
+        0 ->
+            case armor of
+                0 -> 100
+                1 -> 40
+                2 -> 25
+                _ -> 60
+
+        1 ->
+            case armor of
+                0 -> 50
+                1 -> 120
+                2 -> 60
+                _ -> 110
+
+        2 ->
+            case armor of
+                0 -> 70
+                1 -> 90
+                2 -> 130
+                _ -> 0
+
+        _ ->
+            90
+
+
+-- ===== units =====
+
+
+uName : UnitKind -> String
+uName k =
+    case k of
+        Hauler -> "Hauler"
+        Sapper -> "Sapper"
+        Rifle -> "Rifle Squad"
+        Rocket -> "Rocket Squad"
+        ScoutCar -> "Scout Car"
+        Bulwark -> "Bulwark Tank"
+        Thumper -> "Thumper"
+        Kestrel -> "Kestrel"
+        Reclaimer -> "Reclaimer"
+        Hijacker -> "Hijacker"
+        Scrapper -> "Scrapper Pack"
+        Spiker -> "Spike Thrower"
+        DuneBike -> "Dune Bike"
+        Scorcher -> "Scorcher"
+        Warthog -> "Warthog"
+        Vulture -> "Vulture"
+        RamTruck -> "Ram Truck"
+        TitheDrone -> "Tithe Drone"
+        Attuner -> "Attuner"
+        Lancer -> "Lancer"
+        Nullifier -> "Nullifier"
+        Sliver -> "Sliver Skiff"
+        Colossus -> "Colossus"
+        RiftSkiff -> "Rift Skiff"
+
+
+-- one-line role blurb shown when the cursor rests on a train button
+uDesc : UnitKind -> String
+uDesc k =
+    case k of
+        Hauler -> "Worker. Mines ore into credits."
+        Sapper -> "Engineer. Captures neutral derelicts."
+        Rifle -> "Infantry. Cheap, fires on ground and air."
+        Rocket -> "Missile infantry. Strong vs armor and air."
+        ScoutCar -> "Fast recon car. Reveals ground, light gun."
+        Bulwark -> "Battle tank. Heavy armor and cannon."
+        Thumper -> "Artillery. Long range, weak up close."
+        Kestrel -> "Gunship. Flies over terrain, hits ground."
+        Reclaimer -> "Worker. Mines ore and hauls scrap for cash."
+        Hijacker -> "Engineer. Seizes neutral derelicts."
+        Scrapper -> "Swarm infantry. Cheap, ground and air."
+        Spiker -> "Spike gunner. Anti-air and anti-infantry."
+        DuneBike -> "Raider bike. Fast, harasses workers."
+        Scorcher -> "Flamer. Devastates infantry up close."
+        Warthog -> "Assault truck. Tough all-rounder."
+        Vulture -> "Scrap flyer. Strafes ground and air."
+        RamTruck -> "Suicide truck. Explodes on contact."
+        TitheDrone -> "Worker. Channels ore into credits."
+        Attuner -> "Acolyte. Converts neutral derelicts."
+        Lancer -> "Energy infantry. Shielded, ground and air."
+        Nullifier -> "EMP caster. Stuns clusters of enemies."
+        Sliver -> "Blade skiff. Fast, shielded, short range."
+        Colossus -> "Walker. Heavy shielded siege unit."
+        RiftSkiff -> "Skiff. Shielded flyer, strikes ground."
+
+
+-- two-letter code for the selection chips
+uShort : UnitKind -> String
+uShort k =
+    case k of
+        Hauler -> "HA"
+        Sapper -> "SP"
+        Rifle -> "RF"
+        Rocket -> "RK"
+        ScoutCar -> "SC"
+        Bulwark -> "BW"
+        Thumper -> "TH"
+        Kestrel -> "KE"
+        Reclaimer -> "RC"
+        Hijacker -> "HJ"
+        Scrapper -> "SR"
+        Spiker -> "SK"
+        DuneBike -> "DB"
+        Scorcher -> "SO"
+        Warthog -> "WH"
+        Vulture -> "VU"
+        RamTruck -> "RT"
+        TitheDrone -> "TD"
+        Attuner -> "AT"
+        Lancer -> "LA"
+        Nullifier -> "NU"
+        Sliver -> "SL"
+        Colossus -> "CO"
+        RiftSkiff -> "RS"
+
+
+uRace : UnitKind -> Race
+uRace k =
+    case k of
+        Hauler -> Compact
+        Sapper -> Compact
+        Rifle -> Compact
+        Rocket -> Compact
+        ScoutCar -> Compact
+        Bulwark -> Compact
+        Thumper -> Compact
+        Kestrel -> Compact
+        Reclaimer -> Combine
+        Hijacker -> Combine
+        Scrapper -> Combine
+        Spiker -> Combine
+        DuneBike -> Combine
+        Scorcher -> Combine
+        Warthog -> Combine
+        Vulture -> Combine
+        RamTruck -> Combine
+        TitheDrone -> Vessari
+        Attuner -> Vessari
+        Lancer -> Vessari
+        Nullifier -> Vessari
+        Sliver -> Vessari
+        Colossus -> Vessari
+        RiftSkiff -> Vessari
+
+
+uCost : UnitKind -> Int
+uCost k =
+    case k of
+        Hauler -> 600
+        Sapper -> 350
+        Rifle -> 180
+        Rocket -> 260
+        ScoutCar -> 250
+        Bulwark -> 700
+        Thumper -> 850
+        Kestrel -> 900
+        Reclaimer -> 500
+        Hijacker -> 250
+        Scrapper -> 120
+        Spiker -> 190
+        DuneBike -> 180
+        Scorcher -> 380
+        Warthog -> 480
+        Vulture -> 600
+        RamTruck -> 400
+        TitheDrone -> 700
+        Attuner -> 450
+        Lancer -> 320
+        Nullifier -> 420
+        Sliver -> 300
+        Colossus -> 1300
+        RiftSkiff -> 1100
+
+
+uSupply : UnitKind -> Int
+uSupply k =
+    case k of
+        Hauler -> 2
+        Reclaimer -> 2
+        TitheDrone -> 2
+        Bulwark -> 3
+        Thumper -> 3
+        Kestrel -> 3
+        Warthog -> 2
+        Scorcher -> 2
+        Vulture -> 2
+        RamTruck -> 2
+        Colossus -> 4
+        RiftSkiff -> 3
+        _ -> 1
+
+
+uHp : UnitKind -> Int
+uHp k =
+    case k of
+        Hauler -> 420
+        Sapper -> 80
+        Rifle -> 95
+        Rocket -> 80
+        ScoutCar -> 130
+        Bulwark -> 340
+        Thumper -> 150
+        Kestrel -> 230
+        Reclaimer -> 360
+        Hijacker -> 70
+        Scrapper -> 70
+        Spiker -> 65
+        DuneBike -> 100
+        Scorcher -> 180
+        Warthog -> 210
+        Vulture -> 170
+        RamTruck -> 190
+        TitheDrone -> 300
+        Attuner -> 80
+        Lancer -> 90
+        Nullifier -> 85
+        Sliver -> 110
+        Colossus -> 620
+        RiftSkiff -> 250
+
+
+uShield : UnitKind -> Int
+uShield k =
+    case k of
+        TitheDrone -> 120
+        Attuner -> 60
+        Lancer -> 70
+        Nullifier -> 70
+        Sliver -> 60
+        Colossus -> 240
+        RiftSkiff -> 130
+        _ -> 0
+
+
+uSpeed : UnitKind -> Int
+uSpeed k =
+    case k of
+        Hauler -> 22
+        Sapper -> 18
+        Rifle -> 19
+        Rocket -> 18
+        ScoutCar -> 42
+        Bulwark -> 26
+        Thumper -> 22
+        Kestrel -> 44
+        Reclaimer -> 24
+        Hijacker -> 22
+        Scrapper -> 24
+        Spiker -> 22
+        DuneBike -> 52
+        Scorcher -> 30
+        Warthog -> 30
+        Vulture -> 46
+        RamTruck -> 34
+        TitheDrone -> 22
+        Attuner -> 20
+        Lancer -> 21
+        Nullifier -> 21
+        Sliver -> 50
+        Colossus -> 18
+        RiftSkiff -> 38
+
+
+uRange : UnitKind -> Int
+uRange k =
+    case k of
+        Sapper -> 24
+        Rifle -> 90
+        Rocket -> 115
+        ScoutCar -> 85
+        Bulwark -> 105
+        Thumper -> 195
+        Kestrel -> 95
+        Hijacker -> 24
+        Scrapper -> 70
+        Spiker -> 110
+        DuneBike -> 70
+        Scorcher -> 60
+        Warthog -> 95
+        Vulture -> 85
+        RamTruck -> 26
+        Attuner -> 24
+        Lancer -> 95
+        Nullifier -> 125
+        Sliver -> 70
+        Colossus -> 115
+        RiftSkiff -> 100
+        _ -> 0
+
+
+uCd : UnitKind -> Int
+uCd k =
+    case k of
+        Rifle -> 24
+        Rocket -> 48
+        ScoutCar -> 20
+        Bulwark -> 42
+        Thumper -> 100
+        Kestrel -> 36
+        Scrapper -> 22
+        Spiker -> 45
+        DuneBike -> 24
+        Scorcher -> 34
+        Warthog -> 40
+        Vulture -> 30
+        Lancer -> 34
+        Nullifier -> 36
+        Sliver -> 26
+        Colossus -> 55
+        RiftSkiff -> 42
+        _ -> 30
+
+
+uDmg : UnitKind -> Int
+uDmg k =
+    case k of
+        Rifle -> 8
+        Rocket -> 34
+        ScoutCar -> 6
+        Bulwark -> 36
+        Thumper -> 70
+        Kestrel -> 26
+        Scrapper -> 7
+        Spiker -> 26
+        DuneBike -> 6
+        Scorcher -> 20
+        Warthog -> 26
+        Vulture -> 14
+        RamTruck -> 400
+        Lancer -> 16
+        Nullifier -> 30
+        Sliver -> 8
+        Colossus -> 48
+        RiftSkiff -> 30
+        _ -> 0
+
+
+uDt : UnitKind -> Int
+uDt k =
+    case k of
+        Rifle -> 0
+        ScoutCar -> 0
+        Scrapper -> 0
+        DuneBike -> 0
+        Scorcher -> 0
+        Vulture -> 0
+        Sliver -> 3
+        Rocket -> 1
+        Spiker -> 1
+        Nullifier -> 1
+        Bulwark -> 2
+        Thumper -> 2
+        Warthog -> 2
+        RamTruck -> 2
+        Kestrel -> 1
+        Lancer -> 3
+        Colossus -> 3
+        RiftSkiff -> 3
+        _ -> 0
+
+
+-- splash radius px (0 = single target)
+uSplash : UnitKind -> Int
+uSplash k =
+    case k of
+        Thumper -> 34
+        Scorcher -> 26
+        RamTruck -> 44
+        Colossus -> 20
+        _ -> 0
+
+
+uSight : UnitKind -> Int
+uSight k =
+    case k of
+        ScoutCar -> 8
+        DuneBike -> 7
+        Sliver -> 7
+        Kestrel -> 6
+        Vulture -> 6
+        RiftSkiff -> 6
+        _ -> 5
+
+
+uFly : UnitKind -> Bool
+uFly k =
+    case k of
+        Kestrel -> True
+        Vulture -> True
+        RiftSkiff -> True
+        _ -> False
+
+
+-- can this unit shoot air?
+uAA : UnitKind -> Bool
+uAA k =
+    case k of
+        Rifle -> True
+        Rocket -> True
+        Scrapper -> True
+        Spiker -> True
+        Nullifier -> True
+        Lancer -> True
+        Vulture -> True
+        _ -> False
+
+
+-- can this unit shoot ground?
+uGround : UnitKind -> Bool
+uGround k =
+    case k of
+        Nullifier -> False
+        Hauler -> False
+        Reclaimer -> False
+        TitheDrone -> False
+        Sapper -> False
+        Hijacker -> False
+        Attuner -> False
+        _ -> True
+
+
+uBuild : UnitKind -> Int
+uBuild k =
+    uCost k * 3 // 20 + 45      -- cost-scaled: 180cr ~= 72t, 700cr ~= 150t
+
+
+uClass : UnitKind -> Int
+uClass k =
+    case k of
+        Rifle -> 0
+        Rocket -> 0
+        Sapper -> 0
+        Scrapper -> 0
+        Spiker -> 0
+        Hijacker -> 0
+        Lancer -> 0
+        Nullifier -> 0
+        Attuner -> 0
+        Kestrel -> 2
+        Vulture -> 2
+        RiftSkiff -> 2
+        _ -> 1
+
+
+-- tier 2 units need the race's tech building
+uTier : UnitKind -> Int
+uTier k =
+    case k of
+        Thumper -> 2
+        Kestrel -> 2
+        Bulwark -> 2
+        Scorcher -> 2
+        Vulture -> 2
+        RamTruck -> 2
+        Colossus -> 2
+        RiftSkiff -> 2
+        Nullifier -> 2
+        _ -> 1
+
+
+-- rough army value for the bot's composition math
+uScore : UnitKind -> Int
+uScore k =
+    uCost k
+
+
+-- is this a worker (harvester)?
+uWorker : UnitKind -> Bool
+uWorker k =
+    case k of
+        Hauler -> True
+        Reclaimer -> True
+        TitheDrone -> True
+        _ -> False
+
+
+uCapturer : UnitKind -> Bool
+uCapturer k =
+    case k of
+        Sapper -> True
+        Hijacker -> True
+        Attuner -> True
+        _ -> False
+
+
+-- collision radius in px (for crowding)
+uRad : UnitKind -> Int
+uRad k =
+    case k of
+        Hauler -> 10
+        Reclaimer -> 10
+        TitheDrone -> 10
+        Bulwark -> 10
+        Thumper -> 9
+        Warthog -> 9
+        Scorcher -> 9
+        Colossus -> 12
+        RamTruck -> 9
+        _ -> 7
+
+
+-- ===== buildings =====
+
+
+bName : BldKind -> String
+bName k =
+    case k of
+        Bastion -> "Command Bastion"
+        PowerStation -> "Power Station"
+        Refinery -> "Refinery"
+        Billet -> "Billet"
+        Foundry -> "Foundry"
+        MotorPool -> "Motor Pool"
+        Airfield -> "Airfield"
+        Watchtower -> "Watchtower"
+        FlakTower -> "Flak Tower"
+        Armory -> "Armory"
+        ArtilleryBeacon -> "Artillery Beacon"
+        CrawlerHQ -> "Crawler HQ"
+        JunkTurbine -> "Junk Turbine"
+        Smeltery -> "Smeltery"
+        Bunkroom -> "Bunkroom"
+        RatDen -> "Rat Den"
+        ChopShop -> "Chop Shop"
+        Roost -> "Roost"
+        SpikeNest -> "Spike Nest"
+        FlakRack -> "Flak Rack"
+        WarlordHall -> "Warlord Hall"
+        ScrapMagnet -> "Scrap Magnet"
+        GenesisFont -> "Genesis Font"
+        Spire -> "Spire"
+        ExtractBloom -> "Extract Bloom"
+        Chrysalis -> "Chrysalis"
+        ForgeWomb -> "Forge Womb"
+        SkyCradle -> "Sky Cradle"
+        PylonThorn -> "Pylon Thorn"
+        AegisNode -> "Aegis Node"
+        AscendantGate -> "Ascendant Gate"
+        PurgeLens -> "Purge Lens"
+        Derelict -> "Derelict Extractor"
+
+
+-- tooltip blurb: what it does + why you'd want it. Never repeats the name
+-- (the title already shows it); leads with the function.
+bDesc : BldKind -> String
+bDesc k =
+    case k of
+        Bastion -> "Trains workers and anchors the whole base. Protect it at all costs."
+        CrawlerHQ -> "Trains workers and anchors the whole base. Protect it at all costs."
+        GenesisFont -> "Trains workers and anchors the whole base. Protect it at all costs."
+        PowerStation -> "Feeds power to everything you build. Add more before you run short."
+        JunkTurbine -> "Burns scrap into power. Stay ahead of demand or buildings stall."
+        Spire -> "Powers Vessari structures. Raise more as the base grows."
+        Refinery -> "Turns mined ore into credits."
+        Smeltery -> "Turns mined ore into credits. The Combine's income engine."
+        ExtractBloom -> "Turns mined ore into credits. Vessari's steady income."
+        Billet -> "Raises your unit cap. Build before supply fills or training stops."
+        Bunkroom -> "Raises your unit cap. Build before supply fills or training stops."
+        Foundry -> "Trains infantry: cheap, dependable, your first army."
+        RatDen -> "Breeds swarm infantry fast. Win fights by sheer numbers."
+        Chrysalis -> "Grows Vessari infantry. Fragile bodies behind regenerating shields."
+        MotorPool -> "Builds tanks and vehicles. Your main hitting power."
+        ChopShop -> "Welds scrap into fast, cheap vehicles and raiders."
+        ForgeWomb -> "Grows Vessari vehicles and walkers. Heavy, shielded punch."
+        Airfield -> "Builds aircraft that fly over terrain and strike from above."
+        Roost -> "Launches scrap flyers for raids and anti-air cover."
+        SkyCradle -> "Births Vessari flyers to strike where the ground can't reach."
+        Watchtower -> "Fixed gun against ground attackers. Guards your economy and chokes."
+        SpikeNest -> "Fixed gun against ground attackers. Cheap perimeter defense."
+        PylonThorn -> "Fixed gun that hits ground AND air. All-round base defense."
+        FlakTower -> "Anti-air only: shreds aircraft, but ignores the ground."
+        FlakRack -> "Anti-air only: shreds aircraft, but ignores the ground."
+        AegisNode -> "Projects a shield aura that regenerates nearby units' armor."
+        Armory -> "Unlocks advanced units and upgrades. Tech up to escalate."
+        WarlordHall -> "Unlocks advanced units and upgrades. Tech up to escalate."
+        AscendantGate -> "Unlocks advanced units and upgrades. Tech up to escalate."
+        ArtilleryBeacon -> "Superweapon: call a heavy artillery barrage onto a target."
+        ScrapMagnet -> "Superweapon: drop a scrap storm that wrecks an area."
+        PurgeLens -> "Superweapon: sweep a wide purge beam across the battlefield."
+        Derelict -> "Neutral ruin. Capture it with an engineer for extra income."
+
+
+bRace : BldKind -> Race
+bRace k =
+    case k of
+        Bastion -> Compact
+        PowerStation -> Compact
+        Refinery -> Compact
+        Billet -> Compact
+        Foundry -> Compact
+        MotorPool -> Compact
+        Airfield -> Compact
+        Watchtower -> Compact
+        FlakTower -> Compact
+        Armory -> Compact
+        ArtilleryBeacon -> Compact
+        CrawlerHQ -> Combine
+        JunkTurbine -> Combine
+        Smeltery -> Combine
+        Bunkroom -> Combine
+        RatDen -> Combine
+        ChopShop -> Combine
+        Roost -> Combine
+        SpikeNest -> Combine
+        FlakRack -> Combine
+        WarlordHall -> Combine
+        ScrapMagnet -> Combine
+        GenesisFont -> Vessari
+        Spire -> Vessari
+        ExtractBloom -> Vessari
+        Chrysalis -> Vessari
+        ForgeWomb -> Vessari
+        SkyCradle -> Vessari
+        PylonThorn -> Vessari
+        AegisNode -> Vessari
+        AscendantGate -> Vessari
+        PurgeLens -> Vessari
+        Derelict -> Compact
+
+
+bCost : BldKind -> Int
+bCost k =
+    case k of
+        Bastion -> 2500
+        PowerStation -> 300
+        Refinery -> 900
+        Billet -> 250
+        Foundry -> 400
+        MotorPool -> 900
+        Airfield -> 800
+        Watchtower -> 350
+        FlakTower -> 400
+        Armory -> 700
+        ArtilleryBeacon -> 1200
+        CrawlerHQ -> 2500
+        JunkTurbine -> 220
+        Smeltery -> 800
+        Bunkroom -> 200
+        RatDen -> 300
+        ChopShop -> 700
+        Roost -> 650
+        SpikeNest -> 250
+        FlakRack -> 300
+        WarlordHall -> 600
+        ScrapMagnet -> 1000
+        GenesisFont -> 2500
+        Spire -> 350
+        ExtractBloom -> 1000
+        Chrysalis -> 450
+        ForgeWomb -> 1100
+        SkyCradle -> 950
+        PylonThorn -> 450
+        AegisNode -> 600
+        AscendantGate -> 900
+        PurgeLens -> 1400
+        Derelict -> 0
+
+
+bHp : BldKind -> Int
+bHp k =
+    case k of
+        Bastion -> 2200
+        CrawlerHQ -> 2000
+        GenesisFont -> 2400
+        PowerStation -> 430
+        JunkTurbine -> 320
+        Spire -> 400
+        Refinery -> 780
+        Smeltery -> 720
+        ExtractBloom -> 820
+        Billet -> 360
+        Bunkroom -> 300
+        Foundry -> 640
+        RatDen -> 540
+        Chrysalis -> 680
+        MotorPool -> 780
+        ChopShop -> 700
+        ForgeWomb -> 860
+        Airfield -> 680
+        Roost -> 600
+        SkyCradle -> 740
+        Watchtower -> 520
+        SpikeNest -> 420
+        PylonThorn -> 560
+        FlakTower -> 480
+        FlakRack -> 400
+        Armory -> 580
+        WarlordHall -> 540
+        AscendantGate -> 640
+        AegisNode -> 500
+        ArtilleryBeacon -> 650
+        ScrapMagnet -> 620
+        PurgeLens -> 760
+        Derelict -> 900
+
+
+-- footprint in tiles (width, height share one table each)
+bW : BldKind -> Int
+bW k =
+    case k of
+        Bastion -> 3
+        CrawlerHQ -> 3
+        GenesisFont -> 3
+        Refinery -> 3
+        Smeltery -> 3
+        ExtractBloom -> 3
+        MotorPool -> 3
+        ChopShop -> 3
+        ForgeWomb -> 3
+        Airfield -> 3
+        SkyCradle -> 3
+        ArtilleryBeacon -> 2
+        ScrapMagnet -> 2
+        PurgeLens -> 2
+        Watchtower -> 1
+        SpikeNest -> 1
+        PylonThorn -> 1
+        FlakTower -> 1
+        FlakRack -> 1
+        Spire -> 1
+        Derelict -> 2
+        _ -> 2
+
+
+bH : BldKind -> Int
+bH k =
+    case k of
+        Bastion -> 3
+        CrawlerHQ -> 3
+        GenesisFont -> 3
+        Refinery -> 2
+        Smeltery -> 2
+        ExtractBloom -> 2
+        MotorPool -> 2
+        ChopShop -> 2
+        ForgeWomb -> 2
+        Airfield -> 2
+        SkyCradle -> 2
+        Watchtower -> 1
+        SpikeNest -> 1
+        PylonThorn -> 1
+        FlakTower -> 1
+        FlakRack -> 1
+        Spire -> 1
+        Derelict -> 2
+        _ -> 2
+
+
+-- power: positive = generates, negative = draws
+bPow : BldKind -> Int
+bPow k =
+    case k of
+        PowerStation -> 100
+        JunkTurbine -> 70
+        Spire -> 60
+        Bastion -> 0 - 10
+        CrawlerHQ -> 0 - 10
+        GenesisFont -> 0
+        Refinery -> 0 - 25
+        Smeltery -> 0 - 25
+        ExtractBloom -> 0 - 20
+        Billet -> 0
+        Bunkroom -> 0
+        Foundry -> 0 - 15
+        RatDen -> 0 - 15
+        Chrysalis -> 0 - 15
+        MotorPool -> 0 - 25
+        ChopShop -> 0 - 25
+        ForgeWomb -> 0 - 25
+        Airfield -> 0 - 20
+        Roost -> 0 - 20
+        SkyCradle -> 0 - 20
+        Watchtower -> 0 - 15
+        SpikeNest -> 0 - 10
+        PylonThorn -> 0 - 15
+        FlakTower -> 0 - 15
+        FlakRack -> 0 - 10
+        Armory -> 0 - 20
+        WarlordHall -> 0 - 20
+        AscendantGate -> 0 - 20
+        AegisNode -> 0 - 15
+        ArtilleryBeacon -> 0 - 40
+        ScrapMagnet -> 0 - 40
+        PurgeLens -> 0 - 40
+        Derelict -> 0
+
+
+bSup : BldKind -> Int
+bSup k =
+    case k of
+        Bastion -> 10
+        CrawlerHQ -> 10
+        GenesisFont -> 10
+        Billet -> 8
+        Bunkroom -> 8
+        Spire -> 8
+        _ -> 0
+
+
+bBuild : BldKind -> Int
+bBuild k =
+    bCost k // 6 + 120          -- slower + more spread: 300cr ~= 170t (5.7s),
+                               -- 900cr ~= 270t (9s), HQ ~= 536t (18s) at 30Hz
+
+
+bTier : BldKind -> Int
+bTier k =
+    case k of
+        Airfield -> 2
+        Roost -> 2
+        SkyCradle -> 2
+        ArtilleryBeacon -> 2
+        ScrapMagnet -> 2
+        PurgeLens -> 2
+        FlakTower -> 1
+        _ -> 1
+
+
+bSight : BldKind -> Int
+bSight k =
+    case k of
+        Watchtower -> 8
+        SpikeNest -> 7
+        PylonThorn -> 7
+        _ -> 6
+
+
+-- defense weapon: 0 damage = unarmed
+bDmg : BldKind -> Int
+bDmg k =
+    case k of
+        Watchtower -> 24
+        SpikeNest -> 24
+        PylonThorn -> 26
+        FlakTower -> 34
+        FlakRack -> 30
+        _ -> 0
+
+
+bDt : BldKind -> Int
+bDt k =
+    case k of
+        Watchtower -> 2
+        SpikeNest -> 1
+        PylonThorn -> 3
+        FlakTower -> 1
+        FlakRack -> 1
+        _ -> 0
+
+
+bRange : BldKind -> Int
+bRange k =
+    case k of
+        Watchtower -> 135
+        SpikeNest -> 125
+        PylonThorn -> 135
+        FlakTower -> 160
+        FlakRack -> 150
+        _ -> 0
+
+
+bCd : BldKind -> Int
+bCd k =
+    case k of
+        Watchtower -> 40
+        SpikeNest -> 42
+        PylonThorn -> 36
+        FlakTower -> 26
+        FlakRack -> 28
+        _ -> 0
+
+
+bAA : BldKind -> Bool
+bAA k =
+    case k of
+        FlakTower -> True
+        FlakRack -> True
+        PylonThorn -> True
+        _ -> False
+
+
+bGroundW : BldKind -> Bool
+bGroundW k =
+    case k of
+        Watchtower -> True
+        SpikeNest -> True
+        PylonThorn -> True
+        _ -> False
+
+
+-- producer class: -1 none, 0 infantry, 1 vehicle, 2 air
+bProduces : BldKind -> Int
+bProduces k =
+    case k of
+        Foundry -> 0
+        RatDen -> 0
+        Chrysalis -> 0
+        MotorPool -> 1
+        ChopShop -> 1
+        ForgeWomb -> 1
+        Airfield -> 2
+        Roost -> 2
+        SkyCradle -> 2
+        _ -> 0 - 1
+
+
+bIsHQ : BldKind -> Bool
+bIsHQ k =
+    case k of
+        Bastion -> True
+        CrawlerHQ -> True
+        GenesisFont -> True
+        _ -> False
+
+
+bIsRefinery : BldKind -> Bool
+bIsRefinery k =
+    case k of
+        Refinery -> True
+        Smeltery -> True
+        ExtractBloom -> True
+        _ -> False
+
+
+bIsTech : BldKind -> Bool
+bIsTech k =
+    case k of
+        Armory -> True
+        WarlordHall -> True
+        AscendantGate -> True
+        _ -> False
+
+
+bIsSuper : BldKind -> Bool
+bIsSuper k =
+    case k of
+        ArtilleryBeacon -> True
+        ScrapMagnet -> True
+        PurgeLens -> True
+        _ -> False
+
+
+-- the race's HQ / refinery / tech / supply kinds
+
+
+raceHQ : Race -> BldKind
+raceHQ r =
+    case r of
+        Compact -> Bastion
+        Combine -> CrawlerHQ
+        Vessari -> GenesisFont
+
+
+raceWorker : Race -> UnitKind
+raceWorker r =
+    case r of
+        Compact -> Hauler
+        Combine -> Reclaimer
+        Vessari -> TitheDrone
+
+
+raceCapturer : Race -> UnitKind
+raceCapturer r =
+    case r of
+        Compact -> Sapper
+        Combine -> Hijacker
+        Vessari -> Attuner
+
+
+-- the buildable structure list per race, sidebar order
+raceBlds : Race -> List BldKind
+raceBlds r =
+    case r of
+        Compact ->
+            [ PowerStation, Refinery, Billet, Foundry, Watchtower
+            , MotorPool, FlakTower, Armory, Airfield, ArtilleryBeacon ]
+
+        Combine ->
+            [ JunkTurbine, Smeltery, Bunkroom, RatDen, SpikeNest
+            , ChopShop, FlakRack, WarlordHall, Roost, ScrapMagnet ]
+
+        Vessari ->
+            [ Spire, ExtractBloom, Chrysalis, PylonThorn, ForgeWomb
+            , AegisNode, AscendantGate, SkyCradle, PurgeLens ]
+
+
+-- the trainable unit list per race, sidebar order
+raceUnits : Race -> List UnitKind
+raceUnits r =
+    case r of
+        Compact ->
+            [ Hauler, Rifle, Rocket, Sapper, ScoutCar
+            , Bulwark, Thumper, Kestrel ]
+
+        Combine ->
+            [ Reclaimer, Scrapper, Spiker, Hijacker, DuneBike
+            , Warthog, Scorcher, RamTruck, Vulture ]
+
+        Vessari ->
+            [ TitheDrone, Lancer, Nullifier, Attuner, Sliver
+            , Colossus, RiftSkiff ]
+
+
+-- structure prerequisite: which building must exist first
+bNeeds : BldKind -> List BldKind
+bNeeds k =
+    case k of
+        Refinery -> [ PowerStation ]
+        Foundry -> [ PowerStation ]
+        Billet -> [ PowerStation ]
+        MotorPool -> [ Refinery ]
+        Watchtower -> [ Foundry ]
+        FlakTower -> [ Foundry ]
+        Armory -> [ MotorPool ]
+        Airfield -> [ Armory ]
+        ArtilleryBeacon -> [ Armory ]
+        Smeltery -> [ JunkTurbine ]
+        RatDen -> [ JunkTurbine ]
+        Bunkroom -> [ JunkTurbine ]
+        ChopShop -> [ Smeltery ]
+        SpikeNest -> [ RatDen ]
+        FlakRack -> [ RatDen ]
+        WarlordHall -> [ ChopShop ]
+        Roost -> [ WarlordHall ]
+        ScrapMagnet -> [ WarlordHall ]
+        ExtractBloom -> [ Spire ]
+        Chrysalis -> [ Spire ]
+        ForgeWomb -> [ ExtractBloom ]
+        PylonThorn -> [ Chrysalis ]
+        AegisNode -> [ Chrysalis ]
+        AscendantGate -> [ ForgeWomb ]
+        SkyCradle -> [ AscendantGate ]
+        PurgeLens -> [ AscendantGate ]
+        _ -> []
+
+
+-- unit prerequisite: the producer plus (for tier 2) the tech building
+uNeeds : UnitKind -> List BldKind
+uNeeds k =
+    let
+        producer =
+            case uClass k of
+                0 ->
+                    case uRace k of
+                        Compact -> Foundry
+                        Combine -> RatDen
+                        Vessari -> Chrysalis
+
+                1 ->
+                    case uRace k of
+                        Compact -> MotorPool
+                        Combine -> ChopShop
+                        Vessari -> ForgeWomb
+
+                _ ->
+                    case uRace k of
+                        Compact -> Airfield
+                        Combine -> Roost
+                        Vessari -> SkyCradle
+
+        tech =
+            case uRace k of
+                Compact -> Armory
+                Combine -> WarlordHall
+                Vessari -> AscendantGate
+    in
+    if uTier k >= 2 && uClass k /= 2 then
+        [ producer, tech ]
+    else
+        [ producer ]
+
+
+-- vessari lattice radius (tiles) from Spire / GenesisFont
+latticeRadius : Int
+latticeRadius = 7
+
+
+-- adjacency radius (tiles) for normal base building
+baseRadius : Int
+baseRadius = 6
+
+
+-- wrecks: vehicles leave scrap worth a share of their cost
+scrapShare : Int -> Int
+scrapShare cost =
+    cost // 4
+
+
+-- building center in plain px (needs the footprint tables, so it lives
+-- here rather than in Types)
+bpx : Bld -> Int
+bpx b = b.tx * tileW + bW b.kind * tileW // 2
+
+
+bpy : Bld -> Int
+bpy b = b.ty * tileW + bH b.kind * tileW // 2

@@ -68,12 +68,27 @@ struct MarPageHost: View {
                     }
                 }
             } else if let err = runtime.lastError {
-                Text(err)
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    .padding()
+                // No view to draw, so the message IS the screen (ADR 0020).
+                // Back is offered only when the stack has something under
+                // this page: a cold launch has nothing to return to, and
+                // relaunching re-runs the `init` that just failed.
+                MarFailureView(
+                    kind: AppContext.shared.navPath.isEmpty ? .stuck : .page,
+                    detail: err
+                )
+                .padding(16)
             } else {
                 EmptyView()
+            }
+        }
+        // A failure in `update`, a tagger or an effect leaves the app
+        // running, so its message sits over the live screen instead of
+        // replacing it, and goes away on the next dispatch that works.
+        .safeAreaInset(edge: .bottom) {
+            if runtime.lastErrorSite == .dispatch, let err = runtime.lastError {
+                MarFailureView(kind: .dispatch, detail: err)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
             }
         }
         .navigationTitle(runtime.title.isEmpty ? runtime.path : runtime.title)
@@ -88,6 +103,15 @@ struct MarPageHost: View {
     private static func isNativeContainer(_ view: MarView) -> Bool {
         switch view.tag {
         case "navigationStack", "form", "uiList", "centered":
+            return true
+        case "canvas":
+            // A full-bleed game surface: MarCanvasView is a GeometryReader
+            // that fills its container and reports that size via onResize.
+            // Wrapping it in the ScrollView+VStack branch below would
+            // collapse the GeometryReader to its ~10pt ideal height (the
+            // classic "GeometryReader inside a ScrollView" trap) — which
+            // rendered the whole game as a thin strip at the top. Render it
+            // directly so it takes the full content area.
             return true
         default:
             return false

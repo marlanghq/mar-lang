@@ -1,0 +1,25 @@
+{
+  "name": "quiz-duel",
+  "admins": [
+    "mfdavid@gmail.com"
+  ],
+  "auth": {
+    "sessionSecret": "env:SESSION_SECRET"
+  },
+  "server": {
+    "port": 3024
+  },
+  "mail": {
+    "from": "no-reply@segunda.tech",
+    "smtpHost": "smtp.resend.com",
+    "smtpUsername": "resend",
+    "smtpPassword": "env:SMTP_PASSWORD"
+  },
+  "deploy": {
+    "fly": {
+      "app": "mar-quiz-duel",
+      "region": "gru",
+      "memory": "256mb"
+    }
+  }
+}

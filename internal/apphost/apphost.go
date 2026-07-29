@@ -126,10 +126,15 @@ func MakeFullstackBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram)
 }
 
 // PickFrontMods extracts the subset of project modules reachable from the
-// pages' origin modules, then appends a synthetic `__entry = appFrontend
-// [...pages]` declaration so the JS runtime can boot the bundle by
-// looking up `__entry`. Errors when a page lacks provenance (i.e. wasn't
-// declared at top level).
+// pages' origin modules, narrows each one to the declarations the pages
+// actually use, then appends a synthetic `__entry = appFrontend [...pages]`
+// declaration so the JS runtime can boot the bundle by looking up `__entry`.
+// Errors when a page lacks provenance (i.e. wasn't declared at top level), or
+// when client-reachable code calls a builtin that exists only on the server.
+//
+// The narrowing is what keeps the server's half of a fullstack app out of the
+// browser: importing a module for one type alias used to ship everything else
+// in it, schema and service handlers included. See prune.go.
 func PickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, error) {
 	roots := map[string]bool{}
 	pageRefs := make([]ast.Expr, 0, len(pages))
@@ -172,6 +177,22 @@ func PickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, er
 			},
 		},
 	}
+	// Built here, not parsed, so the typechecker never sees it. Nothing in
+	// it needs elaborating — no numeric literals, no polymorphic references,
+	// just a call over the page references collected above. The claim is
+	// explicit because the evaluating and serializing sides refuse a tree
+	// that has not been through the checker.
+	entryModule.MarkElaborated()
+
+	merged = pruneToPageReachable(merged, pageRefs)
+	if leaks := findBackendOnlyLeaks(merged); len(leaks) > 0 {
+		l := leaks[0]
+		return nil, fmt.Errorf(
+			"%s.%s runs in the browser and calls `%s`, which only exists on the server.\n"+
+				"  Move the call into a service handler and reach it from the page with Service.call.",
+			l.Module, l.Decl, l.Builtin)
+	}
+
 	merged = append(merged, entryModule)
 	return merged, nil
 }

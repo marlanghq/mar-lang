@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 
 	"mar/internal/ast"
@@ -21,13 +22,53 @@ func errorf(pos ast.Pos, format string, args ...any) *EvalError {
 	return &EvalError{Pos: pos, Message: fmt.Sprintf(format, args...)}
 }
 
+// internalErrorf reports a state the TYPE CHECKER already rules out — an `if`
+// whose condition is not a Bool, a field read on something that is not a
+// record, applying a value that is not a function.
+//
+// These are not mistakes a user can make in a program that compiles, so
+// reporting them the same way as "no such file" sends the reader looking for a
+// bug in their own code that is not there. Reaching one means the checker let
+// something through, or an elaboration mark the evaluator depends on went
+// missing (ADR 0016, ADR 0017) — a compiler bug, and the message says so.
+//
+// Keeping them as errors rather than panics is deliberate: the server's
+// request boundary turns an error into a 500 for one request, while a panic in
+// a goroutine takes the process down. The guard is the invariant; the wording
+// is what tells the two kinds of failure apart.
+func internalErrorf(pos ast.Pos, format string, args ...any) *EvalError {
+	return &EvalError{
+		Pos: pos,
+		Message: "internal error: " + fmt.Sprintf(format, args...) +
+			" — a checked program cannot do this, so this is a bug in Mar rather than in your code. Please report it.",
+	}
+}
+
 // Eval evaluates an AST expression against a runtime environment.
+//
+// This is the entry point from outside the evaluator, so it starts the call
+// chain at depth zero; `evalAt` carries the depth from there.
 func Eval(e ast.Expr, env *Env) (Value, error) {
+	return evalAt(e, env, 0)
+}
+
+func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 	switch n := e.(type) {
 	case *ast.EInt:
+		// AsDecimal is the typechecker's elaboration: this literal sat in a
+		// Decimal context, so it IS a Decimal. Scale 0 — an integer literal
+		// has no fractional digits, and `+` takes the larger scale, so
+		// `1 + 1.50` lands on 2.50 without a rule of its own.
+		if n.AsDecimal {
+			return VDecimal{Coef: big.NewInt(n.Value), Scale: 0}, nil
+		}
 		return VInt{V: n.Value}, nil
-	case *ast.EFloat:
-		return VFloat{V: n.Value}, nil
+	case *ast.EDecimal:
+		coef, ok := new(big.Int).SetString(n.Coef, 10)
+		if !ok {
+			return nil, errorf(n.Pos, "invalid decimal literal")
+		}
+		return VDecimal{Coef: coef, Scale: n.Scale}, nil
 	case *ast.EString:
 		return VString{V: n.Value}, nil
 	case *ast.EChar:
@@ -36,6 +77,9 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 		return VUnit{}, nil
 
 	case *ast.EVar:
+		if v, ok := lookupElaborated(n.Impl, env); ok {
+			return v, nil
+		}
 		v, ok := env.Lookup(n.Name)
 		if !ok {
 			return nil, errorf(n.Pos, "unbound name: %s", n.Name)
@@ -43,6 +87,9 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 		return v, nil
 
 	case *ast.EQualified:
+		if v, ok := lookupElaborated(n.Impl, env); ok {
+			return v, nil
+		}
 		key := joinName(n.Module, n.Name)
 		if v, ok := env.Lookup(key); ok {
 			return v, nil
@@ -68,47 +115,69 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 		return v, nil
 
 	case *ast.EApp:
-		fn, err := Eval(n.Fn, env)
+		fn, err := evalAt(n.Fn, env, depth)
 		if err != nil {
 			return nil, err
 		}
-		arg, err := Eval(n.Arg, env)
+		arg, err := evalAt(n.Arg, env, depth)
 		if err != nil {
 			return nil, err
 		}
-		return apply(fn, arg)
+		return applyAt(fn, arg, depth)
 
 	case *ast.EBinop:
 		op, ok := env.Lookup(n.Op)
 		if !ok {
 			return nil, errorf(n.Pos, "unknown operator: %s", n.Op)
 		}
-		left, err := Eval(n.Left, env)
+		left, err := evalAt(n.Left, env, depth)
 		if err != nil {
 			return nil, err
 		}
-		right, err := Eval(n.Right, env)
+		right, err := evalAt(n.Right, env, depth)
 		if err != nil {
 			return nil, err
 		}
-		out, err := apply(op, left)
+		// Every operator is a two-argument builtin, and reaching it through
+		// applyAt twice means two argument slices and one throwaway
+		// partially-applied closure for each `+` in the program. Calling the
+		// builtin directly skips all of it. The conditions are checked rather
+		// than assumed so anything unusual falls through to the slow path.
+		if f, isFn := op.(VFn); isFn && f.Native != nil && f.Arity == 2 && len(f.Applied) == 0 {
+			if depth >= MaxCallDepth {
+				return nil, errorf(n.Pos, "too much recursion: more than %d nested calls. "+
+					"A function is calling itself without reaching a base case", MaxCallDepth)
+			}
+			args := []Value{left, right}
+			// `|>` and `<|` APPLY an operand, so the depth has to ride along
+			// here exactly as it does in applyAt — otherwise recursion written
+			// with a pipe would slip past the guard.
+			for i := range args {
+				if af, isF := args[i].(VFn); isF {
+					af.Depth = depth + 1
+					args[i] = af
+				}
+			}
+			return f.Native(args)
+		}
+		out, err := applyAt(op, left, depth)
 		if err != nil {
 			return nil, err
 		}
-		return apply(out, right)
+		return applyAt(out, right, depth)
 
 	case *ast.ENegate:
-		v, err := Eval(n.Inner, env)
+		v, err := evalAt(n.Inner, env, depth)
 		if err != nil {
 			return nil, err
 		}
 		switch v := v.(type) {
 		case VInt:
 			return VInt{V: -v.V}, nil
-		case VFloat:
-			return VFloat{V: -v.V}, nil
+		case VDecimal:
+			return VDecimal{Coef: new(big.Int).Neg(v.Coef), Scale: v.Scale}, nil
 		}
-		return nil, errorf(n.Pos, "negate: unsupported type")
+		return nil, internalErrorf(n.Pos, "negate applied to something that is not a number")
 
 	case *ast.ELambda:
 		paramNames := make([]string, len(n.Params))
@@ -131,34 +200,34 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 		}, nil
 
 	case *ast.EIf:
-		c, err := Eval(n.Cond, env)
+		c, err := evalAt(n.Cond, env, depth)
 		if err != nil {
 			return nil, err
 		}
 		b, ok := c.(VBool)
 		if !ok {
-			return nil, errorf(n.Cond.Position(), "if condition not Bool")
+			return nil, internalErrorf(n.Cond.Position(), "the condition of an `if` evaluated to something that is not a Bool")
 		}
 		if b.V {
-			return Eval(n.Then, env)
+			return evalAt(n.Then, env, depth)
 		}
-		return Eval(n.Else, env)
+		return evalAt(n.Else, env, depth)
 
 	case *ast.ELet:
 		cur := env
 		for _, b := range n.Bindings {
-			val, err := Eval(b.Body, cur)
+			val, err := evalAt(b.Body, cur, depth)
 			if err != nil {
 				return nil, err
 			}
 			cur = bindPattern(b.Pattern, val, cur)
 		}
-		return Eval(n.Body, cur)
+		return evalAt(n.Body, cur, depth)
 
 	case *ast.ETuple:
 		members := make([]Value, len(n.Members))
 		for i, m := range n.Members {
-			v, err := Eval(m, env)
+			v, err := evalAt(m, env, depth)
 			if err != nil {
 				return nil, err
 			}
@@ -169,7 +238,7 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 	case *ast.EList:
 		elems := make([]Value, len(n.Elements))
 		for i, e := range n.Elements {
-			v, err := Eval(e, env)
+			v, err := evalAt(e, env, depth)
 			if err != nil {
 				return nil, err
 			}
@@ -181,7 +250,7 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 		fields := make(map[string]Value, len(n.Fields))
 		order := make([]string, 0, len(n.Fields))
 		for _, f := range n.Fields {
-			v, err := Eval(f.Value, env)
+			v, err := evalAt(f.Value, env, depth)
 			if err != nil {
 				return nil, err
 			}
@@ -191,20 +260,20 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 		return VRecord{Fields: fields, Order: order}, nil
 
 	case *ast.ERecordUpdate:
-		base, err := Eval(n.Record, env)
+		base, err := evalAt(n.Record, env, depth)
 		if err != nil {
 			return nil, err
 		}
 		rec, ok := base.(VRecord)
 		if !ok {
-			return nil, errorf(n.Pos, "record update on non-record")
+			return nil, internalErrorf(n.Pos, "a record update was applied to something that is not a record")
 		}
 		newFields := make(map[string]Value, len(rec.Fields))
 		for k, v := range rec.Fields {
 			newFields[k] = v
 		}
 		for _, f := range n.Fields {
-			v, err := Eval(f.Value, env)
+			v, err := evalAt(f.Value, env, depth)
 			if err != nil {
 				return nil, err
 			}
@@ -213,13 +282,13 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 		return VRecord{Fields: newFields, Order: rec.Order}, nil
 
 	case *ast.EFieldAccess:
-		base, err := Eval(n.Record, env)
+		base, err := evalAt(n.Record, env, depth)
 		if err != nil {
 			return nil, err
 		}
 		rec, ok := base.(VRecord)
 		if !ok {
-			return nil, errorf(n.Pos, "field access on non-record (got %T)", base)
+			return nil, internalErrorf(n.Pos, "a field was read from something that is not a record (got %T)", base)
 		}
 		v, ok := rec.Fields[n.Field]
 		if !ok {
@@ -246,7 +315,7 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 		}, nil
 
 	case *ast.ECase:
-		subject, err := Eval(n.Subject, env)
+		subject, err := evalAt(n.Subject, env, depth)
 		if err != nil {
 			return nil, err
 		}
@@ -254,7 +323,7 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 			bindings, ok := matchPattern(branch.Pattern, subject)
 			if ok {
 				branchEnv := env.BindMany(bindings)
-				return Eval(branch.Body, branchEnv)
+				return evalAt(branch.Body, branchEnv, depth)
 			}
 		}
 		return nil, errorf(n.Pos, "no case branch matched")
@@ -264,20 +333,51 @@ func Eval(e ast.Expr, env *Env) (Value, error) {
 	}
 }
 
+// MaxCallDepth bounds how deep the evaluator will recurse before refusing.
+//
+// Runaway recursion used to take the whole process with it. Go's stack
+// overflow is a FATAL error, not a panic: `recover()` never runs, the deferred
+// handlers at the request boundary never run, and a server answering other
+// users dies because one request called a function that calls itself. Measured
+// before this guard: about 1.1 seconds to consume the 1 GB default stack.
+//
+// The limit is chosen to be far past any honest recursion and far short of the
+// stack Go will kill us over. Mar's own list functions are Go loops, so user
+// recursion is usually shallow; a hand-written recursive fold over a large list
+// is the deep case, and 100k frames covers it with room to spare.
+const MaxCallDepth = 100_000
+
 // Apply applies a function value to one argument, handling currying.
 // Exported entry point used by the unified server to invoke handlers.
 func Apply(fn Value, arg Value) (Value, error) {
 	return apply(fn, arg)
 }
 
+// apply is the entry point for callers outside the evaluator — chiefly the
+// builtins that invoke a user function (List.map, Dict.foldl, Random.andThen).
+// It resumes the depth the function value was stamped with rather than starting
+// over at zero: without that, recursion routed through a higher-order builtin
+// would reset the count on every lap and never trip the guard.
 func apply(fn Value, arg Value) (Value, error) {
+	if f, ok := fn.(VFn); ok {
+		return applyAt(fn, arg, f.Depth)
+	}
+	return applyAt(fn, arg, 0)
+}
+
+func applyAt(fn Value, arg Value, depth int) (Value, error) {
+	if depth >= MaxCallDepth {
+		return nil, fmt.Errorf("too much recursion: more than %d nested calls. "+
+			"A function is calling itself without reaching a base case", MaxCallDepth)
+	}
 	f, ok := fn.(VFn)
 	if !ok {
-		return nil, fmt.Errorf("apply: not a function (got %T)", fn)
+		return nil, internalErrorf(ast.Pos{}, "a value that is not a function was applied (got %T)", fn)
 	}
 	applied := append(append([]Value{}, f.Applied...), arg)
 	if len(applied) < f.Arity {
-		// Partial application: return a new closure.
+		// Partial application: return a new closure. It keeps this call's
+		// depth so that finishing the application later resumes the count.
 		return VFn{
 			Params:  f.Params,
 			Body:    f.Body,
@@ -285,10 +385,23 @@ func apply(fn Value, arg Value) (Value, error) {
 			Native:  f.Native,
 			Applied: applied,
 			Arity:   f.Arity,
+			Depth:   depth,
 		}, nil
 	}
 	// Fully applied
 	if f.Native != nil {
+		// A builtin receives plain values and has no way to be told how deep
+		// it already is, so the depth rides on the function arguments it is
+		// about to call. `List.foldl (\_ _ -> loop n) 0 [1]` recurses forever
+		// through Go frames; stamping the lambda is what lets the guard see it.
+		// Indexed rather than ranged, to avoid copying each interface value.
+		// Measured as a wash against `range` — kept for the smaller loop body.
+		for i := range applied {
+			if af, isFn := applied[i].(VFn); isFn {
+				af.Depth = depth + 1
+				applied[i] = af
+			}
+		}
 		return f.Native(applied)
 	}
 	// Closure: bind params in env, evaluate body
@@ -298,9 +411,9 @@ func apply(fn Value, arg Value) (Value, error) {
 	}
 	body, ok := f.Body.(ast.Expr)
 	if !ok {
-		return nil, fmt.Errorf("apply: closure body is not an Expr")
+		return nil, internalErrorf(ast.Pos{}, "a closure carries a body that is not an expression")
 	}
-	return Eval(body, env)
+	return evalAt(body, env, depth+1)
 }
 
 func joinName(mod ast.ModuleName, name string) string {
@@ -308,6 +421,17 @@ func joinName(mod ast.ModuleName, name string) string {
 		return name
 	}
 	return strings.Join(mod, ".") + "." + name
+}
+
+// lookupElaborated resolves the implementation the typechecker chose for a
+// reference (ast.EVar.Impl / ast.EQualified.Impl). Empty means the checker had
+// nothing to say, which is every reference but a Decimal List.sum. A miss
+// falls through to the ordinary name so an unelaborated tree still runs.
+func lookupElaborated(impl string, env *Env) (Value, bool) {
+	if impl == "" {
+		return nil, false
+	}
+	return env.Lookup(impl)
 }
 
 // matchPattern attempts to match v against pat. Returns the bindings if

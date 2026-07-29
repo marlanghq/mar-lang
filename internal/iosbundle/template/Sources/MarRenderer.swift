@@ -58,6 +58,11 @@ struct MarRenderer: View {
             // <img class="mar-image"> + applyImageAttrs.
             MarUIImage(view: view)
 
+        case "canvas":
+            // 2D draw-list (Canvas.*). Replays the shape list every frame via
+            // SwiftUI Canvas and threads onTap/onResize/onDrag/onRelease.
+            MarCanvasView(view: view, dispatch: dispatch)
+
         case "button":
             Button(view.text) {
                 if let msg = view.msg {

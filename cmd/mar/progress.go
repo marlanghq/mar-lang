@@ -64,7 +64,7 @@ func clearLine() {
 //
 // TTY: animates frames in-place, then wipes and redraws as
 // "  ✓ <label>" once fn returns. One line total per step. We
-// deliberately omit the "[mar fly deploy]" prefix used elsewhere
+// deliberately omit the "[mar deploy]" prefix used elsewhere
 // in the banner — these steps fire in quick succession near the
 // banner and the prefix adds noise without information.
 //

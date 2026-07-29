@@ -1,0 +1,264 @@
+module Frontend.Showcase.CanvasDemo exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, footer
+    , height, lines
+    )
+import Canvas exposing
+    ( canvas, rect, circle, triangle, group, rgb, rgba
+    , watchSize, onTap
+    )
+
+
+-- Demo: `canvas` — the 2D draw-list for games and graphics.
+--
+-- Signature:
+--   Canvas.canvas
+--     : CanvasMode -> List (Attr Canvas) -> List Shape -> View msg
+--
+-- The mode is mandatory: Pixelated (1x buffer, crisp 8-bit upscale,
+-- the 60fps game choice) or Crisp (retina buffer, sharp text). Shapes
+-- are plain data: rect x y w h color, circle cx cy r color,
+-- triangle x1 y1 x2 y2 x3 y3 color, Canvas.text x y size align color
+-- str, and group [Transform] [Shape] to move/rotate/scale/fade a
+-- bunch as one thing.
+--
+-- A canvas normally fills the screen (games own the viewport); the
+-- universal `height (lines n)` attr is what makes these inline strips
+-- possible. Each canvas reports its real box via watchSize, so the
+-- drawings below center themselves at any width.
+
+
+type alias Dot =
+    { x : Int, y : Int }
+
+
+type alias Model =
+    { w : Int          -- live width of the demo strips, from watchSize
+    , dots : List Dot  -- tap-to-paint marks
+    , ang : Int        -- windmill angle, degrees
+    }
+
+
+type Msg
+    = Resized Int Int
+    | Tapped Int Int
+    | Tick Time
+
+
+init : (Model, Cmd Msg)
+init = ({ w = 340, dots = [], ang = 0 }, Cmd.none)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Resized w _ ->
+            ({ model | w = w }, Cmd.none)
+
+        Tapped x y ->
+            ({ model | dots = List.concat [ model.dots, [ { x = x, y = y } ] ] }, Cmd.none)
+
+        Tick _ ->
+            ({ model | ang = modBy 360 (model.ang + 3) }, Cmd.none)
+
+
+-- ===== strip 1: every shape primitive =====
+
+
+sky : Color
+sky = rgb 15 26 38
+
+
+shapesStrip : Model -> View Msg
+shapesStrip m =
+    let
+        cx = m.w // 2
+    in
+    canvas Pixelated [ watchSize Resized, height (lines 9) ]
+        [ rect 0 0 m.w 216 sky
+        , rect (cx - 150) 140 300 40 (rgb 34 84 48)
+        , circle (cx + 80) 60 26 (rgb 250 220 100)
+        , triangle (cx - 90) 140 (cx - 50) 70 (cx - 10) 140 (rgb 90 110 130)
+        , triangle (cx - 40) 140 (cx - 10) 90 (cx + 20) 140 (rgb 70 90 110)
+        , rect (cx - 4) 96 8 44 (rgb 120 80 50)
+        , circle (cx - 1) 84 18 (rgb 60 120 70)
+        , Canvas.text cx 22 12 Canvas.Center (rgb 235 240 245) "rect, circle, triangle, text"
+        ]
+
+
+-- ===== strip 2: tap to paint (onTap gives canvas-local coords) =====
+
+
+paintStrip : Model -> View Msg
+paintStrip m =
+    let
+        cx = m.w // 2
+        hint = if List.isEmpty m.dots then "tap anywhere" else "keep going"
+    in
+    canvas Pixelated [ onTap Tapped, height (lines 9) ]
+        (List.concat
+            [ [ rect 0 0 m.w 216 (rgb 24 22 30) ]
+            , List.map (\d -> circle d.x d.y 9 (rgba 255 170 60 60)) m.dots
+            -- Hint as a floating pill, drawn LAST: the dark chip keeps it
+            -- legible even when a tapped dot lands right under it, and it's
+            -- big enough (16) to read at a glance.
+            , [ rect (cx - 74) 13 148 26 (rgb 44 42 54)
+              , Canvas.text cx 26 16 Canvas.Center (rgb 232 230 238) hint
+              ]
+            ]
+        )
+
+
+-- ===== strip 3: group + Translate/Rotate (a windmill on a timer) =====
+
+
+blade : Int -> Shape
+blade turn =
+    group [ Canvas.Rotate turn ]
+        [ triangle 0 0 60 (0 - 12) 60 12 (rgb 226 220 205) ]
+
+
+windmillStrip : Model -> View Msg
+windmillStrip m =
+    let
+        cx = m.w // 2
+    in
+    canvas Pixelated [ height (lines 9) ]
+        [ rect 0 0 m.w 216 (rgb 130 180 220)
+        , rect 0 176 m.w 40 (rgb 96 140 80)
+        , triangle (cx - 20) 176 cx 80 (cx + 20) 176 (rgb 150 100 70)
+        , group [ Canvas.Translate cx 84, Canvas.Rotate m.ang ]
+            [ blade 0, blade 90, blade 180, blade 270 ]
+        , circle cx 84 6 (rgb 70 50 40)
+        ]
+
+
+-- ===== strip 4: rgba per shape vs Canvas.Alpha per group =====
+
+
+puff : Int -> Color -> Color -> List Shape
+puff ox lit shade =
+    [ circle (ox + 40) 60 26 lit
+    , circle (ox + 64) 66 19 shade
+    ]
+
+
+alphaStrip : Model -> View Msg
+alphaStrip m =
+    let
+        lx = m.w // 2 - 130
+        rx = m.w // 2 + 26
+    in
+    canvas Pixelated [ height (lines 7) ]
+        [ rect 0 0 m.w 168 sky
+        -- left: rgba on each circle — the overlap paints twice and shows a seam
+        , group [] (puff lx (rgba 232 238 246 45) (rgba 190 200 215 45))
+        -- right: opaque circles inside one Alpha group — composited once, even
+        , group [ Canvas.Alpha 45 ] (puff rx (rgb 232 238 246) (rgb 190 200 215))
+        , Canvas.text (lx + 52) 110 10 Canvas.Center (rgb 170 180 195) "rgba each"
+        , Canvas.text (rx + 52) 110 10 Canvas.Center (rgb 170 180 195) "Alpha group"
+        ]
+
+
+-- ===== strip 5: blend modes over one grey backdrop =====
+
+
+blendPanel : Int -> Blend -> String -> List Shape
+blendPanel ox mode label =
+    [ group [ Canvas.Blend mode ]
+        [ circle (ox + 36) 62 24 (rgb 200 60 30) ]
+    , Canvas.text (ox + 36) 112 10 Canvas.Center (rgb 225 228 232) label
+    ]
+
+
+blendStrip : Model -> View Msg
+blendStrip m =
+    let
+        x0 = m.w // 2 - 148
+    in
+    canvas Pixelated [ height (lines 7) ]
+        (List.concat
+            [ [ rect 0 0 m.w 168 (rgb 108 108 108) ]
+            , blendPanel x0 Canvas.Normal "Normal"
+            , blendPanel (x0 + 76) Canvas.Add "Add"
+            , blendPanel (x0 + 152) Canvas.Multiply "Multiply"
+            , blendPanel (x0 + 228) Canvas.Screen "Screen"
+            ]
+        )
+
+
+-- ===== strip 6: Erase inside an Alpha group (the torch idiom) =====
+
+
+torchStrip : Model -> View Msg
+torchStrip m =
+    let
+        cx = m.w // 2
+    in
+    canvas Pixelated [ height (lines 7) ]
+        [ rect 0 0 m.w 168 (rgb 30 90 45)
+        , circle (cx - 60) 84 20 (rgb 240 210 120)
+        , circle (cx + 60) 84 20 (rgb 240 210 120)
+        -- darkness and its hole live in ONE Alpha group, so the erase is
+        -- scoped to the dark: the world underneath survives
+        , group [ Canvas.Alpha 100 ]
+            [ rect 0 0 m.w 168 (rgb 8 8 14)
+            , group [ Canvas.Blend Canvas.Erase ]
+                [ circle (cx - 60) 84 34 (rgb 255 255 255)
+                , circle (cx - 60) 84 46 (rgba 255 255 255 40)
+                ]
+            ]
+        ]
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Canvas" ]
+        [ form
+            [ section
+                [ header "Shapes"
+                , footer "rect, circle, triangle and Canvas.text on a Pixelated canvas, inline in the page via height (lines 9)."
+                ]
+                [ shapesStrip model ]
+            , section
+                [ header "Input: onTap"
+                , footer "onTap delivers canvas-local x y. Each tap appends a translucent rgba dot to the model."
+                ]
+                [ paintStrip model ]
+            , section
+                [ header "Group & transforms"
+                , footer "One group [Translate, Rotate] spins four triangle blades as a single thing; a Time.every sub advances the angle."
+                ]
+                [ windmillStrip model ]
+            , section
+                [ header "Transparency"
+                , footer "Same 45% both sides. Per-shape rgba paints every overlap twice and shows the seam; Canvas.Alpha composites the group once, so it fades as one object."
+                ]
+                [ alphaStrip model ]
+            , section
+                [ header "Blend modes"
+                , footer "The same red disc over the same grey. Normal covers, Add sums light, Multiply darkens, Screen lightens without clipping."
+                ]
+                [ blendStrip model ]
+            , section
+                [ header "Erase"
+                , footer "Canvas.Blend Canvas.Erase punches holes in its enclosing Alpha group: the darkness loses pixels, the world underneath does not. One torch is lit, one is swallowed."
+                ]
+                [ torchStrip model ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/showcase/canvas"
+        , title = "Canvas"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Time.every (Time.millis 40) Tick
+        }

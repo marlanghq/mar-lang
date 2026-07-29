@@ -216,7 +216,7 @@ The runtime carries the default through to:
 
 Today the entity field carries `Optional`, `Primary`, `Auto`,
 `NotNull`. Add `Default Value` (using the existing runtime `Value`
-type, supports String / Int / Bool / Float).
+type, supports String / Int / Bool).
 
 ### 2. Entity.belongsTo (NEW)
 

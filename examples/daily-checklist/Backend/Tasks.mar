@@ -117,13 +117,10 @@ addTaskImpl input user =
 -- is min(0, min(positions) - 1) — always less than every
 -- existing position.
 --
--- Mar's List.foldl signature is `(b -> a -> b) -> b -> List a -> b`
--- — accumulator first, element second (Elm-style). The lambda
--- takes (acc, t).
 frontPosition : List Shared.TodoItem -> Int
 frontPosition existing =
     List.foldl
-        (\acc t -> if t.position <= acc then t.position - 1 else acc)
+        (\t acc -> if t.position <= acc then t.position - 1 else acc)
         0
         existing
 

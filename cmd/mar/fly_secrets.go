@@ -11,7 +11,7 @@
 //     Railway, AWS) extends this same surface — `mar render secrets
 //     {set,list,unset}` — without users learning provider CLIs.
 //
-// Bulk pushing is handled automatically by `mar fly deploy` (it
+// Bulk pushing is handled automatically by `mar deploy` (it
 // prompts for any env: refs missing on the Fly app, then pushes
 // them with the deploy). The set/list/unset trio is the targeted
 // complement for after-the-fact rotation and inspection.
@@ -96,7 +96,7 @@ func flySecretsUsage() string {
 		"                              against " + colorMagenta("mar.json") + " (missing vs orphaned).\n" +
 		"  " + name("unset") + " NAME [path]          Remove a secret from the Fly app. Confirms.\n" +
 		"\n" +
-		hdr("Note:") + " bulk pushing is handled by " + run("fly deploy") + ", it prompts\n" +
+		hdr("Note:") + " bulk pushing is handled by " + run("deploy") + ", it prompts\n" +
 		"for any " + colorMagenta("env:VAR") + " ref declared in " + colorMagenta("mar.json") + " that isn't yet set\n" +
 		"on the Fly app and pushes them in one shot. Use the commands\n" +
 		"above only for targeted rotation / inspection after the fact.\n" +
@@ -285,7 +285,7 @@ func runFlySecretsList(path string) int {
 	if missing > 0 {
 		fprintHint("%d declared secret(s) not set on Fly. Run %s to push them\n"+
 			"      (deploy prompts for any missing values).",
-			missing, flySuggestion("deploy", path))
+			missing, cmdSuggest("deploy"))
 	}
 	if orphan > 0 {
 		fmt.Printf("  %s orphan secret(s) are set on Fly but not referenced in %s.\n",
@@ -335,7 +335,7 @@ func runFlySecretsUnset(args []string) int {
 	if containsString(declared, name) {
 		fprintWarn("%s is still referenced in mar.json, unsetting it will block\n"+
 			"      the next %s and break the running app on next restart.",
-			colorMagenta(name), cmdSuggest("fly deploy"))
+			colorMagenta(name), cmdSuggest("deploy"))
 	}
 
 	fmt.Printf("Unset %s from Fly app %s?\n",

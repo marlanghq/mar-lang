@@ -95,7 +95,9 @@ func TestGenerateMaterializesXcodeProject(t *testing.T) {
 	}
 
 	// (d) Info.plist substitutions: DisplayName goes in literally
-	// (Apple home-screen label), MarBaseURL is the production URL.
+	// (Apple home-screen label), MarBaseURL is the production URL,
+	// MarAppName is the RAW manifest name (what mar dev advertises
+	// over Bonjour — the DEBUG auto-connect matches against it).
 	infoBytes, err := os.ReadFile(filepath.Join(projectDir, "Info.plist"))
 	if err != nil {
 		t.Fatalf("read Info.plist: %v", err)
@@ -104,6 +106,7 @@ func TestGenerateMaterializesXcodeProject(t *testing.T) {
 	for _, want := range []string{
 		"Notes Fullstack",           // DisplayName literal (with space)
 		"https://notes.example.com", // DefaultBaseURL
+		"<key>MarAppName</key>",     // Bonjour-guard identity key
 	} {
 		if !strings.Contains(info, want) {
 			t.Errorf("Info.plist should contain %q", want)
@@ -112,6 +115,7 @@ func TestGenerateMaterializesXcodeProject(t *testing.T) {
 	for _, raw := range []string{
 		"__MAR_DISPLAY_NAME__",
 		"__MAR_DEFAULT_BASE_URL__",
+		"__MAR_PROJECT_NAME__",
 	} {
 		if strings.Contains(info, raw) {
 			t.Errorf("Info.plist contains unsubstituted %s", raw)

@@ -7,6 +7,10 @@ import Foundation
 indirect enum Expr {
     case int(Int)
     case float(Double)
+    /// Decimal literal. `coef` is the digit string exactly as the
+    /// serializer shipped it (34 digits overflow Int, so it rides as
+    /// text); scale is the number of fractional places.
+    case decimal(coef: String, scale: Int)
     case string(String)
     /// Single Unicode code point. Wire format from Go side: EChar
     /// payload carries the int code point; we wrap it in Unicode.Scalar.

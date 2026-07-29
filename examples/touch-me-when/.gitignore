@@ -1,0 +1,15 @@
+# Database files
+*.db*
+*.sqlite*
+
+# Build artifacts
+*.tar.gz
+dist/
+
+# Local secrets
+.env
+
+# AI assistants
+.claude/
+.codex/
+.cursor/

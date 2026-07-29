@@ -18,16 +18,28 @@ import Foundation
 // touching them again. Letting Swift 6 infer Sendable would force
 // us to refactor the runtime model unnecessarily; this conformance
 // captures the invariant we actually rely on.
-indirect enum MarValue: @unchecked Sendable {
+// NOT `indirect enum` as a whole: a blanket `indirect` heap-boxes EVERY value,
+// including `.int`, behind an allocation + ARC retain/release. A canvas frame
+// builds millions of MarValues (every `rect x y w h c` is 5 scalar args, times
+// hundreds of shapes), so that boxing dominated the interpreter — it's why iOS
+// native (20fps) trailed the same tree-walk running on JavaScriptCore in the
+// web view (30fps): JSC tags small ints and doesn't refcount them; we were
+// heap-allocating them. Only `.view` embeds a MarValue BY VALUE directly
+// (MarView.msg is `MarValue?`), so only it needs `indirect` to break the
+// size recursion. Every other case holds MarValues through an Array /
+// Dictionary / class (`.list`, `.record`, `.ctor`, `.fn`, …) — those are
+// already references, so the enum stays finite-sized and scalars live inline
+// on the stack with no allocation and no ARC traffic.
+enum MarValue: @unchecked Sendable {
     case int(Int)
     case float(Double)
     case string(String)
     case bool(Bool)
     case unit
-    /// Time interval normalized to seconds. Built only via Time.*
-    /// smart constructors; user code never coerces an Int into one
-    /// directly.
-    case duration(Int)
+    /// Time interval normalized to (fractional) seconds. Built only via
+    /// Time.* smart constructors (Time.millis gives sub-second); user
+    /// code never coerces a number into one directly.
+    case duration(Double)
     /// Absolute moment, Unix milliseconds. Built via Time.now or
     /// Time.fromIso. Wire format is `{"__time": "ISO 8601"}`.
     case time(Int)
@@ -37,6 +49,13 @@ indirect enum MarValue: @unchecked Sendable {
     /// JS code points: `String.toList "🇧🇷"` yields two Chars, not
     /// one. Wire format: `{"__char": "x"}`.
     case char(Unicode.Scalar)
+    /// Exact base-10 number (see MarDecimal.swift). Wire format:
+    /// `{"__dec": "1.50"}` — a string, never a JSON number.
+    case decimal(MarDec)
+    /// The inert exact quotient `/` produces. Opaque: no codec, no
+    /// arithmetic, not comparable — only Decimal.rounded / exact /
+    /// withRemainder turn it into a value.
+    case division(num: MarDec, den: MarDec)
     case list([MarValue])
     case tuple([MarValue])
     case record(fields: [String: MarValue], order: [String])
@@ -59,7 +78,9 @@ indirect enum MarValue: @unchecked Sendable {
     case ctor(tag: String, args: [MarValue], origin: ServiceOrigin?)
 
     case fn(MarFn)
-    case view(MarView)
+    /// The one case that embeds a MarValue by value (via MarView.msg :
+    /// MarValue?), so it alone carries `indirect` to keep the enum finite.
+    indirect case view(MarView)
     case effect(MarEffect)
 }
 
@@ -189,6 +210,8 @@ extension MarValue {
         case (.float(let a),  .float(let b)):  return a == b
         case (.int(let a),    .float(let b)):  return Double(a) == b
         case (.float(let a),  .int(let b)):    return a == Double(b)
+        // Numeric equality: 1.50 == 1.5 (scale is display metadata).
+        case (.decimal(let a), .decimal(let b)): return DecMath.decCompare(a, b) == 0
         case (.string(let a), .string(let b)): return a == b
         case (.char(let a),   .char(let b)):   return a == b
         case (.bool(let a),   .bool(let b)):   return a == b
@@ -237,6 +260,8 @@ extension MarValue {
         case (.float(let a), .int(let b)):
             let db = Double(b)
             if a < db { return -1 }; if a > db { return 1 }; return 0
+        case (.decimal(let a), .decimal(let b)):
+            return DecMath.decCompare(a, b)
         case (.string(let a), .string(let b)):
             return a < b ? -1 : (a > b ? 1 : 0)
         case (.char(let a), .char(let b)):

@@ -68,9 +68,16 @@ func Infer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 func doInfer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 	switch n := e.(type) {
 	case *ast.EInt:
-		return TInt, nil
-	case *ast.EFloat:
-		return TFloat, nil
+		// An integer literal is `number`, not Int: the context decides
+		// which member it is, exactly as in Elm. Unconstrained, it
+		// generalizes and stays `number`; used at Decimal, elaborateLiterals
+		// rewrites the node so the runtime produces a Decimal. Note the
+		// asymmetry that keeps this safe — a literal WITH a point is
+		// TDecimal below, never `number`, so `1` can widen to Decimal but
+		// `1.5` can never narrow to Int.
+		return TVar{ID: int(atomicNextVarID()), Constraint: KindNumber}, nil
+	case *ast.EDecimal:
+		return TDecimal, nil
 	case *ast.EString:
 		return TString, nil
 	case *ast.EChar:
@@ -107,10 +114,14 @@ func doInfer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := Unify(t, TInt, s); err != nil {
-			return nil, errorf(n.Pos, "negation requires Int: %v", err)
+		// Negation is number-constrained like + - *: works on Int and
+		// Decimal, nothing else. A fresh constrained var lets the
+		// operand pick which.
+		nv := TVar{ID: int(atomicNextVarID()), Constraint: KindNumber}
+		if err := Unify(t, nv, s); err != nil {
+			return nil, errorf(n.Pos, "negation requires a number (Int or Decimal): %v", err)
 		}
-		return TInt, nil
+		return nv, nil
 	case *ast.EApp:
 		return inferApp(n, env, s)
 	case *ast.EBinop:
@@ -290,6 +301,11 @@ func inferBinop(n *ast.EBinop, env *TypeEnv, s *Subst) (Type, error) {
 		// which buries the actual problem.
 		if ue, ok := err.(*UnifyError); ok && ue.KindMismatch {
 			return nil, errorf(n.Pos, "operator %s: %s", n.Op, ue.Reason)
+		}
+		// `/` is Decimal-only; the Int habit from every other language
+		// deserves a pointed hint rather than a bare unification error.
+		if n.Op == "/" {
+			return nil, errorf(n.Pos, "operator /: %v (use // for integer division; / divides Decimals and returns a Decimal.Division)", err)
 		}
 		return nil, errorf(n.Pos, "operator %s: %v", n.Op, err)
 	}
@@ -554,90 +570,6 @@ func inferCase(n *ast.ECase, env *TypeEnv, s *Subst) (Type, error) {
 		return nil, err
 	}
 	return s.Apply(tResult), nil
-}
-
-// checkExhaustive walks the patterns of a case expression and verifies
-// that every variant of the subject's type is matched, recursing into
-// nested constructor patterns so e.g. `case msg of LoadedNotes (Ok x)`
-// fails to exhaust `Msg` (the `Err _` arm of `Result` inside `LoadedNotes`
-// is missing). Catch-all patterns (`_` / a bare name) at any nesting
-// level cover everything below.
-//
-// Subject types that aren't a known custom type (Int, String, lists,
-// records, type variables) are skipped — only constructor-shaped types
-// participate in exhaustiveness today.
-func checkExhaustive(subjectType Type, branches []ast.CaseBranch, env *TypeEnv, pos ast.Pos) error {
-	patterns := make([]ast.Pattern, len(branches))
-	for i, b := range branches {
-		patterns[i] = b.Pattern
-	}
-	return checkExhaustivePatterns(subjectType, patterns, env, pos)
-}
-
-// checkExhaustivePatterns is the recursive workhorse: given a list of
-// patterns that might match a value of `subjectType`, decide whether they
-// cover every constructor shape.
-func checkExhaustivePatterns(subjectType Type, patterns []ast.Pattern, env *TypeEnv, pos ast.Pos) error {
-	// Catch-all anywhere covers everything.
-	for _, p := range patterns {
-		if isCatchAllPattern(p) {
-			return nil
-		}
-	}
-	tc, ok := subjectType.(TCon)
-	if !ok {
-		return nil
-	}
-	ct, ok := env.LookupCustom(tc.Name)
-	if !ok {
-		return nil
-	}
-	// Group patterns by outer constructor and remember each branch's
-	// argument patterns so we can recurse on each arg position.
-	byCtor := map[string][][]ast.Pattern{}
-	for _, p := range patterns {
-		ctor, ok := p.(*ast.PCtor)
-		if !ok {
-			continue
-		}
-		byCtor[ctor.Name] = append(byCtor[ctor.Name], ctor.Args)
-	}
-	// Pass 1: any constructor not present at all is missing outright.
-	var missing []string
-	for _, name := range ct.CtorOrder {
-		if _, present := byCtor[name]; !present {
-			missing = append(missing, name)
-		}
-	}
-	if len(missing) > 0 {
-		if len(missing) == 1 {
-			return errorf(pos, "non-exhaustive case: missing pattern for %s", missing[0])
-		}
-		return errorf(pos, "non-exhaustive case: missing patterns for %s", strings.Join(missing, ", "))
-	}
-	// Pass 2: every constructor is matched, but some matches may be
-	// constrained (e.g. `LoadedNotes (Ok r)` only). For each arg position
-	// of each constructor, recurse with the arg patterns we collected.
-	for _, ctorName := range ct.CtorOrder {
-		ctorInfo := ct.Constructors[ctorName]
-		argRows := byCtor[ctorName]
-		for argIdx, argType := range ctorInfo.Args {
-			argPats := make([]ast.Pattern, 0, len(argRows))
-			for _, row := range argRows {
-				if argIdx < len(row) {
-					argPats = append(argPats, row[argIdx])
-				}
-			}
-			// Specialize the constructor's declared arg type for the
-			// concrete subject so recursion descends into the right
-			// instantiated type rather than a bare type parameter.
-			substituted := instantiateCtorArg(argType, ctorInfo.Result, tc.Args)
-			if err := checkExhaustivePatterns(substituted, argPats, env, pos); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 // isCatchAllPattern reports whether `p` matches every value of its type

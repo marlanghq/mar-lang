@@ -204,7 +204,38 @@ Standard Elm syntax:
 - `let x <- task in body` for chaining backend Tasks (sugared `Task.andThen`)
 - `|>` for pipelines
 
-### 3.2 Nominal IDs
+Booleans combine with `&&` and `||`. Negation is the function `not`, not a prefix operator — Mar has none — so it is written `not busy` and composes like anything else: `List.filter (\m -> not m.seen) rows`.
+
+A small numeric kit sits beside it, all bare and named as in Elm: `max`, `min` and `clamp` (which ride Comparable, so they order Char and String too), `abs` (Int or Decimal), and two remainders — `modBy` follows the divisor's sign, which is what wrapping an index wants, while `remainderBy` follows the dividend's and so stays in step with `//`. Both take the divisor first, so `modBy 8` is the wrapping function. Together with `always` and `linkTo` these are the whole bare-name surface of the language; everything else is qualified.
+
+### 3.2 Numbers
+
+Two number types, both exact; there is no floating point anywhere in the language.
+
+- **`Int`**: whole numbers, 53 bits wide — `-9007199254740991` to `9007199254740991`. Counting, indices, ticks, pixel math.
+- **`Decimal`**: exact base-10 numbers, written with a point (`19.99`). Stored as coefficient + scale (up to 34 significant digits); `1.50` keeps its two places for display, while `==` compares numerically (`1.50 == 1.5` is `True`).
+
+`+ - *` work on both types and are always exact. Two *quantities* never mix — with `n : Int`, `n + 1.5` is a type error, and `Decimal.fromInt` is how you cross. A *literal* is different: it has no committed type until the context gives it one, so `price : Decimal` / `price = 1` is fine and `1 + 1.50` is `2.50`. The adaptation is one-way — `count : Int = 1.5` stays an error (ADR 0013). Division comes in two spellings:
+
+- **`//` is integer division.** Truncates toward zero and is total: `7 // 2 == 3`, `-7 // 2 == -3`, `n // 0 == 0` on every runtime. For the remainder, reach for `modBy` or `remainderBy` above.
+- **`/` is Decimal division and returns `Decimal.Division`**, the unresolved exact quotient. It has no codec and no arithmetic; exactly two resolvers turn it into a value, so every rounding names its mode and scale at the call site:
+
+```elm
+third : Decimal
+third = 1.0 / 3.0 |> Decimal.rounded Decimal.HalfEven 4     -- 0.3333
+
+split : { quotient : Decimal, remainder : Decimal }
+split = Decimal.withRemainder 2 (100.00 / 3)
+    -- { quotient = 33.33, remainder = 0.01 } and q * b + r == a always holds
+```
+
+`List.sum` and `List.product` add or multiply either kind — `List number -> number` — and their empty-list answers (`0` and `1`) come out as whatever the context asked for, because the compiler writes that choice onto the call (ADR 0014).
+
+**Leaving `Int`'s range is an error, not a wrapped number** (ADR 0021). The width is 53 bits because that is the widest all three runtimes agree on: JavaScript has no integers, so an `Int` in the browser is a double, and past 2^53 it silently stops being able to tell `9007199254740993` from `9007199254740992`. Refusing is the only answer that reads the same everywhere. A literal past the range is refused by the parser, `String.toInt` returns `Nothing` for text it cannot represent, and an out-of-range integer arriving from the database raises while one arriving in a request body is answered as a malformed request. For values that genuinely need 64 bits — external ids, snowflakes — carry them as `String`.
+
+Rounding modes: `Decimal.HalfEven` (banker's), `HalfUp`, `Down`, `Up`, `Floor`, `Ceiling`. The rest of the module: `Decimal.zero`, `fromInt`, `fromCents` / `toCents`, `fromString` / `toString`, `toScale`, `round` / `floor` / `ceiling` / `truncate` (to `Int`), `toIntWith`, `abs`, `negate`, `compare`. On the wire (services, JSON) a Decimal travels as a string under a marker, so no JSON parser ever routes the digits through binary floats; `Json.decode` also reads plain fractional JSON numbers textually into Decimals.
+
+### 3.3 Nominal IDs
 
 Every entity ID is a nominal wrap of a primitive:
 
@@ -216,7 +247,7 @@ type SlugId = SlugId String
 
 This prevents mixing IDs of different entities at compile time. Mar's auto-derived codecs encode them transparently (the wrapper disappears on the wire).
 
-### 3.3 Task a and Cmd msg
+### 3.4 Task a and Cmd msg
 
 Side effects are values of two distinct types, one per side of the app.
 
@@ -249,7 +280,7 @@ The two types stay separate on purpose. They used to be one `Effect a` that carr
 
 Neither type carries an error index. On the backend a `Task` aborts with `Task.fail`, whose String becomes the `Err` the frontend receives; reserve it for genuine failures and keep matchable domain errors in the service's response value (a typed union) instead. On the frontend a failure travels inside the value: a `Service.call` delivers `Result Service.Error resp`, where `Service.Error` is a union (`Offline` / `Unauthorized` / `ServerError String`) the frontend cases on.
 
-### 3.4 Task chaining: `let <-`
+### 3.5 Task chaining: `let <-`
 
 Sugar for `Task.andThen`, on the backend. Each `<-` binds the result of one `Task` before the next runs:
 
@@ -265,7 +296,7 @@ toggle id =
 
 Equivalent to `Repo.findById tasks id |> Task.andThen (\found -> ...)`.
 
-### 3.5 Error handling
+### 3.6 Error handling
 
 Three kinds of failure, three homes. The rule of thumb: transport is a
 shared union, domain is a per-endpoint outcome in the response value, and
@@ -310,6 +341,8 @@ Done (Ok EmailTaken)     -> ...
 Done (Ok TeamFull)       -> ...
 Done (Err why)           -> ...
 ```
+
+Exhaustiveness covers every subject, not only unions (ADR 0022). A list needs both `[]` and `x :: rest`, since together they name every list there is. `Int`, `String` and `Char` need a catch-all (`_ ->`, or a bare name), because their values cannot be enumerated and no list of literals covers them — `case n of 1 -> "one"` is a compile error, not a program that fails on the second input. And a branch the ones above it already cover is refused too: it could never run, so it is a typo or a misreading rather than a spare. The message names what is missing (`[]`, `Just _`, `Blue`) or which branch is dead.
 
 The auth flow follows the same shape with framework-provided outcomes:
 `Auth.requestCode` delivers `Auth.RequestOutcome` (`Auth.CodeSent` /
@@ -390,7 +423,7 @@ Computed defaults (a slug from a title, a creation time) belong in the handler, 
 - Sum types with payload → `{ "tag": "constructorName", ...payload }`.
 - `Maybe a` → value or `null`. Optional fields on decode.
 - `List a` → JSON array.
-- Primitives: `Int`, `Float`, `String`, `Bool`, `Char`, `Time` (ISO 8601 UTC), `()`.
+- Primitives: `Int`, `String`, `Bool`, `Char`, `Time` (ISO 8601 UTC), `()`.
 
 Mar uses these codecs at the HTTP boundary (request body, response body, path params, query params) and at the DB boundary. User code never sees JSON or constructs codecs manually.
 
@@ -583,6 +616,45 @@ verifyCode = "/sign-in/verify/{email:String}"
 
 The placeholder values are parsed and delivered to `init` as a record (`{ email : String }`).
 
+`Page.sheet` wraps any of them and changes one thing: how the page is
+SHOWN. Navigating to it leaves the page you came from on screen and lays
+this one over it in a sheet, which is what a bounded task wants — take
+attendance, compose a message, edit a record: something the reader
+finishes or abandons. Keep the plain push for places the reader browses
+*into*, where going deeper is the point.
+
+```elm
+page : Page
+page =
+    Page.sheet
+        (Page.dynamicProtected
+            { path   = Frontend.Routes.takeAttendance
+            , title  = "Take attendance"
+            , init   = init
+            , update = update
+            , view   = view
+            , subscriptions = \_ _ _ -> Sub.none
+            }
+        )
+```
+
+It stays a real route: same path, same history entry, same deep link. Back,
+Escape and a tap outside dismiss it, and `Nav.dismiss` is the same verb for
+the sheet's own Cancel / Done button. Two consequences worth designing
+around:
+
+- **Opened cold it renders full screen.** A deep link, a reload or a
+  shared URL has no page behind it to present over, so the route mounts
+  like any other page. Write it so it reads on its own.
+- **The covered page is inert while it is covered**, and it comes back
+  exactly as it was — same model, same scroll. Nothing refetches on
+  dismissal, so if the task changed data the page underneath is showing,
+  that page will be stale until something asks it to reload.
+
+A presented route has no navigation bar of its own — the sheet is not on
+the stack — so its own header is the chrome: the dismiss on one side, the
+title centered, the confirming action on the other.
+
 ### 5.3 View vocabulary
 
 Views are abstract: no HTML, CSS, or SwiftUI in user code. Mar renders natively per platform (HTML/CSS for web, SwiftUI for iOS). Every element takes a list of attributes as its first argument, even when empty (`text []`, `section []`), so adding an attribute never changes the call shape.
@@ -614,6 +686,8 @@ update msg model =
 ```
 
 `replace` swaps the current entry, so Back does not return to it; `push` adds one. After a successful sign-in, `Auth.completeSignIn` returns the user to wherever a 401 sent them (or home).
+
+`Nav.dismiss` closes a route that is being presented (`Page.sheet`) — the verb its own Cancel / Done needs, doing exactly what a tap outside or Back does. With nothing presented it steps back one screen, and at the app's first screen it does nothing, so a sheet route opened cold cannot walk the reader off the site.
 
 ## 6. Client and server
 
@@ -680,7 +754,7 @@ The following are intentionally not in the MVP. They will be revisited when conc
 - **Custom HTTP clients** for external APIs (Stripe, etc.) via an explicit `Codec` API.
 - **Crud scaffold helpers** (`Crud.scaffold entity`) if examples become repetitive.
 - **Ownership helpers** for the read-then-check pattern, if it recurs.
-- **State preservation across navigation**: pages are currently rebuilt on navigate-away.
+- **Cross-screen shared state** (an elm-land-style global `Shared` model): page models live on the navigation stack. Going somewhere new re-runs that page's `init` (and refetches); going Back restores the screen you left, model intact. So forward navigation still refetches per screen, and shared data is currently refetched or kept on the server; a `Shared` store to hold it once on the client is future work. See ADR 0009.
 - **Loading-state abstraction**: each page currently handles its own loading state.
 - **Multiple environments in `mar.json`**: currently a single config, env vars handle differences.
 

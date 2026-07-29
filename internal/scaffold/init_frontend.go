@@ -29,7 +29,7 @@ import Home
 import About
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.frontend [ Home.page, About.page ]
 `
@@ -73,15 +73,15 @@ type Msg
     | Decrement
 
 
-init : (Model, Effect Msg)
-init = (0, Effect.none)
+init : (Model, Cmd Msg)
+init = (0, Cmd.none)
 
 
-update : Msg -> Model -> (Model, Effect Msg)
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        Increment -> (model + 1, Effect.none)
-        Decrement -> (model - 1, Effect.none)
+        Increment -> (model + 1, Cmd.none)
+        Decrement -> (model - 1, Cmd.none)
 
 
 view : Model -> View Msg
@@ -91,13 +91,13 @@ view model =
             [ section [ header "Counter" ]
                 [ vstack []
                     [ button [] Increment "+"
-                    , text (String.fromInt model)
+                    , text [] (String.fromInt model)
                     , button [] Decrement "-"
                     ]
                 ]
             , section []
                 [ navigationLink [] Routes.about {}
-                    (text "About this app")
+                    (text [] "About this app")
                 ]
             ]
         ]
@@ -111,6 +111,7 @@ page =
         , init = init
         , update = update
         , view = view
+        , subscriptions = always Sub.none
         }
 `, name, name)
 	files["About.mar"] = fmt.Sprintf(`module About exposing (page)
@@ -134,12 +135,12 @@ type Msg
     = NoOp
 
 
-init : (Model, Effect Msg)
-init = ((), Effect.none)
+init : (Model, Cmd Msg)
+init = ((), Cmd.none)
 
 
-update : Msg -> Model -> (Model, Effect Msg)
-update _ _ = ((), Effect.none)
+update : Msg -> Model -> (Model, Cmd Msg)
+update _ _ = ((), Cmd.none)
 
 
 view : Model -> View Msg
@@ -153,8 +154,8 @@ view _ =
                     ]
                 ]
             , section [ header "Next steps" ]
-                [ text "Edit Home.mar to change the home page."
-                , text "Add new pages by creating a module + listing it in Main.mar."
+                [ text [] "Edit Home.mar to change the home page."
+                , text [] "Add new pages by creating a module + listing it in Main.mar."
                 ]
             ]
         ]
@@ -168,6 +169,7 @@ page =
         , init = init
         , update = update
         , view = view
+        , subscriptions = always Sub.none
         }
 `, name)
 	return files

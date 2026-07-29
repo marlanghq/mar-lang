@@ -1,0 +1,44 @@
+module Frontend.Chrome exposing (sheetHeader, sheetHeaderDone)
+
+
+import UI exposing
+    ( View, hstack, title, spacer, button
+    , width, fill
+    )
+
+
+-- Shared sheet chrome for every panel in the app: the dismiss on the
+-- left, the panel's title centered, the confirming action on the right.
+--
+-- That is the Apple form-sheet layout, and it is the shape a sheet wants
+-- on both ends of the breakpoint the runtime switches at: a bottom
+-- drawer on a phone, a centered card on a desktop (ADR 0011). Buttons
+-- stranded at the bottom of a short centered card read as a footer that
+-- lost its page.
+--
+-- The two `hstack [ width fill ]` wrappers are what centers the title:
+-- each side gets an equal share of the row, so the middle lands in the
+-- middle no matter how wide the labels are.
+--
+-- Polymorphic in the message type so each page passes its own `Msg`.
+sheetHeader : String -> String -> msg -> View msg -> View msg
+sheetHeader label sheetTitle onCancel rightSlot =
+    hstack []
+        [ hstack [ width fill ] [ button [] onCancel label ]
+        , title sheetTitle
+        , hstack [ width fill ] [ spacer, rightSlot ]
+        ]
+
+
+-- The other sheet shape: a panel with nothing to cancel, because there
+-- is nothing pending. Attendance saves on every tap and the account
+-- panel only reads, so both close with a single Done on the right,
+-- where iOS puts it. Offering a Cancel next to it would promise an undo
+-- that does not exist.
+sheetHeaderDone : String -> msg -> View msg
+sheetHeaderDone sheetTitle onDone =
+    hstack []
+        [ hstack [ width fill ] [ spacer ]
+        , title sheetTitle
+        , hstack [ width fill ] [ spacer, button [] onDone "Done" ]
+        ]

@@ -18,10 +18,17 @@
 //   - RELEASE: always the baked Info.plist MarBaseURL (set from
 //     mar.json's `ios.serverUrl`). Bonjour is compiled out.
 //   - DEBUG: same baked URL by default, but the Bonjour discovery
-//     loop overrides it the moment a `_mar._tcp` service appears
-//     on the LAN — typically `mar dev` running on the laptop. No
-//     UI, no UserDefaults; the override is purely automatic for
-//     the lifetime of the process.
+//     loop overrides it when a `_mar._tcp` service appears on the
+//     LAN — typically `mar dev` running on the laptop. Two guards
+//     keep the convenience from turning into a trap:
+//       * the service's mDNS instance name must equal this app's
+//         MarAppName (mar dev advertises its mar.json `name`), so
+//         another project's dev server on the same LAN is ignored
+//         instead of silently hijacking the backend;
+//       * every adoption is announced — a banner in the UI
+//         (devOverrideLabel, rendered by ContentView) and a console
+//         line — so "I could swear it was pointing at production"
+//         can't happen again.
 
 import Foundation
 import Observation
@@ -48,6 +55,12 @@ final class AppViewModel {
     /// Info.plist value; in DEBUG, swaps to a discovered Bonjour
     /// endpoint when one appears.
     private(set) var baseURLString: String
+
+    /// Non-nil while the app is talking to a Bonjour-discovered dev
+    /// server instead of the baked URL ("192.168.0.12:3033"). Drives
+    /// the DEBUG banner in ContentView. Always nil in RELEASE (the
+    /// discovery loop that sets it is compiled out).
+    private(set) var devOverrideLabel: String?
 
     #if DEBUG
     let discovery = Discovery()
@@ -128,15 +141,47 @@ final class AppViewModel {
     }
 
     #if DEBUG
+    /// The baked Info.plist `MarAppName`: the raw mar.json `name`,
+    /// which is exactly what `mar dev` advertises as its mDNS instance
+    /// name. Empty on scaffolds generated before the key existed —
+    /// those keep the historical accept-any behavior.
+    private static func bakedAppName() -> String {
+        (Bundle.main.object(forInfoDictionaryKey: "MarAppName") as? String) ?? ""
+    }
+
+    /// Names of foreign dev servers we already warned about, so the
+    /// console line prints once per server instead of once per
+    /// Bonjour churn event.
+    @ObservationIgnored
+    private var ignoredDevServers: Set<String> = []
+
     private func maybeAutoPick() {
-        let resolved = discovery.servers.compactMap { $0.url }
-        guard let first = resolved.first else { return }
-        let s = first.absoluteString
+        let expected = AppViewModel.bakedAppName()
+
+        // Only adopt a dev server advertising THIS app's name.
+        // Bonjour renames colliding instances to "name (2)", so accept
+        // that suffix too.
+        let matches: (DiscoveredServer) -> Bool = { s in
+            if expected.isEmpty { return true }
+            return s.name == expected || s.name.hasPrefix(expected + " (")
+        }
+
+        for s in discovery.servers where s.url != nil && !matches(s) {
+            if ignoredDevServers.insert(s.name).inserted {
+                print("[mar] ignoring mar dev \"\(s.name)\" on the LAN — this app is \"\(expected)\"")
+            }
+        }
+
+        guard let picked = discovery.servers.first(where: { $0.url != nil && matches($0) }),
+              let url = picked.url else { return }
+        let s = url.absoluteString
         guard s != baseURLString else { return }
         baseURLString = s
+        devOverrideLabel = "\(picked.host):\(picked.port)"
+        print("[mar] DEBUG: connected to mar dev at \(s) — the baked server URL is NOT being used")
         Task {
-            await api.setBaseURL(first)
-            MarDispatcher.shared.baseURL = first
+            await api.setBaseURL(url)
+            MarDispatcher.shared.baseURL = url
             await loadAll()
         }
     }

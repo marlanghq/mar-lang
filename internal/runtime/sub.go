@@ -36,5 +36,19 @@ func subBuiltins() map[string]Value {
 				Run: func() (Value, error) { return VUnit{}, nil },
 			}, nil
 		}),
+
+		// Keyboard.watch : ({ down : List Keyboard.Key } -> msg) -> Sub msg — the
+		// held-key mirror. Inert on the backend (no MVU loop); the frontend keeps
+		// the current down-set from window keydown/keyup + blur and delivers the
+		// whole set as a record on every change.
+		"keyboardWatch": nativeFn(1, func(args []Value) (Value, error) {
+			return VEffect{Tag: "keyboardWatch", Run: func() (Value, error) { return VUnit{}, nil }}, nil
+		}),
+		// Gamepad.watch : (pad -> msg) -> Sub msg — the full-pad mirror (sticks +
+		// held buttons). Inert on the backend; the frontend polls the Gamepad API
+		// per frame and delivers the snapshot on change. Web-first, like Keyboard.
+		"gamepadWatch": nativeFn(1, func(args []Value) (Value, error) {
+			return VEffect{Tag: "gamepadWatch", Run: func() (Value, error) { return VUnit{}, nil }}, nil
+		}),
 	}
 }

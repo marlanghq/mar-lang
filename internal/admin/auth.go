@@ -131,19 +131,35 @@ func VerifyCode(db *sql.DB, secret, email, candidate string, now time.Time) (Ver
 	}
 	candidateHash := auth.Hash(secret, candidate)
 	if !auth.Equal(candidateHash, storedHash) {
-		newAttempts := attempts + 1
+		// Atomic increment (SQLite serializes writes), so concurrent wrong
+		// guesses can't all read the same attempts value and get
+		// MaxCodeAttempts tries per concurrency round.
+		// See docs/security-audit-2026-07-15.md #4.
+		var newAttempts int
+		if err := db.QueryRow(
+			`UPDATE _mar_admin_codes SET attempts = attempts + 1 WHERE codeHash = ? RETURNING attempts`,
+			storedHash,
+		).Scan(&newAttempts); err != nil {
+			return VerifyInvalid, nil
+		}
 		if newAttempts >= MaxCodeAttempts {
 			// Burn the row; further attempts should look identical
 			// to "no code on file" (no error message hints at the lock).
 			_, _ = db.Exec(`DELETE FROM _mar_admin_codes WHERE codeHash = ?`, storedHash)
 			return VerifyTooManyAttempts, nil
 		}
-		_, _ = db.Exec(`UPDATE _mar_admin_codes SET attempts = ? WHERE codeHash = ?`,
-			newAttempts, storedHash)
 		return VerifyInvalid, nil
 	}
-	// Match — burn the code so it can't be replayed.
-	_, _ = db.Exec(`DELETE FROM _mar_admin_codes WHERE codeHash = ?`, storedHash)
+	// Match — consume the code atomically so it can't be replayed. If a
+	// concurrent request with the same code already burned it, RowsAffected
+	// == 0 and this one fails. See docs/security-audit-2026-07-15.md #4.
+	res, err := db.Exec(`DELETE FROM _mar_admin_codes WHERE codeHash = ?`, storedHash)
+	if err != nil {
+		return VerifyInvalid, fmt.Errorf("admin.VerifyCode consume: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return VerifyInvalid, nil
+	}
 	return VerifyOK, nil
 }
 

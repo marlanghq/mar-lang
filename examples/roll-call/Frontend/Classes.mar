@@ -1,0 +1,449 @@
+module Frontend.Classes exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import Frontend.Chrome exposing (sheetHeader, sheetHeaderDone)
+import UI exposing ( navigationStack, navigationTitle, topBarLeading, topBarTrailing
+    , list, keyedList, keyed, section, header, footer, subtitle
+    , hstack, vstack, spacer
+    , text, textField, button, errorText
+    , submit, disabled, onMove, onDelete
+    , sheet, confirm, empty, navigationLink
+    , width, fill)
+
+
+-- The roster home: the teacher's classes, each showing its student
+-- count. Tapping a class opens its detail (navigationLink pushes the
+-- typed route). "New" opens a sheet to name a class; Edit turns on
+-- drag-to-reorder + per-row delete (with a confirm dialog).
+--
+-- Account lives behind a single "Account" button in the top-LEFT of the
+-- navigation bar, which opens a sheet with the signed-in email, a
+-- couple of roster totals, and the two account actions (sign out and
+-- delete account). Keeping it there does two things: the destructive
+-- action is two taps away instead of sitting on the home screen, and
+-- the top-right stays free for the everyday actions (Edit / New).
+--
+-- Sheet chrome convention (both sheets here): the actions live in a
+-- header row — Cancel on the left, the title centered, the confirming
+-- action on the right — which is how Apple lays out a form sheet. The
+-- two `width fill` side columns balance each other so the title stays
+-- optically centered whatever the button widths are.
+
+
+type alias Model =
+    { classes                 : Maybe (List Shared.ClassSummary)
+    , error                   : Maybe String
+    , editing                 : Bool
+    , showAdd                 : Bool
+    , draft                   : String
+    , busy                    : Bool
+    , confirmingDelete        : Maybe Shared.ClassSummary
+    , showAccount             : Bool
+    , confirmingAccountDelete : Bool
+    }
+
+
+type Msg
+    = ClassesFetched (Result Service.Error (List Shared.ClassSummary))
+    | EditClicked
+    | DoneEditingClicked
+    | AddClicked
+    | AddDismissed
+    | DraftChanged String
+    | CreateSubmitted
+    | ClassCreated (Result Service.Error Shared.ClassOutcome)
+    | DeleteRowAt Int
+    | DeleteConfirmed
+    | DeleteCancelled
+    | ClassDeleted (Result Service.Error ())
+    | ClassMoved Int Int
+    | ClassesReordered (Result Service.Error ())
+    | AccountOpened
+    | AccountDismissed
+    | SignOutClicked
+    | SignedOut (Result String ())
+    | DeleteAccountClicked
+    | DeleteAccountConfirmed
+    | DeleteAccountCancelled
+    | AccountDeleted (Result Service.Error ())
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { classes = Nothing
+      , error = Nothing
+      , editing = False
+      , showAdd = False
+      , draft = ""
+      , busy = False
+      , confirmingDelete = Nothing
+      , showAccount = False
+      , confirmingAccountDelete = False
+      }
+    , Service.call Shared.listClasses () ClassesFetched
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        ClassesFetched (Ok classes) ->
+            ( { model | classes = Just classes, error = Nothing }, Cmd.none )
+
+        ClassesFetched (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        EditClicked ->
+            ( { model | editing = True }, Cmd.none )
+
+        DoneEditingClicked ->
+            ( { model | editing = False, confirmingDelete = Nothing }, Cmd.none )
+
+        AddClicked ->
+            ( { model | showAdd = True, draft = "", error = Nothing }, Cmd.none )
+
+        AddDismissed ->
+            ( { model | showAdd = False, draft = "" }, Cmd.none )
+
+        DraftChanged value ->
+            ( { model | draft = value }, Cmd.none )
+
+        CreateSubmitted ->
+            if String.trim model.draft == "" || model.busy then
+                ( model, Cmd.none )
+            else
+                ( { model | busy = True }
+                , Service.call Shared.createClass { name = model.draft } ClassCreated
+                )
+
+        ClassCreated (Ok (Shared.ClassCreated _)) ->
+            ( { model | busy = False, draft = "", showAdd = False }
+            , Service.call Shared.listClasses () ClassesFetched
+            )
+
+        ClassCreated (Ok Shared.ClassNameBlank) ->
+            ( { model | busy = False, error = Just "A class needs a name." }, Cmd.none )
+
+        ClassCreated (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        DeleteRowAt idx ->
+            case model.classes of
+                Just classes ->
+                    case List.head (List.drop idx classes) of
+                        Just cls ->
+                            ( { model | confirmingDelete = Just cls }, Cmd.none )
+
+                        Nothing ->
+                            ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        DeleteConfirmed ->
+            case model.confirmingDelete of
+                Just cls ->
+                    ( { model
+                        | classes = Maybe.map (List.filter (\c -> c.id /= cls.id)) model.classes
+                        , confirmingDelete = Nothing
+                      }
+                    , Service.call Shared.deleteClass { id = cls.id } ClassDeleted
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        DeleteCancelled ->
+            ( { model | confirmingDelete = Nothing }, Cmd.none )
+
+        ClassDeleted (Ok ()) ->
+            ( model, Cmd.none )
+
+        ClassDeleted (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }
+            , Service.call Shared.listClasses () ClassesFetched
+            )
+
+        ClassMoved from to ->
+            case model.classes of
+                Just classes ->
+                    let
+                        reordered = List.move from to classes
+                    in
+                    ( { model | classes = Just reordered }
+                    , Service.call Shared.reorderClasses
+                        { orderedIds = List.map (\c -> c.id) reordered }
+                        ClassesReordered
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ClassesReordered (Ok ()) ->
+            ( model, Cmd.none )
+
+        ClassesReordered (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        AccountOpened ->
+            -- Opening the account panel leaves edit mode and clears any
+            -- armed row delete, so only one destructive flow is ever
+            -- live at a time.
+            ( { model | showAccount = True, editing = False, confirmingDelete = Nothing }
+            , Cmd.none
+            )
+
+        AccountDismissed ->
+            ( { model | showAccount = False }, Cmd.none )
+
+        SignOutClicked ->
+            ( model, Auth.logout SignedOut )
+
+        SignedOut _ ->
+            ( model, Auth.completeSignIn )
+
+        DeleteAccountClicked ->
+            -- Close the account sheet as the confirm dialog opens: two
+            -- stacked overlays would fight for the backdrop.
+            ( { model | showAccount = False, confirmingAccountDelete = True }, Cmd.none )
+
+        DeleteAccountCancelled ->
+            ( { model | confirmingAccountDelete = False }, Cmd.none )
+
+        DeleteAccountConfirmed ->
+            ( { model | confirmingAccountDelete = False, busy = True }
+            , Service.call Shared.deleteAccount () AccountDeleted
+            )
+
+        AccountDeleted (Ok ()) ->
+            ( model, Auth.logout SignedOut )
+
+        AccountDeleted (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+
+countLabel : Int -> String
+countLabel n =
+    if n == 1 then "1 student" else String.fromInt n ++ " students"
+
+
+-- ===== VIEW =====
+
+
+view : Shared.User -> Model -> View Msg
+view user model =
+    navigationStack (navBar model)
+        [ list [] (sections model)
+        , addSheet model
+        , accountSheet user model
+        , deleteDialog model
+        , accountDialog model
+        ]
+
+
+-- Account sits leading (top-left); the everyday actions stay trailing
+-- (top-right), so the destructive path never shares space with "New".
+navBar : Model -> List (Attr NavStack)
+navBar model =
+    let
+        editAffordance =
+            case model.classes of
+                Just classes ->
+                    if model.editing then
+                        button [] DoneEditingClicked "Done"
+                    else if List.isEmpty classes then
+                        empty
+                    else
+                        button [] EditClicked "Edit"
+
+                Nothing ->
+                    empty
+    in
+    [ navigationTitle "Classes"
+    , topBarLeading (button [] AccountOpened "Account")
+    , topBarTrailing
+        (hstack []
+            [ editAffordance
+            , button [] AddClicked "New"
+            ]
+        )
+    ]
+
+
+sections : Model -> List (View Msg)
+sections model =
+    case model.classes of
+        Nothing ->
+            [ section [] [ text [] "Loading…" ] ]
+
+        Just classes ->
+            List.concat
+                [ errorSection model
+                , classesSection model classes
+                ]
+
+
+errorSection : Model -> List (View Msg)
+errorSection model =
+    case model.error of
+        Just why ->
+            [ section [ header "Something went wrong" ] [ errorText why ] ]
+
+        Nothing ->
+            []
+
+
+classesSection : Model -> List Shared.ClassSummary -> List (View Msg)
+classesSection model classes =
+    if List.isEmpty classes then
+        [ section [ header "Your classes" ]
+            [ subtitle "No classes yet. Tap New to add your first one." ]
+        ]
+    else
+        [ keyedList
+            [ header "Your classes"
+            , onMove model.editing ClassMoved
+            , onDelete model.editing DeleteRowAt
+            ]
+            (List.map (classRow model) classes)
+        ]
+
+
+classRow : Model -> Shared.ClassSummary -> KeyedView Msg
+classRow model cls =
+    keyed (String.fromInt cls.id)
+        (if model.editing then
+            hstack []
+                [ text [] cls.name
+                , spacer
+                , subtitle (countLabel cls.studentCount)
+                ]
+         else
+            navigationLink [ width fill ] Frontend.Routes.classDetail { id = cls.id }
+                (hstack []
+                    [ text [] cls.name
+                    , spacer
+                    , subtitle (countLabel cls.studentCount)
+                    ]
+                )
+        )
+
+
+-- ===== Sheets =====
+
+
+addSheet : Model -> View Msg
+addSheet model =
+    sheet
+        { open      = model.showAdd
+        , onDismiss = AddDismissed
+        , outlet    = "add-class"
+        }
+        [ vstack []
+            [ sheetHeader "Cancel" "New class" AddDismissed
+                (button [ disabled model.busy ] CreateSubmitted "Create")
+            , section [ footer "You can rename or reorder classes later." ]
+                [ textField
+                    [ submit CreateSubmitted, width fill, disabled model.busy ]
+                    "e.g. Period 3 Biology" model.draft DraftChanged
+                ]
+            ]
+        ]
+
+
+-- The account panel: who you're signed in as, a little roster context,
+-- then the two account actions. Sign out is ordinary; deleting the
+-- account only ARMS a confirm dialog (see accountDialog) and carries a
+-- footer spelling out what it destroys.
+accountSheet : Shared.User -> Model -> View Msg
+accountSheet user model =
+    sheet
+        { open      = model.showAccount
+        , onDismiss = AccountDismissed
+        , outlet    = "account"
+        }
+        [ vstack []
+            [ sheetHeaderDone "Account" AccountDismissed
+            , section [ header "Signed in as" ]
+                [ text [] user.email ]
+            , section [ header "Your roster" ]
+                (rosterRows model)
+            , section []
+                [ button [] SignOutClicked "Sign out" ]
+            , section
+                [ footer "Deleting your account permanently removes your classes, students, and every attendance record. This can't be undone."
+                ]
+                [ button [] DeleteAccountClicked "Delete account" ]
+            ]
+        ]
+
+
+-- Two totals folded out of the class summaries the page already has —
+-- no extra round-trip just to fill the panel.
+rosterRows : Model -> List (View Msg)
+rosterRows model =
+    case model.classes of
+        Just classes ->
+            let
+                students =
+                    List.sum (List.map .studentCount classes)
+            in
+            [ statRow "Classes" (String.fromInt (List.length classes))
+            , statRow "Students" (String.fromInt students)
+            ]
+
+        Nothing ->
+            [ subtitle "Still loading…" ]
+
+
+statRow : String -> String -> View Msg
+statRow label value =
+    hstack []
+        [ text [] label
+        , spacer
+        , subtitle value
+        ]
+
+
+deleteDialog : Model -> View Msg
+deleteDialog model =
+    case model.confirmingDelete of
+        Just cls ->
+            confirm
+                { title        = "Delete \"" ++ cls.name ++ "\"?"
+                , confirmLabel = "Delete"
+                , destructive  = True
+                , onConfirm    = DeleteConfirmed
+                , onCancel     = DeleteCancelled
+                }
+
+        Nothing ->
+            empty
+
+
+accountDialog : Model -> View Msg
+accountDialog model =
+    if model.confirmingAccountDelete then
+        confirm
+            { title        = "Delete your account?"
+            , confirmLabel = "Delete account"
+            , destructive  = True
+            , onConfirm    = DeleteAccountConfirmed
+            , onCancel     = DeleteAccountCancelled
+            }
+    else
+        empty
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/"
+        , title  = "Classes"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

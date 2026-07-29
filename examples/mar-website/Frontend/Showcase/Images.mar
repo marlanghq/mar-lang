@@ -60,7 +60,7 @@ view _ =
                     }
                 ]
             , section
-                [ header "Fixed size · cover"
+                [ header "Fixed size, cover"
                 , footer "With cover, the image is cropped to fill the box; no empty space."
                 ]
                 [ hstack []
@@ -72,7 +72,7 @@ view _ =
                     ]
                 ]
             , section
-                [ header "Fixed size · fit"
+                [ header "Fixed size, fit"
                 , footer "With fit, the whole image fits inside the box; no crop."
                 ]
                 [ image [ size (px 120) (px 80), fit ]

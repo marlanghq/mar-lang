@@ -11,6 +11,12 @@
 *.tar.gz
 .claude/
 .env
+# Per-project local state written by `mar dev`: dev-secrets.json holds a
+# session secret, so this directory never belongs in a repository.
+.mar/
+# Compiled Go test binaries + Python bytecode from the example tooling.
+*.test
+__pycache__/
 # macOS Finder metadata
 .DS_Store
 **/.DS_Store
@@ -26,4 +32,8 @@ vscode-mar/node_modules/
 vscode-mar/out/
 release-local.sh
 deploy/
+# per-run logs from update-all-demos.sh
+deploy-logs/
 tmp/
+docs/book/book/
+.wrangler/cache/pages.json

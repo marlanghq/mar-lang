@@ -179,6 +179,8 @@ func satisfiesKind(k Kind, t Type) bool {
 		return IsComparableType(t)
 	case KindAppendable:
 		return IsAppendableType(t)
+	case KindNumber:
+		return IsNumberType(t)
 	}
 	return true
 }
@@ -197,6 +199,12 @@ func mergeKinds(a, b Kind) (Kind, bool) {
 	}
 	if b == KindAny {
 		return a, true
+	}
+	// Comparable ∩ Number is representable: every number (Int, Decimal)
+	// is also comparable, so a var that must be both is just a number.
+	// (`\a b -> if a < b then a + b else b` needs exactly this.)
+	if (a == KindComparable && b == KindNumber) || (a == KindNumber && b == KindComparable) {
+		return KindNumber, true
 	}
 	return KindAny, false
 }
@@ -233,7 +241,7 @@ func kindMismatchReason(k Kind, t Type) string {
 		// jargon; this message also fires for the ordering operators
 		// (`<`, `>`, `<=`, `>=`), where "key" makes no sense.
 		return fmt.Sprintf(
-			"%s is not comparable; comparable types are Int, Float, String, Char",
+			"%s is not comparable; comparable types are Int, Decimal, String, Char",
 			shape,
 		)
 	case KindAppendable:
@@ -241,6 +249,18 @@ func kindMismatchReason(k Kind, t Type) string {
 		// is exactly what the runtime append handles.
 		return fmt.Sprintf(
 			"%s is not appendable; ++ joins two Strings or two Lists",
+			shape,
+		)
+	case KindNumber:
+		// Fires for `+ - *` and negation. The two members are spelled
+		// out so the fix (convert, or change the literal) is obvious;
+		// an unresolved Decimal.Division names its own way out.
+		if c, ok := t.(TCon); ok && c.Name == "Decimal.Division" {
+			return "a division has no numeric value until you choose its precision; " +
+				"pipe it into Decimal.rounded or Decimal.withRemainder"
+		}
+		return fmt.Sprintf(
+			"%s is not a number; + - * work on two Ints or two Decimals (mix with Decimal.fromInt)",
 			shape,
 		)
 	}

@@ -4,8 +4,7 @@ module Frontend.ProjectDetail exposing (page)
 import Shared exposing (IssueStatus(..), Role(..))
 import Frontend.Routes
 import UI exposing
-    ( navigationStack, navigationTitle, topBarTrailing
-    , list, section, header, footer
+    ( navigationStack, navigationTitle, list, section, header, footer
     , hstack, vstack
     , title, subtitle, text, button, navigationLink, empty, spacer, picker, errorText
     )
@@ -143,8 +142,8 @@ issueRow issue =
             [ text [] ("#" ++ String.fromInt issue.number ++ ": " ++ issue.title)
             , subtitle
                 ( Shared.statusLabel issue.status
-                    ++ " · " ++ Shared.priorityLabel issue.priority
-                    ++ " · " ++ issue.assigneeName
+                    ++ ", " ++ Shared.priorityLabel issue.priority
+                    ++ ", " ++ issue.assigneeName
                 )
             ])
 
@@ -161,7 +160,7 @@ issuesSection state =
                     [ subtitle "Nothing matches the current filter." ]
             else
                 section
-                    [ header ("Issues · " ++ String.fromInt (List.length items)) ]
+                    [ header ("Issues (" ++ String.fromInt (List.length items) ++ ")") ]
                     (List.map issueRow items)
 
 
@@ -169,7 +168,7 @@ headerSection : Maybe Shared.Project -> View Msg
 headerSection maybeProject =
     case maybeProject of
         Just project ->
-            section [ header (project.slug ++ " · project") ]
+            section [ header (project.slug ++ " project") ]
                 [ title project.name
                 , text []
                     ( if project.description == "" then

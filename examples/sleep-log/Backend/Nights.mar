@@ -1,0 +1,95 @@
+module Backend.Nights exposing (services)
+
+
+import Shared
+
+
+-- The database half. It lives in its own module for a concrete reason: the
+-- Entity is server-only furniture, and keeping it out of the page keeps it out
+-- of the browser bundle.
+--
+-- Per-user isolation: every read filters by `userId = caller.id`, and the
+-- upsert looks for an existing row with BOTH the caller and the day before it
+-- decides to edit. A client guessing row ids cannot reach another person's
+-- nights, because those rows never appear in the per-user query.
+nights : Entity Shared.Night
+nights =
+    Entity.define
+        { name = "nights"
+        , columns =
+            { id = Entity.serial
+            , date = Entity.timestamp Entity.notNull
+            , quality =
+                Entity.enum
+                    [ Shared.VeryBad, Shared.Bad, Shared.Normal, Shared.Good, Shared.VeryGood ]
+                    Entity.notNull
+            , userId = Entity.int Entity.notNull
+            }
+
+        -- COMPOSITE, and it has to be. One row per night PER PERSON. A unique
+        -- index on `date` alone would mean the first person to log the 20th
+        -- locks that whole date for everybody else — a bug that only exists
+        -- once the app has more than one user, which is exactly the kind that
+        -- ships unnoticed.
+        , uniques = [ [ "userId", "date" ] ]
+        }
+
+
+listNightsImpl : () -> Shared.User -> Task (List Shared.Night)
+listNightsImpl _ user =
+    Repo.findBy nights { userId = user.id }
+
+
+-- Upsert, scoped to the caller. The unique index would reject a second row for
+-- the same person and day anyway; looking first turns that rejection into the
+-- behaviour we actually want, which is correcting the night you already rated.
+logNightImpl : { date : Time, quality : Shared.Quality } -> Shared.User -> Task Shared.Night
+logNightImpl input user =
+    let
+        day =
+            Shared.startOfDay input.date
+    in
+    Repo.findBy nights { userId = user.id, date = day }
+        |> Task.andThen
+            (\existing ->
+                case List.head existing of
+                    Just night ->
+                        Repo.update nights night.id { quality = input.quality }
+                            |> Task.map
+                                (\updated ->
+                                    -- If the row vanished under us, answer with what
+                                    -- was asked for rather than the stale record.
+                                    Maybe.withDefault { night | quality = input.quality } updated
+                                )
+
+                    Nothing ->
+                        Repo.create nights
+                            { date = day, quality = input.quality, userId = user.id }
+            )
+
+
+-- Undo a rating. Scoped the same way as everything else: the lookup carries the
+-- caller, so a day belonging to someone else simply is not found, and deleting
+-- a night that was never logged is a no-op rather than an error.
+clearNightImpl : { date : Time } -> Shared.User -> Task ()
+clearNightImpl input user =
+    Repo.findBy nights { userId = user.id, date = Shared.startOfDay input.date }
+        |> Task.andThen
+            (\existing ->
+                case List.head existing of
+                    Just night ->
+                        Repo.deleteById nights night.id
+
+                    Nothing ->
+                        Task.succeed ()
+            )
+
+
+-- Auth.protect injects the signed-in user as the second argument and answers
+-- 401 when there is no session. The frontend calls the same Service value and
+-- never sees the wrapping.
+services =
+    [ Auth.protect Shared.listNights listNightsImpl
+    , Auth.protect Shared.logNight logNightImpl
+    , Auth.protect Shared.clearNight clearNightImpl
+    ]

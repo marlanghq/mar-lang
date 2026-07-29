@@ -55,7 +55,7 @@ issueRow issue =
             [ text [] (Shared.issueHandle issue)
             , subtitle
                 ( Shared.statusLabel issue.status
-                    ++ " · " ++ Shared.priorityLabel issue.priority
+                    ++ ", " ++ Shared.priorityLabel issue.priority
                 )
             ])
 
@@ -84,7 +84,7 @@ renderBody model =
                         ]
                     else
                         [ section
-                            [ header ("Open & In progress · " ++ String.fromInt (List.length items))
+                            [ header ("Open & In progress (" ++ String.fromInt (List.length items) ++ ")")
                             , footer "Sorted by recent activity."
                             ]
                             (List.map issueRow items)

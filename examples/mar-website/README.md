@@ -36,7 +36,7 @@ Fly app. After the first push, the site lives at
 point at it — `mar-lang.dev` in production).
 
 ```sh
-mar fly deploy
+mar deploy
 ```
 
 Single command. First deploy creates the Fly app; subsequent

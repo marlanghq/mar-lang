@@ -1,0 +1,263 @@
+module Backend.Profiles exposing
+    ( profiles
+    , services
+    , profileForUser
+    , nickForUser
+    , applyOutcome
+    )
+
+
+import Shared exposing (Outcome(..))
+
+
+-- Profiles — a player's game identity (nick) plus their denormalized
+-- overall record. One row per user, created the first time they pick
+-- a nick (the Nickname gate). The W/L/D counters are bumped exactly
+-- once per duel, when it transitions to `done` (see applyOutcome,
+-- called from Backend.Challenges), so the leaderboard-style stats are
+-- a cheap column read rather than a scan of every finished duel.
+profiles : Entity Shared.Profile
+profiles =
+    Entity.define
+        { name = "profiles"
+        , columns =
+            { id     = Entity.serial
+            , userId = Entity.int  Entity.notNull
+            , nick   = Entity.text Entity.notNull
+            , wins   = Entity.int  Entity.notNull
+            , losses = Entity.int  Entity.notNull
+            , draws  = Entity.int  Entity.notNull
+            }
+        -- One profile per user; nicks globally unique. The code paths
+        -- below also enforce these (case-insensitively for nicks), so
+        -- the DB indexes are a backstop against a race, never the
+        -- primary check.
+        , uniques = [ [ "userId" ], [ "nick" ] ]
+        }
+
+
+-- ====================================================================
+-- HELPERS (shared with Backend.Challenges)
+-- ====================================================================
+
+
+-- The caller's profile, if they've picked a nick. userId is unique so
+-- at most one row comes back.
+profileForUser : Int -> Task (Maybe Shared.Profile)
+profileForUser userId =
+    Repo.findBy profiles { userId = userId }
+        |> Task.map List.head
+
+
+-- A userId → nick lookup for building opponent-facing cards. Falls
+-- back to a neutral placeholder if the row is somehow missing (e.g. a
+-- duel referencing a since-deleted account) so the UI never shows a
+-- blank name.
+nickForUser : Int -> Task String
+nickForUser userId =
+    profileForUser userId
+        |> Task.map
+            (\maybe ->
+                case maybe of
+                    Just p  -> p.nick
+                    Nothing -> "jogador"
+            )
+
+
+-- applyOutcome bumps both players' records for a freshly-finished
+-- duel. Called once, inside the answer handler's `done` transition.
+-- Undecided is a no-op guard so a mis-sequenced call can't corrupt
+-- the counters.
+applyOutcome : Int -> Int -> Shared.Outcome -> Task ()
+applyOutcome challengerUserId opponentUserId outcome =
+    case outcome of
+        ChallengerWon ->
+            addWin challengerUserId
+                |> Task.andThen (\_ -> addLoss opponentUserId)
+
+        OpponentWon ->
+            addWin opponentUserId
+                |> Task.andThen (\_ -> addLoss challengerUserId)
+
+        Drew ->
+            addDraw challengerUserId
+                |> Task.andThen (\_ -> addDraw opponentUserId)
+
+        Undecided ->
+            Task.succeed ()
+
+
+addWin : Int -> Task ()
+addWin userId =
+    withProfile userId (\p -> Repo.update profiles p.id { wins = p.wins + 1 })
+
+
+addLoss : Int -> Task ()
+addLoss userId =
+    withProfile userId (\p -> Repo.update profiles p.id { losses = p.losses + 1 })
+
+
+addDraw : Int -> Task ()
+addDraw userId =
+    withProfile userId (\p -> Repo.update profiles p.id { draws = p.draws + 1 })
+
+
+-- Load the profile, run a mutating step on it, discard the result.
+-- Missing profile → succeed silently (the duel's already been scored;
+-- a vanished profile shouldn't fail the whole request).
+withProfile : Int -> (Shared.Profile -> Task (Maybe Shared.Profile)) -> Task ()
+withProfile userId step =
+    profileForUser userId
+        |> Task.andThen
+            (\maybe ->
+                case maybe of
+                    Just p ->
+                        step p |> Task.map (\_ -> ())
+
+                    Nothing ->
+                        Task.succeed ()
+            )
+
+
+-- ====================================================================
+-- SERVICES
+-- ====================================================================
+
+
+meImpl : () -> Shared.User -> Task Shared.MeResult
+meImpl _ user =
+    profileForUser user.id
+        |> Task.map
+            (\maybe ->
+                case maybe of
+                    Just p  -> Shared.HasProfile p
+                    Nothing -> Shared.NoProfile
+            )
+
+
+createProfileImpl : { nick : String } -> Shared.User -> Task Shared.ProfileResult
+createProfileImpl input user =
+    let
+        nick =
+            String.trim input.nick
+    in
+    -- Length + charset rules live in Shared so the gate, the account
+    -- editor and this handler can never disagree.
+    if Shared.nickProblem nick /= Nothing then
+        Task.succeed Shared.InvalidNick
+
+    else
+        profileForUser user.id
+            |> Task.andThen
+                (\existing ->
+                    case existing of
+                        Just p ->
+                            -- Already onboarded (double submit / stale
+                            -- page): hand back the profile they already
+                            -- have instead of erroring.
+                            Task.succeed (Shared.ProfileCreated p)
+
+                        Nothing ->
+                            nickTaken nick
+                                |> Task.andThen
+                                    (\taken ->
+                                        if taken then
+                                            Task.succeed Shared.NickTaken
+
+                                        else
+                                            Repo.create profiles
+                                                { userId = user.id
+                                                , nick   = nick
+                                                , wins   = 0
+                                                , losses = 0
+                                                , draws  = 0
+                                                }
+                                                |> Task.map Shared.ProfileCreated
+                                    )
+                )
+
+
+-- Case-insensitive uniqueness: "Ana" and "ana" collide, so a rival
+-- can be challenged by whatever casing the challenger types.
+nickTaken : String -> Task Bool
+nickTaken nick =
+    let
+        target =
+            String.toLower nick
+    in
+    Repo.all profiles
+        |> Task.map
+            (\all ->
+                List.any (\p -> String.toLower p.nick == target) all
+            )
+
+
+-- Every player except the caller, as pickable opponent cards, sorted
+-- by nick for a stable list.
+listPlayersImpl : () -> Shared.User -> Task (List Shared.PlayerCard)
+listPlayersImpl _ user =
+    Repo.all profiles
+        |> Task.map
+            (\all ->
+                all
+                    |> List.filter (\p -> p.userId /= user.id)
+                    |> List.sortBy (\p -> p.nick)
+                    |> List.map
+                        (\p ->
+                            { nick   = p.nick
+                            , wins   = p.wins
+                            , losses = p.losses
+                            , draws  = p.draws
+                            }
+                        )
+            )
+
+
+-- Rename the caller. Same rules as onboarding (via Shared.nickProblem),
+-- plus the case-insensitive taken check — skipped when the nick is
+-- unchanged so re-casing your OWN nick ("ana" → "Ana") is allowed. The
+-- DB `uniques` index on `nick` is the backstop against a race.
+updateNickImpl : { nick : String } -> Shared.User -> Task Shared.NickResult
+updateNickImpl input user =
+    let
+        nick =
+            String.trim input.nick
+    in
+    if Shared.nickProblem nick /= Nothing then
+        Task.succeed Shared.NickBad
+
+    else
+        profileForUser user.id
+            |> Task.andThen
+                (\maybe ->
+                    case maybe of
+                        Nothing ->
+                            -- No profile to rename (shouldn't happen from
+                            -- the account sheet); treat as a bad request.
+                            Task.succeed Shared.NickBad
+
+                        Just p ->
+                            if String.toLower p.nick == String.toLower nick then
+                                Repo.update profiles p.id { nick = nick }
+                                    |> Task.map (\_ -> Shared.NickUpdated { p | nick = nick })
+
+                            else
+                                nickTaken nick
+                                    |> Task.andThen
+                                        (\taken ->
+                                            if taken then
+                                                Task.succeed Shared.NickUnavailable
+
+                                            else
+                                                Repo.update profiles p.id { nick = nick }
+                                                    |> Task.map (\_ -> Shared.NickUpdated { p | nick = nick })
+                                        )
+                )
+
+
+services =
+    [ Auth.protect Shared.me            meImpl
+    , Auth.protect Shared.createProfile createProfileImpl
+    , Auth.protect Shared.updateNick    updateNickImpl
+    , Auth.protect Shared.listPlayers   listPlayersImpl
+    ]

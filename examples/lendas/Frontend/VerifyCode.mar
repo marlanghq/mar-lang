@@ -1,0 +1,107 @@
+module Frontend.VerifyCode exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, text, textField, button, errorText
+    , numericCode, submit, empty, disabled
+    , width, chars
+    )
+
+
+-- Code half of the sign-in flow, mounted at /entrar/codigo/{email}.
+
+
+type alias Model =
+    { draft : String
+    , error : Maybe String
+    , busy  : Bool
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeVerified (Result Service.Error (Auth.VerifyOutcome Shared.User))
+
+
+init : { email : String } -> (Model, Cmd Msg)
+init _ =
+    ( { draft = "", error = Nothing, busy = False }, Cmd.none )
+
+
+update : { email : String } -> Msg -> Model -> (Model, Cmd Msg)
+update params msg model =
+    case msg of
+        DraftChanged value ->
+            ( { model | draft = value, error = Nothing }, Cmd.none )
+
+        Submitted ->
+            if model.busy then
+                ( model, Cmd.none )
+
+            else
+                ( { model | busy = True, error = Nothing }
+                , Auth.verifyCode
+                    { email = params.email, code = model.draft }
+                    CodeVerified
+                )
+
+        CodeVerified (Ok (Auth.SignedIn _)) ->
+            ( { model | busy = False, draft = "" }, Auth.completeSignIn )
+
+        CodeVerified (Ok Auth.WrongCode) ->
+            ( { model | busy = False, draft = "", error = Just "Código incorreto. Confira o e-mail ou peça um novo." }
+            , Cmd.none
+            )
+
+        CodeVerified (Ok Auth.TooManyAttempts) ->
+            ( { model | busy = False, draft = "", error = Just "Tentativas demais com este código. Peça um novo." }
+            , Cmd.none
+            )
+
+        CodeVerified (Err why) ->
+            ( { model | busy = False, draft = "", error = Just (Service.errorToString why) }
+            , Cmd.none
+            )
+
+
+view : { email : String } -> Model -> View Msg
+view params model =
+    navigationStack [ navigationTitle "Confirme o código" ]
+        [ form
+            [ section []
+                [ text [] ("Enviamos um código de 6 dígitos para " ++ params.email ++ ".")
+                , textField
+                    [ numericCode, submit Submitted, disabled model.busy, width (chars 6) ]
+                    "Código" model.draft DraftChanged
+                , errorView model.error
+                ]
+            , section []
+                [ button [ disabled model.busy ] Submitted "Entrar" ]
+            ]
+        ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            errorText msg
+
+
+page : Page
+page =
+    Page.dynamic
+        { path   = Frontend.Routes.verifyCode
+        , title  = "Confirmar código"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

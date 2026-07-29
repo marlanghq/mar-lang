@@ -89,7 +89,7 @@ func WriteSnapshot(in SnapshotInputs) error {
 	if err != nil {
 		return fmt.Errorf("admin.WriteSnapshot: read manifest: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(stage, "mar.json"), manifestRaw, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(stage, "mar.json"), manifestRaw, 0o600); err != nil {
 		return fmt.Errorf("admin.WriteSnapshot: stage manifest: %w", err)
 	}
 
@@ -114,7 +114,7 @@ func WriteSnapshot(in SnapshotInputs) error {
 		return fmt.Errorf("admin.WriteSnapshot: marshal metadata: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(stage, "metadata.json"),
-		append(metaBytes, '\n'), 0o644); err != nil {
+		append(metaBytes, '\n'), 0o600); err != nil {
 		return fmt.Errorf("admin.WriteSnapshot: stage metadata: %w", err)
 	}
 
@@ -140,14 +140,28 @@ func manifestName(m *project.Manifest) string {
 	return m.Name
 }
 
+// ensureBackupDir creates dir owner-only, and tightens a dir that
+// already exists (MkdirAll never changes the mode of an existing
+// dir, so catalogs created before the 0o700 policy stay 0o755
+// without the explicit Chmod). Backup bundles hold the full
+// database — auth codes and session hashes included — so on a
+// multi-user host the catalog must not be listable or readable by
+// other local users.
+func ensureBackupDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o700)
+}
+
 // writeSnapshotTarGz creates a gzipped tarball at outPath
 // containing every file directly under stageDir. File names inside
 // the archive are stage-relative (no leading dir).
 func writeSnapshotTarGz(stageDir, outPath string) error {
-	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+	if err := ensureBackupDir(filepath.Dir(outPath)); err != nil {
 		return err
 	}
-	out, err := os.Create(outPath)
+	out, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
@@ -179,7 +193,7 @@ func writeSnapshotTarGz(stageDir, outPath string) error {
 		}
 		hdr := &tar.Header{
 			Name:    e.Name(),
-			Mode:    0o644,
+			Mode:    0o600,
 			Size:    info.Size(),
 			ModTime: info.ModTime(),
 		}

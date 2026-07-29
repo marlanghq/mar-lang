@@ -133,12 +133,13 @@ update _ msg model =
             ( { model | draftDate = Just when }, Cmd.none )
 
         SubmitExpense ->
-            -- Whole numbers only (no cents in this example); the backend
-            -- re-checks > 0.
+            -- Decimal.fromString accepts "12", "12.5", "12.50" — exact
+            -- digits, no floats anywhere. The backend re-checks > 0 and
+            -- normalizes to two places before writing.
             if model.busy then
                 ( model, Cmd.none )
             else
-                case String.toInt (String.trim model.draftAmount) of
+                case Decimal.fromString (String.trim model.draftAmount) of
                     Just amount ->
                         if amount > 0 then
                             ( { model | busy = True, error = Nothing }
@@ -155,7 +156,7 @@ update _ msg model =
                             ( { model | error = Just "Amount must be greater than zero." }, Cmd.none )
 
                     Nothing ->
-                        ( { model | error = Just "Enter the amount as a whole number." }, Cmd.none )
+                        ( { model | error = Just "Enter the amount like 12.50." }, Cmd.none )
 
         ExpenseSubmitted (Ok (Shared.ExpenseAdded _)) ->
             ( { model | busy = False, adding = False, draftAmount = "", draftNote = "", draftDate = Nothing }
@@ -169,7 +170,7 @@ update _ msg model =
             ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
 
         DeleteExpenseRowAt idx ->
-            case nth idx (currentExpenses model) of
+            case List.head (List.drop idx (currentExpenses model)) of
                 Just expense ->
                     ( { model | confirmingExpense = Just expense }, Cmd.none )
 
@@ -210,16 +211,6 @@ update _ msg model =
 currentExpenses : Model -> List Shared.Expense
 currentExpenses model =
     Maybe.withDefault [] model.expenses
-
-
-nth : Int -> List a -> Maybe a
-nth idx xs =
-    case xs of
-        [] ->
-            Nothing
-
-        x :: rest ->
-            if idx <= 0 then Just x else nth (idx - 1) rest
 
 
 -- ====================================================================
@@ -371,26 +362,13 @@ expenseRow pets expense =
 -- would just be noise on every row — then the note if there is one.
 rowSubtitle : List Shared.Pet -> Shared.Expense -> String
 rowSubtitle pets expense =
-    joinDot
+    String.join ", "
         (List.concat
             [ [ Shared.formatDate expense.spentAt ]
             , if expense.petId == Shared.allPetsId then [] else [ Shared.petLabel expense.petId pets ]
             , if expense.note == "" then [] else [ expense.note ]
             ]
         )
-
-
-joinDot : List String -> String
-joinDot parts =
-    case parts of
-        [] ->
-            ""
-
-        x :: rest ->
-            if List.isEmpty rest then
-                x
-            else
-                x ++ " · " ++ joinDot rest
 
 
 -- Per-category totals, dropping categories with no spend. Computed on
@@ -405,17 +383,14 @@ breakdown items =
         )
 
 
-sumCategory : String -> List Shared.Expense -> Int
+sumCategory : String -> List Shared.Expense -> Decimal
 sumCategory category items =
-    List.sum
-        (List.map (\e -> e.amount)
-            (List.filter (\e -> e.category == category) items)
-        )
+    Shared.sumAmounts (List.filter (\e -> e.category == category) items)
 
 
-totalOf : List Shared.Expense -> Int
+totalOf : List Shared.Expense -> Decimal
 totalOf items =
-    List.sum (List.map (\e -> e.amount) items)
+    Shared.sumAmounts items
 
 
 -- Per-month report: each month the user spent in, newest first, with
@@ -456,22 +431,17 @@ monthKeyOf e =
 -- (the backend sorts it), so that order is already newest-month-first.
 distinctMonths : List Shared.Expense -> List Int
 distinctMonths items =
-    -- Mar's List.foldl is (b -> a -> b) -> b -> List a -> b: accumulator
-    -- first, element second.
     List.foldl
-        (\seen e ->
+        (\e seen ->
             if List.member (monthKeyOf e) seen then seen else seen ++ [ monthKeyOf e ]
         )
         []
         items
 
 
-monthTotal : Int -> List Shared.Expense -> Int
+monthTotal : Int -> List Shared.Expense -> Decimal
 monthTotal key items =
-    List.sum
-        (List.map (\e -> e.amount)
-            (List.filter (\e -> monthKeyOf e == key) items)
-        )
+    Shared.sumAmounts (List.filter (\e -> monthKeyOf e == key) items)
 
 
 monthLabel : Int -> List Shared.Expense -> String

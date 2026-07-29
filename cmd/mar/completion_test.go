@@ -12,14 +12,9 @@ import (
 
 var topLevelCommands = []string{
 	"dev", "build", "init", "check", "format",
-	"config", "migrate", "admin", "fly", "cloudflare-pages",
+	"config", "migrate", "admin", "deploy", "fly",
 	"repl", "lsp", "completion", "version",
 }
-
-// cloudflarePagesSubcommands — the only sub right now is `deploy`.
-// Listed separately from flySubcommands so the per-shell assertions
-// can confirm both top-level commands offer their own subs.
-var cloudflarePagesSubcommands = []string{"deploy"}
 
 // flySubcommands, migrateSubcommands, adminSubcommands, and the
 // fly third-level subs are the inner sets that `mar <cmd> <tab>`
@@ -28,9 +23,10 @@ var cloudflarePagesSubcommands = []string{"deploy"}
 // forgetting to register a new subcommand, or feeding `_describe`
 // loose args (zsh interprets them as helper-function names and
 // leaks `__tmp_*` into the candidate list — the array-indirection
-// pattern in zshCompletion prevents this).
+// pattern in zshCompletion prevents this). Shipping is the top-level
+// `mar deploy` command, so it's NOT in this fly-subcommand set.
 var flySubcommands = []string{
-	"preview", "deploy", "logs", "status",
+	"preview", "logs", "status",
 	"admin", "database", "db", "secrets", "destroy",
 }
 
@@ -209,30 +205,25 @@ func TestAllShells_listAdminSubs(t *testing.T) {
 	}
 }
 
-// TestAllShells_listCloudflarePagesSubs — `mar cloudflare-pages` sits
-// next to `mar fly` as a second deploy target. Each shell should
-// offer its sub(s) so users discover the path via tab. Today the only
-// sub is `deploy`; this test catches us forgetting to add new subs
-// (or new top-level deploy targets) when they land.
-func TestAllShells_listCloudflarePagesSubs(t *testing.T) {
+// TestAllShells_offerDeployCommand — `mar deploy` is the single ship
+// command; it routes to Fly or Cloudflare Pages from mar.json. Each
+// shell should list it as a top-level command so users discover the
+// path via tab. (topLevelCommands above also covers presence; this
+// pins the intent as a named regression.)
+func TestAllShells_offerDeployCommand(t *testing.T) {
 	for shell, out := range map[string]string{
 		"zsh":  zshCompletion(),
 		"bash": bashCompletion(),
 		"fish": fishCompletion(),
 	} {
-		if !strings.Contains(out, "cloudflare-pages") {
-			t.Errorf("%s: missing top-level cloudflare-pages command", shell)
-		}
-		for _, sub := range cloudflarePagesSubcommands {
-			if !strings.Contains(out, sub) {
-				t.Errorf("%s: missing cloudflare-pages sub %q", shell, sub)
-			}
+		if !strings.Contains(out, "deploy") {
+			t.Errorf("%s: missing top-level deploy command", shell)
 		}
 	}
 }
 
 // TestAllShells_haveNoOpenFlag — the --no-open flag was added to
-// `mar dev` and `mar fly deploy` after MAR_NO_OPEN was removed.
+// `mar dev` and `mar deploy` after MAR_NO_OPEN was removed.
 // Each shell should advertise it so users discover it via tab.
 func TestAllShells_haveNoOpenFlag(t *testing.T) {
 	for shell, out := range map[string]string{

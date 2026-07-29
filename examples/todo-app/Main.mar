@@ -3,7 +3,7 @@ module Main exposing (main)
 
 import UI exposing
     ( navigationStack, navigationTitle
-    , form, list, section, header
+    , list, section, header
     , hstack
     , text, textField, button
     , submit

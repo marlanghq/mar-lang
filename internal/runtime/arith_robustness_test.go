@@ -2,16 +2,16 @@ package runtime
 
 import "testing"
 
-// Integer divide-by-zero is total and yields 0 on every Mar runtime: the web
-// (runtime.js) and iOS runtimes already return 0, so the Go runtime must agree
-// — otherwise the same program would 500 on the server while returning 0 on the
-// client.
+// Integer divide-by-zero (`//`) is total and yields 0 on every Mar runtime:
+// the web (runtime.js) and iOS runtimes already return 0, so the Go runtime
+// must agree — otherwise the same program would 500 on the server while
+// returning 0 on the client.
 func TestIntDivideByZeroIsTotalZero(t *testing.T) {
-	if got := runValue(t, "10 / 0"); got != "0" {
-		t.Fatalf("10 / 0: got %s, want 0", got)
+	if got := runValue(t, "10 // 0"); got != "0" {
+		t.Fatalf("10 // 0: got %s, want 0", got)
 	}
-	if got := runValue(t, "0 / 0"); got != "0" {
-		t.Fatalf("0 / 0: got %s, want 0", got)
+	if got := runValue(t, "0 // 0"); got != "0" {
+		t.Fatalf("0 // 0: got %s, want 0", got)
 	}
 }
 
@@ -25,6 +25,7 @@ func TestOperatorBuiltinsErrorInsteadOfPanicking(t *testing.T) {
 	}{
 		{"-", subOp},
 		{"*", mulOp},
+		{"//", intDivOp},
 		{"/", divOp},
 		{"&&", andOp},
 		{"||", orOp},

@@ -19,6 +19,78 @@
 import Foundation
 import Observation
 import SwiftUI
+import QuartzCore
+
+/// Drives a closure at a requested tick interval via CADisplayLink. Used for
+/// game-rate `Time.every` ticks so the loop is vsync-aligned and never
+/// backlogs (a Timer at 60Hz queues up ticks when a frame overruns, which
+/// spirals a heavy game into a death loop). Mirrors the web runtime's rAF
+/// tick source (ADR-0003) step for step:
+///  - display period within ±25% of the interval (the healthy 60Hz case):
+///    lock ONE tick per painted frame — glass-smooth, ~4% slower than
+///    nominal, imperceptible.
+///  - faster panels (120Hz ProMotion): the accumulator fires at the correct
+///    average rate (the frame-rate range below is a hint, not a guarantee).
+///  - SLOWER frames (Low Power Mode, a heavy scene): 2..catchUpMax
+///    back-to-back ticks per painted frame keep the GAME clock at true
+///    speed — only the paint rate drops, instead of dropped frames dilating
+///    game time into slow motion. Debt beyond the cap is dropped, so an
+///    impossible load degrades to slow motion, never a catch-up spiral.
+///    SwiftUI coalesces the burst's model writes into a single body
+///    re-evaluation, so a burst costs N updates + ONE render.
+@MainActor
+final class DisplayLinkProxy {
+    /// Max catch-up ticks per painted frame: holds true game speed down to
+    /// 15 display-fps at a 16ms interval; past that the debt clamp below
+    /// drops the excess.
+    static let catchUpMax = 4
+    var onFrame: (() -> Void)?
+    private var link: CADisplayLink?
+    private let interval: TimeInterval
+    private var acc: TimeInterval = 0
+    private var ema: TimeInterval = 0
+    private var lastTs: CFTimeInterval = 0
+
+    init(interval: TimeInterval) {
+        self.interval = interval
+    }
+
+    func start() {
+        let l = CADisplayLink(target: self, selector: #selector(step(_:)))
+        // Ask the panel for the requested rate (16ms -> ~60Hz) so ProMotion
+        // doesn't wake us at 120Hz for nothing. This is a hint, not a
+        // guarantee — the accumulator below is what actually gates ticks.
+        let hz = Float(min(120, max(30, Int((1.0 / max(interval, 1.0 / 120.0)).rounded()))))
+        l.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: hz, preferred: hz)
+        l.add(to: .main, forMode: .common)
+        link = l
+    }
+
+    @objc private func step(_ l: CADisplayLink) {
+        if lastTs == 0 { lastTs = l.timestamp; return }
+        // Clamp a suspend/resume gap so returning to the foreground catches
+        // up at most one frame's worth of ticks (the web clamps at 100ms).
+        let d = min(l.timestamp - lastTs, 0.1)
+        lastTs = l.timestamp
+        ema = ema > 0 ? ema * 0.9 + d * 0.1 : d
+        if abs(ema - interval) <= interval / 4 {
+            onFrame?()
+        } else {
+            acc += d
+            var n = 0
+            while acc >= interval && n < Self.catchUpMax {
+                acc -= interval
+                n += 1
+                onFrame?()
+            }
+            // At most one interval of residual carries to the next frame
+            // (the slow-motion floor).
+            if acc > interval { acc = interval }
+        }
+    }
+
+    func stop() { link?.invalidate(); link = nil }
+}
 
 @MainActor
 @Observable
@@ -41,9 +113,64 @@ final class PageRuntime {
     private(set) var model: MarValue = .unit
     private(set) var lastError: String?
 
+    /// Which of ADR 0020's cases the recorded failure belongs to. `dispatch`
+    /// means the app is still standing (`update` never returned a new model,
+    /// so what is on screen is consistent); `page` means what failed was
+    /// drawing, and there is no screen to preserve.
+    enum FailureSite { case dispatch, page }
+    private(set) var lastErrorSite: FailureSite?
+
+    private func record(_ site: String, _ where_: FailureSite, _ message: String) {
+        lastError = "\(site) failed: \(message)"
+        lastErrorSite = where_
+    }
+
+    /// Records a runtime error raised somewhere that cannot propagate one.
+    ///
+    /// Every caller of this used to be a `try?`, which drops the error whole:
+    /// no message, no log, nothing recorded. A failing `subscriptions` simply
+    /// stopped registering and a failing tagger simply stopped delivering, so
+    /// a page whose arithmetic broke looked like "the keyboard died on its
+    /// own" — with no way to tell that from a bug in the framework.
+    ///
+    /// Swallowing is never the right default. A subscription that cannot be
+    /// built is still a broken program, and the person running it deserves to
+    /// know which part broke.
+    private func report(_ site: String, _ error: Error) {
+        // Subscriptions and taggers: the model is untouched, so the screen
+        // behind the message is still a consistent one.
+        record(site, .dispatch, error.localizedDescription)
+    }
+
+    /// Applies a subscription tagger, reporting instead of swallowing.
+    private func applyTagger(_ tagger: MarValue, _ value: MarValue, _ site: String) -> MarValue? {
+        do {
+            return try Eval.apply(tagger, value)
+        } catch {
+            report(site, error)
+            return nil
+        }
+    }
+
     @ObservationIgnored private var initEffectFired = false
     @ObservationIgnored private var pendingInitEffect: MarValue?
-    @ObservationIgnored private var activeSubs: [String: (timer: Timer, taggers: [MarValue])] = [:]
+    @ObservationIgnored private var activeSubs: [String: LiveSub] = [:]
+
+    /// A live subscription source. Different kinds (timer, keyboard, gamepad,
+    /// device, sound) hold different native handles behind `stop`; all carry
+    /// the current taggers, refreshed on reconcile without a restart (identity
+    /// is the item content, never the tagger). Mirrors the JS `subSources`
+    /// records + activeSubs map in internal/jsserve/runtime.js.
+    final class LiveSub {
+        var taggers: [MarValue]
+        let stop: () -> Void
+        /// Optional live-retarget hook, called with the item's payload when
+        /// the SAME key survives a reconcile. Sound.hold uses it to glide
+        /// the held bed to a new pitch/volume (the JS `update:` on the
+        /// ambient subSource); sources without live state leave it nil.
+        var update: ((MarValue) -> Void)?
+        init(taggers: [MarValue], stop: @escaping () -> Void) { self.taggers = taggers; self.stop = stop }
+    }
 
     /// Public-page constructor (no User threading, no params).
     convenience init(page: DecodedPage) {
@@ -76,7 +203,7 @@ final class PageRuntime {
             self.model = m
             self.pendingInitEffect = eff
         } catch {
-            self.lastError = "init failed: \(error.localizedDescription)"
+            self.record("init", .page, error.localizedDescription)
         }
     }
 
@@ -135,10 +262,25 @@ final class PageRuntime {
             let result = try Eval.apply(partial, model)
             let (newModel, eff) = unwrapModelEffect(result)
             model = newModel
+            // A dispatch that completed is the app working again, which is the
+            // only honest reason to take the message down. A `page` failure is
+            // left alone: nothing here re-ran `view`.
+            if lastErrorSite == .dispatch {
+                lastError = nil
+                lastErrorSite = nil
+            }
             runEffect(eff)
             reconcileSubs()
+        } catch MarRuntimeError.noMatch {
+            // A stale message: an async effect (a Service.call, Cmd.perform,
+            // or subscription) started by a PREVIOUS page resolved AFTER we
+            // navigated away, so this page received a message it can't match.
+            // Case exhaustiveness is checked at compile time, so a no-match
+            // reaching dispatch can only be a message meant for a torn-down
+            // page — drop it silently instead of surfacing it as an error.
+            // Mirrors the guard in internal/jsserve/runtime.js.
         } catch {
-            lastError = "update failed: \(error.localizedDescription)"
+            record("update", .dispatch, error.localizedDescription)
         }
     }
 
@@ -150,12 +292,12 @@ final class PageRuntime {
             let viewFnApplied = try PageRuntime.applyExtras(viewFn, user: user, params: params)
             let v = try Eval.apply(viewFnApplied, model)
             guard case .view(let mv) = v else {
-                lastError = "view returned non-View value"
+                record("view", .page, "returned a value that is not a View")
                 return nil
             }
             return mv
         } catch {
-            lastError = "view failed: \(error.localizedDescription)"
+            record("view", .page, error.localizedDescription)
             return nil
         }
     }
@@ -165,60 +307,166 @@ final class PageRuntime {
     // Reconcile the live subscription sources against `subscriptions model`.
     // Run after init (mount) and after every dispatch — the same funnel as the
     // JS runtime's render(): start newly-returned sources, stop ones no longer
-    // returned, refresh taggers on survivors. Identity is the interval (the
-    // data), never the tagger. Mirrors reconcileSubs in internal/jsserve/runtime.js.
-    // NOTE: not compiled in CI (no xcode) — verify on a real iOS build.
+    // returned, refresh taggers on survivors. Identity is the item content,
+    // never the tagger. Mirrors reconcileSubs + subSources in
+    // internal/jsserve/runtime.js. Handles Time.every plus the web-first
+    // sources: Keyboard / Gamepad / Device (input + capability) and Sound
+    // (loop / ambient / once). Compile-checked, verified on a real iOS build.
     private func reconcileSubs() {
-        var desired: [String: (seconds: Int, taggers: [MarValue])] = [:]
-        if let applied = try? PageRuntime.applyExtras(subscriptionsFn, user: user, params: params),
-           let subVal = try? Eval.apply(applied, model),
-           case .ctor(let tag, let items, _) = subVal, tag == "__Sub" {
+        var desired: [String: [MarValue]] = [:]      // key -> taggers
+        var makers: [String: () -> LiveSub] = [:]    // key -> native source factory
+        var payloads: [String: MarValue] = [:]       // key -> live-retarget payload
+
+        func want(_ key: String, _ tagger: MarValue?, _ make: @escaping () -> LiveSub) {
+            if desired[key] == nil { desired[key] = []; makers[key] = make }
+            if let tagger { desired[key]!.append(tagger) }
+        }
+
+        var subVal: MarValue?
+        do {
+            let applied = try PageRuntime.applyExtras(subscriptionsFn, user: user, params: params)
+            subVal = try Eval.apply(applied, model)
+        } catch {
+            report("subscriptions", error)
+        }
+        if let subVal, case .ctor(let tag, let items, _) = subVal, tag == "__Sub" {
             for item in items {
-                guard case .ctor(let itag, let a, _) = item, itag == "__SubEvery",
-                      a.count == 2, case .duration(let seconds) = a[0] else { continue }
-                let key = "timeEvery:\(seconds)"
-                if desired[key] == nil { desired[key] = (seconds, []) }
-                desired[key]!.taggers.append(a[1])
+                guard case .ctor(let itag, let a, _) = item else { continue }
+                switch itag {
+                case "__SubEvery":
+                    guard a.count == 2, case .duration(let seconds) = a[0] else { continue }
+                    let key = "every:\(seconds)"
+                    want(key, a[1]) { [weak self] in self?.makeTimer(key, seconds) ?? LiveSub(taggers: []) {} }
+                case "__SubKeyboard":
+                    want("keyboard", a.first) { [weak self] in self?.makeKeyboard() ?? LiveSub(taggers: []) {} }
+                case "__SubGamepad":
+                    want("gamepad", a.first) { [weak self] in self?.makeGamepad() ?? LiveSub(taggers: []) {} }
+                case "__SubDevice":
+                    want("device", a.first) { [weak self] in self?.makeDevice() ?? LiveSub(taggers: []) {} }
+                case "__SubSound":
+                    guard a.count == 2, case .string(let mode) = a[0] else { continue }
+                    let snd = a[1]
+                    // ambient is a STEADY bed (docs/proposals/sound.md): its
+                    // identity is the bed's STRUCTURE without freq or volume
+                    // (MarSound.bedKey, the JS soundBedKey). Returning the
+                    // same bed at a new pitch/volume must RETUNE the live
+                    // node (the survivor's update hook below), never
+                    // stop+restart it — restarting clicked AND, at 60
+                    // renders/sec, stalled the frame rate. loop / once keep
+                    // the full content key so a genuine change swaps the
+                    // track.
+                    let key = mode == "hold" ? "sound:hold:\(MarSound.bedKey(snd))" : "sound:\(mode):\(MarSound.contentKey(snd))"
+                    if mode == "hold" { payloads[key] = snd }
+                    want(key, nil) { [weak self] in self?.makeSound(mode, snd) ?? LiveSub(taggers: []) {} }
+                default:
+                    continue
+                }
             }
         }
         // Stop sources no longer desired (collect keys first — never mutate
-        // the dictionary while iterating it).
+        // while iterating).
         for key in activeSubs.keys.filter({ desired[$0] == nil }) {
-            activeSubs[key]?.timer.invalidate()
+            activeSubs[key]?.stop()
             activeSubs.removeValue(forKey: key)
         }
-        // Start new sources; refresh taggers on survivors.
-        for (key, g) in desired {
-            if var existing = activeSubs[key] {
-                existing.taggers = g.taggers
-                activeSubs[key] = existing
+        // Start new sources; refresh taggers on survivors and let sources
+        // with live state (the ambient bed) retarget to the new payload.
+        for (key, taggers) in desired {
+            if let live = activeSubs[key] {
+                live.taggers = taggers
+                if let p = payloads[key] { live.update?(p) }
             } else {
-                let interval = TimeInterval(max(g.seconds, 1))
-                let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-                    Task { @MainActor in self?.fireSub(key) }
-                }
-                activeSubs[key] = (timer, g.taggers)
+                let live = makers[key]!()
+                live.taggers = taggers
+                activeSubs[key] = live
             }
         }
     }
 
-    /// Fire one subscription key: read the wall clock and deliver each
-    /// tagger's Msg into the loop.
-    private func fireSub(_ key: String) {
-        guard let rec = activeSubs[key] else { return }
+    // MARK: source factories
+
+    private func makeTimer(_ key: String, _ seconds: Double) -> LiveSub {
+        // Game-rate ticks (<= ~40fps, e.g. Time.every (millis 16)) ride a
+        // CADisplayLink: a vsync-aligned game clock (ADR-0003) — locked 1:1
+        // on a healthy display, capped catch-up when frames drop, never an
+        // unbounded backlog. A 60Hz Timer both misaligns with vsync and
+        // QUEUES ticks under load — a heavy game then spirals into
+        // unplayability as the queue never drains. This mirrors the web
+        // runtime's rAF tick source for Time.every ≤20ms.
+        if seconds <= 0.025 {
+            let proxy = DisplayLinkProxy(interval: seconds)
+            proxy.onFrame = { [weak self] in self?.fireTime(key) }
+            proxy.start()
+            return LiveSub(taggers: []) { proxy.stop() }
+        }
+        // Slower clocks stay on a Timer (a display link can't do long
+        // intervals and would freeze in a backgrounded tab). 1ms floor so
+        // Time.millis can still drive sub-second ticks.
+        let timer = Timer.scheduledTimer(withTimeInterval: max(seconds, 0.001), repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.fireTime(key) }
+        }
+        return LiveSub(taggers: []) { timer.invalidate() }
+    }
+    private func fireTime(_ key: String) {
+        guard let live = activeSubs[key] else { return }
         let now = MarValue.time(Int(Date().timeIntervalSince1970 * 1000))
-        for tagger in rec.taggers {
-            if let msg = try? Eval.apply(tagger, now) {
-                dispatch(msg)
-            }
+        for t in live.taggers { if let m = applyTagger(t, now, "a Time.every subscription") { dispatch(m) } }
+    }
+
+    // Keyboard.watch / Gamepad.watch — held-state mirrors. Each registers a
+    // change listener on its hub (which seeds the current snapshot on subscribe,
+    // deferred, like Device.watch) and delivers the whole record on every
+    // change. Mirrors subSources.keyboardWatch / gamepadWatch in runtime.js.
+    private func makeKeyboard() -> LiveSub {
+        let tok = KeyboardHub.shared.add { [weak self] in
+            guard let self, let live = self.activeSubs["keyboard"] else { return }
+            let rec = KeyboardHub.shared.currentRecord()
+            for t in live.taggers { if let m = self.applyTagger(t, rec, "a keyboard subscription") { self.dispatch(m) } }
+        }
+        return LiveSub(taggers: []) { KeyboardHub.shared.remove(tok) }
+    }
+
+    private func makeGamepad() -> LiveSub {
+        let tok = GamepadHub.shared.add { [weak self] in
+            guard let self, let live = self.activeSubs["gamepad"] else { return }
+            let rec = GamepadHub.shared.currentRecord()
+            for t in live.taggers { if let m = self.applyTagger(t, rec, "a gamepad subscription") { self.dispatch(m) } }
+        }
+        return LiveSub(taggers: []) { GamepadHub.shared.remove(tok) }
+    }
+
+    private func makeDevice() -> LiveSub {
+        let tok = DeviceHub.shared.add { [weak self] in
+            guard let self, let live = self.activeSubs["device"] else { return }
+            let rec = DeviceHub.shared.currentRecord()
+            for t in live.taggers { if let m = self.applyTagger(t, rec, "a device subscription") { self.dispatch(m) } }
+        }
+        return LiveSub(taggers: []) { DeviceHub.shared.remove(tok) }
+    }
+
+    private func makeSound(_ mode: String, _ snd: MarValue) -> LiveSub {
+        switch mode {
+        case "loop":
+            let handle = MarSound.shared.startLoop(snd)
+            return LiveSub(taggers: []) { MarSound.shared.stop(handle) }
+        case "hold":
+            let handle = MarSound.shared.startHold(snd)
+            let live = LiveSub(taggers: []) { MarSound.shared.stop(handle) }
+            // Same bed key surviving a reconcile = glide the held bed to
+            // the new pitch/volume (the racer's engine note).
+            live.update = { MarSound.shared.retuneHold(handle, $0) }
+            return live
+        default:
+            let handle = MarSound.shared.startOnce(snd)
+            return LiveSub(taggers: []) { MarSound.shared.stop(handle) }
         }
     }
 
-    /// Invalidate every live timer. Called from unmount() so leaving a page
+    /// Invalidate every live source. Called from unmount() so leaving a page
     /// stops its subscriptions (mirrors the JS reconciler dropping the page's
     /// keys on navigation).
     private func teardownSubs() {
-        for (_, rec) in activeSubs { rec.timer.invalidate() }
+        for (_, live) in activeSubs { live.stop() }
         activeSubs.removeAll()
     }
 
@@ -241,7 +489,7 @@ final class PageRuntime {
         do {
             _ = try eff.run()
         } catch {
-            lastError = "effect [\(eff.tag)] failed: \(error.localizedDescription)"
+            record("effect [\(eff.tag)]", .dispatch, error.localizedDescription)
         }
     }
 }

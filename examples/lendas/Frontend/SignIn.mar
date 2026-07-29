@@ -1,0 +1,147 @@
+module Frontend.SignIn exposing (page)
+
+
+import Frontend.Routes
+import UI exposing
+    ( navigationStack
+    , form, section, header, footer
+    , vstack, align, center
+    , title, subtitle, text, paragraph, span, bold
+    , image, px, size
+    , textField, button, errorText
+    , email, submit, disabled, empty
+    )
+
+
+-- The landing. This is the app's signInPage, so it's the first thing a
+-- new visitor sees: a proper title screen that sells the game, then the
+-- email half of the sign-in flow (request a code, push to /codigo with
+-- the address in the URL). Native UI throughout, to match the code and
+-- nickname screens that follow.
+
+
+type alias Model =
+    { draft : String
+    , error : Maybe String
+    , busy  : Bool
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { draft = "", error = Nothing, busy = False }, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        DraftChanged value ->
+            ( { model | draft = value, error = Nothing }, Cmd.none )
+
+        Submitted ->
+            if model.busy then
+                ( model, Cmd.none )
+
+            else
+                ( { model | busy = True, error = Nothing }
+                , Auth.requestCode { email = model.draft } CodeRequested
+                )
+
+        CodeRequested (Ok Auth.CodeSent) ->
+            ( { model | busy = False }
+            , Nav.pushTo Frontend.Routes.verifyCode { email = model.draft }
+            )
+
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( { model | busy = False, error = Just "Esse e-mail não parece válido." }
+            , Cmd.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( { model | busy = False, error = Just "Muitas tentativas. Espere um instante antes de tentar de novo." }
+            , Cmd.none
+            )
+
+        CodeRequested (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }
+            , Cmd.none
+            )
+
+
+-- One "Como funciona" line: emoji marker + bold name + description.
+feature : String -> String -> String -> View Msg
+feature emoji name desc =
+    paragraph
+        [ span [] (emoji ++ "  ")
+        , span [bold] name
+        , span [] (": " ++ desc)
+        ]
+
+
+view : Model -> View Msg
+view model =
+    navigationStack []
+        [ form
+            [ section []
+                [ vstack [ align center ]
+                    [ image [ size (px 132) (px 132) ]
+                        { src = "/logo.png"
+                        , alt = "Emblema do LENDAS: um sol dourado sobre um disco violeta"
+                        }
+                    , title "LENDAS"
+                    , subtitle "Duelos de cartas dos mitos da América Latina"
+                    ]
+                ]
+            , section []
+                [ paragraph
+                    [ span [] "Monte um baralho com deuses, bichos e assombrações do folclore latino-americano e desafie outra pessoa. Cada um joga no seu tempo: faça sua jogada, feche o app e volte quando quiser." ]
+                ]
+            , section [ header "Como funciona" ]
+                [ feature "🃏" "Monte seu baralho"
+                    "três reinos para escolher, Sol, Águas e Floresta, cada um com seu jeito de jogar."
+                , feature "⏳" "Jogue sem pressa"
+                    "as partidas são por turnos. Sua vez fica te esperando, sem relógio correndo."
+                , feature "⚔️" "Desafie um rival"
+                    "convide alguém pelo apelido e disputem a mesa, lance por lance."
+                ]
+            , section
+                [ header "Entre para jogar"
+                , footer "Enviamos um código novo a cada acesso. Nada de senha para decorar."
+                ]
+                [ text [] "Digite seu e-mail e mandamos um código de acesso na hora."
+                , textField
+                    [ email, submit Submitted, disabled model.busy ]
+                    "E-mail" model.draft DraftChanged
+                , errorView model.error
+                , button [ disabled model.busy ] Submitted "Enviar meu código"
+                ]
+            ]
+        ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just msg ->
+            errorText msg
+
+
+page : Page
+page =
+    Page.create
+        { path   = "/entrar"
+        , title  = "Entrar"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = always Sub.none
+        }

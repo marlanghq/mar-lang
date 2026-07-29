@@ -62,7 +62,7 @@ mar dev examples/pet-expenses
 
 In dev mode the sign-in code is printed to the server log, so you can sign in
 without configuring SMTP. For production, set `SESSION_SECRET` + the mailer
-credentials (`mar.json` `mail` block) and deploy with `mar fly deploy`.
+credentials (`mar.json` `mail` block) and deploy with `mar deploy`.
 
 ## Notes
 

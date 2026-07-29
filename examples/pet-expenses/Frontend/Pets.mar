@@ -103,10 +103,10 @@ update _ msg model =
             ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
 
         EditClicked ->
-            ( { model | editing = (if model.editing then False else True) }, Cmd.none )
+            ( { model | editing = not model.editing }, Cmd.none )
 
         DeletePetRowAt idx ->
-            case nth idx (currentPets model) of
+            case List.head (List.drop idx (currentPets model)) of
                 Just pet ->
                     ( { model | confirmingPet = Just pet }, Cmd.none )
 
@@ -141,16 +141,6 @@ update _ msg model =
 currentPets : Model -> List Shared.Pet
 currentPets model =
     Maybe.withDefault [] model.pets
-
-
-nth : Int -> List a -> Maybe a
-nth idx xs =
-    case xs of
-        [] ->
-            Nothing
-
-        x :: rest ->
-            if idx <= 0 then Just x else nth (idx - 1) rest
 
 
 -- ====================================================================

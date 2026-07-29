@@ -1,0 +1,400 @@
+module Main exposing (main)
+
+
+-- Touch me When — a 2-player reaction duel on one device.
+--
+-- Two shapes morph (type + color) every second. The instant they match (same
+-- type AND color), the first player to tap their own zone scores; tapping when
+-- they DON'T match hands the point to the other player. The screen is split
+-- into two touch zones (top + bottom) with the play area between them, and the
+-- top zone is rotated 180° so the two players face each other.
+--
+-- The round flows as a tiny state machine: a score freezes the board with the
+-- winner's zone green for a beat, then deals a new round. First to 10 wins.
+--
+-- Built on the v0.0.7 canvas primitives (the `Canvas` module: `canvas`, the
+-- shapes, `rgb`, `onTap` / `watchSize`). Web-first; iOS is deferred.
+--
+-- Layout is REFLOW: the canvas fills the screen and reports its size via
+-- `watchSize`; everything is positioned from that live size (no fixed px), and
+-- the shapes scale with the width, so it fits any screen without stretching.
+
+
+import Canvas exposing
+    ( canvas, rect, circle, text, group, rgb
+    , onTap, watchSize
+    )
+import Random
+import Time
+
+
+-- `Shape`, `Color`, `Transform`, and `Align` are Canvas's own types — they
+-- resolve without importing (like `Maybe`), and their constructors are
+-- qualified: `Canvas.Translate`, `Canvas.Rotate`, `Canvas.Center`.
+
+
+type Hue
+    = White | Pink | Orange | Purple | Blue
+
+
+type ColoredShape
+    = Circle Hue
+    | Square Hue
+
+
+type Player
+    = P1 | P2
+
+
+-- The board's lifecycle:
+--   Title         — the opening menu; tap anywhere to start
+--   Playing       — shapes morph each second; a tap on a zone scores
+--   Celebrating p — p just scored; the winning zone holds green for a beat
+--   GameOver p    — p reached the target; tap anywhere to start over
+type Phase
+    = Title
+    | Playing
+    | Celebrating Player
+    | GameOver Player
+
+
+type alias Round =
+    { left : ColoredShape, right : ColoredShape }
+
+
+type alias Model =
+    { w     : Int          -- canvas box size (from watchSize)
+    , h     : Int
+    , left  : ColoredShape
+    , right : ColoredShape
+    , p1    : Int
+    , p2    : Int
+    , phase : Phase
+    }
+
+
+type Msg
+    = Resized Int Int     -- canvas reported its box size
+    | Morph               -- Playing tick: re-roll both shapes
+    | Resume              -- Celebrating tick: green shown, deal a new round
+    | Spawned Round       -- Random produced the next pair
+    | Tapped Int Int      -- tap at canvas-local x, y
+
+
+target : Int
+target = 10               -- points to win the game
+
+
+-- ===== Random =====
+
+shapeGen : Random.Generator ColoredShape
+shapeGen =
+    Random.uniform (Circle Pink)
+        [ Circle Orange, Circle Purple, Circle Blue
+        , Square Pink, Square Orange, Square Purple, Square Blue
+        ]
+
+
+roundGen : Random.Generator Round
+roundGen =
+    Random.map2 Round shapeGen shapeGen     -- Round used as a record-alias constructor
+
+
+newRound : Cmd Msg
+newRound =
+    Random.generate Spawned roundGen
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { w = 360, h = 640
+      , left = Circle White, right = Square White
+      , p1 = 0, p2 = 0, phase = Title
+      }
+    , Cmd.none                       -- nothing morphs until "Start" (see Tapped)
+    )
+
+
+-- ===== update =====
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Resized w h ->
+            ( { model | w = w, h = h }, Cmd.none )
+
+        Morph ->
+            ( model, newRound )      -- only fires while Playing (see subscriptions)
+
+        Resume ->
+            ( { model | phase = Playing }, newRound )
+
+        Spawned round ->
+            -- Reject a re-roll identical to the current pair: a morph that
+            -- changes nothing reads as a frozen frame. (The two shapes within
+            -- a round CAN equal each other — that's the score cue — we only
+            -- avoid repeating the *previous* round.)
+            if round.left == model.left && round.right == model.right then
+                ( model, newRound )
+            else
+                ( { model | left = round.left, right = round.right }, Cmd.none )
+
+        Tapped _ y ->
+            case model.phase of
+                Title ->
+                    ( { model | phase = Playing }, newRound )   -- start the game
+
+                GameOver _ ->
+                    restart model
+
+                Celebrating _ ->
+                    ( model, Cmd.none )      -- round decided; wait out the green
+
+                Playing ->
+                    case zoneAt y model of
+                        Nothing ->
+                            ( model, Cmd.none )   -- neutral middle: no score
+
+                        Just who ->
+                            ( score who model, Cmd.none )
+
+
+-- which player's zone (if any) a tap at canvas-y landed in
+zoneAt : Int -> Model -> Maybe Player
+zoneAt y model =
+    let
+        band = model.h // 5
+    in
+    if y < band then
+        Just P2
+    else if y > model.h - band then
+        Just P1
+    else
+        Nothing
+
+
+-- a tap by `tapper`: matching shapes score the tapper, a wrong tap scores the
+-- opponent. Reaching `target` ends the game; otherwise the round celebrates.
+score : Player -> Model -> Model
+score tapper model =
+    let
+        scorer =
+            if equalShapes model.left model.right then tapper else other tapper
+
+        scored =
+            award scorer model
+    in
+    if scoreOf scorer scored >= target then
+        { scored | phase = GameOver scorer }
+    else
+        { scored | phase = Celebrating scorer }
+
+
+restart : Model -> (Model, Cmd Msg)
+restart model =
+    ( { model | p1 = 0, p2 = 0, phase = Playing }, newRound )
+
+
+other : Player -> Player
+other p =
+    case p of
+        P1 -> P2
+        P2 -> P1
+
+
+award : Player -> Model -> Model
+award p model =
+    case p of
+        P1 -> { model | p1 = model.p1 + 1 }
+        P2 -> { model | p2 = model.p2 + 1 }
+
+
+scoreOf : Player -> Model -> Int
+scoreOf p model =
+    case p of
+        P1 -> model.p1
+        P2 -> model.p2
+
+
+equalShapes : ColoredShape -> ColoredShape -> Bool
+equalShapes a b =
+    case (a, b) of
+        (Circle x, Circle y) -> x == y
+        (Square x, Square y) -> x == y
+        _ -> False
+
+
+-- ===== view (the draw-list, sized from the live canvas box) =====
+
+view : Model -> View Msg
+view model =
+    canvas Pixelated [ onTap Tapped, watchSize Resized ]
+        (case model.phase of
+            Title ->
+                titleScreen model
+
+            _ ->
+                playfield model
+        )
+
+
+-- the opening screen (mirrors the Elm menu): the game name, a blue
+-- "Start Two Players" call to action, and the mobile note. A tap anywhere
+-- starts the game (see update's Tapped / Title branch).
+titleScreen : Model -> List Shape
+titleScreen model =
+    let
+        w  = model.w
+        h  = model.h
+        s  = if w < h then w else h    -- size off the short edge so it holds up in landscape too
+        cx = w // 2
+        cy = h // 2                      -- center the block (like the Elm menu's centerY)
+    in
+    [ rect 0 0 w h (rgb 240 240 240)
+    , text cx (cy - s * 3 // 10) (s // 10) Canvas.Center (rgb 60 60 60) "Touch me When"
+    , text cx cy (s // 13) Canvas.Center (rgb 20 160 180) "Start Two Players"
+    , text cx (cy + s // 6) (s // 22) Canvas.Center (rgb 120 120 120) "(For mobile devices only)"
+    ]
+
+
+-- the live board: the two touch zones (top / bottom fifths) framing the play
+-- area, the scores, and the round's shapes (or the game-over prompt)
+playfield : Model -> List Shape
+playfield model =
+    let
+        w    = model.w
+        h    = model.h
+        band = h // 5             -- each player's zone is the top / bottom fifth;
+        midY = h // 2             -- the three middle fifths stay light, so the
+        r    = w // 12            -- two zones read as clearly separate areas
+        gap  = w // 5
+    in
+    List.concat
+        [ [ rect 0 0 w h (rgb 240 240 240) ]                       -- light field — shows through as the divider
+        , [ rect 0 0 w band (zoneColor P2 model) ]                 -- player 2 zone (top fifth)
+        , [ rect 0 (band - 3) w 3 (rgb 170 170 170) ]              -- its edge line
+        , [ rect 0 (h - band) w band (zoneColor P1 model) ]        -- player 1 zone (bottom fifth)
+        , [ rect 0 (h - band) w 3 (rgb 150 150 150) ]              -- its edge line
+        , [ text (w // 2) (h - band // 2) (band // 3) Canvas.Center (rgb 255 255 255) (String.fromInt model.p1) ]
+        , [ group [ Canvas.Translate (w // 2) (band // 2), Canvas.Rotate 180 ]   -- P2 score faces the far player
+              [ text 0 0 (band // 3) Canvas.Center (rgb 255 255 255) (String.fromInt model.p2) ]
+          ]
+        , centerContent model band gap r midY
+        ]
+
+
+-- the play area: the live pair while a round runs, or a restart prompt once
+-- the game is over
+centerContent : Model -> Int -> Int -> Int -> Int -> List Shape
+centerContent model band gap r midY =
+    case model.phase of
+        GameOver _ ->
+            gameOverContent model midY
+
+        _ ->
+            List.concat
+                [ drawShape model.left (model.w // 2 - gap) midY r           -- left shape
+                , [ text (model.w // 2) midY r Canvas.Center (rgb 60 60 60) "=" ]
+                , drawShape model.right (model.w // 2 + gap) midY r          -- right shape
+                ]
+
+
+-- the end screen, drawn twice so it faces both players: one copy upright in
+-- the bottom half for P1, one rotated 180° in the top half for P2 (same trick
+-- as the P2 score). A tap anywhere restarts (see update), so either player's
+-- "tap to play again" is live.
+gameOverContent : Model -> Int -> List Shape
+gameOverContent model midY =
+    [ group [ Canvas.Translate (model.w // 2) (midY + model.h // 8) ]
+        (gameOverLines model)
+    , group [ Canvas.Translate (model.w // 2) (midY - model.h // 8), Canvas.Rotate 180 ]
+        (gameOverLines model)
+    ]
+
+
+-- "Game over" stacked over "tap to play again", centered on the group origin
+gameOverLines : Model -> List Shape
+gameOverLines model =
+    let
+        off = model.h // 18
+    in
+    [ text 0 (0 - off) (model.w // 10) Canvas.Center (rgb 60 60 60) "Game over"
+    , text 0 off (model.w // 16) Canvas.Center (rgb 20 160 180) "tap to play again"
+    ]
+
+
+-- a zone is green only for the player who just won (round or game)
+zoneColor : Player -> Model -> Color
+zoneColor p model =
+    case (winnerOf model.phase, p) of
+        (Just P1, P1) -> rgb 0 200 0
+        (Just P2, P2) -> rgb 0 200 0
+        _             -> rgb 120 120 120
+
+
+winnerOf : Phase -> Maybe Player
+winnerOf phase =
+    case phase of
+        Celebrating w -> Just w
+        GameOver w    -> Just w
+        Playing       -> Nothing
+        Title         -> Nothing
+
+
+paint : Hue -> Color
+paint hue =
+    case hue of
+        White  -> rgb 255 255 255
+        Pink   -> rgb 242 102 171
+        Orange -> rgb 255 184 76
+        Purple -> rgb 164 89 209
+        Blue   -> rgb 44 211 225
+
+
+-- a shape with the original's dark outline, composed as a slightly larger
+-- dark shape behind the fill (until shapes gain a native stroke)
+drawShape : ColoredShape -> Int -> Int -> Int -> List Shape
+drawShape shape cx cy r =
+    case shape of
+        Circle hue ->
+            [ circle cx cy (r + 1) (rgb 50 50 50)
+            , circle cx cy r (paint hue)
+            ]
+
+        Square hue ->
+            [ rect (cx - r - 1) (cy - r - 1) (2 * r + 2) (2 * r + 2) (rgb 50 50 50)
+            , rect (cx - r) (cy - r) (2 * r) (2 * r) (paint hue)
+            ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    case model.phase of
+        Playing ->
+            Time.every (Time.seconds 1) (\_ -> Morph)     -- morph cadence
+
+        Celebrating _ ->
+            Time.every (Time.millis 1500) (\_ -> Resume)  -- hold the green ~1.5s, then continue
+
+        Title ->
+            Sub.none                                      -- opening menu; nothing ticks
+
+        GameOver _ ->
+            Sub.none                                      -- frozen until a tap restarts
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Touch me When"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]

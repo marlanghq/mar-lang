@@ -1,0 +1,191 @@
+module Frontend.ComoJogar exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , paragraph, span, bold
+    )
+
+
+-- "Como jogar" — the in-app rulebook. A public, static page (no auth,
+-- no model): reachable from the lobby and from the "?" on the match
+-- table, so a confused player never has to leave the game to learn it.
+-- The prose mirrors REGRAS.md; the CONTROLES section is the one that
+-- answers the usual "toco na carta e nada acontece" (it's two taps, and
+-- taps do nothing when it isn't your turn).
+
+
+type alias Model =
+    ()
+
+
+type Msg
+    = NoOp
+
+
+init : (Model, Cmd Msg)
+init =
+    ((), Cmd.none)
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update _ model =
+    (model, Cmd.none)
+
+
+view : Model -> View Msg
+view _ =
+    navigationStack [ navigationTitle "Como jogar" ]
+        [ list []
+            [ section [ header "O objetivo" ]
+                [ paragraph
+                    [ span [] "Cada um começa com "
+                    , span [bold] "20 de vida"
+                    , span [] ". Zere a vida do rival e você vence. "
+                    , span [] "É um duelo de cartas "
+                    , span [bold] "por turnos e assíncrono"
+                    , span [] ": você joga a sua vez agora, o rival responde quando puder."
+                    ]
+                ]
+
+            , section [ header "Controles (comece por aqui)" ]
+                [ paragraph
+                    [ span [bold] "Jogar uma carta são dois toques. "
+                    , span [] "Toque numa carta da sua mão para "
+                    , span [bold] "selecioná-la"
+                    , span [] " (ela sobe e brilha); depois toque no "
+                    , span [bold] "seu campo"
+                    , span [] " para colocá-la. Criaturas entram sempre no seu lado."
+                    ]
+                , paragraph
+                    [ span [] "Se a carta for um "
+                    , span [bold] "feitiço com alvo"
+                    , span [] ", em vez do seu campo toque na "
+                    , span [bold] "criatura inimiga"
+                    , span [] " que ele deve atingir."
+                    ]
+                , paragraph
+                    [ span [bold] "Atacar também são dois toques. "
+                    , span [] "Toque numa "
+                    , span [bold] "criatura sua que esteja pronta"
+                    , span [] " (não cansada) e depois toque numa criatura inimiga, ou no "
+                    , span [bold] "retrato do rival"
+                    , span [] " lá em cima, para bater direto na vida dele."
+                    ]
+                , paragraph
+                    [ span [] "Quando terminar, toque em "
+                    , span [bold] "ENCERRAR"
+                    , span [] " para passar a vez. A bandeirinha no canto superior direito "
+                    , span [bold] "concede"
+                    , span [] " a partida (pede um segundo toque para confirmar)."
+                    ]
+                , paragraph
+                    [ span [bold] "Nada acontece quando você toca? "
+                    , span [] "Provavelmente "
+                    , span [bold] "não é a sua vez"
+                    , span [] ". Como o jogo é assíncrono, fora do seu turno os toques ficam inertes: espere o rival jogar. A tela avisa de quem é a vez e atualiza sozinha (você ainda assiste as jogadas dele acontecerem)."
+                    ]
+                ]
+
+            , section [ header "Energia" ]
+                [ paragraph
+                    [ span [] "Energia é o custo de tudo. No começo do "
+                    , span [bold] "seu"
+                    , span [] " turno o seu limite sobe "
+                    , span [bold] "+1"
+                    , span [] " (até "
+                    , span [bold] "8"
+                    , span [] ") e os cristais "
+                    , span [bold] "recarregam por completo"
+                    , span [] ". Cada carta mostra o custo no cristal do canto; jogue quantas a energia do turno pagar."
+                    ]
+                ]
+
+            , section [ header "O seu turno" ]
+                [ paragraph
+                    [ span [] "No começo do turno, automático: energia recarrega, suas criaturas "
+                    , span [bold] "acordam"
+                    , span [] " e você "
+                    , span [bold] "compra 1 carta"
+                    , span [] ". Depois, em qualquer ordem: jogue cartas, ataque com criaturas prontas e encerre."
+                    ]
+                , paragraph
+                    [ span [] "A mão comporta no máximo "
+                    , span [bold] "8 cartas"
+                    , span [] " (comprar com a mão cheia queima a carta). Se o baralho acabar, cada compra vira "
+                    , span [bold] "fadiga"
+                    , span [] ": você perde 1 de vida, depois 2, depois 3…"
+                    ]
+                ]
+
+            , section [ header "Criaturas" ]
+                [ paragraph
+                    [ span [] "Uma criatura tem "
+                    , span [bold] "custo, ataque e vida"
+                    , span [] ", e entra no seu campo (máximo "
+                    , span [bold] "5"
+                    , span [] "). Recém-jogada, entra "
+                    , span [bold] "cansada"
+                    , span [] ": só ataca no seu próximo turno (a não ser que tenha Ímpeto)."
+                    ]
+                , paragraph
+                    [ span [] "Ao atacar uma criatura inimiga, as duas se ferem "
+                    , span [bold] "ao mesmo tempo"
+                    , span [] "; quem fica com vida 0 vai pro descarte. Cada criatura ataca "
+                    , span [bold] "uma vez por turno"
+                    , span [] "."
+                    ]
+                ]
+
+            , section [ header "Habilidades e feitiços" ]
+                [ paragraph
+                    [ span [bold] "Ímpeto. "
+                    , span [] "Pode atacar já no turno em que entra, sem esperar acordar."
+                    ]
+                , paragraph
+                    [ span [bold] "Guardião. "
+                    , span [] "Enquanto houver um no campo inimigo, seus ataques precisam mirá-lo primeiro. Ele protege o resto do time e o herói."
+                    ]
+                , paragraph
+                    [ span [bold] "Ao entrar. "
+                    , span [] "Algumas criaturas disparam um efeito sozinhas quando chegam ao campo: causar dano, curar você ou comprar carta. Não precisa fazer nada, acontece na hora de jogar."
+                    ]
+                , paragraph
+                    [ span [] "Um "
+                    , span [bold] "feitiço"
+                    , span [] " é jogado da mão, faz o efeito escrito nele e vai pro descarte. Alguns pedem um alvo (uma criatura inimiga); outros agem sozinhos."
+                    ]
+                ]
+
+            , section
+                [ header "Os três decks"
+                , footer "A partida fica salva no servidor: feche o navegador, volte amanhã, o jogo continua de onde parou."
+                ]
+                [ paragraph
+                    [ span [bold] "Floresta 🌿. "
+                    , span [] "Equilibrado, com muralhas e cura (Saci, Curupira, Boitatá)."
+                    ]
+                , paragraph
+                    [ span [bold] "Sol ☀️. "
+                    , span [] "Agressivo, de dano direto (Guerreiro Jaguar, Inti, Quetzalcóatl)."
+                    ]
+                , paragraph
+                    [ span [bold] "Águas 🌊. "
+                    , span [] "Controle, cura e compra de cartas (Iara, Boto, Iemanjá)."
+                    ]
+                ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path   = "/como-jogar"
+        , title  = "Como jogar"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = always Sub.none
+        }

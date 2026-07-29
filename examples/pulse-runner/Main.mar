@@ -1,0 +1,1691 @@
+module Main exposing (main)
+
+
+-- PULSE RUNNER — a brutal one-button rhythm runner in the tradition of the
+-- early-2010s "impossible" auto-runners: you are a small orange square racing
+-- right at constant speed over spikes, blocks and pits, and every obstacle
+-- sits on the beat grid of the soundtrack. Jump on the beat and you live.
+-- Touch anything pointy and you shatter. Built with ZERO language changes.
+--
+-- MUSIC SYNC, the whole trick: game-rate Time.every ticks ride
+-- requestAnimationFrame (vsync-locked, ~16.7 ms at 60 Hz), so 30 ticks are
+-- ~500 ms — one beat at 120 BPM. The square moves 2 px/tick, so one beat is
+-- exactly 60 px and one sixteenth note is 15 px. Level data is in SIXTEENTHS
+-- on that grid, and every obstacle is placed FROM THE BEAT YOU JUMP ON: a
+-- single spike for jump-beat B sits at 4B+2 (so the takeoff window is
+-- centered on the kick), a pit at 4B+1, a block's mount at 4B+3, doubles at
+-- 4B+1 (jump a hair early — the four hard moments). An offline bot
+-- restricted to jumping ONLY on beat ticks completes the whole level: hop on
+-- the kick and you live.
+--
+-- The WHOLE soundtrack is world-driven: the game loop fires the groove one
+-- beat at a time (grooveBeat, keyed by the beat you just crossed) and the
+-- lead as one-shot cues at the exact jump positions. Nothing rides a free
+-- tape — if the tab is hidden and rAF stops, the music stops WITH the game
+-- and resumes in phase, and the arrangement grows with the level section.
+-- Checkpoints sit exactly on loop boundaries (every 32 beats), and spawns
+-- re-seed the beat cue — so after any death you are back on beat.
+--
+-- Modes: HARDCORE (death sends you back to the very start) and CHECKPOINTS
+-- (death sends you back to the last flag you crossed).
+--
+-- Controls: Space / Up / W = jump (hold to keep hopping), M = mute.
+--   Gamepad: A = jump, Start = start. Touch: tap and hold anywhere = jump.
+--
+-- Run: mar dev examples/pulse-runner
+
+
+import Canvas exposing
+    ( canvas, rect, triangle, group, rgb
+    , onTap, watchSize, onRelease
+    )
+import Time
+
+
+-- ===== logical screen (scaled to fit the window, pixels stay chunky) =====
+
+
+gameW : Int
+gameW = 400                -- 2:1 stage: fills an 18:9 phone edge-to-edge, same
+                           -- on every device (fixed camera; more track shown,
+                           -- but the same amount on all screens so difficulty
+                           -- is device-independent — you still jump on the beat)
+
+
+gameH : Int
+gameH = 200
+
+
+fps : Int
+fps = 60
+
+
+-- ===== the beat grid ties physics and music together =====
+-- Ticks ride requestAnimationFrame (vsync-locked, ~16.7 ms at 60 Hz), so
+-- 30 ticks = ~500 ms = one beat at 120 BPM. The square moves 2 px/tick, so a
+-- beat is 60 px and a sixteenth note is 15 px. The jump impulse is tuned so
+-- a full hop lasts ~29 ticks: one hop = one beat — holding jump makes the
+-- square hop on the kick.
+
+
+spd : Int
+spd = 2                   -- px per tick, constant — this game never slows down
+
+
+fp : Int
+fp = 16                   -- fixed-point scale for vertical physics
+
+
+grav : Int
+grav = 4                  -- gravity, fp per tick^2
+
+
+jumpV : Int
+jumpV = 60                -- jump impulse, fp per tick (hop = ~1 beat, 26 px high)
+
+
+pw : Int
+pw = 13                   -- the square's side
+
+
+groundY : Int
+groundY = 164             -- ground surface y
+
+
+unitPx : Int
+unitPx = 15               -- one sixteenth note, in px
+
+
+beatPx : Int
+beatPx = 60               -- one beat, in px (4 sixteenths)
+
+
+loopPx : Int
+loopPx = 1920             -- one music loop = 32 beats — checkpoints live here
+
+
+finishX : Int
+finishX = 17280           -- 288 beats = 9 loops
+
+
+playerScreenX : Int
+playerScreenX = 70        -- the square stays here; the world scrolls
+
+
+-- ===== small Int helpers (no Basics in Mar) =====
+
+
+
+
+iclamp : Int -> Int -> Int -> Int
+iclamp lo hi v = max lo (min hi v)
+
+
+
+range : Int -> List Int
+range n =
+    List.indexedMap (\i _ -> i) (List.repeat n 0)
+
+
+-- ===== types =====
+
+
+type Mode
+    = Title
+    | Run
+    | Dead
+    | Win
+
+
+-- Level pieces, positioned in SIXTEENTHS (u) on the music grid.
+--   Spk u lift : a spike; lift 0 = on the ground, 1 = on top of a 1-block
+--   Blk u w h  : a block, w sixteenths wide, h blocks (15 px) tall — land on
+--                top of it; hit its side and you die
+--   Gap u w    : a pit in the ground, w sixteenths wide — fall in and you die
+type Ob
+    = Spk Int Int
+    | Blk Int Int Int
+    | Gap Int Int
+
+
+type Cue
+    = CueDeath
+    | CueCheck
+    | CueWin
+    | CueLead Int
+    | CueBeat Int             -- one beat of the groove, keyed by world beat
+
+
+type Msg
+    = Resized Int Int
+    | Tick
+    | Tapped Int Int
+    | Released Int Int
+    | KeysChanged { down : List Keyboard.Key }
+    | PadChanged { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button }
+
+
+type alias Model =
+    { w : Int
+    , h : Int
+    , mode : Mode
+    , hardcore : Bool        -- chosen on the title screen
+    , sel : Int              -- title selection: 0 = hardcore, 1 = checkpoints
+    , tick : Int             -- global animation clock (title blink etc.)
+    , runT : Int             -- ticks since (re)spawn — also the music phase
+    , px : Int               -- player world x (left edge)
+    , pyBot : Int            -- player bottom y, fixed-point (x16)
+    , vy : Int               -- vertical speed, fixed-point
+    , grounded : Bool
+    , airT : Int             -- ticks since takeoff — drives the mid-air spin
+    , jumpHeld : Bool        -- jump input held: touch sets it directly, keyboard
+                             -- + gamepad derive it via syncHeld (see below)
+    , keysDown : List Keyboard.Key   -- raw held set — keyboard mirror
+    , padDown : List Gamepad.Button  -- raw held set — gamepad mirror
+    , lastCp : Int           -- last checkpoint index crossed (0 = start)
+    , attempts : Int
+    , deathT : Int           -- ticks since death (drives the shatter burst)
+    , deathX : Int
+    , deathY : Int
+    , muted : Bool
+    , sfx : List Cue
+    }
+
+
+-- ===== the level, placed from the beats you JUMP on =====
+-- SIX loops of 32 beats; jump-beat B -> single at 4B+2, pit at 4B+1, block
+-- mount at 4B+3, on-block hop spike at 4B+2 (lift 1), doubles at 4B+1.
+-- The difficulty ramps with the music: loop 1 teaches hopping on the kick;
+-- loop 2 adds platforms and pits; loop 3 runs 4-beat chains; loop 4 mixes
+-- everything; loop 5 packs the same tricks tighter (double-hop block rides,
+-- back-to-back chains); loop 6 is the gauntlet — doubles into pits and a
+-- FIVE-beat chain. Checkpoint flags sit at beats 32/64/96/128/160 — loop
+-- boundaries, which is what keeps respawns on beat. The whole thing is
+-- completable jumping ONLY on beats — proven offline by sim.mjs in this
+-- directory (`node sim.mjs`; re-run it whenever obs or the physics
+-- constants change). When in doubt, trust the kick.
+
+
+obs : List Ob
+obs =
+    [ -- loop 1: singles on the kick (jump-beats 8, 12, 16, 20, 23, 24, 28)
+      Spk 34 0, Spk 50 0, Spk 66 0, Spk 82 0, Spk 94 0, Spk 98 0, Spk 114 0
+
+      -- loop 2: platforms and pits
+    , Blk 139 12 1, Spk 146 1          -- mount on 34, hop the spike on 36
+    , Gap 161 2                        -- 40
+    , Spk 174 0, Spk 178 0             -- 43-44 chain
+    , Spk 186 0                        -- 46
+    , Spk 193 0, Spk 194 0             -- 48: first double (a hair early!)
+    , Spk 210 0                        -- 52
+    , Gap 217 2                        -- 54
+    , Spk 226 0, Spk 230 0, Spk 234 0  -- 56-57-58 chain
+    , Spk 246 0                        -- 61
+
+      -- loop 3: beat chains
+    , Spk 266 0                        -- 66
+    , Gap 273 2                        -- 68
+    , Spk 282 0, Spk 286 0, Spk 290 0, Spk 294 0   -- 70-73 four-chain
+    , Blk 307 12 1, Spk 314 1          -- mount on 76, hop on 78
+    , Spk 330 0                        -- 82
+    , Gap 337 2                        -- 84
+    , Spk 345 0, Spk 346 0             -- 86 double
+    , Spk 354 0, Spk 358 0, Spk 362 0, Spk 366 0   -- 88-91 four-chain
+    , Spk 378 0                        -- 94
+
+      -- loop 4: the finale
+    , Spk 394 0                        -- 98
+    , Gap 401 2                        -- 100
+    , Spk 410 0, Spk 414 0, Spk 418 0  -- 102-104 chain
+    , Spk 425 0, Spk 426 0             -- 106 double
+    , Blk 435 16 1, Spk 442 1, Spk 450 1  -- mount 108, hops 110 and 112
+    , Spk 465 0, Spk 466 0             -- 116 double
+    , Gap 473 2                        -- 118
+    , Spk 482 0, Spk 486 0, Spk 490 0  -- 120-122 chain
+    , Spk 498 0                        -- 124
+
+      -- loop 5: everything again, tighter
+    , Spk 522 0                        -- 130
+    , Spk 529 0, Spk 530 0             -- 132 double
+    , Gap 537 2                        -- 134
+    , Spk 546 0, Spk 550 0, Spk 554 0  -- 136-138 chain
+    , Spk 565 0, Spk 566 0             -- 141 double
+    , Blk 579 16 1, Spk 586 1, Spk 594 1  -- mount 144, hops 146 and 148
+    , Spk 601 0, Spk 602 0             -- 150 double right off the block
+    , Gap 609 2                        -- 152
+    , Spk 618 0, Spk 622 0, Spk 626 0  -- 154-156 chain
+    , Spk 634 0                        -- 158
+
+      -- loop 6: the gauntlet
+    , Spk 649 0, Spk 650 0             -- 162 double
+    , Gap 657 2                        -- 164
+    , Spk 665 0, Spk 666 0             -- 166 double
+    , Spk 674 0, Spk 678 0, Spk 682 0, Spk 686 0, Spk 690 0   -- 168-172 FIVE-chain
+    , Spk 701 0, Spk 702 0             -- 175 double
+    , Blk 715 20 1, Spk 722 1, Spk 730 1  -- long ride: mount 178, hops 180 and 182
+    , Gap 745 2                        -- 186
+    , Spk 754 0, Spk 758 0, Spk 762 0  -- 188-190 closing chain
+
+      -- loop 7: the crossing — back-to-back pits and a SIX-chain
+    , Spk 777 0, Spk 778 0             -- 194 double
+    , Gap 785 2                        -- 196
+    , Gap 793 2                        -- 198: second pit one breath later
+    , Spk 802 0, Spk 806 0, Spk 810 0, Spk 814 0, Spk 818 0, Spk 822 0   -- 200-205 SIX-chain
+    , Spk 833 0, Spk 834 0             -- 208 double
+    , Spk 842 0                        -- 210
+    , Blk 851 16 1, Spk 858 1, Spk 866 1  -- mount 212, hops 214 and 216
+    , Spk 877 0, Spk 878 0             -- 219 double
+    , Spk 886 0, Spk 890 0, Spk 894 0  -- 221-223 closing chain
+
+      -- loop 8: the high road — a LONG ride with three hops
+    , Spk 906 0                        -- 226
+    , Spk 913 0, Spk 914 0             -- 228 double
+    , Gap 921 2                        -- 230
+    , Blk 931 28 1, Spk 938 1, Spk 946 1, Spk 954 1  -- mount 232, hops 234, 236, 238
+    , Spk 965 0, Spk 966 0             -- 241 double right off the dismount
+    , Gap 973 2                        -- 243
+    , Spk 982 0, Spk 986 0, Spk 990 0, Spk 994 0, Spk 998 0   -- 245-249 FIVE-chain
+    , Spk 1009 0, Spk 1010 0           -- 252 double
+    , Spk 1018 0                       -- 254
+
+      -- loop 9: the storm home — SEVEN-chain, pit sandwich, final sprint
+    , Spk 1033 0, Spk 1034 0           -- 258 double
+    , Spk 1042 0, Spk 1046 0, Spk 1050 0, Spk 1054 0, Spk 1058 0, Spk 1062 0, Spk 1066 0   -- 260-266 SEVEN-chain
+    , Gap 1077 2                       -- 269
+    , Spk 1085 0, Spk 1086 0           -- 271 double
+    , Gap 1093 2                       -- 273: pit sandwich
+    , Spk 1101 0, Spk 1102 0           -- 275 double straight into the mount
+    , Blk 1107 20 1, Spk 1114 1, Spk 1122 1  -- mount 276, hops 278 and 280
+    , Spk 1133 0, Spk 1134 0           -- 283 double
+    , Spk 1142 0, Spk 1146 0, Spk 1150 0  -- 285-287: land the last jump ON the finish line
+    ]
+
+
+-- ===== level geometry, precomputed from `obs` =====
+
+
+type alias Box =
+    { x0 : Int, x1 : Int, y0 : Int, y1 : Int }
+
+
+type alias BlockR =
+    { x : Int, w : Int, top : Int }
+
+
+type alias Seg =
+    { x0 : Int, x1 : Int }
+
+
+-- spike KILL boxes are inset from the drawn triangle (4 px each side, 5 px
+-- off the tip) so grazing a corner feels fair — same trick the original used
+spikeBoxes : List Box
+spikeBoxes =
+    List.concat
+        (List.map
+            (\o ->
+                case o of
+                    Spk u lift ->
+                        let
+                            x = u * unitPx
+                            top = groundY - lift * unitPx - unitPx
+                        in
+                        [ { x0 = x + 4, x1 = x + 11, y0 = top + 5, y1 = top + 15 } ]
+
+                    _ ->
+                        []
+            )
+            obs)
+
+
+blockRects : List BlockR
+blockRects =
+    List.concat
+        (List.map
+            (\o ->
+                case o of
+                    Blk u w h ->
+                        [ { x = u * unitPx, w = w * unitPx, top = groundY - h * unitPx } ]
+
+                    _ ->
+                        []
+            )
+            obs)
+
+
+-- ground segments = everything except the pits (gaps come sorted in `obs`)
+groundSegs : List Seg
+groundSegs =
+    let
+        walk =
+            List.foldl
+                (\o acc ->
+                    case o of
+                        Gap u w ->
+                            { cur = (u + w) * unitPx
+                            , segs = List.concat [ acc.segs, [ { x0 = acc.cur, x1 = u * unitPx } ] ]
+                            }
+
+                        _ ->
+                            acc
+                )
+                { cur = 0 - 600, segs = [] }
+                obs
+    in
+    List.concat [ walk.segs, [ { x0 = walk.cur, x1 = finishX + 900 } ] ]
+
+
+cpX : Int -> Int
+cpX i = i * loopPx
+
+
+-- ===== model =====
+
+
+freshModel : Model
+freshModel =
+    { w = 640
+    , h = 400
+    , mode = Title
+    , hardcore = True
+    , sel = 0
+    , tick = 0
+    , runT = 0
+    , px = 0
+    , pyBot = groundY * fp
+    , vy = 0
+    , grounded = True
+    , airT = 0
+    , jumpHeld = False
+    , keysDown = []
+    , padDown = []
+    , lastCp = 0
+    , attempts = 1
+    , deathT = 0
+    , deathX = 0
+    , deathY = 0
+    , muted = False
+    , sfx = []
+    }
+
+
+init : (Model, Cmd Msg)
+init =
+    ( freshModel, Cmd.none )
+
+
+-- ===== update =====
+
+
+emit : Model -> (Model, Cmd Msg)
+emit model =
+    if List.length model.sfx == 0 then
+        ( model, Cmd.none )
+    else
+        ( { model | sfx = [] }
+        , Cmd.batch (List.map (\c -> Sound.play (cueSound c)) model.sfx)
+        )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Resized w h ->
+            ( { model | w = w, h = h }, Cmd.none )
+
+        Tick ->
+            case model.mode of
+                Run -> emit (stepRun model)
+                Dead -> emit (stepDead model)
+                _ -> ( { model | tick = model.tick + 1 }, Cmd.none )
+
+        Tapped x y ->
+            if inMuteZone model x y then
+                toggleMute model
+            else
+                case model.mode of
+                    Title -> titleTap model x y
+                    Run -> ( { model | jumpHeld = True }, Cmd.none )
+                    Dead -> ( model, Cmd.none )
+                    Win -> ( { model | mode = Title }, Cmd.none )
+
+        Released x y ->
+            ( { model | jumpHeld = False }, Cmd.none )
+
+        KeysChanged st ->
+            -- the jump is a HELD flag (syncHeld mirrors the keyboard + gamepad
+            -- sets, so the physics fires ONE hop per landing while a key is
+            -- down — "hold to keep hopping"). Mute, title selection and the
+            -- win/continue advance fire on the PRESS-EDGE: keys newly in the
+            -- set, so each fires exactly once per real press. A key leaving the
+            -- set just re-derives jumpHeld, so the old KeyUp clear is automatic.
+            let
+                pressed = List.filter (\k -> List.member k model.keysDown == False) st.down
+                base = syncHeld { model | keysDown = st.down }
+            in
+            List.foldl applyKeyPress ( base, Cmd.none ) pressed
+
+        PadChanged p ->
+            -- A's jump is held via syncHeld; A/Start (start / continue) and
+            -- Up/Down (selection) fire on the button press-edge, once per press
+            let
+                pressed = List.filter (\b -> List.member b model.padDown == False) p.down
+                base = syncHeld { model | padDown = p.down }
+            in
+            List.foldl applyPadPress ( base, Cmd.none ) pressed
+
+
+-- the shared HELD ledger: the jump is "held" while any jump key OR the gamepad
+-- A button is in its mirror set. Both device mirrors feed the one flag, so
+-- neither clobbers the other, and a key/button leaving its set re-derives it to
+-- False for free (releases need no handler at all now). Touch
+-- writes jumpHeld directly (onTap / onRelease) and never fires these subs on a
+-- touch device, so it composes cleanly without a separate mirror.
+syncHeld : Model -> Model
+syncHeld m =
+    { m | jumpHeld = List.any isJumpKey m.keysDown || List.member Gamepad.A m.padDown }
+
+
+-- keyboard press-edge (one key newly down). M toggles mute in any mode; on the
+-- title Space/Enter starts and the nav keys move the selection; on the win
+-- screen Space/Enter returns to the title. In Run the jump is HELD (syncHeld),
+-- so a press is a no-op here — this is exactly the old KeyDown, once per press.
+applyKeyPress : Keyboard.Key -> (Model, Cmd Msg) -> (Model, Cmd Msg)
+applyKeyPress key acc =
+    let
+        (m, cmd) = acc
+    in
+    if key == Keyboard.KeyM then
+        let
+            (m2, c2) = toggleMute m
+        in
+        ( m2, Cmd.batch [ cmd, c2 ] )
+    else
+        case m.mode of
+            Title ->
+                if key == Keyboard.Space || key == Keyboard.Enter then
+                    ( startRun m, cmd )
+                else if isTitleNavKey key then
+                    ( { m | sel = 1 - m.sel }, cmd )
+                else
+                    ( m, cmd )
+
+            Run ->
+                ( m, cmd )
+
+            Dead ->
+                ( m, cmd )
+
+            Win ->
+                if key == Keyboard.Space || key == Keyboard.Enter then
+                    ( { m | mode = Title }, cmd )
+                else
+                    ( m, cmd )
+
+
+-- gamepad press-edge (one button newly down). A/Start start (title) or continue
+-- (win); Up/Down move the selection. A's jump is HELD via syncHeld, so there is
+-- no edge action in Run — exactly the old PadDown, once per press.
+applyPadPress : Gamepad.Button -> (Model, Cmd Msg) -> (Model, Cmd Msg)
+applyPadPress btn acc =
+    let
+        (m, cmd) = acc
+    in
+    case m.mode of
+        Title ->
+            if btn == Gamepad.A || btn == Gamepad.Start then
+                ( startRun m, cmd )
+            else if btn == Gamepad.Up || btn == Gamepad.Down then
+                ( { m | sel = 1 - m.sel }, cmd )
+            else
+                ( m, cmd )
+
+        Run ->
+            ( m, cmd )
+
+        Dead ->
+            ( m, cmd )
+
+        Win ->
+            if btn == Gamepad.A || btn == Gamepad.Start then
+                ( { m | mode = Title }, cmd )
+            else
+                ( m, cmd )
+
+
+isJumpKey : Keyboard.Key -> Bool
+isJumpKey key =
+    key == Keyboard.Space || key == Keyboard.ArrowUp || key == Keyboard.KeyW
+
+
+isTitleNavKey : Keyboard.Key -> Bool
+isTitleNavKey key =
+    key == Keyboard.ArrowUp || key == Keyboard.ArrowDown
+        || key == Keyboard.KeyW || key == Keyboard.KeyS
+        || key == Keyboard.ArrowLeft || key == Keyboard.ArrowRight
+
+
+titleTap : Model -> Int -> Int -> (Model, Cmd Msg)
+titleTap model x y =
+    let
+        lay = layout model
+        lx = (x - lay.ox) * 100 // max 1 lay.scale
+        ly = (y - lay.oy) * 100 // max 1 lay.scale
+
+        -- the buttons are centered on gameW/2 (see titleShapes); the hit-test
+        -- must follow them, or a tap on a wide-screen stage misses and the
+        -- game never starts.
+        bx0 = gameW // 2 - 75
+        bx1 = gameW // 2 + 75
+    in
+    if lx >= bx0 && lx <= bx1 && ly >= 104 && ly <= 126 then
+        ( startRun { model | sel = 0 }, Cmd.none )
+    else if lx >= bx0 && lx <= bx1 && ly >= 134 && ly <= 156 then
+        ( startRun { model | sel = 1 }, Cmd.none )
+    else
+        ( model, Cmd.none )
+
+
+startRun : Model -> Model
+startRun m =
+    spawn { m | mode = Run, hardcore = m.sel == 0, lastCp = 0, attempts = 1 }
+
+
+-- back on the grid: spawn points are loop boundaries, so you respawn on
+-- beat. Ticks only fire beats they CROSS, and no tick crosses the spawn
+-- point itself — so seed the spawn beat's groove cue here by hand.
+spawn : Model -> Model
+spawn m =
+    let
+        sx = if m.hardcore then 0 else cpX m.lastCp
+    in
+    { m
+        | mode = Run
+        , px = sx
+        , pyBot = groundY * fp
+        , vy = 0
+        , grounded = True
+        , airT = 0
+        , runT = 0
+        , sfx = CueBeat (sx // beatPx) :: m.sfx
+    }
+
+
+-- one physics tick. The exact same rules were fed to an offline search that
+-- proved the level is completable from the start and from every checkpoint,
+-- so any change here (constants included) needs that check re-run.
+stepRun : Model -> Model
+stepRun m =
+    let
+        px2 = m.px + spd
+        topPx = m.pyBot // fp
+
+        -- still supported? (you can run off an edge and start falling)
+        gEdge = m.grounded && supportedAt px2 topPx
+
+        -- holding jump on the ground fires the hop
+        jumping = gEdge && m.jumpHeld
+        g1 = gEdge && (jumping == False)
+        vy1 =
+            if jumping then 0 - jumpV
+            else if m.grounded then 0
+            else m.vy
+
+        -- integrate + land (only while falling)
+        vy2 = if g1 then 0 else min 120 (vy1 + grav)
+        prevBot = m.pyBot
+        botRaw = if g1 then m.pyBot else m.pyBot + vy2
+        landedTop = if g1 == False && vy2 > 0 then landTop px2 prevBot botRaw else 999
+        g2 = g1 || landedTop < 999
+        bot2 = if landedTop < 999 then landedTop * fp else botRaw
+        vy3 = if landedTop < 999 then 0 else vy2
+
+        -- checkpoints (only meaningful outside hardcore) + finish
+        cpNow = min 8 (px2 // loopPx)
+        gotCp = m.hardcore == False && cpNow > m.lastCp
+
+        -- the world plays the WHOLE soundtrack. Melody: fire the lead cues
+        -- whose position we crossed this very tick — sync with the jump
+        -- moment by construction. Groove: fire one beat of drums/bass every
+        -- beat line we cross, keyed by the world beat, so the arrangement
+        -- tracks the level section and stops/resumes with the game itself.
+        leadCues =
+            List.map (\e -> CueLead e.hz)
+                (List.filter (\e -> e.x == px2) leadEvents)
+        beatCues =
+            if modBy beatPx px2 == 0 && px2 < finishX then
+                [ CueBeat (px2 // beatPx) ]
+            else
+                []
+
+        m2 =
+            { m
+                | runT = m.runT + 1
+                , tick = m.tick + 1
+                , px = px2
+                , pyBot = bot2
+                , vy = vy3
+                , grounded = g2
+                , airT = if g2 then 0 else m.airT + 1
+                , lastCp = if gotCp then cpNow else m.lastCp
+                , sfx =
+                    List.concat
+                        [ leadCues
+                        , beatCues
+                        , if gotCp then [ CueCheck ] else []
+                        , m.sfx
+                        ]
+            }
+    in
+    if deadAt px2 bot2 then
+        { m2
+            | mode = Dead
+            , deathT = 0
+            , deathX = px2
+            , deathY = bot2 // fp
+            , attempts = m.attempts + 1
+            , sfx = CueDeath :: m2.sfx
+        }
+    else if px2 >= finishX then
+        { m2 | mode = Win, sfx = CueWin :: m2.sfx }
+    else
+        m2
+
+
+stepDead : Model -> Model
+stepDead m =
+    if m.deathT >= 50 then
+        spawn m
+    else
+        { m | deathT = m.deathT + 1, tick = m.tick + 1 }
+
+
+-- --- collision queries (mirror the offline feasibility sim exactly) ---
+
+
+supportedAt : Int -> Int -> Bool
+supportedAt px topPx =
+    let
+        onGround =
+            topPx == groundY
+                && List.any (\s -> px + pw > s.x0 && px < s.x1) groundSegs
+        onBlock =
+            List.any (\b -> b.top == topPx && px + pw > b.x && px < b.x + b.w) blockRects
+    in
+    onGround || onBlock
+
+
+-- highest surface whose top the falling square crossed this tick (999 = none)
+landTop : Int -> Int -> Int -> Int
+landTop px prevFp newFp =
+    let
+        best0 =
+            List.foldl
+                (\s acc ->
+                    if px + pw > s.x0 && px < s.x1
+                        && prevFp <= groundY * fp && groundY * fp <= newFp then
+                        min acc groundY
+                    else
+                        acc
+                )
+                999
+                groundSegs
+    in
+    List.foldl
+        (\b acc ->
+            if px + pw > b.x && px < b.x + b.w
+                && prevFp <= b.top * fp && b.top * fp <= newFp then
+                min acc b.top
+            else
+                acc
+        )
+        best0
+        blockRects
+
+
+deadAt : Int -> Int -> Bool
+deadAt px botFp =
+    let
+        bot = botFp // fp
+        top = bot - pw
+        inPit = botFp > (groundY + 12) * fp
+        onSpike =
+            List.any
+                (\s -> px < s.x1 && px + pw > s.x0 && top < s.y1 && bot > s.y0)
+                spikeBoxes
+        blockSide =
+            List.any
+                (\b -> px < b.x + b.w && px + pw > b.x && bot > b.top + 2 && top < groundY)
+                blockRects
+    in
+    inPit || onSpike || blockSide
+
+
+toggleMute : Model -> (Model, Cmd Msg)
+toggleMute model =
+    let
+        m2 = model.muted == False
+    in
+    ( { model | muted = m2 }, Sound.setMuted m2 )
+
+
+inMuteZone : Model -> Int -> Int -> Bool
+inMuteZone model x y =
+    let
+        lay = layout model
+        lx = (x - lay.ox) * 100 // max 1 lay.scale
+        ly = (y - lay.oy) * 100 // max 1 lay.scale
+    in
+    lx > gameW - 40 && ly < 20
+
+
+-- ===== the soundtrack: the WORLD plays EVERYTHING =====
+-- No free-running tape. The game loop fires the groove ONE BEAT at a time
+-- (a CueBeat when the player crosses each beat line — grooveBeat below
+-- builds that beat's kick/snare/hat/bass/arp cells), and the HIGH LEAD as
+-- one-shot cues at the exact jump positions. Both therefore track the
+-- player's movement BY CONSTRUCTION: hide the tab and rAF stops the game,
+-- so the music stops too and resumes exactly in phase (the old Sound.loop
+-- tape kept playing on the audio clock while the game froze, and the lead
+-- came back in the wrong part of the bar). It also means the arrangement
+-- can GROW with the level: grooveBeat keys off the world beat, adding
+-- layers section by section. Timing: ticks are vsync-locked (~16.7 ms at
+-- 60 Hz), so 30 ticks = ~500 ms = one beat at 120 BPM; every eighth cell
+-- below is exactly 250 ms so a beat is two cells.
+
+
+-- --- the kit (recipes proven in the soundboard example — no Atari booms) ---
+
+
+drKick : Sound
+drKick =
+    Sound.sequence [ Sound.volume 55 (Sound.sweep 45 (Sound.tone Sound.Triangle 150 85)), Sound.rest 165 ]
+
+
+drSnare : Sound
+drSnare =
+    Sound.sequence
+        [ Sound.chord
+            [ Sound.volume 36 (Sound.tone Sound.Noise 0 80)
+            , Sound.volume 15 (Sound.sweep 130 (Sound.tone Sound.Triangle 190 45))
+            ]
+        , Sound.rest 170
+        ]
+
+
+drHat : Sound
+drHat =
+    Sound.sequence [ Sound.volume 11 (Sound.tone Sound.Noise 0 30), Sound.rest 220 ]
+
+
+-- two sixteenths of hat in one eighth cell
+drHat2 : Sound
+drHat2 =
+    Sound.sequence
+        [ Sound.volume 11 (Sound.tone Sound.Noise 0 30), Sound.rest 95
+        , Sound.volume 9 (Sound.tone Sound.Noise 0 26), Sound.rest 99
+        ]
+
+
+drOpen : Sound
+drOpen =
+    Sound.sequence [ Sound.volume 15 (Sound.tone Sound.Noise 0 120), Sound.rest 130 ]
+
+
+-- a ghost note: a whisper of snare on the offbeat (one eighth cell)
+drGhost : Sound
+drGhost =
+    Sound.sequence [ Sound.volume 15 (Sound.tone Sound.Noise 0 40), Sound.rest 210 ]
+
+
+-- two sixteenth-note snare hits in one eighth cell (the fill roll)
+dr16x2 : Sound
+dr16x2 =
+    Sound.sequence
+        [ Sound.volume 26 (Sound.tone Sound.Noise 0 45), Sound.rest 80
+        , Sound.volume 26 (Sound.tone Sound.Noise 0 45), Sound.rest 80
+        ]
+
+
+r8 : Sound
+r8 =
+    Sound.rest 250
+
+
+-- --- bass: a syncopated Amiga-style line, triangle sub + a bite of saw ---
+
+
+bs : Int -> Sound
+bs hz =
+    Sound.sequence
+        [ Sound.chord
+            [ Sound.volume 27 (Sound.tone Sound.Triangle hz 210)
+            , Sound.volume 6 (Sound.tone Sound.Sawtooth hz 210)
+            ]
+        , Sound.rest 40
+        ]
+
+
+-- --- the tracker arpeggio: a chord cycled fast on one voice (Sound.arp),
+-- one shimmering quarter note per beat ---
+
+
+ar : Int -> Int -> Int -> Sound
+ar hz third fifth =
+    Sound.sequence
+        [ Sound.volume 9 (Sound.arp [ third, fifth ] (Sound.duty 25 (Sound.tone Sound.Square hz 480)))
+        , Sound.rest 20
+        ]
+
+
+-- --- harmony: one chord per 8 beats. Sections 1-4 ride Am F C G; the last
+-- two swap the G for the E dominant to push toward the finish ---
+
+
+type alias GChord =
+    { r : Int, o : Int, f : Int, ab : Int, a3 : Int, a5 : Int }
+
+
+chAm : GChord
+chAm = { r = Sound.a 2, o = Sound.a 3, f = Sound.e 3, ab = Sound.a 3, a3 = Sound.c 4, a5 = Sound.e 4 }
+
+
+chF : GChord
+chF = { r = Sound.f 2, o = Sound.f 3, f = Sound.c 3, ab = Sound.f 3, a3 = Sound.a 3, a5 = Sound.c 4 }
+
+
+chC : GChord
+chC = { r = Sound.c 3, o = Sound.c 4, f = Sound.g 3, ab = Sound.c 4, a3 = Sound.e 4, a5 = Sound.g 4 }
+
+
+chG : GChord
+chG = { r = Sound.g 2, o = Sound.g 3, f = Sound.d 3, ab = Sound.g 3, a3 = Sound.b 3, a5 = Sound.d 4 }
+
+
+chE : GChord
+chE = { r = Sound.e 2, o = Sound.e 3, f = Sound.b 2, ab = Sound.e 4, a3 = Sound.gs 4, a5 = Sound.b 4 }
+
+
+chordAt : Int -> Int -> GChord
+chordAt sec ph =
+    if ph == 0 then chAm
+    else if ph == 1 then chF
+    else if ph == 2 then chC
+    else if sec >= 4 then chE
+    else chG
+
+
+-- a beat = two 250ms eighth cells back to back
+p2 : Sound -> Sound -> Sound
+p2 a b =
+    Sound.sequence [ a, b ]
+
+
+-- ONE BEAT of the groove, keyed by the world beat you just crossed. The
+-- arrangement grows with the level: section 1 is a bare pulse, the backbeat
+-- lands in section 2, ghosts and drive in 3, the arp shimmer in 4, and the
+-- last two sections run the full kit with double-kick, 16th hats and a
+-- snare roll closing every section. Cells may ring past the beat line
+-- (one-shots overlap freely), so seams stay clean at any granularity.
+grooveBeat : Int -> Sound
+grooveBeat b =
+    let
+        sec = min 8 (b // 32)
+        lb = modBy 32 b
+        k = modBy 4 lb
+        c = chordAt sec (lb // 8)
+        fill = (sec >= 1 && lb >= 30) || (sec >= 6 && lb >= 28)
+        kick =
+            if sec == 0 then
+                if k == 0 || k == 2 then p2 drKick r8 else p2 r8 r8
+            else if sec >= 6 then
+                -- the storm sections: double kick all the way home
+                if k == 0 || k == 2 then p2 drKick drKick else p2 r8 drKick
+            else if sec >= 4 then
+                if k == 0 || k == 2 then p2 drKick r8 else p2 r8 drKick
+            else if k == 0 then
+                p2 drKick r8
+            else if k == 3 then
+                p2 r8 r8
+            else
+                p2 r8 drKick
+        snare =
+            if sec == 0 then
+                p2 r8 r8
+            else if fill then
+                if lb == 28 then p2 drSnare dr16x2
+                else if lb == 29 then p2 dr16x2 dr16x2
+                else if lb == 30 then p2 dr16x2 dr16x2
+                else p2 drSnare drOpen
+            else if k == 1 then
+                p2 drSnare r8
+            else if k == 3 then
+                if sec >= 2 then p2 drSnare drGhost else p2 drSnare r8
+            else
+                p2 r8 r8
+        hat =
+            if sec == 0 then
+                p2 drHat r8
+            else if sec >= 6 then
+                if k == 1 || k == 3 then p2 drOpen drHat2 else p2 drHat2 drHat2
+            else if sec >= 4 then
+                if k == 3 then p2 drOpen drHat2 else p2 drHat2 drHat2
+            else if k == 3 then
+                p2 drOpen drHat2
+            else
+                p2 drHat drHat
+        bass =
+            if sec == 0 then
+                if k == 0 || k == 2 then p2 (bs c.r) r8 else p2 r8 r8
+            else if sec >= 4 then
+                if k == 0 then p2 (bs c.r) (bs c.r)
+                else if k == 1 then p2 (bs c.r) (bs c.o)
+                else if k == 2 then p2 (bs c.r) (bs c.r)
+                else p2 (bs c.f) (bs c.o)
+            else if k == 0 then
+                p2 (bs c.r) r8
+            else if k == 1 then
+                p2 (bs c.r) (bs c.o)
+            else if k == 2 then
+                p2 r8 (bs c.r)
+            else
+                p2 r8 (bs c.o)
+        arps =
+            if sec >= 3 then [ ar c.ab c.a3 c.a5 ] else []
+    in
+    Sound.chord (List.concat [ [ kick, snare, hat, bass ], arps ])
+
+
+-- melody contour: climbs the A-minor pentatonic and comes back down, one
+-- step per jump — chains become runs, lone jumps get a single accent
+leadPitch : Int -> Int
+leadPitch i =
+    let
+        k = modBy 8 i
+    in
+    if k == 0 then Sound.a 4
+    else if k == 1 then Sound.c 5
+    else if k == 2 then Sound.d 5
+    else if k == 3 then Sound.e 5
+    else if k == 4 then Sound.g 5
+    else if k == 5 then Sound.e 5
+    else if k == 6 then Sound.d 5
+    else Sound.c 5
+
+
+-- jump beats per 32-beat segment, LOCAL to the segment (world beat - 32k) —
+-- these mirror the level data above; if `obs` changes, change these too
+-- (and re-run the offline sim!)
+jumps1 : List Int
+jumps1 = [ 8, 12, 16, 20, 23, 24, 28 ]
+
+
+jumps2 : List Int
+jumps2 = [ 2, 4, 8, 11, 12, 14, 16, 20, 22, 24, 25, 26, 29 ]
+
+
+jumps3 : List Int
+jumps3 = [ 2, 4, 6, 7, 8, 9, 12, 14, 18, 20, 22, 24, 25, 26, 27, 30 ]
+
+
+jumps4 : List Int
+jumps4 = [ 2, 4, 6, 7, 8, 10, 12, 14, 16, 20, 22, 24, 25, 26, 28 ]
+
+
+jumps5 : List Int
+jumps5 = [ 2, 4, 6, 8, 9, 10, 13, 16, 18, 20, 22, 24, 26, 27, 28, 30 ]
+
+
+jumps6 : List Int
+jumps6 = [ 2, 4, 6, 8, 9, 10, 11, 12, 15, 18, 20, 22, 26, 28, 29, 30 ]
+
+
+jumps7 : List Int
+jumps7 = [ 2, 4, 6, 8, 9, 10, 11, 12, 13, 16, 18, 20, 22, 24, 27, 29, 30, 31 ]
+
+
+jumps8 : List Int
+jumps8 = [ 2, 4, 6, 8, 10, 12, 14, 17, 19, 21, 22, 23, 24, 25, 28, 30 ]
+
+
+jumps9 : List Int
+jumps9 = [ 2, 4, 5, 6, 7, 8, 9, 10, 13, 15, 17, 19, 20, 22, 24, 27, 29, 30, 31 ]
+
+
+type alias LeadEv =
+    { x : Int, hz : Int }
+
+
+-- world positions where the game loop fires the melody: one note ON each
+-- jump beat. The last two segments sing an octave up — the finale lift.
+-- All positions are even, and the player moves 2 px/tick from even spawns,
+-- so stepRun crosses each one exactly.
+leadEvents : List LeadEv
+leadEvents =
+    let
+        seg =
+            \k jumps ->
+                (List.foldl
+                    (\b acc ->
+                        let
+                            bx = (k * 32 + b) * beatPx
+                            oct = if k >= 4 then 2 else 1
+                        in
+                        { idx = acc.idx + 1
+                        , evs =
+                            List.concat
+                                [ acc.evs
+                                , [ { x = bx, hz = oct * leadPitch acc.idx } ]
+                                ]
+                        }
+                    )
+                    { idx = 0, evs = [] }
+                    jumps).evs
+    in
+    List.concat
+        [ seg 0 jumps1, seg 1 jumps2, seg 2 jumps3
+        , seg 3 jumps4, seg 4 jumps5, seg 5 jumps6
+        , seg 6 jumps7, seg 7 jumps8, seg 8 jumps9
+        ]
+
+
+cueSound : Cue -> Sound
+cueSound cue =
+    case cue of
+        CueDeath ->
+            -- the square shatters: a noise burst over a falling saw
+            Sound.chord
+                [ Sound.volume 30 (Sound.tone Sound.Noise 0 200)
+                , Sound.volume 24 (Sound.sweep 55 (Sound.tone Sound.Sawtooth 320 220))
+                ]
+
+        CueCheck ->
+            Sound.sequence
+                [ Sound.volume 14 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 60))
+                , Sound.volume 14 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 6) 90))
+                ]
+
+        CueWin ->
+            Sound.sequence
+                [ Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 5) 120))
+                , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 120))
+                , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 120))
+                , Sound.vibrato 22 6 (Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 420)))
+                ]
+
+        CueLead hz ->
+            -- the melody note, fired BY the world on the jump beat. LONG
+            -- (440 ms ≈ the whole beat), and it now rings out instead of
+            -- stopping flat: without an explicit release the engine gives a
+            -- voice 5 ms, which is only the floor below which a gain change
+            -- clicks. That held the note at full level for 435 ms and then
+            -- cut it, which is what made the high line sound dry.
+            --
+            -- 90 ms of release is about a fifth of the note: clearly a decay,
+            -- still short enough that a beat lands on silence rather than on
+            -- the tail of the note before it. Release is shaped INSIDE the
+            -- note (the ramp ends at its own duration, it does not extend
+            -- it), so all three voices stay exactly 440 ms and the chord
+            -- keeps its alignment.
+            --
+            -- Two detuned duty-50 squares (chorus) over a sub-octave triangle.
+            Sound.chord
+                [ Sound.release 90 (Sound.vibrato 14 5 (Sound.volume 13 (Sound.duty 50 (Sound.tone Sound.Square hz 440))))
+                , Sound.release 90 (Sound.volume 9 (Sound.duty 50 (Sound.tone Sound.Square (hz + max 3 (hz // 90)) 440)))
+                , Sound.release 90 (Sound.volume 7 (Sound.tone Sound.Triangle (hz // 2) 440))
+                ]
+
+        CueBeat b ->
+            -- one beat of the groove, built for exactly this world position
+            grooveBeat b
+
+
+-- ===== colors =====
+
+
+ink : Color
+ink = rgb 10 10 18
+
+
+hudWhite : Color
+hudWhite = rgb 235 238 245
+
+
+hudAmber : Color
+hudAmber = rgb 255 196 64
+
+
+hudDim : Color
+hudDim = rgb 120 128 150
+
+
+hudRed : Color
+hudRed = rgb 235 80 70
+
+
+orange : Color
+orange = rgb 255 150 40
+
+
+orangeDark : Color
+orangeDark = rgb 140 60 0
+
+
+spikeC : Color
+spikeC = rgb 226 232 244
+
+
+blockC : Color
+blockC = rgb 30 34 52
+
+
+blockEdge : Color
+blockEdge = rgb 150 200 255
+
+
+voidC : Color
+voidC = rgb 8 8 14
+
+
+groundC : Color
+groundC = rgb 17 17 28
+
+
+flagC : Color
+flagC = rgb 90 220 120
+
+
+bezel : Color
+bezel = rgb 6 6 10
+
+
+-- background per 32-beat segment: the hue changes exactly at the checkpoint
+-- lines (beats 32/64/96/128/160) — and at the same world positions in
+-- hardcore, where the checkpoints would be. The last two run hot.
+bgColor : Model -> Color
+bgColor m =
+    let
+        seg = iclamp 0 8 (max 0 m.px // loopPx)
+    in
+    if seg == 0 then rgb 24 30 66
+    else if seg == 1 then rgb 40 24 64
+    else if seg == 2 then rgb 16 48 58
+    else if seg == 3 then rgb 56 24 44
+    else if seg == 4 then rgb 62 38 18
+    else if seg == 5 then rgb 66 16 24
+    else if seg == 6 then rgb 74 46 12
+    else if seg == 7 then rgb 34 12 52
+    else rgb 84 12 18
+
+
+-- ===== view =====
+
+
+type alias Layout =
+    { scale : Int
+    , ox : Int
+    , oy : Int
+    }
+
+
+layout : Model -> Layout
+layout model =
+    let
+        s = max 60 (min (model.w * 100 // gameW) (model.h * 100 // gameH))
+    in
+    { scale = s
+    , ox = (model.w - gameW * s // 100) // 2
+    , oy = (model.h - gameH * s // 100) // 2
+    }
+
+
+view : Model -> View Msg
+view model =
+    let
+        lay = layout model
+        scene =
+            case model.mode of
+                Title -> titleShapes model
+                Run -> worldShapes model
+                Dead -> worldShapes model
+                Win -> List.concat [ worldShapes model, winShapes model ]
+    in
+    canvas Pixelated [ watchSize Resized, onTap Tapped, onRelease Released ]
+        (List.concat
+            [ [ rect 0 0 model.w model.h bezel
+              , group [ Canvas.Translate lay.ox lay.oy, Canvas.Scale lay.scale lay.scale ]
+                    (List.concat [ scene, muteIcon model ])
+              ]
+            , matteShapes model lay
+            ])
+
+
+camX : Model -> Int
+camX m =
+    m.px - playerScreenX
+
+
+worldShapes : Model -> List Shape
+worldShapes m =
+    let
+        cx = camX m
+    in
+    List.concat
+        [ [ rect 0 0 gameW gameH (bgColor m) ]
+        , [ rect 0 groundY gameW (gameH - groundY) voidC ]
+        , groundShapes cx
+        , flagShapes m cx
+        , finishShapes cx
+        , blockShapes cx
+        , spikeShapes cx
+        , attemptTextShapes m cx
+        , playerShapes m cx
+        , hudShapes m
+        ]
+
+
+groundShapes : Int -> List Shape
+groundShapes cx =
+    List.concat
+        (List.map
+            (\s ->
+                let
+                    x0 = max s.x0 (cx - 10)
+                    x1 = min s.x1 (cx + gameW + 10)
+                in
+                if x1 <= x0 then
+                    []
+                else
+                    [ rect (x0 - cx) groundY (x1 - x0) (gameH - groundY) groundC
+                    , rect (x0 - cx) groundY (x1 - x0) 2 blockEdge
+                    ]
+            )
+            groundSegs)
+
+
+visible : Int -> Int -> Int -> Bool
+visible cx x w =
+    x + w > cx - 20 && x < cx + gameW + 20
+
+
+blockShapes : Int -> List Shape
+blockShapes cx =
+    List.concat
+        (List.map
+            (\b ->
+                if visible cx b.x b.w then
+                    [ rect (b.x - cx) b.top b.w (groundY - b.top) blockC
+                    , rect (b.x - cx) b.top b.w 2 blockEdge
+                    , rect (b.x - cx) b.top 2 (groundY - b.top) (rgb 70 88 120)
+                    ]
+                else
+                    []
+            )
+            blockRects)
+
+
+-- a 15x15 spike: one Canvas.triangle, base on the ground, apex up
+spikeShapes : Int -> List Shape
+spikeShapes cx =
+    List.concat
+        (List.map
+            (\o ->
+                case o of
+                    Spk u lift ->
+                        let
+                            x = u * unitPx
+                            top = groundY - lift * unitPx - unitPx
+                        in
+                        if visible cx x unitPx then
+                            [ triangle (x - cx) (top + unitPx) (x - cx + unitPx) (top + unitPx) (x - cx + unitPx // 2) top spikeC ]
+                        else
+                            []
+
+                    _ ->
+                        []
+            )
+            obs)
+
+
+flagShapes : Model -> Int -> List Shape
+flagShapes m cx =
+    if m.hardcore then
+        []
+    else
+        List.concat
+            (List.map
+                (\i ->
+                    let
+                        x = cpX (i + 1)
+                    in
+                    if visible cx x 12 then
+                        [ rect (x - cx) 126 2 38 hudWhite
+                        , rect (x - cx + 2) 126 9 7 flagC
+                        ]
+                    else
+                        []
+                )
+                (range 8))
+
+
+finishShapes : Int -> List Shape
+finishShapes cx =
+    if visible cx finishX 10 then
+        List.concat
+            (List.map
+                (\i ->
+                    [ rect (finishX - cx) (44 + i * 24) 8 12 hudWhite
+                    , rect (finishX - cx) (56 + i * 24) 8 12 ink
+                    ]
+                )
+                (range 5))
+    else
+        []
+
+
+playerShapes : Model -> Int -> List Shape
+playerShapes m cx =
+    if m.mode == Dead then
+        shatterShapes m cx
+    else
+        let
+            x = m.px - cx
+            top = m.pyBot // fp - pw
+            edge = orangeDark
+            -- mid-air the square does a quarter turn over the hop (a square is
+            -- symmetric under 90 degrees, so it lands looking upright again)
+            deg = min 90 (m.airT * 90 // 28)
+        in
+        let
+            -- pw is odd, so anchor everything on the top-left corner (-pw/2)
+            -- and derive the far edges from it — pw/2-2 would land the
+            -- bottom/right borders 2 px inside the body
+            o = 0 - pw // 2
+            f = o + pw - 2
+        in
+        [ group [ Canvas.Translate (x + pw // 2) (top + pw // 2), Canvas.Rotate deg ]
+            [ rect o o pw pw orange
+            , rect o o pw 2 edge
+            , rect o f pw 2 edge
+            , rect o o 2 pw edge
+            , rect f o 2 pw edge
+            ]
+        ]
+
+
+-- the square breaks into eight fragments that fly apart under gravity —
+-- the object itself shatters, nothing else on screen moves
+shatterShapes : Model -> Int -> List Shape
+shatterShapes m cx =
+    let
+        t = m.deathT
+        vels =
+            [ { vx = 0 - 40, vy = 0 - 90 }, { vx = 0 - 15, vy = 0 - 110 }
+            , { vx = 20, vy = 0 - 100 }, { vx = 45, vy = 0 - 70 }
+            , { vx = 0 - 50, vy = 0 - 40 }, { vx = 35, vy = 0 - 45 }
+            , { vx = 0 - 25, vy = 0 - 70 }, { vx = 10, vy = 0 - 120 }
+            ]
+    in
+    List.concat
+        (List.map
+            (\v ->
+                let
+                    fx = m.deathX + (v.vx * t) // 16
+                    fy = m.deathY - pw + (v.vy * t + 2 * t * t) // 16
+                in
+                if fy > gameH then
+                    []
+                else
+                    [ rect (fx - cx) fy 4 4 orange ]
+            )
+            vels)
+
+
+attemptTextShapes : Model -> Int -> List Shape
+attemptTextShapes m cx =
+    let
+        sx = if m.hardcore then 0 else cpX m.lastCp
+    in
+    pixText (sx + 6 - cx) 118 1 hudWhite ("ATTEMPT " ++ String.fromInt m.attempts)
+
+
+hudShapes : Model -> List Shape
+hudShapes m =
+    let
+        barW = gameW - 80
+        fill = iclamp 0 barW (m.px * barW // finishX)
+    in
+    List.concat
+        [ [ rect 40 6 barW 4 (rgb 40 44 62)
+          , rect 40 6 fill 4 hudAmber
+          ]
+        , pixText 4 3 1 hudWhite (String.fromInt (iclamp 0 100 (m.px * 100 // finishX)))
+        , pixTextR (gameW - 32) 13 1 hudDim (if m.hardcore then "HARDCORE" else "CHECKPOINT")
+        ]
+
+
+-- ===== title / win screens =====
+
+
+titleShapes : Model -> List Shape
+titleShapes m =
+    let
+        cx = gameW // 2
+        blink = modBy 50 m.tick < 32
+        hopT = modBy 30 m.tick
+        hopY = groundY - (hopT * (30 - hopT)) * 26 // 225
+        btn =
+            \x y w sel label ->
+                List.concat
+                    [ [ rect x y w 22 (if sel then orange else rgb 28 32 50)
+                      , rect x y w 2 (if sel then rgb 255 210 130 else hudDim)
+                      , rect x (y + 20) w 2 (if sel then orangeDark else hudDim)
+                      ]
+                    , pixTextC (x + w // 2) (y + 8) 1 (if sel then ink else hudWhite) label
+                    ]
+    in
+    List.concat
+        [ [ rect 0 0 gameW gameH (rgb 20 24 52) ]
+        , [ rect 0 groundY gameW (gameH - groundY) groundC
+          , rect 0 groundY gameW 2 blockEdge
+          ]
+        , [ group
+                [ Canvas.Translate (46 + pw // 2) (hopY - 13 + pw // 2)
+                , Canvas.Rotate (min 90 (hopT * 90 // 28))
+                ]
+                [ rect (0 - pw // 2) (0 - pw // 2) pw pw orange ]
+          ]
+        , [ triangle 92 groundY (92 + unitPx) groundY (92 + unitPx // 2) (groundY - unitPx) spikeC ]
+        , pixTextC (cx + 3) 33 4 ink "PULSE"
+        , pixTextC cx 30 4 hudWhite "PULSE"
+        , pixTextC (cx + 3) 63 4 ink "RUNNER"
+        , pixTextC cx 60 4 hudAmber "RUNNER"
+        , btn (cx - 75) 104 150 (m.sel == 0) "HARDCORE"
+        , btn (cx - 75) 134 150 (m.sel == 1) "CHECKPOINTS"
+        , if blink then
+            pixTextC cx 170 1 hudDim "SPACE OR TAP TO JUMP - M TO MUTE"
+          else
+            []
+        ]
+
+
+winShapes : Model -> List Shape
+winShapes m =
+    let
+        blink = modBy 50 m.tick < 32
+        cx = gameW // 2
+    in
+    List.concat
+        [ [ rect (cx - 102) 56 204 76 ink
+          , rect (cx - 102) 56 204 2 hudAmber
+          , rect (cx - 102) 130 204 2 hudAmber
+          ]
+        , pixTextC cx 66 2 hudAmber "COMPLETE!"
+        , pixTextC cx 86 1 hudWhite ("ATTEMPTS: " ++ String.fromInt m.attempts)
+        , pixTextC cx 98 1 hudDim (if m.hardcore then "MODE: HARDCORE" else "MODE: CHECKPOINTS")
+        , if blink then pixTextC cx 114 1 hudWhite "PRESS TO CONTINUE" else []
+        ]
+
+
+-- Opaque strips over the four letterbox margins, drawn AFTER the scaled
+-- world group. The group is not clipped, so a spike that has scrolled just
+-- past the logical stage edge still draws into the black margin on a wide
+-- phone screen (portrait desktop hides it because the stage fills the canvas).
+-- Same color as the bezel, so the stage reads as a framed screen.
+matteShapes : Model -> Layout -> List Shape
+matteShapes m lay =
+    let
+        pw = gameW * lay.scale // 100
+        ph = gameH * lay.scale // 100
+    in
+    [ rect 0 0 m.w (max 0 lay.oy) bezel
+    , rect 0 (lay.oy + ph) m.w (max 0 (m.h - lay.oy - ph)) bezel
+    , rect 0 0 (max 0 lay.ox) m.h bezel
+    , rect (lay.ox + pw) 0 (max 0 (m.w - lay.ox - pw)) m.h bezel
+    ]
+
+
+muteIcon : Model -> List Shape
+muteIcon m =
+    let
+        mx = gameW - 20
+    in
+    List.concat
+        [ [ rect mx 4 5 6 hudWhite
+          , rect (mx + 5) 2 3 10 hudWhite
+          ]
+        , if m.muted then
+            [ rect (mx + 10) 4 6 2 hudRed
+            , rect (mx + 10) 8 6 2 hudRed
+            ]
+          else
+            [ rect (mx + 10) 5 2 4 hudDim
+            , rect (mx + 13) 3 2 8 hudDim
+            ]
+        ]
+
+
+-- ===== pixel font (3x5 glyphs drawn as rects — same table as the other Mar
+-- canvas games) =====
+
+
+pixText : Int -> Int -> Int -> Color -> String -> List Shape
+pixText x y s color str =
+    List.concat
+        (List.indexedMap
+            (\i ch -> glyphShapes (x + i * 4 * s) y s color ch)
+            (String.toList str))
+
+
+pixTextC : Int -> Int -> Int -> Color -> String -> List Shape
+pixTextC x y s color str =
+    pixText (x - pixW (String.length str) s // 2) y s color str
+
+
+pixTextR : Int -> Int -> Int -> Color -> String -> List Shape
+pixTextR x y s color str =
+    pixText (x - pixW (String.length str) s) y s color str
+
+
+pixW : Int -> Int -> Int
+pixW n s =
+    n * 4 * s - s
+
+
+glyphShapes : Int -> Int -> Int -> Color -> Char -> List Shape
+glyphShapes gx gy s color ch =
+    List.concat
+        (List.indexedMap
+            (\r bits -> rowShapes gx (gy + r * s) s color bits)
+            (glyph ch))
+
+
+rowShapes : Int -> Int -> Int -> Color -> Int -> List Shape
+rowShapes rx ry s color bits =
+    List.concat
+        [ if bitOn bits 4 then [ rect rx ry s s color ] else []
+        , if bitOn bits 2 then [ rect (rx + s) ry s s color ] else []
+        , if bitOn bits 1 then [ rect (rx + 2 * s) ry s s color ] else []
+        ]
+
+
+bitOn : Int -> Int -> Bool
+bitOn bits bit =
+    modBy 2 (bits // bit) == 1
+
+
+glyph : Char -> List Int
+glyph ch =
+    case ch of
+        'A' -> [ 7, 5, 7, 5, 5 ]
+        'B' -> [ 6, 5, 6, 5, 6 ]
+        'C' -> [ 7, 4, 4, 4, 7 ]
+        'D' -> [ 6, 5, 5, 5, 6 ]
+        'E' -> [ 7, 4, 7, 4, 7 ]
+        'F' -> [ 7, 4, 7, 4, 4 ]
+        'G' -> [ 7, 4, 5, 5, 7 ]
+        'H' -> [ 5, 5, 7, 5, 5 ]
+        'I' -> [ 7, 2, 2, 2, 7 ]
+        'J' -> [ 1, 1, 1, 5, 7 ]
+        'K' -> [ 5, 6, 4, 6, 5 ]
+        'L' -> [ 4, 4, 4, 4, 7 ]
+        'M' -> [ 5, 7, 7, 5, 5 ]
+        'N' -> [ 5, 7, 7, 7, 5 ]
+        'O' -> [ 7, 5, 5, 5, 7 ]
+        'P' -> [ 7, 5, 7, 4, 4 ]
+        'Q' -> [ 7, 5, 5, 7, 1 ]
+        'R' -> [ 7, 5, 7, 6, 5 ]
+        'S' -> [ 7, 4, 7, 1, 7 ]
+        'T' -> [ 7, 2, 2, 2, 2 ]
+        'U' -> [ 5, 5, 5, 5, 7 ]
+        'V' -> [ 5, 5, 5, 5, 2 ]
+        'W' -> [ 5, 5, 7, 7, 5 ]
+        'X' -> [ 5, 5, 2, 5, 5 ]
+        'Y' -> [ 5, 5, 2, 2, 2 ]
+        'Z' -> [ 7, 1, 2, 4, 7 ]
+        '0' -> [ 7, 5, 5, 5, 7 ]
+        '1' -> [ 2, 6, 2, 2, 7 ]
+        '2' -> [ 7, 1, 7, 4, 7 ]
+        '3' -> [ 7, 1, 7, 1, 7 ]
+        '4' -> [ 5, 5, 7, 1, 1 ]
+        '5' -> [ 7, 4, 7, 1, 7 ]
+        '6' -> [ 7, 4, 7, 5, 7 ]
+        '7' -> [ 7, 1, 2, 2, 2 ]
+        '8' -> [ 7, 5, 7, 5, 7 ]
+        '9' -> [ 7, 5, 7, 1, 7 ]
+        ':' -> [ 0, 2, 0, 2, 0 ]
+        '-' -> [ 0, 0, 7, 0, 0 ]
+        '.' -> [ 0, 0, 0, 0, 2 ]
+        '!' -> [ 2, 2, 2, 0, 2 ]
+        _ -> [ 0, 0, 0, 0, 0 ]
+
+
+-- ===== wiring =====
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.batch
+        [ Time.every (Time.millis (1000 // fps)) (\_ -> Tick)
+        , Keyboard.watch KeysChanged
+        , Gamepad.watch PadChanged
+        -- no Sound.loop here on purpose: the ENTIRE soundtrack (groove +
+        -- melody) is fired by stepRun as one-shot cues at exact world
+        -- positions, so it pauses with the game and never drifts
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Pulse Runner"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]

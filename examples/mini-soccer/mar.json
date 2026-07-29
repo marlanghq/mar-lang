@@ -1,0 +1,13 @@
+{
+  "name": "mini-soccer",
+  "server": {
+    "port": 3021
+  },
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "mar-mini-soccer",
+      "account": "env:CLOUDFLARE_ACCOUNT_ID",
+      "apiToken": "env:CLOUDFLARE_API_TOKEN"
+    }
+  }
+}

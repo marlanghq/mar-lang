@@ -1,0 +1,478 @@
+module Backend.Games exposing (games, moves, services)
+
+
+import Backend.Players
+import Backend.Bot
+import Shared exposing (Status(..))
+
+
+-- The match tables + every service that drives a game of Lendas. The
+-- server never trusts the client's picture of the board: `jogar`
+-- replays the stored log with Shared's engine, applies the incoming
+-- move THROUGH THE SAME RULES, and only then persists it. A client can
+-- only ever submit what the engine itself calls legal.
+
+
+-- ====================================================================
+-- ENTITIES
+-- ====================================================================
+
+
+games : Entity Shared.Game
+games =
+    Entity.define
+        { name = "games"
+        , columns =
+            { id        = Entity.serial
+            , aId       = Entity.int  Entity.notNull
+            , bId       = Entity.int  Entity.notNull
+            , deckA     = Entity.text Entity.notNull
+            , deckB     = Entity.text Entity.notNull
+            , seed      = Entity.int  Entity.notNull
+            , status    = Entity.enum [ Desafio, Ativa, Encerrada, Recusada ] Entity.notNull
+            , turnA     = Entity.bool Entity.notNull
+            , winnerN   = Entity.int  Entity.notNull
+            , createdAt = Entity.timestamp Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+moves : Entity Shared.Move
+moves =
+    Entity.define
+        { name = "moves"
+        , columns =
+            { id     = Entity.serial
+            , gameId = Entity.int  Entity.notNull
+            , ix     = Entity.int  Entity.notNull
+            , byA    = Entity.bool Entity.notNull
+            , data   = Entity.text Entity.notNull
+            }
+        , uniques = []
+        }
+
+
+-- ====================================================================
+-- HELPERS
+-- ====================================================================
+
+
+-- Is this user part of this game, and are they side A?
+sideFor : Shared.Game -> Int -> Maybe Bool
+sideFor g userId =
+    if userId == g.aId then
+        Just True
+
+    else if userId == g.bId then
+        Just False
+
+    else
+        Nothing
+
+
+movesFor : Int -> Task (List Shared.MoveData)
+movesFor gameId =
+    Repo.findBy moves { gameId = gameId }
+        |> Task.map
+            (\rows ->
+                List.sortBy (\m -> m.ix) rows
+                    |> List.map (\m -> { byA = m.byA, data = m.data })
+            )
+
+
+-- An unfinished pairing (either direction) between two users?
+openBetween : Int -> Int -> List Shared.Game -> Bool
+openBetween u1 u2 all =
+    List.any
+        (\g ->
+            (g.status == Desafio || g.status == Ativa)
+                && ((g.aId == u1 && g.bId == u2) || (g.aId == u2 && g.bId == u1)))
+        all
+
+
+-- ====================================================================
+-- desafiar  (POST /partidas)
+-- ====================================================================
+
+
+desafiarImpl : { nick : String, deck : String } -> Shared.User -> Task Shared.DesafiarResult
+desafiarImpl input user =
+    if Shared.deckValid input.deck == False then
+        Task.succeed Shared.DeckInvalido
+
+    else
+        Backend.Players.findByNick input.nick
+            |> Task.andThen
+                (\maybeOpp ->
+                    case maybeOpp of
+                        Nothing ->
+                            Task.succeed Shared.OponenteNaoExiste
+
+                        Just opp ->
+                            if opp.userId == user.id then
+                                Task.succeed Shared.AutoDesafio
+
+                            else
+                                Repo.all games
+                                    |> Task.andThen
+                                        (\all ->
+                                            if openBetween user.id opp.userId all then
+                                                Task.succeed Shared.JaTemPartida
+
+                                            else if opp.userId == Backend.Players.botId then
+                                                -- solo play: skip the accept dance
+                                                createBotGame user.id input.deck
+
+                                            else
+                                                createGame user.id opp.userId input.deck
+                                        )
+                )
+
+
+-- A bot match is born already Ativa (auto-accepted): the bot picks its deck
+-- from the seed, and you still play first (turnA = True). Everything after —
+-- your opening turn, the bot's reply — flows through the normal move gate.
+createBotGame : Int -> String -> Task Shared.DesafiarResult
+createBotGame challengerId deck =
+    Time.now
+        |> Task.andThen
+            (\now ->
+                let
+                    seed =
+                        Shared.sanitizeSeed (Time.toMillis now + challengerId * 131 + Backend.Players.botId * 17)
+                in
+                Repo.create games
+                    { aId       = challengerId
+                    , bId       = Backend.Players.botId
+                    , deckA     = deck
+                    , deckB     = Backend.Bot.botDeck seed
+                    , seed      = seed
+                    , status    = Ativa
+                    , turnA     = True
+                    , winnerN   = 0
+                    , createdAt = now
+                    }
+                    |> Task.map (\g -> Shared.DesafioCriado g.id)
+            )
+
+
+createGame : Int -> Int -> String -> Task Shared.DesafiarResult
+createGame challengerId opponentId deck =
+    Time.now
+        |> Task.andThen
+            (\now ->
+                Repo.create games
+                    { aId       = challengerId
+                    , bId       = opponentId
+                    , deckA     = deck
+                    , deckB     = ""
+                    -- wall-clock ms + ids: two games born the same
+                    -- instant still shuffle differently
+                    , seed      = Shared.sanitizeSeed (Time.toMillis now + challengerId * 131 + opponentId * 17)
+                    , status    = Desafio
+                    , turnA     = True
+                    , winnerN   = 0
+                    , createdAt = now
+                    }
+                    |> Task.map (\g -> Shared.DesafioCriado g.id)
+            )
+
+
+-- ====================================================================
+-- aceitar / recusar  (POST /partidas/{id}/aceitar | recusar)
+-- ====================================================================
+
+
+aceitarImpl : { id : Int, deck : String } -> Shared.User -> Task Shared.Ack
+aceitarImpl input user =
+    Repo.findById games input.id
+        |> Task.andThen
+            (\maybeG ->
+                case maybeG of
+                    Just g ->
+                        if g.status == Desafio && g.bId == user.id && Shared.deckValid input.deck then
+                            Repo.update games g.id { deckB = input.deck, status = Ativa }
+                                |> Task.map (\_ -> Shared.AckOk)
+
+                        else
+                            Task.succeed Shared.AckNegado
+
+                    Nothing ->
+                        Task.succeed Shared.AckNegado
+            )
+
+
+recusarImpl : { id : Int } -> Shared.User -> Task Shared.Ack
+recusarImpl input user =
+    Repo.findById games input.id
+        |> Task.andThen
+            (\maybeG ->
+                case maybeG of
+                    Just g ->
+                        if g.status == Desafio && g.bId == user.id then
+                            Repo.update games g.id { status = Recusada }
+                                |> Task.map (\_ -> Shared.AckOk)
+
+                        else
+                            Task.succeed Shared.AckNegado
+
+                    Nothing ->
+                        Task.succeed Shared.AckNegado
+            )
+
+
+-- ====================================================================
+-- lobby  (GET /partidas)
+-- ====================================================================
+
+
+lobbyImpl : () -> Shared.User -> Task Shared.Lobby
+lobbyImpl _ user =
+    Repo.all games
+        |> Task.andThen
+            (\all ->
+                let
+                    mine =
+                        List.filter (\g -> g.aId == user.id || g.bId == user.id) all
+                in
+                Task.sequence (List.map (\g -> buildCard user.id g) mine)
+                    |> Task.map splitLobby
+            )
+
+
+buildCard : Int -> Shared.Game -> Task Shared.PartidaCard
+buildCard userId g =
+    let
+        souA = g.aId == userId
+        rivalId = if souA then g.bId else g.aId
+    in
+    Backend.Players.nickForUser rivalId
+        |> Task.map
+            (\nick ->
+                { id        = g.id
+                , rivalNick = nick
+                , status    = g.status
+                -- A challenge you sent counts as "your turn" until you play
+                -- your opening turn (you may act before the rival accepts).
+                , minhaVez  =
+                    g.turnA == souA
+                        && (g.status == Ativa || (g.status == Desafio && souA))
+                , souA      = souA
+                , meuDeck   = if souA then g.deckA else g.deckB
+                , winnerMe  =
+                    if g.winnerN == 0 then 0
+                    else if (g.winnerN == 1) == souA then 1
+                    else 2
+                }
+            )
+
+
+splitLobby : List Shared.PartidaCard -> Shared.Lobby
+splitLobby cards =
+    { convites =
+        List.filter (\c -> c.status == Desafio && c.souA == False) cards
+    , enviados =
+        List.filter (\c -> c.status == Desafio && c.souA) cards
+    , ativas =
+        List.filter (\c -> c.status == Ativa) cards
+    , encerradas =
+        List.filter (\c -> c.status == Encerrada || c.status == Recusada) cards
+    }
+
+
+-- ====================================================================
+-- partida  (GET /partidas/{id})
+-- ====================================================================
+
+
+partidaImpl : { id : Int } -> Shared.User -> Task Shared.PartidaResult
+partidaImpl input user =
+    Repo.findById games input.id
+        |> Task.andThen
+            (\maybeG ->
+                case maybeG of
+                    Nothing ->
+                        Task.succeed Shared.PartidaNaoEncontrada
+
+                    Just g ->
+                        case sideFor g user.id of
+                            Nothing ->
+                                Task.succeed Shared.PartidaNaoEncontrada
+
+                            Just souA ->
+                                buildPartida g souA
+            )
+
+
+buildPartida : Shared.Game -> Bool -> Task Shared.PartidaResult
+buildPartida g souA =
+    movesFor g.id
+        |> Task.andThen
+            (\mvs ->
+                Backend.Players.nickForUser (if souA then g.bId else g.aId)
+                    |> Task.andThen
+                        (\rivalNick ->
+                            Backend.Players.nickForUser (if souA then g.aId else g.bId)
+                                |> Task.map
+                                    (\meuNick ->
+                                        Shared.PartidaOk
+                                            { id        = g.id
+                                            , souA      = souA
+                                            , meuNick   = meuNick
+                                            , rivalNick = rivalNick
+                                            , deckA     = g.deckA
+                                            , deckB     = g.deckB
+                                            , seed      = g.seed
+                                            , status    = g.status
+                                            , winnerN   = g.winnerN
+                                            , moves     = mvs
+                                            }
+                                    )
+                        )
+            )
+
+
+-- ====================================================================
+-- jogar  (POST /partidas/{id}/jogar) — the authoritative move gate
+-- ====================================================================
+
+
+jogarImpl : { id : Int, ix : Int, data : String } -> Shared.User -> Task Shared.MoveResult
+jogarImpl input user =
+    Repo.findById games input.id
+        |> Task.andThen
+            (\maybeG ->
+                case maybeG of
+                    Nothing ->
+                        Task.succeed Shared.PartidaIndisponivel
+
+                    Just g ->
+                        case sideFor g user.id of
+                            Nothing ->
+                                Task.succeed Shared.PartidaIndisponivel
+
+                            Just souA ->
+                                -- The CHALLENGER may play their opening turn while the
+                                -- challenge still awaits an accept: turn-1 moves never
+                                -- depend on B's (yet unchosen) deck — B has no board,
+                                -- and B's life / hand SIZE are deck-independent — so
+                                -- the log replays identically once the real deck B is
+                                -- set. B, who hasn't picked a deck, must accept first.
+                                if g.status == Ativa || (g.status == Desafio && souA) then
+                                    movesFor g.id
+                                        |> Task.andThen (\mvs -> judgeMove g souA input mvs)
+
+                                else
+                                    Task.succeed Shared.PartidaIndisponivel
+            )
+
+
+judgeMove : Shared.Game -> Bool -> { id : Int, ix : Int, data : String } -> List Shared.MoveData -> Task Shared.MoveResult
+judgeMove g souA input mvs =
+    if List.length mvs /= input.ix then
+        -- The client moved against a stale board (the rival acted in
+        -- between). It refetches and tries again.
+        Task.succeed Shared.MoveDesatualizado
+
+    else
+        let
+            st = Shared.replay g.seed g.deckA g.deckB mvs
+        in
+        case Shared.applyMoveBy souA st input.data of
+            Err reason ->
+                Task.succeed (Shared.MoveIlegal reason)
+
+            Ok st2 ->
+                Repo.create moves
+                    { gameId = g.id
+                    , ix     = input.ix
+                    , byA    = souA
+                    , data   = input.data
+                    }
+                    |> Task.andThen (\_ -> persistOutcome g st2)
+                    |> Task.andThen
+                        (\_ ->
+                            -- If this is a solo match and the human just handed the
+                            -- turn over (bot = B, so turnA is now False), the bot
+                            -- takes its whole turn right here, server-side. Its moves
+                            -- land in the same log and the client animates them on
+                            -- the next poll, like a rival's.
+                            if g.bId == Backend.Players.botId && st2.winner == 0 && st2.turnA == False then
+                                runBotTurn g st2 (input.ix + 1) 60
+
+                            else
+                                Task.succeed ()
+                        )
+                    |> Task.map (\_ -> Shared.MoveOk)
+
+
+-- Play out the bot's (B's) turn: pick a move, apply it through the SAME
+-- engine, append it, recurse — until the bot ends its turn (turnA flips back
+-- to A), the game ends, or the fuel runs out (a backstop against a stuck
+-- move). State + index are threaded so we don't re-read the log each step.
+runBotTurn : Shared.Game -> Shared.GState -> Int -> Int -> Task ()
+runBotTurn g st ix fuel =
+    if fuel <= 0 || st.winner /= 0 || st.turnA then
+        persistOutcome g st
+
+    else
+        let
+            mv = Backend.Bot.botMove st
+        in
+        case Shared.applyMoveBy False st mv of
+            Ok st2 ->
+                Repo.create moves { gameId = g.id, ix = ix, byA = False, data = mv }
+                    |> Task.andThen (\_ -> runBotTurn g st2 (ix + 1) (fuel - 1))
+
+            Err _ ->
+                -- Defensive: the bot proposed something the engine rejects.
+                -- Force an end-turn so we never loop on a bad move.
+                case Shared.applyMoveBy False st "E" of
+                    Ok st2 ->
+                        Repo.create moves { gameId = g.id, ix = ix, byA = False, data = "E" }
+                            |> Task.andThen (\_ -> persistOutcome g st2)
+
+                    Err _ ->
+                        persistOutcome g st
+
+
+-- Mirror the replayed state onto the game row (lobby's denormalized
+-- view), and settle the W/L records exactly once when it ends.
+persistOutcome : Shared.Game -> Shared.GState -> Task ()
+persistOutcome g st =
+    let
+        ended = st.winner /= 0
+    in
+    Repo.update games g.id
+        { turnA = st.turnA
+        , winnerN = st.winner
+        , status = if ended then Encerrada else g.status
+        }
+        |> Task.andThen
+            (\_ ->
+                if ended then
+                    let
+                        winnerUser = if st.winner == 1 then g.aId else g.bId
+                        loserUser = if st.winner == 1 then g.bId else g.aId
+                    in
+                    Backend.Players.bumpRecord winnerUser loserUser
+
+                else
+                    Task.succeed ()
+            )
+
+
+-- ====================================================================
+-- SERVICE MANIFEST
+-- ====================================================================
+
+
+services =
+    [ Auth.protect Shared.desafiar desafiarImpl
+    , Auth.protect Shared.aceitar  aceitarImpl
+    , Auth.protect Shared.recusar  recusarImpl
+    , Auth.protect Shared.lobby    lobbyImpl
+    , Auth.protect Shared.partida  partidaImpl
+    , Auth.protect Shared.jogar    jogarImpl
+    ]

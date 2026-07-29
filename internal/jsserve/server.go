@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	esbuild "github.com/evanw/esbuild/pkg/api"
 
@@ -71,6 +72,16 @@ func currentPublicDir() string {
 // is cleaned and confined to publicDir — `..` traversal and absolute
 // escapes can't reach outside the folder.
 func serveStaticOrShell(w http.ResponseWriter, r *http.Request, lp *LiveProgram) {
+	// /_mar/ is the framework's reserved namespace (runtime.js, program.json,
+	// manifest, icons, admin panel, …). Every real asset there is registered
+	// with its own handler and never reaches this catch-all — so anything under
+	// /_mar/ that lands here is a framework path that doesn't exist for this
+	// app (e.g. /_mar/admin on a frontend-only app, where the admin panel is
+	// not mounted). Answer 404 rather than leak the SPA shell for it.
+	if strings.HasPrefix(r.URL.Path, "/_mar/") {
+		http.NotFound(w, r)
+		return
+	}
 	if dir := currentPublicDir(); dir != "" && r.URL.Path != "/" {
 		clean := path.Clean(r.URL.Path) // collapses .. and duplicate slashes
 		// Skip any path with a dotfile segment (.env, .git, .DS_Store…).
@@ -233,11 +244,14 @@ const pageHTML = `<!doctype html>
      also propagates to form controls, scrollbars and the like. -->
 <meta name="color-scheme" content="light dark">
 <!-- theme-color: paints the iOS Safari status-bar / Chrome address-bar
-     to match the page. Two variants so it switches with the OS. The
-     dark hex matches the html background in the dark-mode branch of
-     the inline <style> below. -->
-<meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)">
+     to match the page. Two variants so it switches with the OS. Each
+     hex is the page's TOP color (the top stop of the body gradient),
+     because the status bar sits where the page is lightest — using the
+     gradient's dark stop put a near-black strip over a lighter page in
+     dark mode. The nav bar's own fixed surface uses these same two
+     values (see .mar-nav-toolbar-row::after in runtime.js). -->
+<meta name="theme-color" content="#f7f7f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#232326" media="(prefers-color-scheme: dark)">
 <!-- PWA: makes the app installable ("Add to Home Screen") and open
      fullscreen. The manifest + icons are generated from mar.json's
      pwa block (served at /_mar/* in dev, written into dist/ by
@@ -506,6 +520,15 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	// dev's stdout sink path). To boot without SMTP verification,
 	// omit the `mail.from` field from mar.json — there's no env-var
 	// escape hatch, by design.
+	// Before either mail-sending surface mounts, refuse to boot if the
+	// codes would have nowhere to go but the log stream. Covers user
+	// auth AND the admin panel — the admin panel is the case that
+	// motivated this, since an admin-only project needs no Auth.config
+	// and so slipped past every check below.
+	if err := guardMailSink(); err != nil {
+		return err
+	}
+
 	if runtime.CurrentAuth() != nil && AuthSecret() != "" {
 		if err := maybeVerifySMTP(); err != nil {
 			return err
@@ -523,7 +546,10 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	// AND no .mar/dev-secrets.json), admin endpoints would have
 	// nothing to sign cookies with — skip mounting so the panel
 	// appears unreachable rather than misbehaving.
-	if AuthSecret() != "" {
+	// ...and only when the app has a database. A frontend-only app
+	// (App.frontend) has no SQLite db in dev, so the admin panel — which
+	// reads/writes _mar_admins — has nothing to run against; skip it.
+	if AuthSecret() != "" && runtime.CurrentDBPath() != "" {
 		mountAdminHandlers(mux)
 	}
 
@@ -669,7 +695,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	smtpCfg := SMTP()
 	mailToStdout := runtime.CurrentAuth() != nil && AuthSecret() != "" &&
 		(smtpCfg.Host == "" || smtpCfg.Password == "")
-	printBanner(addr, hub, lp.AppName(), mailToStdout)
+	printBanner(addr, hub, lp.AppName(), mailToStdout, runtime.CurrentDBPath() != "")
 	noteServerBooted()
 	if onReady != nil {
 		onReady()
@@ -692,5 +718,19 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	// chain (handler, version headers, instrumentation) becomes a clean
 	// 500 with the stack logged server-side — never a dropped connection
 	// or a stack trace leaked toward the client.
-	return http.Serve(ln, recoverPanic(withVersionHeaders(lp, adminInstrument(mux))))
+	// Wrap in an *http.Server with timeouts rather than the bare
+	// http.Serve, so a slow client can't hold a connection (and its
+	// goroutine) open indefinitely — Slowloris and slow-body attacks
+	// (security-audit-2026-07-15.md #3). ReadHeaderTimeout is the key
+	// Slowloris defense. WriteTimeout bounds a slow-reading client; the
+	// live-reload SSE stream clears its own write deadline so it survives
+	// (see ServeReload). IdleTimeout reclaims idle keep-alive connections.
+	srv := &http.Server{
+		Handler:           recoverPanic(withVersionHeaders(lp, adminInstrument(mux))),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	return srv.Serve(ln)
 }

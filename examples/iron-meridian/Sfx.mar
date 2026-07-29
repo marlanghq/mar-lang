@@ -1,0 +1,226 @@
+module Sfx exposing (..)
+
+
+import Types exposing (..)
+import Balance exposing (..)
+
+
+-- IRON MERIDIAN: sound effects only (missions run no music, per the
+-- design brief; the menu gets a quiet ambient pad from Main). Chip
+-- grammar: Sound.tone wave hz ms, wrapped in volume/sweep/duty, mixed
+-- with Sound.sequence / Sound.chord. Every cue is a one-shot fired
+-- through Sound.play by Main, deduped per tick so twenty rifles firing
+-- at once read as one crack, not a wall.
+
+
+cueSound : Cue -> Sound
+cueSound c =
+    case c of
+        CClick ->
+            Sound.volume 22 (Sound.tone Sound.Square 880 22)
+
+        CMenuMove ->
+            Sound.volume 16 (Sound.tone Sound.Triangle 660 26)
+
+        CError ->
+            Sound.sequence
+                [ Sound.volume 26 (Sound.tone Sound.Square 140 60)
+                , Sound.volume 20 (Sound.tone Sound.Square 110 80)
+                ]
+
+        CNoFunds ->
+            Sound.sequence
+                [ Sound.volume 24 (Sound.tone Sound.Square 180 45)
+                , Sound.rest 25
+                , Sound.volume 24 (Sound.tone Sound.Square 140 70)
+                ]
+
+        CVoice kind atk ->
+            voiceMotif kind atk
+
+        CPlace ->
+            Sound.chord
+                [ Sound.volume 30 (Sound.sweep 60 (Sound.tone Sound.Triangle 130 90))
+                , Sound.volume 12 (Sound.tone Sound.Noise 0 40)
+                ]
+
+        CBuilt ->
+            Sound.sequence
+                [ Sound.volume 22 (Sound.tone Sound.Triangle 520 45)
+                , Sound.volume 22 (Sound.tone Sound.Triangle 660 45)
+                , Sound.volume 24 (Sound.tone Sound.Triangle 880 70)
+                ]
+
+        CTrained kind ->
+            -- "unit ready": timbre by class (infantry / vehicle / air), pitch
+            -- nudged per kind so different types don't sound identical
+            let
+                bump = modBy 6 (uCost kind // 20) * 24
+            in
+            if uClass kind == 2 then
+                -- air: high, rising
+                Sound.sequence
+                    [ Sound.volume 20 (Sound.tone Sound.Triangle (760 + bump) 26)
+                    , Sound.volume 22 (Sound.sweep 1320 (Sound.tone Sound.Triangle (1000 + bump) 60))
+                    ]
+            else if uClass kind == 1 then
+                -- vehicle: low, heavy, three-note
+                Sound.sequence
+                    [ Sound.volume 24 (Sound.duty 30 (Sound.tone Sound.Square (300 + bump) 34))
+                    , Sound.volume 22 (Sound.tone Sound.Triangle (430 + bump) 40)
+                    , Sound.volume 22 (Sound.tone Sound.Triangle (300 + bump) 55)
+                    ]
+            else
+                -- infantry / worker: quick bright two-note
+                Sound.sequence
+                    [ Sound.volume 20 (Sound.tone Sound.Square (600 + bump) 28)
+                    , Sound.volume 20 (Sound.tone Sound.Square (820 + bump) 40)
+                    ]
+
+        CLowPower ->
+            Sound.sequence
+                [ Sound.volume 26 (Sound.tone Sound.Triangle 220 90)
+                , Sound.volume 26 (Sound.tone Sound.Triangle 160 130)
+                ]
+
+        CUnderAttack ->
+            -- a long alternating klaxon: has to cut through a firefight and read
+            -- as "your base is being hit right now", not a polite chirp
+            Sound.sequence
+                [ Sound.volume 33 (Sound.tone Sound.Square 540 130)
+                , Sound.volume 33 (Sound.tone Sound.Square 360 130)
+                , Sound.volume 33 (Sound.tone Sound.Square 540 130)
+                , Sound.volume 33 (Sound.tone Sound.Square 360 130)
+                , Sound.volume 35 (Sound.tone Sound.Square 580 160)
+                , Sound.volume 30 (Sound.tone Sound.Square 300 200)
+                ]
+
+        CShotLight ->
+            Sound.volume 14 (Sound.tone Sound.Noise 0 20)
+
+        CShotPierce ->
+            Sound.volume 17 (Sound.sweep 90 (Sound.tone Sound.Triangle 400 70))
+
+        CShotBlast ->
+            Sound.chord
+                [ Sound.volume 19 (Sound.sweep 50 (Sound.tone Sound.Triangle 180 70))
+                , Sound.volume 11 (Sound.tone Sound.Noise 0 45)
+                ]
+
+        CShotBeam ->
+            Sound.volume 16 (Sound.duty 20 (Sound.sweep 1600 (Sound.tone Sound.Square 1100 45)))
+
+        CShotFlame ->
+            Sound.volume 14 (Sound.tone Sound.Noise 0 60)
+
+        CBoomSmall ->
+            -- a unit going down: a real impact plus a short debris tail, not a tick
+            Sound.sequence
+                [ Sound.chord
+                    [ Sound.volume 25 (Sound.tone Sound.Noise 0 140)
+                    , Sound.volume 18 (Sound.sweep 26 (Sound.tone Sound.Triangle 210 120))
+                    ]
+                , Sound.volume 12 (Sound.tone Sound.Noise 0 90)
+                ]
+
+        CBoomBig ->
+            -- a vehicle or structure blows: heavy body then an aftershock rumble
+            Sound.sequence
+                [ Sound.chord
+                    [ Sound.volume 38 (Sound.tone Sound.Noise 0 240)
+                    , Sound.volume 28 (Sound.sweep 18 (Sound.tone Sound.Triangle 250 220))
+                    ]
+                , Sound.chord
+                    [ Sound.volume 20 (Sound.tone Sound.Noise 0 170)
+                    , Sound.volume 14 (Sound.sweep 40 (Sound.tone Sound.Triangle 120 200))
+                    ]
+                ]
+
+        CCaptured ->
+            Sound.sequence
+                [ Sound.volume 24 (Sound.tone Sound.Triangle 660 50)
+                , Sound.volume 24 (Sound.tone Sound.Triangle 880 50)
+                , Sound.volume 26 (Sound.tone Sound.Triangle 1100 80)
+                ]
+
+        CSuperReady ->
+            Sound.sequence
+                [ Sound.volume 28 (Sound.tone Sound.Square 520 90)
+                , Sound.volume 28 (Sound.tone Sound.Square 660 130)
+                ]
+
+        CSuperFire ->
+            Sound.chord
+                [ Sound.volume 30 (Sound.sweep 40 (Sound.tone Sound.Triangle 320 400))
+                , Sound.volume 12 (Sound.tone Sound.Noise 0 200)
+                ]
+
+        CVictory ->
+            Sound.sequence
+                [ Sound.volume 30 (Sound.tone Sound.Square 523 110)
+                , Sound.volume 30 (Sound.tone Sound.Square 659 110)
+                , Sound.volume 30 (Sound.tone Sound.Square 784 110)
+                , Sound.volume 34 (Sound.tone Sound.Square 1046 260)
+                ]
+
+        CDefeat ->
+            Sound.sequence
+                [ Sound.volume 28 (Sound.tone Sound.Triangle 392 160)
+                , Sound.volume 26 (Sound.tone Sound.Triangle 330 160)
+                , Sound.volume 24 (Sound.tone Sound.Triangle 262 320)
+                ]
+
+
+-- a short chip "voice line": the selected leader answers a command, like the
+-- unit callouts in C&C / StarCraft. Melody + pitch vary by unit KIND (a Rifle
+-- and a Tank "say" different things), timbre by class (infantry crisp, vehicle
+-- buzzy, air airy), and attack orders read more urgent than a plain move. Fired
+-- once per order (deduped), so a whole squad answers with one voice.
+voiceMotif : UnitKind -> Bool -> Sound
+voiceMotif kind atk =
+    let
+        cls = uClass kind
+
+        seed = modBy 7 (uCost kind // 10)
+
+        base =
+            if cls == 2 then 700
+            else if cls == 1 then 300
+            else 360
+
+        step = 50 + seed * 16
+
+        p1 = base + seed * 14
+
+        p2 = if modBy 2 seed == 0 then p1 + step else p1 - step // 2
+
+        p3 = if atk then p2 + step else p1
+
+        dur = if atk then 24 else 30
+    in
+    Sound.sequence
+        [ voiceNote cls p1 dur
+        , voiceNote cls p2 dur
+        , voiceNote cls p3 (dur + 12)
+        ]
+
+
+-- one note of a voice motif, timbre chosen by unit class (0 inf, 1 veh, 2 air)
+voiceNote : Int -> Int -> Int -> Sound
+voiceNote cls h ms =
+    if cls == 1 then
+        Sound.volume 21 (Sound.duty 28 (Sound.tone Sound.Square h ms))
+    else if cls == 2 then
+        Sound.volume 18 (Sound.vibrato 26 5 (Sound.tone Sound.Triangle h ms))
+    else
+        Sound.volume 18 (Sound.tone Sound.Square h ms)
+
+
+-- the menu pad: a quiet layered drone for title and briefing screens
+menuPad : Sound
+menuPad =
+    Sound.chord
+        [ Sound.volume 7 (Sound.tone Sound.Triangle 110 4000)
+        , Sound.volume 5 (Sound.vibrato 18 3 (Sound.tone Sound.Triangle 165 4000))
+        , Sound.volume 3 (Sound.vibrato 22 4 (Sound.tone Sound.Triangle 220 4000))
+        ]

@@ -1,0 +1,127 @@
+module Backend.Attendance exposing (services, marks, deleteForStudent, deleteForClass, deleteAllForUser)
+
+
+import Shared
+
+
+-- Attendance domain, server-side. Owns the marks entity, the daily
+-- upsert, and the cascade helpers the other modules call when a
+-- student, class, or account goes away.
+--
+-- This module is a leaf: it imports nothing from Students or Classes,
+-- so the backend module graph stays acyclic (Attendance ← Students ←
+-- Classes ← Account). Ownership is enforced the same way everywhere:
+-- every read filters by `teacherId = caller.id`, every write stamps
+-- it. A mark is therefore always bound to the caller — a forged
+-- studentId in a request can at worst litter the caller's own space,
+-- never touch or reveal another teacher's rows.
+
+
+marks : Entity Shared.AttendanceMark
+marks =
+    Entity.define
+        { name = "attendance_marks"
+        , columns =
+            { id        = Entity.serial
+            , studentId = Entity.int Entity.notNull
+            , classId   = Entity.int Entity.notNull
+            , day       = Entity.timestamp Entity.notNull
+            , dayKey    = Entity.int Entity.notNull
+            , status    = Entity.int Entity.notNull
+            , teacherId = Entity.int Entity.notNull
+            }
+        -- One mark per student per day. This is what makes "mark
+        -- today" an upsert instead of an ever-growing pile of rows:
+        -- a second mark for the same (student, day) updates the first.
+        , uniques = [ [ "studentId", "dayKey" ] ]
+        }
+
+
+-- ===== Read (GET, side-effect free) =====
+
+
+listMarksImpl : { classId : Int, dayKey : Int } -> Shared.User -> Task (List Shared.AttendanceMark)
+listMarksImpl input user =
+    Repo.findBy marks
+        { teacherId = user.id, classId = input.classId, dayKey = input.dayKey }
+
+
+studentHistoryImpl : { studentId : Int } -> Shared.User -> Task (List Shared.AttendanceMark)
+studentHistoryImpl input user =
+    Repo.findBy marks { teacherId = user.id, studentId = input.studentId }
+
+
+-- ===== Upsert =====
+--
+-- Mark student X for the day carried by `day`. We normalize the day
+-- to its key (Shared.dayKeyOf, the SAME function the frontend used to
+-- ask for this day) and look for an existing mark. Found → update its
+-- status in place; not found → create. Either way the caller gets the
+-- resulting row back so the UI can reconcile without a refetch.
+setMarkImpl : { studentId : Int, classId : Int, day : Time, status : Int } -> Shared.User -> Task (Maybe Shared.AttendanceMark)
+setMarkImpl input user =
+    let
+        key =
+            Shared.dayKeyOf input.day
+    in
+    Repo.findBy marks
+        { teacherId = user.id, studentId = input.studentId, dayKey = key }
+        |> Task.andThen
+            (\existing ->
+                case List.head existing of
+                    Just mark ->
+                        Repo.update marks mark.id
+                            { status = input.status, classId = input.classId, day = input.day }
+
+                    Nothing ->
+                        Repo.create marks
+                            { studentId = input.studentId
+                            , classId   = input.classId
+                            , day       = input.day
+                            , dayKey    = key
+                            , status    = input.status
+                            , teacherId = user.id
+                            }
+                            |> Task.map (\created -> Just created)
+            )
+
+
+-- ===== Cascades =====
+--
+-- Called from Students / Classes / Account when their rows are
+-- removed. Each filters by teacherId first, so they only ever delete
+-- the caller's own marks even if handed an id.
+
+
+deleteForStudent : Int -> Shared.User -> Task ()
+deleteForStudent studentId user =
+    Repo.findBy marks { teacherId = user.id, studentId = studentId }
+        |> Task.andThen deleteAll
+
+
+deleteForClass : Int -> Shared.User -> Task ()
+deleteForClass classId user =
+    Repo.findBy marks { teacherId = user.id, classId = classId }
+        |> Task.andThen deleteAll
+
+
+deleteAllForUser : Shared.User -> Task ()
+deleteAllForUser user =
+    Repo.findBy marks { teacherId = user.id }
+        |> Task.andThen deleteAll
+
+
+deleteAll : List Shared.AttendanceMark -> Task ()
+deleteAll rows =
+    Task.sequence (List.map (\m -> Repo.deleteById marks m.id) rows)
+        |> Task.map (\_ -> ())
+
+
+-- ===== Service wiring =====
+
+
+services =
+    [ Auth.protect Shared.listMarks      listMarksImpl
+    , Auth.protect Shared.setMark        setMarkImpl
+    , Auth.protect Shared.studentHistory studentHistoryImpl
+    ]

@@ -1,0 +1,2806 @@
+module Main exposing (main)
+
+
+import Types exposing (..)
+import Balance exposing (..)
+import Maps exposing (..)
+import Sim exposing (..)
+import Bot exposing (..)
+import Draw exposing (..)
+import Hud exposing (..)
+import Sfx exposing (..)
+import Story exposing (..)
+import Missions exposing (..)
+import Canvas exposing ( canvas, rect, circle, group, rgb, rgba
+    , onTap, onDrag, onRelease, watchSize)
+
+
+-- IRON MERIDIAN, a real-time strategy game for Mar.
+--
+-- Desktop-first: mouse for selection and orders (C&C one-button
+-- grammar: click selects, click orders, drag boxes), keyboard for
+-- everything else (H in game lists the whole map). Campaign of five
+-- missions with briefings, plus skirmish where all three factions are
+-- playable. Frontend-only, no music in missions, chip SFX throughout.
+--
+-- The sim runs at 30 Hz on a 60 Hz canvas tick; rendering and camera
+-- pan happen every frame, the world advances every other frame at
+-- normal speed (Minus / Equal change that).
+
+
+-- ===== screens =====
+
+
+type Screen
+    = STitle
+    | SSelect
+    | SBrief
+    | SPlay
+    | SWin
+    | SLose
+    | SEnd
+    | SSkirmish
+
+
+type alias Drag =
+    { on : Bool
+    , mode : Int             -- 0 world, 1 minimap
+    , sx : Int               -- screen px, press point
+    , sy : Int
+    , x : Int                -- screen px, current
+    , y : Int
+    }
+
+
+type alias Model =
+    { w : Int
+    , h : Int
+    , screen : Screen
+    , mission : Int          -- 1..5 campaign, 0 skirmish
+    , g : Game
+    , terrain : Dict Int (List Run)
+    , detailRows : Dict Int (List Shape)
+    , miniTerrain : List Shape
+    , camX : Int
+    , camY : Int
+    , hoverX : Int          -- last cursor pos over the world (Canvas.onHover)
+    , hoverY : Int
+    , hoverCell : Int       -- hovered sidebar grid slot for tooltips, -1 = none
+    , sel : List Int
+    , selB : Int             -- selected own building id, -1 none
+    , groups : Dict Int (List Int)
+    , tab : Int
+    , kbMode : Int
+    , atkArmed : Bool
+    , superArmed : Bool
+    , rmbGuard : Bool       -- swallow the left-release paired with a right-click
+    , drag : Drag
+    , panUp : Bool
+    , panDown : Bool
+    , panLeft : Bool
+    , panRight : Bool
+    , shift : Bool
+    , keysDown : List Keyboard.Key   -- the held-key mirror (Keyboard.watch)
+    , paused : Bool
+    , menuOpen : Bool        -- esc menu inside a mission
+    , speed : Int            -- 0 slow, 1 normal, 2 fast
+    , simAcc : Int
+    , muted : Bool
+    , help : Bool
+    , shownCredits : Int
+    , briefLine : Int
+    , progress : Dict Int Int
+    , skRace : Int           -- 0 compact 1 combine 2 vessari
+    , skFoe : Int
+    , skDiff : Int
+    , radioIx : Int
+    , endLine : Int
+    , autoplay : Bool        -- QA autopilot: the bot drives side 1 (Backquote)
+    }
+
+
+freshModel : Model
+freshModel =
+    { w = 1280
+    , h = 760
+    , screen = STitle
+    , mission = 1
+    , g = emptyGame
+    , terrain = Dict.empty
+    , detailRows = Dict.empty
+    , miniTerrain = []
+    , camX = 0
+    , camY = 0
+    , hoverX = 0
+    , hoverY = 0
+    , hoverCell = 0 - 1
+    , sel = []
+    , selB = 0 - 1
+    , groups = Dict.empty
+    , tab = 0
+    , kbMode = 0
+    , atkArmed = False
+    , superArmed = False
+    , rmbGuard = False
+    , drag = { on = False, mode = 0, sx = 0, sy = 0, x = 0, y = 0 }
+    , panUp = False
+    , panDown = False
+    , panLeft = False
+    , panRight = False
+    , shift = False
+    , keysDown = []
+    , paused = False
+    , menuOpen = False
+    , speed = 1
+    , simAcc = 0
+    , muted = False
+    , help = False
+    , shownCredits = 0
+    , briefLine = 0
+    , progress = Dict.empty
+    , skRace = 0
+    , skFoe = 1
+    , skDiff = 1
+    , radioIx = 0
+    , endLine = 0
+    , autoplay = False
+    }
+
+
+type Msg
+    = Frame
+    | Sized Int Int
+    | Down Int Int
+    | Moved Int Int
+    | Up Int Int
+    | Hover Int Int          -- desktop: cursor move with no button (Canvas.onHover)
+    | AltTap Int Int         -- desktop: right-click / two-finger (Canvas.onAltTap)
+    | Wheel Int Int          -- desktop: scroll delta dx dy (Canvas.onWheel)
+    | KeysChanged { down : List Keyboard.Key }
+
+
+init : (Model, Cmd Msg)
+init =
+    ( freshModel, Cmd.none )
+
+
+-- ===== mission launch =====
+
+
+launch : Int -> Model -> Model
+launch m model =
+    let
+        def =
+            if m == 0 then
+                skirmishDef (raceOf model.skRace) (raceOf model.skFoe) model.skDiff
+            else
+                mission m
+
+        g = buildGame def
+
+        -- use the real viewport helpers so the start camera lands exactly on
+        -- the map edge (they subtract the sidebar, top bar, and bottom console)
+        vw = viewW model
+        vh = viewH model
+
+        terrainRuns = buildTerrainRuns g.tiles g.mapW g.mapH
+    in
+    { model
+        | mission = m
+        , g = g
+        , terrain = terrainRuns
+        , detailRows = buildDetailRows g.tiles g.mapW g.mapH
+        , miniTerrain = buildMiniTerrain (mmSizeOf model.h) g terrainRuns
+        , camX = clampI 0 (max 0 (g.mapW * tileW - vw)) (def.camTx * tileW - vw // 2)
+        , camY = clampI 0 (max 0 (g.mapH * tileW - vh)) (def.camTy * tileW - vh // 2)
+        , sel = []
+        , selB = 0 - 1
+        , groups = Dict.empty
+        , tab = 0
+        , kbMode = 0
+        , atkArmed = False
+        , superArmed = False
+        , rmbGuard = False
+        , paused = False
+        , menuOpen = False
+        , help = False
+        , simAcc = 0
+        , shownCredits = startCreditsOf g
+        , screen = SPlay
+        , radioIx = 0
+    }
+
+
+raceOf : Int -> Race
+raceOf i =
+    if i == 0 then Compact else if i == 1 then Combine else Vessari
+
+
+startCreditsOf : Game -> Int
+startCreditsOf g =
+    case List.head (List.filter (\s -> s.id == 1) g.sides) of
+        Just s -> s.credits
+        Nothing -> 0
+
+
+-- ===== update =====
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Sized w h ->
+            -- The cached minimap terrain is built at the minimap's scale, and
+            -- that scale now follows the height. Rotating a phone, or the
+            -- browser toolbar sliding away, changes the height and therefore
+            -- the whole sidebar; without rebuilding here the terrain would
+            -- keep the old scale and sit misaligned in its frame.
+            ( if mmSizeOf h == mmSizeOf model.h then
+                { model | w = w, h = h }
+              else
+                { model
+                    | w = w
+                    , h = h
+                    , miniTerrain = buildMiniTerrain (mmSizeOf h) model.g model.terrain
+                }
+            , Cmd.none
+            )
+
+        Frame ->
+            frame model
+
+        Down x y ->
+            ( press x y model, Cmd.none )
+
+        Moved x y ->
+            ( move x y model, Cmd.none )
+
+        Up x y ->
+            release x y model
+
+        Hover x y ->
+            ( hover x y model, Cmd.none )
+
+        AltTap x y ->
+            altTap x y model
+
+        Wheel dx dy ->
+            ( wheel dx dy model, Cmd.none )
+
+        KeysChanged st ->
+            -- the whole held set arrives at once: rebuild shift + the pan flags
+            -- from it (a release is just a key LEAVING the set, so it needs no
+            -- code), then run the hotkey for each key that JUST went down.
+            let
+                held = \k -> List.member k st.down
+
+                base =
+                    { model
+                        | keysDown = st.down
+                        , shift = held Keyboard.ShiftLeft || held Keyboard.ShiftRight
+                        , panUp = held Keyboard.ArrowUp
+                        , panDown = held Keyboard.ArrowDown
+                        , panLeft = held Keyboard.ArrowLeft
+                        , panRight = held Keyboard.ArrowRight
+                    }
+
+                justPressed =
+                    List.filter (\k -> List.member k model.keysDown == False) st.down
+            in
+            List.foldl applyKeyPress ( base, Cmd.none ) justPressed
+
+
+-- ----- the frame -----
+
+
+frame : Model -> (Model, Cmd Msg)
+frame model =
+    case model.screen of
+        SPlay ->
+            if model.paused || model.menuOpen || model.help then
+                ( panCamera model, Cmd.none )
+            else
+                let
+                    speedAdd =
+                        if model.speed == 0 then 50
+                        else if model.speed == 1 then 100
+                        else 200
+
+                    acc = model.simAcc + speedAdd
+                    sims = min 4 (acc // 200)
+
+                    stepped =
+                        List.foldl (\_ m -> simOnce m) { model | simAcc = acc - sims * 200 } (List.range 1 sims)
+
+                    m2 = panCamera stepped
+
+                    m3 =
+                        { m2
+                            | shownCredits =
+                                let
+                                    target = startCreditsOf m2.g
+                                    d = target - m2.shownCredits
+                                in
+                                m2.shownCredits + d // 5 + (if d > 0 then 1 else if d < 0 then 0 - 1 else 0)
+                        }
+
+                    cues = dedupeCues m3.g.cues
+
+                    m4 = { m3 | g = clearCues m3.g }
+
+                    ( m5, endCue ) = checkEnd m4
+                in
+                ( m5
+                , Cmd.batch
+                    (List.concat
+                        [ List.map (\c -> Sound.play (cueSound c)) cues
+                        , endCue
+                        ]
+                    )
+                )
+
+        _ ->
+            ( model, Cmd.none )
+
+
+clearCues : Game -> Game
+clearCues g =
+    { g | cues = [] }
+
+
+dedupeCues : List Cue -> List Cue
+dedupeCues cues =
+    List.foldl
+        (\c acc -> if List.member c acc then acc else c :: acc)
+        []
+        cues
+
+
+-- one 30 Hz sim step: bot thinking, mission triggers, then the tick
+simOnce : Model -> Model
+simOnce model =
+    let
+        g0 = model.g
+
+        -- staggered bot thinking, one side per half second
+        g1 =
+            List.foldl
+                (\s acc ->
+                    if (bnot s.human || model.autoplay) && s.alive && modBy 30 (acc.tick + s.id * 15) == 0 then
+                        let
+                            acc2 =
+                                if s.human then
+                                    mapSide s.id (\q -> { q | human = False }) acc
+                                else
+                                    acc
+
+                            pair = think acc2 s.id
+
+                            restored =
+                                case pair of
+                                    ( gth, _ ) ->
+                                        if s.human then
+                                            mapSide s.id (\q -> { q | human = True }) gth
+                                        else
+                                            gth
+                        in
+                        case pair of
+                            ( _, acts ) ->
+                                List.foldl (\act a2 -> applyAct act a2) restored acts
+                    else
+                        acc
+                )
+                g0
+                g0.sides
+
+        g2 = tick g1
+
+        m2 = triggers { model | g = g2 }
+    in
+    m2
+
+
+-- ----- camera -----
+
+
+viewW : Model -> Int
+viewW model = model.w - sideW
+
+
+viewH : Model -> Int
+viewH model = model.h - topH - botH
+
+
+panCamera : Model -> Model
+panCamera model =
+    let
+        -- px per 30Hz tick. 16 crossed these small maps in ~3s and felt
+        -- like the camera was fleeing; 8 still reaches any corner fast.
+        sp = 8
+
+        dx = (if model.panRight then sp else 0) - (if model.panLeft then sp else 0)
+        dy = (if model.panDown then sp else 0) - (if model.panUp then sp else 0)
+    in
+    if dx == 0 && dy == 0 then
+        model
+    else
+        { model
+            | camX = clampI 0 (max 0 (model.g.mapW * tileW - viewW model)) (model.camX + dx)
+            , camY = clampI 0 (max 0 (model.g.mapH * tileW - viewH model)) (model.camY + dy)
+        }
+
+
+camTo : Int -> Int -> Model -> Model
+camTo wx wy model =
+    { model
+        | camX = clampI 0 (max 0 (model.g.mapW * tileW - viewW model)) (wx - viewW model // 2)
+        , camY = clampI 0 (max 0 (model.g.mapH * tileW - viewH model)) (wy - viewH model // 2)
+    }
+
+
+-- ----- mission end -----
+
+
+checkEnd : Model -> ( Model, List (Cmd Msg) )
+checkEnd model =
+    let
+        g = model.g
+
+        playerAlive =
+            case List.head (List.filter (\s -> s.id == 1) g.sides) of
+                Just s -> s.alive
+                Nothing -> False
+    in
+    if g.winner == 1 then
+        ( { model
+            | screen = if model.mission == 5 then SEnd else SWin
+            , endLine = 0
+            , progress =
+                if model.mission > 0 then
+                    Dict.insert model.mission 1 model.progress
+                else
+                    model.progress
+          }
+        , [ Sound.play (cueSound CVictory) ]
+        )
+    else if bnot playerAlive || (g.winner /= 0 && g.winner /= 1) then
+        ( { model | screen = SLose }
+        , [ Sound.play (cueSound CDefeat) ]
+        )
+    else
+        ( model, [] )
+
+
+-- ===== mission triggers =====
+
+
+triggers : Model -> Model
+triggers model =
+    case model.mission of
+        1 -> trigM1 model
+        2 -> trigM2 model
+        3 -> trigM3 model
+        4 -> trigM4 model
+        5 -> trigM5 model
+        _ -> model
+
+
+flagAt : Game -> Int -> Int
+flagAt g k =
+    Maybe.withDefault 0 (Dict.get k g.flags)
+
+
+setFlag : Int -> Int -> Game -> Game
+setFlag k v g =
+    { g | flags = Dict.insert k v g.flags }
+
+
+radioLine : Int -> Model -> Model
+radioLine idx model =
+    { model
+        | g =
+            alertAt (radio model.mission idx) (0 - 1) (0 - 1) model.g
+    }
+
+
+-- M1: an early scripted raid teaches defense; win = raze the camp
+trigM1 : Model -> Model
+trigM1 model =
+    let
+        g = model.g
+    in
+    if g.tick == 150 then
+        { model | g = notify "Your Hauler mines ore on its own. Credits keep climbing." g }
+    else if g.tick == 540 then
+        { model | g = notify "Press B to build, place a Foundry, then train troops from it." g }
+    else if g.tick == 900 then
+        radioLine 0 model
+    else if g.tick == 2400 && flagAt g 1 == 0 then
+        let
+            n0 = g.nextId
+
+            g2 =
+                g
+                    |> mkUnit 2 Scrapper (px 20) (px 4)
+                    |> mkUnit 2 Scrapper (px 22) (px 4)
+                    |> mkUnit 2 DuneBike (px 24) (px 4)
+
+            ids = [ n0, n0 + 1, n0 + 2 ]
+
+            hq = playerHqPos g2
+
+            g3 =
+                applyAct (AAtkMove ids hq.x hq.y) g2
+                    |> setFlag 1 1
+        in
+        radioLine 1 { model | g = g3 }
+    else if g.tick == 8100 then
+        radioLine 2 model
+    else
+        model
+
+
+playerHqPos : Game -> { x : Int, y : Int }
+playerHqPos g =
+    case List.head (List.filter (\b -> b.side == 1 && bIsHQ b.kind) g.blds) of
+        Just b -> { x = bpx b, y = bpy b }
+        Nothing ->
+            case List.head (List.filter (\u -> u.side == 1) g.units) of
+                Just u -> { x = upx u, y = upy u }
+                Nothing -> { x = 0, y = 0 }
+
+
+-- M2: hold three silos for six minutes, then break the Combine base.
+-- flag 1 = hold ticks accumulated, flag 2 = objective announced
+trigM2 : Model -> Model
+trigM2 model =
+    let
+        g = model.g
+
+        held =
+            List.length
+                (List.filter
+                    (\b ->
+                        b.side == 1
+                            && (case b.kind of
+                                    Derelict -> True
+                                    _ -> False)
+                    )
+                    g.blds)
+
+        goal = 10800
+
+        t0 = flagAt g 1
+
+        g2 =
+            if held >= 3 && t0 < goal then
+                setFlag 1 (t0 + 1) g
+            else
+                g
+
+        -- the mission is not won until the silos have been held
+        g3 =
+            if g2.winner == 1 && flagAt g2 1 < goal then
+                { g2 | winner = 0 }
+            else
+                g2
+
+        model2 = { model | g = g3 }
+    in
+    if g3.tick == 600 then
+        radioLine 1 model2
+    else if held >= 3 && flagAt g3 2 == 0 then
+        radioLine 0 { model2 | g = setFlag 2 1 g3 }
+    else if flagAt g3 1 == goal && flagAt g3 3 == 0 then
+        radioLine 2 { model2 | g = setFlag 3 1 g3 }
+    else
+        model2
+
+
+-- M3: warp surges on a timer; win = the lattice nexus (their gate) dies
+trigM3 : Model -> Model
+trigM3 model =
+    let
+        g = model.g
+
+        -- Surges are FREE units, so their real cost is measured in credits
+        -- the enemy never had to spend. This once gifted 5440 credits of
+        -- shielded Vessari starting two minutes in, before a beginner had a
+        -- second barracks. Now the first surge holds off until ~3.5 min and
+        -- there are only TWO of them (three units each) — roughly 2080 credits
+        -- of pressure against a player who now opens with 4200.
+        surgeDue =
+            g.tick >= 6600
+                && modBy 3600 (g.tick - 6600) == 0
+                && g.tick < 12000
+
+        nexusAlive =
+            List.any
+                (\b ->
+                    b.side == 2
+                        && (case b.kind of
+                                AscendantGate -> True
+                                _ -> False)
+                )
+                g.blds
+
+        model2 =
+            if surgeDue then
+                surgeM3 model
+            else
+                model
+
+        g2 = model2.g
+
+        g3 =
+            if bnot nexusAlive && g2.winner == 0 then
+                { g2 | winner = 1 }
+            else
+                g2
+
+        model3 = { model2 | g = g3 }
+    in
+    if g3.tick == 300 then
+        -- Ping the shelf. The map is 67x62 and the survivors sit in the far
+        -- south-east corner; without this, "link up with the survivors" is
+        -- a search of the whole map, not an objective. This used to fire
+        -- radio line 0 ("Survivors aboard") ten seconds in, announcing a
+        -- rescue that had not happened and leaving the box unticked.
+        { model3 | g = alertAt "Erebus survivors pinned here. Get a force through." erebusX erebusY g3 }
+
+    else if flagAt g3 10 == 0 && reachedSurvivors g3 then
+        -- a Compact force reached the huddle: they join, and "Survivors
+        -- aboard" finally fires at the moment it is actually true.
+        radioLine 0 { model3 | g = setFlag 10 1 (rescueSurvivors g3) }
+
+    else if g3.tick == 6540 then
+        -- 60 ticks before the first surge (now at 6600), so the warning still
+        -- lands just ahead of it.
+        radioLine 1 model3
+
+    else if g3.tick == 9000 then
+        radioLine 2 model3
+
+    else
+        model3
+
+
+surgeM3 : Model -> Model
+surgeM3 model =
+    let
+        g = model.g
+        hq = playerHqPos g
+        n0 = g.nextId
+
+        ex = clampI (3 * tileW) ((g.mapW - 4) * tileW) (hq.x + 260)
+        ey = clampI (3 * tileW) ((g.mapH - 4) * tileW) (hq.y - 160)
+
+        g2 =
+            -- One of each, not a doubled Lancer: the surge still shows all
+            -- three Vessari answers (shield, speed, EMP) without being a
+            -- deathball.
+            g
+                |> mkUnit 2 Lancer ex ey
+                |> mkUnit 2 Sliver (ex - 18) (ey + 8)
+                |> mkUnit 2 Nullifier (ex + 8) (ey - 12)
+
+        ids = [ n0, n0 + 1, n0 + 2 ]
+
+        g3 =
+            { g2
+                | fxs =
+                    { x = ex, y = ey, t = 0, ttl = 20, kind = FxWarp, a = 0, b = 0 }
+                        :: g2.fxs
+            }
+                |> applyAct (AAtkMove ids hq.x hq.y)
+                |> alertAt "Warp surge detected." ex ey
+    in
+    { model | g = g3 }
+
+
+-- M4: the siege is scripted at spawn; win = both Genesis Fonts dead
+trigM4 : Model -> Model
+trigM4 model =
+    let
+        g = model.g
+
+        fonts =
+            List.length
+                (List.filter
+                    (\b ->
+                        b.side == 2
+                            && (case b.kind of
+                                    GenesisFont -> True
+                                    _ -> False)
+                    )
+                    g.blds)
+
+        siegeGone =
+            List.isEmpty
+                (List.filter
+                    (\u -> u.side == 2 && upx u < 22 * tileW)
+                    g.units)
+
+        g2 =
+            if fonts == 0 && g.winner == 0 then
+                { g | winner = 1 }
+            else
+                g
+
+        model2 = { model | g = g2 }
+    in
+    if g2.tick == 300 then
+        radioLine 1 model2
+    else if siegeGone && flagAt g2 1 == 0 && g2.tick > 600 then
+        radioLine 0 { model2 | g = setFlag 1 1 g2 }
+    else if fonts == 1 && flagAt g2 2 == 0 then
+        radioLine 2 { model2 | g = setFlag 2 1 g2 }
+    else
+        model2
+
+
+-- M5: purge beams rake the field; win = the four conduit spires die
+trigM5 : Model -> Model
+trigM5 model =
+    let
+        g = model.g
+
+        conduits = conduitCount g
+
+        purgeDue =
+            g.tick >= 4500 && modBy 5400 (g.tick - 4500) == 0
+
+        model2 =
+            if purgeDue then
+                purgeM5 model
+            else
+                model
+
+        g2 = model2.g
+
+        g3 =
+            if conduits == 0 && g2.winner == 0 then
+                { g2 | winner = 1 }
+            else
+                g2
+
+        model3 = { model2 | g = g3 }
+    in
+    if g3.tick == 300 then
+        radioLine 1 model3
+    else if conduits == 2 && flagAt g3 2 == 0 then
+        radioLine 2 { model3 | g = setFlag 2 1 g3 }
+    else
+        model3
+
+
+purgeM5 : Model -> Model
+purgeM5 model =
+    let
+        g = model.g
+
+        center =
+            List.foldl
+                (\u acc ->
+                    if u.side == 1 then
+                        { x = acc.x + upx u, y = acc.y + upy u, n = acc.n + 1 }
+                    else
+                        acc
+                )
+                { x = 0, y = 0, n = 0 }
+                g.units
+
+        tx = if center.n > 0 then center.x // center.n else playerHqPos g |> .x
+        ty = if center.n > 0 then center.y // center.n else playerHqPos g |> .y
+
+        g2 =
+            { g
+                | strikes = { at = g.tick + 90, x = tx, y = ty, side = 2, kind = 2 } :: g.strikes
+                , fxs = { x = tx, y = ty, t = 0, ttl = 88, kind = FxRing, a = 64, b = 2 } :: g.fxs
+            }
+                |> alertAt "Purge beam charging. Spread out." tx ty
+    in
+    radioLine 0 { model | g = g2 }
+
+
+-- ===== objectives for the HUD =====
+
+
+objectivesOf : Model -> List { text : String, done : Bool }
+objectivesOf model =
+    let
+        g = model.g
+    in
+    case model.mission of
+        1 ->
+            [ { text = "Establish the field base", done = countMy g Refinery > 0 || g.tick > 1800 }
+            , { text = "Destroy the raider camp", done = enemyBldCount g == 0 }
+            ]
+
+        2 ->
+            let
+                held =
+                    List.length
+                        (List.filter
+                            (\b -> b.side == 1 && (case b.kind of
+                                                        Derelict -> True
+                                                        _ -> False))
+                            g.blds)
+
+                holdTicks = flagAt g 1
+            in
+            [ { text = "Capture three silos (" ++ String.fromInt held ++ "/3)", done = held >= 3 }
+            , { text = "Hold them (" ++ String.fromInt (holdTicks // 1800) ++ "/6 min)", done = holdTicks >= 10800 }
+            , { text = "Break the Combine base", done = enemyBldCount g == 0 }
+            ]
+
+        3 ->
+            -- The survivors are hidden in the fog to the south-east (the
+            -- tick-300 ping points the way). Reaching them relieves the
+            -- huddle; flag 10 is set the moment that happens.
+            [ { text = "Rescue the Erebus survivors (far south-east)", done = flagAt g 10 == 1 }
+            , { text = "Survive the warp surges", done = g.tick >= 12000 }
+            , { text = "Destroy the lattice nexus", done = bnot (hasEnemyKindGate g) }
+            ]
+
+        4 ->
+            [ { text = "Relieve the crawler city", done = flagAt g 1 == 1 }
+            , { text = "Destroy both Genesis Fonts", done = fontCount g == 0 }
+            ]
+
+        5 ->
+            -- Both of these were hardcoded `done = False`, so the panel never
+            -- ticked -- you finished the campaign with every box empty.
+            let
+                left = conduitCount g
+            in
+            [ { text = "Destroy the Prime Conduit ring (" ++ String.fromInt (4 - left) ++ "/4)", done = left == 0 }
+            , { text = "Survive the purge cycles", done = g.tick >= 9900 }
+            ]
+
+        _ ->
+            [ { text = "Destroy every enemy structure", done = enemyBldCount g == 0 } ]
+
+
+countMy : Game -> BldKind -> Int
+countMy g k =
+    List.length (List.filter (\b -> b.side == 1 && b.kind == k) g.blds)
+
+
+enemyBldCount : Game -> Int
+enemyBldCount g =
+    List.length
+        (List.filter
+            (\b ->
+                b.side /= 0
+                    && b.side /= 1
+                    && (case b.kind of
+                            Derelict -> False
+                            _ -> True)
+                    && hostileTo1 g b.side
+            )
+            g.blds)
+
+
+hostileTo1 : Game -> Int -> Bool
+hostileTo1 g sid =
+    case List.head (List.filter (\s -> s.id == sid) g.sides) of
+        Just s -> s.team /= 1
+        Nothing -> False
+
+
+-- The Erebus survivors are side-0 (neutral, stranded) units. "Reaching"
+-- them is literal now: a Compact unit gets within a few tiles of one.
+-- The two earlier tries at this were both hacks over the wrong premise —
+-- the survivors used to be side-1 units you already owned, so any test on
+-- position was either always-true or unrelated to actually going there.
+reachedSurvivors : Game -> Bool
+reachedSurvivors g =
+    List.any
+        (\s ->
+            s.side == 0
+                && List.any
+                    (\p -> p.side == 1 && octd (upx p - upx s) (upy p - upy s) < 5 * tileW)
+                    g.units
+        )
+        g.units
+
+
+-- Relief: the whole huddle joins the Compact at once (they stand within a
+-- couple of tiles of each other, so reaching one is reaching all). Flipping
+-- to side 1 makes them yours to command, lifts the fog they were hiding in
+-- (drawUnits shows side-1 units unconditionally), and turns them from grey
+-- neutrals into blue troops.
+rescueSurvivors : Game -> Game
+rescueSurvivors g =
+    { g | units = List.map (\u -> if u.side == 0 then { u | side = 1 } else u) g.units }
+
+
+-- Where the survivors are, in pixels — used to ping the map so the player
+-- is told WHERE to go instead of having to sweep a 67x62 map for them.
+erebusX : Int
+erebusX = 57 * tileW + tileW // 2
+
+
+erebusY : Int
+erebusY = 43 * tileW + tileW // 2
+
+
+hasEnemyKindGate : Game -> Bool
+hasEnemyKindGate g =
+    List.any
+        (\b ->
+            b.side == 2
+                && (case b.kind of
+                        AscendantGate -> True
+                        _ -> False)
+        )
+        g.blds
+
+
+fontCount : Game -> Int
+fontCount g =
+    List.length
+        (List.filter
+            (\b ->
+                b.side == 2
+                    && (case b.kind of
+                            GenesisFont -> True
+                            _ -> False)
+            )
+            g.blds)
+
+
+-- The Prime Conduit ring: the four spires m5 spawns around the Engine pit,
+-- at (52,28) (52,39) (77,28) (77,39). Matching their tiles exactly keeps the
+-- Vessari base spires (up north at ty 6 and 8) out of the count.
+--
+-- This used to be a region test -- `(tx <= 38 || tx >= 54) && ty >= 19 && ty
+-- <= 30` -- written against an older layout. Against the ring as it is
+-- actually spawned it matched exactly ONE spire, (77,28). So "destroy the
+-- Prime Conduit ring" was won by killing a single building and the other
+-- three were scenery, and the radio line keyed to `conduits == 2` could
+-- never fire because the count started at 1.
+conduitCount : Game -> Int
+conduitCount g =
+    List.length
+        (List.filter
+            (\b ->
+                b.side == 2
+                    && (case b.kind of
+                            Spire -> True
+                            _ -> False)
+                    && (b.tx == 52 || b.tx == 77)
+                    && (b.ty == 28 || b.ty == 39)
+            )
+            g.blds)
+
+
+-- ===== input: mouse =====
+
+
+press : Int -> Int -> Model -> Model
+press x y model =
+    case model.screen of
+        SPlay ->
+            if model.menuOpen || model.help then
+                model
+            else if x >= model.w - sideW then
+                pressSidebar x y model
+            else if y < topH then
+                model
+            else if y >= model.h - botH then
+                -- the always-visible command console owns this strip; presses
+                -- here never reach the world
+                consolePress x y model
+            else
+                { model | drag = { on = True, mode = 0, sx = x, sy = y, x = x, y = y } }
+
+        _ ->
+            model
+
+
+consolePress : Int -> Int -> Model -> Model
+consolePress x y model =
+    let
+        hs = hudStateOf model
+
+        mine = consoleUnits model.g hs
+
+        hasUnits = bnot (List.isEmpty model.sel) && model.selB < 0
+
+        orderIx =
+            List.head
+                (List.filter
+                    (\i ->
+                        let
+                            r = csOrderRect hs i
+                        in
+                        x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
+                    )
+                    (List.range 0 2))
+
+        portraitIx =
+            if hasUnits && List.length mine > 1 then
+                List.head
+                    (List.filter
+                        (\i ->
+                            let
+                                c = csPortraitRect hs i
+                            in
+                            x >= c.x && x < c.x + c.w && y >= c.y && y < c.y + c.h
+                        )
+                        (List.range 0 (min csMaxPortraits (List.length mine) - 1)))
+            else
+                Nothing
+    in
+    case selBldOf model of
+        Just b ->
+            -- a building is selected: the only interactive control is Demolish
+            if b.side == 1 && bnot (bIsHQ b.kind) && inRect x y (csDemolishRect hs) then
+                { model | g = applyAct (ADemolish b.id) model.g, selB = 0 - 1 }
+            else
+                model
+
+        Nothing ->
+            case orderIx of
+                Just 0 ->
+                    if hasUnits then { model | atkArmed = True, superArmed = False } else model
+
+                Just 1 ->
+                    if hasUnits then issueSelfOrder (AStop model.sel) model else model
+
+                Just 2 ->
+                    if hasUnits then issueSelfOrder (AHold model.sel) model else model
+
+                _ ->
+                    case portraitIx of
+                        Just i ->
+                            case List.head (List.drop i mine) of
+                                Just u ->
+                                    if model.shift then
+                                        -- shift-click drops this unit from the squad
+                                        { model | sel = List.filter (\d -> d /= u.id) model.sel }
+                                    else
+                                        -- click singles the unit out
+                                        { model | sel = [ u.id ], selB = 0 - 1 }
+
+                                Nothing ->
+                                    model
+
+                        Nothing ->
+                            model
+
+
+selBldOf : Model -> Maybe Bld
+selBldOf model =
+    List.head (List.filter (\b -> b.id == model.selB) model.g.blds)
+
+
+inRect : Int -> Int -> { x : Int, y : Int, w : Int, h : Int } -> Bool
+inRect x y r =
+    x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
+
+
+-- hover: track the cursor over the world (no button) so the build-placement
+-- ghost follows it without a drag, and for any future edge-scroll / tooltip.
+hover : Int -> Int -> Model -> Model
+hover x y model =
+    case model.screen of
+        SPlay ->
+            if x < model.w - sideW && y >= topH && y < model.h - botH then
+                { model | hoverX = x, hoverY = y, hoverCell = 0 - 1 }
+            else if x >= model.w - sideW then
+                { model | hoverCell = gridCellIndexAt (hudStateOf model) x y }
+            else
+                { model | hoverCell = 0 - 1 }
+
+        _ ->
+            model
+
+
+-- altTap: right-click / two-finger tap. In this C&C-style scheme LEFT-click
+-- issues every order, so right-click is purely CANCEL / DESELECT: drop an armed
+-- placement or attack-move, otherwise clear the selection. rmbGuard swallows the
+-- left-release the same right-press also fires, so it can't double up an order.
+altTap : Int -> Int -> Model -> (Model, Cmd Msg)
+altTap x y model =
+    case model.screen of
+        SPlay ->
+            if model.menuOpen || model.help then
+                ( { model | rmbGuard = True }, Cmd.none )
+            else if x >= model.w - sideW then
+                -- right-click on a UNITS-tab cell cancels one queued unit of
+                -- that kind (newest first) and refunds it — the escape hatch
+                -- when training is stalled on supply
+                let
+                    m2 = sidebarAltTap x y model
+                in
+                ( { m2 | rmbGuard = True }, Cmd.none )
+            else if y < topH || y >= model.h - botH then
+                ( { model | rmbGuard = True }, Cmd.none )
+            else if (Hud.playerSide model.g).sReady >= 0 then
+                ( { model | g = cancelBld 1 model.g, rmbGuard = True }, Cmd.none )
+            else if model.atkArmed || model.superArmed then
+                ( { model | atkArmed = False, superArmed = False, rmbGuard = True }, Cmd.none )
+            else if model.selB >= 0 then
+                -- right-click sets the selected producer's rally point (the green
+                -- flag), the C&C / StarCraft way; the building stays selected
+                ( { model
+                    | g = applyAct (ASetRally model.selB (x + model.camX) (y - topH + model.camY)) model.g
+                    , rmbGuard = True
+                  }
+                , Cmd.none
+                )
+            else
+                ( { model | sel = [], selB = 0 - 1, rmbGuard = True }, Cmd.none )
+
+        _ ->
+            ( model, Cmd.none )
+
+
+-- right-click over the sidebar grid: cancel a queued unit under the cursor
+sidebarAltTap : Int -> Int -> Model -> Model
+sidebarAltTap x y model =
+    let
+        s = Hud.playerSide model.g
+
+        i = gridCellIndexAt (hudStateOf model) x y
+    in
+    if model.tab == 1 && i >= 0 then
+        case List.head (List.drop i (raceUnits s.race)) of
+            Just k ->
+                if List.member k s.uQueue then
+                    { model | g = applyAct (ACancelUnit 1 k) model.g }
+                else
+                    model
+
+            Nothing ->
+                model
+    else if model.tab == 0 && i >= 0 then
+        -- right-click on the structure being built (or armed) cancels it,
+        -- mirroring the units-tab escape hatch
+        case List.head (List.drop i (raceBlds s.race)) of
+            Just k ->
+                if s.sReady == bldCode k || List.head s.sQueue == Just k then
+                    { model | g = applyAct (ACancelBld 1) model.g }
+                else
+                    model
+
+            Nothing ->
+                model
+    else
+        model
+
+
+-- wheel: vertical scroll pans the camera up/down (true zoom would need a world
+-- scale factor the renderer doesn't have yet). Sign is stable across devices.
+wheel : Int -> Int -> Model -> Model
+wheel dx dy model =
+    case model.screen of
+        SPlay ->
+            if model.menuOpen || model.help then
+                model
+            else
+                let
+                    -- PROPORTIONAL to the delta, not a flat jump per event.
+                    -- The old `if dx > 0 then 96` ignored magnitude, so a
+                    -- trackpad — which fires a stream of tiny deltas, dozens a
+                    -- second — turned every one of them into a full 96 px
+                    -- leap. That is the "too fast": not one step being large,
+                    -- but every step being the largest step.
+                    --
+                    -- A mouse notch is ~120, so it now moves 30 px; a
+                    -- trackpad's delta of 4 moves 1 px. Capped so a device
+                    -- reporting huge deltas cannot teleport the camera.
+                    step = \d -> clampI (0 - 40) 40 (d * 30 // 120)
+
+                    sx = step dx
+
+                    sy = step dy
+                in
+                { model
+                    | camX = clampI 0 (max 0 (model.g.mapW * tileW - viewW model)) (model.camX + sx)
+                    , camY = clampI 0 (max 0 (model.g.mapH * tileW - viewH model)) (model.camY + sy)
+                }
+
+        _ ->
+            model
+
+
+pressSidebar : Int -> Int -> Model -> Model
+pressSidebar x y model =
+    let
+        mx = mmX { w = model.w, h = model.h, tab = model.tab, kbMode = model.kbMode, shownCredits = 0, sel = [], attackArmed = False, superArmed = False, paused = False, muted = False, speed = 0, helpOpen = False, objectives = [], clock = 0, hoverCell = 0 - 1, selB = 0 - 1 }
+    in
+    if x >= mx && x < mx + mmSizeOf model.h && y >= mmY && y < mmY + mmSizeOf model.h then
+        -- minimap: jump the camera, keep panning while dragging
+        let
+            wx = (x - mx) * model.g.mapW * tileW // mmSizeOf model.h
+            wy = (y - mmY) * model.g.mapH * tileW // mmSizeOf model.h
+        in
+        camTo wx wy { model | drag = { on = True, mode = 1, sx = x, sy = y, x = x, y = y } }
+    else if y >= tabsYOf model.h && y < tabsYOf model.h + 18 then
+        let
+            x0 = model.w - sideW + 8
+        in
+        if x >= x0 && x < x0 + 76 then
+            { model | tab = 0 }
+        else if x >= x0 + 84 && x < x0 + 160 then
+            { model | tab = 1 }
+        else
+            model
+    else
+        gridPress x y model
+
+
+-- which sidebar grid slot the cursor is over (geometry mirror of gridPress),
+-- -1 if none. Drives the hover tooltip.
+gridCellIndexAt : HudState -> Int -> Int -> Int
+gridCellIndexAt hs x y =
+    case
+        List.head
+            (List.filter
+                (\i ->
+                    let
+                        c = gridCellAt hs i
+                    in
+                    x >= c.x && x < c.x + c.w && y >= c.y && y < c.y + c.h
+                )
+                (List.range 0 12))
+    of
+        Just i ->
+            i
+
+        Nothing ->
+            0 - 1
+
+
+gridPress : Int -> Int -> Model -> Model
+gridPress x y model =
+    let
+        hs = hudStateOf model
+
+        hit =
+            List.head
+                (List.filter
+                    (\i ->
+                        let
+                            c = gridCellAt hs i
+                        in
+                        x >= c.x && x < c.x + c.w && y >= c.y && y < c.y + c.h
+                    )
+                    (List.range 0 12))
+    in
+    case hit of
+        Just i ->
+            gridActivate i model
+
+        Nothing ->
+            superPress x y model
+
+
+superPress : Int -> Int -> Model -> Model
+superPress x y model =
+    let
+        sy = superYOf model.h
+        x0 = model.w - sideW + 8
+    in
+    if x >= x0 && x < x0 + 160 && y >= sy && y < sy + 22 then
+        if model.superArmed then
+            { model | superArmed = False }
+        else
+            armSuper model
+    else
+        model
+
+
+armSuper : Model -> Model
+armSuper model =
+    let
+        s = Hud.playerSide model.g
+
+        hasSuper =
+            List.any (\b -> b.side == 1 && b.prog == 0 && bIsSuper b.kind) model.g.blds
+    in
+    if hasSuper && s.superCd == 0 then
+        { model | superArmed = True, atkArmed = False }
+    else
+        { model | g = cue CError model.g }
+
+
+gridActivate : Int -> Model -> Model
+gridActivate i model =
+    let
+        s = Hud.playerSide model.g
+    in
+    if model.tab == 0 then
+        case List.head (List.drop i (raceBlds s.race)) of
+            Just k ->
+                -- Tapping the cell that is READY or UNDER CONSTRUCTION cancels
+                -- it (C&C style) — the only cancel path that works on touch,
+                -- where there is no right-click and no ESC.
+                if s.sReady == bldCode k then
+                    { model | g = applyAct (ACancelBld 1) model.g }
+                else if List.head s.sQueue == Just k then
+                    { model | g = applyAct (ACancelBld 1) model.g }
+                else
+                    { model | g = applyAct (AQueueBld 1 k) model.g }
+
+            Nothing ->
+                model
+    else
+        case List.head (List.drop i (raceUnits s.race)) of
+            Just k ->
+                { model | g = applyAct (AQueueUnit 1 k) model.g }
+
+            Nothing ->
+                model
+
+
+move : Int -> Int -> Model -> Model
+move x y model =
+    if bnot model.drag.on then
+        model
+    else if model.drag.mode == 1 then
+        -- minimap pan
+        let
+            hs = hudStateOf model
+            mx = mmX hs
+            wx = (x - mx) * model.g.mapW * tileW // mmSizeOf model.h
+            wy = (y - mmY) * model.g.mapH * tileW // mmSizeOf model.h
+        in
+        camTo wx wy { model | drag = dragTo x y model.drag }
+    else
+        { model | drag = dragTo x y model.drag }
+
+
+dragTo : Int -> Int -> Drag -> Drag
+dragTo x y d =
+    { d | x = x, y = y }
+
+
+release : Int -> Int -> Model -> (Model, Cmd Msg)
+release x y model =
+    case model.screen of
+        STitle ->
+            titleClick x y model
+
+        SSelect ->
+            selectClick x y model
+
+        SBrief ->
+            briefClick x y model
+
+        SSkirmish ->
+            skirmishClick x y model
+
+        SWin ->
+            winClick x y model
+
+        SLose ->
+            loseClick x y model
+
+        SEnd ->
+            endClick x y model
+
+        SPlay ->
+            if model.menuOpen then
+                menuClick x y model
+            else if model.help then
+                ( { model | help = False }, Cmd.none )
+            else
+                playRelease x y model
+
+
+playRelease : Int -> Int -> Model -> (Model, Cmd Msg)
+playRelease x y model =
+    let
+        d = model.drag
+        m0 = { model | drag = { on = False, mode = 0, sx = 0, sy = 0, x = 0, y = 0 } }
+    in
+    if model.rmbGuard then
+        -- this release belongs to a right-click (its onAltTap already ran); drop
+        -- it so the right-press never also fires a left-click order
+        ( { m0 | rmbGuard = False }, Cmd.none )
+    else if bnot d.on || d.mode == 1 then
+        ( m0, Cmd.none )
+    else
+        let
+            moved = abs (x - d.sx) + abs (y - d.sy) > 8
+
+            wx = x + model.camX
+            wy = y - topH + model.camY
+
+            s = Hud.playerSide model.g
+        in
+        -- Aiming beats placing. A finished building waiting for a spot is a
+        -- passive standing state -- production never stops, so it is true most
+        -- of the match -- while arming the superweapon or an attack move is a
+        -- deliberate press a moment earlier. With placing first, tapping the
+        -- map after arming dropped a building instead and left the weapon
+        -- armed with nothing on screen to say why. This order also matches the
+        -- banner, which shows the aim prompt over the build prompt.
+        if m0.superArmed then
+            ( { m0
+                | superArmed = False
+                , g = applyAct (ASuper 1 wx wy) m0.g
+              }
+            , Cmd.none
+            )
+        else if m0.atkArmed then
+            orderAtkMove wx wy { m0 | atkArmed = False }
+        else if s.sReady >= 0 then
+            ( placeAt wx wy m0, Cmd.none )
+        else if moved then
+            ( boxSelect d.sx d.sy x y m0, Cmd.none )
+        else
+            clickWorld wx wy m0
+
+
+placeAt : Int -> Int -> Model -> Model
+placeAt wx wy model =
+    { model | g = applyAct (APlaceBld 1 (wx // tileW) (wy // tileW)) model.g }
+
+
+orderAtkMove : Int -> Int -> Model -> (Model, Cmd Msg)
+orderAtkMove wx wy model =
+    if List.isEmpty model.sel then
+        ( model, Cmd.none )
+    else
+        ( { model
+            | g =
+                applyAct (AAtkMove model.sel wx wy) model.g
+                    |> withMoveFlag wx wy
+          }
+        , ackCmd True model
+        )
+
+
+withMoveFlag : Int -> Int -> Game -> Game
+withMoveFlag wx wy g =
+    { g | fxs = { x = wx, y = wy, t = 0, ttl = 13, kind = FxMove, a = 11, b = 0 } :: g.fxs }
+
+
+-- withAtkFlag: red reticle on the attacked target, so an attack order reads
+-- clearly as "locked on this enemy" (never confused with a ground move).
+withAtkFlag : Tgt -> Game -> Game
+withAtkFlag tgt g =
+    let
+        pos =
+            case tgt of
+                TUnit id ->
+                    case unitById g id of
+                        Just u -> Just { x = upx u, y = upy u }
+                        Nothing -> Nothing
+
+                TBld id ->
+                    case bldById g id of
+                        Just b -> Just { x = bpx b, y = bpy b }
+                        Nothing -> Nothing
+
+                TNone ->
+                    Nothing
+    in
+    case pos of
+        Just p ->
+            { g | fxs = { x = p.x, y = p.y, t = 0, ttl = 22, kind = FxTarget, a = 0, b = 0 } :: g.fxs }
+
+        Nothing ->
+            g
+
+
+ackCmd : Bool -> Model -> Cmd Msg
+ackCmd atk model =
+    if model.muted then
+        Cmd.none
+    else
+        Sound.play (cueSound (CVoice (selLeaderKind model) atk))
+
+
+-- the "speaker": the first selected unit answers the order, so a rifle and a
+-- tank sound different (C&C / StarCraft unit callouts). Deduped to one voice.
+selLeaderKind : Model -> UnitKind
+selLeaderKind model =
+    case List.head model.sel of
+        Just uid ->
+            case List.head (List.filter (\u -> u.id == uid) model.g.units) of
+                Just u -> u.kind
+                Nothing -> Rifle
+
+        Nothing ->
+            Rifle
+
+
+boxSelect : Int -> Int -> Int -> Int -> Model -> Model
+boxSelect sx sy ex ey model =
+    let
+        x0 = min sx ex + model.camX
+        x1 = max sx ex + model.camX
+        y0 = min sy ey - topH + model.camY
+        y1 = max sy ey - topH + model.camY
+
+        found =
+            List.filterMap
+                (\u ->
+                    if u.side == 1
+                        && upx u >= x0 && upx u <= x1
+                        && upy u >= y0 && upy u <= y1
+                    then
+                        Just u.id
+                    else
+                        Nothing
+                )
+                model.g.units
+
+        merged =
+            if model.shift then
+                List.foldl (\i acc -> if List.member i acc then acc else i :: acc) model.sel found
+            else
+                found
+    in
+    if List.isEmpty found && bnot model.shift then
+        { model | sel = [], selB = 0 - 1 }
+    else
+        { model | sel = merged, selB = 0 - 1 }
+
+
+-- contextual single click in the world (C&C one-button grammar)
+clickWorld : Int -> Int -> Model -> (Model, Cmd Msg)
+clickWorld wx wy model =
+    let
+        g = model.g
+
+        ownUnit =
+            List.head
+                (List.filter
+                    (\u -> u.side == 1 && octd (upx u - wx) (upy u - wy) < 13)
+                    g.units)
+
+        anyEnemyUnit =
+            List.head
+                (List.filter
+                    (\u ->
+                        hostileTo1 g u.side
+                            && octd (upx u - wx) (upy u - wy) < 13
+                            && visAt g (upx u // tileW) (upy u // tileW) == 2
+                    )
+                    g.units)
+
+        bldHere =
+            List.head
+                (List.filter
+                    (\b ->
+                        wx // tileW >= b.tx && wx // tileW < b.tx + bW b.kind
+                            && wy // tileW >= b.ty && wy // tileW < b.ty + bH b.kind
+                            && bldVisible g b
+                    )
+                    g.blds)
+
+        oreHere =
+            case Dict.get (idxOf g.mapW (wx // tileW) (wy // tileW)) g.ore of
+                Just amount -> amount > 0
+                Nothing -> False
+    in
+    case ownUnit of
+        Just u ->
+            ( { model
+                | sel =
+                    if model.shift then
+                        if List.member u.id model.sel then
+                            List.filter (\i -> i /= u.id) model.sel
+                        else
+                            u.id :: model.sel
+                    else
+                        [ u.id ]
+                , selB = 0 - 1
+              }
+            , Cmd.none
+            )
+
+        Nothing ->
+            case anyEnemyUnit of
+                Just e ->
+                    attackClick (TUnit e.id) model
+
+                Nothing ->
+                    case bldHere of
+                        Just b ->
+                            bldClick b wx wy model
+
+                        Nothing ->
+                            if oreHere then
+                                harvestClick wx wy model
+                            else
+                                groundClick wx wy model
+
+
+attackClick : Tgt -> Model -> (Model, Cmd Msg)
+attackClick tgt model =
+    let
+        fighters =
+            List.filter
+                (\i ->
+                    case List.head (List.filter (\u -> u.id == i) model.g.units) of
+                        Just u -> uDmg u.kind > 0 || u.kind == RamTruck
+                        Nothing -> False
+                )
+                model.sel
+    in
+    if List.isEmpty fighters then
+        ( model, Cmd.none )
+    else
+        ( { model | g = applyAct (AAttack fighters tgt) model.g |> withAtkFlag tgt }
+        , ackCmd True model
+        )
+
+
+bldClick : Bld -> Int -> Int -> Model -> (Model, Cmd Msg)
+bldClick b wx wy model =
+    if b.side == 1 then
+        -- select own building (rally point mode for producers)
+        ( { model | selB = b.id, sel = [] }, Cmd.none )
+    else if List.isEmpty model.sel then
+        -- nothing selected: inspect the enemy/neutral structure so you can see
+        -- what it is (name, role, HP) in the console
+        ( { model | selB = b.id }, Cmd.none )
+    else
+        let
+            capturers =
+                List.filter
+                    (\i ->
+                        case List.head (List.filter (\u -> u.id == i) model.g.units) of
+                            Just u -> uCapturer u.kind
+                            Nothing -> False
+                    )
+                    model.sel
+
+            capturable =
+                b.side == 0 || hostileTo1 model.g b.side
+        in
+        if capturable && bnot (List.isEmpty capturers) then
+            ( { model | g = applyAct (ACapture capturers b.id) model.g }
+            , ackCmd False model
+            )
+        else if hostileTo1 model.g b.side then
+            attackClick (TBld b.id) model
+        else
+            ( model, Cmd.none )
+
+
+harvestClick : Int -> Int -> Model -> (Model, Cmd Msg)
+harvestClick wx wy model =
+    let
+        workers =
+            List.filter
+                (\i ->
+                    case List.head (List.filter (\u -> u.id == i) model.g.units) of
+                        Just u -> uWorker u.kind
+                        Nothing -> False
+                )
+                model.sel
+    in
+    if List.isEmpty workers then
+        groundClick wx wy model
+    else
+        ( { model | g = applyAct (AHarvest workers (idxOf model.g.mapW (wx // tileW) (wy // tileW))) model.g }
+        , ackCmd False model
+        )
+
+
+groundClick : Int -> Int -> Model -> (Model, Cmd Msg)
+groundClick wx wy model =
+    if model.selB >= 0 then
+        -- a building is selected and you clicked empty ground: deselect it, like
+        -- StarCraft / C&C. (Rally point is set with right-click; see altTap.)
+        ( { model | selB = 0 - 1 }, Cmd.none )
+    else if List.isEmpty model.sel then
+        ( model, Cmd.none )
+    else
+        ( { model
+            | g =
+                applyAct (AMove model.sel wx wy) model.g
+                    |> withMoveFlag wx wy
+          }
+        , ackCmd False model
+        )
+
+
+-- ===== input: keyboard =====
+
+
+keyDown : Keyboard.Key -> Model -> (Model, Cmd Msg)
+keyDown k model =
+    case model.screen of
+        SPlay ->
+            playKey k model
+
+        SBrief ->
+            case k of
+                Keyboard.Enter -> ( advanceBrief model, Cmd.none )
+                Keyboard.Space -> ( advanceBrief model, Cmd.none )
+                Keyboard.Escape -> ( { model | screen = SSelect }, Cmd.none )
+                _ -> ( model, Cmd.none )
+
+        SEnd ->
+            case k of
+                Keyboard.Enter -> ( { model | screen = STitle }, Cmd.none )
+                _ -> ( model, Cmd.none )
+
+        _ ->
+            ( model, Cmd.none )
+
+
+playKey : Keyboard.Key -> Model -> (Model, Cmd Msg)
+playKey k model =
+    case k of
+        Keyboard.ShiftLeft -> ( { model | shift = True }, Cmd.none )
+        Keyboard.ShiftRight -> ( { model | shift = True }, Cmd.none )
+        Keyboard.ArrowUp -> ( { model | panUp = True }, Cmd.none )
+        Keyboard.ArrowDown -> ( { model | panDown = True }, Cmd.none )
+        Keyboard.ArrowLeft -> ( { model | panLeft = True }, Cmd.none )
+        Keyboard.ArrowRight -> ( { model | panRight = True }, Cmd.none )
+
+        Keyboard.Escape ->
+            ( escAction model, Cmd.none )
+
+        Keyboard.KeyH ->
+            ( { model | help = bnot model.help }, Cmd.none )
+
+        Keyboard.KeyP ->
+            ( { model | paused = bnot model.paused }, Cmd.none )
+
+        Keyboard.KeyM ->
+            let
+                m2 = bnot model.muted
+            in
+            ( { model | muted = m2 }, Sound.setMuted m2 )
+
+        Keyboard.Minus ->
+            ( { model | speed = max 0 (model.speed - 1) }, Cmd.none )
+
+        Keyboard.Equal ->
+            ( { model | speed = min 2 (model.speed + 1) }, Cmd.none )
+
+        Keyboard.Space ->
+            case List.head model.g.pings of
+                Just p -> ( camTo p.x p.y model, Cmd.none )
+                Nothing -> ( model, Cmd.none )
+
+        Keyboard.KeyB ->
+            ( { model | tab = 0, kbMode = 1 }, Cmd.none )
+
+        Keyboard.Backquote ->
+            let
+                on = bnot model.autoplay
+            in
+            ( { model
+                | autoplay = on
+                , g =
+                    alertAt (if on then "Autopilot engaged." else "Autopilot disengaged.") (0 - 1) (0 - 1) model.g
+              }
+            , Cmd.none
+            )
+
+        Keyboard.KeyV ->
+            ( armSuper model, Cmd.none )
+
+        Keyboard.Digit1 -> groupKey 1 model
+        Keyboard.Digit2 -> groupKey 2 model
+        Keyboard.Digit3 -> groupKey 3 model
+        Keyboard.Digit4 -> groupKey 4 model
+        Keyboard.Digit5 -> groupKey 5 model
+
+        _ ->
+            if model.kbMode > 0 then
+                gridKey k model
+            else
+                commandKey k model
+
+
+-- An immediate order (Stop/Hold) also cancels a pending attack-move or
+-- superweapon cursor, so the A button never stays lit after you press S/G.
+issueSelfOrder : Act -> Model -> Model
+issueSelfOrder act model =
+    { model | g = applyAct act model.g, atkArmed = False, superArmed = False }
+
+
+commandKey : Keyboard.Key -> Model -> (Model, Cmd Msg)
+commandKey k model =
+    case k of
+        Keyboard.KeyT ->
+            ( { model | tab = 1, kbMode = 2 }, Cmd.none )
+
+        Keyboard.KeyA ->
+            if List.isEmpty model.sel then
+                ( model, Cmd.none )
+            else
+                ( { model | atkArmed = True, superArmed = False }, Cmd.none )
+
+        Keyboard.KeyS ->
+            ( issueSelfOrder (AStop model.sel) model, Cmd.none )
+
+        Keyboard.KeyG ->
+            ( issueSelfOrder (AHold model.sel) model, Cmd.none )
+
+        Keyboard.KeyQ ->
+            ( selectArmyOnScreen model, Cmd.none )
+
+        Keyboard.KeyE ->
+            ( cycleProduction model, Cmd.none )
+
+        _ ->
+            ( model, Cmd.none )
+
+
+-- letters while a build tab is armed queue the matching grid slot
+gridKey : Keyboard.Key -> Model -> (Model, Cmd Msg)
+gridKey k model =
+    let
+        ix =
+            case k of
+                Keyboard.KeyQ -> 0
+                Keyboard.KeyW -> 1
+                Keyboard.KeyE -> 2
+                Keyboard.KeyR -> 3
+                Keyboard.KeyT -> 4
+                Keyboard.KeyA -> 5
+                Keyboard.KeyS -> 6
+                Keyboard.KeyD -> 7
+                Keyboard.KeyF -> 8
+                Keyboard.KeyG -> 9
+                Keyboard.KeyZ -> 10
+                Keyboard.KeyX -> 11
+                Keyboard.KeyC -> 12
+                _ -> 0 - 1
+    in
+    if ix < 0 then
+        ( { model | kbMode = 0 }, Cmd.none )
+    else
+        ( gridActivate ix { model | kbMode = 0, tab = if model.kbMode == 1 then 0 else 1 }
+        , Cmd.none
+        )
+
+
+groupKey : Int -> Model -> (Model, Cmd Msg)
+groupKey n model =
+    if model.shift then
+        ( { model | groups = Dict.insert n model.sel model.groups }, Cmd.none )
+    else
+        case Dict.get n model.groups of
+            Just ids ->
+                let
+                    live =
+                        List.filter
+                            (\i -> List.any (\u -> u.id == i) model.g.units)
+                            ids
+                in
+                ( { model | sel = live, selB = 0 - 1 }, Cmd.none )
+
+            Nothing ->
+                ( model, Cmd.none )
+
+
+selectArmyOnScreen : Model -> Model
+selectArmyOnScreen model =
+    let
+        found =
+            List.filterMap
+                (\u ->
+                    if u.side == 1
+                        && uDmg u.kind > 0
+                        && bnot (uWorker u.kind)
+                        && upx u >= model.camX && upx u <= model.camX + viewW model
+                        && upy u >= model.camY && upy u <= model.camY + viewH model
+                    then
+                        Just u.id
+                    else
+                        Nothing
+                )
+                model.g.units
+    in
+    if List.isEmpty found then
+        model
+    else
+        { model | sel = found, selB = 0 - 1 }
+
+
+cycleProduction : Model -> Model
+cycleProduction model =
+    let
+        prods =
+            List.filter
+                (\b -> b.side == 1 && b.prog == 0 && bProduces b.kind >= 0)
+                model.g.blds
+
+        next =
+            case List.head (List.filter (\b -> b.id > model.selB) (List.reverse prods)) of
+                Just b -> Just b
+                Nothing -> List.head (List.reverse prods)
+    in
+    case next of
+        Just b ->
+            camTo (bpx b) (bpy b) { model | selB = b.id, sel = [] }
+
+        Nothing ->
+            model
+
+
+escAction : Model -> Model
+escAction model =
+    if model.help then
+        { model | help = False }
+    else if model.kbMode > 0 then
+        { model | kbMode = 0 }
+    else if model.atkArmed || model.superArmed then
+        { model | atkArmed = False, superArmed = False }
+    else if (Hud.playerSide model.g).sReady >= 0 then
+        { model | g = applyAct (ACancelBld 1) model.g }
+    else if bnot (List.isEmpty model.sel) || model.selB >= 0 then
+        { model | sel = [], selB = 0 - 1 }
+    else
+        { model | menuOpen = bnot model.menuOpen }
+
+
+-- one key that JUST went down: run the screen's hotkey handler for it and
+-- thread the Cmd. There is no release handler any more: the held flags are
+-- rebuilt wholesale from the mirror in KeysChanged, so a key leaving the set
+-- clears itself (and a lost keyup on blur can no longer strand a pan).
+applyKeyPress : Keyboard.Key -> (Model, Cmd Msg) -> (Model, Cmd Msg)
+applyKeyPress key acc =
+    let
+        (m, cmd) = acc
+        r = keyDown key m
+    in
+    ( Tuple.first r, Cmd.batch [ cmd, Tuple.second r ] )
+
+
+-- ===== menu screens: clicks =====
+
+
+btnHit : Int -> Int -> Int -> Int -> Int -> Int -> Bool
+btnHit x y bx by bw bh =
+    x >= bx && x < bx + bw && y >= by && y < by + bh
+
+
+titleClick : Int -> Int -> Model -> (Model, Cmd Msg)
+titleClick x y model =
+    let
+        cx = model.w // 2
+        by = model.h // 2 + 30
+    in
+    if btnHit x y (cx - 110) by 220 34 then
+        ( { model | screen = SSelect }, menuBlip model )
+    else if btnHit x y (cx - 110) (by + 44) 220 34 then
+        ( { model | screen = SSkirmish }, menuBlip model )
+    else if btnHit x y (cx - 110) (by + 88) 220 34 then
+        ( { model | screen = SPlay, help = True, mission = 0 } |> launchIfEmpty, menuBlip model )
+    else
+        ( model, Cmd.none )
+
+
+-- HELP from the title opens the manual over a fresh skirmish sandbox
+launchIfEmpty : Model -> Model
+launchIfEmpty model =
+    let
+        m2 = launch 0 model
+    in
+    { m2 | help = True }
+
+
+menuBlip : Model -> Cmd Msg
+menuBlip model =
+    if model.muted then Cmd.none else Sound.play (cueSound CMenuMove)
+
+
+selectClick : Int -> Int -> Model -> (Model, Cmd Msg)
+selectClick x y model =
+    let
+        cx = model.w // 2
+
+        hit =
+            List.head
+                (List.filter
+                    (\i -> btnHit x y (cx - 180) (selRowY model i) 360 36)
+                    (List.range 0 4))
+    in
+    case hit of
+        Just i ->
+            ( { model | mission = i + 1, screen = SBrief, briefLine = 0 }, menuBlip model )
+
+        Nothing ->
+            if btnHit x y (cx - 60) (model.h // 2 + 140) 120 30 then
+                ( { model | screen = STitle }, menuBlip model )
+            else
+                ( model, Cmd.none )
+
+
+advanceBrief : Model -> Model
+advanceBrief model =
+    let
+        total = List.length (briefing model.mission)
+    in
+    if model.briefLine + 1 >= total then
+        launch model.mission model
+    else
+        { model | briefLine = model.briefLine + 1 }
+
+
+briefClick : Int -> Int -> Model -> (Model, Cmd Msg)
+briefClick x y model =
+    ( advanceBrief model, menuBlip model )
+
+
+skirmishClick : Int -> Int -> Model -> (Model, Cmd Msg)
+skirmishClick x y model =
+    let
+        cx = model.w // 2
+
+        rowY = model.h // 2 - 100
+    in
+    if btnHit x y (cx - 240) rowY 150 70 then
+        ( { model | skRace = modBy 3 (model.skRace + 1) }, menuBlip model )
+    else if btnHit x y (cx - 75) rowY 150 70 then
+        ( { model | skFoe = modBy 3 (model.skFoe + 1) }, menuBlip model )
+    else if btnHit x y (cx + 90) rowY 150 70 then
+        ( { model | skDiff = modBy 3 (model.skDiff + 1) }, menuBlip model )
+    else if btnHit x y (cx - 110) (rowY + 110) 220 38 then
+        ( launch 0 model, menuBlip model )
+    else if btnHit x y (cx - 60) (rowY + 170) 120 30 then
+        ( { model | screen = STitle }, menuBlip model )
+    else
+        ( model, Cmd.none )
+
+
+winClick : Int -> Int -> Model -> (Model, Cmd Msg)
+winClick x y model =
+    let
+        cx = model.w // 2
+        by = model.h // 2 + 60
+    in
+    if model.mission > 0 && model.mission < 5 && btnHit x y (cx - 110) by 220 34 then
+        ( { model | mission = model.mission + 1, screen = SBrief, briefLine = 0 }, menuBlip model )
+    else if btnHit x y (cx - 110) (by + 44) 220 34 then
+        ( { model | screen = STitle }, menuBlip model )
+    else
+        ( model, Cmd.none )
+
+
+loseClick : Int -> Int -> Model -> (Model, Cmd Msg)
+loseClick x y model =
+    let
+        cx = model.w // 2
+        by = model.h // 2 + 60
+    in
+    if btnHit x y (cx - 110) by 220 34 then
+        if model.mission == 0 then
+            ( launch 0 model, menuBlip model )
+        else
+            ( { model | screen = SBrief, briefLine = 0 }, menuBlip model )
+    else if btnHit x y (cx - 110) (by + 44) 220 34 then
+        ( { model | screen = STitle }, menuBlip model )
+    else
+        ( model, Cmd.none )
+
+
+endClick : Int -> Int -> Model -> (Model, Cmd Msg)
+endClick x y model =
+    ( { model | screen = STitle }, menuBlip model )
+
+
+menuClick : Int -> Int -> Model -> (Model, Cmd Msg)
+menuClick x y model =
+    let
+        cx = model.w // 2
+        by = model.h // 2 - 20
+    in
+    if btnHit x y (cx - 110) by 220 34 then
+        ( { model | menuOpen = False }, Cmd.none )
+    else if btnHit x y (cx - 110) (by + 44) 220 34 then
+        if model.mission == 0 then
+            ( launch 0 model, Cmd.none )
+        else
+            ( launch model.mission model, Cmd.none )
+    else if btnHit x y (cx - 110) (by + 88) 220 34 then
+        ( { model | screen = STitle, menuOpen = False }, Cmd.none )
+    else
+        ( model, Cmd.none )
+
+
+-- ===== view =====
+
+
+hudStateOf : Model -> HudState
+hudStateOf model =
+    { w = model.w
+    , h = model.h
+    , tab = model.tab
+    , kbMode = model.kbMode
+    , shownCredits = model.shownCredits
+    , sel = model.sel
+    , attackArmed = model.atkArmed
+    , superArmed = model.superArmed
+    , paused = model.paused
+    , muted = model.muted
+    , speed =
+        if model.speed == 0 then 50
+        else if model.speed == 1 then 100
+        else 200
+    , helpOpen = model.help
+    , objectives = objectivesOf model
+    , clock = model.g.tick // 30
+    , hoverCell = model.hoverCell
+    , selB = model.selB
+    }
+
+
+view : Model -> View Msg
+view model =
+    canvas Pixelated
+        [ watchSize Sized, onTap Down, onDrag Moved, onRelease Up
+        , onHover Hover, onAltTap AltTap, onWheel Wheel ]
+        (case model.screen of
+            STitle -> titleShapes model
+            SSelect -> selectShapes model
+            SBrief -> briefShapes model
+            SSkirmish -> skirmishShapes model
+            SWin -> winShapes model
+            SLose -> loseShapes model
+            SEnd -> endShapes model
+            SPlay -> playShapes model
+        )
+
+
+playShapes : Model -> List Shape
+playShapes model =
+    let
+        g = model.g
+
+        cam = { x = model.camX, y = model.camY, w = viewW model, h = viewH model }
+
+        s = Hud.playerSide g
+
+        -- With a structure armed, the ghost follows the cursor via onHover
+        -- (desktop) and falls back to the drag point (touch), so you can line
+        -- up a placement before committing instead of only during a drag.
+        ghostTile =
+            if s.sReady >= 0 then
+                if model.drag.on then
+                    { tx = (model.drag.x + model.camX) // tileW
+                    , ty = (model.drag.y - topH + model.camY) // tileW
+                    }
+                else
+                    { tx = (model.hoverX + model.camX) // tileW
+                    , ty = (model.hoverY - topH + model.camY) // tileW
+                    }
+            else
+                { tx = 0 - 100, ty = 0 - 100 }
+
+        world =
+            drawWorld g model.terrain model.detailRows cam
+                (if model.selB >= 0 then model.selB :: model.sel else model.sel)
+                s.sReady
+                ghostTile.tx
+                ghostTile.ty
+
+        boxShapes =
+            if model.drag.on && model.drag.mode == 0
+                && abs (model.drag.x - model.drag.sx) + abs (model.drag.y - model.drag.sy) > 8
+            then
+                let
+                    bx = min model.drag.sx model.drag.x
+                    by = min model.drag.sy model.drag.y
+                    bw = abs (model.drag.x - model.drag.sx)
+                    bh = abs (model.drag.y - model.drag.sy)
+                in
+                [ rect bx by bw 1 (rgb 130 240 140)
+                , rect bx (by + bh) bw 1 (rgb 130 240 140)
+                , rect bx by 1 bh (rgb 130 240 140)
+                , rect (bx + bw) by 1 (bh + 1) (rgb 130 240 140)
+                , rect bx by bw bh (rgba 130 240 140 16)
+                ]
+            else
+                []
+    in
+    List.concat
+        [ [ rect 0 0 model.w model.h (rgb 16 9 10) ]
+        , [ group [ Canvas.Translate (0 - model.camX) (0 - model.camY + topH) ] world ]
+        , boxShapes
+        , drawHud g cam model.miniTerrain (hudStateOf model)
+        , tooltipShapes model
+        , if model.menuOpen then menuShapes model else []
+        ]
+
+
+-- hover tooltip: rests over the sidebar and explains the build/train slot the
+-- cursor is on (role, cost, and any missing prerequisite).
+tooltipShapes : Model -> List Shape
+tooltipShapes model =
+    if model.hoverCell < 0 || model.menuOpen || model.help then
+        []
+    else
+        let
+            s = Hud.playerSide model.g
+
+            i = model.hoverCell
+
+            entry =
+                if model.tab == 0 then
+                    case List.head (List.drop i (raceBlds s.race)) of
+                        Just k ->
+                            Just
+                                { name = bName k
+                                , desc = bDesc k
+                                , cost = bCost k
+                                , need = missingLabel model.g s.id (bNeeds k)
+                                }
+
+                        Nothing ->
+                            Nothing
+                else
+                    case List.head (List.drop i (raceUnits s.race)) of
+                        Just k ->
+                            Just
+                                { name = uName k
+                                , desc = uDesc k
+                                , cost = uCost k
+                                , need = missingLabel model.g s.id (uNeeds k)
+                                }
+
+                        Nothing ->
+                            Nothing
+        in
+        case entry of
+            Nothing ->
+                []
+
+            Just e ->
+                tooltipPanel model e
+
+
+missingLabel : Game -> Int -> List BldKind -> String
+missingLabel g sid needs =
+    case firstMissing g sid needs of
+        Just k ->
+            "Needs " ++ bName k
+
+        Nothing ->
+            ""
+
+
+tooltipPanel : Model -> { name : String, desc : String, cost : Int, need : String } -> List Shape
+tooltipPanel model e =
+    let
+        hs = hudStateOf model
+
+        cell = gridCellAt hs model.hoverCell
+
+        descLines = wrapText 26 e.desc
+
+        nDesc = List.length descLines
+
+        nNeed = if e.need == "" then 0 else 1
+
+        panelW = 178
+
+        bodyTop = 44
+
+        panelH = bodyTop + nDesc * 12 + nNeed * 14 + 6
+
+        px = max 4 (hs.w - sideW - panelW - 8)
+
+        py = max (topH + 4) (min (cell.y - 6) (hs.h - panelH - 6))
+
+        descShapes =
+            List.indexedMap
+                (\li ln ->
+                    Canvas.text (px + 10) (py + bodyTop + li * 12) 9 Canvas.Left (rgb 202 198 192) ln
+                )
+                descLines
+
+        needShapes =
+            if e.need == "" then
+                []
+            else
+                [ Canvas.text (px + 10) (py + bodyTop + nDesc * 12 + 10) 9 Canvas.Left (rgb 255 170 110) e.need ]
+    in
+    List.concat
+        [ [ rect (px - 2) (py + 3) (panelW + 4) (panelH + 4) (rgba 6 5 7 70)
+          , rect px py panelW panelH (rgb 28 24 30)
+          , rect px py panelW 2 (rgb 255 214 120)
+          , rect px py 2 panelH (rgb 66 58 64)
+          , Canvas.text (px + 10) (py + 19) 11 Canvas.Left (rgb 240 232 220) e.name
+          , Canvas.text (px + 10) (py + 34) 9 Canvas.Left (rgb 255 214 120) ("$" ++ String.fromInt e.cost)
+          ]
+        , descShapes
+        , needShapes
+        ]
+
+
+menuShapes : Model -> List Shape
+menuShapes model =
+    let
+        cx = model.w // 2
+        by = model.h // 2 - 20
+    in
+    [ rect 0 0 model.w model.h (rgba 10 8 10 170)
+    , rect (cx - 140) (by - 60) 280 210 (rgb 26 22 26)
+    , rect (cx - 140) (by - 60) 280 3 (rgb 255 214 120)
+    , Canvas.text cx (by - 30) 15 Canvas.Center (rgb 235 225 210) "FIELD COMMAND"
+    , rect (cx - 110) by 220 34 (rgb 44 38 44)
+    , Canvas.text cx (by + 22) 12 Canvas.Center (rgb 220 214 206) "RESUME"
+    , rect (cx - 110) (by + 44) 220 34 (rgb 44 38 44)
+    , Canvas.text cx (by + 66) 12 Canvas.Center (rgb 220 214 206) "RESTART MISSION"
+    , rect (cx - 110) (by + 88) 220 34 (rgb 44 38 44)
+    , Canvas.text cx (by + 110) 12 Canvas.Center (rgb 220 214 206) "ABANDON TO TITLE"
+    ]
+
+
+-- ----- menu screens -----
+
+
+-- One star, drawn from the Park-Miller LCG rather than from
+-- `modBy 1000`. (i * k)
+--
+-- A linear multiple mod 1000 is an arithmetic progression, and plotting
+-- one progression (x) against another (y) drops every star onto a small
+-- family of parallel diagonals. That lattice is what "not very
+-- scattered" looks like — the sky had structure the eye could read.
+-- Chaining the LCG between the x draw and the y draw decorrelates them.
+--
+-- Homes stay in a fixed 0..999 virtual space so a resize stretches the
+-- same constellations instead of dealing a new sky.
+starAt : Int -> { vx : Int, vy : Int, tw : Int, a : Int }
+starAt i =
+    case rnd (Random.initialSeed (i * 7919 + 12345)) 1000 of
+        ( s1, vx ) ->
+            case rnd s1 1000 of
+                ( s2, vy ) ->
+                    case rnd s2 3 of
+                        ( s3, tw ) ->
+                            case rnd s3 90 of
+                                ( _, a ) ->
+                                    { vx = vx, vy = vy, tw = tw, a = a }
+
+
+starfield : Model -> List Shape
+starfield model =
+    List.map
+        (\i ->
+            let
+                s = starAt i
+            in
+            rect (s.vx * model.w // 1000) (s.vy * model.h // 1000)
+                (1 + s.tw // 2) (1 + s.tw // 2)
+                (rgba 255 240 220 (40 + s.a))
+        )
+        (List.range 0 90)
+
+
+marsDisc : Model -> List Shape
+marsDisc model =
+    let
+        cx = model.w // 2
+        cy = model.h // 2 - 110
+    in
+    [ circle cx cy 64 (rgb 148 74 52)
+    , circle (cx - 18) (cy - 12) 14 (rgb 128 62 44)
+    , circle (cx + 24) (cy + 18) 10 (rgb 168 90 62)
+    , circle (cx + 8) (cy - 30) 7 (rgb 176 196 208)
+    , rect (cx - 64) (cy + 44) 128 8 (rgba 20 12 12 90)
+    , group [ Canvas.Blend Canvas.Add ]
+        [ rect (cx - 70) (cy - 2) 140 3 (rgba 150 240 220 46) ]
+    ]
+
+
+titleShapes : Model -> List Shape
+titleShapes model =
+    let
+        cx = model.w // 2
+        by = model.h // 2 + 30
+    in
+    List.concat
+        [ [ rect 0 0 model.w model.h (rgb 13 9 12) ]
+        , starfield model
+        , marsDisc model
+        , [ Canvas.text cx (model.h // 2 - 18) 34 Canvas.Center (rgb 235 225 210) "IRON MERIDIAN"
+          , Canvas.text cx (model.h // 2 + 6) 11 Canvas.Center (rgb 150 145 150) "Mars keeps breathing. For now."
+          ]
+        , titleBtn cx by "CAMPAIGN"
+        , titleBtn cx (by + 44) "SKIRMISH"
+        , titleBtn cx (by + 88) "SANDBOX + MANUAL"
+        , [ Canvas.text cx (model.h - 24) 9 Canvas.Center (rgb 110 105 110)
+                "A Mar example. Desktop controls: mouse plus keyboard. H in game for the manual."
+          ]
+        ]
+
+
+selectShapes : Model -> List Shape
+selectShapes model =
+    let
+        cx = model.w // 2
+    in
+    List.concat
+        [ [ rect 0 0 model.w model.h (rgb 13 9 12) ]
+        , starfield model
+        , [ Canvas.text cx (model.h // 2 - 130) 20 Canvas.Center (rgb 235 225 210) "CAMPAIGN" ]
+        , List.concatMap (\i -> selRow model cx i) (List.range 0 4)
+        , [ rect (cx - 60) (model.h // 2 + 140) 120 30 (rgb 34 28 32)
+          , Canvas.text cx (model.h // 2 + 160) 11 Canvas.Center (rgb 190 185 190) "BACK"
+          ]
+        ]
+
+
+portraitShapes : Int -> Int -> Int -> List Shape
+portraitShapes who x y =
+    let
+        frame =
+            [ rect x y 64 64 (rgb 30 26 30)
+            , rect (x + 2) (y + 2) 60 60 (rgb 44 38 44)
+            ]
+    in
+    List.concat
+        [ frame
+        , case who of
+            0 ->
+                -- Rea Sol: blue armor, steady eyes
+                [ rect (x + 18) (y + 14) 28 24 (rgb 224 194 158)
+                , rect (x + 18) (y + 10) 28 8 (rgb 60 52 46)
+                , rect (x + 24) (y + 24) 6 4 (rgb 40 36 40)
+                , rect (x + 36) (y + 24) 6 4 (rgb 40 36 40)
+                , rect (x + 12) (y + 40) 40 20 (rgb 74 138 205)
+                , rect (x + 12) (y + 40) 40 4 (rgb 140 190 235)
+                ]
+
+            1 ->
+                -- Oko: goggles up, grin, tool strap
+                [ rect (x + 18) (y + 16) 28 24 (rgb 150 106 78)
+                , rect (x + 16) (y + 8) 32 8 (rgb 90 78 66)
+                , rect (x + 20) (y + 10) 8 5 (rgb 170 210 230)
+                , rect (x + 34) (y + 10) 8 5 (rgb 170 210 230)
+                , rect (x + 24) (y + 26) 6 4 (rgb 40 36 40)
+                , rect (x + 36) (y + 26) 6 4 (rgb 40 36 40)
+                , rect (x + 26) (y + 34) 12 3 (rgb 90 60 50)
+                , rect (x + 12) (y + 42) 40 18 (rgb 96 88 70)
+                , rect (x + 12) (y + 42) 8 18 (rgb 190 150 80)
+                ]
+
+            2 ->
+                -- Voss: grey brush cut, medals
+                [ rect (x + 18) (y + 14) 28 24 (rgb 214 178 148)
+                , rect (x + 18) (y + 10) 28 6 (rgb 168 168 172)
+                , rect (x + 24) (y + 24) 6 4 (rgb 40 36 40)
+                , rect (x + 36) (y + 24) 6 4 (rgb 40 36 40)
+                , rect (x + 24) (y + 33) 16 2 (rgb 120 90 84)
+                , rect (x + 12) (y + 40) 40 20 (rgb 60 66 74)
+                , rect (x + 16) (y + 44) 4 4 (rgb 255 214 120)
+                , rect (x + 22) (y + 44) 4 4 (rgb 200 120 90)
+                ]
+
+            3 ->
+                -- Kesk: rust scarf, scar
+                [ rect (x + 18) (y + 14) 28 24 (rgb 196 156 122)
+                , rect (x + 18) (y + 10) 28 7 (rgb 70 50 40)
+                , rect (x + 24) (y + 24) 6 4 (rgb 40 36 40)
+                , rect (x + 36) (y + 24) 6 4 (rgb 40 36 40)
+                , rect (x + 40) (y + 18) 2 12 (rgb 150 100 84)
+                , rect (x + 12) (y + 40) 40 20 (rgb 188 92 40)
+                , rect (x + 12) (y + 52) 40 8 (rgb 120 62 30)
+                ]
+
+            4 ->
+                -- The Chorus: a glow in a shell
+                [ circle (x + 32) (y + 30) 20 (rgb 54 38 92)
+                , circle (x + 32) (y + 30) 13 (rgb 98 72 168)
+                , group [ Canvas.Blend Canvas.Add ]
+                    [ circle (x + 32) (y + 30) 7 (rgba 150 240 220 160)
+                    , rect (x + 10) (y + 29) 44 2 (rgba 150 240 220 70)
+                    ]
+                ]
+
+            _ ->
+                -- Meridian Net: a speaker grid
+                [ rect (x + 14) (y + 14) 36 36 (rgb 58 62 70)
+                , rect (x + 18) (y + 20) 28 3 (rgb 120 220 130)
+                , rect (x + 18) (y + 28) 28 3 (rgb 90 160 100)
+                , rect (x + 18) (y + 36) 28 3 (rgb 70 120 80)
+                ]
+        ]
+
+
+-- word-wrap: greedily pack whole words into lines no wider than maxChars.
+-- Canvas.text does not wrap, so the briefing does it by hand (the font is
+-- proportional at ~5.5px/char size 11, so maxChars 84 stays well inside the
+-- dialogue column). A single over-long word is kept, never split.
+wrapText : Int -> String -> List String
+wrapText maxChars s =
+    let
+        acc =
+            List.foldl (wrapStep maxChars) { cur = "", lines = [] } (String.split " " s)
+    in
+    List.concat [ acc.lines, [ acc.cur ] ]
+
+
+wrapStep : Int -> String -> { cur : String, lines : List String } -> { cur : String, lines : List String }
+wrapStep maxChars word acc =
+    let
+        candidate = if acc.cur == "" then word else acc.cur ++ " " ++ word
+    in
+    if String.length candidate <= maxChars then
+        { acc | cur = candidate }
+    else if acc.cur == "" then
+        { cur = word, lines = acc.lines }
+    else
+        { cur = word, lines = List.concat [ acc.lines, [ acc.cur ] ] }
+
+
+briefWrap : Int
+briefWrap = 84
+
+
+-- a briefing entry flattens to one speaker-label row (kind 0) plus one row
+-- per wrapped text line (kind 1). Rows lay out at a uniform 16px pitch.
+briefRows : List Line -> List { kind : Int, s : String }
+briefRows entries =
+    List.concatMap
+        (\ln ->
+            List.concat
+                [ [ { kind = 0, s = speakerName ln.who } ]
+                , List.map (\t -> { kind = 1, s = t }) (wrapText briefWrap ln.text)
+                ]
+        )
+        entries
+
+
+briefShapes : Model -> List Shape
+briefShapes model =
+    let
+        cx = model.w // 2
+        lines = briefing model.mission
+        shown = List.take (model.briefLine + 1) lines
+
+        -- size the box for the WHOLE briefing so it never jumps as lines
+        -- reveal; render only the rows shown so far.
+        allRows = briefRows lines
+        shownRows = briefRows shown
+
+        rowPitch = 16
+        contentH = List.length allRows * rowPitch
+
+        boxH = 96 + contentH + 60
+        top = max 24 (model.h // 2 - boxH // 2)
+        rowsY = top + 80
+        textX = cx - 246
+
+        rowShapes =
+            List.indexedMap
+                (\i row ->
+                    if row.kind == 0 then
+                        Canvas.text textX (rowsY + i * rowPitch) 10 Canvas.Left (rgb 255 214 120) row.s
+                    else
+                        Canvas.text textX (rowsY + i * rowPitch) 11 Canvas.Left (rgb 214 208 202) row.s
+                )
+                shownRows
+
+        btnY = rowsY + contentH + 12
+
+        current =
+            case List.head (List.drop model.briefLine lines) of
+                Just ln -> ln.who
+                Nothing -> 5
+    in
+    List.concat
+        [ [ rect 0 0 model.w model.h (rgb 13 9 12) ]
+        , starfield model
+        , [ rect (cx - 330) top 660 boxH (rgba 20 16 20 235)
+          , rect (cx - 330) top 660 3 (rgb 255 214 120)
+          , Canvas.text (cx - 310) (top + 30) 16 Canvas.Left (rgb 235 225 210)
+                ("MISSION " ++ (if model.mission > 0 then String.fromInt model.mission else "X") ++ ": " ++ missionTitle model.mission)
+          , Canvas.text (cx - 310) (top + 50) 10 Canvas.Left (rgb 150 145 150) (missionPlace model.mission)
+          ]
+        , portraitShapes current (cx - 322) (top + 62)
+        , rowShapes
+        , [ rect (cx - 110) btnY 220 30 (rgb 44 38 44)
+          , Canvas.text cx (btnY + 20) 11 Canvas.Center (rgb 220 214 206)
+                (if model.briefLine + 1 >= List.length lines then "LAUNCH MISSION" else "CONTINUE")
+          , Canvas.text cx (btnY + 44) 9 Canvas.Center (rgb 120 115 120) "click or ENTER"
+          ]
+        ]
+
+
+skirmishShapes : Model -> List Shape
+skirmishShapes model =
+    let
+        cx = model.w // 2
+        rowY = model.h // 2 - 100
+
+    in
+    List.concat
+        [ [ rect 0 0 model.w model.h (rgb 13 9 12) ]
+        , starfield model
+        , [ Canvas.text cx (rowY - 40) 20 Canvas.Center (rgb 235 225 210) "SKIRMISH: RUST BASIN" ]
+        , skCard (cx - 240) rowY "YOUR FACTION" (raceNameOf model.skRace) (rgb 74 138 205)
+        , skCard (cx - 75) rowY "ENEMY FACTION" (raceNameOf model.skFoe) (rgb 205 66 56)
+        , skCard (cx + 90) rowY "DIFFICULTY" (diffNameOf model.skDiff) (rgb 255 214 120)
+        , [ rect (cx - 110) (rowY + 110) 220 38 (rgb 50 42 46)
+          , Canvas.text cx (rowY + 134) 13 Canvas.Center (rgb 235 225 210) "START"
+          , rect (cx - 60) (rowY + 170) 120 30 (rgb 34 28 32)
+          , Canvas.text cx (rowY + 190) 11 Canvas.Center (rgb 190 185 190) "BACK"
+          , Canvas.text cx (rowY + 230) 9 Canvas.Center (rgb 120 115 120) "click a card to cycle it"
+          ]
+        ]
+
+
+-- keep the frozen battlefield visible behind the end-of-mission card, dimmed,
+-- so victory/defeat lands softly instead of cutting straight to black
+-- Keep the frozen battlefield visible behind the end screen; a light wash
+-- sets it back, and a centered scrim keeps the result text readable no
+-- matter how bright the map is under it.
+frozenBackdrop : Int -> Model -> List Shape
+frozenBackdrop dim model =
+    let
+        bandY = model.h // 2 - 132
+    in
+    List.concat
+        [ playShapes model
+        , [ rect 0 0 model.w model.h (rgba 10 7 10 dim)
+          , rect 0 bandY model.w 264 (rgba 8 6 9 150)
+          ]
+        ]
+
+
+winShapes : Model -> List Shape
+winShapes model =
+    let
+        cx = model.w // 2
+        by = model.h // 2 + 60
+
+        lines = victoryText model.mission
+    in
+    List.concat
+        [ frozenBackdrop 110 model
+        , [ Canvas.text cx (model.h // 2 - 110) 24 Canvas.Center (rgb 130 240 140) "MISSION ACCOMPLISHED" ]
+        , List.concat
+            (List.indexedMap
+                (\i t -> [ Canvas.text cx (model.h // 2 - 66 + i * 18) 11 Canvas.Center (rgb 210 205 200) t ])
+                lines)
+        , if model.mission > 0 && model.mission < 5 then
+            [ rect (cx - 110) by 220 34 (rgb 44 38 44)
+            , Canvas.text cx (by + 22) 12 Canvas.Center (rgb 220 214 206) "NEXT MISSION"
+            ]
+          else
+            []
+        , [ rect (cx - 110) (by + 44) 220 34 (rgb 34 28 32)
+          , Canvas.text cx (by + 66) 11 Canvas.Center (rgb 190 185 190) "TITLE"
+          ]
+        ]
+
+
+loseShapes : Model -> List Shape
+loseShapes model =
+    let
+        cx = model.w // 2
+        by = model.h // 2 + 60
+    in
+    List.concat
+        [ frozenBackdrop 120 model
+        , [ Canvas.text cx (model.h // 2 - 90) 24 Canvas.Center (rgb 240 110 90) "MISSION FAILED" ]
+        , List.concat
+            (List.indexedMap
+                (\i t -> [ Canvas.text cx (model.h // 2 - 46 + i * 18) 11 Canvas.Center (rgb 210 205 200) t ])
+                (defeatText model.mission))
+        , [ rect (cx - 110) by 220 34 (rgb 44 38 44)
+          , Canvas.text cx (by + 22) 12 Canvas.Center (rgb 220 214 206) "RETRY"
+          , rect (cx - 110) (by + 44) 220 34 (rgb 34 28 32)
+          , Canvas.text cx (by + 66) 11 Canvas.Center (rgb 190 185 190) "TITLE"
+          ]
+        ]
+
+
+endShapes : Model -> List Shape
+endShapes model =
+    let
+        cx = model.w // 2
+        lines = victoryText 5
+    in
+    List.concat
+        [ [ rect 0 0 model.w model.h (rgb 13 9 12) ]
+        , starfield model
+        , marsDisc model
+        , List.concat
+            (List.indexedMap
+                (\i t -> [ Canvas.text cx (model.h // 2 - 20 + i * 20) 11 Canvas.Center (rgb 214 208 202) t ])
+                lines)
+        , [ Canvas.text cx (model.h - 60) 10 Canvas.Center (rgb 150 145 150) "click to return to the title" ]
+        ]
+
+
+-- ===== wiring =====
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.batch
+        -- the 60fps clock only runs during play; menu/briefing/win/lose screens
+        -- are static (frame is a no-op there), so ticking them just burns frames
+        [ case model.screen of
+            SPlay -> Time.every (Time.millis 16) (\_ -> Frame)
+            _ -> Sub.none
+        , Keyboard.watch KeysChanged
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Iron Meridian"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]
+
+
+-- hoisted screen helpers (let bindings cannot take parameters)
+
+
+selRowY : Model -> Int -> Int
+selRowY model i =
+    model.h // 2 - 90 + i * 44
+
+
+titleBtn : Int -> Int -> String -> List Shape
+titleBtn cx y label =
+    [ rect (cx - 110) y 220 34 (rgb 34 28 32)
+    , rect (cx - 110) y 220 2 (rgb 70 58 60)
+    , Canvas.text cx (y + 22) 12 Canvas.Center (rgb 220 214 206) label
+    ]
+
+
+selRow : Model -> Int -> Int -> List Shape
+selRow model cx i =
+    let
+        m = i + 1
+        done = Dict.member m model.progress
+        y = selRowY model i
+    in
+    [ rect (cx - 180) y 360 36 (rgb 30 26 30)
+    , rect (cx - 180) y 360 2 (rgb 56 48 54)
+    , Canvas.text (cx - 164) (y + 23) 12 Canvas.Left
+        (if done then rgb 130 200 140 else rgb 220 214 206)
+        ("MISSION " ++ String.fromInt m ++ "  " ++ missionTitle m)
+    , Canvas.text (cx + 164) (y + 23) 10 Canvas.Right
+        (if done then rgb 130 240 140 else rgb 120 115 120)
+        (if done then "CLEARED" else "READY")
+    ]
+
+
+skCard : Int -> Int -> String -> String -> Color -> List Shape
+skCard x rowY label value tint =
+    [ rect x rowY 150 70 (rgb 30 26 30)
+    , rect x rowY 150 3 tint
+    , Canvas.text (x + 75) (rowY + 24) 10 Canvas.Center (rgb 150 145 150) label
+    , Canvas.text (x + 75) (rowY + 46) 12 Canvas.Center (rgb 235 225 210) value
+    ]
+
+
+raceNameOf : Int -> String
+raceNameOf i =
+    case i of
+        0 -> "THE COMPACT"
+        1 -> "SCRAPLINE COMBINE"
+        _ -> "THE VESSARI"
+
+
+diffNameOf : Int -> String
+diffNameOf i =
+    case i of
+        0 -> "RELAXED"
+        1 -> "STANDARD"
+        _ -> "IRON"

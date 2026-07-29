@@ -5,21 +5,36 @@ import (
 	"testing"
 
 	"mar/internal/parser"
+	"mar/internal/typecheck"
 )
+
+// checkAndLoad is how every runtime test gets a module: through the
+// typechecker, not around it. LoadModule refuses a tree the checker has not
+// elaborated, because an unelaborated tree makes the runtime disagree with
+// the compiler instead of failing — so these tests exercise the same
+// pipeline production does, which is the only version worth testing.
+func checkAndLoad(t *testing.T, src string) *Module {
+	t.Helper()
+	mod, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := typecheck.CheckModule(mod); err != nil {
+		t.Fatalf("typecheck: %v", err)
+	}
+	loaded, err := LoadModule(mod)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	return loaded
+}
 
 // runValue parses src as a module, loads it, evaluates the value named "x",
 // and returns its display string.
 func runValue(t *testing.T, src string) string {
 	t.Helper()
 	full := "module M exposing (..)\nx = " + src + "\n"
-	mod, err := parser.Parse(full)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	loaded, err := LoadModule(mod)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
+	loaded := checkAndLoad(t, full)
 	v, err := loaded.Get("x")
 	if err != nil {
 		t.Fatal(err)
@@ -29,14 +44,7 @@ func runValue(t *testing.T, src string) string {
 
 func runModule(t *testing.T, src, name string) string {
 	t.Helper()
-	mod, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	loaded, err := LoadModule(mod)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
+	loaded := checkAndLoad(t, src)
 	v, err := loaded.Get(name)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +74,7 @@ func TestEvalArith(t *testing.T) {
 	if got := runValue(t, "10 - 4"); got != "6" {
 		t.Fatalf("got %s", got)
 	}
-	if got := runValue(t, "10 / 3"); got != "3" {
+	if got := runValue(t, "10 // 3"); got != "3" {
 		t.Fatalf("got %s", got)
 	}
 }

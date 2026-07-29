@@ -23,7 +23,11 @@ func adminTestServer(t *testing.T, seedAdmins []string) (*httptest.Server, func(
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
 	runtime.SetDBPath(dbPath)
-	SetAuthRuntime("test-secret-32bytes-padding-padding-padding", auth.SMTPConfig{})
+	// Stdout sink allowed: these tests exercise the dev shape, where the
+	// admin code is printed instead of emailed. Production refuses to
+	// boot in this configuration (see guardMailSink).
+	SetAuthRuntime("test-secret-32bytes-padding-padding-padding",
+		auth.SMTPConfig{AllowStdoutSink: true})
 	SetAdminMailFrom("admin-test@x.com")
 
 	db, err := runtime.OpenDB()

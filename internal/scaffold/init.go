@@ -121,6 +121,11 @@ dist/
 # Local secrets
 .env
 
+# Local state written by ` + "`mar dev`" + `. dev-secrets.json holds this
+# project's session secret, so committing it would publish the key that
+# signs your users' sessions.
+.mar/
+
 # AI assistants
 .claude/
 .codex/
@@ -131,14 +136,14 @@ dist/
 # shell takes precedence.
 #
 # Used in two ways:
-#  - CLI tokens (e.g. for ` + "`mar cloudflare-pages deploy`" + `). These
-#    only exist on your machine, there's nowhere else for them.
+#  - CLI tokens (e.g. for ` + "`mar deploy`" + ` to Cloudflare Pages).
+#    These only exist on your machine, there's nowhere else for them.
 #  - Runtime secrets in dev (e.g. SMTP password). In production
 #    these come from the platform's secret store (Fly secrets,
 #    systemd, etc.), not from .env.
 
 # CLOUDFLARE_API_TOKEN=your-cloudflare-token
-# CLOUDFLARE_ACCOUNT=your-cloudflare-account-id
+# CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
 
 # SMTP_PASSWORD=your-smtp-password
 `,

@@ -139,7 +139,7 @@ verifies every `env:` ref resolves before producing a binary.
 ```sh
 mar fly init examples/hello-auth        # pick fly app name + region
 mar fly provision examples/hello-auth   # prompts for SESSION_SECRET, SMTP_PASSWORD
-mar fly deploy examples/hello-auth      # build + ship
+mar deploy examples/hello-auth      # build + ship
 ```
 
 `mar fly provision` will walk every `env:VAR_NAME` reference in

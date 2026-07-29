@@ -90,7 +90,7 @@ cd examples/mini-twitter
 mar fly init                      # scaffolds deploy/fly/
 mar fly provision                 # creates app + auto-generates SESSION_SECRET,
                                   # prompts for SMTP_PASSWORD (your Resend API key)
-mar fly deploy                    # builds + ships
+mar deploy                    # builds + ships
 ```
 
 The Resend account whose API key you provide must have the domain

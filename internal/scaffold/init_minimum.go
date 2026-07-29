@@ -31,12 +31,12 @@ type Msg
     = NoOp
 
 
-init : (Model, Effect Msg)
-init = ((), Effect.none)
+init : (Model, Cmd Msg)
+init = ((), Cmd.none)
 
 
-update : Msg -> Model -> (Model, Effect Msg)
-update _ _ = ((), Effect.none)
+update : Msg -> Model -> (Model, Cmd Msg)
+update _ _ = ((), Cmd.none)
 
 
 view : Model -> View Msg
@@ -51,10 +51,11 @@ page =
         , init = init
         , update = update
         , view = view
+        , subscriptions = always Sub.none
         }
 
 
-main : Effect ()
+main : Cmd ()
 main =
     App.fullstack
         { services = []

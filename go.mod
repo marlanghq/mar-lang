@@ -2,14 +2,14 @@ module mar
 
 go 1.26
 
-toolchain go1.26.2
+toolchain go1.26.5
 
 require (
 	github.com/evanw/esbuild v0.28.1
 	github.com/grandcat/zeroconf v1.0.0
 	github.com/zeebo/blake3 v0.2.4
-	golang.org/x/term v0.44.0
-	modernc.org/sqlite v1.52.0
+	golang.org/x/term v0.45.0
+	modernc.org/sqlite v1.53.0
 )
 
 require (
@@ -24,9 +24,9 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/tools v0.46.0 // indirect
 	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

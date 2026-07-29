@@ -1,5 +1,8 @@
 {
   "name": "daily-checklist",
+  "server": {
+    "port": 3033
+  },
   "admins": [],
   "database": {
     "path": "./checklist.db"

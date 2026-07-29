@@ -156,6 +156,12 @@ func Generate(spec Spec, outDir string) (projectDir string, err error) {
 		"__MAR_MARKETING_VERSION__": spec.MarketingVersion,
 		"__MAR_BUILD_NUMBER__":      spec.BuildNumber,
 		"__MAR_DEFAULT_BASE_URL__":  spec.DefaultBaseURL,
+		// Raw manifest name (NOT the Swift mangle): `mar dev` publishes
+		// this exact string as its mDNS instance name, and the DEBUG
+		// Bonjour auto-connect only adopts servers whose name matches —
+		// so the checklist app can't get hijacked by a game's dev server
+		// that happens to be running on the same LAN.
+		"__MAR_PROJECT_NAME__": spec.AppName,
 	}
 
 	// One header per Swift file, stamped with the generator version
