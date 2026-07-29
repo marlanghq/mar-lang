@@ -148,7 +148,7 @@ view _ =
 
             , gameCard "Star Condor"
                 "star-condor"
-                "A vertical shoot-em-up across ten wonders of Latin America: the Amazon, Iguazu, Uyuni, Machu Picchu, Teotihuacan. Squadrons fly rings, loops and snaking waves, barriers wear the scenery, and every stage has its own parallax, boss and melody. The soundtrack is world-driven: the game loop plays one groove beat per beat line, so music and action can never drift."
+                "A vertical shoot-em-up across ten wonders of Latin America: the Amazon, Iguazu, Uyuni, Machu Picchu, Teotihuacan. Squadrons fly rings, loops and snaking waves, barriers wear the scenery, and every stage has its own parallax, boss and melody."
                 "Canvas 2D, world-driven Sound engine, Keyboard + Gamepad + touch, 320x240 pixel art at 60fps."
                 "https://mar-star-condor.pages.dev"
                 "star-condor"
