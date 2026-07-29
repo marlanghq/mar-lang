@@ -176,51 +176,6 @@ func BareGlobals() map[string]Type {
 	return out
 }
 
-// IsBackendOnlyBuiltin reports whether a qualified-name builtin
-// (e.g. "Repo.create") is intentionally never reachable from frontend
-// code. These are the names that exist in BaseEnv() but should be
-// implemented only in the Go runtime — JS/Swift runtimes don't need
-// to ship them, and runtime-coverage tests treat them as expected
-// gaps.
-//
-// Covers server topology (App.fullstack), persistence (Repo, Entity,
-// Db), auth wiring evaluated at server boot (Auth.config / .protect /
-// .authorize / .requireRole / .requireOwner), and service handlers
-// (Service.implement).
-//
-// Adding a new entry here is a deliberate statement: "this builtin
-// runs server-only; clients don't need to implement it." Don't add a
-// name just to silence a coverage test — first confirm frontend code
-// can't reach it.
-//
-// `Service.declare` used to be on this list and does not belong: the
-// contract it builds carries the verb and path the BROWSER fetches, so
-// every runtime implements it and every page reaches it. Listing it
-// meant the drift tests stood ready to excuse a client runtime that
-// dropped it — the opposite of what this function is for. It was found
-// by wiring the list to an enforcement point (apphost's prune pass)
-// instead of using it only to excuse gaps.
-func IsBackendOnlyBuiltin(name string) bool {
-	for _, prefix := range []string{
-		"Repo.",   // SQLite repository
-		"Entity.", // schema-defining helpers
-		"Db.",     // raw query escape hatch
-		"Server.", // HTTP server config
-	} {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	switch name {
-	case "Auth.config", "Auth.protect",
-		"Auth.authorize", "Auth.requireOwner", "Auth.requireRole",
-		"Service.implement",
-		"App.frontend", "App.backend", "App.fullstack":
-		return true
-	}
-	return false
-}
-
 // BaseCustomTypes returns the stdlib custom-type registrations
 // (Maybe, Result, Bool) so the LSP can advertise the variants for
 // completion in case expressions and surface a hover summary.

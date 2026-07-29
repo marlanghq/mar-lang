@@ -180,6 +180,10 @@ func Load(root string) (*Project, error) {
 		issue := issues[0]
 		return nil, diag.Wrap(paths[issue.Module], sources[issue.Module], &issue)
 	}
+	if issues := typecheck.RunSideCheck(orderedMods); len(issues) > 0 {
+		issue := issues[0]
+		return nil, diag.Wrap(paths[issue.Module], sources[issue.Module], &issue)
+	}
 
 	return &Project{
 		Root:    root,

@@ -183,6 +183,17 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 		return nil, nil, diag.Wrap(modPath, modSrc, &issue)
 	}
 
+	// Every module runs on one side. A module that reaches both the browser
+	// and the server has no machine to run on. Lives here rather than in the
+	// build so the editor reports it too — this function is what the LSP
+	// calls with the unsaved buffer substituted.
+	if issues := typecheck.RunSideCheck(out); len(issues) > 0 {
+		issue := issues[0]
+		modPath := paths[issue.Module]
+		modSrc := sources[issue.Module]
+		return nil, nil, diag.Wrap(modPath, modSrc, &issue)
+	}
+
 	return out, valueTypes, nil
 }
 
