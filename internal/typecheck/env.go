@@ -3053,6 +3053,100 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TPage(), To: TPage()},
 		},
 
+		// App.shared / Page.withShared / Cmd.toShared — one app-wide client
+		// model that outlives navigation.
+		//
+		// Page models live on the nav stack and die on every forward
+		// navigation (ADR 0009). That is deliberate, and it leaves one
+		// question open: where does state that must survive the trip live?
+		// Here. The profile fetched once at boot, the theme, the unread
+		// count — anything twenty screens would otherwise each refetch in
+		// their own init.
+		//
+		//   App.shared :
+		//       { init          : (model, Cmd msg)
+		//       , update        : msg -> model -> (model, Cmd msg)
+		//       , subscriptions : model -> Sub msg
+		//       }
+		//       -> App.Shared model msg
+		//
+		//   Page.withShared : App.Shared model msg -> (model -> Page) -> Page
+		//   Cmd.toShared    : App.Shared model msg -> msg -> Cmd pageMsg
+		//
+		// The def value is the whole type story. It is an ordinary top-level
+		// binding in an ordinary app module, and every use site names THAT
+		// binding, so a page reading the model and a page sending a message
+		// cannot disagree about either type — there is nothing to keep in
+		// sync. Same shape as Auth.config, Entity.define and Service.declare:
+		// a capability you hold, not a module the framework looks up by name.
+		//
+		// `Cmd.toShared` returns `Cmd pageMsg` for any pageMsg: sending to
+		// the shared update tells the PAGE nothing, so it composes into
+		// whatever the page's own update was already returning.
+		//
+		// There is no registration step and no `shared` field on the App
+		// config. The runtime discovers the def through the pages that use
+		// it, which is what keeps this feature invisible to apps that don't
+		// want it: no vestigial argument, no changed signature, no migration.
+		"appShared": TForall{
+			Vars: []int{-103, -104},
+			Body: TArrow{
+				From: TRecord{
+					Fields: map[string]Type{
+						"init": TTuple{Members: []Type{TVar{ID: -103}, TCmd(TVar{ID: -104})}},
+						"update": TArrow{
+							From: TVar{ID: -104},
+							To: TArrow{
+								From: TVar{ID: -103},
+								To:   TTuple{Members: []Type{TVar{ID: -103}, TCmd(TVar{ID: -104})}},
+							},
+						},
+						"subscriptions": TArrow{From: TVar{ID: -103}, To: TSub(TVar{ID: -104})},
+					},
+					Order: []string{"init", "update", "subscriptions"},
+				},
+				To: TShared(TVar{ID: -103}, TVar{ID: -104}),
+			},
+		},
+
+		// Page.withShared wraps ANY of the six page constructors rather than
+		// adding a seventh and eighth flavor of each. The builder receives
+		// the model and returns a Page, so the shared value reaches
+		// init/update/view by ordinary partial application — `view global`
+		// already has the type Page.create wants.
+		//
+		// The builder is re-applied whenever the shared model changes, so a
+		// page renders the LIVE value, never a snapshot taken at its init.
+		"pageWithShared": TForall{
+			Vars: []int{-105, -106},
+			Body: TArrow{
+				From: TShared(TVar{ID: -105}, TVar{ID: -106}),
+				To: TArrow{
+					From: TArrow{From: TVar{ID: -105}, To: TPage()},
+					To:   TPage(),
+				},
+			},
+		},
+
+		// Cmd.toShared is how a page WRITES: it sends a message, it does not
+		// assign. The shared module owns its update and its exhaustive case,
+		// exactly like a page owns its own.
+		//
+		// A message issued by page A that resolves after navigating to page B
+		// still applies — shared is page-independent, so unlike a page msg it
+		// has no stale-foreign-message problem and the dispatch boundary does
+		// not drop it.
+		"cmdToShared": TForall{
+			Vars: []int{-107, -108, -109},
+			Body: TArrow{
+				From: TShared(TVar{ID: -107}, TVar{ID: -108}),
+				To: TArrow{
+					From: TVar{ID: -108},
+					To:   TCmd(TVar{ID: -109}),
+				},
+			},
+		},
+
 		// Nav.push : String -> Effect e msg
 		// Pushes a URL onto the browser history and re-renders the
 		// matching Page. For dynamic pages prefer Nav.pushTo, which
@@ -3552,6 +3646,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Cmd.batch":          "effectBatch",
 		"Cmd.none":           "effectNone",
 		"Cmd.perform":        "cmdPerform",
+		"Cmd.toShared":       "cmdToShared",
 		"Sub.batch":          "subBatch",
 		"Sub.none":           "subNone",
 		"Random.generate":    "randomGenerate",
@@ -3750,6 +3845,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"App.frontend":         "appFrontend",
 		"App.backend":          "appBackend",
 		"App.fullstack":        "appFullstack",
+		"App.shared":           "appShared",
 		// Service: typed RPC contracts.
 		"Service.declare":            "serviceDeclare",
 		"Service.implement":          "serviceImplement",
@@ -3762,6 +3858,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Page.dynamicProtected":      "pageDynamicProtected",
 		"Page.dynamicAdminProtected": "pageDynamicAdminProtected",
 		"Page.sheet":                 "pageSheet",
+		"Page.withShared":            "pageWithShared",
 		"Mar.Admin.serverInfo":       "marAdminServerInfo",
 		"Mar.Admin.dbStats":          "marAdminDbStats",
 		"Mar.Admin.recentRequests":   "marAdminRecentRequests",

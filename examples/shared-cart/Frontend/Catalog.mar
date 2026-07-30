@@ -1,0 +1,125 @@
+module Frontend.Catalog exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , text, textField, button, navigationLink
+    , hstack, spacer
+    )
+import Frontend.Global
+import Frontend.Products
+import Frontend.Routes
+
+
+-- The catalog. Reads the shared cart to show what's already in it, writes to
+-- the shared cart when you add something, and keeps its OWN filter text in a
+-- page model — which is exactly the contrast worth seeing.
+--
+-- Type something in the filter, then:
+--
+--   press Back from a product   → the filter is still there
+--   reach this page by a LINK   → the filter is empty
+--
+-- Page models live on the nav stack (ADR 0009): going forward re-inits a
+-- screen, coming back restores the one you left. The cart is unaffected by
+-- either, because it never lived in a page.
+
+
+type alias Filtering =
+    { filter : String }
+
+
+type Msg
+    = FilterChanged String
+    | AddClicked Int
+
+
+init : (Filtering, Cmd Msg)
+init =
+    ( { filter = "" }, Cmd.none )
+
+
+update : Msg -> Filtering -> (Filtering, Cmd Msg)
+update msg model =
+    case msg of
+        FilterChanged s ->
+            ( { model | filter = s }, Cmd.none )
+
+        AddClicked id ->
+            -- A page never writes the shared model; it sends a message and the
+            -- shared update decides. Same discipline as a page's own msgs.
+            ( model, Cmd.toShared Frontend.Global.def (Frontend.Global.Added id) )
+
+
+view : Frontend.Global.Model -> Filtering -> View Msg
+view global model =
+    navigationStack [ navigationTitle "Catalog" ]
+        [ list []
+            [ section [ header "Cart" ]
+                [ navigationLink [] Frontend.Routes.cart {}
+                    (text [] (cartSummary global))
+                , navigationLink [] Frontend.Routes.settings {}
+                    (text [] "Settings")
+                ]
+            , section
+                [ header "Products"
+                , footer "The filter belongs to this screen and is empty whenever you arrive by a link. The cart never is."
+                ]
+                (textField [] "Filter" model.filter FilterChanged
+                    :: List.map (row global) (matching model.filter))
+            ]
+        ]
+
+
+row : Frontend.Global.Model -> Frontend.Products.Product -> View Msg
+row global p =
+    hstack []
+        [ navigationLink [] Frontend.Routes.item { id = p.id }
+            (text [] (p.name ++ "  " ++ Frontend.Products.format p.price))
+        , spacer
+        , text [] (inCart (Frontend.Global.quantityOf p.id global))
+        , button [] (AddClicked p.id) "Add"
+        ]
+
+
+inCart : Int -> String
+inCart n =
+    if n == 0 then "" else "x" ++ String.fromInt n
+
+
+matching : String -> List Frontend.Products.Product
+matching filter =
+    if filter == "" then
+        Frontend.Products.all
+
+    else
+        List.filter
+            (\p -> String.contains (String.toLower filter) (String.toLower p.name))
+            Frontend.Products.all
+
+
+cartSummary : Frontend.Global.Model -> String
+cartSummary global =
+    case Frontend.Global.count global of
+        0 -> "Cart is empty"
+        n -> String.fromInt n ++ " in cart  " ++ Frontend.Products.format (Frontend.Global.total global)
+
+
+-- Page.withShared wraps the ordinary Page.create — there is no
+-- Page.createWithShared, and the six page flavors stay six. The builder is
+-- re-applied whenever the shared model changes, so `view global` always sees
+-- the live cart, not a copy taken when this page mounted.
+page : Page
+page =
+    Page.withShared Frontend.Global.def
+        (\global ->
+            Page.create
+                { path = "/"
+                , title = "Catalog"
+                , init = init
+                , update = update
+                , view = view global
+                , subscriptions = always Sub.none
+                }
+        )

@@ -1,0 +1,26 @@
+module Main exposing (main)
+
+
+import Frontend.Catalog
+import Frontend.Item
+import Frontend.Cart
+import Frontend.Settings
+
+
+-- Four pages, one cart.
+--
+-- Note what is NOT here: the shared store is never mentioned. There is no
+-- `shared` field to register and nothing to keep in sync with the pages —
+-- the runtime finds the store through the pages that use it, and the pages
+-- find each other's type through the one `def` binding they all name. An app
+-- with no shared state writes exactly the same Main it writes today.
+
+
+main : Cmd ()
+main =
+    App.frontend
+        [ Frontend.Catalog.page
+        , Frontend.Item.page
+        , Frontend.Cart.page
+        , Frontend.Settings.page
+        ]

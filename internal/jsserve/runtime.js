@@ -1047,6 +1047,13 @@
   // function rejects the old shape.
   let preservedModel = null;
   let preservedScreenModels = {};
+  // Same idea for shared stores, keyed by the order in which their defs were
+  // built. A def is a top-level binding, so the Nth App.shared call is the
+  // same def on every reload; adding or removing one shifts the keys and
+  // resets the stores, which is the same discipline a page model already has
+  // when its shape changes.
+  let preservedSharedModels = {};
+  let sharedDefSeq = 0;
 
   // Time-travel state survives marReload too. After hot-reload, frames are
   // validated against the new view functions: any frame whose nextModel
@@ -1099,6 +1106,99 @@
   // currentDispatch is set by App.serve before render. Click handlers use it
   // to dispatch a Msg into the running update loop.
   let currentDispatch = null;
+
+  // ---- Shared: the client state that outlives navigation -------------------
+  //
+  // Page models live on the nav stack and die on forward navigation (ADR
+  // 0009). A shared store is the designated survivor: one model per
+  // `App.shared` def, alive from the first page that names it until the tab
+  // closes.
+  //
+  // Keyed by the def VALUE, not by a name. `def` is a top-level binding, so
+  // it evaluates once per module load and every use site — the page that
+  // reads it, the page that writes to it, the Main that never mentions it —
+  // holds the same object. That identity is the whole registration story:
+  // there is no `shared` field on the App config to keep in sync, and two
+  // different defs are simply two stores rather than a conflict to report.
+  const sharedStores = new Map();
+
+  // Set by mountPages. A shared model change has to repaint the current page
+  // (its builder is re-applied with the new value), and only mountPages knows
+  // how to paint.
+  let sharedRerender = null;
+
+  // Deferred until the first render, so `init`'s Cmd — nearly always the
+  // Service.call that fills the store — dispatches into a live loop rather
+  // than into a null one.
+  let pendingSharedCmds = [];
+
+  function sharedStoreFor(def) {
+    let store = sharedStores.get(def);
+    if (store) return store;
+    // Preserved across `mar dev`'s hot reload for the same reason page models
+    // are: a save should not sign you out or refetch your profile. The key is
+    // the def's declaration site, which survives the reload that the def
+    // OBJECT does not.
+    const preserved = preservedSharedModels[def.__originKey];
+    const initTuple = def.args[0];
+    store = {
+      def,
+      model: preserved !== undefined ? preserved : initTuple.xs[0],
+      update: def.args[1],
+      subscriptions: def.args[2],
+    };
+    sharedStores.set(def, store);
+    if (preserved === undefined) {
+      preservedSharedModels[def.__originKey] = store.model;
+      pendingSharedCmds.push(initTuple.xs[1]);
+    }
+    return store;
+  }
+
+  function sharedDispatch(def, msg) {
+    const store = sharedStoreFor(def);
+    let out;
+    try {
+      out = unwrapModelTuple(apply(apply(store.update, msg), store.model));
+    } catch (err) {
+      // Unlike a page msg, a shared msg has no "arrived after navigation"
+      // excuse: the store is page-independent and always live, so a failure
+      // here is a real one and is reported rather than swallowed.
+      if (typeof console !== 'undefined') console.error('[mar] shared update failed:', err);
+      return;
+    }
+    store.model = out.model;
+    preservedSharedModels[def.__originKey] = out.model;
+    runEffect(out.effect);
+    // Repaint: pages read shared through their builder, so a change to the
+    // model is a change to the view even though no page model moved.
+    if (sharedRerender) sharedRerender();
+  }
+
+  // Wrap a shared subscription's tagger so its messages reach the shared
+  // update instead of the current page's. Subs are merged by KEY across
+  // owners (a shared `Time.every 1000` and a page's own are one timer with
+  // two taggers), so the destination cannot ride on the record — it has to
+  // ride on each tagger.
+  function sharedSubItems(store) {
+    const sub = store.subscriptions ? apply(store.subscriptions, store.model) : null;
+    if (!sub || !sub.items) return [];
+    return sub.items.map((it) => {
+      if (!it.tagger) return it;
+      const routed = native(1, ([v]) => apply(it.tagger, v));
+      routed.__sharedDef = store.def;
+      return Object.assign({}, it, { tagger: routed });
+    });
+  }
+
+  // Deliver one subscription message to whoever owns the tagger. Every sub
+  // source funnels through here so shared and page subs stay indistinguishable
+  // to the reconciler.
+  function deliverSub(tg, arg) {
+    const msg = apply(tg, arg);
+    if (tg && tg.__sharedDef) { sharedDispatch(tg.__sharedDef, msg); return; }
+    if (currentDispatch) currentDispatch(msg);
+  }
 
   // True while the rAF tick source is replaying the intermediate ticks of a
   // catch-up burst (ADR-0003: a painted frame that carries more than one tick
@@ -1981,9 +2081,7 @@
       },
       fire: (rec) => {
         const now = VTime(Date.now());
-        for (const tg of rec.taggers) {
-          if (currentDispatch) currentDispatch(apply(tg, now));
-        }
+        for (const tg of rec.taggers) deliverSub(tg, now);
       },
     },
     // Keyboard.watch — the held-key mirror. Shared window keydown/keyup keep
@@ -2003,7 +2101,7 @@
         return h;
       },
       stop: (rec) => { const h = rec.handle; if (!h) return; h.stopped = true; kbWatchFires.delete(h.fire); },
-      fire: (rec) => { const r = keyboardStateRecord(); for (const tg of rec.taggers) if (currentDispatch) currentDispatch(apply(tg, r)); },
+      fire: (rec) => { const r = keyboardStateRecord(); for (const tg of rec.taggers) deliverSub(tg, r); },
     },
     // Gamepad.watch — the full-pad mirror. The shared poll (padPoll) keeps
     // connection + both sticks + held-button set current and notifies every sub
@@ -2018,7 +2116,7 @@
         return h;
       },
       stop: (rec) => { const h = rec.handle; if (!h) return; h.stopped = true; padWatchRemove(h.fire); },
-      fire: (rec) => { const r = gamepadStateRecord(); for (const tg of rec.taggers) if (currentDispatch) currentDispatch(apply(tg, r)); },
+      fire: (rec) => { const r = gamepadStateRecord(); for (const tg of rec.taggers) deliverSub(tg, r); },
     },
     // Sound.voice and Sound.glide — a held source, alive for as long as the
     // subscription is. Same start and stop; they differ in exactly two things,
@@ -2094,7 +2192,7 @@
       },
       fire: (rec) => {
         const d = readDevice();
-        for (const tg of rec.taggers) if (currentDispatch) currentDispatch(apply(tg, d));
+        for (const tg of rec.taggers) deliverSub(tg, d);
       },
     },
   };
@@ -4334,6 +4432,46 @@
     // server's mar.json, not user code.
     def('appFrontend', native(1, ([list]) => VEffect(() => mountPages(list.xs), 'mountPages')));
     def('App.frontend', native(1, ([list]) => VEffect(() => mountPages(list.xs), 'mountPages')));
+
+    // App.shared : { init, update, subscriptions } -> App.Shared model msg
+    //
+    // Builds the DEF, not the store. The store is created on first use (see
+    // sharedStoreFor) and keyed by this value's identity, which is why the
+    // def has to be a top-level binding: it must evaluate once so every use
+    // site holds the same object.
+    //
+    // __originKey is the hot-reload identity — the def OBJECT dies on reload,
+    // the declaration order doesn't.
+    const appSharedImpl = native(1, ([rec]) => {
+      const f = rec.fields;
+      const d = VCtor('__Shared', [f.init, f.update, f.subscriptions]);
+      d.__originKey = 'shared:' + (sharedDefSeq++);
+      return d;
+    });
+    def('appShared', appSharedImpl);
+    def('App.shared', appSharedImpl);
+
+    // Page.withShared : App.Shared model msg -> (model -> Page) -> Page
+    //
+    // Carries the builder rather than calling it: mountPages re-applies it
+    // whenever the shared model changes, which is what makes the page render
+    // the LIVE value. Calling it here would freeze the model at boot.
+    const pageWithSharedImpl = native(2, ([sharedDef, builder]) =>
+      VCtor('__SharedPage', [sharedDef, builder])
+    );
+    def('pageWithShared', pageWithSharedImpl);
+    def('Page.withShared', pageWithSharedImpl);
+
+    // Cmd.toShared : App.Shared model msg -> msg -> Cmd pageMsg
+    //
+    // An ordinary Cmd, so it batches with Cmd.batch and composes with
+    // Cmd.perform for free. It resolves against the store, never against the
+    // page, so a message issued before a navigation still lands after it.
+    const cmdToSharedImpl = native(2, ([sharedDef, msg]) =>
+      VEffect(() => { sharedDispatch(sharedDef, msg); return VUnit(); }, 'toShared')
+    );
+    def('cmdToShared', cmdToSharedImpl);
+    def('Cmd.toShared', cmdToSharedImpl);
 
     // App.backend : List Route -> Effect String ()
     // Backend is a server-side concept. The browser bundle never sees
@@ -10459,7 +10597,11 @@
     // buildPathURL) live at the IIFE level so they're reachable from
     // both makeBuiltinEnv (linkTo / Nav.pushTo) and mountPages.
 
-    function buildPageEntry(path, initFn, updateFn, viewFn, title, isProtected, isDynamic, subsFn, isSheet) {
+    // `fns()` returns { init, update, view, subscriptions } — a function
+    // rather than four values because a page built by Page.withShared has to
+    // resolve them against the CURRENT shared model on every use. For an
+    // ordinary page it closes over one ctor and never changes.
+    function buildPageEntry(path, fns, title, isProtected, isDynamic, isSheet) {
       // For protected/dynamic pages init/update/view need extra args
       // threaded in (User, Params, or both). We can't init until those
       // are known, so we defer.
@@ -10480,10 +10622,10 @@
       const initWith = (user, params, key) => {
         if (initializedKeys[key]) return;
         initializedKeys[key] = true;
-        const initFnApplied = applyExtras(initFn, user, params);
+        const initFnApplied = applyExtras(fns().init, user, params);
         const prior = preservedScreenModels[key];
         if (prior !== undefined) {
-          const viewFnApplied = applyExtras(viewFn, user, params);
+          const viewFnApplied = applyExtras(fns().view, user, params);
           try {
             apply(viewFnApplied, prior);
             models[key] = prior;
@@ -10542,10 +10684,13 @@
           delete initEffectsRun[key];
         },
         initWith: (user, params) => initWith(user, params, entry.activeKey),
-        init: initFn,
-        update: updateFn,
-        view: viewFn,
-        subscriptions: subsFn,
+        // Getters, not values: under Page.withShared these resolve against
+        // the shared model as it is right now, so a store change repaints
+        // with the new view without the page's own model moving.
+        get init()          { return fns().init; },
+        get update()        { return fns().update; },
+        get view()          { return fns().view; },
+        get subscriptions() { return fns().subscriptions; },
       };
 
       if (!isProtected && !isDynamic) {
@@ -10564,8 +10709,33 @@
     // dynamic in declaration order.
     const dynamicPages = [];
 
-    for (const p of pageList) {
-      if (p.k !== 'C') continue;
+    // The page ctors all share the arg shape [path, init, update, view,
+    // title, subscriptions], so one reader serves all four.
+    const ctorFns = (c) => ({ init: c.args[1], update: c.args[2], view: c.args[3], subscriptions: c.args[5] });
+
+    for (const p0 of pageList) {
+      if (p0.k !== 'C') continue;
+
+      // Page.withShared wraps any of the four ctors below. Unwrap it here so
+      // everything downstream — routing, auth, init, dispatch, subs — sees an
+      // ordinary page and stays oblivious to shared entirely.
+      //
+      // The builder is re-applied only when the model actually changes;
+      // identity is enough because Mar models are immutable, so a new model
+      // is always a new object.
+      let p = p0, fns = null;
+      if (p0.tag === '__SharedPage') {
+        const store = sharedStoreFor(p0.args[0]);
+        const builder = p0.args[1];
+        let built = null, builtFor = {};   // {} can never equal a Mar value
+        const rebuild = () => {
+          if (builtFor !== store.model) { built = apply(builder, store.model); builtFor = store.model; }
+          return built;
+        };
+        p = rebuild();
+        fns = () => ctorFns(rebuild());
+      }
+
       if (p.tag !== '__Page' && p.tag !== '__ProtectedPage' &&
           p.tag !== '__DynamicPage' && p.tag !== '__DynamicProtectedPage') continue;
       // These ctors share the same arg shape: [path, init, update, view,
@@ -10574,7 +10744,7 @@
       // the Auth.config builtin). __DynamicPage / __DynamicProtectedPage also
       // enable URL-pattern matching with `:param` segments. (Page.adminProtected
       // pre-applies its AdminSession and emits a plain __Page — see its builtin.)
-      const [pathV, initFn, updateFn, viewFn, titleV, subsFn] = p.args;
+      const pathV = p.args[0], titleV = p.args[4];
       const path = pathV.s;
       const title = (titleV && titleV.k === 'S') ? titleV.s : '';
       const isProtected = (p.tag === '__ProtectedPage' || p.tag === '__DynamicProtectedPage');
@@ -10583,7 +10753,10 @@
       // or an arg slot, so it composes with all four ctors above.
       const isSheet     = p.presented === true;
       if (firstPath === null) firstPath = path;
-      const entry = buildPageEntry(path, initFn, updateFn, viewFn, title, isProtected, isDynamic, subsFn, isSheet);
+      // Path, title and the flags are read ONCE: they are the route, and a
+      // route that moved when the shared model changed would be a different
+      // page, not the same page redrawn. Only the four functions are live.
+      const entry = buildPageEntry(path, fns || (() => ctorFns(p)), title, isProtected, isDynamic, isSheet);
       if (isDynamic) {
         dynamicPages.push({ pattern: parsePathPattern(path), page: entry });
       } else {
@@ -11030,6 +11203,21 @@
       // inspecting a past frame (traveling), strip the clock sources so the
       // world's autonomous timers freeze — non-clock subs keep running.
       let desiredSub = pg.subscriptions ? apply(applyExtras(pg, pg.subscriptions), pg.model) : null;
+      // Shared subs belong to the STORE, not the screen, so they join every
+      // render's desired set instead of starting and stopping with the page.
+      // A `Time.every 1000` here is an app-wide heartbeat.
+      //
+      // The reconciler merges by key, so a shared Time.every 1000 and a
+      // page's own are one timer with two taggers — and each tagger knows
+      // which update loop it feeds (see deliverSub).
+      if (sharedStores.size > 0) {
+        let sharedItems = [];
+        for (const store of sharedStores.values()) sharedItems = sharedItems.concat(sharedSubItems(store));
+        if (sharedItems.length) {
+          const own = (desiredSub && desiredSub.items) ? desiredSub.items : [];
+          desiredSub = { k: 'SUB', items: own.concat(sharedItems) };
+        }
+      }
       // Freeze the world's clock sources whenever the time-travel panel is OPEN
       // (so opening it pauses at the present) or you've jumped to a past frame.
       if (preservedTimeTravel && (preservedTimeTravel.traveling || timeTravelPanelOpen())) desiredSub = stripClockSubs(desiredSub);
@@ -12089,7 +12277,17 @@
     }
     prevPopstateHandler = handlePopState;
     window.addEventListener('popstate', handlePopState);
+    // A shared model change repaints the current page: its builder is
+    // re-applied with the new value, so its VIEW moved even though its own
+    // model did not.
+    sharedRerender = render;
     render();
+    // The stores' init Cmds run only now. init happens while pages are being
+    // built — before there is a dispatch to deliver a result to — so a
+    // Service.call fired there would resolve into nothing.
+    const cmds = pendingSharedCmds;
+    pendingSharedCmds = [];
+    for (const c of cmds) runEffect(c);
     return VUnit();
   }
 
@@ -12259,6 +12457,15 @@
   // mountApp / mountScreens closures become unreachable garbage.
   global.marReload = function () {
     currentDispatch = null;
+    // The def objects die with the old program, so the stores keyed by them
+    // are dead too. Their MODELS live on in preservedSharedModels, which is
+    // keyed by declaration order rather than by object — a save should not
+    // sign you out or refetch your profile, exactly as it does not reset a
+    // page model.
+    sharedStores.clear();
+    sharedRerender = null;
+    pendingSharedCmds = [];
+    sharedDefSeq = 0;
     const root = document.getElementById('mar-root');
     if (root) while (root.firstChild) root.removeChild(root.firstChild);
     return fetch('/_mar/program.json', { cache: 'no-store' })

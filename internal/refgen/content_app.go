@@ -176,6 +176,7 @@ var appCategories = map[string][]CatGroup{
 		{"Static routes", []string{"create", "protected", "adminProtected"}},
 		{"Routes with parameters", []string{"dynamic", "dynamicProtected", "dynamicAdminProtected"}},
 		{"How a route is presented", []string{"sheet"}},
+		{"Reading shared state", []string{"withShared"}},
 	},
 	"Nav": {
 		{"Go somewhere", []string{"push", "pushTo"}},
@@ -184,6 +185,7 @@ var appCategories = map[string][]CatGroup{
 	},
 	"Cmd": {
 		{"Common", []string{"none", "batch", "perform"}},
+		{"Writing shared state", []string{"toShared"}},
 	},
 	"Sub": {
 		{"Common", []string{"none", "batch"}},
@@ -206,6 +208,7 @@ var appCategories = map[string][]CatGroup{
 	},
 	"App": {
 		{"Entry points", []string{"frontend", "backend", "fullstack"}},
+		{"State that outlives navigation", []string{"shared"}},
 	},
 	"Device": {
 		{"Watch", []string{"watch"}},
@@ -436,6 +439,7 @@ var appDescriptions = map[string]string{
 	"Page.dynamic":               "A page whose path carries parameters, like an item id. The parameters arrive as a record, already parsed and typed.",
 	"Page.dynamicProtected":      "A page with both path parameters and a required signed-in user.",
 	"Page.sheet":                 "Present a page over the screen it was reached from, instead of pushing it. For a task the reader finishes or abandons. Opened cold it renders full-screen.",
+	"Page.withShared":            "Wrap any page so it can read the app-wide state built by App.shared. The builder runs again whenever that state changes, so the page always sees the current value.",
 	"Page.dynamicAdminProtected": "A page with both path parameters and a required admin session.",
 
 	// Nav
@@ -443,6 +447,8 @@ var appDescriptions = map[string]string{
 	"Nav.pushTo":    "Goes to a typed path with its parameters, checked at compile time.",
 	"Nav.replace":   "Goes to a path without adding to the history, so back skips over the screen being left.",
 	"Nav.dismiss":   "Closes a route being presented as a sheet (see Page.sheet), or steps back one screen. Does nothing at the first screen.",
+	"App.shared":    "Build the one app-wide model that outlives navigation: loaded once, readable from any page, and unaffected by moving between screens. Pages read it with Page.withShared and change it with Cmd.toShared.",
+	"Cmd.toShared":  "Send a message to the app-wide state built by App.shared. A page never assigns that state; it asks, and the shared update decides.",
 	"Nav.replaceTo": "Replaces the current screen with a typed path and its parameters.",
 
 	// Cmd
@@ -734,6 +740,7 @@ var appExamples = map[string][]string{
 	"Page.protected":             {"page = Page.protected { path = \"/me\", title = \"Me\", init = \\user -> (0, Cmd.none), update = \\user msg model -> (model, Cmd.none), view = \\user model -> UI.empty, subscriptions = \\user model -> Sub.none }"},
 	"Page.adminProtected":        {"page = Page.adminProtected { path = \"/admin\", title = \"Admin\", init = \\session -> (0, Cmd.none), update = \\session msg model -> (model, Cmd.none), view = \\session model -> UI.empty, subscriptions = \\session model -> Sub.none }"},
 	"Page.dynamic":               {"task : Path { id : Int }\ntask = \"/task/{id:Int}\"\n\npage = Page.dynamic { path = task, title = \"Task\", init = \\params -> (params.id, Cmd.none), update = \\params msg model -> (model, Cmd.none), view = \\params model -> UI.text [] (String.fromInt params.id), subscriptions = \\params model -> Sub.none }"},
+	"Page.withShared":            {"cart : App.Shared Int msg\ncart =\n    App.shared\n        { init = (0, Cmd.none)\n        , update = \\_ model -> (model, Cmd.none)\n        , subscriptions = \\_ -> Sub.none\n        }\n\npage = Page.withShared cart (\\count -> Page.create { path = \"/\", title = \"Cart\", init = ((), Cmd.none), update = \\msg model -> (model, Cmd.none), view = \\model -> UI.text [] (String.fromInt count), subscriptions = \\model -> Sub.none })"},
 	"Page.sheet":                 {"page = Page.sheet (Page.create { path = \"/compose\", title = \"New message\", init = (\"\", Cmd.none), update = \\msg model -> (model, Cmd.none), view = \\model -> UI.empty, subscriptions = \\model -> Sub.none })"},
 	"Page.dynamicProtected":      {"task : Path { id : Int }\ntask = \"/task/{id:Int}\"\n\npage = Page.dynamicProtected { path = task, title = \"Task\", init = \\user params -> (params.id, Cmd.none), update = \\user params msg model -> (model, Cmd.none), view = \\user params model -> UI.empty, subscriptions = \\user params model -> Sub.none }"},
 	"Page.dynamicAdminProtected": {"user : Path { id : Int }\nuser = \"/admin/user/{id:Int}\"\n\npage = Page.dynamicAdminProtected { path = user, title = \"User\", init = \\session params -> (params.id, Cmd.none), update = \\session params msg model -> (model, Cmd.none), view = \\session params model -> UI.empty, subscriptions = \\session params model -> Sub.none }"},
@@ -742,6 +749,8 @@ var appExamples = map[string][]string{
 	"Nav.push":      {"Nav.push \"/settings\""},
 	"Nav.pushTo":    {"task : Path { id : Int }\ntask = \"/task/{id:Int}\"\n\ngoToTask = Nav.pushTo task { id = 7 }"},
 	"Nav.replace":   {"Nav.replace \"/\""},
+	"App.shared":    {"cart : App.Shared Int msg\ncart =\n    App.shared\n        { init = (0, Cmd.none)\n        , update = \\_ model -> (model, Cmd.none)\n        , subscriptions = \\_ -> Sub.none\n        }"},
+	"Cmd.toShared":  {"cart : App.Shared Int Bool\ncart =\n    App.shared\n        { init = (0, Cmd.none)\n        , update = \\_ model -> (model, Cmd.none)\n        , subscriptions = \\_ -> Sub.none\n        }\n\nemptyIt = Cmd.toShared cart True"},
 	"Nav.dismiss":   {"closeSheet : (Int, Cmd msg)\ncloseSheet = (0, Nav.dismiss)"},
 	"Nav.replaceTo": {"task : Path { id : Int }\ntask = \"/task/{id:Int}\"\n\nshowTask = Nav.replaceTo task { id = 7 }"},
 

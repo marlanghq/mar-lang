@@ -85,6 +85,13 @@ var sideByName = map[string]Side{
 	"Service.declare":   SideBoth,
 	"Service.call":      SideFrontend,
 	"Service.implement": SideBackend,
+
+	// App: the module is the build-time seam (App.fullstack and friends split
+	// the program in two), but App.shared is not part of that seam — it builds
+	// a client-side store and is called from an ordinary frontend module,
+	// beside the Service.call that fills it. Filing it as build-time would
+	// document it as something it isn't.
+	"App.shared": SideFrontend,
 }
 
 // sideByModule covers every other qualified builtin, by its module. Every

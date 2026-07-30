@@ -1,0 +1,34 @@
+module Frontend.Products exposing (Product, all, find, format)
+
+
+-- The catalog, as plain data. No state, no effects — every page reads the
+-- same list, so nothing here needs to be shared at runtime.
+
+
+type alias Product =
+    { id    : Int
+    , name  : String
+    , price : Int      -- in cents, so the arithmetic stays exact
+    }
+
+
+all : List Product
+all =
+    [ { id = 1, name = "Cast iron pan", price = 4200 }
+    , { id = 2, name = "Wooden spoon", price = 900 }
+    , { id = 3, name = "Linen apron", price = 3150 }
+    , { id = 4, name = "Chef's knife", price = 8800 }
+    , { id = 5, name = "Pepper mill", price = 2400 }
+    ]
+
+
+find : Int -> Maybe Product
+find id =
+    List.head (List.filter (\p -> p.id == id) all)
+
+
+-- Cents to "R$ 42.00". Kept here so the catalog, the item page and the cart
+-- cannot drift apart on how a price looks.
+format : Int -> String
+format cents =
+    String.fromInt (cents // 100) ++ "." ++ String.padLeft 2 '0' (String.fromInt (modBy 100 cents))

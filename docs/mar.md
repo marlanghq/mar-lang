@@ -689,6 +689,52 @@ update msg model =
 
 `Nav.dismiss` closes a route that is being presented (`Page.sheet`) — the verb its own Cancel / Done needs, doing exactly what a tap outside or Back does. With nothing presented it steps back one screen, and at the app's first screen it does nothing, so a sheet route opened cold cannot walk the reader off the site.
 
+### 5.5 Shared state (`App.shared`)
+
+Page models live on the navigation stack: going forward re-runs a page's `init`, coming Back restores the screen you left. State that has to survive that trip — a profile fetched once, a theme, an unread count, a cart — belongs in a shared store instead.
+
+An app-owned module holds the model, the messages and one binding:
+
+```elm
+def : App.Shared Model Msg
+def =
+    App.shared { init = init, update = update, subscriptions = subscriptions }
+```
+
+A page **reads** it by wrapping any of the six page constructors, and the value reaches `init` / `update` / `view` by ordinary partial application:
+
+```elm
+page : Page
+page =
+    Page.withShared Frontend.Global.def
+        (\global ->
+            Page.create { path = "/", init = init, update = update, view = view global, subscriptions = always Sub.none }
+        )
+```
+
+A page **writes** to it the way it talks to itself, by sending a message:
+
+```elm
+AddClicked id ->
+    ( model, Cmd.toShared Frontend.Global.def (Frontend.Global.Added id) )
+```
+
+Pages never assign the shared model; the shared module owns its own `update`, with the usual exhaustive `case`. `Cmd.toShared` is an ordinary `Cmd`, so it batches with `Cmd.batch` and composes with `Cmd.perform`.
+
+There is no registration step: `Main` does not mention the store, and the runtime finds it through the pages that use it. Every use site names the same `def`, which is what makes them agree on `Model` and `Msg` at compile time (ADR-0026).
+
+Semantics worth knowing:
+
+- `init` runs once, before the first page's `init`. Its `Cmd` — typically the one `Service.call` that fills the store — runs after the first render.
+- A shared change repaints the page on screen: its builder is re-applied with the new value. The page's own model is untouched and its `update` is **not** called.
+- A `Cmd.toShared` issued before a navigation still applies after it. Shared is page-independent, so unlike a page msg it is never dropped at the dispatch boundary.
+- `subscriptions` here are alive for the life of the store, not the page. A `Time.every` is an app-wide heartbeat.
+- The store dies with the tab. Persistence is out of scope; a `localStorage`-backed variant is future work.
+
+Shared is not a server cache. There is no revalidation or staleness policy — if the data can rot, the app decides when to refresh it. And it is not a place for page state: if only one screen cares, it stays in that screen's model.
+
+See `examples/shared-cart`.
+
 ## 6. Client and server
 
 The same `Service` value (section 4.4) is the contract for both halves: declared once in the shared module with its verb and path, implemented on the backend (`Service.implement`, or `Auth.protect` for an authenticated call), and invoked from a page with `Service.call`. The verb and path are transparent to the caller: `Service.call` looks the same whatever method a service uses. Renaming a service or changing its `req` / `resp` breaks both sides at compile time, with no code-generation step.

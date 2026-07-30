@@ -1,0 +1,116 @@
+module Frontend.Cart exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , text, button, navigationLink
+    , hstack, spacer
+    )
+import Frontend.Global
+import Frontend.Products
+import Frontend.Routes
+
+
+-- The cart. This page has NO model of its own — everything it shows lives in
+-- the store, and everything it does is a message to the store.
+--
+-- `Model` is Unit and `update` is a no-op, which is what a page that is a
+-- pure view onto shared state honestly looks like. It still gets a Msg type,
+-- because the buttons have to say something; they just all say it to the
+-- store rather than to this page.
+
+
+type Msg
+    = RemoveClicked Int
+    | EmptyClicked
+
+
+init : ((), Cmd Msg)
+init =
+    ( (), Cmd.none )
+
+
+update : Msg -> () -> ((), Cmd Msg)
+update msg model =
+    case msg of
+        RemoveClicked id ->
+            ( model, Cmd.toShared Frontend.Global.def (Frontend.Global.Removed id) )
+
+        EmptyClicked ->
+            ( model, Cmd.toShared Frontend.Global.def Frontend.Global.Emptied )
+
+
+view : Frontend.Global.Model -> () -> View Msg
+view global _ =
+    navigationStack [ navigationTitle "Cart" ]
+        [ list []
+            (List.concat
+                [ [ section
+                        [ header "Items"
+                        , footer (taxNote global.withTax)
+                        ]
+                        (lines global)
+                  ]
+                , [ section []
+                        [ navigationLink [] Frontend.Routes.catalog {} (text [] "Keep shopping")
+                        , navigationLink [] Frontend.Routes.settings {} (text [] "Settings")
+                        ]
+                  ]
+                ])
+        ]
+
+
+lines : Frontend.Global.Model -> List (View Msg)
+lines global =
+    case Frontend.Global.count global of
+        0 ->
+            [ text [] "Your cart is empty." ]
+
+        _ ->
+            List.concat
+                [ List.map (lineRow global) (inCart global)
+                , [ hstack []
+                        [ text [] "Total"
+                        , spacer
+                        , text [] (Frontend.Products.format (Frontend.Global.total global))
+                        ]
+                  , button [] EmptyClicked "Empty the cart"
+                  ]
+                ]
+
+
+-- Walk the catalog rather than the cart's own lines, so rows come out in
+-- catalog order however they were added.
+inCart : Frontend.Global.Model -> List Frontend.Products.Product
+inCart global =
+    List.filter (\p -> Frontend.Global.quantityOf p.id global > 0) Frontend.Products.all
+
+
+lineRow : Frontend.Global.Model -> Frontend.Products.Product -> View Msg
+lineRow global p =
+    hstack []
+        [ text [] (p.name ++ "  x" ++ String.fromInt (Frontend.Global.quantityOf p.id global))
+        , spacer
+        , button [] (RemoveClicked p.id) "Remove"
+        ]
+
+
+taxNote : Bool -> String
+taxNote withTax =
+    if withTax then "Total includes 8% tax." else "Total is before tax."
+
+
+page : Page
+page =
+    Page.withShared Frontend.Global.def
+        (\global ->
+            Page.create
+                { path = "/cart"
+                , title = "Cart"
+                , init = init
+                , update = update
+                , view = view global
+                , subscriptions = always Sub.none
+                }
+        )

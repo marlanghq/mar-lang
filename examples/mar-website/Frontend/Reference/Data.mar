@@ -516,6 +516,11 @@ sectionsFor m =
                     , { moduleName = "App", name = "fullstack", signature = "{ services : List ExposedService, pages : List Page } -> Cmd ()", side = "entry point", description = "An app that is both, sharing types and service declarations across the two halves.", examples = [ [ "App.fullstack { services = [], pages = [] }" ] ] }
                     ]
               }
+            , { category = "State that outlives navigation"
+              , entries =
+                    [ { moduleName = "App", name = "shared", signature = "{ init : (a, Cmd b), update : b -> a -> (a, Cmd b), subscriptions : a -> Sub b } -> App.Shared a b", side = "frontend", description = "Build the one app-wide model that outlives navigation: loaded once, readable from any page, and unaffected by moving between screens. Pages read it with Page.withShared and change it with Cmd.toShared.", examples = [ [ "cart : App.Shared Int msg", "cart =", "    App.shared", "        { init = (0, Cmd.none)", "        , update = \\_ model -> (model, Cmd.none)", "        , subscriptions = \\_ -> Sub.none", "        }" ] ] }
+                    ]
+              }
             ]
 
         "Page" ->
@@ -536,6 +541,11 @@ sectionsFor m =
             , { category = "How a route is presented"
               , entries =
                     [ { moduleName = "Page", name = "sheet", signature = "Page -> Page", side = "frontend", description = "Present a page over the screen it was reached from, instead of pushing it. For a task the reader finishes or abandons. Opened cold it renders full-screen.", examples = [ [ "page = Page.sheet (Page.create { path = \"/compose\", title = \"New message\", init = (\"\", Cmd.none), update = \\msg model -> (model, Cmd.none), view = \\model -> UI.empty, subscriptions = \\model -> Sub.none })" ] ] }
+                    ]
+              }
+            , { category = "Reading shared state"
+              , entries =
+                    [ { moduleName = "Page", name = "withShared", signature = "App.Shared a b -> (a -> Page) -> Page", side = "frontend", description = "Wrap any page so it can read the app-wide state built by App.shared. The builder runs again whenever that state changes, so the page always sees the current value.", examples = [ [ "cart : App.Shared Int msg", "cart =", "    App.shared", "        { init = (0, Cmd.none)", "        , update = \\_ model -> (model, Cmd.none)", "        , subscriptions = \\_ -> Sub.none", "        }", "page = Page.withShared cart (\\count -> Page.create { path = \"/\", title = \"Cart\", init = ((), Cmd.none), update = \\msg model -> (model, Cmd.none), view = \\model -> UI.text [] (String.fromInt count), subscriptions = \\model -> Sub.none })" ] ] }
                     ]
               }
             ]
@@ -1017,6 +1027,11 @@ sectionsFor m =
                     [ { moduleName = "Cmd", name = "none", signature = "Cmd a", side = "frontend", description = "Do nothing. What update returns when the message changed the model and nothing else.", examples = [ [ "Cmd.none" ] ] }
                     , { moduleName = "Cmd", name = "batch", signature = "List (Cmd a) -> Cmd a", side = "frontend", description = "Runs several commands together. There is no ordering between them.", examples = [ [ "Cmd.batch [ Nav.push \"/\", Sound.play (Sound.tone Sound.Square (Sound.c 5) 60) ]" ] ] }
                     , { moduleName = "Cmd", name = "perform", signature = "(a -> b) -> Task a -> Cmd b", side = "frontend", description = "Runs a task and hands the result back as a message. This is the bridge from the task world into update.", examples = [ [ "type Msg = GotNow Time", "started = Cmd.perform GotNow Time.now" ] ] }
+                    ]
+              }
+            , { category = "Writing shared state"
+              , entries =
+                    [ { moduleName = "Cmd", name = "toShared", signature = "App.Shared a b -> b -> Cmd c", side = "frontend", description = "Send a message to the app-wide state built by App.shared. A page never assigns that state; it asks, and the shared update decides.", examples = [ [ "cart : App.Shared Int Bool", "cart =", "    App.shared", "        { init = (0, Cmd.none)", "        , update = \\_ model -> (model, Cmd.none)", "        , subscriptions = \\_ -> Sub.none", "        }", "emptyIt = Cmd.toShared cart True" ] ] }
                     ]
               }
             ]

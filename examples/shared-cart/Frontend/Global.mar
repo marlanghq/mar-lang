@@ -1,0 +1,122 @@
+module Frontend.Global exposing (Model, Msg(..), def, count, total, quantityOf)
+
+
+import Frontend.Products
+
+
+-- The app-wide client state, and the only thing in this app that survives
+-- navigation.
+--
+-- Page models die on every forward navigation (they live on the nav stack),
+-- which is why the cart cannot live in the catalog's model: walking to an
+-- item and back would empty it. Everything a second screen needs to see
+-- belongs here; everything only one screen cares about stays in that screen.
+--
+-- Deliberately NOT called `Shared`: fullstack apps use a module by that name
+-- for the frontend/backend wire contract, and the framework never looks this
+-- module up by name anyway — `def` below is what ties it in.
+
+
+type alias Line =
+    { productId : Int
+    , quantity  : Int
+    }
+
+
+type alias Model =
+    { lines    : List Line
+    , withTax  : Bool     -- a client-only preference: no server owns it
+    }
+
+
+type Msg
+    = Added Int
+    | Removed Int
+    | Emptied
+    | TaxToggled
+
+
+init : (Model, Cmd Msg)
+init =
+    -- Runs once, before the first page's init. A fullstack app would fire its
+    -- "load my profile" Service.call here and never fetch it again.
+    ( { lines = [], withTax = False }, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Added id ->
+            ( { model | lines = addLine id model.lines }, Cmd.none )
+
+        Removed id ->
+            ( { model | lines = List.filter (\l -> l.productId /= id) model.lines }, Cmd.none )
+
+        Emptied ->
+            ( { model | lines = [] }, Cmd.none )
+
+        TaxToggled ->
+            ( { model | withTax = not model.withTax }, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    -- A Time.every here would be an app-wide heartbeat: shared subscriptions
+    -- are alive for as long as the store is, not just while one page is up.
+    Sub.none
+
+
+-- THE def. Every use site — Page.withShared in three pages, Cmd.toShared in
+-- three more — names this one binding, which is what makes them agree on
+-- Model and Msg without any of them saying so.
+--
+-- Declared last on purpose: top-level values evaluate in file order, and this
+-- one reads init/update/subscriptions above.
+def : App.Shared Model Msg
+def =
+    App.shared
+        { init = init
+        , update = update
+        , subscriptions = subscriptions
+        }
+
+
+-- Derived views of the model, so five screens cannot each write their own
+-- slightly different total.
+
+
+count : Model -> Int
+count model =
+    List.sum (List.map (\l -> l.quantity) model.lines)
+
+
+total : Model -> Int
+total model =
+    let
+        subtotal =
+            List.sum (List.map lineTotal model.lines)
+    in
+    if model.withTax then subtotal + (subtotal * 8 // 100) else subtotal
+
+
+quantityOf : Int -> Model -> Int
+quantityOf id model =
+    case List.head (List.filter (\l -> l.productId == id) model.lines) of
+        Just line -> line.quantity
+        Nothing   -> 0
+
+
+lineTotal : Line -> Int
+lineTotal line =
+    case Frontend.Products.find line.productId of
+        Just p  -> p.price * line.quantity
+        Nothing -> 0
+
+
+addLine : Int -> List Line -> List Line
+addLine id lines =
+    if List.any (\l -> l.productId == id) lines then
+        List.map (\l -> if l.productId == id then { l | quantity = l.quantity + 1 } else l) lines
+
+    else
+        lines ++ [ { productId = id, quantity = 1 } ]

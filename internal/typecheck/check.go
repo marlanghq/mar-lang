@@ -597,6 +597,7 @@ var qualifiedBuiltinTypes = map[string]bool{
 	"Keyboard.Key":        true,
 	"Gamepad.Button":      true,
 	"Sound.Wave":          true,
+	"App.Shared":          true,
 }
 
 func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[string]int) (Type, error) {

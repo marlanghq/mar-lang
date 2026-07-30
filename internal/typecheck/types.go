@@ -727,6 +727,21 @@ func TPage() TCon {
 	return TCon{Name: "Page"}
 }
 
+// TShared returns the parameterized "App.Shared model msg" type — the
+// capability value that ties one app-wide client model to the messages that
+// change it. Built by App.shared, read by Page.withShared, written by
+// Cmd.toShared. Carrying both parameters is what makes the three agree at
+// compile time without any of them naming the other's module: a page that
+// reads `def` gets the model type, and a page that sends to `def` is held to
+// that def's msg type.
+//
+// Qualified on purpose. Fullstack apps already use a module named `Shared`
+// for the frontend/backend wire contract, so a bare `Shared` type would read
+// as that module's and collide in every example we have.
+func TShared(model, msg Type) TCon {
+	return TCon{Name: "App.Shared", Args: []Type{model, msg}}
+}
+
 // TAdminSession returns the opaque "AdminSession" type — the capability
 // token the framework threads into a Page.adminProtected page's
 // init/update/view. It has no user-facing constructor: only the admin

@@ -45,9 +45,21 @@ func TestIOSBuiltinsCoverClientStdlib(t *testing.T) {
 	// are now all native: MarCanvas (SwiftUI Canvas draw-list), MarSound
 	// (AVAudioEngine chip synth), MarInput (GameController Gamepad + GCKeyboard
 	// + trait/scene Device), wired through MarPageRuntime's generalized sub
-	// reconciler. So nothing is deferred. The map stays (empty) so re-deferring
-	// a future web-first builtin is a one-line change.
-	iosDeferred := map[string]bool{}
+	// reconciler. So nothing WAS deferred, and the map is here so re-deferring a
+	// web-first builtin stays a one-line change.
+	//
+	// Shared (ADR-0026) is the current occupant, landed web-first the way Canvas
+	// and Sound did. What iOS is missing is not the three builtins in isolation
+	// but the store behind them: a model keyed by def identity, PageRuntime
+	// resolving its four functions live instead of capturing them at init, and
+	// the sub reconciler carrying a destination per tagger. Stubbing the
+	// builtins to satisfy this test would be worse than the gap — an app would
+	// compile for iOS and then quietly lose its cart.
+	iosDeferred := map[string]bool{
+		"App.shared":      true,
+		"Page.withShared": true,
+		"Cmd.toShared":    true,
+	}
 
 	var missing []string
 	for name := range required {

@@ -51,6 +51,27 @@ func (p VPage) Display() string {
 	return fmt.Sprintf("<page:%s>", p.Path)
 }
 
+// VShared is one app-wide client store: the model that outlives navigation,
+// plus the update and subscriptions that drive it. Built by App.shared, read
+// by Page.withShared, written by Cmd.toShared.
+//
+// The store itself only ever runs in the browser — this half exists because
+// `mar dev` evaluates `main` server-side to learn the ROUTES, and a page built
+// by Page.withShared cannot report its path without first being built, which
+// needs a model. InitModel is that model, and only that: the init's Cmd is
+// deliberately left unrun here, since it is a client command (typically the
+// Service.call that fills the store) and running it on the server would fetch
+// once per boot for nobody.
+type VShared struct {
+	InitModel Value
+	InitCmd   Value
+	UpdateFn  Value
+	SubsFn    Value
+}
+
+func (VShared) isValue()        {}
+func (VShared) Display() string { return "<shared>" }
+
 // readPageRecord pulls the common { path, init, update, view, title? } shape
 // out of a record argument. Used by Page.dynamic and Page.dynamicProtected
 // — both share the same surface as Page.create, the only difference being
@@ -274,6 +295,69 @@ func appBuiltins() map[string]Value {
 			}
 			page.IsSheet = true
 			return page, nil
+		}),
+
+		// App.shared — the app-wide client store's definition.
+		//
+		// Server-side this is a carrier, not a store: nothing here runs an
+		// update or a subscription. It exists because `mar dev` evaluates
+		// `main` to learn the routes, and Page.withShared below needs a model
+		// of the right shape to build its page with.
+		"appShared": nativeFn(1, func(args []Value) (Value, error) {
+			rec, ok := args[0].(VRecord)
+			if !ok {
+				return nil, fmt.Errorf("App.shared: expected record argument (got %T)", args[0])
+			}
+			initV, ok := rec.Fields["init"]
+			if !ok {
+				return nil, fmt.Errorf("App.shared: missing `init` field")
+			}
+			tup, ok := initV.(VTuple)
+			if !ok || len(tup.Members) != 2 {
+				return nil, fmt.Errorf("App.shared: `init` must be a (model, Cmd msg) tuple (got %T)", initV)
+			}
+			return VShared{
+				InitModel: tup.Members[0],
+				InitCmd:   tup.Members[1],
+				UpdateFn:  rec.Fields["update"],
+				SubsFn:    rec.Fields["subscriptions"],
+			}, nil
+		}),
+
+		// Page.withShared — a wrapper over the six page constructors, not a
+		// seventh flavor of each.
+		//
+		// The builder is applied ONCE here, with the store's initial model,
+		// which is all the server needs: the page's path, so the route can be
+		// registered and the bundle narrowed to the modules it reaches. In
+		// the browser the same builder is re-applied on every shared change,
+		// which is what makes a page render the live value rather than a
+		// snapshot — see runtime.js.
+		"pageWithShared": nativeFn(2, func(args []Value) (Value, error) {
+			shared, ok := args[0].(VShared)
+			if !ok {
+				return nil, fmt.Errorf("Page.withShared: expected an App.Shared value (got %T)", args[0])
+			}
+			built, err := Apply(args[1], shared.InitModel)
+			if err != nil {
+				return nil, fmt.Errorf("Page.withShared: %w", err)
+			}
+			page, ok := built.(VPage)
+			if !ok {
+				return nil, fmt.Errorf("Page.withShared: the builder must return a Page (got %T)", built)
+			}
+			return page, nil
+		}),
+
+		// Cmd.toShared is a browser effect, like every other Cmd. Evaluating
+		// it server-side is fine; running it is not.
+		"cmdToShared": nativeFn(2, func(args []Value) (Value, error) {
+			return VEffect{
+				Tag: "cmdToShared",
+				Run: func() (Value, error) {
+					return nil, fmt.Errorf("Cmd.toShared is only available in the browser runtime")
+				},
+			}, nil
 		}),
 
 		// Nav.* are browser-only effects. Server-side they evaluate

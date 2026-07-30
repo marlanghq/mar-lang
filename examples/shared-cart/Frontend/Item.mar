@@ -1,0 +1,108 @@
+module Frontend.Item exposing (page)
+
+
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , text, button, navigationLink
+    )
+import Frontend.Global
+import Frontend.Products
+import Frontend.Routes
+
+
+-- One product, reached from the catalog. A DYNAMIC page (its path carries an
+-- Int), and shared works the same here as anywhere: Page.withShared wraps
+-- Page.dynamic exactly as it wraps Page.create.
+--
+-- Note the two argument sources that arrive by different routes: `params`
+-- comes from the URL and is threaded by the framework as the leading
+-- argument, while `global` arrives by closure. They compose without knowing
+-- about each other.
+
+
+type alias Feedback =
+    { justAdded : Bool }
+
+
+type Msg
+    = AddClicked Int
+
+
+init : { id : Int } -> (Feedback, Cmd Msg)
+init _ =
+    ( { justAdded = False }, Cmd.none )
+
+
+update : { id : Int } -> Msg -> Feedback -> (Feedback, Cmd Msg)
+update _ msg model =
+    case msg of
+        AddClicked id ->
+            -- Two things happen at once and neither knows about the other: a
+            -- page-local flag, and a message to the store.
+            ( { model | justAdded = True }
+            , Cmd.toShared Frontend.Global.def (Frontend.Global.Added id)
+            )
+
+
+view : Frontend.Global.Model -> { id : Int } -> Feedback -> View Msg
+view global params model =
+    case Frontend.Products.find params.id of
+        Nothing ->
+            navigationStack [ navigationTitle "Not found" ]
+                [ list []
+                    [ section []
+                        [ text [] "No product with that id."
+                        , navigationLink [] Frontend.Routes.catalog {} (text [] "Back to the catalog")
+                        ]
+                    ]
+                ]
+
+        Just p ->
+            navigationStack [ navigationTitle p.name ]
+                [ list []
+                    [ section [ header "Price" ]
+                        [ text [] (Frontend.Products.format p.price) ]
+                    , section
+                        [ header "Cart"
+                        , footer (addedNote model.justAdded)
+                        ]
+                        [ text [] (alreadyIn (Frontend.Global.quantityOf p.id global))
+                        , button [] (AddClicked p.id) "Add to cart"
+                        , navigationLink [] Frontend.Routes.cart {}
+                            (text [] ("Go to cart (" ++ String.fromInt (Frontend.Global.count global) ++ ")"))
+                        ]
+                    ]
+                ]
+
+
+alreadyIn : Int -> String
+alreadyIn n =
+    case n of
+        0 -> "Not in your cart yet."
+        1 -> "One in your cart."
+        _ -> String.fromInt n ++ " in your cart."
+
+
+addedNote : Bool -> String
+addedNote justAdded =
+    if justAdded then
+        "Added. This note belongs to this screen; the cart belongs to the app."
+
+    else
+        ""
+
+
+page : Page
+page =
+    Page.withShared Frontend.Global.def
+        (\global ->
+            Page.dynamic
+                { path = Frontend.Routes.item
+                , title = "Product"
+                , init = init
+                , update = update
+                , view = view global
+                , subscriptions = \_ _ -> Sub.none
+                }
+        )

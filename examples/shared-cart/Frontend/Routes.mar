@@ -1,0 +1,21 @@
+module Frontend.Routes exposing (catalog, item, cart, settings)
+
+
+-- Typed routes, so an in-app link breaks at compile time when a path changes
+-- rather than 404-ing at runtime.
+
+
+catalog : Path {}
+catalog = "/"
+
+
+item : Path { id : Int }
+item = "/item/{id:Int}"
+
+
+cart : Path {}
+cart = "/cart"
+
+
+settings : Path {}
+settings = "/settings"
