@@ -64,7 +64,8 @@ private final class LiveVoice {
     }
 }
 
-/// One voice of a Sound.hold BED: a node held indefinitely — no duration,
+/// One voice of a held source (Sound.voice / Sound.glide): a node held
+/// indefinitely — no duration,
 /// no envelope re-trigger — whose pitch and level are SMOOTHED parameters
 /// gliding toward retunable targets. This is the native analog of the web
 /// bed (soundBedStart/soundBedSet in runtime.js): the sub keeps returning
@@ -119,18 +120,49 @@ final class MarSound: @unchecked Sendable {
     // Shared with the realtime render thread — guarded by `lock`.
     private let lock = NSLock()
     private var voices: [LiveVoice] = []
-    private var beds: [BedVoice] = []        // Sound.hold held voices
+    private var beds: [BedVoice] = []        // Sound.voice / Sound.glide held voices
     private var clock: Double = 0            // frames since engine start
     private var nextGroup = 1
 
-    // Per-sample smoothing for the RETUNE of a live bed (setTargetAtTime
-    // analogs, mirroring soundBedSet in the web runtime): pitch glides in
-    // ~80ms, volume swells slowly (1.1s — a bed follows the slow trend, not
-    // per-event jumps). The fade-in / fade-out constants that used to live
-    // here are gone: those were the envelope, and the envelope is the voice's
-    // now (Sound.attack / Sound.release), computed per bed in startHold.
-    private static let bedFreqK   = 1 - exp(-1 / (0.08 * 44_100))
-    private static let bedSwellK  = 1 - exp(-1 / (1.1 * 44_100))
+    // Per-sample smoothing for the RETUNE of a live held source (setTargetAtTime
+    // analogs, mirroring soundGlideTo in the web runtime): pitch glides in ~80ms,
+    // and a NEW LEVEL lands at one of two speeds.
+    //
+    // One number, two meanings, and the split is Sound.voice vs Sound.glide
+    // (ADR-0024). A bed's level is supposed to lag: a crowd that tracks each event
+    // is heard as a rhythm, not as a background. A VOICE's level is not — a
+    // polyphonic instrument scales its voices by how many are sounding, and that
+    // has to land while the chord is still held. At 1.1s it took about three
+    // seconds to arrive, so the notes already down kept their old level and the
+    // chord went over full scale anyway.
+    //
+    // The fade-in / fade-out constants that used to live here are gone: those were
+    // the envelope, and the envelope is the voice's now (Sound.attack /
+    // Sound.release), computed per voice in startHeld.
+    private static let bedFreqK      = 1 - exp(-1 / (0.08 * 44_100))
+    private static let bedSwellK     = 1 - exp(-1 / (1.1 * 44_100))
+    private static let voiceLevelK   = 1 - exp(-1 / (0.03 * 44_100))
+
+    /// The soft ceiling on the master mix. The bus sums voices LINEARLY and
+    /// nothing downstream was catching the result: an app that sounds several
+    /// things at once could ask for more than full scale, and the output was hard
+    /// clipped — heard as a chord that is not just louder but broken.
+    ///
+    /// Stateless on purpose, not a compressor: a compressor would duck the WHOLE
+    /// mix whenever one sound got loud, a behaviour no app can see coming. This is
+    /// a function of the sample and nothing else.
+    ///
+    /// Below the knee it is EXACTLY the identity, so anything already in range is
+    /// untouched; above it the curve bends and asymptotes to 1, so full scale can
+    /// be approached and never passed. Mirrors soundCeilingCurve in runtime.js.
+    private static let ceilingKnee = 0.7
+    @inline(__always) static func ceiling(_ x: Double) -> Double {
+        let a = abs(x)
+        if a <= ceilingKnee { return x }
+        let k = ceilingKnee
+        let y = k + (1 - k) * tanh((a - k) / (1 - k))
+        return x < 0 ? -y : y
+    }
 
     // App-owned audio controls (Sound.setMuted / Sound.master). masterLevel
     // mirrors the JS 0..0.5 headroom scaling; muted ducks everything sounding.
@@ -188,7 +220,7 @@ final class MarSound: @unchecked Sendable {
             for b in bs {
                 sample += MarSound.bedSample(b, sr: sr)
             }
-            out[frame] = Float(sample * level)
+            out[frame] = Float(MarSound.ceiling(sample * level))
         }
 
         lock.lock()
@@ -412,14 +444,27 @@ final class MarSound: @unchecked Sendable {
         }.joined(separator: ";")
     }
 
-    /// A Sound.hold BED's identity: its structure WITHOUT freq or volume
-    /// (mirrors soundBedKey in the JS runtime). Both are smooth glides on
-    /// the live bed — returning the same bed at a new pitch RETUNES it,
-    /// never stop+restarts it (which would click). A structural change
-    /// (different wave / voice count / tone shaping) still swaps the bed.
-    static func bedKey(_ snd: MarValue) -> String {
+    /// The identity of a HELD source — one node kept alive by a Sub, as opposed
+    /// to a note scheduled and forgotten (mirrors heldKey in the JS runtime).
+    /// Whatever is left OUT becomes a live parameter: handing the sound back
+    /// with only that part changed glides the running node (glideTo) instead of
+    /// stopping and restarting it, which would click AND, at 60 renders/sec,
+    /// stall the frame rate.
+    ///
+    /// Volume is always out, so a held sound can swell. `withFreq` is the ONLY
+    /// difference between the two held Subs:
+    ///
+    ///   Sound.voice  true   pitch is identity -> two pitches are two voices,
+    ///                       which is polyphony: one voice per held key.
+    ///   Sound.glide  false  pitch is a param  -> one source that slides to
+    ///                       whatever pitch it is handed. Monophonic by
+    ///                       construction, like glide on a synth.
+    ///
+    /// A structural change (different wave / voice count / tone shaping) swaps
+    /// the source either way: the filter is built once and never glides.
+    static func heldKey(_ snd: MarValue, withFreq: Bool) -> String {
         voicesOf(snd).map {
-            "\($0.wave)|\($0.ms)|\($0.endFreq)|\($0.holdMs)|\($0.delayMs)|\($0.duty)|\($0.vibDepth)|\($0.vibRate)|\($0.arp)|\($0.lowCut)|\($0.highCut)|\($0.attack)|\($0.release)"
+            "\($0.wave)|\(withFreq ? $0.freq : 0)|\($0.ms)|\($0.endFreq)|\($0.holdMs)|\($0.delayMs)|\($0.duty)|\($0.vibDepth)|\($0.vibRate)|\($0.arp)|\($0.lowCut)|\($0.highCut)|\($0.attack)|\($0.release)"
         }.joined(separator: ";")
     }
 
@@ -456,9 +501,9 @@ final class MarSound: @unchecked Sendable {
     /// ambient: a steady bed — each voice becomes ONE held BedVoice (no
     /// duration, no envelope re-trigger; re-arming the sound on a timer
     /// audibly repeated the attack, which is what made the engine drone
-    /// sound like a stuck loop). Fades in on start; retuneHold glides
+    /// sound like a stuck loop). Fades in on start; glideTo glides
     /// it live; stop fades it out. Mirrors soundBedStart in runtime.js.
-    func startHold(_ snd: MarValue) -> Handle {
+    func startHeld(_ snd: MarValue) -> Handle {
         ensure()
         let h = Handle()
         lock.lock()
@@ -486,14 +531,16 @@ final class MarSound: @unchecked Sendable {
     /// engine returns the same bed at a new freq every frame and the note
     /// slides, the "vrum" rising with speed). Small deltas are skipped,
     /// like the web, so a steady bed isn't re-targeted 60x a second.
-    func retuneHold(_ h: Handle, _ snd: MarValue) {
+    /// `promptLevel` is true for Sound.voice and false for Sound.glide — see
+    /// voiceLevelK / bedSwellK above. It is the only thing that differs.
+    func glideTo(_ h: Handle, _ snd: MarValue, promptLevel: Bool) {
         let vs = MarSound.voicesOf(snd).filter { $0.wave != "Rest" }
         lock.lock()
         for (b, v) in zip(h.bedRefs, vs) {
             let peak = max(0.0002, min(100, max(0, v.volume)) / 100)
             if abs(b.ampTarget - peak) >= 0.004 {
                 b.ampTarget = peak
-                b.ampK = MarSound.bedSwellK
+                b.ampK = promptLevel ? MarSound.voiceLevelK : MarSound.bedSwellK
             }
             let f = max(1, v.freq)
             if b.wave != "Noise" && abs(b.freqTarget - f) >= 1 {
@@ -640,7 +687,8 @@ final class MarSound: @unchecked Sendable {
             .ctor(tag: "__Sub", args: [.ctor(tag: "__SubSound", args: [.string(mode), snd], origin: nil)], origin: nil)
         }
         env.defineFn("soundLoop", "Sound.loop", 1) { a in soundSub("loop", a[0]) }
-        env.defineFn("soundHold", "Sound.hold", 1) { a in soundSub("hold", a[0]) }
+        env.defineFn("soundVoice", "Sound.voice", 1) { a in soundSub("voice", a[0]) }
+        env.defineFn("soundGlide", "Sound.glide", 1) { a in soundSub("glide", a[0]) }
         env.defineFn("soundOnce", "Sound.once", 1) { a in soundSub("once", a[0]) }
         env.defineFn("soundSetMuted", "Sound.setMuted", 1) { a in
             let b: Bool = { if case .bool(let x) = a[0] { return x }; return false }()

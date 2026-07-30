@@ -660,14 +660,22 @@ func baseBindings() map[string]Type {
 	out["soundRest"] = TArrow{From: TInt, To: TSound}
 	// Sound.play : Sound -> Cmd msg (fire once).
 	// Sound.loop : Sound -> Sub msg (replay the sound seamlessly while subscribed —
-	//   melodies / background music). Sound.hold : Sound -> Sub msg (hold each
-	//   voice as one steady node — crowd / wind / drone, no re-trigger).
+	//   melodies / background music).
 	// Sound.once : Sound -> Sub msg (play the sound ONE time while subscribed —
 	//   a death dirge, a stinger — and cut it off if the sub goes away first;
 	//   the cancellable middle ground between play and loop).
+	// Sound.voice : Sound -> Sub msg (one held voice, sounding for as long as it
+	//   is returned. Its PITCH is part of its identity, so two pitches are two
+	//   voices: that is polyphony, one voice per held key).
+	// Sound.glide : Sound -> Sub msg (the same held source with its pitch as a
+	//   LIVE parameter instead of its identity, so handing it a new pitch slides
+	//   the running oscillator there — an engine note, a siren. Monophonic by
+	//   construction, exactly like glide on a real synth: there is one source,
+	//   and it is always on its way somewhere).
 	out["soundPlay"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TSound, To: TCmd(b)}}
 	out["soundLoop"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TSound, To: TSub(b)}}
-	out["soundHold"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TSound, To: TSub(b)}}
+	out["soundVoice"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TSound, To: TSub(b)}}
+	out["soundGlide"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TSound, To: TSub(b)}}
 	out["soundOnce"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TSound, To: TSub(b)}}
 	// Note helpers : Int -> Int  (octave -> Hz, equal temperament, C4 = middle C,
 	// A4 = 440). Kills the magic-Hz table: Sound.tone Sound.Square (Sound.e 5) dur.
@@ -3589,7 +3597,8 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Sound.sequence":     "soundSequence",
 		"Sound.play":         "soundPlay",
 		"Sound.loop":         "soundLoop",
-		"Sound.hold":         "soundHold",
+		"Sound.voice":        "soundVoice",
+		"Sound.glide":        "soundGlide",
 		"Sound.once":         "soundOnce",
 		"Sound.setMuted":     "soundSetMuted",
 		"Sound.master":       "soundMaster",

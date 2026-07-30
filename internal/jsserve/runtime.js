@@ -1295,7 +1295,7 @@
   }
   // ---- Sound (docs/proposals/sound.md): chip-audio SFX + loops + beds ----
   // A Sound value is { k:'SND', voices:[{ wave, freq, ms, endFreq, volume,
-  // delayMs }] }. Sound.play (a Cmd) fires one; Sound.loop / Sound.hold (Subs)
+  // delayMs }] }. Sound.play (a Cmd) fires one; Sound.loop / Sound.voice (Subs)
   // repeat one / hold one while subscribed.
   // The envelope is the VOICE's (Sound.attack / Sound.release), never the
   // player's. It used to be neither: the one-shot renderer shaped every note
@@ -1313,6 +1313,48 @@
   const voiceAttackSec = (v) => rampSec(v.attack);
   const voiceReleaseSec = (v) => rampSec(v.release);
   let audioCtx = null, masterGain = null, noiseBuf = null, noiseBuf2 = null;
+  // The bus sums voices LINEARLY, and nothing downstream was catching the result:
+  // an app that sounds several things at once could ask for more than full scale
+  // and the output was hard-clipped by the device — heard as a chord that is not
+  // just louder but broken. Measured on examples/pocket-synth: three held organ
+  // notes reached 1.05 to 1.29 depending on where their phases landed.
+  //
+  // The fix is a stateless soft ceiling, not a compressor. A compressor would duck
+  // the WHOLE mix whenever one sound got loud, which is a behaviour no app can see
+  // coming or reason about; this is a function of the sample and nothing else, so
+  // it stays as predictable as the rest of the engine.
+  //
+  // Below the knee it is EXACTLY the identity, so every app that was already
+  // within range sounds as before. Above it the curve bends and asymptotes to 1,
+  // so full scale can be approached and never passed. Same category as
+  // SOUND_MIN_RAMP_MS: not house style, a floor (here a ceiling) past which the
+  // output stops being a faithful rendering of what was asked for.
+  // A WaveShaper maps its INPUT RANGE -1..+1 across the whole table, so the table
+  // has to be built over -1..+1 too. Building it over a wider span silently
+  // rescales the transfer function — a first draft spanned -2..+2 and therefore
+  // doubled every quiet signal and saturated everything else, which is the exact
+  // opposite of transparent. Input past ±1 clamps to the end of the table, so the
+  // value there is the hard limit: it is deliberately below 1.
+  const CEILING_KNEE = 0.7;
+  function soundCeilingCurve() {
+    const n = 4096, c = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * 2 - 1;            // the table spans the input range
+      const a = Math.abs(x), k = CEILING_KNEE;
+      const y = a <= k ? a : k + (1 - k) * Math.tanh((a - k) / (1 - k));
+      c[i] = x < 0 ? -y : y;
+    }
+    return c;
+  }
+  // Exposed so the ceiling's two promises can be tested as pure arithmetic,
+  // without an AudioContext: see TestMasterCeilingIsSoftAndTransparent.
+  if (typeof globalThis !== 'undefined') globalThis.__marSoundCeilingCurve = soundCeilingCurve;
+  function soundCeiling(ctx) {
+    const ws = ctx.createWaveShaper();
+    ws.curve = soundCeilingCurve();
+    ws.oversample = '2x';                          // the bend makes harmonics; do not alias them
+    return ws;
+  }
   let dutyWaveCache = {};   // Sound.duty pulse-width -> band-limited PeriodicWave
   let soundMuted = false;
   let soundMasterLevel = 0.35;   // Sound.master 0..100 -> gain; 0.35 is the default headroom (~master 70)
@@ -1325,7 +1367,7 @@
       audioCtx = new AC();
       masterGain = audioCtx.createGain();
       masterGain.gain.value = soundMuted ? 0 : soundMasterLevel;   // headroom so stacked voices don't clip
-      masterGain.connect(audioCtx.destination);
+      masterGain.connect(soundCeiling(audioCtx)).connect(audioCtx.destination);
     }
     if (audioCtx.state === 'suspended') { try { audioCtx.resume(); } catch (e) {} }
     return audioCtx;
@@ -1360,7 +1402,7 @@
   if (typeof window !== 'undefined') window.marSoundMute = (b) => { soundMuted = !!b; applyMaster(); };
   // A looping white-noise clip, DE-CLICKED at the loop point. Two artefacts to beat:
   //   1. Repetition: a single looped clip, however long, is heard as a recurring
-  //      pattern. Cured by DECORRELATION - the bed (soundBedStart) sums two of these
+  //      pattern. Cured by DECORRELATION - a held source (soundHeldStart) sums two of these
   //      at incommensurate lengths so the wash never repeats.
   //   2. The seam "estalo": when a buffer loops, buf[n-1] -> buf[0] is a FIXED
   //      sample-to-sample STEP that recurs every loop period; through the high-pass
@@ -1389,7 +1431,7 @@
     return noiseBuf;
   }
   function soundNoiseBuffer2(ctx) {
-    // The bed's second, different-length layer (detuned in soundBedStart) - its loop
+    // The second, different-length noise layer (detuned in soundHeldStart) - its loop
     // is incommensurate with the primary's, so the summed wash never repeats.
     if (!noiseBuf2) noiseBuf2 = makeNoiseLoop(ctx, 4.9);
     return noiseBuf2;
@@ -1439,7 +1481,7 @@
     return head;   // source -> highpass -> lowpass -> dest
   }
 
-  function soundVoice(ctx, v, at, dest) {
+  function scheduleVoice(ctx, v, at, dest) {
     // A rest (Sound.rest) occupies time in a sequence but emits nothing.
     if (v.wave === 'Rest') return;
     const t0 = at + (v.delayMs || 0) / 1000;
@@ -1551,30 +1593,33 @@
     const ctx = ensureAudio();
     if (!ctx || soundMuted || !snd || !snd.voices) return;
     const at = ctx.currentTime + 0.02;
-    for (const v of snd.voices) soundVoice(ctx, v, at);
+    for (const v of snd.voices) scheduleVoice(ctx, v, at);
   }
-  // Sound.hold plays a BED: each voice becomes ONE continuous node held at a
-  // steady level (fades in on start, out on stop), NOT a re-triggered grain. So a
-  // wash stays constant with no looping pulse, and swapping beds cross-fades
-  // cleanly. Noise voices become TWO decorrelated looping layers so the wash never
+  // The start of a HELD source, behind both Sound.voice and Sound.glide: each
+  // voice becomes ONE continuous node held at a steady level (fades in on start,
+  // out on stop), NOT a re-triggered grain. So an organ key stays flat with no
+  // looping pulse, a wash stays constant, and swapping sources cross-fades
+  // cleanly. Noise voices become TWO decorrelated looping layers so a wash never
   // audibly repeats (see below); oscillators hold their pitch.
   // (Looping MELODIES are Sound.loop / soundLoopStart below, not this.)
   //
   // The oscillator branch applies the same TIMBRE shaping as the one-shot path
-  // (soundVoice): duty, vibrato, and the lowCut/highCut filters. It used to hold a
-  // bare, unshaped tone, which made ambient useless as a "held note": a synth pad
-  // lost its wobble and its pulse width the moment it stopped re-triggering, so
-  // holding a key had to mean looping (and audibly re-attacking) just to keep the
-  // timbre. The difference from soundVoice is LIFETIME, which is the point of a
-  // bed: no amplitude envelope, and the vibrato LFO never stops.
+  // (scheduleVoice): duty, vibrato, and the lowCut/highCut filters. It used to
+  // hold a bare, unshaped tone, which made a held sound useless as a held NOTE: a
+  // synth pad lost its wobble and its pulse width the moment it stopped
+  // re-triggering, so holding a key had to mean looping (and audibly
+  // re-attacking) just to keep the timbre. The difference from scheduleVoice is
+  // LIFETIME, which is the whole point: no amplitude envelope, and the vibrato
+  // LFO never stops.
   //
-  // What a bed deliberately does NOT apply is the per-note PITCH ENVELOPE —
-  // Sound.sweep and Sound.arp. Both describe how one note's pitch moves over its
-  // own length, and a bed has no length; worse, its pitch is a live-retunable
-  // parameter that soundBedSet glides from underneath (that is how an engine note
-  // tracks speed), so a scheduled ramp here would be silently overwritten by the
-  // next retune. Those stay with Sound.loop / Sound.play, which own a note's span.
-  function soundBedStart(snd) {
+  // What a held source deliberately does NOT apply is the per-note PITCH ENVELOPE
+  // — Sound.sweep and Sound.arp. Both describe how one note's pitch moves over
+  // its own length, and a held source has no length; worse, for Sound.glide the
+  // pitch is a live parameter that soundGlideTo slides from underneath (that is
+  // how an engine note tracks speed), so a scheduled ramp here would be silently
+  // overwritten by the next slide. Those stay with Sound.loop / Sound.play, which
+  // own a note's span.
+  function soundHeldStart(snd) {
     const ctx = ensureAudio();
     if (!ctx || soundMuted || !snd || !snd.voices) return { nodes: [] };
     const at = ctx.currentTime + 0.02;
@@ -1621,7 +1666,7 @@
         else node.type = v.wave === 'Triangle' ? 'triangle' : v.wave === 'Sawtooth' ? 'sawtooth' : 'square';
         node.frequency.setValueAtTime(Math.max(1, v.freq || 440), at);
         // Sound.vibrato — no stop time, so the wobble breathes for as long as the
-        // bed lives. Driven on `detune` (cents) precisely so soundBedSet can glide
+        // bed lives. Driven on `detune` (cents) precisely so soundGlideTo can glide
         // `frequency` underneath a live bed without disturbing it.
         if (v.vibDepth && v.vibDepth > 0) {
           const lfo = ctx.createOscillator();
@@ -1630,7 +1675,7 @@
           lg.gain.setValueAtTime(v.vibDepth, at);
           lfo.connect(lg).connect(node.detune);
           lfo.start(at);
-          extra.push(lfo);   // soundBedStop stops every extra alongside the node
+          extra.push(lfo);   // soundHeldStop stops every extra alongside the node
         }
         node.connect(soundFilterChain(ctx, v, g));
       }
@@ -1639,7 +1684,7 @@
     }
     return { nodes };
   }
-  function soundBedStop(h) {
+  function soundHeldStop(h) {
     if (!h || !h.nodes || !audioCtx) return;
     const t = audioCtx.currentTime;
     for (const rec of h.nodes) {
@@ -1659,10 +1704,26 @@
       } catch (e) {}
     }
   }
-  // Retune a LIVE bed's per-voice volume without restarting it - a smooth glide to
-  // the new levels (e.g. a stadium swelling as an attack nears goal: the sub keeps
-  // returning the same bed at a rising volume; see soundBedKey).
-  function soundBedSet(h, snd) {
+  // Slide a LIVE held source to new per-voice levels (and, for Sound.glide, to a
+  // new pitch) without restarting it: a smooth ramp to whatever it is handed, not
+  // a stop+start. A stadium swells as an attack nears goal by returning the same
+  // sound at a rising volume; an engine note tracks speed by returning it at a
+  // rising pitch. Which of the two is possible is decided by heldKey.
+  //
+  // How fast a NEW LEVEL lands is one number with two meanings, and the split is
+  // the same one as Sound.voice vs Sound.glide (ADR-0024). A bed's level is
+  // supposed to lag: a crowd that tracks each event is heard as a rhythm, not as a
+  // background. A VOICE's level is not — a polyphonic instrument scales its voices
+  // by how many are sounding, and that has to land while the chord is still being
+  // held. At 1.1s it took about three seconds to arrive, so the notes already down
+  // kept their old level and a chord still went over full scale; the app's
+  // normalisation could only reach the notes that had not started yet.
+  //
+  // 30ms is prompt enough to be inaudible as a movement and long enough not to
+  // step the gain (a step is a click).
+  const VOICE_RELEVEL_SEC = 0.03;
+  const BED_RELEVEL_SEC = 1.1;
+  function soundGlideTo(h, snd, levelSec) {
     if (!h || !h.nodes || !audioCtx || !snd || !snd.voices) return;
     const t = audioCtx.currentTime;
     for (let i = 0; i < h.nodes.length; i++) {
@@ -1679,7 +1740,7 @@
           // Big time-constant = the level lags HEAVILY, following only the slow
           // trend and ignoring per-event jumps. That lag is what a BED is: a level
           // that tracks each event is heard as a rhythm, not as a background.
-          rec.gain.gain.setTargetAtTime(peak, t, 1.1);
+          rec.gain.gain.setTargetAtTime(peak, t, levelSec == null ? BED_RELEVEL_SEC : levelSec);
         } catch (e) {}
       }
       // PITCH: glide the SAME oscillator to the voice's new freq (oscillators only
@@ -1731,7 +1792,7 @@
       // the present so unmuting resumes smoothly (no burst to "catch up").
       if (soundMuted) { state.next = audioCtx.currentTime + 0.06; return; }
       while (state.next < audioCtx.currentTime + horizon) {
-        for (const v of state.voices) soundVoice(audioCtx, v, state.next, loopGain);
+        for (const v of state.voices) scheduleVoice(audioCtx, v, state.next, loopGain);
         state.next += state.period;
       }
     };
@@ -1783,7 +1844,7 @@
     g.gain.value = 1;
     g.connect(masterGain);
     const at = ctx.currentTime + 0.02;
-    for (const v of snd.voices) soundVoice(ctx, v, at, g);
+    for (const v of snd.voices) scheduleVoice(ctx, v, at, g);
     return { gain: g };
   }
   function soundOnceStop(state) {
@@ -1947,14 +2008,28 @@
       stop: (rec) => { const h = rec.handle; if (!h) return; h.stopped = true; padWatchRemove(h.fire); },
       fire: (rec) => { const r = gamepadStateRecord(); for (const tg of rec.taggers) if (currentDispatch) currentDispatch(apply(tg, r)); },
     },
-    // Sound.hold — holds a steady bed while the subscription is active. Emits
-    // no msgs (fire is a no-op); the reconcile key ignores volume, so returning
-    // the same bed at a new volume RETUNES the live gain (a swell) instead of
-    // restarting it. NOT clock: audio keeps going during time-travel.
-    hold: {
-      start: (g) => soundBedStart(g.sound),
-      stop: (rec) => soundBedStop(rec.handle),
-      update: (rec, g) => soundBedSet(rec.handle, g.sound),   // live volume swell, no restart
+    // Sound.voice and Sound.glide — a held source, alive for as long as the
+    // subscription is. Same start and stop; they differ in exactly two things,
+    // and both are the same distinction:
+    //
+    //   what the reconcile key covers   heldKey, computed before the sub gets
+    //                                   here: pitch is identity for a voice and
+    //                                   a live parameter for a glide
+    //   how fast a new level lands      a voice now, a bed slowly
+    //
+    // Whatever the key leaves out is retuned on the running node instead of
+    // restarting it. Emits no msgs (fire is a no-op). NOT clock: audio keeps
+    // going during time-travel.
+    voice: {
+      start: (g) => soundHeldStart(g.sound),
+      stop: (rec) => soundHeldStop(rec.handle),
+      update: (rec, g) => soundGlideTo(rec.handle, g.sound, VOICE_RELEVEL_SEC),
+      fire: () => {},
+    },
+    glide: {
+      start: (g) => soundHeldStart(g.sound),
+      stop: (rec) => soundHeldStop(rec.handle),
+      update: (rec, g) => soundGlideTo(rec.handle, g.sound, BED_RELEVEL_SEC),
       fire: () => {},
     },
     // Sound.loop — replays a Sound seamlessly while subscribed. The reconcile key
@@ -4516,17 +4591,32 @@
     // outermost one, and the loss is invisible (no error, just a sound that
     // ignores half of what it was asked for).
     const cloneVoices = (snd) => (snd && snd.voices) ? snd.voices.map(v => ({ ...v })) : [];
-    // A Sound.hold BED's identity is its structure WITHOUT volume OR freq: the
-    // bed is a single HELD oscillator, so returning it from `subscriptions` at a
-    // new volume swells the live gain, and at a new pitch RETUNES the live
-    // oscillator's frequency (both are smooth glides in soundBedSet) — never a
-    // stop+restart, which would click/crossfade. Noise beds carry freq 0, so
-    // dropping freq changes nothing for them. The cuts DO belong to the identity:
-    // the filter is built once when the bed starts and never glides, so a bed
-    // asking for a new shape has to be a new bed or it would keep the old one.
-    const soundBedKey = (snd) => {
-      try { return JSON.stringify(((snd && snd.voices) || []).map(v => [v.wave, v.ms, v.endFreq, v.holdMs, v.delayMs, v.duty, v.vibDepth, v.vibRate, v.arp, v.lowCut, v.highCut, v.attack, v.release])); }
-      catch (e) { return 'x'; }
+    // The identity of a HELD source — one oscillator kept alive by a Sub, as
+    // opposed to a note scheduled and forgotten. Whatever is left OUT of the
+    // identity becomes a live parameter: returning the sound again with only
+    // that part changed glides the running node (soundGlideTo) instead of
+    // stopping and restarting it, which would click.
+    //
+    // Volume is always out, so a held sound can swell. `withFreq` is the ONLY
+    // difference between the two held Subs, and it is the whole difference:
+    //
+    //   Sound.voice  withFreq = true   pitch is identity  -> two pitches are
+    //                                  two voices. Polyphony: a voice per key.
+    //   Sound.glide  withFreq = false  pitch is a param   -> one source that
+    //                                  slides to whatever pitch it is handed.
+    //                                  Monophonic by construction, like glide
+    //                                  on a synth. An engine note, a siren.
+    //
+    // Noise carries freq 0, so the flag changes nothing for it. The cuts DO
+    // belong to the identity either way: the filter is built once when the
+    // source starts and never glides, so a new shape has to be a new source or
+    // it would keep the old filter.
+    const heldKey = (snd, withFreq) => {
+      try {
+        return JSON.stringify(((snd && snd.voices) || []).map(v => [
+          v.wave, withFreq ? v.freq : 0, v.ms, v.endFreq, v.holdMs, v.delayMs,
+          v.duty, v.vibDepth, v.vibRate, v.arp, v.lowCut, v.highCut, v.attack, v.release]));
+      } catch (e) { return 'x'; }
     };
     // tone : Wave -> Int -> Int -> Sound  (wave, freq Hz, duration ms)
     const soundToneImpl = native(3, ([wave, freq, ms]) =>
@@ -4612,8 +4702,10 @@
     // once : Sound -> Sub msg (play through a single time; unsubscribe cancels).
     const soundOnceImpl = native(1, ([snd]) => ({ k: 'SUB', items: [{ src: 'once', key: 'once:' + soundFullKey(snd), sound: snd, tagger: null }] }));
     def('soundOnce', soundOnceImpl); def('Sound.once', soundOnceImpl);
-    const soundHoldImpl = native(1, ([snd]) => ({ k: 'SUB', items: [{ src: 'hold', key: 'hold:' + soundBedKey(snd), sound: snd, tagger: null }] }));
-    def('soundHold', soundHoldImpl); def('Sound.hold', soundHoldImpl);
+    const soundVoiceImpl = native(1, ([snd]) => ({ k: 'SUB', items: [{ src: 'voice', key: 'voice:' + heldKey(snd, true), sound: snd, tagger: null }] }));
+    def('soundVoice', soundVoiceImpl); def('Sound.voice', soundVoiceImpl);
+    const soundGlideImpl = native(1, ([snd]) => ({ k: 'SUB', items: [{ src: 'glide', key: 'glide:' + heldKey(snd, false), sound: snd, tagger: null }] }));
+    def('soundGlide', soundGlideImpl); def('Sound.glide', soundGlideImpl);
     // App-owned audio. setMuted ducks the master gain (silences beds/loops already
     // sounding, not just new plays); master sets a 0..100 volume.
     const soundSetMutedImpl = native(1, ([b]) => VEffect(() => { soundMuted = !!(b && b.b); applyMaster(); return VUnit(); }, 'soundSetMuted'));
@@ -12725,7 +12817,7 @@
   // Start one subscription source directly, outside a running page. A Cmd can be
   // driven from a test because it carries .run(); a Sub cannot — it only means
   // something to the reconciler. This lets a test drive the SUB half of the synth
-  // (Sound.hold's held bed) against a fake AudioContext, the same way the Cmd
+  // (Sound.voice / Sound.glide's held node) against a fake AudioContext, the same way the Cmd
   // half is already driven through Sound.play.
   global.__marStartSub = function (src, sound) { return subSources[src].start({ sound }); };
   } // end if (__MAR_DEV__)

@@ -66,18 +66,54 @@ playWind =
 
 playPlain =
     Sound.play plain
+
+
+-- Two held notes a fifth apart, through both held Subs. What the reconcile key
+-- covers is the ONLY difference between them, and it is the difference between
+-- a keyboard and an engine, so it is worth pinning by name.
+voiceLow : Sub msg
+voiceLow =
+    Sound.voice (Sound.tone Sound.Square 220 1000)
+
+
+voiceHigh : Sub msg
+voiceHigh =
+    Sound.voice (Sound.tone Sound.Square 330 1000)
+
+
+-- the same note, louder: volume is a live parameter for a held voice, so this
+-- must swell the running note rather than start a second one
+voiceLoud : Sub msg
+voiceLoud =
+    Sound.voice (Sound.volume 90 (Sound.tone Sound.Square 220 1000))
+
+
+glideLow : Sub msg
+glideLow =
+    Sound.glide (Sound.tone Sound.Square 220 1000)
+
+
+glideHigh : Sub msg
+glideHigh =
+    Sound.glide (Sound.tone Sound.Square 330 1000)
 `
 
 // runSoundDriver compiles soundShapingSrc, drops it next to the real runtime.js,
 // and runs `driver` under node with both as argv. Returns the driver's stdout.
 func runSoundDriver(t *testing.T, driver string) string {
 	t.Helper()
+	return runSoundDriverSrc(t, soundShapingSrc, driver)
+}
+
+// runSoundDriverSrc is the same for a caller that brings its own Mar module.
+func runSoundDriverSrc(t *testing.T, src, driver string) string {
+	t.Helper()
 	nodePath, lookErr := exec.LookPath("node")
 	if lookErr != nil {
 		t.Skip("node not installed")
 	}
 
-	mod, err := parser.Parse(soundShapingSrc)
+	mod, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -153,7 +189,7 @@ const param = () => ({
 });
 function mk(kind, extra) {
   const n = Object.assign({ __id: nextId++, __kind: kind,
-    connect(dst) { edges.push([this.__id, dst && dst.__id]); },
+    connect(dst) { edges.push([this.__id, dst && dst.__id]); return dst; },
     disconnect() {}, start() {}, stop() {}, setPeriodicWave() {},
   }, extra);
   nodes.push(n);
@@ -168,6 +204,7 @@ const ctx = {
   createBiquadFilter: () => mk('biquad', { frequency: param(), Q: param(), type: '' }),
   createBuffer: (ch, len) => ({ getChannelData: () => new Float32Array(len) }),
   createPeriodicWave: () => ({}),
+  createWaveShaper: () => mk('shaper', { curve: null, oversample: '' }),
 };
 globalThis.window = { AudioContext: function () { return ctx; } };
 
@@ -202,7 +239,7 @@ process.stdout.write(
 	}
 }
 
-// Sound.hold holds a voice instead of re-triggering it, which is the only way
+// Sound.voice holds a voice instead of re-triggering it, which is the only way
 // to sustain a note without an audible re-attack. But the bed used to build a
 // BARE oscillator — no duty, no vibrato, no filters — so a patch lost its timbre
 // the moment it stopped looping, and "held" was only usable for flat drones.
@@ -245,6 +282,7 @@ const ctx = {
   createBiquadFilter: () => mk('biquad', { frequency: param('frequency'), Q: param('Q'), type: '' }),
   createBuffer: (ch, len) => ({ getChannelData: () => new Float32Array(len) }),
   createPeriodicWave: () => ({}),
+  createWaveShaper: () => mk('shaper', { curve: null, oversample: '' }),
 };
 globalThis.window = { AudioContext: function () { return ctx; } };
 
@@ -252,7 +290,7 @@ globalThis.window = { AudioContext: function () { return ctx; } };
 // graph actually contains: pulse shaping, a vibrato LFO, and any filters.
 function bedOf(name) {
   nodes = []; edges = []; nextId = 1;
-  globalThis.__marStartSub('hold', globalThis.__marEvalRaw(program, name));
+  globalThis.__marStartSub('voice', globalThis.__marEvalRaw(program, name));
   const duty = nodes.some(n => n.__kind === 'osc' && n.__periodic) ? 'duty' : '-';
   const vib = edges.some(e => e[1] === 'param:detune') ? 'vib' : '-';
   const cuts = nodes.filter(n => n.__kind === 'biquad').map(n => n.type + n.frequency.value);
@@ -263,5 +301,92 @@ process.stdout.write([bedOf('Shape.pad'), bedOf('Shape.warm'), bedOf('Shape.plai
 	want := "Shape.pad:duty/vib/- Shape.warm:-/-/lowpass900 Shape.plain:-/-/-"
 	if got != want {
 		t.Fatalf("the held bed dropped shaping the voice asked for.\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// Two held notes at different pitches must be two VOICES and one GLIDE. That is
+// the whole difference between the two Subs, and getting it wrong is not a
+// theoretical risk: `Sound.hold` was both of them at once, and its key left
+// pitch out — correct for an engine note that slides with speed, fatal for a
+// keyboard. Two held organ keys hashed to the same key, collapsed into one
+// oscillator, and releasing one slid the survivor to the other note.
+//
+// Volume stays out of both keys, so a held note can still swell.
+func TestHeldSubIdentity(t *testing.T) {
+	got := runSoundDriverSrc(t, soundShapingSrc, `
+const fs = require('fs');
+(0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
+const program = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+globalThis.window = {};
+
+const keyOf = (name) => {
+  const sub = globalThis.__marEvalRaw(program, name);
+  if (!sub || sub.k !== 'SUB' || !sub.items || !sub.items.length) return 'NOT-A-SUB:' + name;
+  return sub.items[0].key;
+};
+const cmp = (label, a, b) => label + ':' + (keyOf(a) === keyOf(b) ? 'same' : 'differ');
+process.stdout.write([
+  cmp('voicePitch', 'Shape.voiceLow', 'Shape.voiceHigh'),
+  cmp('glidePitch', 'Shape.glideLow', 'Shape.glideHigh'),
+  cmp('voiceVolume', 'Shape.voiceLow', 'Shape.voiceLoud'),
+].join(' '));
+`)
+	want := "voicePitch:differ glidePitch:same voiceVolume:same"
+	if got != want {
+		t.Fatalf("the held Subs do not carry the identities they promise.\n got: %s\nwant: %s\n"+
+			"voicePitch:same means Sound.voice is monophonic — two keys would sound as one.\n"+
+			"glidePitch:differ means Sound.glide restarts instead of sliding.\n"+
+			"voiceVolume:differ means a swell on a held note restarts it (a click).", got, want)
+	}
+}
+
+// The master bus sums voices linearly, so an app that sounds several things at
+// once can ask for more than full scale. It used to get there: three held organ
+// notes in examples/pocket-synth measured 1.05 to 1.29 at the bus depending on
+// where their phases landed, and past 1.0 the device hard-clips — a chord that is
+// not merely louder but broken.
+//
+// Two properties, and BOTH matter. The ceiling has to be inescapable, or it is
+// not a ceiling. It also has to be the exact identity below the knee, or every
+// app that was already in range quietly changes tone the day it lands.
+func TestMasterCeilingIsSoftAndTransparent(t *testing.T) {
+	got := runSoundDriverSrc(t, soundShapingSrc, `
+const fs = require('fs');
+(0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
+globalThis.window = {};
+
+// The curve is the whole mechanism, and it is pure: read it straight out.
+const curve = globalThis.__marSoundCeilingCurve();
+const n = curve.length;
+const at = (x) => {                       // the table spans the input range -1..1
+  const i = Math.round(((x + 1) / 2) * (n - 1));
+  return curve[Math.max(0, Math.min(n - 1, i))];
+};
+const out = [];
+// transparent below the knee: bit-for-bit what came in
+for (const x of [0, 0.1, 0.35, 0.6, 0.69]) {
+  out.push('id(' + x + ')=' + (Math.abs(at(x) - x) < 1e-3 ? 'yes' : 'no:' + at(x).toFixed(4)));
+}
+// inescapable: not a sample of the curve but its MAXIMUM, so no table
+// quantisation can make a missing ceiling look like a present one
+let peak = 0;
+for (const v of curve) peak = Math.max(peak, Math.abs(v));
+out.push('maxUnder1=' + (peak < 1 ? 'yes' : 'no:' + peak.toFixed(4)));
+// input past +-1 clamps to the end of the table, so that entry IS the hard limit
+out.push('limitUnder1=' + (Math.abs(curve[n - 1]) < 1 ? 'yes' : 'no:' + curve[n - 1].toFixed(4)));
+// monotonic, so it cannot fold a loud signal back down into a quiet one
+let mono = true;
+for (let i = 1; i < n; i++) if (curve[i] < curve[i - 1] - 1e-6) mono = false;
+out.push('monotonic=' + (mono ? 'yes' : 'no'));
+// and odd, so it adds no DC offset
+out.push('odd=' + (Math.abs(at(0.9) + at(-0.9)) < 1e-3 ? 'yes' : 'no'));
+process.stdout.write(out.join(' '));
+`)
+	want := "id(0)=yes id(0.1)=yes id(0.35)=yes id(0.6)=yes id(0.69)=yes " +
+		"maxUnder1=yes limitUnder1=yes monotonic=yes odd=yes"
+	if got != want {
+		t.Fatalf("the master ceiling does not hold its two promises.\n got: %s\nwant: %s\n"+
+			"an id(...)=no means a mix that was already in range now sounds different;\n"+
+			"a maxUnder1/limitUnder1=no means the output can still be driven past full scale and clip.", got, want)
 	}
 }

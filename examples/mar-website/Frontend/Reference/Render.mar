@@ -6,9 +6,9 @@ import UI exposing
     , list, section, header, footer
     , text, paragraph, span, navigationLink
     , vstack
-    , code, bold
+    , code, bold, italic
     )
-import Frontend.Reference.Data exposing (Entry, Section, sectionsFor, entriesFor)
+import Frontend.Reference.Data exposing (Entry, Section, sectionsFor, entriesFor, sideFor)
 import Frontend.Reference.Data
 import Frontend.Reference.Routes
 
@@ -36,6 +36,73 @@ displayName moduleName name =
     if moduleName == "Basics" then name else moduleName ++ "." ++ name
 
 
+-- Where a function runs, in words rather than a code word.
+--
+-- The first draft printed the compiler's own label next to every signature, so a
+-- row read "List.map : (a -> b) -> List a -> List b  both". "Both" of what was
+-- never said, and it appeared on hundreds of rows that had nothing to disclose.
+--
+-- So the fact is stated once per module, as a sentence, on the module's own page
+-- and again on each function's detail page. A row carries it ONLY when the
+-- function disagrees with its module, which is the case worth interrupting a
+-- list for: Auth and Service are single ideas with parts on each side, so
+-- `Auth.protect` being server-side is news, while `UI.button` being client-side
+-- inside a module the page already called client-side is not.
+--
+-- The value comes from the compiler's side table, the same place the check that
+-- enforces it reads, so this cannot disagree with the compiler the way a
+-- hand-written "frontend only" in a description could.
+sideLine : String -> String
+sideLine side =
+    if side == "frontend" then
+        "Runs in the app: pages, and the code they reach."
+
+    else if side == "backend" then
+        "Runs on the server: services, and the code they reach."
+
+    else if side == "entry point" then
+        "Read when the app is built. It says which pages and services exist, and runs on neither side."
+
+    else if side == "both" then
+        "Runs in the app and on the server."
+
+    else
+        ""
+
+
+-- The short form, for the one place it has to fit beside a signature: a compact
+-- row in a module list or a search result. The detail page has room for the
+-- sentence and prints that instead, so the two never appear together.
+--
+-- Parenthesised so it cannot be misread as part of the type it follows.
+sideTag : String -> String
+sideTag side =
+    if side == "frontend" then
+        "  (in the app only)"
+
+    else if side == "backend" then
+        "  (on the server only)"
+
+    else if side == "entry point" then
+        "  (build time)"
+
+    else
+        "  (app and server)"
+
+
+-- An Inline, not a View: it sits inside the same paragraph as the signature.
+-- Empty for all but the handful of functions that disagree with their module,
+-- and the empty case is `span [] ""` rather than `empty`, which is a View and
+-- would not fit here.
+sideBadge : Entry -> Inline msg
+sideBadge e =
+    if e.side == sideFor e.moduleName then
+        span [] ""
+
+    else
+        span [ italic ] (sideTag e.side)
+
+
 -- Compact row: the whole row is a link into the detail page for this function.
 entryRow : Entry -> View msg
 entryRow e =
@@ -43,6 +110,7 @@ entryRow e =
         (paragraph
             [ span [ code, bold ] (displayName e.moduleName e.name)
             , span [ code ] (" : " ++ e.signature)
+            , sideBadge e
             ])
 
 
@@ -71,6 +139,7 @@ detailSections e =
                     , span [ code ] (" : " ++ e.signature)
                     ]
                 , text [] e.description
+                , text [] (sideLine e.side)
                 ]
           ]
         , if List.isEmpty e.examples then
@@ -114,7 +183,9 @@ moduleDoc mod =
             (List.concat
                 [ [ section
                         [ footer (String.fromInt (List.length (entriesFor mod)) ++ " functions") ]
-                        [ text [] (blurb mod) ]
+                        [ text [] (blurb mod)
+                        , text [] (sideLine (sideFor mod))
+                        ]
                   ]
                 , List.map sectionView (sectionsFor mod)
                 ])

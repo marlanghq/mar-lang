@@ -153,6 +153,18 @@ func SideOf(name string) (Side, bool) {
 	return s, ok
 }
 
+// SideOfModule reports the side of a module as a whole: where its functions run
+// unless a name overrides it in `sideByName`. `Auth` and `Service` answer
+// SideBoth here, which is the honest answer for them — they are the two modules
+// with parts on each side, and the per-name table is what says which is which.
+//
+// False for a module this table does not know, including `Basics`, which is the
+// reference's shelf for the bare globals rather than a real module.
+func SideOfModule(mod string) (Side, bool) {
+	s, ok := sideByModule[mod]
+	return s, ok
+}
+
 // IsBackendOnlyBuiltin reports whether the client runtimes (JS and Swift) may
 // skip implementing `name`.
 //

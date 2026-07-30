@@ -140,7 +140,7 @@ var appCategories = map[string][]CatGroup{
 		{"Note pitches", []string{"c", "cs", "d", "ds", "e", "f", "fs", "g", "gs", "a", "as_", "b"}},
 		{"Shape a sound", []string{"attack", "release", "sweep", "holdPitch", "vibrato", "duty", "arp", "volume", "lowCut", "highCut"}},
 		{"Combine sounds", []string{"chord", "sequence"}},
-		{"Play it", []string{"play", "once", "loop", "hold"}},
+		{"Play it", []string{"play", "once", "loop", "voice", "glide"}},
 		{"Global audio", []string{"master", "setMuted"}},
 	},
 	"Time": {
@@ -316,7 +316,8 @@ var appDescriptions = map[string]string{
 	"Sound.play":      "Plays a sound once, right now, as a command. The one to use for a hit, a jump, or a coin.",
 	"Sound.once":      "Plays a sound once as a subscription, when the subscription first appears. Because it is a subscription, it belongs to the state that asked for it.",
 	"Sound.loop":      "Repeats a sound for as long as the subscription is returned. Stop returning it and the loop ends.",
-	"Sound.hold":      "Sustains a sound for as long as the subscription is returned, without restarting it. This is what a held key or an engine note wants; loop would retrigger it instead.",
+	"Sound.voice":     "Holds one voice for as long as the subscription is returned, without ever restarting it. A voice's pitch is part of what makes it that voice, so returning two pitches sounds two notes at once: this is what a keyboard wants, one voice per held key.",
+	"Sound.glide":     "Holds one voice whose pitch is a live setting rather than part of its identity, so handing it a new pitch slides the running note there instead of starting a second one. An engine that rises with speed, a siren. Only ever one note at a time, the way glide works on a real synth.",
 	"Sound.master":    "Sets the overall output volume, 0 to 100, for everything the app plays.",
 	"Sound.setMuted":  "Silences or unsilences all audio, leaving the volume setting untouched.",
 
@@ -614,7 +615,8 @@ var appExamples = map[string][]string{
 	"Sound.play":      {"Sound.play (Sound.tone Sound.Square (Sound.c 5) 80)"},
 	"Sound.once":      {"Sound.once (Sound.tone Sound.Noise 200 60)"},
 	"Sound.loop":      {"Sound.loop (Sound.tone Sound.Triangle (Sound.c 2) 500)"},
-	"Sound.hold":      {"Sound.hold (Sound.tone Sound.Sawtooth (Sound.a 3) 400)"},
+	"Sound.voice":     {"Sound.voice (Sound.tone Sound.Sawtooth (Sound.a 3) 400)"},
+	"Sound.glide":     {"Sound.glide (Sound.tone Sound.Triangle (Sound.a 2) 400)"},
 	"Sound.master":    {"Sound.master 70"},
 	"Sound.setMuted":  {"Sound.setMuted True"},
 

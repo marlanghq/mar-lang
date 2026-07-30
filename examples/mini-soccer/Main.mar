@@ -3395,7 +3395,7 @@ halftimeSfx =
     Sound.volume 74 (Sound.tone Sound.Square 2400 430)
 
 
--- Crowd beds (Sound.hold holds each as a steady wash). ALL the noise beds share one live bed: the runtime
+-- Crowd beds (Sound.glide holds each as a steady wash). ALL the noise beds share one live source: the runtime
 -- keys a music bed by structure, NOT volume, so returning the crowd at a new
 -- volume ramps the same bed smoothly (a swell) instead of restarting it. So the
 -- crowd murmurs quietly all match and rises as an attack nears goal (crowdBed),
@@ -3476,12 +3476,12 @@ musicSub model =
     else
         case model.phase of
             Title -> Sub.none
-            Break -> if model.flashText == "GOAL!" then Sound.hold crowdRoar else Sound.hold (crowdBed model)
+            Break -> if model.flashText == "GOAL!" then Sound.glide crowdRoar else Sound.glide (crowdBed model)
             Full ->
-                if model.blue > model.red then Sound.hold crowdCheer
-                else if model.red > model.blue then Sound.hold (crowdBoo (booLevel model))
-                else Sound.hold (crowdNoise 8)
-            _ -> Sound.hold (crowdBed model)
+                if model.blue > model.red then Sound.glide crowdCheer
+                else if model.red > model.blue then Sound.glide (crowdBoo (booLevel model))
+                else Sound.glide (crowdNoise 8)
+            _ -> Sound.glide (crowdBed model)
 
 
 -- ===== wiring =====

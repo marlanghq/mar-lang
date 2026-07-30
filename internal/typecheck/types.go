@@ -351,7 +351,7 @@ var (
 	// list in gamepad.go. Web-first like Canvas / Keyboard.
 	TGamepadButton = TCon{Name: "Gamepad.Button"}
 	// TSound — an opaque chip-audio value assembled by Sound.tone/chord/sequence
-	// and consumed by Sound.play (a Cmd) / Sound.loop / Sound.hold (Subs). Data
+	// and consumed by Sound.play (a Cmd) / Sound.loop / Sound.voice (Subs). Data
 	// only; the JS runtime synthesises it via WebAudio. Frontend-first, iOS deferred.
 	TSound = TCon{Name: "Sound"}
 	// TSoundWave — a Sound.Wave constructor (Square/Triangle/Sawtooth/Noise), the

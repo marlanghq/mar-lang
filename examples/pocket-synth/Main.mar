@@ -25,10 +25,11 @@ module Main exposing (main)
 -- the arpeggiator's are structural, because it replaces the note with a run of
 -- steps and the one-note modifiers have nothing left to shape.
 --
--- "Struck" presets (GRAND, E-PIANO, BELL) build the note from a bright hammer
--- transient over same-pitch layers of staggered length: as the short upper
--- layers fall silent the note loses amplitude and brightness, so it DECAYS like
--- a real string instead of holding flat. That is what makes the piano a piano.
+-- "Struck" presets (GRAND, E-PIANO, BELL) build the note from a brief hammer tick
+-- over layers of staggered length, each one DECAYING from the moment it is
+-- struck (Sound.release, one call per layer, matched to that layer's own span).
+-- The shortest layer is an octave up, so brightness falls before body does, and
+-- the note thins out as it fades the way a real string does.
 --
 -- A note sounds for as long as its key is HELD, not a fixed length: each held
 -- key contributes a Sound subscription, recomputed from the Model, so pressing
@@ -87,9 +88,9 @@ defaultPatch =
     { wave = 1, duty = 50, oct = 0, det = 0, sub = True, len = 1500, bend = 0, vibD = 0, vibR = 5, arp = 0, vol = 60, struck = True, sustain = False }
 
 
--- Twelve voices in two rows. Struck patches (piano, e-piano, bell) get a bright
--- hammer transient over a body that steps down as its upper layers drop out —
--- so they DECAY like a real string, instead of holding flat like the others.
+-- Twelve voices in two rows. Struck patches (piano, e-piano, bell) get a hammer
+-- tick over a body that fades continuously from the strike onward, so they DECAY
+-- like a real string instead of holding flat like the others.
 presets : List Preset
 presets =
     [ { name = "GRAND"
@@ -302,22 +303,29 @@ subLayer p hz =
 
 
 -- a hammer-struck note: a short bright transient (the strike) over a body of
--- same-pitch layers whose lengths are staggered — as the short upper layers
--- fall silent the tone loses both amplitude and brightness, so it DECAYS like a
--- real string instead of holding flat. This is what makes the piano a piano.
--- One body layer: the patch's wave, shaped by PULSE and BEND. Split out because
--- ENSEMBLE doubles THIS and nothing else.
+-- layers whose lengths are staggered — the upper, shorter ones die first, so the
+-- tone loses brightness as well as volume. That is what makes the piano a piano.
+--
+-- Every layer DECAYS from the moment it is struck, which it did not always do.
+-- The lengths were staggered but each layer held FLAT at full level and then
+-- stopped, so the note was a rectangle that dropped in three audible steps and
+-- cut off. A rectangle is an organ, not a string, no matter how many of them you
+-- stack. The decay is one call per layer: `Sound.release ms` on a note that is
+-- `ms` long puts the whole note inside its own release ramp, and the runtime
+-- ramps exponentially, which is the curve a struck string actually follows.
 struckBody : Patch -> Int -> Int -> Int -> Sound
 struckBody p vol hz ms =
     let
         base = shapeDuty p (Sound.tone (waveOf p.wave) hz ms)
     in
-    Sound.volume vol
-        (if p.bend == 0 then
-            base
+    Sound.release ms
+        (Sound.volume vol
+            (if p.bend == 0 then
+                base
 
-         else
-            Sound.sweep (max 20 (hz * (100 + p.bend) // 100)) base
+             else
+                Sound.sweep (max 20 (hz * (100 + p.bend) // 100)) base
+            )
         )
 
 
@@ -330,8 +338,16 @@ struckLayers p hz =
         [ -- the strike: one short bright transient. Never doubled and never
           -- bent — a hammer hits once, and detuning the attack would smear the
           -- very edge that makes the note read as struck.
-          [ Sound.volume (p.vol * 50 // 100)
-                (Sound.tone Sound.Sawtooth (max 40 (hz * 2)) 130)
+          --
+          -- 30ms, and it decays across all 30. It used to be 130ms holding FLAT
+          -- at half the body's level, which is not a transient — at that length
+          -- and that level the ear hears a separate pitched event, an octave-up
+          -- sawtooth blip laid over the note. A real hammer transient is a few
+          -- milliseconds of noise, so the honest direction was shorter and
+          -- quieter, not a different wave.
+          [ Sound.release 30
+                (Sound.volume (p.vol * 30 // 100)
+                    (Sound.tone Sound.Sawtooth (max 40 (hz * 2)) 30))
           ]
         , [ struckBody p p.vol hz p.len
           , struckBody p (p.vol * 66 // 100) hz (max 140 (p.len * 55 // 100))
@@ -348,12 +364,24 @@ struckLayers p hz =
 
           else
             []
-        , -- an octave above, short: as it drops out the tone loses brightness as
-          -- well as volume, which is the decay that makes a piano a piano
-          [ Sound.volume (p.vol * 40 // 100)
-                (Sound.tone Sound.Triangle (max 40 (hz * 2)) (max 110 (p.len * 30 // 100)))
-          ]
+        , -- an octave above, short: it decays fastest of all, so the note loses
+          -- brightness before it loses body — the upper partials of a real
+          -- string die first, and that falling brightness IS the piano.
+          [ octaveLayer p hz ]
         ]
+
+
+-- Split out only so its length is written once: the layer's release has to match
+-- its own span, and a decay that outlives its note (or ends before it) is the
+-- one way to get this wrong.
+octaveLayer : Patch -> Int -> Sound
+octaveLayer p hz =
+    let
+        ms = max 110 (p.len * 30 // 100)
+    in
+    Sound.release ms
+        (Sound.volume (p.vol * 40 // 100)
+            (Sound.tone Sound.Triangle (max 40 (hz * 2)) ms))
 
 
 -- arpeggiator patterns: per-mille frequency ratios over the base note. Walked
@@ -412,7 +440,11 @@ buildNote p hz0 =
         Sound.chord
             (List.concat
                 [ struckLayers p hz
-                , if p.sub then [ subLayer p hz ] else []
+                  -- the sub decays with the note here, and only here: under a
+                  -- SUSTAIN patch the same layer has to hold flat for as long as
+                  -- the key is down, which is why the decay lives at this call
+                  -- and not inside subLayer.
+                , if p.sub then [ Sound.release p.len (subLayer p hz) ] else []
                 ])
 
     else
@@ -464,15 +496,25 @@ voices model =
 --   sustain + (arp | struck) -> Sound.loop    the re-attack IS the sound: an
 --                                             arpeggio run, or the mandolin ROLL
 --                                             that re-strikes while you hold it.
---   sustain, plain           -> Sound.hold one node held for as long as the key
---                                             is down — a true organ/strings/pad
---                                             sustain, with no repeat.
+--   sustain, plain           -> Sound.voice one voice per key, held for as long
+--                                             as that key is down — a true
+--                                             organ/strings/pad sustain, with no
+--                                             repeat, and polyphonic because a
+--                                             voice's PITCH is part of its
+--                                             identity: two keys are two voices.
 --
 -- HELD used to loop too, which meant holding a key re-attacked the note about
 -- once a second. It sounded like a stuck loop rather than a held note, and the
--- only reason to accept it was that the ambient bed rendered a bare tone and
--- threw the patch's timbre away. The bed applies duty/vibrato/filters now, so a
--- held note can be genuinely held without losing what makes it that patch.
+-- only reason to accept it was that the held path rendered a bare tone and threw
+-- the patch's timbre away. It applies duty/vibrato/filters now, so a held note
+-- can be genuinely held without losing what makes it that patch.
+--
+-- It then spent a while on the WRONG held primitive. The one it used keyed a
+-- voice by everything except its pitch, which is what an engine note wants (hand
+-- it a new pitch and the running oscillator slides there) and is fatal for a
+-- keyboard: two keys produced the same key, so they collapsed to one oscillator,
+-- and releasing one slid the survivor to the other note. That primitive is
+-- Sound.glide now, named for what it does, and a keyboard asks for Sound.voice.
 --
 -- The runtime fades a clean cut when the key is released early.
 heldSound : Patch -> Int -> Sub Msg
@@ -487,7 +529,7 @@ heldSound patch semi =
         Sound.loop s
 
     else
-        Sound.hold s
+        Sound.voice s
 
 
 -- ===== layout =====
@@ -1356,10 +1398,59 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     -- one sound subscription per held voice: it starts when the key goes down
     -- and stops when the key comes up, so hold time is the note's duration.
+    --
+    -- The patch is scaled by how many voices are sounding (polyScaled), because
+    -- the bus sums them and nothing downstream is going to catch it.
+    let
+        held = voices model
+        patch = polyScaled model.patch (List.length held)
+    in
     Sub.batch
         (Keyboard.watch KeysChanged
-            :: List.map (\semi -> heldSound model.patch semi) (voices model)
+            :: List.map (\semi -> heldSound patch semi) held
         )
+
+
+-- Voice-count gain, the thing every polysynth has and this one did not.
+--
+-- The audio bus sums voices LINEARLY, and at these pitches they really do add up
+-- rather than average out: a chord holds only a handful of cycles per window, so
+-- the phases stay put instead of cancelling. Measured on the ORGAN preset, which
+-- asks for 0.62 of gain per note (0.40 voice + 0.22 sub): one note peaked ~0.30
+-- at the bus, three notes peaked 1.05 to 1.29 depending on where the phases
+-- landed. Past 1.0 the output is clipped, so a three-note chord was not merely
+-- ~10dB louder than one note, it was distorting. Playing the same three notes one
+-- after another never summed, which is why it only showed up on chords.
+--
+-- The scale is 1/sqrt(n), the usual choice, and what it holds constant is POWER:
+-- n voices at a/sqrt(n) each sum to n * (a/sqrt n)^2 = a^2. So the chord sits at
+-- the same LEVEL as a single note while its PEAK is still free to grow as the
+-- phases line up — measured on the organ, peaks went 0.21 / 0.27 / 0.31 for one,
+-- two and three notes with the level flat inside half a dB. That is the point: a
+-- chord reads as fuller rather than louder, and the headroom is preserved.
+-- Written as a table because the stdlib has no sqrt and, at this size, a table is
+-- clearer than an approximation.
+--
+-- This is free at the runtime level precisely because volume is NOT part of a
+-- held voice's identity (ADR-0024): joining or releasing a key re-levels the
+-- voices that are already sounding by GLIDING their gain, never by restarting
+-- them, so re-scaling mid-chord cannot click.
+polyGain : Int -> Int
+polyGain n =
+    if n <= 1 then 1000        -- 1000 / sqrt n, per mille
+    else if n == 2 then 707
+    else if n == 3 then 577
+    else if n == 4 then 500
+    else if n == 5 then 447
+    else if n == 6 then 408
+    else if n == 7 then 378
+    else if n == 8 then 354
+    else 333                   -- 9 or more: ten fingers run out before this does
+
+
+polyScaled : Patch -> Int -> Patch
+polyScaled p n =
+    { p | vol = max 1 (p.vol * polyGain n // 1000) }
 
 
 page : Page

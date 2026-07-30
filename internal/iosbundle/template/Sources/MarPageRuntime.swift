@@ -165,7 +165,7 @@ final class PageRuntime {
         var taggers: [MarValue]
         let stop: () -> Void
         /// Optional live-retarget hook, called with the item's payload when
-        /// the SAME key survives a reconcile. Sound.hold uses it to glide
+        /// the SAME key survives a reconcile. Sound.voice / Sound.glide use it to slide
         /// the held bed to a new pitch/volume (the JS `update:` on the
         /// ambient subSource); sources without live state leave it nil.
         var update: ((MarValue) -> Void)?
@@ -346,17 +346,20 @@ final class PageRuntime {
                 case "__SubSound":
                     guard a.count == 2, case .string(let mode) = a[0] else { continue }
                     let snd = a[1]
-                    // ambient is a STEADY bed (docs/proposals/sound.md): its
-                    // identity is the bed's STRUCTURE without freq or volume
-                    // (MarSound.bedKey, the JS soundBedKey). Returning the
-                    // same bed at a new pitch/volume must RETUNE the live
-                    // node (the survivor's update hook below), never
-                    // stop+restart it — restarting clicked AND, at 60
-                    // renders/sec, stalled the frame rate. loop / once keep
-                    // the full content key so a genuine change swaps the
-                    // track.
-                    let key = mode == "hold" ? "sound:hold:\(MarSound.bedKey(snd))" : "sound:\(mode):\(MarSound.contentKey(snd))"
-                    if mode == "hold" { payloads[key] = snd }
+                    // voice / glide are HELD sources (docs/proposals/sound.md):
+                    // their identity is the structure without volume, and for
+                    // glide without pitch either (MarSound.heldKey, the JS
+                    // heldKey). Handing one back with only a live parameter
+                    // changed must GLIDE the running node (the survivor's
+                    // update hook below), never stop+restart it — restarting
+                    // clicked AND, at 60 renders/sec, stalled the frame rate.
+                    // loop / once keep the full content key so a genuine
+                    // change swaps the track.
+                    let held = mode == "voice" || mode == "glide"
+                    let key = held
+                        ? "sound:\(mode):\(MarSound.heldKey(snd, withFreq: mode == "voice"))"
+                        : "sound:\(mode):\(MarSound.contentKey(snd))"
+                    if held { payloads[key] = snd }
                     want(key, nil) { [weak self] in self?.makeSound(mode, snd) ?? LiveSub(taggers: []) {} }
                 default:
                     continue
@@ -449,12 +452,13 @@ final class PageRuntime {
         case "loop":
             let handle = MarSound.shared.startLoop(snd)
             return LiveSub(taggers: []) { MarSound.shared.stop(handle) }
-        case "hold":
-            let handle = MarSound.shared.startHold(snd)
+        case "voice", "glide":
+            let handle = MarSound.shared.startHeld(snd)
             let live = LiveSub(taggers: []) { MarSound.shared.stop(handle) }
-            // Same bed key surviving a reconcile = glide the held bed to
-            // the new pitch/volume (the racer's engine note).
-            live.update = { MarSound.shared.retuneHold(handle, $0) }
+            // Same held key surviving a reconcile = slide the running node to
+            // the new levels, and for glide to the new pitch as well (the
+            // racer's engine note). What the key covers decides which.
+            live.update = { MarSound.shared.glideTo(handle, $0, promptLevel: mode == "voice") }
             return live
         default:
             let handle = MarSound.shared.startOnce(snd)

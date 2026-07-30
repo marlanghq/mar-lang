@@ -4489,7 +4489,7 @@ subscriptions model =
         , Gamepad.watch PadChanged
         , Device.watch DeviceChanged
         , if model.mode == Play then
-            Sound.hold (drone model)
+            Sound.glide (drone model)
           else
             Sub.none
         , if model.mode == Play && model.combatT > 0 then

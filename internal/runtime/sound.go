@@ -3,7 +3,7 @@ package runtime
 import "math"
 
 // Sound (docs/proposals/sound.md) is chip-audio. Builders assemble an opaque
-// Sound value; Sound.play turns it into a Cmd, Sound.loop / Sound.hold into
+// Sound value; Sound.play turns it into a Cmd, Sound.loop / Sound.voice into
 // a Sub. The real synthesis (WebAudio) lives in the JS runtime — these Go
 // builtins are inert, present only so top-level Sound constants force without
 // crashing during server-side eval and the builtin vocabulary stays uniform
@@ -42,10 +42,11 @@ func soundBuiltins() map[string]Value {
 		"soundSequence":  inertSound(1),
 
 		// play : Sound -> Cmd msg ; loop / ambient / once : Sound -> Sub msg.
-		"soundPlay": nativeFn(1, func(args []Value) (Value, error) { return inertEffect("soundPlay"), nil }),
-		"soundLoop": nativeFn(1, func(args []Value) (Value, error) { return inertEffect("soundLoop"), nil }),
-		"soundHold": nativeFn(1, func(args []Value) (Value, error) { return inertEffect("soundHold"), nil }),
-		"soundOnce": nativeFn(1, func(args []Value) (Value, error) { return inertEffect("soundOnce"), nil }),
+		"soundPlay":  nativeFn(1, func(args []Value) (Value, error) { return inertEffect("soundPlay"), nil }),
+		"soundLoop":  nativeFn(1, func(args []Value) (Value, error) { return inertEffect("soundLoop"), nil }),
+		"soundVoice": nativeFn(1, func(args []Value) (Value, error) { return inertEffect("soundVoice"), nil }),
+		"soundGlide": nativeFn(1, func(args []Value) (Value, error) { return inertEffect("soundGlide"), nil }),
+		"soundOnce":  nativeFn(1, func(args []Value) (Value, error) { return inertEffect("soundOnce"), nil }),
 
 		// setMuted / master : app-owned audio controls (inert Cmds here).
 		"soundSetMuted": nativeFn(1, func(args []Value) (Value, error) { return inertEffect("soundSetMuted"), nil }),

@@ -1250,8 +1250,8 @@ stepClock m =
 
 
 -- ===== sound =====
--- The engine is a Sub: a Sound.hold — ONE continuously-held triangle
--- oscillator that the sound runtime retunes in place (Sound.hold keys ignore
+-- The engine is a Sub: a Sound.glide — ONE continuously-held triangle
+-- oscillator that the sound runtime slides in place (Sound.glide keys ignore
 -- freq, so a new pitch each frame glides the same node — see soundBedSet), a
 -- smooth rev with no clicks/crossfade. The pitch simulates a 2-SPEED GEARBOX:
 -- within each gear the "rpm" climbs, then at the single shift it dips and climbs
@@ -2226,7 +2226,7 @@ subscriptions model =
         , Gamepad.watch PadChanged
         , Device.watch DeviceChanged
         , if model.mode == Race then
-            Sound.hold (engineNote model)
+            Sound.glide (engineNote model)
           else
             Sub.none
         ]
