@@ -1680,7 +1680,11 @@
         node.connect(soundFilterChain(ctx, v, g));
       }
       node.start(at);
-      nodes.push({ node, gain: g, extra, release: voiceReleaseSec(v) });
+      // `_peak` and `_attackEnd` exist for soundGlideTo, and they are not
+      // bookkeeping — they are what keeps it from destroying this envelope.
+      // Without `_peak`, its "did the level change?" guard read undefined on the
+      // FIRST slide and ran anyway, cancelling the ramp scheduled just above.
+      nodes.push({ node, gain: g, extra, release: voiceReleaseSec(v), _peak: peak, _attackEnd: at + Math.max(0.0005, voiceAttackSec(v)) });
     }
     return { nodes };
   }
@@ -1736,7 +1740,15 @@
       if (rec._peak == null || Math.abs(rec._peak - peak) >= 0.004) {
         rec._peak = peak;
         try {
-          rec.gain.gain.cancelScheduledValues(t);
+          // Cancel from the end of the attack, never from `now`. The attack is
+          // scheduled slightly in the FUTURE (soundHeldStart starts at
+          // currentTime + 0.02), so cancelling at `now` wipes it — and a
+          // GainNode whose automation is wiped falls back to its base value of
+          // 1, which is 2.5x the level the voice asked for. That was audible as
+          // a held note jumping in volume the moment it first slid, and staying
+          // there for seconds while setTargetAtTime crawled back down at the
+          // bed's 1.1s lag.
+          rec.gain.gain.cancelScheduledValues(Math.max(t, rec._attackEnd || 0));
           // Big time-constant = the level lags HEAVILY, following only the slow
           // trend and ignoring per-event jumps. That lag is what a BED is: a level
           // that tracks each event is heard as a rhythm, not as a background.
