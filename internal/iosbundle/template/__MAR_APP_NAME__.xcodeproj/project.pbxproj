@@ -15,6 +15,7 @@
 		2CEBD3F805F7B14B80F13C54 /* MarEnv.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AC6D6C31DA699017A49EC69 /* MarEnv.swift */; };
 		3261C4D120A0A85998999F24 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B978C6A4C024308BE99BE1A3 /* APIClient.swift */; };
 		493D3C02C5420E09DC9A9D58 /* MarPageRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49572645D20DFF429518E618 /* MarPageRuntime.swift */; };
+		4F5F61AC66A3FB62634EC9D5 /* MarSharedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7514C4E0930E690C37F202EA /* MarSharedStore.swift */; };
 		4FA4A6208515E57314147BD2 /* MarEval.swift in Sources */ = {isa = PBXBuildFile; fileRef = D82563539CB5C35B24C312D6 /* MarEval.swift */; };
 		5357A3F6632D8A28E7865332 /* MarInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A6A6A0C7D7381FC8AD2C4 /* MarInput.swift */; };
 		60C37209F73BD3AFFA4C4A12 /* MarKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2F47775647F77B2B2DBD640 /* MarKeychain.swift */; };
@@ -56,6 +57,7 @@
 		6654885C23C163D12E1D05A3 /* program.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = program.json; sourceTree = "<group>"; };
 		698C9F8D49856062A3E6029F /* MarAppContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarAppContext.swift; sourceTree = "<group>"; };
 		69950D21362193B50C7F15BD /* __MAR_APP_NAME__.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = __MAR_APP_NAME__.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7514C4E0930E690C37F202EA /* MarSharedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarSharedStore.swift; sourceTree = "<group>"; };
 		79888DFD3A4BC98247BD5AA1 /* MarLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarLoader.swift; sourceTree = "<group>"; };
 		79EC36D575AEBC3C182AB484 /* MarCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarCanvas.swift; sourceTree = "<group>"; };
 		8EE1E637A5CE8C785674AEE9 /* MarExpr.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarExpr.swift; sourceTree = "<group>"; };
@@ -129,6 +131,7 @@
 				C316B9C7635C3035FFE027AE /* MarPath.swift */,
 				63F190E7937B558BFD757B19 /* MarRenderer.swift */,
 				C8CBCB8DB09D9A40304B3DAA /* MarRuntimeIOSApp.swift */,
+				7514C4E0930E690C37F202EA /* MarSharedStore.swift */,
 				188C4335F604FB991926BD68 /* MarSound.swift */,
 				E73011F6F0CF37ADFC8EF5DC /* MarValue.swift */,
 			);
@@ -233,6 +236,7 @@
 				8DA57DCA7363582700087898 /* MarPath.swift in Sources */,
 				95E175645730190913F5A4F0 /* MarRenderer.swift in Sources */,
 				ACFDBA1661EBFB6A10831879 /* MarRuntimeIOSApp.swift in Sources */,
+				4F5F61AC66A3FB62634EC9D5 /* MarSharedStore.swift in Sources */,
 				7D2DE8EFDDCD7D1944E69693 /* MarSound.swift in Sources */,
 				83074E905DC05A40B0E08DE3 /* MarValue.swift in Sources */,
 			);

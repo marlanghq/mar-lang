@@ -1238,6 +1238,60 @@ enum MarBuiltins {
                          origin: nil)
         }
         env.define("pageCreate",  .fn(pageCreate))
+
+        // MARK: Shared state (ADR-0026)
+        //
+        // The three builtins are thin on purpose; MarSharedStore.swift holds
+        // the behaviour, so there is one place to read when the web and iOS
+        // runtimes are compared.
+        //
+        // `App.shared` stamps a positional key onto the value it returns
+        // because MarValue is an enum and has no object identity — the web
+        // keys its stores by the identity of the def value itself.
+        let appShared = MarFn.native(1) { args in
+            guard case .record(let fs, _) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "record", got: Eval.typeOf(args[0]))
+            }
+            let key = MarSharedRegistry.nextKey()
+            _ = MarSharedRegistry.store(
+                key: key,
+                initFn: fs["init"] ?? .unit,
+                updateFn: fs["update"] ?? .unit,
+                subscriptionsFn: fs["subscriptions"] ?? .unit)
+            return .ctor(tag: "__Shared", args: [.string(key)], origin: nil)
+        }
+        env.define("appShared", .fn(appShared))
+        env.define("App.shared", .fn(appShared))
+
+        // Page.withShared def builder — the page is a FUNCTION of the shared
+        // model, so the wrapper carries the builder unapplied. decodedPages()
+        // resolves it, and MarPageRuntime re-resolves it on every read.
+        let pageWithShared = MarFn.native(2) { args in
+            guard case .ctor(let tag, let sargs, _) = args[0], tag == "__Shared",
+                  case .string(let key) = sargs.first ?? .unit else {
+                throw MarRuntimeError.typeMismatch(expected: "App.Shared", got: Eval.typeOf(args[0]))
+            }
+            return .ctor(tag: "__SharedPage", args: [.string(key), args[1]], origin: nil)
+        }
+        env.define("pageWithShared", .fn(pageWithShared))
+        env.define("Page.withShared", .fn(pageWithShared))
+
+        // Cmd.toShared def msg — an effect that lands in the store's update
+        // rather than the page's. It returns unit: a shared message has no
+        // reply, which is what keeps the two update loops from interleaving.
+        let cmdToShared = MarFn.native(2) { args in
+            guard case .ctor(let tag, let sargs, _) = args[0], tag == "__Shared",
+                  case .string(let key) = sargs.first ?? .unit else {
+                throw MarRuntimeError.typeMismatch(expected: "App.Shared", got: Eval.typeOf(args[0]))
+            }
+            let msg = args[1]
+            return .effect(MarEffect(tag: "toShared") {
+                MarSharedRegistry.lookup(key)?.dispatch(msg)
+                return .unit
+            })
+        }
+        env.define("cmdToShared", .fn(cmdToShared))
+        env.define("Cmd.toShared", .fn(cmdToShared))
         env.define("Page.create", .fn(pageCreate))
 
         // MARK: Page.protected

@@ -2,5 +2,11 @@
   "name": "shared-cart",
   "server": {
     "port": 3038
+  },
+  "ios": {
+    "bundleId": "dev.marlang.sharedcart",
+    "displayName": "Shared Cart",
+    "marketingVersion": "0.0.1",
+    "buildNumber": "1"
   }
 }

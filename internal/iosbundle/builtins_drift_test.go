@@ -55,11 +55,7 @@ func TestIOSBuiltinsCoverClientStdlib(t *testing.T) {
 	// the sub reconciler carrying a destination per tagger. Stubbing the
 	// builtins to satisfy this test would be worse than the gap — an app would
 	// compile for iOS and then quietly lose its cart.
-	iosDeferred := map[string]bool{
-		"App.shared":      true,
-		"Page.withShared": true,
-		"Cmd.toShared":    true,
-	}
+	iosDeferred := map[string]bool{}
 
 	var missing []string
 	for name := range required {

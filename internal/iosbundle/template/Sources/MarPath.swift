@@ -56,6 +56,13 @@ enum MarPath {
     /// Register a custom enum type for use in `{name:Type}` segments.
     /// Idempotent — re-registration overwrites (so hot reload picks
     /// up renames cleanly).
+    #if DEBUG
+    /// The ctor names registered for a path-enum type. Read by the route
+    /// smoke so it can fill a `{role:Role}` segment with a value the matcher
+    /// will actually accept.
+    static func enumCtors(_ typeName: String) -> [String]? { enumTypes[typeName] }
+    #endif
+
     static func registerEnumType(_ typeName: String, ctorNames: [String]) {
         enumTypes[typeName] = ctorNames
     }

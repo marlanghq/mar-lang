@@ -97,10 +97,38 @@ final class DisplayLinkProxy {
 final class PageRuntime {
     let path: String
     let title: String
-    @ObservationIgnored let initFn: MarValue
-    @ObservationIgnored let updateFn: MarValue
-    @ObservationIgnored let viewFn: MarValue
-    @ObservationIgnored let subscriptionsFn: MarValue
+    // A page from `Page.withShared` (ADR-0026) is a FUNCTION of the shared
+    // model, so its four functions cannot be captured once. `shared` holds the
+    // builder and the four become computed: every read rebuilds the page ctor
+    // against the store's CURRENT model. A plain page keeps the captured
+    // values and pays nothing.
+    //
+    // The web hit this too and solved it the same way, by passing an accessor
+    // instead of four values into buildPageEntry.
+    @ObservationIgnored private let shared: DecodedPage.SharedBinding?
+    @ObservationIgnored private let capturedInit: MarValue
+    @ObservationIgnored private let capturedUpdate: MarValue
+    @ObservationIgnored private let capturedView: MarValue
+    @ObservationIgnored private let capturedSubs: MarValue
+
+    /// The page ctor as it stands right now: rebuilt from the shared model
+    /// when there is one, otherwise nil so the captured values are used.
+    private var liveArgs: [MarValue]? {
+        guard let shared,
+              let store = MarSharedRegistry.lookup(shared.key),
+              let page = try? Eval.apply(shared.builder, store.model),
+              case .ctor(_, let args, _) = page, args.count >= 4
+        else { return nil }
+        return args
+    }
+
+    @ObservationIgnored private var initFn: MarValue { liveArgs?[1] ?? capturedInit }
+    @ObservationIgnored private var updateFn: MarValue { liveArgs?[2] ?? capturedUpdate }
+    @ObservationIgnored private var viewFn: MarValue { liveArgs?[3] ?? capturedView }
+    @ObservationIgnored private var subscriptionsFn: MarValue {
+        guard let a = liveArgs, a.count >= 6 else { return capturedSubs }
+        return a[5]
+    }
 
     /// For Page.protected, the User to thread into init/update/view.
     /// nil for public pages.
@@ -113,6 +141,10 @@ final class PageRuntime {
     private(set) var model: MarValue = .unit
     private(set) var lastError: String?
 
+    /// Bumped when the shared model moves. The page's own model is untouched,
+    /// so nothing else here tells SwiftUI that the view is now different.
+    private(set) var touch: Int = 0
+
     /// Which of ADR 0020's cases the recorded failure belongs to. `dispatch`
     /// means the app is still standing (`update` never returned a new model,
     /// so what is on screen is consistent); `page` means what failed was
@@ -123,6 +155,13 @@ final class PageRuntime {
     private func record(_ site: String, _ where_: FailureSite, _ message: String) {
         lastError = "\(site) failed: \(message)"
         lastErrorSite = where_
+        // Also on the console. The screen is the primary channel (ADR 0020),
+        // but a failure that only exists as pixels cannot be grepped, and
+        // checking every example on both platforms means reading logs rather
+        // than eyeballing screenshots.
+        #if DEBUG
+        print("[mar] FAILURE on \(path): \(lastError ?? "")")
+        #endif
     }
 
     /// Records a runtime error raised somewhere that cannot propagate one.
@@ -143,9 +182,29 @@ final class PageRuntime {
     }
 
     /// Applies a subscription tagger, reporting instead of swallowing.
+    /// Which store, if any, owns a delivered tagger. Rebuilt on every
+    /// reconcile, because a page can gain or lose shared subscriptions as the
+    /// shared model moves.
+    @ObservationIgnored private var sharedTaggerOwners: [String: String] = [:]
+
+    /// A stable identity for a tagger value. Taggers are closures, and Swift
+    /// closures are not Equatable — the pointer is what the reconciler already
+    /// keys survivors on, so it is the honest choice here too.
+    private static func taggerIdentity(_ v: MarValue) -> String {
+        if case .fn(let f) = v { return String(UInt(bitPattern: ObjectIdentifier(f).hashValue)) }
+        return String(describing: v)
+    }
+
     private func applyTagger(_ tagger: MarValue, _ value: MarValue, _ site: String) -> MarValue? {
         do {
-            return try Eval.apply(tagger, value)
+            let msg = try Eval.apply(tagger, value)
+            // Route by tagger, not by source: one key can have owners on both
+            // sides, and the page's update would not understand a shared msg.
+            if let key = sharedTaggerOwners[Self.taggerIdentity(tagger)] {
+                MarSharedRegistry.lookup(key)?.dispatch(msg)
+                return nil
+            }
+            return msg
         } catch {
             report(site, error)
             return nil
@@ -185,12 +244,22 @@ final class PageRuntime {
     init(page: DecodedPage, user: MarValue?, params: MarValue?) {
         self.path = page.path
         self.title = page.title
-        self.initFn = page.initFn
-        self.updateFn = page.updateFn
-        self.viewFn = page.viewFn
-        self.subscriptionsFn = page.subscriptionsFn
+        self.shared = page.shared
+        self.capturedInit = page.initFn
+        self.capturedUpdate = page.updateFn
+        self.capturedView = page.viewFn
+        self.capturedSubs = page.subscriptionsFn
         self.user = user
         self.params = params
+
+        // NOTHING that touches the shared store belongs here. SwiftUI
+        // evaluates `PageRuntime(page:)` on every pass of the parent's body
+        // and keeps only the first instance (MarPageHost holds it in @State),
+        // so an `init` with side effects runs on throwaway objects: a store
+        // callback installed here would be stolen by an instance that
+        // deallocates a moment later, and the queued init Cmd would be
+        // consumed by a page that never appears. The wiring lives in
+        // `mount`/`unmount`, which SwiftUI calls on the surviving instance.
 
         // Run init: applyExtras threads User then Params depending on
         // the page flavor, and the result IS the (Model, Effect)
@@ -227,9 +296,31 @@ final class PageRuntime {
     /// ours when SwiftUI eventually tears us down — see the
     /// comment on MarDispatcher.currentOwner for why that matters.
     func mount() {
+        // One line per screen that comes up, naming what it drew. "mounted
+        // with no view and no error" is the silent failure this catches: the
+        // page rendered EmptyView and nobody would ever know.
+        #if DEBUG
+        print("[mar] mount \(path) drew=\(currentView().map { $0.tag } ?? "nothing")")
+        #endif
         MarDispatcher.shared.currentOwner = ObjectIdentifier(self)
         MarDispatcher.shared.current = { [weak self] msg in
             self?.dispatch(msg)
+        }
+        // A page built by Page.withShared IS a function of the shared model,
+        // so a change there changes what this page is — not merely what it
+        // shows. Re-reconcile and let @Observable redraw; the four functions
+        // are computed, so the next read already sees the new model.
+        //
+        // Registered per MOUNTED page rather than in one slot on the store: a
+        // pushed stack keeps the screens beneath it alive, and every one of
+        // them is reading the same model.
+        if shared != nil {
+            MarSharedRegistry.addObserver(ObjectIdentifier(self)) { [weak self] in
+                guard let self else { return }
+                self.reconcileSubs()
+                self.touch += 1
+            }
+            MarSharedRegistry.drainInitEffects()
         }
         if !initEffectFired, let eff = pendingInitEffect {
             initEffectFired = true
@@ -249,6 +340,7 @@ final class PageRuntime {
     /// page's init effect posted.
     func unmount() {
         teardownSubs()
+        MarSharedRegistry.removeObserver(ObjectIdentifier(self))
         if MarDispatcher.shared.currentOwner == ObjectIdentifier(self) {
             MarDispatcher.shared.currentOwner = nil
             MarDispatcher.shared.current = nil
@@ -288,11 +380,20 @@ final class PageRuntime {
     /// as `lastError`; the prior render stays visible until the
     /// model recovers.
     func currentView() -> MarView? {
+        // Reading `touch` is what subscribes this view to shared-model changes.
+        // @Observable tracks READS, so a counter nobody reads redraws nothing —
+        // and `viewFn` being computed is not enough on its own, because the
+        // page's own model never moved.
+        _ = touch
         do {
             let viewFnApplied = try PageRuntime.applyExtras(viewFn, user: user, params: params)
             let v = try Eval.apply(viewFnApplied, model)
             guard case .view(let mv) = v else {
-                record("view", .page, "returned a value that is not a View")
+                // Name what came back. A bare "not a View" leaves the two
+                // likely causes indistinguishable: a `fn` means the view was
+                // applied to too few arguments, anything else means the page
+                // returned the wrong thing entirely.
+                record("view", .page, "returned \(Eval.typeOf(v)), not a View")
                 return nil
             }
             return mv
@@ -329,7 +430,30 @@ final class PageRuntime {
         } catch {
             report("subscriptions", error)
         }
-        if let subVal, case .ctor(let tag, let items, _) = subVal, tag == "__Sub" {
+
+        // A shared store subscribes too, and its messages belong to ITS update
+        // — not to whichever page happened to mount the source. The reconciler
+        // groups by key across owners, so the destination has to travel with
+        // each TAGGER rather than sit on the registration. The web hit exactly
+        // this and solved it the same way (deliverSub in runtime.js).
+        var sharedTaggers: [String: String] = [:]   // tagger identity -> store key
+        var allItems: [MarValue] = []
+        if let subVal, case .ctor("__Sub", let items, _) = subVal {
+            allItems.append(contentsOf: items)
+        }
+        if let shared, let store = MarSharedRegistry.lookup(shared.key),
+           case .ctor("__Sub", let items, _) = store.subscriptions() {
+            for item in items {
+                if case .ctor(_, let a, _) = item, let tagger = a.last {
+                    sharedTaggers[Self.taggerIdentity(tagger)] = shared.key
+                }
+            }
+            allItems.append(contentsOf: items)
+        }
+        self.sharedTaggerOwners = sharedTaggers
+
+        if !allItems.isEmpty {
+            let items = allItems
             for item in items {
                 guard case .ctor(let itag, let a, _) = item else { continue }
                 switch itag {

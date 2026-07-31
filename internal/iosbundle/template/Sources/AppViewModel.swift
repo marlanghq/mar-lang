@@ -118,6 +118,168 @@ final class AppViewModel {
         #endif
     }
 
+    #if DEBUG
+    /// Builds every declared page once and prints what each one drew, then
+    /// gets out of the way. Off unless MAR_ROUTE_SMOKE=1 is in the
+    /// environment, so a normal Debug run never pays for it.
+    ///
+    /// Exists because "the app launched and the first screen looks right" is
+    /// a weak check, and the failure it missed was severe: with the module
+    /// loader sharing one namespace, EVERY page rendered the last-loaded
+    /// module's `view` while keeping its own path and title. One screen can
+    /// look fine while the rest of the app is wrong. This walks all of them,
+    /// which is what "runs on both platforms" has to mean.
+    ///
+    /// The title printed is the page's own `navigationTitle`, not the route:
+    /// a route whose title belongs to another module is exactly that bug.
+    @MainActor
+    private static func routeSmoke(_ pages: [DecodedPage]) {
+        print("[mar] ROUTE SMOKE \(pages.count) page(s)")
+        for page in pages {
+            // A Page.protected view takes the app's OWN user entity as its
+            // first argument, and that type is different in every app — there
+            // is no generic User to hand it. Say so instead of rendering it
+            // without one and reporting the resulting partial application as
+            // a failure of the page.
+            if page.isProtected {
+                print("[mar] ROUTE \(page.path) -> NEEDS SESSION (not covered)")
+                continue
+            }
+            // Dynamic pages need params; a page whose pattern cannot be
+            // filled is reported rather than skipped silently. The CONCRETE
+            // url is what gets printed, because the web half of the
+            // comparison is sent to whatever these lines name and has to
+            // land on the same page with the same values.
+            var url = page.path
+            var params: MarValue? = nil
+            if page.isDynamic {
+                guard let visit = page.sampleVisit() else {
+                    print("[mar] ROUTE \(page.path) -> SKIPPED (no sample params)")
+                    continue
+                }
+                url = visit.url
+                params = visit.params
+            }
+            let runtime = PageRuntime(page: page, user: nil, params: params)
+            guard let view = runtime.currentView() else {
+                print("[mar] ROUTE \(url) -> DREW NOTHING \(runtime.lastError ?? "")")
+                continue
+            }
+            let title = view.attrs.first { $0.name == "navigationTitle" }
+                .flatMap { attr -> String? in
+                    if case .string(let s) = attr.value { return s }
+                    return nil
+                } ?? page.title
+            print("[mar] ROUTE \(url) -> \(view.tag) titled \"\(title)\"")
+            // Everything this screen puts in front of a person, as a set. The
+            // web runtime can be asked the same question about the same
+            // program, and the two answers have to agree — that comparison is
+            // what "equivalent", rather than "it also rendered", means.
+            print("[mar] TEXT \(url) \(AppViewModel.visibleText(view))")
+            // One interaction, so the check covers responding and not just
+            // drawing: dispatch the first message the screen offers and ask
+            // again. A runtime that draws correctly but ignores taps differs
+            // here and nowhere else.
+            if let msg = AppViewModel.firstMessage(view) {
+                runtime.dispatch(msg)
+                if let after = runtime.currentView() {
+                    print("[mar] TEXT+1 \(url) \(AppViewModel.visibleText(after))")
+                }
+            }
+        }
+        print("[mar] ROUTE SMOKE DONE")
+    }
+
+    /// The screen's visible strings, deduplicated and sorted.
+    ///
+    /// A SET, not the tree: SwiftUI and the DOM nest differently and repeat
+    /// text in different places (a nav title appears once here and twice
+    /// there), so comparing structure would report differences that no user
+    /// could see. What a user CAN see is which words are on the screen, and
+    /// that has to be identical on both platforms.
+    private static func visibleText(_ view: MarView) -> String {
+        var out = Set<String>()
+        func add(_ s: String) {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { out.insert(t) }
+        }
+        // Attributes carry three different kinds of thing, and only two of
+        // them are on screen:
+        //
+        //   views  (a toolbar's leading/trailing items) — recurse
+        //   lists  (a picker's `options`)               — recurse
+        //   plain strings — ONLY the few that render as text
+        //
+        // Both halves of this had to be learned from a failed run. Reading
+        // just a whitelist of names missed pickers and toolbars; reading
+        // every string instead pulled in `href`, `src`, `alt` and `align`,
+        // which no one sees and which the DOM does not put in textContent
+        // either. Either mistake reports a difference that isn't one.
+        let textAttrs: Set<String> = ["navigationTitle", "header", "footer", "placeholder"]
+        func walkValue(_ v: MarValue, named name: String) {
+            switch v {
+            case .string(let s): if textAttrs.contains(name) { add(s) }
+            case .list(let xs): xs.forEach { walkValue($0, named: name) }
+            case .view(let inner): walk(inner)
+            default: break
+            }
+        }
+        func walk(_ v: MarView) {
+            add(v.text)
+            // A picker shows `toLabel option`, never the option itself — the
+            // options can be Ints or custom-type ctors with no text in them at
+            // all. Reading the raw list found nothing on screens where the web
+            // (which renders the label into each <option>) found nineteen
+            // labels. So apply the same function the renderer applies.
+            if v.tag == "picker",
+               let options = v.attrs.first(where: { $0.name == "options" })?.value,
+               let toLabel = v.attrs.first(where: { $0.name == "toLabel" })?.value,
+               case .list(let opts) = options {
+                for opt in opts {
+                    if let labeled = try? Eval.apply(toLabel, opt),
+                       case .string(let s) = labeled { add(s) }
+                }
+            }
+            for attr in v.attrs { walkValue(attr.value, named: attr.name) }
+            v.children.forEach(walk)
+        }
+        walk(view)
+        return out.sorted().joined(separator: " ¦ ")
+    }
+
+    /// The first BUTTON's message, in tree order.
+    ///
+    /// Buttons specifically, not "anything tappable", because the web half of
+    /// this comparison has to pick the same thing and a DOM node cannot say
+    /// whether a tap sends a message or follows a link. Both sides say "the
+    /// first button" — a definition that means the same on each — so a
+    /// difference in the result is a difference in the runtimes.
+    private static func firstMessage(_ view: MarView) -> MarValue? {
+        // A disabled button is skipped, because the web half cannot press one
+        // either: there the click lands on a disabled DOM node and does
+        // nothing. Dispatching its msg here goes around the UI entirely and
+        // reports a difference — the showcase's "tap is ignored" demo counted
+        // up on iOS and stayed put on the web for exactly this reason.
+        let disabled = view.attrs.contains { attr in
+            guard attr.name == "disabled" else { return false }
+            if case .bool(let b) = attr.value { return b }
+            return true
+        }
+        if view.tag == "button", !disabled, let msg = view.msg, !isFunction(msg) { return msg }
+        for child in view.children {
+            if let found = firstMessage(child) { return found }
+        }
+        return nil
+    }
+
+    /// A textField's `msg` is a FUNCTION of the typed string, not a message.
+    /// Dispatching it would hand `update` a closure and prove nothing.
+    private static func isFunction(_ v: MarValue) -> Bool {
+        if case .fn = v { return true }
+        return false
+    }
+    #endif
+
     /// Reads the embedded program.json from Bundle.main if present.
     /// Returns nil when scaffolds without Resources/program.json are
     /// running (older builds or corrupt installs) — callers must
@@ -248,6 +410,15 @@ final class AppViewModel {
         if !program.authSignInPath.isEmpty {
             AppContext.shared.signInPath = program.authSignInPath
         }
+        // Shared stores are keyed by the order their `App.shared` calls are
+        // evaluated, so the counter has to start over with the program. Skip
+        // this and the background refresh that follows every cold start mints
+        // `shared:1` for the same def: the pages decoded from the new program
+        // bind to a fresh empty store while the screen already on the stack
+        // still reads the old one, and the two silently disagree. The MODELS
+        // are preserved across the reload — a refresh should no more empty the
+        // cart than a `mar dev` save should.
+        MarSharedRegistry.beginProgramLoad()
         let env = MarBuiltins.makeEnv()
         for module in program.modules {
             try MarLoader.load(module: module, into: env)
@@ -272,6 +443,11 @@ final class AppViewModel {
         _ = try eff.run()
 
         let decoded = AppContext.shared.decodedPages()
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["MAR_ROUTE_SMOKE"] == "1" {
+            AppViewModel.routeSmoke(decoded)
+        }
+        #endif
         self.pages = decoded
         // Seed the navigation stack only on the initial load. On a
         // refresh (program changed but user was already navigating),

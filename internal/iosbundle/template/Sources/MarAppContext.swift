@@ -196,12 +196,39 @@ final class AppContext {
     /// which is why it rides as an arg instead of multiplying them.
     func decodedPages() -> [DecodedPage] {
         pages.compactMap { v in
+            // Page.withShared wraps a page. Unwrap it against the store's
+            // CURRENT model to read the route, and keep the builder so the
+            // runtime can re-resolve the four functions as the model moves.
+            var v = v
+            var binding: DecodedPage.SharedBinding? = nil
+            if case .ctor("__SharedPage", let wargs, _) = v, wargs.count >= 2,
+               case .string(let key) = wargs[0] {
+                // Say so when this fails. A dropped page does not crash and
+                // does not draw anything — it simply is not in the app, and
+                // the first symptom is the WRONG SCREEN at launch, because
+                // the root is whichever page happened to survive.
+                guard let store = MarSharedRegistry.lookup(key) else {
+                    print("[mar] dropping a Page.withShared: no store for \(key)")
+                    return nil
+                }
+                let inner: MarValue
+                do {
+                    inner = try Eval.apply(wargs[1], store.model)
+                } catch {
+                    print("[mar] dropping a Page.withShared (\(key)): "
+                          + "the builder failed: \(error.localizedDescription)")
+                    return nil
+                }
+                binding = DecodedPage.SharedBinding(key: key, builder: wargs[1])
+                v = inner
+            }
             guard case .ctor(let tag, let args, _) = v else { return nil }
             let isSheet = args.count >= 7 && boolOf(args[6]) == true
             switch tag {
             case "__Page":
                 guard args.count >= 4 else { return nil }
                 return DecodedPage(
+                    shared: binding,
                     path: stringOf(args[0]) ?? "/",
                     title: args.count >= 5 ? (stringOf(args[4]) ?? "") : "",
                     initFn: args[1],
@@ -215,6 +242,7 @@ final class AppContext {
             case "__ProtectedPage":
                 guard args.count >= 5 else { return nil }
                 return DecodedPage(
+                    shared: binding,
                     path: stringOf(args[0]) ?? "/",
                     title: stringOf(args[4]) ?? "",
                     initFn: args[1],
@@ -228,6 +256,7 @@ final class AppContext {
             case "__DynamicPage":
                 guard args.count >= 5 else { return nil }
                 return DecodedPage(
+                    shared: binding,
                     path: stringOf(args[0]) ?? "/",
                     title: stringOf(args[4]) ?? "",
                     initFn: args[1],
@@ -241,6 +270,7 @@ final class AppContext {
             case "__DynamicProtectedPage":
                 guard args.count >= 5 else { return nil }
                 return DecodedPage(
+                    shared: binding,
                     path: stringOf(args[0]) ?? "/",
                     title: stringOf(args[4]) ?? "",
                     initFn: args[1],
@@ -276,6 +306,16 @@ final class AppContext {
 /// time. `isSheet` (Page.sheet) says this route is PRESENTED over the
 /// screen it was reached from instead of pushed onto the stack.
 struct DecodedPage: Identifiable {
+    /// Set when the page came from `Page.withShared`. The page is a FUNCTION
+    /// of the shared model, so the builder is kept unapplied and re-run on
+    /// every read — see MarPageRuntime. Path, title and the flags are read
+    /// once, because a route cannot change with the model.
+    struct SharedBinding {
+        let key: String
+        let builder: MarValue
+    }
+
+    var shared: SharedBinding? = nil
     let path: String
     let title: String
     let initFn: MarValue
@@ -307,4 +347,45 @@ struct DecodedPage: Identifiable {
         let pattern = MarPath.parse(path)
         return MarPath.match(urlPath, pattern: pattern)
     }
+
+    #if DEBUG
+    /// Params good enough to render this page once, for the route smoke in
+    /// AppViewModel. Fills each `{name:Type}` segment with a plausible value
+    /// and runs it back through the real matcher, so whatever comes out is
+    /// typed exactly the way a real URL's params would be. Returns nil when
+    /// the pattern uses something this cannot fill — the caller says so
+    /// rather than counting the page as checked.
+    func sampleParams() -> MarValue? { sampleVisit()?.params }
+
+    /// The concrete URL this page was rendered at, alongside its params.
+    ///
+    /// The URL matters as much as the params: the web half of the comparison
+    /// has to be sent to the SAME address. Feeding it the raw pattern instead
+    /// made it render `/verify/{email:String}` literally, so the two platforms
+    /// were asked different questions and every dynamic route looked like a
+    /// difference.
+    func sampleVisit() -> (url: String, params: MarValue)? {
+        var url = ""
+        for segment in path.split(separator: "/", omittingEmptySubsequences: false) {
+            let s = String(segment)
+            if s.hasPrefix("{") && s.hasSuffix("}") {
+                let body = s.dropFirst().dropLast()
+                let type = body.split(separator: ":").last.map(String.init) ?? "String"
+                switch type {
+                case "Int": url += "1"
+                case "String": url += "sample"
+                // A `{role:Role}` segment takes a ctor name; the registry the
+                // matcher itself consults is the source of truth for those.
+                default: url += MarPath.enumCtors(type)?.first ?? "sample"
+                }
+            } else {
+                url += s
+            }
+            url += "/"
+        }
+        if url.count > 1 { url.removeLast() }
+        guard let params = matchURL(url) else { return nil }
+        return (url, params)
+    }
+    #endif
 }
