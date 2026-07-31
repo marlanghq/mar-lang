@@ -157,26 +157,56 @@ process.stdout.write(seen.join(' '));
 	}
 }
 
-// Opened cold there is nothing to present over — no page came before it — so
-// the route has to render as an ordinary full screen. Without this a shared
-// link or a reload would land on a backdrop over nothing.
-func TestSheetRouteOpenedColdRendersFullScreen(t *testing.T) {
-	got := runNavDriver(t, `
+// Opened cold — a bookmark, a shared link, a reload — a presented route now
+// arrives WITH the screen it belongs to underneath it.
+//
+// It used to render as a bare full screen, on the reasoning that a deep link
+// has nothing behind it. That was worse than odd: Nav.dismiss is a no-op on
+// the first history entry, so the sheet's own Done button did nothing and the
+// screen was a dead end you could only leave with the browser's back button.
+//
+// The parent needs no new API because a presented route already nests in the
+// url under the screen it covers, and the prefix of a concrete url is itself
+// concrete — so /a/nested resolves /a with its params already filled in. A
+// presented route with no such parent falls back to the app's first page,
+// because a modal always has something behind it.
+func TestSheetRouteOpenedColdPresentsOverItsParent(t *testing.T) {
+	for _, tc := range []struct {
+		name, url, want string
+	}{
+		{
+			name: "nested under its parent route",
+			url:  "/a/nested",
+			want: "root=A=0,sheet=N=0",
+		},
+		{
+			// /s is declared at the top level, so there is no prefix to
+			// resolve — the app's first page goes underneath instead.
+			name: "top-level, so the app's first page goes underneath",
+			url:  "/s",
+			want: "root=A=0,sheet=S=0",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runNavDriver(t, `
 const fs = require('fs');
 (0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
 const program = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 
 // Land directly on the presented route, as a deep link or reload would.
-history.replaceState({ marDepth: 0, prevTitle: '' }, '', '/s');
+history.replaceState({ marDepth: 0, prevTitle: '' }, '', '`+tc.url+`');
 window.marRun(program);
 
 process.stdout.write(
-  'root=' + ((screenText().match(/[ABS]=\d+/) || ['-'])[0]) +
-  ',sheet=' + ((sheetText().match(/[ABS]=\d+/) || ['-'])[0]));
+  'root=' + ((screenText().match(/[ABSN]=\d+/) || ['-'])[0]) +
+  ',sheet=' + ((sheetText().match(/[ABSN]=\d+/) || ['-'])[0]));
 `)
-	want := "root=S=0,sheet=-"
-	if got != want {
-		t.Fatalf("a cold-loaded sheet route did not fall back to full screen.\n got: %s\nwant: %s\n\n"+
-			"sheet=S=0 → it presented over nothing, leaving no page underneath.", got, want)
+			if got != tc.want {
+				t.Fatalf("a cold-loaded sheet route did not present over its parent.\n got: %s\nwant: %s\n\n"+
+					"sheet=- with a root  → it rendered full screen, and Done is a dead end.\n"+
+					"root=- with a sheet  → it presented over nothing, which is the same dead end "+
+					"with a backdrop.", got, tc.want)
+			}
+		})
 	}
 }

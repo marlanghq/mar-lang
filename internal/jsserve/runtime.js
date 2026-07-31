@@ -10802,6 +10802,41 @@
       return fallback;
     }
 
+    // The screen a presented route sits over, as a concrete url.
+    //
+    // Longest declared route that is a proper PATH PREFIX of this one:
+    // /classes/3/attendance yields /classes/3, params and all, because the
+    // prefix of a concrete url is itself concrete. Routes that nest on screen
+    // nest in the url too — if they don't, that is a shape worth noticing in
+    // the route table rather than a case to paper over here.
+    //
+    // A presented route with no such parent still gets the app's first page,
+    // because a modal always has something behind it. Returns null only when
+    // there is nothing at all to put there, which is a single-page app whose
+    // only page is a sheet.
+    //
+    // Resolution is deliberately read-only: currentPage() stamps activeKey and
+    // params onto the page it returns, and doing that to a page we are only
+    // asking about would hand the renderer a half-selected route.
+    function routeAt(urlPath) {
+      if (pages[urlPath]) return pages[urlPath];
+      for (const dp of dynamicPages) {
+        if (matchPathPattern(urlPath, dp.pattern) !== null) return dp.page;
+      }
+      return null;
+    }
+    function coveredPathFor(urlPath) {
+      const segments = urlPath.split('/').filter(Boolean);
+      for (let n = segments.length - 1; n > 0; n--) {
+        const candidate = '/' + segments.slice(0, n).join('/');
+        const pg = routeAt(candidate);
+        if (pg && !pg.isSheet) return candidate;
+      }
+      const root = routeAt(firstPath);
+      if (root && !root.isSheet && firstPath !== urlPath) return firstPath;
+      return null;
+    }
+
     let mounted = null;
     let mountedPath = null;   // the LIVE page in the DOM (drives the on-nav init cleanup)
     // Runtime-failure state (ADR 0020). Declared up here with the rest of the
@@ -12253,6 +12288,35 @@
       replaceNav(window.location.pathname + window.location.search + window.location.hash);
     }
 
+    // A presented route opened cold — a bookmark, a shared link, a reload —
+    // used to render as a full screen, because there was nothing behind it to
+    // present over. That was worse than merely odd: `Nav.dismiss` is a no-op
+    // on the first history entry, so the sheet's own Done button did nothing
+    // and the screen was a dead end.
+    //
+    // So give it something behind. The rule needs no new API because a
+    // presented route already nests in the URL under the screen it covers —
+    // /classes/3/attendance sits under /classes/3 — and being a prefix of a
+    // CONCRETE url means the parent's params are already filled in. Seeding
+    // the two-entry stack here, rather than special-casing the render, means
+    // everything downstream (the presenting branch, dismiss, Back) works with
+    // no carve-out at all.
+    //
+    // It boots AT the parent and then navigates to the sheet, rather than
+    // teaching render() a third case. The presenting branch already requires
+    // something mounted behind the overlay, and on a cold start nothing is —
+    // so instead of relaxing that requirement, this replays the two steps the
+    // seeded history claims already happened. render() learns nothing new.
+    let coldPresentation = null;
+    (function seedColdPresentation() {
+      const boot = currentPage();
+      if (!boot || !boot.isSheet || currentNavDepth() !== 0) return;
+      const covered = coveredPathFor(window.location.pathname);
+      if (!covered) return;
+      coldPresentation = window.location.pathname + window.location.search + window.location.hash;
+      replaceNav(covered);
+    })();
+
     // Replace the previous popstate listener (from the prior
     // mountPages, if any) with this mount\'s render. See the
     // `prevPopstateHandler` declaration above for why this matters
@@ -12282,6 +12346,13 @@
     // model did not.
     sharedRerender = render;
     render();
+    // The covered screen is mounted now, so the sheet has something to be
+    // presented over. This is an ordinary push as far as the runtime is
+    // concerned — which is the point.
+    if (coldPresentation !== null) {
+      pushNav(coldPresentation);
+      render();
+    }
     // The stores' init Cmds run only now. init happens while pages are being
     // built — before there is a dispatch to deliver a result to — so a
     // Service.call fired there would resolve into nothing.

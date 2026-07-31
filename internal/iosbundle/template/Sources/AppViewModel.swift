@@ -315,12 +315,16 @@ final class AppViewModel {
         // The counter a page is showing, read from the Mar view the way the
         // renderer would. "-" means nothing is there, which is a real answer:
         // it is what a dismissed sheet should report.
+        // The fixture's page labels. Named once so adding a page to the
+        // fixture cannot silently start reporting "?" for it — which is how
+        // the nested-sheet case first read as a runtime bug.
+        let parity: Set<Character> = ["A", "B", "S", "N"]
         func counter(_ runtime: PageRuntime?) -> String {
             guard let runtime, let view = runtime.currentView() else { return "-" }
             for piece in visibleText(view).components(separatedBy: " ¦ ") {
                 let parts = piece.components(separatedBy: "=")
                 if parts.count == 2, let head = parts.first?.first,
-                   "ABS".contains(head), Int(parts[1]) != nil {
+                   parity.contains(head), Int(parts[1]) != nil {
                     return piece
                 }
             }
@@ -437,9 +441,9 @@ final class AppViewModel {
             await settle()
             noteBoth("reopened")
 
-        case "sheet-cold":
-            // Seeded to /s before the first render (see runProgramSync), so
-            // this is what a shared link or a relaunch lands on.
+        case "sheet-cold", "sheet-cold-nested":
+            // Seeded before the first render (see runProgramSync), so this is
+            // what a shared link or a relaunch lands on.
             noteBoth("cold")
 
         default:
@@ -718,7 +722,7 @@ final class AppViewModel {
         // missing match.
         if isInitialLoad {
             if let first = decoded.first {
-                AppContext.shared.seedRoot(first.path)
+                AppContext.shared.seedRoot(first.path, pages: decoded)
             }
         } else {
             let current = AppContext.shared.currentPath
@@ -736,8 +740,14 @@ final class AppViewModel {
             // cold load the fallback is about. This runs while the shell is
             // still waiting on `state == .loaded`, so the stack it first sees
             // is already the deep-linked one.
+            // Land on a presented route the way a shared link would: through
+            // the same seeding the app uses, so the parent it should be
+            // presented over comes along.
             if script == "sheet-cold" {
-                AppContext.shared.navPath = ["/s"]
+                AppContext.shared.navPath = AppContext.stackFor("/s", pages: decoded)
+            }
+            if script == "sheet-cold-nested" {
+                AppContext.shared.navPath = AppContext.stackFor("/a/nested", pages: decoded)
             }
             MarLiveRuntimes.reset()
             Task { @MainActor in

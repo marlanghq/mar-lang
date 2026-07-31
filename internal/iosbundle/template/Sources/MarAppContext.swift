@@ -115,10 +115,45 @@ final class AppContext {
     /// startup with the path of the first registered page. Idempotent:
     /// only sets when the stack is empty so a hot-reload or program
     /// refresh doesn't bulldoze the user's current location.
-    func seedRoot(_ path: String) {
+    func seedRoot(_ path: String, pages: [DecodedPage] = []) {
         if navPath.isEmpty {
-            navPath = [path]
+            navPath = Self.stackFor(path, pages: pages)
         }
+    }
+
+    /// The navigation stack a url should arrive as.
+    ///
+    /// For an ordinary route that is just the route. For a PRESENTED one it is
+    /// two entries — the screen it covers, then itself — because a presented
+    /// route opened cold used to render as a bare full screen, and that was
+    /// worse than odd: `dismissTop` is a no-op on the first entry, so the
+    /// sheet's own Done button did nothing and the screen was a dead end.
+    ///
+    /// The parent needs no new API. A presented route already nests in the url
+    /// under the screen it covers — /classes/3/attendance sits under
+    /// /classes/3 — and the prefix of a CONCRETE url is itself concrete, so the
+    /// parent's params come along for free. Routes that nest on screen nest in
+    /// the url too; one that doesn't is a shape worth noticing in the route
+    /// table rather than a case to paper over here.
+    ///
+    /// With no such parent the app's first page goes underneath instead,
+    /// because a modal always has something behind it. The web runtime seeds
+    /// the same two entries at boot, for the same reasons.
+    static func stackFor(_ url: String, pages: [DecodedPage]) -> [String] {
+        guard pages.isSheetRoute(url) else { return [url] }
+        var segments = url.split(separator: "/").map(String.init)
+        while segments.count > 1 {
+            segments.removeLast()
+            let candidate = "/" + segments.joined(separator: "/")
+            if pages.contains(where: { $0.matchURL(candidate) != nil }),
+               !pages.isSheetRoute(candidate) {
+                return [candidate, url]
+            }
+        }
+        if let first = pages.first, first.path != url, !first.isSheet {
+            return [first.path, url]
+        }
+        return [url]
     }
 
     /// Called by MarHTTP when a Service.call returns 401. Captures the

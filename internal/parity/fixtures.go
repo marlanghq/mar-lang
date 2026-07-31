@@ -92,9 +92,27 @@ pageS =
         )
 
 
+-- A presented route that NESTS: /a/nested sits under /a in the url, the way
+-- a real one does (/classes/3/attendance under /classes/3). Opened cold it
+-- has a parent to be presented over; pageS, top-level, has none and falls
+-- back to the app's first page. Two fixtures for the two branches.
+pageN : Page
+pageN =
+    Page.sheet
+        (Page.create
+            { path = "/a/nested"
+            , title = "N"
+            , init = init
+            , update = update
+            , view = viewFor "N"
+            , subscriptions = always Sub.none
+            }
+        )
+
+
 main : Cmd ()
 main =
-    App.frontend [ pageA, pageB, pageS ]
+    App.frontend [ pageA, pageB, pageS, pageN ]
 `
 
 // UISource puts one of every widget on a single screen, with a counter so that

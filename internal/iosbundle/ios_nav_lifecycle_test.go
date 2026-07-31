@@ -71,11 +71,25 @@ var iosNavScripts = []struct {
 			"starting a fresh one.",
 	},
 	{
-		name:   "SheetOpenedColdRendersFullScreen",
+		// A presented route opened cold — a shared link, a relaunch — arrives
+		// with the screen it belongs to underneath it. It used to render as a
+		// bare full screen, and Nav.dismiss is a no-op on the first entry, so
+		// its own Done button did nothing.
+		name:   "SheetOpenedColdPresentsOverTheAppRoot",
 		script: "sheet-cold",
-		want:   "cold:root=S=0,sheet=-",
-		hint: "cold:sheet=S=0 → it presented over nothing, leaving no page underneath — " +
-			"what a shared link or a relaunch would land on.",
+		want:   "cold:root=A=0,sheet=S=0",
+		hint: "cold:sheet=-  → it rendered full screen, and Done is a dead end.\n" +
+			"cold:root=-   → it presented over nothing, the same dead end with a backdrop.",
+	},
+	{
+		// The real shape: the presented route nests in the url under the
+		// screen it covers, so the parent resolves by path prefix with its
+		// params already filled in.
+		name:   "SheetOpenedColdPresentsOverItsParentRoute",
+		script: "sheet-cold-nested",
+		want:   "cold:root=A=0,sheet=N=0",
+		hint: "cold:root=A=0,sheet=- → the prefix did not resolve, so it fell back " +
+			"to a full screen instead of presenting over /a.",
 	},
 }
 
