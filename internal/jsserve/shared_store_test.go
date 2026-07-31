@@ -1,15 +1,10 @@
 package jsserve
 
 import (
-	"encoding/json"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
+	"errors"
 	"testing"
 
-	"mar/internal/parser"
-	"mar/internal/typecheck"
+	"mar/internal/parity"
 )
 
 // Page models die on forward navigation (ADR 0009). A shared store is the one
@@ -214,43 +209,16 @@ process.stdout.write([before, afterOne, shown()].join(' | '));
 
 func runSharedDriver(t *testing.T, driver string) string {
 	t.Helper()
-	nodePath, err := exec.LookPath("node")
+	program, err := parity.Compile(sharedStoreSrc, SerializeModule)
 	if err != nil {
+		t.Fatalf("compiling the fixture: %v", err)
+	}
+	out, err := parity.RunWeb(runtimeJS, program, driver)
+	if errors.Is(err, parity.ErrNoNode) {
 		t.Skip("node not installed")
 	}
-
-	mod, err := parser.Parse(sharedStoreSrc)
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("node run: %v", err)
 	}
-	if _, err := typecheck.CheckModule(mod); err != nil {
-		t.Fatalf("typecheck: %v", err)
-	}
-
-	dir := t.TempDir()
-	programJSON, err := json.Marshal(map[string]any{
-		"modules": []any{SerializeModule(mod)},
-		"entry":   "Main.main",
-	})
-	if err != nil {
-		t.Fatalf("marshal program: %v", err)
-	}
-	write := func(name, body string) {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write("runtime.js", runtimeJS)
-	write("program.json", string(programJSON))
-	write("driver.js", navFakeBrowser+driver)
-
-	cmd := exec.Command(nodePath, filepath.Join(dir, "driver.js"),
-		filepath.Join(dir, "runtime.js"), filepath.Join(dir, "program.json"))
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("node run: %v\n%s", err, stderr.String())
-	}
-	return strings.TrimSpace(string(out))
+	return out
 }

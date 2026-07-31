@@ -11,14 +11,12 @@ import (
 	"time"
 
 	"mar/internal/jsserve"
-	"mar/internal/navfixture"
-	"mar/internal/parser"
-	"mar/internal/typecheck"
+	"mar/internal/parity"
 )
 
 // The iOS half of the navigation-lifecycle check.
 //
-// internal/jsserve/nav_lifecycle_test.go runs navfixture.Source through
+// internal/jsserve/nav_lifecycle_test.go runs parity.NavSource through
 // runtime.js and asserts what each step leaves on screen. These run the SAME
 // program through the Swift runtime and assert the SAME strings. Two runtimes,
 // one program, one set of expectations — which is what "no drift between web
@@ -159,7 +157,7 @@ func makeNavHost(t *testing.T) (host *navHost, skip string, fail string) {
 	// turn an unrelated flake into a lifecycle failure. DefaultBaseURL points
 	// at a closed port on purpose, so the background refresh fails fast and
 	// the embedded snapshot is what runs.
-	program, err := compileFixtureProgram()
+	program, err := parity.Compile(parity.NavSource, jsserve.SerializeModule)
 	if err != nil {
 		t.Fatalf("compiling the fixture: %v", err)
 	}
@@ -194,20 +192,6 @@ func makeNavHost(t *testing.T) (host *navHost, skip string, fail string) {
 		return nil, "", "the build produced no NavCheck.app"
 	}
 	return &navHost{appPath: app, bundleID: navBundleID, udid: udid}, "", ""
-}
-
-func compileFixtureProgram() ([]byte, error) {
-	mod, err := parser.Parse(navfixture.Source)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := typecheck.CheckModule(mod); err != nil {
-		return nil, err
-	}
-	return json.Marshal(map[string]any{
-		"modules": []any{jsserve.SerializeModule(mod)},
-		"entry":   "Main.main",
-	})
 }
 
 // runNavScript installs the host, launches it with the script selected, and
