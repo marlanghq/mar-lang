@@ -1,12 +1,16 @@
 // Top-level shell that wires DecodedPages to native navigation.
 //
-// Strategy mirrors what the JS runtime does for App.frontend with
-// multiple pages: each page has a path, and the user moves between
-// them via in-page links. iOS doesn't have a URL bar, so:
+// A program declares its pages; the platform picks the chrome. The
+// web has a URL bar, iOS does not, and what fits here today is:
 //
 //  - 1 public static page → mount it directly.
-//  - anything else        → a NavigationStack, so a link pushes and
-//                           Back pops, exactly as on the web.
+//  - anything else        → a NavigationStack.
+//
+// That choice is free to change per platform, or per device class.
+// What is not free is the page lifecycle underneath it: whichever
+// chrome is on top, one page is live at a time and which one comes
+// from AppContext.navPath, so a move re-inits and Back restores
+// (ADR-0009) exactly as the JS runtime does it.
 //
 // MarPageHost is the stable wrapper around PageRuntime that
 // re-renders on Observable property reads and bridges click events
