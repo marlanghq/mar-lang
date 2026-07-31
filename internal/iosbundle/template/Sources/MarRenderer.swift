@@ -97,6 +97,14 @@ struct MarRenderer: View {
             //
             //   - Anything else: render the child plain (still
             //     visible, just not tappable).
+            // `disabled` works here for the same reason it works on every
+            // other interactive builtin: UI.disabled is polymorphic in its
+            // host, and navigationLink's scheme documents carrying it so a
+            // link can be inert without leaving the tree. The web honors it
+            // (applyAnchorDisabled pulls the anchor out of tab order and the
+            // click handler swallows the navigation); iOS did not, so a
+            // greyed-out row still pushed. Every sibling case below already
+            // had the modifier — this one was simply missed.
             if let href = attrString("href") {
                 let child = view.children.first
                 if href.hasPrefix("/") {
@@ -105,12 +113,14 @@ struct MarRenderer: View {
                             MarRenderer(view: child, dispatch: dispatch)
                         }
                     }
+                    .disabled(isDisabled(view))
                 } else if let url = URL(string: href), url.scheme != nil {
                     Link(destination: url) {
                         if let child {
                             MarRenderer(view: child, dispatch: dispatch)
                         }
                     }
+                    .disabled(isDisabled(view))
                 } else if let child {
                     MarRenderer(view: child, dispatch: dispatch)
                 }
