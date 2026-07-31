@@ -14,6 +14,25 @@ enum MarLoader {
     /// env is mutated in place — typical use is the global env
     /// returned by `MarBuiltins.makeEnv()`.
     static func load(module: Module, into env: Env) throws {
+        let ownName = module.name.joined(separator: ".")
+
+        // Per-module scope, mirroring `loadModule` in
+        // internal/jsserve/runtime.js. Every module used to load its bare
+        // names into the SAME env, so two modules that both declare `view`
+        // or `init` or `page` — which every page module in every example
+        // does — overwrote each other, last one wins. A closure resolves its
+        // free names when it RUNS, so `view = view global` inside Catalog's
+        // Page.create found whichever module happened to be loaded last.
+        //
+        // The symptom was not a crash. It was the Catalog route drawing the
+        // Settings screen: the literals (`path`, `title`) came from the right
+        // module and everything reached by name came from the wrong one.
+        //
+        // The synthetic entry module (name: []) keeps using the shared env so
+        // `main` stays findable. Real modules chain to it through `parent`,
+        // so qualified lookups across modules still resolve.
+        let modEnv = ownName.isEmpty ? env : Env(parent: env)
+
         // Pass 0: imports — re-bind exposed names from already-known
         // qualified bindings. Without this, code that compiles
         // (e.g. `column [...]` after `import View exposing (column)`)
@@ -25,19 +44,19 @@ enum MarLoader {
             // chain (for builtin modules like UI, the whole
             // vocabulary). Mirrors the typechecker's wildcard.
             if imp.all {
-                for (name, v) in env.exportsOf(modName) {
-                    env.define(name, v)
+                for (name, v) in modEnv.exportsOf(modName) {
+                    modEnv.define(name, v)
                 }
             }
             for item in imp.exposing {
                 let qualified = modName + "." + item
-                if let v = env.lookup(qualified) {
-                    env.define(item, v)
+                if let v = modEnv.lookup(qualified) {
+                    modEnv.define(item, v)
                 }
             }
         }
 
-        let modName = module.name.joined(separator: ".")
+        let modName = ownName
 
         // Pass 1: register custom-type constructors as values. Nullary
         // ctors become VCtor values directly; n-ary ctors become
@@ -62,7 +81,9 @@ enum MarLoader {
                     })
                     allZeroArg = false
                 }
-                env.define(c.name, val)
+                // Bare is module-local; the qualified alias goes to the
+                // shared env so `import M exposing (T(..))` elsewhere finds it.
+                modEnv.define(c.name, val)
                 if !modName.isEmpty {
                     env.define(modName + "." + c.name, val)
                 }
@@ -82,23 +103,21 @@ enum MarLoader {
         }
 
         // Pass 2: pre-bind value names with placeholders so mutually
-        // recursive references can resolve through env.lookup. The
-        // actual value gets defined for real in pass 3.
+        // recursive references can resolve through lookup. Module-local:
+        // only this module's own body needs the self-reference, and other
+        // modules reach the value through its qualified alias once pass 3
+        // has run.
         for d in module.decls {
             if case .value(let name, _, _) = d {
-                env.define(name, .unit)
-                if !modName.isEmpty {
-                    env.define(modName + "." + name, .unit)
-                }
+                modEnv.define(name, .unit)
             }
         }
 
-        // Pass 3: evaluate each value declaration. Each value is
-        // bound BOTH bare and qualified — bare for intra-module
-        // references, qualified so EQualified lookups from other
-        // modules resolve. Without the qualified alias, two
-        // modules that both define `page` would silently overwrite
-        // each other in the bare slot.
+        // Pass 3: evaluate each value declaration. Bodies resolve bare
+        // names against modEnv (which chains to the shared env), so a
+        // closure captured here keeps seeing ITS OWN module's bindings no
+        // matter what a later module declares. The qualified alias goes to
+        // the shared env so EQualified lookups from other modules resolve.
         for d in module.decls {
             guard case .value(let name, let params, let body) = d else { continue }
 
@@ -112,9 +131,9 @@ enum MarLoader {
                 bodyExpr = .lambda(params: params, body: body)
             }
 
-            let val = try Eval.eval(bodyExpr, env)
+            let val = try Eval.eval(bodyExpr, modEnv)
 
-            env.define(name, val)
+            modEnv.define(name, val)
             if !modName.isEmpty {
                 env.define(modName + "." + name, val)
             }
