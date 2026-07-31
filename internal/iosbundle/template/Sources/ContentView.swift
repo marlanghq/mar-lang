@@ -5,16 +5,11 @@
 // States:
 //
 //   - loading  → spinner
-//   - loaded   → user's Pages. Two render modes:
-//
-//     * Stack mode (any Page.protected present): SwiftUI
-//       NavigationStack driven by AppContext.navPath. Native
-//       swipe-back pops the top entry; Nav.push/Nav.replace
-//       append or rewrite the stack. Page.protected destinations
-//       gate on Auth.me.
-//
-//     * Tabs mode (all-public multi-page apps): TabView with one
-//       tab per page.
+//   - loaded   → user's Pages, mounted in a SwiftUI NavigationStack
+//     driven by AppContext.navPath. Native swipe-back pops the top
+//     entry; Nav.push/Nav.replace append or rewrite the stack.
+//     Page.protected destinations gate on Auth.me. A lone public
+//     static page skips the stack and mounts directly.
 //
 //   - failed   → error banner with retry.
 //
@@ -86,32 +81,20 @@ private struct LoadedShell: View {
             } else {
                 MarSinglePageView(page: pages[0])
             }
-        } else if pages.contains(where: { $0.isProtected || $0.isDynamic }) {
-            // Any Page.protected or Page.dynamic → stack mode. Tabs
-            // mode only makes sense for all-public, all-static apps
-            // (each tab a fixed page).
-            StackShell(pages: pages)
         } else {
-            // All-public multi-page → tabs UX.
-            TabView {
-                ForEach(pages) { page in
-                    NavigationStack {
-                        MarPageHost(runtime: PageRuntime(page: page))
-                    }
-                    .tabItem {
-                        Label(page.displayTitle, systemImage: tabIcon(for: page))
-                    }
-                }
-            }
+            // Every multi-page app is a navigation stack, on both platforms.
+            //
+            // An all-public, all-static app used to become a TabView here,
+            // with an icon guessed from the path. That changed what the app
+            // WAS, not just how it looked: tabs keep every page alive side by
+            // side, so ADR-0009 — a push re-inits, going Back restores — did
+            // not apply at all on iOS for those apps, while the same
+            // program on the web was an ordinary navigation stack.
+            //
+            // The shape of an app should come from the program, and
+            // `App.frontend [a, b]` says the same thing on both platforms.
+            StackShell(pages: pages)
         }
-    }
-
-    private func tabIcon(for page: DecodedPage) -> String {
-        let p = page.path.lowercased()
-        if p.contains("setting") { return "gearshape" }
-        if p.contains("home") || p == "/" { return "house" }
-        if p.contains("profile") || p.contains("user") { return "person" }
-        return "square"
     }
 }
 

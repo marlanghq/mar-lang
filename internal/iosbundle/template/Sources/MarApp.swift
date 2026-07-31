@@ -4,9 +4,9 @@
 // multiple pages: each page has a path, and the user moves between
 // them via in-page links. iOS doesn't have a URL bar, so:
 //
-//  - 1 page  → mount it directly.
-//  - 2+ pages → put each in a TabView. The displayTitle becomes the
-//               tab label.
+//  - 1 public static page → mount it directly.
+//  - anything else        → a NavigationStack, so a link pushes and
+//                           Back pops, exactly as on the web.
 //
 // MarPageHost is the stable wrapper around PageRuntime that
 // re-renders on Observable property reads and bridges click events
