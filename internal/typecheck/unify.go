@@ -23,6 +23,12 @@ func (e *UnifyError) Error() string {
 	r.collect(e.B)
 	a := r.format(e.A)
 	b := r.format(e.B)
+	// "cannot unify Color with Color" would be a worse message than the bug
+	// it reports. When two types share a base name but not a module (ADR
+	// 0027), the module is the only thing that tells them apart.
+	if SameNameDifferentTypes(e.A, e.B) {
+		a, b = PrettyQualified(e.A), PrettyQualified(e.B)
+	}
 	if e.Reason == "" {
 		return fmt.Sprintf("cannot unify %s with %s", a, b)
 	}

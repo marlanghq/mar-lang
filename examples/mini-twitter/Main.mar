@@ -1,6 +1,7 @@
 module Main exposing (main)
 
 
+import Shared
 import Backend.Users
 import Backend.Services
 import Frontend.SignIn

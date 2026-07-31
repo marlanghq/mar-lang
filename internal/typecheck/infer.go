@@ -217,8 +217,16 @@ func inferApp(n *ast.EApp, env *TypeEnv, s *Subst) (Type, error) {
 		}
 		// It is a function but this argument's type doesn't match.
 		fnT := fnResolved.(TArrow)
+		want, got := fnT.From, s.Apply(tArg)
+		// Two types from different modules can share a base name (ADR 0027).
+		// Printing both bare would read "expected Color, got Color", so the
+		// module comes back exactly here, where it is the whole point.
+		if SameNameDifferentTypes(want, got) {
+			return nil, errorfExpr(n.Arg, "%s has the wrong type: expected %s, got %s",
+				who, PrettyQualified(want), PrettyQualified(got))
+		}
 		return nil, errorfExpr(n.Arg, "%s has the wrong type: expected %s, got %s",
-			who, Pretty(fnT.From), Pretty(s.Apply(tArg)))
+			who, Pretty(want), Pretty(got))
 	}
 	return s.Apply(tRet), nil
 }

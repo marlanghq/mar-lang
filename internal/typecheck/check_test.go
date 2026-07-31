@@ -61,10 +61,10 @@ bar = Inactive
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := res.ValueTypes["foo"].String(); got != "Status" {
+	if got := res.ValueTypes["foo"].String(); got != "M.Status" {
 		t.Fatalf("foo: want Status, got %s", got)
 	}
-	if got := res.ValueTypes["bar"].String(); got != "Status" {
+	if got := res.ValueTypes["bar"].String(); got != "M.Status" {
 		t.Fatalf("bar: want Status, got %s", got)
 	}
 }
@@ -78,7 +78,7 @@ mkId = UserId 42
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := res.ValueTypes["mkId"].String(); got != "UserId" {
+	if got := res.ValueTypes["mkId"].String(); got != "M.UserId" {
 		t.Fatalf("mkId: want UserId, got %s", got)
 	}
 }
@@ -96,7 +96,9 @@ fooStr = Box "x"
 	if got := Pretty(res.ValueTypes["fooInt"]); got != "Box number" {
 		t.Fatalf("fooInt: %s", got)
 	}
-	if got := res.ValueTypes["fooStr"].String(); got != "Box String" {
+	// `.String()` is the raw identity, which since ADR 0027 carries the
+	// module. `Pretty` is the display form and drops it.
+	if got := res.ValueTypes["fooStr"].String(); got != "M.Box String" {
 		t.Fatalf("fooStr: %s", got)
 	}
 }
@@ -904,6 +906,17 @@ name rec = rec.name
 // "not yet supported" gate; they now resolve through the dotted binding the
 // loader registers per module export. The bare Name keeps driving runtime
 // tag matching and exhaustiveness, so the qualifier is resolution-only.
+// qualifyCustoms keys a module's custom types the way the project pipeline
+// does since ADR 0027: `Shared.Outcome`, not `Outcome`. A type is identified
+// by its module, so CheckModuleWith takes canonical keys.
+func qualifyCustoms(module string, cts map[string]CustomType) map[string]CustomType {
+	out := make(map[string]CustomType, len(cts))
+	for name, ct := range cts {
+		out[module+"."+name] = ct
+	}
+	return out
+}
+
 func TestQualifiedConstructorPatternAndExpr(t *testing.T) {
 	resetVarIDsForTesting()
 	shared, err := parser.Parse(`module Shared exposing (Outcome(..))
@@ -933,7 +946,7 @@ made = Shared.Created "x"
 	if err != nil {
 		t.Fatalf("parse main: %v", err)
 	}
-	if _, err := CheckModuleWith(main, env, nil, sharedRes.CustomTypes); err != nil {
+	if _, err := CheckModuleWith(main, env, nil, qualifyCustoms("Shared", sharedRes.CustomTypes)); err != nil {
 		t.Fatalf("qualified ctor pattern + expression should check, got: %v", err)
 	}
 }
@@ -957,7 +970,7 @@ describe o =
     case o of
         Shared.Created name -> name
 `)
-	_, err = CheckModuleWith(main, env, nil, sharedRes.CustomTypes)
+	_, err = CheckModuleWith(main, env, nil, qualifyCustoms("Shared", sharedRes.CustomTypes))
 	// The message names the value nobody matched. It used to list the missing
 	// constructor; the usefulness algorithm builds a witness instead, which
 	// says the same thing for a nullary constructor and much more for a

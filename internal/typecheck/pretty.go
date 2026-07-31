@@ -114,14 +114,21 @@ func (r *renamer) format(t Type) string {
 		r.mapping[v.ID] = r.nameForVar(v)
 		return r.mapping[v.ID]
 	case TCon:
+		// A user type's identity carries its module (ADR 0027), but the
+		// module is noise in a message about the type you are looking at:
+		// "Model -> View Msg" beats "Frontend.Home.Model -> View
+		// Frontend.Home.Msg". The qualifier is printed only where it
+		// disambiguates — see qualifyClashing, used by the mismatch
+		// message when both sides share a base name.
+		name := displayTypeName(v.Name)
 		if len(v.Args) == 0 {
-			return v.Name
+			return name
 		}
 		parts := make([]string, len(v.Args))
 		for i, a := range v.Args {
 			parts[i] = r.formatAtom(a)
 		}
-		return v.Name + " " + strings.Join(parts, " ")
+		return name + " " + strings.Join(parts, " ")
 	case TArrow:
 		return r.formatArrowFrom(v.From) + " -> " + r.format(v.To)
 	case TUnit:
@@ -275,4 +282,39 @@ func contains(s []string, t string) bool {
 		}
 	}
 	return false
+}
+
+// displayTypeName drops a user module qualifier for display. Stdlib types whose
+// canonical name legitimately carries a dot (Service.Error, Keyboard.Key) keep
+// it: there the qualifier IS the name people write.
+func displayTypeName(canonical string) string {
+	i := strings.LastIndex(canonical, ".")
+	if i < 0 {
+		return canonical
+	}
+	if qualifiedBuiltinTypes[canonical] {
+		return canonical
+	}
+	return canonical[i+1:]
+}
+
+// SameNameDifferentTypes reports whether two types print identically but are
+// NOT the same type — the one case where hiding the module would turn a real
+// error into a baffling one ("expected Color, got Color"). The mismatch message
+// checks this and falls back to the canonical names.
+func SameNameDifferentTypes(a, b Type) bool {
+	ca, ok1 := a.(TCon)
+	cb, ok2 := b.(TCon)
+	if !ok1 || !ok2 {
+		return false
+	}
+	return ca.Name != cb.Name && displayTypeName(ca.Name) == displayTypeName(cb.Name)
+}
+
+// PrettyQualified is Pretty with every module qualifier kept.
+func PrettyQualified(t Type) string {
+	if c, ok := t.(TCon); ok && len(c.Args) == 0 {
+		return c.Name
+	}
+	return Pretty(t)
 }

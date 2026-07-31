@@ -2,6 +2,7 @@ package typecheck
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"mar/internal/ast"
@@ -124,14 +125,27 @@ func CheckModuleWith(
 		CustomTypes: map[string]CustomType{},
 	}
 
+	// This module's own prefix. Types it declares are canonically
+	// `Module.Name` (ADR 0027). The synthetic `__entry` module apphost
+	// appends has no name; its types keep the bare form.
+	modPrefix := strings.Join([]string(mod.Name), ".")
+
 	tEnv := newTypeNameEnv()
+	// Imported types arrive keyed CANONICALLY (`Shared.User`). Each is
+	// registered under that key and ALSO bound to its bare tail, because
+	// writing `User` after a plain `import Shared` is the established idiom
+	// — 40 sites across the examples do it. Restricting the bare form to
+	// `exposing` lists is a separate tightening this change does not make.
 	for k, v := range importedAliases {
 		tEnv.aliases[k] = v
+		tEnv.bindBare(baseName(k), k)
 	}
 	for k, v := range importedCustoms {
 		tEnv.customs[k] = v
+		tEnv.bindBare(baseName(k), k)
 		// Imported customs also need to be visible at the value-env
-		// level for exhaustiveness checking to find them.
+		// level for exhaustiveness checking to find them — under the
+		// canonical key, which is what a TCon now carries.
 		valueEnv.RegisterCustom(k, v)
 	}
 
@@ -160,12 +174,17 @@ func CheckModuleWith(
 			if t, ok := valueEnv.Lookup(qual); ok {
 				valueEnv = valueEnv.Bind(item.Name, t)
 			}
-			// Type names: pull aliases / customs into the bare namespace too.
-			if alias, ok := importedAliases[item.Name]; ok {
-				tEnv.aliases[item.Name] = alias
+			// Type names: naming a type in an `exposing` list binds its bare
+			// form. The loops above already bound every imported type's bare
+			// tail, so this is only about being explicit — the lookup is by
+			// the canonical key either way.
+			if alias, ok := importedAliases[qual]; ok {
+				tEnv.aliases[qual] = alias
+				tEnv.bindBare(item.Name, qual)
 			}
-			if ct, ok := importedCustoms[item.Name]; ok {
-				tEnv.customs[item.Name] = ct
+			if ct, ok := importedCustoms[qual]; ok {
+				tEnv.customs[qual] = ct
+				tEnv.bindBare(item.Name, qual)
 				if item.Open {
 					// Expose constructors as bare values too.
 					for _, ctorName := range ct.CtorOrder {
@@ -175,6 +194,21 @@ func CheckModuleWith(
 					}
 				}
 			}
+		}
+	}
+
+	// Claim every name this module declares BEFORE any body is converted.
+	// Dependency order handles the common case, but mutually recursive types
+	// have no order that works: whichever is built first references the other
+	// before it exists. Without this the forward reference fell through to an
+	// opaque bare TCon while the declaration produced the canonical one, and
+	// the two halves of the same type refused to unify.
+	for _, d := range mod.Decls {
+		switch n := d.(type) {
+		case *ast.TypeAliasDecl:
+			tEnv.declareBare(n.Name, canonicalIn(modPrefix, n.Name))
+		case *ast.CustomTypeDecl:
+			tEnv.declareBare(n.Name, canonicalIn(modPrefix, n.Name))
 		}
 	}
 
@@ -213,7 +247,9 @@ func CheckModuleWith(
 			}
 			alias := TypeAlias{Name: n.Name, Params: n.Params, ParamIDs: paramIDs, Body: body}
 			res.TypeAliases[n.Name] = alias
-			tEnv.aliases[n.Name] = alias
+			aliasKey := canonicalIn(modPrefix, n.Name)
+			tEnv.aliases[aliasKey] = alias
+			tEnv.declareBare(n.Name, aliasKey)
 
 			// A record type alias doubles as a positional constructor, the
 			// same as Elm: `type alias Point = { x : Int, y : Int }` also
@@ -255,10 +291,16 @@ func CheckModuleWith(
 				paramVars[i] = v
 				paramVarIDs[p] = v.ID
 			}
-			resultType := TCon{Name: n.Name, Args: paramVars}
+			// The canonical name IS the identity (ADR 0027). Two modules that
+			// both declare `Color` used to produce one TCon{"Color"}, which
+			// unified with itself across the boundary and let a `case` the
+			// checker had proven total fall through at runtime.
+			ctKey := canonicalIn(modPrefix, n.Name)
+			resultType := TCon{Name: ctKey, Args: paramVars}
 
 			// Register the type itself in the env so its own ctors can reference it.
-			tEnv.customs[n.Name] = ct
+			tEnv.customs[ctKey] = ct
+			tEnv.declareBare(n.Name, ctKey)
 			tEnv.paramScopes = append(tEnv.paramScopes, paramVarIDs)
 
 			for _, c := range n.Constructors {
@@ -296,11 +338,12 @@ func CheckModuleWith(
 			}
 
 			tEnv.paramScopes = tEnv.paramScopes[:len(tEnv.paramScopes)-1]
-			tEnv.customs[n.Name] = ct
+			tEnv.customs[ctKey] = ct
 			res.CustomTypes[n.Name] = ct
 			// Make the custom-type registration visible at the value-env
-			// level too — exhaustiveness checking in inferCase reads it.
-			valueEnv.RegisterCustom(n.Name, ct)
+			// level too — exhaustiveness checking in inferCase reads it by
+			// the TCon's name, which is now the canonical one.
+			valueEnv.RegisterCustom(ctKey, ct)
 		}
 	}
 
@@ -539,17 +582,170 @@ func decimalImplFor(name string, t Type) string {
 
 // --- Type name environment for resolving type expressions ---
 
+// A type is identified by `Module.Name`, and the bare name is an explicit
+// alias for it — the same shape the VALUE namespace has always had (ADR 0027).
+//
+// `aliases` and `customs` are keyed CANONICALLY: `Frontend.Global.Model`, not
+// `Model`. Builtins have no user module and keep their bare key (`Device`), or
+// their own dotted one when they already carry a qualifier (`Service.Error`).
+//
+// `bare` is the only way an unqualified name resolves, and it is built per
+// module from that module's own declarations plus its `exposing` imports —
+// never from a shared pool. When two candidates claim one bare name the entry
+// keeps BOTH: having an ambiguity in scope is fine, referencing it is not, and
+// the error at the use site can name them. That distinction is what makes this
+// change non-breaking — see the ADR for the measurement.
 type typeNameEnv struct {
 	aliases map[string]TypeAlias
 	customs map[string]CustomType
+	bare    map[string][]string // bare name -> canonical keys claiming it
 	// paramScopes: stack of currently-in-scope type parameter names -> var IDs
 	paramScopes []map[string]int
 }
 
 func newTypeNameEnv() *typeNameEnv {
-	return &typeNameEnv{
+	e := &typeNameEnv{
 		aliases: builtinTypeAliases(),
 		customs: map[string]CustomType{},
+		bare:    map[string][]string{},
+	}
+	for name := range e.aliases {
+		e.bindBare(name, name)
+	}
+	return e
+}
+
+// bindBare records that `bare` may resolve to `canonical`. Re-binding the same
+// canonical is a no-op, so importing a module twice (or naming a type in an
+// `exposing` list that is also visible whole) never manufactures ambiguity.
+func (e *typeNameEnv) bindBare(bare, canonical string) {
+	for _, c := range e.bare[bare] {
+		if c == canonical {
+			return
+		}
+	}
+	e.bare[bare] = append(e.bare[bare], canonical)
+}
+
+// declareBare binds a name the module declares ITSELF, which shadows every
+// import of that name rather than competing with it.
+//
+// Ordinary lexical scoping, and here it is load-bearing: the framework's own
+// idiom gives each page a `Model` and a `Msg`, and a page that reads shared
+// state imports a module that has them too. Treating those as rival candidates
+// would make `Msg` ambiguous inside the page that declared it, which is absurd
+// — the nearest binding is obviously the one meant. Elm rejects the clash
+// instead, but Elm pages do not import each other's modules the way
+// Page.withShared makes normal (ADR 0026).
+func (e *typeNameEnv) declareBare(bare, canonical string) {
+	e.bare[bare] = []string{canonical}
+}
+
+// known reports whether a canonical key names a type this module can see.
+func (e *typeNameEnv) known(canonical string) bool {
+	if _, ok := e.aliases[canonical]; ok {
+		return true
+	}
+	_, ok := e.customs[canonical]
+	return ok
+}
+
+// resolveTypeName maps a written type name to its canonical key.
+//
+// Qualified (`A.T`): resolves to `A.T` or fails. It never falls back to the
+// bare name, which is the whole defect this closes — the qualifier used to be
+// discarded, so `A.T` could land on B's `T`, and a typo'd `A.Tpyo` became an
+// opaque type instead of an error.
+//
+// Unqualified: only what this module declared or imported by name. `found` is
+// false for anything else, and the caller falls through to the primitives and
+// the opaque-TCon case that builtin nominal types (View, Page, Sub) rely on.
+func (e *typeNameEnv) resolveTypeName(module []string, name string) (canonical string, found bool, err error) {
+	if len(module) > 0 {
+		full := strings.Join(module, ".") + "." + name
+		if qualifiedBuiltinTypes[full] {
+			return full, true, nil
+		}
+		if e.known(full) {
+			return full, true, nil
+		}
+		return "", false, fmt.Errorf("`%s` has no type `%s`%s",
+			strings.Join(module, "."), name, e.didYouMean(strings.Join(module, "."), name))
+	}
+	cands := e.bare[name]
+	switch len(cands) {
+	case 0:
+		return "", false, nil
+	case 1:
+		// Returned even when the body is not registered yet: mutually
+		// recursive types reference each other before both are built, and
+		// the forward reference has to land on the SAME identity or the
+		// two halves never unify.
+		return cands[0], true, nil
+	default:
+		sorted := append([]string(nil), cands...)
+		sort.Strings(sorted)
+		return "", false, fmt.Errorf("`%s` is ambiguous here: it could be %s.\n"+
+			"  Qualify it (write the module name), or import only one of them",
+			name, humanList(sorted))
+	}
+}
+
+// didYouMean lists what the module DOES offer, when it offers anything. The
+// old behaviour turned a wrong qualified name into an opaque type, so the
+// complaint surfaced wherever that type was first used instead of here.
+func (e *typeNameEnv) didYouMean(module, _ string) string {
+	prefix := module + "."
+	var have []string
+	for k := range e.aliases {
+		if strings.HasPrefix(k, prefix) {
+			have = append(have, strings.TrimPrefix(k, prefix))
+		}
+	}
+	for k := range e.customs {
+		if strings.HasPrefix(k, prefix) {
+			have = append(have, strings.TrimPrefix(k, prefix))
+		}
+	}
+	if len(have) == 0 {
+		return ""
+	}
+	sort.Strings(have)
+	return ". It has " + humanList(have)
+}
+
+// baseName is the tail of a canonical key: `Shared.User` -> `User`. Builtin
+// names without a dot are their own tail.
+func baseName(canonical string) string {
+	if i := strings.LastIndex(canonical, "."); i >= 0 {
+		return canonical[i+1:]
+	}
+	return canonical
+}
+
+// canonicalIn prefixes a locally-declared type name with its module. The
+// synthetic `__entry` module has no name, so its types stay bare.
+func canonicalIn(modPrefix, name string) string {
+	if modPrefix == "" {
+		return name
+	}
+	return modPrefix + "." + name
+}
+
+func humanList(xs []string) string {
+	switch len(xs) {
+	case 0:
+		return ""
+	case 1:
+		return "`" + xs[0] + "`"
+	case 2:
+		return "`" + xs[0] + "` or `" + xs[1] + "`"
+	default:
+		quoted := make([]string, len(xs))
+		for i, x := range xs {
+			quoted[i] = "`" + x + "`"
+		}
+		return strings.Join(quoted[:len(quoted)-1], ", ") + " or " + quoted[len(quoted)-1]
 	}
 }
 
@@ -621,9 +817,6 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 		return nil, fmt.Errorf("unbound type variable `%s`: declare it as a parameter of the type (e.g. `type T %s = ...`) or use a concrete type", t.Name, t.Name)
 
 	case *ast.TypeCon:
-		// Qualified type names (Post.Post) are looked up by the base name.
-		// Type-alias info isn't shared across modules yet, so an unknown
-		// qualified name is treated as an opaque TCon.
 		args := make([]Type, len(t.Args))
 		for i, a := range t.Args {
 			at, err := convertTypeExprWithIDs(a, tEnv, nil)
@@ -632,21 +825,34 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 			}
 			args[i] = at
 		}
-		// Stdlib types whose canonical name contains a dot (Service.Error)
-		// keep the qualifier: the parser split it into Module + base name,
-		// so without this it would resolve to a bare, collision-prone
-		// "Error" that wouldn't unify with the constructors' result type.
-		if len(t.Module) > 0 {
-			full := strings.Join([]string(t.Module), ".") + "." + t.Name
-			if qualifiedBuiltinTypes[full] {
-				return TCon{Name: full, Args: args}, nil
+		// A type is identified by its module (ADR 0027). resolveTypeName
+		// turns what was written into the canonical key, or says why it
+		// cannot: a qualified name the module does not export, or a bare
+		// name two modules both claim.
+		canonical, found, err := tEnv.resolveTypeName([]string(t.Module), t.Name)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			// Stdlib types whose canonical name carries a dot
+			// (Service.Error) are nominal under that whole name.
+			if qualifiedBuiltinTypes[canonical] {
+				return TCon{Name: canonical, Args: args}, nil
+			}
+			if ct, ok := tEnv.customs[canonical]; ok {
+				// The canonical name IS the identity. Two modules that
+				// both declare `Color` used to produce one TCon{"Color"}
+				// and unify with each other, which let a `case` the
+				// checker had proven total fall through at runtime.
+				_ = ct
+				return TCon{Name: canonical, Args: args}, nil
 			}
 		}
 		// Resolve aliases (substitute params). ParamIDs[i] is the
 		// TVar ID that occurrences of Params[i] were rewritten to
 		// when the alias was registered, so we can map directly
 		// without walking the body to discover IDs.
-		if alias, ok := tEnv.aliases[t.Name]; ok {
+		if alias, ok := tEnv.aliases[canonical]; found && ok {
 			if len(args) != len(alias.Params) {
 				return nil, fmt.Errorf("type alias %s expects %d arguments, got %d", t.Name, len(alias.Params), len(args))
 			}
@@ -673,6 +879,12 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 			return TBool, nil
 		case "Char":
 			return TChar, nil
+		}
+		// Opaque nominal type. `canonical` when the scope knows the name
+		// (a local type whose body has not been built yet), the written
+		// name otherwise — builtin nominals like View / Page / Sub.
+		if found {
+			return TCon{Name: canonical, Args: args}, nil
 		}
 		return TCon{Name: t.Name, Args: args}, nil
 

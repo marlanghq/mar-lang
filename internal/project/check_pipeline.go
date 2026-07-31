@@ -41,10 +41,10 @@ func checkOrdered(
 				continue
 			}
 			for k, v := range aliasesByModule[impName] {
-				importedAliases[k] = v
+				importedAliases[impName+"."+k] = v
 			}
 			for k, v := range customsByModule[impName] {
-				importedCustoms[k] = v
+				importedCustoms[impName+"."+k] = v
 			}
 		}
 

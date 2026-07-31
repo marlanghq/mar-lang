@@ -174,7 +174,14 @@ func pathSegmentType(name string, tEnv *typeNameEnv) (Type, error) {
 		return TInt, nil
 	}
 	if tEnv != nil {
-		if ct, ok := tEnv.customs[name]; ok {
+		// The name in a `{id:Status}` segment is written bare, so it goes
+		// through the same resolver annotations use (ADR 0027): one
+		// candidate resolves, several are an ambiguity error.
+		canonical, found, err := tEnv.resolveTypeName(nil, name)
+		if err != nil {
+			return nil, err
+		}
+		if ct, ok := tEnv.customs[canonical]; found && ok {
 			// Reject ctors with payload — the URL → ctor mapping
 			// only makes sense for nullary ctors (mirrors
 			// Entity.enum's restriction). Saying "no, you can't"
@@ -191,7 +198,7 @@ func pathSegmentType(name string, tEnv *typeNameEnv) (Type, error) {
 				// would have to carry an unresolved parameter.
 				return nil, fmt.Errorf("type %q can't be used in a path: parameterized types aren't supported", name)
 			}
-			return TCon{Name: name}, nil
+			return TCon{Name: canonical}, nil
 		}
 	}
 	return nil, fmt.Errorf("unknown type %q. Allowed: String, Int, or a zero-arg custom type", name)

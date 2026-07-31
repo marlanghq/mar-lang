@@ -120,12 +120,12 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 			impName := joinName(imp.Module)
 			if a, ok := aliasesByModule[impName]; ok {
 				for k, v := range a {
-					importedAliases[k] = v
+					importedAliases[impName+"."+k] = v
 				}
 			}
 			if c, ok := customsByModule[impName]; ok {
 				for k, v := range c {
-					importedCustoms[k] = v
+					importedCustoms[impName+"."+k] = v
 				}
 			}
 		}
