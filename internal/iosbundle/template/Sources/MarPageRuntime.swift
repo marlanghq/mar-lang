@@ -301,6 +301,7 @@ final class PageRuntime {
         // page rendered EmptyView and nobody would ever know.
         #if DEBUG
         print("[mar] mount \(path) drew=\(currentView().map { $0.tag } ?? "nothing")")
+        MarLiveRuntimes.mounted(self)
         #endif
         MarDispatcher.shared.currentOwner = ObjectIdentifier(self)
         MarDispatcher.shared.current = { [weak self] msg in
@@ -339,6 +340,9 @@ final class PageRuntime {
     /// freshly-set dispatcher, breaking every async msg that
     /// page's init effect posted.
     func unmount() {
+        #if DEBUG
+        MarLiveRuntimes.unmounted(self)
+        #endif
         teardownSubs()
         MarSharedRegistry.removeObserver(ObjectIdentifier(self))
         if MarDispatcher.shared.currentOwner == ObjectIdentifier(self) {
@@ -621,3 +625,54 @@ final class PageRuntime {
         }
     }
 }
+
+#if DEBUG
+/// The pages that are on screen right now, bottom of the stack first.
+///
+/// On iOS the navigation lifecycle is not bookkeeping the runtime does — it is
+/// SwiftUI's. Each entry on the NavigationStack builds its own MarPageHost,
+/// whose `@State` gives it its own PageRuntime; popping destroys the pushed
+/// host while the one underneath was never torn down. That is exactly why
+/// "a push re-inits and Back restores" holds here, and also why it cannot be
+/// checked without SwiftUI actually running.
+///
+/// So this observes rather than reimplements: mount() appends, unmount()
+/// removes, and the resulting array IS the live stack, in stack order. It
+/// exists for the lifecycle harness (AppViewModel.navLifecycle) and is
+/// compiled out of Release builds.
+///
+/// The references are strong on purpose. A runtime whose host SwiftUI
+/// destroyed but whose unmount never ran would linger here and be read as the
+/// top of the stack — which is the failure showing up as a wrong answer
+/// instead of as nothing at all.
+@MainActor
+enum MarLiveRuntimes {
+    private(set) static var stack: [PageRuntime] = []
+
+    static func mounted(_ runtime: PageRuntime) {
+        stack.append(runtime)
+    }
+
+    static func unmounted(_ runtime: PageRuntime) {
+        stack.removeAll { $0 === runtime }
+    }
+
+    /// Reset between program loads, so a hot reload does not leave the
+    /// previous program's pages in the list.
+    static func reset() {
+        stack.removeAll()
+    }
+}
+
+/// The route the shell is PRESENTING over the stack, or nil when the top of
+/// the stack is simply pushed. Written by StackShell as it renders.
+///
+/// Separate from "is this path a sheet route?", which the route table can
+/// answer on its own. What matters to the harness is what the shell did with
+/// that answer, and those two can disagree — a shell that pushed a sheet route
+/// would still look right to anything that re-derived the answer itself.
+@MainActor
+enum MarPresentation {
+    static var current: String?
+}
+#endif

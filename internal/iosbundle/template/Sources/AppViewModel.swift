@@ -190,6 +190,183 @@ final class AppViewModel {
         print("[mar] ROUTE SMOKE DONE")
     }
 
+    /// Drives one navigation script against the LIVE app and prints what each
+    /// step left on screen. Off unless MAR_NAV_LIFECYCLE names a script.
+    ///
+    /// This is the iOS half of the navigation-lifecycle check that
+    /// internal/jsserve/nav_lifecycle_test.go runs against runtime.js — same
+    /// program (navfixture.Source), same steps, same expected strings. Until
+    /// it existed, ADR-0009 was verified on the web by a test and on iOS by a
+    /// person clicking, which is not a thing you can put in a suite.
+    ///
+    /// It has to run in a launched app, and that is not laziness about the
+    /// setup. On iOS nothing in the runtime tracks the navigation stack: each
+    /// entry of the NavigationStack builds its own MarPageHost whose @State
+    /// gives it its own PageRuntime, and popping destroys that host while the
+    /// one underneath was never torn down. The rule "a push re-inits and Back
+    /// restores" IS SwiftUI's view identity. A harness that stood in for
+    /// SwiftUI would be testing the stand-in.
+    ///
+    /// So the driver only pokes and reads: it moves the app through
+    /// AppContext — the same calls Nav.push, Nav.replace and a Back gesture
+    /// make — waits for SwiftUI to settle, and reports what the mounted pages
+    /// are showing.
+    /// The app reloads its program in the background right after cold start,
+    /// and the driver must not run twice against the same launch.
+    private static var navLifecycleStarted = false
+
+    @MainActor
+    private static func navLifecycle(_ script: String) async {
+        let ctx = AppContext.shared
+
+        // SwiftUI rebuilds on the run loop, so every step has to hand control
+        // back before the next read. This is a wait, not a poll, because the
+        // thing being waited on (mount/unmount having run) is exactly what is
+        // under test — polling until it looked right would hide a page that
+        // mounts late.
+        func settle() async {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+
+        // The counter a page is showing, read from the Mar view the way the
+        // renderer would. "-" means nothing is there, which is a real answer:
+        // it is what a dismissed sheet should report.
+        func counter(_ runtime: PageRuntime?) -> String {
+            guard let runtime, let view = runtime.currentView() else { return "-" }
+            for piece in visibleText(view).components(separatedBy: " ¦ ") {
+                let parts = piece.components(separatedBy: "=")
+                if parts.count == 2, let head = parts.first?.first,
+                   "ABS".contains(head), Int(parts[1]) != nil {
+                    return piece
+                }
+            }
+            return "?"
+        }
+
+        // The live page for a route: the most recent mounted runtime with
+        // that path.
+        //
+        // Not "the last thing that mounted", which is the obvious reading and
+        // is wrong. A pop destroys the pushed host, but `onDisappear` — and so
+        // `unmount` — lands only after the pop animation finishes, so for a
+        // few hundred milliseconds the page being dismissed is still the most
+        // recently mounted one. Reading it made Back look like it had shown
+        // the wrong screen when the app was doing the right thing.
+        //
+        // Asking by route removes the race instead of sleeping past it: the
+        // answer is a function of navPath, which moves synchronously. It keeps
+        // every failure the naive version could catch — a Back that re-inits
+        // finds a NEW runtime at that path (counter 0), and a push that reused
+        // a model finds the OLD one (counter still 2).
+        //
+        // Most recent, not first: after /a → /b → /a two runtimes answer to
+        // "/a", and the one on top is the one the user is looking at.
+        func live(_ path: String?) -> PageRuntime? {
+            guard let path else { return nil }
+            return MarLiveRuntimes.stack.last { $0.path == path }
+        }
+
+        // A pushed stack keeps the screen underneath mounted too, so "more
+        // than one page is alive" does NOT mean one is presented.
+        //
+        // And the route table cannot answer it either — asking it whether the
+        // top path is a sheet route only says what the shell was SUPPOSED to
+        // do. A shell that resolved the route correctly and then pushed it
+        // would pass that check while showing the wrong thing (found by
+        // sabotage, not by review). So the answer comes from the shell: it
+        // publishes what it presented as it renders.
+        func presented() -> PageRuntime? {
+            guard let top = MarPresentation.current else { return nil }
+            return live(top)
+        }
+
+        func topRuntime() -> PageRuntime? { live(ctx.navPath.last) }
+
+        // One tap on whatever the screen offers first — the same thing the
+        // web driver does by clicking the button it finds by label.
+        func bump() {
+            guard let runtime = topRuntime(), let view = runtime.currentView(),
+                  let msg = firstMessage(view) else { return }
+            runtime.dispatch(msg)
+        }
+
+        var seen: [String] = []
+        func note(_ label: String) {
+            seen.append("\(label):\(counter(topRuntime()))")
+        }
+        // Both surfaces, every step. Reading only the top would pass on a
+        // runtime that refused to present at all, and reading only the sheet
+        // would miss the covered page being wiped.
+        func noteBoth(_ label: String) {
+            let root = counter(MarLiveRuntimes.stack.first)
+            let sheet = presented().map { counter($0) } ?? "-"
+            seen.append("\(label):root=\(root),sheet=\(sheet)")
+        }
+
+        await settle()
+
+        switch script {
+        case "push":
+            note("mount")
+            bump(); bump()
+            await settle()
+            note("bumped")
+
+            ctx.navigate(path: "/b", replace: false)
+            await settle()
+            note("push-b")
+
+            // What the Back button and the swipe-back gesture both do: drop
+            // the top entry. StackShell's binding writes exactly this.
+            ctx.navPath.removeLast()
+            await settle()
+            note("back-a")
+
+            ctx.navigate(path: "/b", replace: false)
+            await settle()
+            ctx.navigate(path: "/a", replace: false)
+            await settle()
+            note("push-a")
+
+        case "replace":
+            bump(); bump()
+            await settle()
+            seen.append(counter(topRuntime()))
+            ctx.navigate(path: "/b", replace: true)
+            await settle()
+            seen.append(counter(topRuntime()))
+
+        case "sheet":
+            bump(); bump()
+            await settle()
+            noteBoth("start")
+
+            ctx.navigate(path: "/s", replace: false)
+            await settle()
+            noteBoth("presented")
+
+            ctx.navPath.removeLast()
+            await settle()
+            noteBoth("dismissed")
+
+            ctx.navigate(path: "/s", replace: false)
+            await settle()
+            noteBoth("reopened")
+
+        case "sheet-cold":
+            // Seeded to /s before the first render (see runProgramSync), so
+            // this is what a shared link or a relaunch lands on.
+            noteBoth("cold")
+
+        default:
+            print("[mar] NAV UNKNOWN SCRIPT \(script)")
+            return
+        }
+
+        print("[mar] NAV \(seen.joined(separator: " "))")
+        print("[mar] NAV DONE")
+    }
+
     /// The screen's visible strings, deduplicated and sorted.
     ///
     /// A SET, not the tree: SwiftUI and the DOM nest differently and repeat
@@ -466,6 +643,24 @@ final class AppViewModel {
                 AppContext.shared.navigate(path: first.path, replace: true)
             }
         }
+        #if DEBUG
+        if let script = ProcessInfo.processInfo.environment["MAR_NAV_LIFECYCLE"],
+           !script.isEmpty, !AppViewModel.navLifecycleStarted {
+            AppViewModel.navLifecycleStarted = true
+            // Landing on the sheet route has to happen BEFORE the first
+            // render, or it is a push with a page underneath rather than the
+            // cold load the fallback is about. This runs while the shell is
+            // still waiting on `state == .loaded`, so the stack it first sees
+            // is already the deep-linked one.
+            if script == "sheet-cold" {
+                AppContext.shared.navPath = ["/s"]
+            }
+            MarLiveRuntimes.reset()
+            Task { @MainActor in
+                await AppViewModel.navLifecycle(script)
+            }
+        }
+        #endif
         lastLoadedProgramBytes = data
     }
 }

@@ -82,17 +82,23 @@ private struct LoadedShell: View {
                 MarSinglePageView(page: pages[0])
             }
         } else {
-            // Every multi-page app is a navigation stack, on both platforms.
+            // A stack, because that is what iPhone navigation looks like —
+            // not because the program demands one. The chrome is this
+            // platform's to choose, and on another one (an iPad sidebar, an
+            // Android drawer) it should look different.
             //
-            // An all-public, all-static app used to become a TabView here,
-            // with an icon guessed from the path. That changed what the app
-            // WAS, not just how it looked: tabs keep every page alive side by
-            // side, so ADR-0009 — a push re-inits, going Back restores — did
-            // not apply at all on iOS for those apps, while the same
-            // program on the web was an ordinary navigation stack.
+            // What is NOT free is the lifecycle. An all-public, all-static
+            // app used to become a TabView here, with an icon guessed from
+            // the path, and the problem was not the tab bar: it mounted every
+            // page at once and switched by visibility, so navPath never moved
+            // and ADR-0009 had no push to re-init from. The model an app left
+            // behind on a page came back on iOS and did not on the web — the
+            // same program behaving two ways.
             //
-            // The shape of an app should come from the program, and
-            // `App.frontend [a, b]` says the same thing on both platforms.
+            // A tab bar whose selection writes navPath would keep the
+            // lifecycle intact and belongs here just as much. See
+            // shell_shape_test.go, which guards the lifecycle and says
+            // nothing about the chrome.
             StackShell(pages: pages)
         }
     }
@@ -137,8 +143,21 @@ private struct StackShell: View {
         // mounts normally — the same graceful fallback the web gives a
         // cold load of a sheet route.
         let presented: String? = {
-            guard ctx.navPath.count > 1, let top = ctx.navPath.last else { return nil }
-            return isSheetRoute(top) ? top : nil
+            var route: String? = nil
+            if ctx.navPath.count > 1, let top = ctx.navPath.last, isSheetRoute(top) {
+                route = top
+            }
+            #if DEBUG
+            // Publish the decision this shell actually made. The lifecycle
+            // harness asks THIS rather than working it out from the route
+            // table again: a shell that resolved a sheet route and then
+            // pushed it anyway would agree with a re-derivation and disagree
+            // with the screen. A plain box, not observable state, so writing
+            // it during a body pass invalidates nothing. Inside the closure
+            // because a bare assignment in a ViewBuilder is read as a view.
+            MarPresentation.current = route
+            #endif
+            return route
         }()
 
         let pushedBinding = Binding<[String]>(
@@ -213,17 +232,8 @@ private struct StackShell: View {
         ctx.navPath.first ?? pages.first?.path ?? "/"
     }
 
-    /// Does `url` resolve to a page declared with Page.sheet? Static
-    /// paths first, then dynamic patterns, mirroring RouteView's own
-    /// resolution order so both agree on which page a URL means.
     private func isSheetRoute(_ url: String) -> Bool {
-        for pg in pages where !pg.isDynamic {
-            if pg.path == url { return pg.isSheet }
-        }
-        for pg in pages where pg.isDynamic {
-            if pg.matchURL(url) != nil { return pg.isSheet }
-        }
-        return false
+        pages.isSheetRoute(url)
     }
 }
 

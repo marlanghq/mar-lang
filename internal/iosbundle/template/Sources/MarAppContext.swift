@@ -305,6 +305,27 @@ final class AppContext {
 /// path is a `:param` pattern that the renderer matches at navigation
 /// time. `isSheet` (Page.sheet) says this route is PRESENTED over the
 /// screen it was reached from instead of pushed onto the stack.
+extension Array where Element == DecodedPage {
+    /// Does `url` resolve to a page declared with Page.sheet? Static paths
+    /// first, then dynamic patterns, mirroring RouteView's own resolution
+    /// order so both agree on which page a URL means.
+    ///
+    /// One definition, because two would drift: the renderer asks this to
+    /// decide whether to present or push, and the lifecycle harness asks it
+    /// to decide which of the mounted pages is the presented one. A harness
+    /// answering that question its own way could report a pass while the
+    /// renderer did something else.
+    func isSheetRoute(_ url: String) -> Bool {
+        for pg in self where !pg.isDynamic {
+            if pg.path == url { return pg.isSheet }
+        }
+        for pg in self where pg.isDynamic {
+            if pg.matchURL(url) != nil { return pg.isSheet }
+        }
+        return false
+    }
+}
+
 struct DecodedPage: Identifiable {
     /// Set when the page came from `Page.withShared`. The page is a FUNCTION
     /// of the shared model, so the builder is kept unapplied and re-run on

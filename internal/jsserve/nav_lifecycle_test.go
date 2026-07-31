@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"mar/internal/navfixture"
 	"mar/internal/parser"
 	"mar/internal/typecheck"
 )
@@ -21,90 +22,16 @@ import (
 // kept its very first model for the life of the tab. It shipped because the
 // guard *looked* right: it cleared the flags, and nothing downstream used them.
 //
-// So this test drives the real runtime, not the flags. Two pages, a counter you
-// can bump, and a fake browser thin enough to be obviously honest: it renders
-// into a fake DOM the test reads back, and its history is a list with an index.
-// The assertions are on what the page SHOWS, which is the only thing a user can
-// see and the only thing a stale model can lie about.
-const navLifecycleSrc = `module Main exposing (main)
-
-
-import UI exposing (vstack, text, button, navigationStack, navigationTitle)
-
-
-type alias Model =
-    { n : Int }
-
-
-type Msg
-    = Bump
-
-
-init : (Model, Cmd Msg)
-init = ( { n = 0 }, Cmd.none )
-
-
-update : Msg -> Model -> (Model, Cmd Msg)
-update _ model = ( { model | n = model.n + 1 }, Cmd.none )
-
-
--- The label makes each page's text self-identifying, so a wrong-page render
--- fails loudly instead of looking like a wrong counter.
-viewFor : String -> Model -> View Msg
-viewFor label model =
-    navigationStack [ navigationTitle label ]
-        [ vstack []
-            [ text [] (label ++ "=" ++ String.fromInt model.n)
-            , button [] Bump "bump"
-            ]
-        ]
-
-
-pageA : Page
-pageA =
-    Page.create
-        { path = "/a"
-        , title = "A"
-        , init = init
-        , update = update
-        , view = viewFor "A"
-        , subscriptions = always Sub.none
-        }
-
-
-pageB : Page
-pageB =
-    Page.create
-        { path = "/b"
-        , title = "B"
-        , init = init
-        , update = update
-        , view = viewFor "B"
-        , subscriptions = always Sub.none
-        }
-
-
--- Same page in every respect except how it is shown: Page.sheet asks the
--- runtime to lay it OVER the screen it was reached from instead of replacing
--- it. Nothing else about the page changes, which is the claim under test.
-pageS : Page
-pageS =
-    Page.sheet
-        (Page.create
-            { path = "/s"
-            , title = "S"
-            , init = init
-            , update = update
-            , view = viewFor "S"
-            , subscriptions = always Sub.none
-            }
-        )
-
-
-main : Cmd ()
-main =
-    App.frontend [ pageA, pageB, pageS ]
-`
+// So these tests drive the real runtime, not the flags. The program under test
+// is navfixture.Source — a counter you can bump, a page to navigate to, and a
+// sheet route — and a fake browser thin enough to be obviously honest: it
+// renders into a fake DOM the test reads back, and its history is a list with
+// an index. The assertions are on what the page SHOWS, which is the only thing
+// a user can see and the only thing a stale model can lie about.
+//
+// The same fixture drives the same assertions against the Swift runtime on a
+// simulator (internal/iosbundle/nav_lifecycle_ios_test.go). Sharing the source
+// rather than copying it is what makes "the same program" literal.
 
 // navFakeBrowser is the smallest browser the page runtime will boot against.
 //
@@ -305,7 +232,7 @@ func runNavDriver(t *testing.T, driver string) string {
 		t.Skip("node not installed")
 	}
 
-	mod, err := parser.Parse(navLifecycleSrc)
+	mod, err := parser.Parse(navfixture.Source)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
