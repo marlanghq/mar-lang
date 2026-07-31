@@ -180,14 +180,98 @@ final class AppViewModel {
             // drawing: dispatch the first message the screen offers and ask
             // again. A runtime that draws correctly but ignores taps differs
             // here and nowhere else.
+            // A canvas screen puts no words on screen, so the line above says
+            // the same empty thing on both platforms and "matches" by having
+            // nothing to say. What it DOES produce is a draw list, built by
+            // the same Mar code from the same model — so print that too.
+            if let shapes = AppViewModel.drawList(view) {
+                print("[mar] SHAPES \(url) \(shapes)")
+            }
+            // One interaction, so the check covers responding and not just
+            // drawing: dispatch the first message the screen offers and ask
+            // again. A runtime that draws correctly but ignores taps differs
+            // here and nowhere else.
             if let msg = AppViewModel.firstMessage(view) {
                 runtime.dispatch(msg)
                 if let after = runtime.currentView() {
                     print("[mar] TEXT+1 \(url) \(AppViewModel.visibleText(after))")
+                    if let shapes = AppViewModel.drawList(after) {
+                        print("[mar] SHAPES+1 \(url) \(shapes)")
+                    }
                 }
             }
         }
         print("[mar] ROUTE SMOKE DONE")
+    }
+
+    /// The first canvas on the screen, as a canonical string, or nil when
+    /// there is no canvas.
+    ///
+    /// Canonical, not pretty: the web half prints the same shape list the same
+    /// way, and the two strings are compared character for character. Which is
+    /// why this dumps everything it is given instead of deciding what matters
+    /// — "what matters" is a judgement, and two judgements drift. There is no
+    /// judgement here, only structure.
+    private static func drawList(_ view: MarView) -> String? {
+        if view.tag == "canvas",
+           let shapes = view.attrs.first(where: { $0.name == "shapes" })?.value {
+            return dumpValue(shapes)
+        }
+        for child in view.children {
+            if let found = drawList(child) { return found }
+        }
+        // A view can also carry views inside its attributes (a section's
+        // header, a toolbar's items), and a canvas is legal there too.
+        for attr in view.attrs {
+            if case .view(let v) = attr.value, let found = drawList(v) { return found }
+        }
+        return nil
+    }
+
+    /// Two runtimes, two spellings for the same value, and neither is visible
+    /// to a program: a colour is one constructor with three or four arguments
+    /// here and two constructors on the web, and the canvas text shape is
+    /// registered under a different name on each side. Both are internal
+    /// bookkeeping — a Mar program cannot pattern-match a Shape — so they are
+    /// folded together HERE rather than silently, and the same folding is
+    /// spelled out in the web driver.
+    ///
+    /// Anything else keeps its own tag, minus the module prefix (Canvas.Add
+    /// here, Add there).
+    private static func canonicalTag(_ tag: String) -> String {
+        let bare = tag.contains(".") ? String(tag.split(separator: ".").last!) : tag
+        switch bare {
+        case "rgb", "rgba", "__Color": return "color"
+        case "canvasText": return "text"
+        default: return bare
+        }
+    }
+
+    /// tag(arg,arg) for constructors, [a,b] for lists, literals bare. The
+    /// format is arbitrary; being identical on both platforms is the point.
+    private static func dumpValue(_ v: MarValue) -> String {
+        switch v {
+        case .int(let n):
+            return String(n)
+        case .string(let s):
+            return "\"\(s)\""
+        case .bool(let b):
+            return b ? "true" : "false"
+        case .unit:
+            return "()"
+        case .list(let xs):
+            return "[" + xs.map(dumpValue).joined(separator: ",") + "]"
+        case .tuple(let xs):
+            return "(" + xs.map(dumpValue).joined(separator: ",") + ")"
+        case .ctor(let tag, let args, _):
+            let name = canonicalTag(tag)
+            if args.isEmpty { return name }
+            return name + "(" + args.map(dumpValue).joined(separator: ",") + ")"
+        default:
+            // Named rather than skipped: a value shape neither side expected
+            // should look like a difference, not like agreement.
+            return "?" + Eval.typeOf(v)
+        }
     }
 
     /// Drives one navigation script against the LIVE app and prints what each
