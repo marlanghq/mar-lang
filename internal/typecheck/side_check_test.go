@@ -193,3 +193,72 @@ main = App.backend { services = [ handler ] }
 		t.Fatalf("a backend-only project was rejected: %s", issues[0].Message)
 	}
 }
+
+// The mirror of TestPageReachingTheDatabaseIsRejected, and the case the first
+// version of this check walked straight past: a service handler reaching a
+// browser-only builtin compiled clean and died on the first request instead of
+// in the browser. The side table already said Canvas was frontend; only the
+// second walk was missing.
+func TestHandlerReachingTheBrowserIsRejected(t *testing.T) {
+	mods := parseModules(t, `
+module Main exposing (main)
+
+ping = Service.declare GET "/api/ping"
+
+render n = Canvas.rect 0 0 n n (Canvas.rgb 1 2 3)
+
+handler = Service.implement ping (\_ -> Task.succeed (render 3))
+
+main = App.backend { services = [ handler ] }
+`)
+	issues := RunSideCheck(mods)
+	if len(issues) == 0 {
+		t.Fatal("a handler drawing on the server was accepted")
+	}
+	if !strings.Contains(issues[0].Message, "Canvas.rect") ||
+		!strings.Contains(issues[0].Message, "only exists in the browser") {
+		t.Fatalf("wrong message: %s", issues[0].Message)
+	}
+}
+
+// Auth.protect binds a handler too, so it roots the server walk the same way.
+func TestProtectedHandlerReachingTheBrowserIsRejected(t *testing.T) {
+	mods := parseModules(t, `
+module Main exposing (main)
+
+me = Service.declare GET "/me"
+
+greet = UI.text [] "hello"
+
+handler = Auth.protect me (\_ _ -> Task.succeed greet)
+
+main = App.backend { services = [ handler ] }
+`)
+	if issues := RunSideCheck(mods); len(issues) == 0 {
+		t.Fatal("a protected handler reaching UI was accepted")
+	}
+}
+
+// A fullstack `main` names the pages next to the services. Rooting the server
+// walk at App.fullstack would follow it into every page's UI and report the
+// whole app, so the roots are the service binders and nothing else.
+func TestFullstackMainIsNotAServerRoot(t *testing.T) {
+	mods := parseModules(t, `
+module Main exposing (main)
+
+home = Page.create { path = "/", title = "t", init = init, update = update, view = view, subscriptions = sub }
+
+view m = UI.text [] "hi"
+
+tasks = Entity.define { name = "task", columns = { id = Entity.serial }, uniques = [] }
+
+listTasks = Service.declare GET "/api/tasks"
+
+handler = Service.implement listTasks (\_ -> Repo.all tasks)
+
+main = App.fullstack { services = [ handler ], pages = [ home ] }
+`)
+	if issues := RunSideCheck(mods); len(issues) > 0 {
+		t.Fatalf("a legitimate fullstack app was rejected: %s", issues[0].Message)
+	}
+}

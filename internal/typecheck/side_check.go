@@ -8,7 +8,8 @@ import (
 	"mar/internal/ast"
 )
 
-// RunSideCheck rejects client code that reaches the server.
+// RunSideCheck rejects code that reaches across the client/server line, in
+// EITHER direction.
 //
 // The unit is the top-level declaration, not the module. Roots are the
 // declarations that define a page — a body applying `Page.create` and friends —
@@ -34,6 +35,13 @@ import (
 // service module is ordinary in a fullstack app, and conflating them would
 // reject working code.
 //
+// Both directions run on the same graph, because the failure is the same
+// shape both ways: a name that does not exist where the code will run. The
+// first version only walked client -> server, so a service handler could reach
+// `Canvas.rect` and compile clean, and the program died on the first request
+// instead of in the browser. The side table already carried `SideFrontend`;
+// only the second walk was missing.
+//
 // See docs/proposals/side-checking.md.
 func RunSideCheck(mods []*ast.Module) []ShapeIssue {
 	g := buildSideGraph(mods)
@@ -41,11 +49,40 @@ func RunSideCheck(mods []*ast.Module) []ShapeIssue {
 		return nil // nothing defines a page: nothing can reach the server wrongly
 	}
 
-	// reaches[decl] = the backend builtin this declaration can arrive at.
+	// reaches[decl] = the out-of-place builtin this declaration can arrive at,
+	// computed once per direction over the same call graph.
+	toServer := spread(g, func(d *sideDecl) *sideRef { return d.backend })
+	toClient := spread(g, func(d *sideDecl) *sideRef { return d.frontend })
+
+	var issues []ShapeIssue
+	for _, root := range g.roots {
+		reaches := toServer
+		if root.server {
+			reaches = toClient
+		}
+		hit := reaches[root.decl]
+		if hit == nil {
+			continue
+		}
+		issues = append(issues, ShapeIssue{
+			Module:  root.module,
+			Pos:     hit.pos,
+			Message: leakMessage(root, hit),
+		})
+	}
+	sortIssues(issues)
+	return issues
+}
+
+// spread runs the reachability fixed point for one direction. `seed` picks the
+// hit a declaration carries directly; everything else inherits it through the
+// call graph, remembering which hop delivered it so a leak three helpers deep
+// can name the one to look at.
+func spread(g *sideGraph, seed func(*sideDecl) *sideRef) map[string]*sideRef {
 	reaches := map[string]*sideRef{}
 	for name, d := range g.decls {
-		if d.backend != nil {
-			reaches[name] = d.backend
+		if hit := seed(d); hit != nil {
+			reaches[name] = hit
 		}
 	}
 	for changed := true; changed; {
@@ -63,21 +100,7 @@ func RunSideCheck(mods []*ast.Module) []ShapeIssue {
 			}
 		}
 	}
-
-	var issues []ShapeIssue
-	for _, root := range g.roots {
-		hit := reaches[root.decl]
-		if hit == nil {
-			continue
-		}
-		issues = append(issues, ShapeIssue{
-			Module:  root.module,
-			Pos:     hit.pos,
-			Message: leakMessage(root, hit),
-		})
-	}
-	sortIssues(issues)
-	return issues
+	return reaches
 }
 
 // sideRef is one backend name and where it was found. `via` names the callee
@@ -89,10 +112,11 @@ type sideRef struct {
 }
 
 type sideDecl struct {
-	module  string
-	name    string // module-qualified
-	backend *sideRef
-	calls   []string // module-qualified callees
+	module   string
+	name     string // module-qualified
+	backend  *sideRef
+	frontend *sideRef
+	calls    []string // module-qualified callees
 }
 
 type sideRoot struct {
@@ -100,6 +124,7 @@ type sideRoot struct {
 	decl   string // module-qualified
 	simple string
 	pos    ast.Pos
+	server bool // a service handler rather than a page
 }
 
 type sideGraph struct {
@@ -116,6 +141,17 @@ var pageBuilders = map[string]bool{
 	"Page.dynamicProtected": true,
 	"Page.adminProtected":   true,
 	"Page.sheet":            true,
+}
+
+// serviceBuilders are the names whose application makes a declaration a
+// service handler, and therefore a root of the server bundle.
+//
+// `App.backend` and `App.fullstack` are deliberately NOT here. A fullstack
+// `main` names the pages as well as the services, so rooting the server walk
+// there would follow it straight into `UI` and report every page in the app.
+var serviceBuilders = map[string]bool{
+	"Service.implement": true,
+	"Auth.protect":      true,
 }
 
 func buildSideGraph(mods []*ast.Module) *sideGraph {
@@ -178,7 +214,8 @@ func buildSideGraph(mods []*ast.Module) *sideGraph {
 			}
 			qual := info.name + "." + v.Name
 			sd := &sideDecl{module: info.name, name: qual}
-			isRoot := false
+			isPage := false
+			isService := false
 
 			walkAll(v.Body, func(x ast.Expr) {
 				var ref, modOf string
@@ -206,11 +243,17 @@ func buildSideGraph(mods []*ast.Module) *sideGraph {
 				}
 
 				if pageBuilders[ref] {
-					isRoot = true
+					isPage = true
+				}
+				if serviceBuilders[ref] {
+					isService = true
 				}
 				if s, ok := SideOf(ref); ok {
 					if s == SideBackend && sd.backend == nil {
 						sd.backend = &sideRef{name: ref, pos: pos}
+					}
+					if s == SideFrontend && sd.frontend == nil {
+						sd.frontend = &sideRef{name: ref, pos: pos}
 					}
 					return
 				}
@@ -221,9 +264,17 @@ func buildSideGraph(mods []*ast.Module) *sideGraph {
 			})
 
 			g.decls[qual] = sd
-			if isRoot {
+			if isPage {
 				g.roots = append(g.roots, sideRoot{
 					module: info.name, decl: qual, simple: v.Name, pos: v.Pos,
+				})
+			}
+			// A declaration can bind services without being a page; it cannot
+			// sensibly be both, and if it were, both walks would report it.
+			if isService {
+				g.roots = append(g.roots, sideRoot{
+					module: info.name, decl: qual, simple: v.Name, pos: v.Pos,
+					server: true,
 				})
 			}
 		}
@@ -232,16 +283,20 @@ func buildSideGraph(mods []*ast.Module) *sideGraph {
 }
 
 func leakMessage(root sideRoot, hit *sideRef) string {
-	if hit.via == "" {
-		return fmt.Sprintf(
-			"the page `%s` runs in the browser and calls `%s`, which only exists on the server.\n"+
-				"  Move the call into a service handler and reach it from the page with Service.call.",
-			root.simple, hit.name)
+	where, absent, fix := "runs in the browser", "only exists on the server",
+		"  Move the call into a service handler and reach it from the page with Service.call."
+	kind := "page"
+	if root.server {
+		where, absent, fix = "runs on the server", "only exists in the browser",
+			"  Return the data from the handler and let the page do the drawing."
+		kind = "service handler"
 	}
-	return fmt.Sprintf(
-		"the page `%s` runs in the browser and reaches `%s` through `%s`, and `%s` only exists on the server.\n"+
-			"  Move the call into a service handler and reach it from the page with Service.call.",
-		root.simple, hit.name, hit.via, hit.name)
+	if hit.via == "" {
+		return fmt.Sprintf("the %s `%s` %s and calls `%s`, which %s.\n%s",
+			kind, root.simple, where, hit.name, absent, fix)
+	}
+	return fmt.Sprintf("the %s `%s` %s and reaches `%s` through `%s`, and `%s` %s.\n%s",
+		kind, root.simple, where, hit.name, hit.via, hit.name, absent, fix)
 }
 
 // sortIssues makes the output stable: map iteration order otherwise reshuffles
