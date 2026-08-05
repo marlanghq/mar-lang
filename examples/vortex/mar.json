@@ -1,0 +1,13 @@
+{
+  "name": "vortex",
+  "server": {
+    "port": 3042
+  },
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "mar-vortex",
+      "account": "env:CLOUDFLARE_ACCOUNT_ID",
+      "apiToken": "env:CLOUDFLARE_API_TOKEN"
+    }
+  }
+}
