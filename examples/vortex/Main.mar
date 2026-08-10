@@ -2797,9 +2797,15 @@ titleShapes m cam =
 -- Modifiers belong to a VOICE — `sequence` and `chord` are structure and
 -- nothing else — so the volume and the shaping go on each tone rather than on
 -- the list holding them.
+-- TURNED DOWN, AND THE REASON IS THAT VOICES SUM. Each of the four here was
+-- set at a level that sounds right on its own — 24, 12, 26, 30 — and a chord
+-- plays them at once, so what arrives is closer to their total than to any one
+-- of them, and the level change came out shouting next to a kill at 22. Every
+-- voice came down by about the same fraction, which keeps the balance between
+-- them and only moves the whole thing.
 clearNote : Int -> Int -> Sound
 clearNote hz ms =
-    Sound.volume 26 (Sound.duty 25 (Sound.tone Sound.Square hz ms))
+    Sound.volume 16 (Sound.duty 25 (Sound.tone Sound.Square hz ms))
 
 
 clearCue : Sound
@@ -2808,7 +2814,7 @@ clearCue =
         [ -- The tube. Flat for a beat, then a climb that keeps steepening,
           -- which is the curve the camera is riding: `holdPitch` is the
           -- moment before the floor drops out.
-          Sound.volume 24
+          Sound.volume 15
             (Sound.attack 40
                 (Sound.lowCut 90
                     (Sound.holdPitch 240
@@ -2817,7 +2823,7 @@ clearCue =
         , -- Wind past the mouth of the well. Quiet on purpose — it is the
           -- texture that makes the sweep sound like travel and not like a
           -- test tone.
-          Sound.volume 12
+          Sound.volume 8
             (Sound.highCut 2400
                 (Sound.sweep 2000 (Sound.tone Sound.Noise 260 1500)))
 
@@ -2832,7 +2838,7 @@ clearCue =
             , clearNote (Sound.e 5) 110
             , clearNote (Sound.gs 5) 110
             , clearNote (Sound.b 5) 110
-            , Sound.volume 28
+            , Sound.volume 17
                 (Sound.arp [ Sound.gs 6, Sound.b 6 ]
                     (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 540)))
             ]
@@ -2840,7 +2846,7 @@ clearCue =
         , -- And a low note under the arrival, so the landing has a floor.
           Sound.sequence
             [ Sound.rest 1180
-            , Sound.volume 30
+            , Sound.volume 19
                 (Sound.release 200 (Sound.tone Sound.Triangle (Sound.e 3) 320))
             ]
         ]
