@@ -26,6 +26,8 @@
 	<string>__MAR_PROJECT_NAME__</string>
 	<key>MarBaseURL</key>
 	<string>__MAR_DEFAULT_BASE_URL__</string>
+	<key>MarRuntimeVersion</key>
+	<string>__MAR_RUNTIME_VERSION__</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

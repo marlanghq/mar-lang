@@ -54,6 +54,29 @@ struct ContentView: View {
                     .allowsHitTesting(false)
             }
         }
+        // The server is running a different mar than this binary, so
+        // the program it is serving was refused (see loadAll). The app
+        // keeps working on the program it already has, but everything
+        // deployed since is invisible — which would otherwise look like
+        // "my deploy didn't go out". Say it on screen.
+        //
+        // A banner rather than a blocking dialog: the app is still
+        // usable, just frozen at a known-good version, and the fix is
+        // an App Store update the user may not be able to do this
+        // second. Top edge so it does not collide with the DEBUG dev
+        // banner at the bottom.
+        .overlay(alignment: .top) {
+            if let serverVersion = viewModel.incompatibleServerRuntime {
+                Text("Update needed — the server is on mar \(serverVersion)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.red.opacity(0.92), in: Capsule())
+                    .padding(.top, 6)
+                    .allowsHitTesting(false)
+            }
+        }
         .task {
             // Always fire loadAll on first appear. If state is .idle
             // (no embedded snapshot), this is the only fetch and it

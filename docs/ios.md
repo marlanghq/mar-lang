@@ -109,6 +109,52 @@ only deploy occasional UI changes), so this is rare. v2 territory:
 on-disk caching of the last fetched program for true "boot-with-
 last-server-state" behavior.
 
+> The web has the same headers and the opposite problem: there the
+> runtime and the program always arrive together, so nothing needs
+> refusing. What a browser tab can do is outlive a deploy, and the web
+> runtime watches the same two headers to notice and offer a reload.
+> See "Noticing a deploy from an open tab" in `docs/mar.md`.
+
+## The version gate: when a fetched program is refused
+
+The program travels over the air; the Swift runtime does not. It is
+compiled into the binary and only changes through the App Store. So a
+program built by a different `mar` can name a builtin this app has
+never heard of, and the failure would land far from the download: an
+`unbound name` thrown mid-view, on whichever screen the user happened
+to open.
+
+The server already stamps its identity on every response —
+`X-Mar-Runtime`, the mar version that built it (see
+`internal/jsserve/version_headers.go`). The app carries the same value
+as Info.plist's `MarRuntimeVersion`, written by `mar build
+--target ios`. Before applying a fetched program, `loadAll` compares
+them:
+
+| server says | app says | result |
+| --- | --- | --- |
+| same version | same version | apply, as before |
+| different | (stamped) | **refuse**, keep the current program, show a banner |
+| no header | anything | apply — an older server or a proxy that strips unknown headers looks like this, and refusing on silence would brick every app pointed at one |
+| anything | `dev` or absent | apply — the check disables itself for unstamped local builds, where both sides are rebuilt from the same tree constantly |
+
+A refusal is not fatal. The app keeps running the program it already
+has — the embedded snapshot, or whatever it fetched before — which is
+by construction a program this binary CAN run. What it loses is
+everything deployed since, which is why the banner says so out loud
+rather than leaving it looking like a deploy that never went out.
+
+The comparison is exact equality, not semver ordering. The question is
+not "is the server newer" but "were these two built together": a
+server OLDER than the app can mismatch just as easily, and inventing a
+compatibility range would mean promising one that nothing tests.
+
+**Consequence worth knowing:** a version-stamped app (TestFlight, App
+Store) pointed at a laptop's `mar dev` will refuse, because the dev
+server reports `dev`. Building the app with the same local `mar` puts
+both sides on `dev` and the check stands down, which is the ordinary
+development loop.
+
 ## Build pipeline (what `mar build --target ios` does)
 
 1. Loads `mar.json`, validates `ios.serverUrl` shape (compile-time

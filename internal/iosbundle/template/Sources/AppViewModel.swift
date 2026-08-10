@@ -56,6 +56,12 @@ final class AppViewModel {
     /// endpoint when one appears.
     private(set) var baseURLString: String
 
+    /// Non-nil once the server has told us it runs a mar newer or
+    /// older than the one compiled into this binary, and we therefore
+    /// refused to apply its program. Holds the server's version so the
+    /// banner can name it. See `loadAll` for the reasoning.
+    private(set) var incompatibleServerRuntime: String?
+
     /// Non-nil while the app is talking to a Bonjour-discovered dev
     /// server instead of the baked URL ("192.168.0.12:3033"). Drives
     /// the DEBUG banner in ContentView. Always nil in RELEASE (the
@@ -556,6 +562,25 @@ final class AppViewModel {
         return try? Data(contentsOf: url)
     }
 
+    /// The baked Info.plist `MarRuntimeVersion`: the mar that generated
+    /// this app, and therefore the version of the Swift runtime inside
+    /// the binary. nil disables the compatibility check entirely, and
+    /// two cases produce nil on purpose:
+    ///
+    ///   - the key is missing (scaffold generated before it existed);
+    ///   - the value is "dev", which is what an unstamped local build
+    ///     gets. During development the app and the server are rebuilt
+    ///     from the same tree constantly and a version string would
+    ///     only get in the way; the whole point of the check is the
+    ///     shipped app whose runtime is frozen in the App Store.
+    private static func bakedRuntimeVersion() -> String? {
+        guard let v = Bundle.main.object(forInfoDictionaryKey: "MarRuntimeVersion") as? String,
+              !v.isEmpty, v != "dev" else {
+            return nil
+        }
+        return v
+    }
+
     /// The baked Info.plist `MarBaseURL`, with a localhost fallback so
     /// the app still launches if someone shipped without setting one
     /// (the build emits a Warn in that case; this is just defensive).
@@ -625,8 +650,52 @@ final class AppViewModel {
             state = .loading
         }
         do {
-            let programData = try await api.fetchProgram()
-            try runProgramSync(programData)
+            let fetched = try await api.fetchProgram()
+
+            // THE AST IS DATA; THE BUILTINS IT NAMES ARE NOT.
+            //
+            // Over-the-air update means the program travels and the
+            // Swift runtime does not — it is compiled into this binary
+            // and can only change through the App Store. So a program
+            // built by a different mar can name a builtin this app has
+            // never heard of, and the failure would land far from here:
+            // an `unbound name` thrown mid-view, on some screen the user
+            // happened to open, presented as a crash-shaped runtime
+            // failure with nothing actionable in it.
+            //
+            // Refusing up front turns that into one honest sentence.
+            // The app keeps running the program it already has — the
+            // embedded snapshot from the .ipa, or whatever it fetched
+            // before — which is by construction a program this binary
+            // CAN run.
+            //
+            // Deliberately an exact-match check rather than semver
+            // ordering: the question is not "is the server newer" but
+            // "were these two built together". A server older than the
+            // app is just as capable of mismatching (the app may name a
+            // builtin the older server's compiler emitted differently),
+            // and inventing a compatibility range would mean promising
+            // one we do not test.
+            if let serverRuntime = fetched.runtime,
+               let ours = AppViewModel.bakedRuntimeVersion(),
+               serverRuntime != ours {
+                incompatibleServerRuntime = serverRuntime
+                print("[mar] refusing program from server running mar \(serverRuntime); "
+                      + "this app was built with \(ours). Update the app.")
+                if !hadProgram {
+                    state = .failed(
+                        "This app was built with mar \(ours) but the server is running mar "
+                        + "\(serverRuntime). Update the app to continue.")
+                }
+                return
+            }
+            // Either the versions match or one side declined to say.
+            // Both are "carry on": a missing header is what an older
+            // server or a header-stripping proxy looks like, and
+            // refusing on silence would brick every app pointed at one.
+            incompatibleServerRuntime = nil
+
+            try runProgramSync(fetched.data)
             state = .loaded
         } catch {
             if hadProgram {

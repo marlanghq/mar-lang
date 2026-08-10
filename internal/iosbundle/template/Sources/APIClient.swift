@@ -35,10 +35,25 @@ actor APIClient {
         baseURL = url
     }
 
+    /// A fetched program plus the identity the server stamped on the
+    /// response. `runtime` is the mar version that built the server
+    /// (`X-Mar-Runtime`); nil when the server didn't send it, which is
+    /// how an older server or a proxy that strips unknown headers
+    /// looks. The caller decides what nil means — see
+    /// AppViewModel.loadAll.
+    struct FetchedProgram {
+        let data: Data
+        let runtime: String?
+    }
+
     /// Raw program.json bytes — passed to MarJSONCodec.decodeProgram
-    /// off-thread on the main actor.
-    func fetchProgram() async throws -> Data {
-        try await get(path: "/_mar/program.json")
+    /// off-thread on the main actor — plus the server's runtime stamp,
+    /// which has to be read HERE because it lives on the response and
+    /// the response does not survive the return.
+    func fetchProgram() async throws -> FetchedProgram {
+        let (data, http) = try await getWithResponse(path: "/_mar/program.json")
+        let runtime = http?.value(forHTTPHeaderField: "X-Mar-Runtime")
+        return FetchedProgram(data: data, runtime: (runtime?.isEmpty ?? true) ? nil : runtime)
     }
 
     /// POST a raw JSON body to `path`, return the raw response body.
@@ -66,17 +81,18 @@ actor APIClient {
         }
     }
 
-    private func get(path: String) async throws -> Data {
+    private func getWithResponse(path: String) async throws -> (Data, HTTPURLResponse?) {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw APIError.invalidURL
         }
         do {
             let (data, resp) = try await URLSession.shared.data(from: url)
-            if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let http = resp as? HTTPURLResponse
+            if let http, !(200..<300).contains(http.statusCode) {
                 let body = String(data: data, encoding: .utf8) ?? ""
                 throw APIError.http(http.statusCode, body)
             }
-            return data
+            return (data, http)
         } catch let err as APIError {
             throw err
         } catch {

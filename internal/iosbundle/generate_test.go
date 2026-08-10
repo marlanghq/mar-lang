@@ -107,6 +107,13 @@ func TestGenerateMaterializesXcodeProject(t *testing.T) {
 		"Notes Fullstack",           // DisplayName literal (with space)
 		"https://notes.example.com", // DefaultBaseURL
 		"<key>MarAppName</key>",     // Bonjour-guard identity key
+		// The OTA compatibility gate. The app reads this and refuses a
+		// program.json served by a mar that isn't this one, because the
+		// AST travels over the air but the builtins it names are frozen
+		// in the binary. Without the key the check silently disables
+		// itself, so the key's PRESENCE is the thing worth asserting.
+		"<key>MarRuntimeVersion</key>",
+		"<string>test</string>", // spec.MarVersion, verbatim
 	} {
 		if !strings.Contains(info, want) {
 			t.Errorf("Info.plist should contain %q", want)
@@ -116,6 +123,7 @@ func TestGenerateMaterializesXcodeProject(t *testing.T) {
 		"__MAR_DISPLAY_NAME__",
 		"__MAR_DEFAULT_BASE_URL__",
 		"__MAR_PROJECT_NAME__",
+		"__MAR_RUNTIME_VERSION__",
 	} {
 		if strings.Contains(info, raw) {
 			t.Errorf("Info.plist contains unsubstituted %s", raw)

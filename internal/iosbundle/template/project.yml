@@ -142,6 +142,17 @@ targets:
         # this app's backend.
         MarAppName: __MAR_PROJECT_NAME__
 
+        # MarRuntimeVersion is the mar version that generated this
+        # app — the version of the Swift runtime compiled into the
+        # binary. The server stamps the same value on every response
+        # as `X-Mar-Runtime`, and the app compares the two before
+        # applying a downloaded program.json: the AST is data, but
+        # the builtins it names live in the binary, so a program built
+        # by a newer mar can reference something this app does not
+        # have. Mismatch means "needs an App Store update", not
+        # "apply and hope".
+        MarRuntimeVersion: __MAR_RUNTIME_VERSION__
+
         # Bonjour / mDNS discovery — the backend publishes
         # `_mar._tcp` when it starts (jsserve.publishBonjour); the
         # app browses for it via NWBrowser and auto-connects when
