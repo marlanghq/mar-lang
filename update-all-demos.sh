@@ -25,7 +25,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 ROOT="$(pwd)"
 
 # The demo apps to redeploy.
-APPS=(lendas myrkheim mini-soccer seasons-gp quiz-duel daily-checklist pulse-runner star-condor iron-meridian pocket-synth)
+# Every app with a card on /demos. Keep this in step with Frontend/Demos.mar:
+# an app missing here still has a card on the page, and that card goes stale
+# the moment the runtime moves under it.
+APPS=(lendas myrkheim mini-soccer seasons-gp quiz-duel daily-checklist pulse-runner star-condor iron-meridian pocket-synth vortex roll-call mar-trix)
 
 # Colors only when stdout is a real terminal.
 if [ -t 1 ]; then

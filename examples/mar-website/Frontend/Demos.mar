@@ -132,17 +132,31 @@ view _ =
                 "https://mar-roll-call.fly.dev"
                 "roll-call"
 
+            , gameCard "Mar-Trix"
+                "mar-trix"
+                "The falling blocks, done properly. A seven-bag randomiser, so you never wait eleven pieces for the long one. A ghost under the falling piece, hold, wall kicks, a lock delay you can slide against, and combo scoring. On a phone there are no buttons at all: drag to move, flick down to slam it home, flick up to hold."
+                "Canvas 2D, the pointer mirror for gestures, chip-tune cues, and a layout derived entirely from the live canvas size."
+                "https://mar-trix.pages.dev"
+                "mar-trix"
+
             , gameCard "Seasons GP"
                 "seasons-gp"
-                "A pseudo-3D endless racer that drives through four seasons: spring blossoms, summer heat, autumn winds and winter snow, each with its own palette and hazards. The road is classic segment-projection arcade math, all in integer arithmetic."
+                "A pseudo-3D endless racer that drives through four seasons: spring blossoms, summer heat, autumn winds and winter snow, each with its own palette and hazards. The road is classic segment-projection arcade math."
                 "Pseudo-3D road projection, Device-aware touch pads, procedural scenery."
                 "https://mar-seasons-gp.pages.dev"
                 "seasons-gp"
 
+            , gameCard "Vortex"
+                "vortex"
+                "A tube shooter. You move around the rim of a well and shoot the enemies climbing the lanes toward you. Sixteen well shapes, one per level."
+                "A perspective divide, a pasted sine table, and lines built out of triangles because Canvas has no line."
+                "https://mar-vortex.pages.dev"
+                "vortex"
+
             , gameCard "Iron Meridian"
                 "iron-meridian"
                 "A real-time strategy game on colonized Mars, in the lineage of Command & Conquer and StarCraft. Three factions with their own units and doctrines, a five-mission campaign whose story turns on you, and skirmish against a bot that builds, scouts and counterattacks."
-                "Flow-field pathfinding, fog of war, a build-and-battle economy, a bot opponent, integer fixed-point sim at 30Hz."
+                "Flow-field pathfinding, fog of war, a build-and-battle economy, a bot opponent, and a simulation that steps thirty times a second."
                 "https://mar-iron-meridian.pages.dev"
                 "iron-meridian"
 
