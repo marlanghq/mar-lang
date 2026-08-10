@@ -762,6 +762,30 @@ update msg model =
 
 The `Result` the page receives carries `Service.Error` in its `Err` (transport failure) and the declared response in `Ok`, which holds any domain outcome. See section 3.5 for the full error model.
 
+### 6.1 Noticing a deploy from an open tab
+
+A page load pins the runtime and the program together: the HTML carries the program inline, both revalidate on every load, and a fresh load is always internally consistent. The case a fresh load cannot cover is the tab nobody reloads. Leave an app open, deploy, and that tab keeps running last week's code while its service calls land on today's server.
+
+Every response the server sends carries its identity:
+
+```
+X-Mar-Program: <hash of the program being served>
+X-Mar-Runtime: <the mar version that built the server>
+```
+
+The runtime remembers what it saw on the first response and compares every later one. No polling and no extra request: the evidence rides along with traffic the app was making anyway (service calls, and the `Auth.me` check that protected pages do). When something disagrees, a small bar appears in the bottom corner with a **Reload** button. Nothing is blocked, because the page is still running a complete and internally consistent version of the app, just not the newest one.
+
+The two headers mean different things and the bar says so:
+
+| what changed | message |
+| --- | --- |
+| program | "A new version is available." The app's own code was redeployed; this page still works, it is just old. |
+| runtime | "This page is out of date. Reload to keep going." The framework moved, so the wire format this page speaks may no longer be the one the server answers in, and service calls can start failing in ways that look like app bugs. |
+
+A response with neither header changes nothing. That is what an older server, or a proxy that drops what it does not recognise, looks like, and silence is not evidence of a deploy.
+
+The bar never appears under `mar dev`: hot reload already applies changes, and every save would otherwise raise it.
+
 ## 7. Main.mar
 
 Entry point. A single `App.fullstack { ... }` call, returning `Cmd ()`:
