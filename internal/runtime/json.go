@@ -445,8 +445,14 @@ func convertJSON(raw any) (Value, error) {
 			}
 			return VTime{Millis: t.UnixMilli()}, nil
 		}
+		// A decoded object has no declared field order to inherit — the
+		// JSON text's order is gone by the time it is a Go map, and map
+		// iteration is deliberately randomized. Sorting is the only order
+		// available that is the same twice, and Order is what Display and
+		// the missing-field error print, so without it the same value
+		// reads differently run to run.
 		fields := make(map[string]Value, len(x))
-		var order []string
+		order := make([]string, 0, len(x))
 		for k, v := range x {
 			val, err := convertJSON(v)
 			if err != nil {
@@ -455,6 +461,7 @@ func convertJSON(raw any) (Value, error) {
 			fields[k] = val
 			order = append(order, k)
 		}
+		sort.Strings(order)
 		return VRecord{Fields: fields, Order: order}, nil
 	}
 	return nil, fmt.Errorf("JSON.decode: unsupported type %T", raw)
