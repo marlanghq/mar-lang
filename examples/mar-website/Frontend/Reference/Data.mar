@@ -423,7 +423,7 @@ sectionsFor m =
               , entries =
                     [ { moduleName = "Time", name = "fromYMD", signature = "Int -> Int -> Int -> Time", side = "both", description = "A time at midnight on the given year, month, and day.", examples = [ [ "Time.year (Time.fromYMD 2026 7 22)    -- 2026" ] ] }
                     , { moduleName = "Time", name = "fromIso", signature = "String -> Maybe Time", side = "both", description = "Reads an ISO 8601 string, giving Nothing when it is not one.", examples = [ [ "Maybe.map Time.year (Time.fromIso \"2026-07-22T00:00:00Z\")    -- Just 2026" ] ] }
-                    , { moduleName = "Time", name = "now", signature = "Task Time", side = "both", description = "The current time, as a task. It is a task rather than a value because reading the clock is an effect: two calls can disagree.", examples = [ [ "Cmd.perform (\\t -> Time.year t) Time.now" ] ] }
+                    , { moduleName = "Time", name = "now", signature = "Task Time", side = "both", description = "The current time, as a task. It is a task rather than a value because reading the clock is an effect: two calls can disagree.", examples = [ [ "type Msg = YearKnown Int", "askYear = Cmd.perform (\\t -> YearKnown (Time.year t)) Time.now" ] ] }
                     ]
               }
             , { category = "Read the parts"
@@ -496,7 +496,7 @@ sectionsFor m =
               }
             , { category = "Run it"
               , entries =
-                    [ { moduleName = "Random", name = "generate", signature = "(a -> b) -> Random.Generator a -> Cmd b", side = "both", description = "Turns a generator into a command that produces a value and hands it back as a message. Nothing is random until this runs, which is what keeps generators themselves pure and reusable.", examples = [ [ "Random.generate (\\n -> n) (Random.int 1 6)" ] ] }
+                    [ { moduleName = "Random", name = "generate", signature = "(a -> b) -> Random.Generator a -> Cmd b", side = "both", description = "Turns a generator into a command that produces a value and hands it back as a message. Nothing is random until this runs, which is what keeps generators themselves pure and reusable.", examples = [ [ "type Msg = Rolled Int", "roll = Random.generate (\\n -> Rolled n) (Random.int 1 6)" ] ] }
                     ]
               }
             , { category = "Seeded (pure, runs anywhere)"
@@ -592,24 +592,24 @@ sectionsFor m =
               }
             , { category = "Controls"
               , entries =
-                    [ { moduleName = "UI", name = "button", signature = "List (Attr Button) -> a -> String -> View a", side = "frontend", description = "A tappable button that sends a message. The message is a value, not a callback, so what the button does is decided in update.", examples = [ [ "UI.button [] 0 \"Save\"" ] ] }
-                    , { moduleName = "UI", name = "toggle", signature = "List (Attr Toggle) -> String -> Bool -> (Bool -> a) -> View a", side = "frontend", description = "An on-off switch with a label, sending the new state when it flips.", examples = [ [ "UI.toggle [] \"Dark mode\" True (\\on -> on)" ] ] }
-                    , { moduleName = "UI", name = "textField", signature = "List (Attr Input) -> String -> String -> (String -> a) -> View a", side = "frontend", description = "A single-line text input, given a placeholder, its current value, and what to send when it changes.", examples = [ [ "UI.textField [] \"Email\" \"\" (\\s -> s)" ] ] }
-                    , { moduleName = "UI", name = "textArea", signature = "List (Attr Input) -> String -> String -> (String -> a) -> View a", side = "frontend", description = "A multi-line text input. Give it a height in lines to control how tall it starts.", examples = [ [ "UI.textArea [ UI.height (UI.lines 4) ] \"Notes\" \"\" (\\s -> s)" ] ] }
-                    , { moduleName = "UI", name = "picker", signature = "List (Attr Input) -> a -> List a -> (a -> String) -> (a -> b) -> View b", side = "frontend", description = "A chooser over a list of options, given the current one, how to label each, and what to send on a change. The options are your own values, not strings, so nothing has to be parsed back.", examples = [ [ "UI.picker [] 1 [ 1, 2, 3 ] (\\n -> String.fromInt n) (\\n -> n)" ] ] }
-                    , { moduleName = "UI", name = "datePicker", signature = "List (Attr Input) -> Time -> (Time -> a) -> View a", side = "frontend", description = "A date chooser, given the current date and what to send when it changes.", examples = [ [ "UI.datePicker [] (Time.fromYMD 2026 7 22) (\\t -> t)" ] ] }
+                    [ { moduleName = "UI", name = "button", signature = "List (Attr Button) -> a -> String -> View a", side = "frontend", description = "A tappable button that sends a message. The message is a value, not a callback, so what the button does is decided in update.", examples = [ [ "type Msg = Save", "saveButton = UI.button [] Save \"Save\"" ] ] }
+                    , { moduleName = "UI", name = "toggle", signature = "List (Attr Toggle) -> String -> Bool -> (Bool -> a) -> View a", side = "frontend", description = "An on-off switch with a label, sending the new state when it flips.", examples = [ [ "type Msg = DarkModeSet Bool", "darkRow = UI.toggle [] \"Dark mode\" True (\\on -> DarkModeSet on)" ] ] }
+                    , { moduleName = "UI", name = "textField", signature = "List (Attr Input) -> String -> String -> (String -> a) -> View a", side = "frontend", description = "A single-line text input, given a placeholder, its current value, and what to send when it changes.", examples = [ [ "type Msg = EmailTyped String", "emailField = UI.textField [] \"Email\" \"\" (\\s -> EmailTyped s)" ] ] }
+                    , { moduleName = "UI", name = "textArea", signature = "List (Attr Input) -> String -> String -> (String -> a) -> View a", side = "frontend", description = "A multi-line text input. Give it a height in lines to control how tall it starts.", examples = [ [ "type Msg = NotesTyped String", "notesField = UI.textArea [ UI.height (UI.lines 4) ] \"Notes\" \"\" (\\s -> NotesTyped s)" ] ] }
+                    , { moduleName = "UI", name = "picker", signature = "List (Attr Input) -> a -> List a -> (a -> String) -> (a -> b) -> View b", side = "frontend", description = "A chooser over a list of options, given the current one, how to label each, and what to send on a change. The options are your own values, not strings, so nothing has to be parsed back.", examples = [ [ "type Msg = ServingsPicked Int", "servings = UI.picker [] 1 [ 1, 2, 3 ] (\\n -> String.fromInt n) (\\n -> ServingsPicked n)" ] ] }
+                    , { moduleName = "UI", name = "datePicker", signature = "List (Attr Input) -> Time -> (Time -> a) -> View a", side = "frontend", description = "A date chooser, given the current date and what to send when it changes.", examples = [ [ "type Msg = DuePicked Time", "dueField = UI.datePicker [] (Time.fromYMD 2026 7 22) (\\t -> DuePicked t)" ] ] }
                     ]
               }
             , { category = "Input attributes"
               , entries =
-                    [ { moduleName = "UI", name = "email", signature = "Attr Input", side = "frontend", description = "Marks an input as an email address, so the keyboard and autofill match.", examples = [ [ "UI.textField [ UI.email ] \"Email\" \"\" (\\s -> s)" ] ] }
-                    , { moduleName = "UI", name = "password", signature = "Attr Input", side = "frontend", description = "Marks an input as a password, hiding what is typed and offering the saved one.", examples = [ [ "UI.textField [ UI.password ] \"Password\" \"\" (\\s -> s)" ] ] }
-                    , { moduleName = "UI", name = "newPassword", signature = "Attr Input", side = "frontend", description = "Marks an input as a password being chosen, so a password manager offers to generate and save one.", examples = [ [ "UI.textField [ UI.newPassword ] \"Choose a password\" \"\" (\\s -> s)" ] ] }
-                    , { moduleName = "UI", name = "numeric", signature = "Attr Input", side = "frontend", description = "Marks an input as a number, bringing up the number keyboard.", examples = [ [ "UI.textField [ UI.numeric ] \"Quantity\" \"\" (\\s -> s)" ] ] }
-                    , { moduleName = "UI", name = "numericCode", signature = "Attr Input", side = "frontend", description = "Marks an input as a numeric code, like a PIN.", examples = [ [ "UI.textField [ UI.numericCode ] \"PIN\" \"\" (\\s -> s)" ] ] }
-                    , { moduleName = "UI", name = "oneTimeCode", signature = "Attr Input", side = "frontend", description = "Marks an input as a one-time code, so a code that just arrived by mail or message is offered for autofill.", examples = [ [ "UI.textField [ UI.oneTimeCode ] \"Code\" \"\" (\\s -> s)" ] ] }
-                    , { moduleName = "UI", name = "submit", signature = "a -> Attr Input", side = "frontend", description = "The message to send when the field is submitted, from the keyboard return key or an enter press.", examples = [ [ "UI.textField [ UI.submit 0 ] \"Email\" \"\" (\\s -> s)" ] ] }
-                    , { moduleName = "UI", name = "disabled", signature = "Bool -> Attr a", side = "frontend", description = "Greys a control out and stops it responding.", examples = [ [ "UI.button [ UI.disabled True ] 0 \"Save\"" ] ] }
+                    [ { moduleName = "UI", name = "email", signature = "Attr Input", side = "frontend", description = "Marks an input as an email address, so the keyboard and autofill match.", examples = [ [ "type Msg = EmailTyped String", "emailField = UI.textField [ UI.email ] \"Email\" \"\" (\\s -> EmailTyped s)" ] ] }
+                    , { moduleName = "UI", name = "password", signature = "Attr Input", side = "frontend", description = "Marks an input as a password, hiding what is typed and offering the saved one.", examples = [ [ "type Msg = PasswordTyped String", "passwordField = UI.textField [ UI.password ] \"Password\" \"\" (\\s -> PasswordTyped s)" ] ] }
+                    , { moduleName = "UI", name = "newPassword", signature = "Attr Input", side = "frontend", description = "Marks an input as a password being chosen, so a password manager offers to generate and save one.", examples = [ [ "type Msg = PasswordTyped String", "passwordField = UI.textField [ UI.newPassword ] \"Choose a password\" \"\" (\\s -> PasswordTyped s)" ] ] }
+                    , { moduleName = "UI", name = "numeric", signature = "Attr Input", side = "frontend", description = "Marks an input as a number, bringing up the number keyboard.", examples = [ [ "type Msg = QuantityTyped String", "quantityField = UI.textField [ UI.numeric ] \"Quantity\" \"\" (\\s -> QuantityTyped s)" ] ] }
+                    , { moduleName = "UI", name = "numericCode", signature = "Attr Input", side = "frontend", description = "Marks an input as a numeric code, like a PIN.", examples = [ [ "type Msg = PinTyped String", "pinField = UI.textField [ UI.numericCode ] \"PIN\" \"\" (\\s -> PinTyped s)" ] ] }
+                    , { moduleName = "UI", name = "oneTimeCode", signature = "Attr Input", side = "frontend", description = "Marks an input as a one-time code, so a code that just arrived by mail or message is offered for autofill.", examples = [ [ "type Msg = CodeTyped String", "codeField = UI.textField [ UI.oneTimeCode ] \"Code\" \"\" (\\s -> CodeTyped s)" ] ] }
+                    , { moduleName = "UI", name = "submit", signature = "a -> Attr Input", side = "frontend", description = "The message to send when the field is submitted, from the keyboard return key or an enter press.", examples = [ [ "type Msg = EmailTyped String | Submitted", "emailField = UI.textField [ UI.submit Submitted ] \"Email\" \"\" (\\s -> EmailTyped s)" ] ] }
+                    , { moduleName = "UI", name = "disabled", signature = "Bool -> Attr a", side = "frontend", description = "Greys a control out and stops it responding.", examples = [ [ "type Msg = Save", "saveButton = UI.button [ UI.disabled True ] Save \"Save\"" ] ] }
                     ]
               }
             , { category = "Layout"
@@ -629,7 +629,7 @@ sectionsFor m =
             , { category = "Sizing"
               , entries =
                     [ { moduleName = "UI", name = "width", signature = "Size Width -> Attr a", side = "frontend", description = "Sets how wide a view is.", examples = [ [ "UI.text [ UI.width (UI.chars 6) ] \"SW1A\"" ] ] }
-                    , { moduleName = "UI", name = "height", signature = "Size Height -> Attr a", side = "frontend", description = "Sets how tall a view is.", examples = [ [ "UI.textArea [ UI.height (UI.lines 6) ] \"Notes\" \"\" (\\s -> s)" ] ] }
+                    , { moduleName = "UI", name = "height", signature = "Size Height -> Attr a", side = "frontend", description = "Sets how tall a view is.", examples = [ [ "type Msg = NotesTyped String", "notesField = UI.textArea [ UI.height (UI.lines 6) ] \"Notes\" \"\" (\\s -> NotesTyped s)" ] ] }
                     , { moduleName = "UI", name = "fill", signature = "Size a", side = "frontend", description = "Take all the room available on this axis.", examples = [ [ "UI.text [ UI.width UI.fill ] \"Takes the whole row\"" ] ] }
                     , { moduleName = "UI", name = "chars", signature = "Int -> Size Width", side = "frontend", description = "A width measured in characters, so a field sized for a postcode stays that size as the font changes.", examples = [ [ "UI.width (UI.chars 8)" ] ] }
                     , { moduleName = "UI", name = "lines", signature = "Int -> Size Height", side = "frontend", description = "A height measured in lines of text.", examples = [ [ "UI.height (UI.lines 3)" ] ] }
@@ -642,7 +642,7 @@ sectionsFor m =
                     [ { moduleName = "UI", name = "form", signature = "List (View a) -> View a", side = "frontend", description = "A screen made of sections, laid out the way a settings screen is.", examples = [ [ "UI.form [ UI.section [ UI.header \"Account\" ] [ UI.text [] \"you@example.com\" ] ]" ] ] }
                     , { moduleName = "UI", name = "section", signature = "List (Attr Section) -> List (View a) -> View a", side = "frontend", description = "A group of rows inside a form or list, optionally with a header above and a footer below.", examples = [ [ "UI.section [ UI.header \"Account\", UI.footer \"We never share this.\" ] [ UI.text [] \"you@example.com\" ]" ] ] }
                     , { moduleName = "UI", name = "list", signature = "List (Attr List) -> List (View a) -> View a", side = "frontend", description = "A plain list of rows, without a form's grouping.", examples = [ [ "UI.list [] [ UI.text [] \"One\", UI.text [] \"Two\" ]" ] ] }
-                    , { moduleName = "UI", name = "header", signature = "String -> Attr a", side = "frontend", description = "A label above a section.", examples = [ [ "UI.section [ UI.header \"Danger zone\" ] [ UI.button [] 0 \"Delete account\" ]" ] ] }
+                    , { moduleName = "UI", name = "header", signature = "String -> Attr a", side = "frontend", description = "A label above a section.", examples = [ [ "type Msg = DeleteAccount", "dangerZone = UI.section [ UI.header \"Danger zone\" ] [ UI.button [] DeleteAccount \"Delete account\" ]" ] ] }
                     , { moduleName = "UI", name = "footer", signature = "String -> Attr a", side = "frontend", description = "Explanatory text under a section. The place for the sentence that would otherwise clutter a label.", examples = [ [ "UI.section [ UI.footer \"Codes expire after ten minutes.\" ] [ UI.text [] \"Check your mail\" ]" ] ] }
                     ]
               }
@@ -650,8 +650,8 @@ sectionsFor m =
               , entries =
                     [ { moduleName = "UI", name = "keyed", signature = "String -> View a -> KeyedView a", side = "frontend", description = "Attaches a stable identity to a row, so the runtime can tell a moved row from a changed one.", examples = [ [ "UI.keyed \"task-1\" (UI.text [] \"Buy milk\")" ] ] }
                     , { moduleName = "UI", name = "keyedList", signature = "List (Attr KeyedList) -> List (KeyedView a) -> View a", side = "frontend", description = "A list of keyed rows. Rows can be reordered and deleted, and because each carries a key, they animate to their new place instead of being redrawn.", examples = [ [ "UI.keyedList [] [ UI.keyed \"task-1\" (UI.text [] \"Buy milk\") ]" ] ] }
-                    , { moduleName = "UI", name = "onMove", signature = "Bool -> (Int -> Int -> a) -> Attr KeyedList", side = "frontend", description = "Lets rows be dragged, sending the index they came from and the one they went to. The Bool is whether it is currently allowed.", examples = [ [ "UI.onMove True (\\from to -> (from, to))" ] ] }
-                    , { moduleName = "UI", name = "onDelete", signature = "Bool -> (Int -> a) -> Attr KeyedList", side = "frontend", description = "Lets rows be deleted, sending the index. The Bool is whether it is currently allowed.", examples = [ [ "UI.onDelete True (\\index -> index)" ] ] }
+                    , { moduleName = "UI", name = "onMove", signature = "Bool -> (Int -> Int -> a) -> Attr KeyedList", side = "frontend", description = "Lets rows be dragged, sending the index they came from and the one they went to. The Bool is whether it is currently allowed.", examples = [ [ "type Msg = Reordered Int Int", "dragging = UI.onMove True (\\from to -> Reordered from to)" ] ] }
+                    , { moduleName = "UI", name = "onDelete", signature = "Bool -> (Int -> a) -> Attr KeyedList", side = "frontend", description = "Lets rows be deleted, sending the index. The Bool is whether it is currently allowed.", examples = [ [ "type Msg = Deleted Int", "removable = UI.onDelete True (\\index -> Deleted index)" ] ] }
                     ]
               }
             , { category = "Navigation"
@@ -659,14 +659,14 @@ sectionsFor m =
                     [ { moduleName = "UI", name = "navigationStack", signature = "List (Attr NavStack) -> List (View a) -> View a", side = "frontend", description = "The root of a screen that can push other screens, holding the title and the toolbar.", examples = [ [ "UI.navigationStack [ UI.navigationTitle \"Inbox\" ] [ UI.text [] \"Nothing here yet\" ]" ] ] }
                     , { moduleName = "UI", name = "navigationTitle", signature = "String -> Attr NavStack", side = "frontend", description = "The title shown at the top of a navigation stack.", examples = [ [ "UI.navigationStack [ UI.navigationTitle \"Settings\" ] []" ] ] }
                     , { moduleName = "UI", name = "navigationLink", signature = "List (Attr Link) -> Path a -> a -> View b -> View b", side = "frontend", description = "A row that pushes another page when tapped, addressed by a typed path and its parameters. The parameters are checked at compile time, so a link cannot point at a route that does not exist.", examples = [ [ "moduleDoc : Path { moduleName : String }", "moduleDoc = \"/reference/{moduleName:String}\"", "row = UI.navigationLink [] moduleDoc { moduleName = \"List\" } (UI.text [] \"List\")" ] ] }
-                    , { moduleName = "UI", name = "topBarLeading", signature = "View a -> Attr NavStack", side = "frontend", description = "Puts a view at the leading end of the toolbar.", examples = [ [ "UI.navigationStack [ UI.topBarLeading (UI.button [] 0 \"Cancel\") ] []" ] ] }
-                    , { moduleName = "UI", name = "topBarTrailing", signature = "View a -> Attr NavStack", side = "frontend", description = "Puts a view at the trailing end of the toolbar.", examples = [ [ "UI.navigationStack [ UI.topBarTrailing (UI.button [] 0 \"Edit\") ] []" ] ] }
+                    , { moduleName = "UI", name = "topBarLeading", signature = "View a -> Attr NavStack", side = "frontend", description = "Puts a view at the leading end of the toolbar.", examples = [ [ "type Msg = Cancelled", "screen = UI.navigationStack [ UI.topBarLeading (UI.button [] Cancelled \"Cancel\") ] []" ] ] }
+                    , { moduleName = "UI", name = "topBarTrailing", signature = "View a -> Attr NavStack", side = "frontend", description = "Puts a view at the trailing end of the toolbar.", examples = [ [ "type Msg = EditTapped", "screen = UI.navigationStack [ UI.topBarTrailing (UI.button [] EditTapped \"Edit\") ] []" ] ] }
                     ]
               }
             , { category = "Overlays"
               , entries =
-                    [ { moduleName = "UI", name = "sheet", signature = "{ open : Bool, onDismiss : a, outlet : String } -> List (View a) -> View a", side = "frontend", description = "A panel that slides up over the screen while open is true, sending onDismiss when it is closed.", examples = [ [ "UI.sheet { open = True, onDismiss = 0, outlet = \"editor\" } [ UI.text [] \"Edit task\" ]" ] ] }
-                    , { moduleName = "UI", name = "confirm", signature = "{ title : String, confirmLabel : String, destructive : Bool, onConfirm : a, onCancel : a } -> View a", side = "frontend", description = "A confirmation dialog. Mark it destructive when the action cannot be undone, and the confirm button is styled as a warning.", examples = [ [ "UI.confirm { title = \"Delete this task?\", confirmLabel = \"Delete\", destructive = True, onConfirm = 1, onCancel = 0 }" ] ] }
+                    [ { moduleName = "UI", name = "sheet", signature = "{ open : Bool, onDismiss : a, outlet : String } -> List (View a) -> View a", side = "frontend", description = "A panel that slides up over the screen while open is true, sending onDismiss when it is closed.", examples = [ [ "type Msg = SheetDismissed", "editor = UI.sheet { open = True, onDismiss = SheetDismissed, outlet = \"editor\" } [ UI.text [] \"Edit task\" ]" ] ] }
+                    , { moduleName = "UI", name = "confirm", signature = "{ title : String, confirmLabel : String, destructive : Bool, onConfirm : a, onCancel : a } -> View a", side = "frontend", description = "A confirmation dialog. Mark it destructive when the action cannot be undone, and the confirm button is styled as a warning.", examples = [ [ "type Msg = DeleteConfirmed | DeleteCancelled", "dialog = UI.confirm { title = \"Delete this task?\", confirmLabel = \"Delete\", destructive = True, onConfirm = DeleteConfirmed, onCancel = DeleteCancelled }" ] ] }
                     ]
               }
             , { category = "Images"
@@ -1015,8 +1015,8 @@ sectionsFor m =
               }
             , { category = "Ask about it"
               , entries =
-                    [ { moduleName = "Device", name = "touchOnly", signature = "{ pointer : Pointer, anyFine : Bool, supportsHover : Bool, width : Int, height : Int, prefersDark : Bool, prefersReducedMotion : Bool } -> Bool", side = "frontend", description = "True when the only pointer is a finger. The test for whether to show touch controls.", examples = [ [ "Device.watch (\\device -> Device.touchOnly device)" ] ] }
-                    , { moduleName = "Device", name = "canHover", signature = "{ pointer : Pointer, anyFine : Bool, supportsHover : Bool, width : Int, height : Int, prefersDark : Bool, prefersReducedMotion : Bool } -> Bool", side = "frontend", description = "True when there is a pointer that can hover, so a hover state is worth showing at all.", examples = [ [ "Device.watch (\\device -> Device.canHover device)" ] ] }
+                    [ { moduleName = "Device", name = "touchOnly", signature = "{ pointer : Pointer, anyFine : Bool, supportsHover : Bool, width : Int, height : Int, prefersDark : Bool, prefersReducedMotion : Bool } -> Bool", side = "frontend", description = "True when the only pointer is a finger. The test for whether to show touch controls.", examples = [ [ "type Msg = TouchOnlyChanged Bool", "subs = Device.watch (\\device -> TouchOnlyChanged (Device.touchOnly device))" ] ] }
+                    , { moduleName = "Device", name = "canHover", signature = "{ pointer : Pointer, anyFine : Bool, supportsHover : Bool, width : Int, height : Int, prefersDark : Bool, prefersReducedMotion : Bool } -> Bool", side = "frontend", description = "True when there is a pointer that can hover, so a hover state is worth showing at all.", examples = [ [ "type Msg = HoverChanged Bool", "subs = Device.watch (\\device -> HoverChanged (Device.canHover device))" ] ] }
                     ]
               }
             ]
@@ -1040,7 +1040,7 @@ sectionsFor m =
             [ { category = "Common"
               , entries =
                     [ { moduleName = "Sub", name = "none", signature = "Sub a", side = "frontend", description = "Subscribe to nothing.", examples = [ [ "Sub.none" ] ] }
-                    , { moduleName = "Sub", name = "batch", signature = "List (Sub a) -> Sub a", side = "frontend", description = "Subscribes to several things at once.", examples = [ [ "Sub.batch [ Time.every (Time.seconds 1) (\\t -> Time.second t), Sub.none ]" ] ] }
+                    , { moduleName = "Sub", name = "batch", signature = "List (Sub a) -> Sub a", side = "frontend", description = "Subscribes to several things at once.", examples = [ [ "type Msg = Ticked Int", "subs = Sub.batch [ Time.every (Time.seconds 1) (\\t -> Ticked (Time.second t)), Sub.none ]" ] ] }
                     ]
               }
             ]
@@ -1138,8 +1138,8 @@ sectionsFor m =
               }
             , { category = "Sign in"
               , entries =
-                    [ { moduleName = "Auth", name = "requestCode", signature = "{ email : String } -> (Result Service.Error Auth.RequestOutcome -> a) -> Cmd a", side = "frontend", description = "Asks the server to mail a sign-in code to an address.", examples = [ [ "Auth.requestCode { email = \"you@example.com\" } (\\result -> result)" ] ] }
-                    , { moduleName = "Auth", name = "verifyCode", signature = "{ email : String, code : String } -> (Result Service.Error (Auth.VerifyOutcome a) -> b) -> Cmd b", side = "frontend", description = "Sends a code back to be checked, signing the person in when it matches.", examples = [ [ "Auth.verifyCode { email = \"you@example.com\", code = \"123456\" } (\\result -> result)" ] ] }
+                    [ { moduleName = "Auth", name = "requestCode", signature = "{ email : String } -> (Result Service.Error Auth.RequestOutcome -> a) -> Cmd a", side = "frontend", description = "Asks the server to mail a sign-in code to an address.", examples = [ [ "type Msg = CodeRequested (Result Service.Error Auth.RequestOutcome)", "ask = Auth.requestCode { email = \"you@example.com\" } (\\result -> CodeRequested result)" ] ] }
+                    , { moduleName = "Auth", name = "verifyCode", signature = "{ email : String, code : String } -> (Result Service.Error (Auth.VerifyOutcome a) -> b) -> Cmd b", side = "frontend", description = "Sends a code back to be checked, signing the person in when it matches.", examples = [ [ "type Msg = CodeChecked (Result Service.Error (Auth.VerifyOutcome { email : String }))", "check = Auth.verifyCode { email = \"you@example.com\", code = \"123456\" } (\\result -> CodeChecked result)" ] ] }
                     , { moduleName = "Auth", name = "completeSignIn", signature = "Cmd a", side = "frontend", description = "Finishes signing in and moves on to the app, resetting the navigation history so back does not return to the sign-in screen.", examples = [ [ "Auth.completeSignIn" ] ] }
                     ]
               }
@@ -1159,8 +1159,8 @@ sectionsFor m =
               }
             , { category = "The current user"
               , entries =
-                    [ { moduleName = "Auth", name = "me", signature = "(Result String (Maybe a) -> b) -> Cmd b", side = "frontend", description = "Asks who is signed in, giving Nothing when nobody is.", examples = [ [ "Auth.me (\\result -> result)" ] ] }
-                    , { moduleName = "Auth", name = "logout", signature = "(Result String () -> a) -> Cmd a", side = "frontend", description = "Ends the session.", examples = [ [ "Auth.logout (\\result -> result)" ] ] }
+                    [ { moduleName = "Auth", name = "me", signature = "(Result String (Maybe a) -> b) -> Cmd b", side = "frontend", description = "Asks who is signed in, giving Nothing when nobody is.", examples = [ [ "type Msg = Me (Result String (Maybe { email : String }))", "who = Auth.me (\\result -> Me result)" ] ] }
+                    , { moduleName = "Auth", name = "logout", signature = "(Result String () -> a) -> Cmd a", side = "frontend", description = "Ends the session.", examples = [ [ "type Msg = LoggedOut (Result String ())", "signOut = Auth.logout (\\result -> LoggedOut result)" ] ] }
                     ]
               }
             , { category = "Guard a service"
@@ -1176,8 +1176,8 @@ sectionsFor m =
         "Http" ->
             [ { category = "Requests"
               , entries =
-                    [ { moduleName = "Http", name = "get", signature = "String -> (Result String String -> a) -> Cmd a", side = "frontend", description = "Fetches a URL from the frontend, handing back the body or a failure message. This is the escape hatch for talking to somebody else's server; for your own backend, use Service. It exists on the client only: a backend service cannot make an outbound call, so anything needing a secret key has to be reached some other way.", examples = [ [ "Http.get \"https://example.com/ping\" (\\result -> result)" ] ] }
-                    , { moduleName = "Http", name = "post", signature = "String -> String -> (Result String String -> a) -> Cmd a", side = "frontend", description = "Posts a body to a URL from the frontend, handing back the response or a failure message. Client only, like get.", examples = [ [ "Http.post \"https://example.com/echo\" \"hello\" (\\result -> result)" ] ] }
+                    [ { moduleName = "Http", name = "get", signature = "String -> (Result String String -> a) -> Cmd a", side = "frontend", description = "Fetches a URL from the frontend, handing back the body or a failure message. This is the escape hatch for talking to somebody else's server; for your own backend, use Service. It exists on the client only: a backend service cannot make an outbound call, so anything needing a secret key has to be reached some other way.", examples = [ [ "type Msg = Pinged (Result String String)", "ping = Http.get \"https://example.com/ping\" (\\result -> Pinged result)" ] ] }
+                    , { moduleName = "Http", name = "post", signature = "String -> String -> (Result String String -> a) -> Cmd a", side = "frontend", description = "Posts a body to a URL from the frontend, handing back the response or a failure message. Client only, like get.", examples = [ [ "type Msg = Echoed (Result String String)", "echo = Http.post \"https://example.com/echo\" \"hello\" (\\result -> Echoed result)" ] ] }
                     ]
               }
             ]
