@@ -629,7 +629,7 @@ var appExamples = map[string][]string{
 	// Time
 	"Time.fromYMD":   {"Time.year (Time.fromYMD 2026 7 22) == 2026"},
 	"Time.fromIso":   {"Maybe.map Time.year (Time.fromIso \"2026-07-22T00:00:00Z\") == Just 2026"},
-	"Time.now":       {"Cmd.perform (\\t -> Time.year t) Time.now"},
+	"Time.now":       {"type Msg = YearKnown Int\n\naskYear = Cmd.perform (\\t -> YearKnown (Time.year t)) Time.now"},
 	"Time.year":      {"Time.year (Time.fromYMD 2026 7 22) == 2026"},
 	"Time.month":     {"Time.month (Time.fromYMD 2026 7 22) == 7"},
 	"Time.day":       {"Time.day (Time.fromYMD 2026 7 22) == 22"},
@@ -665,7 +665,7 @@ var appExamples = map[string][]string{
 	"Random.map2":        {"Random.map2 (\\a b -> a + b) (Random.int 1 6) (Random.int 1 6)"},
 	"Random.map3":        {"Random.map3 (\\a b c -> a + b + c) (Random.int 1 6) (Random.int 1 6) (Random.int 1 6)"},
 	"Random.andThen":     {"Random.andThen (\\n -> Random.list n (Random.int 1 6)) (Random.int 1 3)"},
-	"Random.generate":    {"Random.generate (\\n -> n) (Random.int 1 6)"},
+	"Random.generate":    {"type Msg = Rolled Int\n\nroll = Random.generate (\\n -> Rolled n) (Random.int 1 6)"},
 	"Random.initialSeed": {"Random.initialSeed 42"},
 	"Random.step":        {"Random.step (Random.int 1 6) (Random.initialSeed 42)"},
 	"Random.seed":        {"Task.map (\\s -> Random.step (Random.int 1 6) s) Random.seed"},
@@ -682,20 +682,25 @@ var appExamples = map[string][]string{
 	"UI.code":            {"UI.span [ UI.code ] \"List.map\""},
 	"UI.strikethrough":   {"UI.span [ UI.strikethrough ] \"9.99\""},
 	"UI.link":            {"UI.span [ UI.link \"https://mar-lang.dev\" ] \"the site\""},
-	"UI.button":          {"UI.button [] 0 \"Save\""},
-	"UI.toggle":          {"UI.toggle [] \"Dark mode\" True (\\on -> on)"},
-	"UI.textField":       {"UI.textField [] \"Email\" \"\" (\\s -> s)"},
-	"UI.textArea":        {"UI.textArea [ UI.height (UI.lines 4) ] \"Notes\" \"\" (\\s -> s)"},
-	"UI.picker":          {"UI.picker [] 1 [ 1, 2, 3 ] (\\n -> String.fromInt n) (\\n -> n)"},
-	"UI.datePicker":      {"UI.datePicker [] (Time.fromYMD 2026 7 22) (\\t -> t)"},
-	"UI.email":           {"UI.textField [ UI.email ] \"Email\" \"\" (\\s -> s)"},
-	"UI.password":        {"UI.textField [ UI.password ] \"Password\" \"\" (\\s -> s)"},
-	"UI.newPassword":     {"UI.textField [ UI.newPassword ] \"Choose a password\" \"\" (\\s -> s)"},
-	"UI.numeric":         {"UI.textField [ UI.numeric ] \"Quantity\" \"\" (\\s -> s)"},
-	"UI.numericCode":     {"UI.textField [ UI.numericCode ] \"PIN\" \"\" (\\s -> s)"},
-	"UI.oneTimeCode":     {"UI.textField [ UI.oneTimeCode ] \"Code\" \"\" (\\s -> s)"},
-	"UI.submit":          {"UI.textField [ UI.submit 0 ] \"Email\" \"\" (\\s -> s)"},
-	"UI.disabled":        {"UI.button [ UI.disabled True ] 0 \"Save\""},
+	// The free `a` in these signatures is the APP'S MSG, and a bare literal
+	// in that slot type-checks into nonsense: `UI.button [] 0 "Save"` infers
+	// a `View Int`, which no page can ever return, and it reads as if the
+	// argument were an id. Same trap the Keyboard.watch note below describes.
+	// So every message slot here names a real constructor.
+	"UI.button":          {"type Msg = Save\n\nsaveButton = UI.button [] Save \"Save\""},
+	"UI.toggle":          {"type Msg = DarkModeSet Bool\n\ndarkRow = UI.toggle [] \"Dark mode\" True (\\on -> DarkModeSet on)"},
+	"UI.textField":       {"type Msg = EmailTyped String\n\nemailField = UI.textField [] \"Email\" \"\" (\\s -> EmailTyped s)"},
+	"UI.textArea":        {"type Msg = NotesTyped String\n\nnotesField = UI.textArea [ UI.height (UI.lines 4) ] \"Notes\" \"\" (\\s -> NotesTyped s)"},
+	"UI.picker":          {"type Msg = ServingsPicked Int\n\nservings = UI.picker [] 1 [ 1, 2, 3 ] (\\n -> String.fromInt n) (\\n -> ServingsPicked n)"},
+	"UI.datePicker":      {"type Msg = DuePicked Time\n\ndueField = UI.datePicker [] (Time.fromYMD 2026 7 22) (\\t -> DuePicked t)"},
+	"UI.email":           {"type Msg = EmailTyped String\n\nemailField = UI.textField [ UI.email ] \"Email\" \"\" (\\s -> EmailTyped s)"},
+	"UI.password":        {"type Msg = PasswordTyped String\n\npasswordField = UI.textField [ UI.password ] \"Password\" \"\" (\\s -> PasswordTyped s)"},
+	"UI.newPassword":     {"type Msg = PasswordTyped String\n\npasswordField = UI.textField [ UI.newPassword ] \"Choose a password\" \"\" (\\s -> PasswordTyped s)"},
+	"UI.numeric":         {"type Msg = QuantityTyped String\n\nquantityField = UI.textField [ UI.numeric ] \"Quantity\" \"\" (\\s -> QuantityTyped s)"},
+	"UI.numericCode":     {"type Msg = PinTyped String\n\npinField = UI.textField [ UI.numericCode ] \"PIN\" \"\" (\\s -> PinTyped s)"},
+	"UI.oneTimeCode":     {"type Msg = CodeTyped String\n\ncodeField = UI.textField [ UI.oneTimeCode ] \"Code\" \"\" (\\s -> CodeTyped s)"},
+	"UI.submit":          {"type Msg = EmailTyped String | Submitted\n\nemailField = UI.textField [ UI.submit Submitted ] \"Email\" \"\" (\\s -> EmailTyped s)"},
+	"UI.disabled":        {"type Msg = Save\n\nsaveButton = UI.button [ UI.disabled True ] Save \"Save\""},
 	"UI.vstack":          {"UI.vstack [] [ UI.title \"Mar\", UI.subtitle \"A friendly language\" ]"},
 	"UI.hstack":          {"UI.hstack [] [ UI.text [] \"Total\", UI.spacer, UI.text [] \"42\" ]"},
 	"UI.spacer":          {"UI.hstack [] [ UI.text [] \"Left\", UI.spacer, UI.text [] \"Right\" ]"},
@@ -707,7 +712,7 @@ var appExamples = map[string][]string{
 	"UI.top":             {"UI.align UI.top"},
 	"UI.bottom":          {"UI.align UI.bottom"},
 	"UI.width":           {"UI.text [ UI.width (UI.chars 6) ] \"SW1A\""},
-	"UI.height":          {"UI.textArea [ UI.height (UI.lines 6) ] \"Notes\" \"\" (\\s -> s)"},
+	"UI.height":          {"type Msg = NotesTyped String\n\nnotesField = UI.textArea [ UI.height (UI.lines 6) ] \"Notes\" \"\" (\\s -> NotesTyped s)"},
 	"UI.fill":            {"UI.text [ UI.width UI.fill ] \"Takes the whole row\""},
 	"UI.chars":           {"UI.width (UI.chars 8)"},
 	"UI.lines":           {"UI.height (UI.lines 3)"},
@@ -716,19 +721,19 @@ var appExamples = map[string][]string{
 	"UI.form":            {"UI.form [ UI.section [ UI.header \"Account\" ] [ UI.text [] \"you@example.com\" ] ]"},
 	"UI.section":         {"UI.section [ UI.header \"Account\", UI.footer \"We never share this.\" ] [ UI.text [] \"you@example.com\" ]"},
 	"UI.list":            {"UI.list [] [ UI.text [] \"One\", UI.text [] \"Two\" ]"},
-	"UI.header":          {"UI.section [ UI.header \"Danger zone\" ] [ UI.button [] 0 \"Delete account\" ]"},
+	"UI.header":          {"type Msg = DeleteAccount\n\ndangerZone = UI.section [ UI.header \"Danger zone\" ] [ UI.button [] DeleteAccount \"Delete account\" ]"},
 	"UI.footer":          {"UI.section [ UI.footer \"Codes expire after ten minutes.\" ] [ UI.text [] \"Check your mail\" ]"},
 	"UI.keyed":           {"UI.keyed \"task-1\" (UI.text [] \"Buy milk\")"},
 	"UI.keyedList":       {"UI.keyedList [] [ UI.keyed \"task-1\" (UI.text [] \"Buy milk\") ]"},
-	"UI.onMove":          {"UI.onMove True (\\from to -> (from, to))"},
-	"UI.onDelete":        {"UI.onDelete True (\\index -> index)"},
+	"UI.onMove":          {"type Msg = Reordered Int Int\n\ndragging = UI.onMove True (\\from to -> Reordered from to)"},
+	"UI.onDelete":        {"type Msg = Deleted Int\n\nremovable = UI.onDelete True (\\index -> Deleted index)"},
 	"UI.navigationStack": {"UI.navigationStack [ UI.navigationTitle \"Inbox\" ] [ UI.text [] \"Nothing here yet\" ]"},
 	"UI.navigationTitle": {"UI.navigationStack [ UI.navigationTitle \"Settings\" ] []"},
 	"UI.navigationLink":  {"moduleDoc : Path { moduleName : String }\nmoduleDoc = \"/reference/{moduleName:String}\"\n\nrow = UI.navigationLink [] moduleDoc { moduleName = \"List\" } (UI.text [] \"List\")"},
-	"UI.topBarLeading":   {"UI.navigationStack [ UI.topBarLeading (UI.button [] 0 \"Cancel\") ] []"},
-	"UI.topBarTrailing":  {"UI.navigationStack [ UI.topBarTrailing (UI.button [] 0 \"Edit\") ] []"},
-	"UI.sheet":           {"UI.sheet { open = True, onDismiss = 0, outlet = \"editor\" } [ UI.text [] \"Edit task\" ]"},
-	"UI.confirm":         {"UI.confirm { title = \"Delete this task?\", confirmLabel = \"Delete\", destructive = True, onConfirm = 1, onCancel = 0 }"},
+	"UI.topBarLeading":   {"type Msg = Cancelled\n\nscreen = UI.navigationStack [ UI.topBarLeading (UI.button [] Cancelled \"Cancel\") ] []"},
+	"UI.topBarTrailing":  {"type Msg = EditTapped\n\nscreen = UI.navigationStack [ UI.topBarTrailing (UI.button [] EditTapped \"Edit\") ] []"},
+	"UI.sheet":           {"type Msg = SheetDismissed\n\neditor = UI.sheet { open = True, onDismiss = SheetDismissed, outlet = \"editor\" } [ UI.text [] \"Edit task\" ]"},
+	"UI.confirm":         {"type Msg = DeleteConfirmed | DeleteCancelled\n\ndialog = UI.confirm { title = \"Delete this task?\", confirmLabel = \"Delete\", destructive = True, onConfirm = DeleteConfirmed, onCancel = DeleteCancelled }"},
 	"UI.image":           {"UI.image [] { src = \"/logo.png\", alt = \"The Mar logo\" }"},
 	"UI.fit":             {"UI.image [ UI.fit ] { src = \"/logo.png\", alt = \"The Mar logo\" }"},
 	"UI.cover":           {"UI.image [ UI.cover ] { src = \"/hero.png\", alt = \"A night sea\" }"},
@@ -761,7 +766,7 @@ var appExamples = map[string][]string{
 
 	// Sub
 	"Sub.none":  {"Sub.none"},
-	"Sub.batch": {"Sub.batch [ Time.every (Time.seconds 1) (\\t -> Time.second t), Sub.none ]"},
+	"Sub.batch": {"type Msg = Ticked Int\n\nsubs = Sub.batch [ Time.every (Time.seconds 1) (\\t -> Ticked (Time.second t)), Sub.none ]"},
 
 	// Task
 	"Task.succeed":  {"Task.succeed 42"},
@@ -783,8 +788,8 @@ var appExamples = map[string][]string{
 	"Service.errorToString": {"Service.errorToString Service.Offline"},
 
 	// Http
-	"Http.get":  {"Http.get \"https://example.com/ping\" (\\result -> result)"},
-	"Http.post": {"Http.post \"https://example.com/echo\" \"hello\" (\\result -> result)"},
+	"Http.get":  {"type Msg = Pinged (Result String String)\n\nping = Http.get \"https://example.com/ping\" (\\result -> Pinged result)"},
+	"Http.post": {"type Msg = Echoed (Result String String)\n\necho = Http.post \"https://example.com/echo\" \"hello\" (\\result -> Echoed result)"},
 
 	// JSON
 	"JSON.encode": {"JSON.encode { name = \"Ada\", born = 1815 }"},
@@ -797,8 +802,8 @@ var appExamples = map[string][]string{
 
 	// Device
 	"Device.watch":     {"type Msg = Resized Int Int\n\nsubscriptions model = Device.watch (\\device -> Resized device.width device.height)"},
-	"Device.touchOnly": {"Device.watch (\\device -> Device.touchOnly device)"},
-	"Device.canHover":  {"Device.watch (\\device -> Device.canHover device)"},
+	"Device.touchOnly": {"type Msg = TouchOnlyChanged Bool\n\nsubs = Device.watch (\\device -> TouchOnlyChanged (Device.touchOnly device))"},
+	"Device.canHover":  {"type Msg = HoverChanged Bool\n\nsubs = Device.watch (\\device -> HoverChanged (Device.canHover device))"},
 
 	// Entity
 	"Entity.define":    {tasksTableOnly},
@@ -834,8 +839,8 @@ var appExamples = map[string][]string{
 	// Auth. The guards wrap a service that has a name, so you can see what is
 	// being guarded and what the guard is.
 	"Auth.config":          {"Auth.config { from = \"hello@example.com\" }"},
-	"Auth.requestCode":     {"Auth.requestCode { email = \"you@example.com\" } (\\result -> result)"},
-	"Auth.verifyCode":      {"Auth.verifyCode { email = \"you@example.com\", code = \"123456\" } (\\result -> result)"},
+	"Auth.requestCode":     {"type Msg = CodeRequested (Result Service.Error Auth.RequestOutcome)\n\nask = Auth.requestCode { email = \"you@example.com\" } (\\result -> CodeRequested result)"},
+	"Auth.verifyCode":      {"type Msg = CodeChecked (Result Service.Error (Auth.VerifyOutcome { email : String }))\n\ncheck = Auth.verifyCode { email = \"you@example.com\", code = \"123456\" } (\\result -> CodeChecked result)"},
 	"Auth.completeSignIn":  {"Auth.completeSignIn"},
 	"Auth.CodeSent":        {"Auth.CodeSent"},
 	"Auth.InvalidEmail":    {"Auth.InvalidEmail"},
@@ -843,8 +848,8 @@ var appExamples = map[string][]string{
 	"Auth.SignedIn":        {"Auth.SignedIn { email = \"you@example.com\" }"},
 	"Auth.WrongCode":       {"Auth.WrongCode"},
 	"Auth.TooManyAttempts": {"Auth.TooManyAttempts"},
-	"Auth.me":              {"Auth.me (\\result -> result)"},
-	"Auth.logout":          {"Auth.logout (\\result -> result)"},
+	"Auth.me":              {"type Msg = Me (Result String (Maybe { email : String }))\n\nwho = Auth.me (\\result -> Me result)"},
+	"Auth.logout":          {"type Msg = LoggedOut (Result String ())\n\nsignOut = Auth.logout (\\result -> LoggedOut result)"},
 	"Auth.protect":         {"whoAmI = Service.declare GET \"/me\"\n\nsignedInOnly = Auth.protect whoAmI (\\request user -> Task.succeed user)"},
 	"Auth.requireRole":     {"stats = Service.implement (Service.declare GET \"/stats\") (\\request -> Task.succeed ())\n\nadminsOnly = Auth.requireRole \"admin\" stats"},
 	"Auth.requireOwner":    {"editTask = Service.implement (Service.declare POST \"/task\") (\\request -> Task.succeed ())\n\nfindTheTask = \\request user -> Task.succeed Nothing\n\nownersOnly = Auth.requireOwner findTheTask (\\task -> task.userId) editTask"},

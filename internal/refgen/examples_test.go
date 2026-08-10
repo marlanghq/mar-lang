@@ -143,3 +143,55 @@ func TestEveryEntryHasExample(t *testing.T) {
 		t.Fatalf("functions without an example (add one to the examples map in content.go): %v", missing)
 	}
 }
+
+// TestExamplesDoNotFakeAMessage closes the hole that let `UI.button [] 0 "Save"`
+// sit in the reference for months inside a green suite.
+//
+// The free `a` in `View a` / `Sub a` / `Cmd a` is the APP'S MESSAGE. Checked on
+// its own, an example can instantiate it with anything: `UI.button [] 0 "Save"`
+// infers `View Int`, `UI.textField [] "Email" "" (\s -> s)` infers `View String`,
+// and both compile. Neither is code a page could ever contain, because
+// `Page.create` unifies the view's message with update's, so the reader is being
+// shown something that does not typecheck where they will put it. It also reads
+// wrong: a bare `0` in the message slot looks like an id.
+//
+// THE RULE IS THE INVERSE OF THE OBVIOUS ONE, and measuring is what found that.
+// A free message variable is almost always CORRECT: `UI.text [] "Hello"` is a
+// view that emits nothing, so `View a` is exactly right, and so are `UI.empty`,
+// `Nav.push` and `Sound.play`. What cannot be right is a CONCRETE payload in an
+// example written as a bare expression, because a real message type has to be
+// declared, and declaring one forces the example into module form. So a
+// concrete payload here is always a placeholder wearing a message's clothes.
+//
+// `()` is the exception and a real one: `main : Cmd ()` is the type of an app's
+// entry point, which is what `App.frontend` and friends return.
+//
+// This rule found nine examples that a careful manual sweep had just missed.
+func TestExamplesDoNotFakeAMessage(t *testing.T) {
+	carriers := []string{"View ", "Sub ", "Cmd "}
+	for _, e := range Entries() {
+		for _, ex := range e.Examples {
+			ty, _, err := parseExpr(ex)
+			if err != nil {
+				// A declaration block. Those can name a real Msg, and the ones
+				// that need to already do.
+				continue
+			}
+			p := typecheck.Pretty(ty)
+			for _, c := range carriers {
+				if !strings.HasPrefix(p, c) {
+					continue
+				}
+				payload := p[len(c):]
+				if payload == "" || payload == "()" {
+					continue
+				}
+				if len(payload) == 1 && payload[0] >= 'a' && payload[0] <= 'z' {
+					continue // still polymorphic, which is the healthy case
+				}
+				t.Errorf("%s: the example fakes a message.\n    %s\n    infers %s, but the message slot of a %sis the app's Msg.\n    Write the example as a declaration block that names one:\n        type Msg = Something\n\n        name = ...",
+					e.Qualified(), ex, p, c)
+			}
+		}
+	}
+}
