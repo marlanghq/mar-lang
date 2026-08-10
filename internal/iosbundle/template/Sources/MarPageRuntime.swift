@@ -152,6 +152,12 @@ final class PageRuntime {
     enum FailureSite { case dispatch, page }
     private(set) var lastErrorSite: FailureSite?
 
+    /// A `page` failure stopped this runtime (ADR 0028). `view` is a pure
+    /// function of the model, so the same model fails the same way forever:
+    /// the program cannot reach a working state on its own, and every tick it
+    /// keeps taking is spent behind a screen nobody will see again.
+    private(set) var halted = false
+
     private func record(_ site: String, _ where_: FailureSite, _ message: String) {
         lastError = "\(site) failed: \(message)"
         lastErrorSite = where_
@@ -162,6 +168,16 @@ final class PageRuntime {
         #if DEBUG
         print("[mar] FAILURE on \(path): \(lastError ?? "")")
         #endif
+        // Stop, and only for the case that cannot recover. A `dispatch`
+        // failure leaves a consistent screen behind it and the next message
+        // may well succeed; a `page` failure will not. Cutting the
+        // subscriptions here — after the message is recorded, never before —
+        // is what keeps a broken screen from running a display link at sixty
+        // frames a second for as long as the phone stays awake.
+        if where_ == .page {
+            halted = true
+            teardownSubs()
+        }
     }
 
     /// Records a runtime error raised somewhere that cannot propagate one.
@@ -352,6 +368,9 @@ final class PageRuntime {
     }
 
     func dispatch(_ msg: MarValue) {
+        // A halted runtime accepts no more messages. The subscriptions are
+        // already gone; this catches what was in flight when they were cut.
+        if halted { return }
         do {
             let updateFnApplied = try PageRuntime.applyExtras(updateFn, user: user, params: params)
             let partial = try Eval.apply(updateFnApplied, msg)
