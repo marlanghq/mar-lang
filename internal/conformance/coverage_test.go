@@ -34,6 +34,29 @@ func TestCorpusCoversEveryFunctionInScope(t *testing.T) {
 	}
 }
 
+// The same gate for the names spelled WITHOUT a qualifier. The module walk
+// above skips them by construction ("bare operators and globals; not module
+// surface"), and that blind spot is where `modBy` lived: defined in all three
+// runtimes, exercised in none, and wrong in one for as long as it took a game
+// to leave a window minimised overnight.
+func TestCorpusCoversEveryBareGlobal(t *testing.T) {
+	var missing []string
+	for name := range typecheck.BareGlobals() {
+		if _, explained := OutOfScopeBare[name]; explained {
+			continue
+		}
+		if !strings.Contains(Source, name) {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("%d bare globals are not exercised by the corpus, so the runtimes are\n"+
+			"free to disagree about them. Add a case to Source for each, or explain it\n"+
+			"in OutOfScopeBare:\n  %s", len(missing), strings.Join(missing, "\n  "))
+	}
+}
+
 // Every stdlib module is either compared here or explained. A module in
 // neither list fails the build, which is what keeps a newly added one from
 // going untested by simply not being noticed — the first run of this check

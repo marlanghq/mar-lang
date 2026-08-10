@@ -221,6 +221,40 @@ tupleCases =
         ]
 
 
+-- The BARE globals — Elm's Basics, spelled without a qualifier. They had no
+-- block here for as long as the corpus existed, because the coverage gate
+-- walks the stdlib MODULE by module and a name with no dot is not module
+-- surface. That is exactly where modBy diverged: its zero guard in the
+-- browser compared an Int against a BigInt literal, so it was dead code, and
+-- modBy 0 produced a NaN inside a value typed Int. Go and Swift were right;
+-- nothing was looking at the third.
+--
+-- The three cases that matter are the ones nobody writes on purpose: divisor
+-- zero, a negative divisor, and a negative divisor that divides exactly.
+basicsCases : String
+basicsCases =
+    String.join ";"
+        [ "abs=" ++ String.fromInt (abs (-7))
+        , "absPos=" ++ String.fromInt (abs 7)
+        , "always=" ++ String.fromInt (always 4 9)
+        , "clampAbove=" ++ String.fromInt (clamp 1 10 42)
+        , "clampBelow=" ++ String.fromInt (clamp 1 10 (-5))
+        , "clampInside=" ++ String.fromInt (clamp 1 10 6)
+        , "max=" ++ String.fromInt (max 3 9)
+        , "min=" ++ String.fromInt (min 3 9)
+        , "not=" ++ yn (not True)
+        , "notFalse=" ++ yn (not False)
+        , "modBy=" ++ String.fromInt (modBy 3 10)
+        , "modByNegDividend=" ++ String.fromInt (modBy 8 (-1))
+        , "modByNegDivisor=" ++ String.fromInt (modBy (-8) 1)
+        , "modByNegExact=" ++ String.fromInt (modBy (-4) 8)
+        , "modByZero=" ++ String.fromInt (modBy 0 5)
+        , "remainderBy=" ++ String.fromInt (remainderBy 3 10)
+        , "remainderByNeg=" ++ String.fromInt (remainderBy 8 (-1))
+        , "remainderByZero=" ++ String.fromInt (remainderBy 0 5)
+        ]
+
+
 charCases : String
 charCases =
     String.join ";"
@@ -330,7 +364,7 @@ jsonCases =
 
 results : String
 results =
-    String.join "\n" [ stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases ]
+    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases ]
 `
 
 // Entry is the value each runtime is asked to evaluate.
@@ -340,7 +374,7 @@ const Entry = "Conform.results"
 // across modules — `map`, `foldl`, `filter`, `toList` — so a case is named for
 // the block it landed in: `Dict.map`, not `map`.
 var Blocks = []string{
-	"String", "List", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "JSON",
+	"Basics", "String", "List", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "JSON",
 }
 
 // Scope is the set of modules whose meaning must be identical everywhere: pure
@@ -350,6 +384,15 @@ var Blocks = []string{
 var Scope = map[string]bool{
 	"String": true, "List": true, "Maybe": true, "Result": true,
 	"Tuple": true, "Char": true, "Dict": true, "Set": true, "JSON": true,
+}
+
+// OutOfScopeBare is the bare-global counterpart to OutOfScope: a name spelled
+// without a qualifier that cannot be compared as a value. Everything else in
+// typecheck.BareGlobals() has to appear in Source, which is the gate that was
+// missing when `modBy` diverged — the module walk skips dotless names, so the
+// numeric kit had never been compared across runtimes at all.
+var OutOfScopeBare = map[string]string{
+	"linkTo": "builds a UI link; compared by the renderer parity tests",
 }
 
 // OutOfScope is every other stdlib module, with the reason it is not compared
@@ -401,6 +444,25 @@ var OutOfScope = map[string]string{
 // deduplicated. If a runtime disagrees with a line here, the line is the
 // argument.
 const expectations = `
+Basics.abs=7
+Basics.absPos=7
+Basics.always=4
+Basics.clampAbove=10
+Basics.clampBelow=1
+Basics.clampInside=6
+Basics.max=9
+Basics.min=3
+Basics.not=F
+Basics.notFalse=T
+Basics.modBy=1
+Basics.modByNegDividend=7
+Basics.modByNegDivisor=-7
+Basics.modByNegExact=0
+Basics.modByZero=0
+Basics.remainderBy=1
+Basics.remainderByNeg=-1
+Basics.remainderByZero=0
+
 String.any=T
 String.cons=xyz
 String.contains=T
