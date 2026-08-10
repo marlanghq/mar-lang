@@ -1,0 +1,24 @@
+module Backend.Users exposing (users)
+
+
+import Shared
+
+
+-- Backs Auth.config. The framework owns every read and write here —
+-- signup on first sign-in, then the requestCode / verifyCode / me
+-- lifecycle — and all this module hands it is the entity. Email is
+-- unique, so one address is one person.
+--
+-- Note what is not in this table: no name, no birth date, no gender,
+-- nothing the app does not need to do its job. An app that holds a
+-- year of somebody's moods should ask for as little else as it can.
+users : Entity Shared.User
+users =
+    Entity.define
+        { name = "users"
+        , columns =
+            { id    = Entity.serial
+            , email = Entity.text Entity.notNull
+            }
+        , uniques = [ [ "email" ] ]
+        }

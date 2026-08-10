@@ -1,0 +1,220 @@
+module Frontend.Setup exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , form, section, header, footer
+    , text, paragraph, span, toggle, button, errorText
+    , centered, empty, disabled
+    )
+
+
+-- The one-time questions that decide which fields exist for this
+-- person — and, much more importantly, which ones never appear.
+--
+-- A daily form is abandoned by a thousand small irrelevances. Somebody
+-- who does not drink should not scroll past an alcohol row every
+-- evening for the rest of their life to answer "none". So the app asks
+-- once, and the answer removes the row rather than pre-filling it.
+--
+-- The same screen is reachable later from Settings, which is why it
+-- loads the current selection instead of starting blank: turning a
+-- factor off keeps every answer already given for it, so a report over
+-- the months it was tracked stays valid.
+
+
+type alias Model =
+    { chosen  : List String
+    , first   : Bool          -- first run, or editing later from Settings
+    , loading : Bool
+    , saving  : Bool
+    , error   : Maybe String
+    }
+
+
+type Msg
+    = GotSetup (Result Service.Error Shared.SetupState)
+    | Toggled String Bool
+    | Saved (Result Service.Error ())
+    | SaveClicked
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { chosen = [], first = True, loading = True, saving = False, error = Nothing }
+    , Service.call Shared.getSetup () GotSetup
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        GotSetup (Ok state) ->
+            ( { model | chosen = state.factors, first = not state.done, loading = False }
+            , Cmd.none
+            )
+
+        GotSetup (Err why) ->
+            ( { model | loading = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        Toggled key on ->
+            ( { model | chosen = setMembership key on model.chosen }, Cmd.none )
+
+        SaveClicked ->
+            if model.saving then
+                ( model, Cmd.none )
+            else
+                ( { model | saving = True, error = Nothing }
+                , Service.call Shared.saveSetup { factors = model.chosen } Saved
+                )
+
+        Saved (Ok _) ->
+            ( { model | saving = False }, Nav.replaceTo Frontend.Routes.today {} )
+
+        Saved (Err why) ->
+            ( { model | saving = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+
+setMembership : String -> Bool -> List String -> List String
+setMembership key on keys =
+    if on then
+        if List.member key keys then keys else key :: keys
+    else
+        List.filter (\k -> k /= key) keys
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    if model.loading then
+        navigationStack [ navigationTitle "Setting up" ]
+            [ centered (text [] "One moment.") ]
+
+    else
+        navigationStack [ navigationTitle (if model.first then "Set up Baseline" else "What you track") ]
+            [ form
+                [ introSection model
+                , lifeSection model
+                , cycleSection model
+                , extrasSection model
+                , saveSection model
+                ]
+            ]
+
+
+introSection : Model -> View Msg
+introSection model =
+    if model.first then
+        section []
+            [ paragraph
+                [ span [] "A few questions, once. They decide what the daily screen asks you and, more to the point, what it never asks you again."
+                ]
+            ]
+
+    else
+        section []
+            [ paragraph
+                [ span [] "Turning something off only stops it being asked. Everything you already logged for it is kept, and the reports about that stretch stay valid."
+                ]
+            ]
+
+
+lifeSection : Model -> View Msg
+lifeSection model =
+    section
+        [ header "Which of these are part of your life?"
+        , footer "Anything you leave off never appears on the daily screen. Sleep, movement and company are always tracked: they matter for nearly everyone and they cost three taps."
+        ]
+        (List.map
+            (\factor ->
+                toggle [ disabled model.saving ]
+                    (setupPrompt factor)
+                    (List.member factor.key model.chosen)
+                    (Toggled factor.key)
+            )
+            Shared.askFirstFactors
+        )
+
+
+setupPrompt : Shared.Factor -> String
+setupPrompt factor =
+    case factor.avail of
+        Shared.AskFirst prompt -> prompt
+        Shared.Always          -> factor.name
+        Shared.Extra           -> factor.name
+
+
+cycleSection : Model -> View Msg
+cycleSection model =
+    section
+        [ header "Cycle"
+        , footer "If you turn this on, the app never asks which phase you are in. You tap one button on the first day of a period and it works out the rest."
+        ]
+        [ toggle [ disabled model.saving ]
+            Shared.cyclePrompt
+            (Shared.tracksCycle model.chosen)
+            (Toggled Shared.cycleKey)
+        ]
+
+
+-- No cap on how many of these you take. The cost of another factor is
+-- another row every evening, and that cost is the tracker's to weigh —
+-- so the footer counts the rows out loud instead of the app deciding
+-- for them.
+extrasSection : Model -> View Msg
+extrasSection model =
+    section
+        [ header "Anything else you suspect?"
+        , footer (costLine model)
+        ]
+        (List.map
+            (\factor ->
+                toggle [ disabled model.saving ]
+                    factor.name
+                    (List.member factor.key model.chosen)
+                    (Toggled factor.key)
+            )
+            Shared.extraFactors
+        )
+
+
+costLine : Model -> String
+costLine model =
+    let
+        n = Shared.dailyQuestions model.chosen
+    in
+    "Take as many as you want to test. Right now the daily screen would ask "
+        ++ String.fromInt n
+        ++ " things, one tap each. Every one you add is one more, every evening — and you can change this later."
+
+
+saveSection : Model -> View Msg
+saveSection model =
+    section []
+        [ errorView model.error
+        , button [ disabled model.saving ] SaveClicked
+            (if model.first then "Start logging" else "Save")
+        ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just message ->
+            errorText message
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/setup"
+        , title  = "Set up Baseline"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

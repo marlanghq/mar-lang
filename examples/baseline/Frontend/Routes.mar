@@ -1,0 +1,49 @@
+module Frontend.Routes exposing
+    ( today, signIn, verifyCode, setup, month, patterns, day, settings )
+
+
+-- Every URL in Baseline, in one place, as typed paths. Each value
+-- carries a `Path r` annotation, so `Nav.pushTo` and `navigationLink`
+-- check the params against the pattern at compile time: change a route
+-- and every call site becomes a type error rather than a 404 later.
+
+
+-- The log itself: today's entry, and the week underneath it. Protected,
+-- so an unsigned visitor is sent to the sign-in page, which is where
+-- the app explains itself.
+today : Path {}
+today = "/"
+
+
+signIn : Path {}
+signIn = "/sign-in"
+
+
+-- The email travels as a typed segment, so the URL is the source of
+-- truth and Back gives a mistyped-address retry for free.
+verifyCode : Path { email : String }
+verifyCode = "/sign-in/verify/{email:String}"
+
+
+-- The one-time questions that decide which fields exist for this
+-- person. Reachable later from Settings, which is the same screen.
+setup : Path {}
+setup = "/setup"
+
+
+month : Path {}
+month = "/month"
+
+
+patterns : Path {}
+patterns = "/patterns"
+
+
+-- One day, presented over whatever screen opened it. The day is in the
+-- path, so a particular day is linkable and reloadable.
+day : Path { dayKey : Int }
+day = "/day/{dayKey:Int}"
+
+
+settings : Path {}
+settings = "/settings"

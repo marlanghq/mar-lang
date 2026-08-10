@@ -1,0 +1,33 @@
+{
+  "name": "baseline",
+  "server": {
+    "port": 3041
+  },
+  "admins": [],
+  "database": {
+    "path": "./baseline.db"
+  },
+  "auth": {
+    "sessionSecret": "env:SESSION_SECRET"
+  },
+  "mail": {
+    "from": "no-reply@segunda.tech",
+    "smtpHost": "smtp.resend.com",
+    "smtpUsername": "resend",
+    "smtpPassword": "env:SMTP_PASSWORD"
+  },
+  "ios": {
+    "bundleId": "com.yourcompany.baseline",
+    "displayName": "Baseline",
+    "marketingVersion": "0.0.1",
+    "buildNumber": "1",
+    "serverUrl": "https://mar-baseline.fly.dev"
+  },
+  "deploy": {
+    "fly": {
+      "app": "mar-baseline",
+      "region": "gru",
+      "memory": "256mb"
+    }
+  }
+}

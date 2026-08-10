@@ -1,0 +1,503 @@
+module Frontend.Patterns exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import Frontend.Ink
+import Canvas exposing ( canvas, rect, circle, rgba, watchSize )
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , title, subtitle, text, paragraph, span, bold
+    , button, errorText, hstack, spacer
+    , centered, empty
+    , height, lines
+    )
+
+
+-- What the app has to say, and — just as prominently — what it does
+-- not have enough days to say yet.
+--
+-- Three blocks, in this order:
+--
+--   The series, so the shape of the last weeks is visible before any
+--   claim is made about it. In practice this is where people form the
+--   hunch that the next block confirms or kills.
+--
+--   The findings, one per factor that has enough days at both ends of
+--   its scale. Each one names its sample size in the same breath as its
+--   number, uses the words that were on the buttons, and says whether
+--   the effect showed up the same day or the morning after.
+--
+--   What is still missing, treated as a first-class report rather than
+--   an empty state. "Eleven more days with a drink recorded" is the
+--   most useful sentence available at day nine, and not saying it is
+--   why people abandon apps like this in week three.
+--
+-- The language never says cause. It says these days come together. The
+-- reader knows things about their own life the app never will, and the
+-- conclusion is theirs.
+
+
+type alias Model =
+    { window  : Shared.Window
+    , factors : List String
+    , today   : Maybe Int
+    , span    : Int          -- how many days the series shows
+    , dark    : Bool
+    , w       : Int
+    , loading : Bool
+    , error   : Maybe String
+    }
+
+
+type Msg
+    = GotNow Time
+    | GotSetup (Result Service.Error Shared.SetupState)
+    | GotWindow (Result Service.Error Shared.Window)
+    | DeviceChanged Device
+    | Resized Int Int
+    | SpanPicked Int
+
+
+windowDays : Int
+windowDays =
+    400
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { window = Shared.emptyWindow
+      , factors = []
+      , today = Nothing
+      , span = 30
+      , dark = False
+      , w = 340
+      , loading = True
+      , error = Nothing
+      }
+    , Cmd.batch
+        [ Cmd.perform GotNow Time.now
+        , Service.call Shared.getSetup () GotSetup
+        ]
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        GotNow now ->
+            let
+                key = Shared.dayKeyOf now
+            in
+            ( { model | today = Just key }
+            , Service.call Shared.loadWindow
+                { sinceDayKey = key - windowDays * Shared.dayMillis }
+                GotWindow
+            )
+
+        GotSetup (Ok state) ->
+            ( { model | factors = state.factors }, Cmd.none )
+
+        GotSetup (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        GotWindow (Ok window) ->
+            ( { model | window = window, loading = False }, Cmd.none )
+
+        GotWindow (Err why) ->
+            ( { model | loading = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        DeviceChanged device ->
+            ( { model | dark = device.prefersDark }, Cmd.none )
+
+        Resized w _ ->
+            ( { model | w = w }, Cmd.none )
+
+        SpanPicked days ->
+            ( { model | span = days }, Cmd.none )
+
+
+-- ===== The series =====
+--
+-- Mood is a bar per day in the calendar's colours; energy is a dot
+-- above it. Two encodings rather than two lines, because they carry
+-- different questions — mood is the thing being explained, energy is
+-- the thing that tells you which kind of bad day it was — and because
+-- a bar chart of five named levels cannot suggest a precision the
+-- scale does not have.
+
+
+seriesLines : Int
+seriesLines =
+    7
+
+
+series : Model -> Int -> View Msg
+series model todayKey =
+    let
+        h        = seriesLines * 24
+        base     = h - 16
+        top      = 14
+        step     = (base - top) // 4
+        first    = todayKey - (model.span - 1) * Shared.dayMillis
+        days     = Shared.daysOf model.window
+        barW     = max 2 ((model.w - (model.span - 1) * 2) // model.span)
+        pitch    = barW + 2
+        left     = max 0 ((model.w - (model.span * pitch - 2)) // 2)
+    in
+    canvas Crisp
+        [ watchSize Resized, height (lines seriesLines) ]
+        (List.concat
+            [ [ rect 0 base model.w 1 (Frontend.Ink.idleCell model.dark) ]
+            , List.filterMap
+                (\i ->
+                    Maybe.map
+                        (\day ->
+                            let
+                                x = left + i * pitch
+                            in
+                            Canvas.group []
+                                [ rect x (base - (day.mood - 1) * step - 4)
+                                    barW ((day.mood - 1) * step + 4)
+                                    (Frontend.Ink.levelColor day.mood)
+                                , circle (x + barW // 2) (base - (day.energy - 1) * step - 10)
+                                    (max 2 (barW // 3))
+                                    (rgba 130 134 148 70)
+                                ]
+                        )
+                        (Shared.dayAt (first + i * Shared.dayMillis) days)
+                )
+                (List.range 0 (model.span - 1))
+            ]
+        )
+
+
+-- ===== The findings =====
+
+
+readings : Model -> List { factor : Shared.Factor, reading : Shared.Reading }
+readings model =
+    let
+        days = Shared.daysOf model.window
+    in
+    List.map
+        (\factor -> { factor = factor, reading = Shared.readingFor days factor })
+        (Shared.activeFactors model.factors)
+
+
+isDifference : Shared.Reading -> Bool
+isDifference reading =
+    case reading of
+        Shared.Difference _ -> True
+        Shared.Level _      -> False
+        Shared.Waiting _ _  -> False
+
+
+isLevel : Shared.Reading -> Bool
+isLevel reading =
+    case reading of
+        Shared.Difference _ -> False
+        Shared.Level _      -> True
+        Shared.Waiting _ _  -> False
+
+
+-- "the same day" or "the next morning" — which one won is part of the
+-- finding, not a footnote. Sleep and alcohol land the morning after,
+-- and an app that only ever crosses a factor with the same day quietly
+-- never finds either.
+lagPhrase : Int -> String
+lagPhrase lag =
+    if lag == 0 then "the same day" else "the next day"
+
+
+-- Named ends rather than numbered ones: "waking up rested", not "sleep
+-- level 4". The report has to be readable by somebody who has never
+-- thought about what a band is.
+bandPhrase : Shared.Factor -> Bool -> String
+bandPhrase factor high =
+    let
+        width  = Shared.bandWidth factor
+        count  = List.length factor.options
+        picked =
+            if high then
+                List.drop (count - width) factor.options
+            else
+                List.take width factor.options
+    in
+    String.join " or " picked
+
+
+findingCard : { factor : Shared.Factor, reading : Shared.Reading } -> View Msg
+findingCard item =
+    case item.reading of
+        Shared.Difference comparison ->
+            let
+                better = comparison.delta > 0
+                high   = bandPhrase item.factor True
+                low    = bandPhrase item.factor False
+            in
+            section
+                [ header item.factor.name
+                , footer ("Measured " ++ lagPhrase comparison.lag ++ ". This is what your days have in common, not proof that one causes the other.")
+                ]
+                [ paragraph
+                    [ span [ bold ] (high ++ ": ")
+                    , span [] ("mood " ++ Shared.formatTenths comparison.highMood)
+                    , span [] (" across " ++ String.fromInt comparison.highDays ++ " days.")
+                    ]
+                , paragraph
+                    [ span [ bold ] (low ++ ": ")
+                    , span [] ("mood " ++ Shared.formatTenths comparison.lowMood)
+                    , span [] (" across " ++ String.fromInt comparison.lowDays ++ " days.")
+                    ]
+                , paragraph
+                    [ span []
+                        ("A difference of " ++ Shared.formatTenths (abs comparison.delta) ++ ", "
+                            ++ (if better then "in favour of " ++ high else "in favour of " ++ low)
+                            ++ "."
+                        )
+                    ]
+                ]
+
+        Shared.Level _ ->
+            empty
+
+        Shared.Waiting _ _ ->
+            empty
+
+
+-- ===== What is still missing =====
+
+
+waitingLine : { factor : Shared.Factor, reading : Shared.Reading } -> View Msg
+waitingLine item =
+    case item.reading of
+        Shared.Difference _ ->
+            empty
+
+        Shared.Level comparison ->
+            paragraph
+                [ span [ bold ] (item.factor.name ++ ": ")
+                , span []
+                    ("level across "
+                        ++ String.fromInt (comparison.lowDays + comparison.highDays)
+                        ++ " days."
+                    )
+                ]
+
+        Shared.Waiting lowShort highShort ->
+            paragraph
+                [ span [ bold ] (item.factor.name ++ ": ")
+                , span [] (shortfall item.factor lowShort highShort)
+                ]
+
+
+shortfall : Shared.Factor -> Int -> Int -> String
+shortfall factor lowShort highShort =
+    if lowShort > 0 && highShort > 0 then
+        String.fromInt lowShort
+            ++ " more days at "
+            ++ bandPhrase factor False
+            ++ ", and "
+            ++ String.fromInt highShort
+            ++ " more at "
+            ++ bandPhrase factor True
+            ++ "."
+
+    else if lowShort > 0 then
+        String.fromInt lowShort ++ " more days at " ++ bandPhrase factor False ++ "."
+
+    else
+        String.fromInt highShort ++ " more days at " ++ bandPhrase factor True ++ "."
+
+
+-- ===== The cycle =====
+
+
+cycleSection : Model -> View Msg
+cycleSection model =
+    if not (Shared.tracksCycle model.factors) then
+        empty
+
+    else
+        let
+            stats =
+                List.filter (\s -> s.days > 0)
+                    (Shared.phaseStats model.window.cycles (Shared.daysOf model.window))
+        in
+        if List.isEmpty stats then
+            section [ header "Cycle" ]
+                [ paragraph
+                    [ span [] "Mark the first day of a period on the log screen and this fills in on its own. Nothing to answer daily." ]
+                ]
+
+        else
+            section
+                [ header "Cycle"
+                , footer "Phases are worked out from the first days you marked. This one compares phases rather than ends of a scale, because that is the shape of the question."
+                ]
+                (List.map
+                    (\stat ->
+                        paragraph
+                            [ span [ bold ] (stat.phase ++ ": ")
+                            , span []
+                                ("mood " ++ Shared.formatTenths stat.mood
+                                    ++ ", energy " ++ Shared.formatTenths stat.energy
+                                    ++ " across " ++ String.fromInt stat.days ++ " days."
+                                )
+                            ]
+                    )
+                    stats
+                )
+
+
+-- ===== View =====
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    case model.today of
+        Just todayKey ->
+            if model.loading then
+                waitingView
+
+            else
+                loaded model todayKey
+
+        Nothing ->
+            waitingView
+
+
+waitingView : View Msg
+waitingView =
+    navigationStack [ navigationTitle "Reports" ]
+        [ centered (text [] "Reading your log.") ]
+
+
+loaded : Model -> Int -> View Msg
+loaded model todayKey =
+    let
+        all     = readings model
+        found   = List.filter (\item -> isDifference item.reading) all
+        level   = List.filter (\item -> isLevel item.reading) all
+        waiting = List.filter (\item -> not (isDifference item.reading || isLevel item.reading)) all
+        days    = Shared.daysOf model.window
+    in
+    navigationStack [ navigationTitle "Reports" ]
+        [ list []
+            (List.concat
+                [ [ seriesSection model todayKey (List.length days) ]
+                , [ foundHeader found days ]
+                , List.map findingCard found
+                , [ levelSection level ]
+                , [ waitingSection waiting ]
+                , [ cycleSection model ]
+                , [ methodSection ]
+                , [ errorSection model.error ]
+                ]
+            )
+        ]
+
+
+seriesSection : Model -> Int -> Int -> View Msg
+seriesSection model todayKey logged =
+    section
+        [ header "The last few weeks"
+        , footer "Bars are mood, in the calendar's colours. The grey dot on each bar is that day's energy."
+        ]
+        [ series model todayKey
+        , hstack []
+            [ button [] (SpanPicked 30) "30 days"
+            , spacer
+            , button [] (SpanPicked 90) "90 days"
+            , spacer
+            , text [] (String.fromInt logged ++ " days logged")
+            ]
+        ]
+
+
+foundHeader : List { factor : Shared.Factor, reading : Shared.Reading } -> List Shared.DayRow -> View Msg
+foundHeader found days =
+    if List.isEmpty found then
+        section [ header "What I can tell you" ]
+            [ paragraph
+                [ span [] ("Nothing yet. There are " ++ String.fromInt (List.length days) ++ " days in your log, and every comparison needs at least " ++ String.fromInt Shared.minDaysPerSide ++ " at each end of a scale before it is worth reporting.")
+                ]
+            , paragraph
+                [ span [] "Below is exactly what each one is still waiting for." ]
+            ]
+
+    else
+        section [ header "What I can tell you" ]
+            [ paragraph
+                [ span [] "These are your own days compared against each other. Nothing here is a diagnosis and nothing here is advice."
+                ]
+            ]
+
+
+-- Enough days on both sides and the two ends came out the same. That is
+-- a finding, not a gap, and it belongs under its own heading: telling
+-- somebody their coffee is not the problem is worth as much as telling
+-- them their sleep is.
+levelSection : List { factor : Shared.Factor, reading : Shared.Reading } -> View Msg
+levelSection level =
+    if List.isEmpty level then
+        empty
+
+    else
+        section
+            [ header "No difference I can see"
+            , footer "These have the days behind them, and the two ends of the scale came out level. Anything under half a point is noise, and noise does not get a headline."
+            ]
+            (List.map waitingLine level)
+
+
+waitingSection : List { factor : Shared.Factor, reading : Shared.Reading } -> View Msg
+waitingSection waiting =
+    if List.isEmpty waiting then
+        empty
+
+    else
+        section
+            [ header "Not enough yet"
+            , footer "Ten days at each end, minimum. Being late costs a little patience; being early costs the only thing this app has, which is being worth believing."
+            ]
+            (List.map waitingLine waiting)
+
+
+methodSection : View Msg
+methodSection =
+    section
+        [ header "How this is worked out" ]
+        [ paragraph
+            [ span [] "Each factor's answers split into the top of its scale and the bottom; the middle is left out. The mood on each side is averaged, and the two averages are compared — once against the same day, once against the day after. Whichever moved more is what you see, with the number of days behind it."
+            ]
+        , paragraph
+            [ span [] "A gap smaller than "
+            , span [ bold ] (Shared.formatTenths Shared.minTenths)
+            , span [] " is reported as no difference. Small gaps on few days are noise, and noise does not get a headline."
+            ]
+        ]
+
+
+errorSection : Maybe String -> View Msg
+errorSection maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just message ->
+            section [] [ errorText message ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/patterns"
+        , title  = "Reports"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Device.watch DeviceChanged
+        }

@@ -1,0 +1,85 @@
+module Frontend.Ink exposing (..)
+
+
+import Canvas exposing ( rgb, rgba )
+
+
+-- The palette, shared by the two screens that actually draw: the month
+-- grid and the series chart.
+--
+-- Those are the only places a canvas earns its keep. Both are pictures
+-- of data with no native equivalent — a hundred coloured squares, or
+-- ninety bars — and neither has any text competing with the page's own.
+--
+-- The daily log used to draw its answer strips here too, and that was
+-- the wrong call twice over. Canvas text beside native text never quite
+-- matches, however close the family and the size; and the strips were
+-- solving a problem (one tap per answer) that one question per screen
+-- solves better with ordinary buttons.
+--
+-- What a canvas can't inherit is the surface it sits on, so callers
+-- pass `dark` from the Device mirror (`prefersDark`). Only the idle
+-- cell and the muted ink have to flip; every other colour here is
+-- mid-toned enough to read on both.
+
+
+-- ===== The mood ramp =====
+--
+-- Five steps from a dusty red through sand to a deep teal.
+-- Deliberately muted: this is a palette somebody looks at on a bad day,
+-- and a screen of alarm red for a rough week is a design that gets
+-- deleted. The same ramp colours the month grid, so a glance at the
+-- calendar reads the same way as a glance at today.
+--
+-- The middle step is warm sand rather than grey, which it wants to be
+-- and cannot: grey is already taken by the empty cell, and a month grid
+-- where an average day and a day nobody logged look alike is a month
+-- grid that lies at a glance.
+
+
+levelColor : Int -> Color
+levelColor level =
+    if level <= 1 then
+        rgb 178 84 90
+    else if level == 2 then
+        rgb 206 138 88
+    else if level == 3 then
+        rgb 198 176 104
+    else if level == 4 then
+        rgb 118 166 128
+    else
+        rgb 74 146 152
+
+
+-- Factors are not good or bad — "lots of coffee" is not a worse answer
+-- than "none" — so they get one calm accent instead of the ramp. Only
+-- mood and energy, which really do run from bad to good, are coloured
+-- by level.
+accent : Color
+accent =
+    rgb 78 116 186
+
+
+idleCell : Bool -> Color
+idleCell dark =
+    if dark then rgba 255 255 255 9 else rgba 22 26 36 6
+
+
+idleLabel : Bool -> Color
+idleLabel dark =
+    if dark then rgb 148 152 162 else rgb 112 116 126
+
+
+onLabel : Color
+onLabel =
+    rgb 255 255 255
+
+
+mutedInk : Bool -> Color
+mutedInk dark =
+    if dark then rgb 138 142 152 else rgb 122 126 136
+
+
+strongInk : Bool -> Color
+strongInk dark =
+    if dark then rgb 232 234 240 else rgb 34 38 48

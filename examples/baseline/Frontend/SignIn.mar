@@ -1,0 +1,215 @@
+module Frontend.SignIn exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import Frontend.Ink
+import Canvas exposing ( canvas, rect, rgba, watchSize )
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , title, subtitle, text, paragraph, span, bold
+    , textField, button, errorText
+    , email, submit, empty, disabled
+    , width, fill, chars, height, lines
+    )
+
+
+-- The front door, and the only page a signed-out visitor ever sees.
+--
+-- It carries the whole pitch rather than just an email box on purpose.
+-- Nobody hands over an address, let alone a year of their moods, to a
+-- screen that has not said what it is for — and this app asks for
+-- something more personal than most. So the page answers, in order:
+-- what it does, what it gives back, when it will speak, and what it
+-- will never do. The email field is at the bottom, after the case has
+-- been made.
+--
+-- The illustration is the product, not decoration: it is the same
+-- month grid, drawn with the same colour ramp the real one uses, so
+-- what a reader recognises on this page is what they get.
+
+
+type alias Model =
+    { draft : String
+    , error : Maybe String
+    , busy  : Bool
+    , w     : Int
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Submitted
+    | Resized Int Int
+    | CodeRequested (Result Service.Error Auth.RequestOutcome)
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { draft = "", error = Nothing, busy = False, w = 340 }, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        DraftChanged value ->
+            ( { model | draft = value, error = Nothing }, Cmd.none )
+
+        Resized w _ ->
+            ( { model | w = w }, Cmd.none )
+
+        Submitted ->
+            if model.busy then
+                ( model, Cmd.none )
+            else
+                ( { model | busy = True, error = Nothing }
+                , Auth.requestCode { email = model.draft } CodeRequested
+                )
+
+        CodeRequested (Ok Auth.CodeSent) ->
+            ( { model | busy = False }
+            , Nav.pushTo Frontend.Routes.verifyCode { email = model.draft }
+            )
+
+        CodeRequested (Ok Auth.InvalidEmail) ->
+            ( { model | busy = False, error = Just "That doesn't look like a valid email address." }
+            , Cmd.none
+            )
+
+        CodeRequested (Ok Auth.RateLimited) ->
+            ( { model | busy = False, error = Just "Too many attempts. Wait a moment before trying again." }
+            , Cmd.none
+            )
+
+        CodeRequested (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }
+            , Cmd.none
+            )
+
+
+-- ===== The illustration =====
+--
+-- Four weeks of somebody's log: a good start, a rough stretch, a
+-- recovery, and two days nobody filled in. The blanks are there on
+-- purpose — missing days are normal here, and the app that pretends
+-- otherwise is the app people quit out of guilt.
+
+
+sampleMonth : List Int
+sampleMonth =
+    [ 3, 4, 2, 3, 5, 4, 3
+    , 2, 1, 2, 3, 4, 4, 5
+    , 0, 3, 2, 1, 2, 3, 4
+    , 4, 5, 4, 3, 4, 5, 0
+    ]
+
+
+heroCell : Int -> Int -> Int -> Int -> Int -> Shape
+heroCell x0 y0 size i level =
+    let
+        col = modBy 7 i
+        row = i // 7
+        x   = x0 + col * (size + 6)
+        y   = y0 + row * (size + 6)
+    in
+    if level == 0 then
+        rect x y size size (rgba 130 134 144 20)
+    else
+        rect x y size size (Frontend.Ink.levelColor level)
+
+
+hero : Model -> View Msg
+hero model =
+    let
+        size = clamp 18 30 ((model.w - 60) // 7 - 6)
+        gridW = 7 * size + 6 * 6
+        x0 = max 0 ((model.w - gridW) // 2)
+    in
+    canvas Crisp
+        [ watchSize Resized, height (lines 6) ]
+        (List.indexedMap (heroCell x0 12 size) sampleMonth)
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Baseline" ]
+        [ list []
+            [ section []
+                [ hero model
+                , title "Find out what actually moves your mood"
+                , paragraph
+                    [ span [] "Sleep matters, coffee makes you anxious, exercise helps. True on average, useless in person: an afternoon coffee wrecks one person's night and does nothing to the next. The only way to know which one you are is to watch yourself for a while."
+                    ]
+                , paragraph
+                    [ span [] "Baseline is that experiment, small enough to keep up. It knows nothing about you on day one. After two months it knows more than any article will."
+                    ]
+                ]
+
+            , section [ header "A minute a day, no typing" ]
+                [ paragraph
+                    [ span [] "Tap how you felt and how much energy you had, then a few things that might be behind it: how you slept, how work went, whether you moved, whether you saw anyone you like. Every answer is a choice between a few named options."
+                    ]
+                ]
+
+            , section [ header "It compares your days against each other" ]
+                [ paragraph
+                    [ span [] "No averages from strangers. Your own best days against your own worst ones, reported in the words you tapped."
+                    ]
+                , paragraph
+                    [ span [ bold ] "\"Days after waking up rested: mood 3.8 across 34 days. After waking up wrecked: 2.6 across 21 days.\""
+                    ]
+                , paragraph
+                    [ span [] "It checks the next day too. Some things land tonight, some land tomorrow morning, and only looking at the same day never finds the drink."
+                    ]
+                ]
+
+            , section [ header "It stays quiet until it can be sure" ]
+                [ paragraph
+                    [ span [] "With too few days it says nothing, and tells you how many are still missing. It would rather be late than confident and wrong."
+                    ]
+                ]
+
+            , section
+                [ header "What it will not do"
+                , footer "Nothing to buy, no third party inside the app, no data sold. Deleting your account deletes all of it."
+                ]
+                [ paragraph [ span [] "No diagnosis, and no screening questionnaire." ]
+                , paragraph [ span [] "No advice. It reports; you decide. Between \"your worst days follow bad nights\" and \"go to bed earlier\" is the difference between an instrument and a busybody." ]
+                , paragraph [ span [] "No streaks, no badges, no points. Missing a day costs you nothing." ]
+                ]
+
+            , section
+                [ header "Start"
+                , footer "We email you a six-digit code. No password to invent."
+                ]
+                [ textField
+                    [ email, submit Submitted, width (chars 30), disabled model.busy ]
+                    "Email" model.draft DraftChanged
+                , errorView model.error
+                , button [ disabled model.busy ] Submitted "Send me a code"
+                ]
+            ]
+        ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just message ->
+            errorText message
+
+
+page : Page
+page =
+    Page.create
+        { path   = "/sign-in"
+        , title  = "Baseline: a daily mood log that tells you what moves it"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = always Sub.none
+        }

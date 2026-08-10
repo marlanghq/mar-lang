@@ -1,0 +1,949 @@
+module Shared exposing (..)
+
+
+-- Baseline — a daily mood log that tells you what actually moves it.
+--
+-- The product is an experiment you run on yourself: log a mood and a
+-- handful of surroundings once a day, and after enough days the app
+-- compares your best days against your worst and says which of those
+-- surroundings show up on each side. Generic advice ("sleep more",
+-- "less coffee") is useless because the variation between people is
+-- enormous. Your own two months of data is not.
+--
+-- This module is the contract both halves agree on, and it carries
+-- more than usual: besides the shared types and the Service
+-- declarations, it owns the whole reporting engine. The backend is
+-- deliberately thin — it stores rows and hands a window of them back.
+-- Every number the app reports is computed by the pure functions
+-- below, on the client, from that window.
+--
+-- Putting the analysis here rather than behind an endpoint is a
+-- product decision as much as an architectural one: the reports are
+-- the reason the app exists, and being able to read exactly how each
+-- one is derived — in the same file that declares the wire types — is
+-- what makes the claim "it never says more than the data supports"
+-- checkable instead of promised.
+
+
+-- ===== Identity =====
+
+
+type alias User =
+    { id    : Int
+    , email : String
+    }
+
+
+-- ===== Storage rows =====
+--
+-- Every row a person owns carries `userId`. It is the ownership
+-- boundary: reads filter by it, writes stamp it, and the server never
+-- returns a row it did not filter.
+--
+-- `dayKey` is a day normalized to midnight (see dayKeyOf) and stored
+-- as an Int. It is what the unique indexes match on, what the reports
+-- join by, and — because every day is exactly `dayMillis` apart — what
+-- makes "the day after" a plain addition.
+
+
+-- One day's log. Unique on (userId, dayKey), so saving twice corrects
+-- the same row instead of piling up a second opinion about Tuesday.
+type alias Entry =
+    { id     : Int
+    , userId : Int
+    , dayKey : Int
+    , day    : Time
+    , mood   : Int
+    , energy : Int
+    , note   : String
+    }
+
+
+-- One factor's answer on one day: `key` names the factor, `value` is
+-- the index of the chosen option in that factor's option list.
+-- Unique on (userId, dayKey, key).
+type alias Choice =
+    { id     : Int
+    , userId : Int
+    , dayKey : Int
+    , key    : String
+    , value  : Int
+    }
+
+
+-- Which factors this person tracks. There is no separate "profile
+-- completed" flag: the presence of these rows IS the flag, because
+-- setup always writes at least the three everyone gets.
+type alias Tracked =
+    { id     : Int
+    , userId : Int
+    , key    : String
+    }
+
+
+-- The first day of a period, recorded as an event. The app never asks
+-- which phase you are in — nobody lives their life in "luteal" — it
+-- derives the phase from the most recent start.
+type alias CycleStart =
+    { id     : Int
+    , userId : Int
+    , dayKey : Int
+    , day    : Time
+    }
+
+
+-- ===== The factor catalogue =====
+--
+-- Everything the app can ask about, declared once. Adding a factor is
+-- one entry in this list: the entry screen renders it, the reports
+-- pick it up, and setup offers it. Nothing else changes.
+--
+-- Three rules the catalogue enforces by construction:
+--
+-- 1. Every answer is a choice between named options. No field asks
+--    for a typed number. Besides being faster, it is more honest:
+--    people remember their days in rough bands, not in measurements,
+--    so asking for a band asks for what they actually have. It also
+--    means the reports never invent a cutoff — the bands people
+--    answered in ARE the groups being compared.
+--
+-- 2. Option labels are short on purpose: they sit in a row of choices,
+--    and a label that has to be truncated is a label nobody reads.
+--
+-- 3. Every scale that can not apply opens with the option that says
+--    so: "none", "off". That is what makes a skip button unnecessary,
+--    and it is why there is not one — a second way to say "it did not
+--    happen" would split the same fact between an answer the reports
+--    count and a missing row they ignore.
+
+
+type Availability
+    = Always            -- everyone tracks this
+    | AskFirst String   -- only if the setup question is answered yes
+    | Extra             -- opt-in from the catalogue, three at setup
+
+
+type alias Factor =
+    { key       : String        -- storage key, stable forever
+    , name      : String        -- how reports name it: "Sleep"
+    , question  : String        -- how the entry screen asks it
+    , options   : List String   -- index = stored value
+    , avail     : Availability
+    }
+
+
+catalogue : List Factor
+catalogue =
+    [ { key = "sleep"
+      , name = "Sleep"
+      , question = "How did you wake up?"
+      , options = [ "wrecked", "tired", "okay", "rested", "great" ]
+      , avail = Always
+      }
+    , { key = "exercise"
+      , name = "Exercise"
+      , question = "Did you move today?"
+      , options = [ "none", "light", "medium", "hard" ]
+      , avail = Always
+      }
+    , { key = "social"
+      , name = "Company"
+      , question = "Time with people you like?"
+      , options = [ "none", "some", "lots" ]
+      , avail = Always
+      }
+    , { key = "work"
+      , name = "Workload"
+      , question = "How was the working day?"
+      , options = [ "off", "light", "normal", "heavy", "brutal" ]
+      , avail = AskFirst "Do you work or study on a regular schedule?"
+      }
+    -- The one factor answered in a count rather than in words, because a
+    -- count is what people actually have for this: nobody knows what
+    -- "a lot of caffeine" means, everybody knows they had three coffees.
+    -- The question has to carry the unit, though — bare "1-2" under
+    -- "how much caffeine?" is a number with nothing attached to it.
+    , { key = "caffeine"
+      , name = "Caffeine"
+      , question = "How many caffeinated drinks?"
+      , options = [ "none", "1-2", "3-4", "5+" ]
+      , avail = AskFirst "Do you drink coffee or anything else with caffeine?"
+      }
+    , { key = "alcohol"
+      , name = "Alcohol"
+      , question = "How many alcoholic drinks?"
+      , options = [ "none", "1-2", "more" ]
+      , avail = AskFirst "Do you drink alcohol?"
+      }
+    , { key = "meds"
+      , name = "Medication"
+      , question = "Took your medication?"
+      , options = [ "no", "yes" ]
+      , avail = AskFirst "Do you take any medication regularly?"
+      }
+    , { key = "nicotine"
+      , name = "Nicotine"
+      , question = "Smoked or vaped?"
+      , options = [ "none", "some", "lots" ]
+      , avail = AskFirst "Do you smoke or vape?"
+      }
+    -- Like caffeine, answered in a number, so the question carries the
+    -- unit. "5-6" under "how long did you sleep" is a range of nothing.
+    , { key = "sleepHours"
+      , name = "Hours of sleep"
+      , question = "Roughly how many hours did you sleep?"
+      , options = [ "under 5", "5-6", "6-7", "7-8", "8+" ]
+      , avail = Extra
+      }
+    , { key = "outdoors"
+      , name = "Time outside"
+      , question = "Any time outdoors?"
+      , options = [ "none", "some", "lots" ]
+      , avail = Extra
+      }
+    , { key = "screens"
+      , name = "Screens at night"
+      , question = "Screens in the evening?"
+      , options = [ "little", "normal", "lots" ]
+      , avail = Extra
+      }
+    -- The one factor that is openly an impression rather than a fact.
+    -- Asked as "how was it" rather than "did you eat well", because the
+    -- second is a verdict, and a log that makes somebody defend
+    -- themselves to it every evening is a log they stop opening.
+    , { key = "eating"
+      , name = "Eating"
+      , question = "How was your eating today?"
+      , options = [ "poorly", "okay", "well" ]
+      , avail = Extra
+      }
+    , { key = "pain"
+      , name = "Pain"
+      , question = "Any pain today?"
+      , options = [ "none", "mild", "bad" ]
+      , avail = Extra
+      }
+    ]
+
+
+factorByKey : String -> Maybe Factor
+factorByKey key =
+    List.head (List.filter (\f -> f.key == key) catalogue)
+
+
+-- The catalogue filtered to what this person actually tracks, in
+-- catalogue order so the entry screen never reshuffles under them.
+activeFactors : List String -> List Factor
+activeFactors keys =
+    List.filter (\f -> List.member f.key keys) catalogue
+
+
+alwaysKeys : List String
+alwaysKeys =
+    List.map (\f -> f.key) (List.filter (\f -> f.avail == Always) catalogue)
+
+
+askFirstFactors : List Factor
+askFirstFactors =
+    List.filter
+        (\f ->
+            case f.avail of
+                AskFirst _ -> True
+                Always     -> False
+                Extra      -> False
+        )
+        catalogue
+
+
+extraFactors : List Factor
+extraFactors =
+    List.filter (\f -> f.avail == Extra) catalogue
+
+
+-- What the daily screen will ask, given a tracked set: the two fixed
+-- axes plus one row per active factor.
+--
+-- Setup shows this number rather than capping the list. An earlier
+-- version allowed three opt-in factors and no more, which was both
+-- patronising and incoherent — the questions in the first group were
+-- never capped, so somebody who drinks, smokes, works and takes
+-- medication already ended up with eight rows and nothing stopped
+-- them. The cost of one more factor is one more row every evening. It
+-- is entirely the tracker's to weigh, and the honest move is to show
+-- it, not to decide it for them.
+dailyQuestions : List String -> Int
+dailyQuestions keys =
+    2 + List.length (activeFactors keys)
+
+
+-- The cycle is tracked like a factor but recorded unlike one: it is an
+-- event ("the period started today"), not a daily answer, so it lives
+-- outside the catalogue and is stored as a key of its own.
+--
+-- Asking somebody every evening which phase they are in would be both
+-- annoying and wrong, because nobody experiences their life as "day 19,
+-- luteal". One tap a month is enough for the app to derive the rest,
+-- and it is probably the highest-effect factor with the poorest
+-- coverage anywhere in this category of app.
+cycleKey : String
+cycleKey =
+    "cycle"
+
+
+cyclePrompt : String
+cyclePrompt =
+    "Do you menstruate?"
+
+
+tracksCycle : List String -> Bool
+tracksCycle keys =
+    List.member cycleKey keys
+
+
+optionLabel : Factor -> Int -> String
+optionLabel factor value =
+    case List.head (List.drop value factor.options) of
+        Just label -> label
+        Nothing    -> "?"
+
+
+-- ===== The two fixed axes =====
+--
+-- Five levels, not ten. Nobody tells 7 from 8 the same way twice, and
+-- a ten-point scale manufactures variation that LOOKS like signal.
+--
+-- Mood and energy are separate because they come apart, and the way
+-- they come apart is the most useful thing a one-number log throws
+-- away: anxious is low mood with high energy, flat is low mood with
+-- low energy, calm is high mood with low energy.
+
+
+moodLabels : List String
+moodLabels =
+    [ "awful", "low", "okay", "good", "great" ]
+
+
+energyLabels : List String
+energyLabels =
+    [ "empty", "low", "okay", "good", "high" ]
+
+
+moodLabel : Int -> String
+moodLabel value =
+    case List.head (List.drop (value - 1) moodLabels) of
+        Just label -> label
+        Nothing    -> "-"
+
+
+-- ===== The daily sequence =====
+--
+-- The log is asked one question at a time, and this is the order. Mood
+-- and energy first, because they are what the rest exists to explain
+-- and the only two that must never be skipped; then the factors in
+-- catalogue order, so the sequence never reshuffles under somebody who
+-- has learned it.
+--
+-- A first draft put all of them on one scrolling screen. It was eleven
+-- questions stacked in a form, and a form reads as work — which is
+-- fatal for a product whose only real failure mode is being abandoned
+-- in week three. One question per screen is also fewer actions, not
+-- more: a tap answers and advances, so there is nothing to scroll and
+-- nothing to submit.
+
+
+type Question
+    = AskMood
+    | AskEnergy
+    | AskFactor Factor
+
+
+flow : List String -> List Question
+flow keys =
+    AskMood :: AskEnergy :: List.map AskFactor (activeFactors keys)
+
+
+questionAt : Int -> List String -> Maybe Question
+questionAt index keys =
+    List.head (List.drop index (flow keys))
+
+
+questionPrompt : Question -> String
+questionPrompt question =
+    case question of
+        AskMood         -> "How was today?"
+        AskEnergy       -> "And your energy?"
+        AskFactor f     -> f.question
+
+
+-- The short name a report uses, which is also the name on the summary
+-- row. Deliberately not the question: "Sleep" reads down a list, "How
+-- did you wake up?" does not.
+questionName : Question -> String
+questionName question =
+    case question of
+        AskMood     -> "Mood"
+        AskEnergy   -> "Energy"
+        AskFactor f -> f.name
+
+
+questionOptions : Question -> List String
+questionOptions question =
+    case question of
+        AskMood     -> moodLabels
+        AskEnergy   -> energyLabels
+        AskFactor f -> f.options
+
+
+-- ===== Day math =====
+--
+-- Both halves have to agree on what a day is, or the unique index and
+-- the day lookup drift apart, so the normalization lives here and is
+-- called from both sides. Every key is a whole number of days from the
+-- epoch, which is what makes `nextDay` addition and what lets the
+-- weekday come out of arithmetic instead of a calendar library.
+
+
+dayMillis : Int
+dayMillis =
+    86400000
+
+
+startOfDay : Time -> Time
+startOfDay t =
+    Time.fromYMD (Time.year t) (Time.month t) (Time.day t)
+
+
+dayKeyOf : Time -> Int
+dayKeyOf t =
+    Time.toMillis (startOfDay t)
+
+
+timeOfDayKey : Int -> Time
+timeOfDayKey key =
+    Time.addDays (Time.fromYMD 1970 1 1) (key // dayMillis)
+
+
+nextDay : Int -> Int
+nextDay key =
+    key + dayMillis
+
+
+daysBetween : Int -> Int -> Int
+daysBetween from to =
+    (to - from) // dayMillis
+
+
+-- 0 = Sunday. 1970-01-01 was a Thursday, which is the +4.
+weekdayOf : Int -> Int
+weekdayOf key =
+    modBy 7 (key // dayMillis + 4)
+
+
+weekdayNames : List String
+weekdayNames =
+    [ "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" ]
+
+
+monthNames : List String
+monthNames =
+    [ "January", "February", "March", "April", "May", "June"
+    , "July", "August", "September", "October", "November", "December"
+    ]
+
+
+shortMonthNames : List String
+shortMonthNames =
+    [ "Jan", "Feb", "Mar", "Apr", "May", "Jun"
+    , "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    ]
+
+
+monthName : Int -> String
+monthName m =
+    case List.head (List.drop (m - 1) monthNames) of
+        Just name -> name
+        Nothing   -> "?"
+
+
+shortMonthName : Int -> String
+shortMonthName m =
+    case List.head (List.drop (m - 1) shortMonthNames) of
+        Just name -> name
+        Nothing   -> "?"
+
+
+weekdayName : Int -> String
+weekdayName d =
+    case List.head (List.drop d weekdayNames) of
+        Just name -> name
+        Nothing   -> "?"
+
+
+-- "Sunday 3 August" — the header on the entry screen.
+longDate : Int -> String
+longDate key =
+    let
+        t = timeOfDayKey key
+    in
+    weekdayName (weekdayOf key)
+        ++ " "
+        ++ String.fromInt (Time.day t)
+        ++ " "
+        ++ monthName (Time.month t)
+
+
+shortDate : Int -> String
+shortDate key =
+    let
+        t = timeOfDayKey key
+    in
+    String.fromInt (Time.day t) ++ " " ++ shortMonthName (Time.month t)
+
+
+-- How far back a day can still be filled in. Three days, because
+-- forgetting happens and a hole in the middle of the series hurts the
+-- comparisons — and only three, because memory for mood past that is
+-- bad enough that a late entry is worse than no entry, and because
+-- being able to rewrite the past indefinitely turns a log into a
+-- story.
+editWindowDays : Int
+editWindowDays =
+    3
+
+
+editable : Int -> Int -> Bool
+editable todayKey key =
+    key <= todayKey && daysBetween key todayKey < editWindowDays
+
+
+-- ===== Tenths =====
+--
+-- Averages are carried as tenths in a plain Int: 38 means 3.8. The
+-- arithmetic stays exact, and every number the app prints came out of
+-- one rounding step that is written down right here.
+
+
+mean : List Int -> Int
+mean values =
+    let
+        n = List.length values
+    in
+    if n == 0 then
+        0
+    else
+        (List.sum values * 10 + n // 2) // n
+
+
+formatTenths : Int -> String
+formatTenths tenths =
+    let
+        sign  = if tenths < 0 then "-" else ""
+        magn  = abs tenths
+    in
+    sign ++ String.fromInt (magn // 10) ++ "." ++ String.fromInt (modBy 10 magn)
+
+
+-- ===== The joined day =====
+--
+-- The reports work on this, not on the raw rows: one record per day
+-- that actually has an entry, with its factor answers attached.
+
+
+type alias DayRow =
+    { dayKey : Int
+    , mood   : Int
+    , energy : Int
+    , note   : String
+    , picks  : List Choice
+    }
+
+
+type alias Window =
+    { entries : List Entry
+    , choices : List Choice
+    , cycles  : List CycleStart
+    }
+
+
+emptyWindow : Window
+emptyWindow =
+    { entries = [], choices = [], cycles = [] }
+
+
+-- Join the two lists into days, oldest first. Sorting here once means
+-- every report below can assume chronological order.
+daysOf : Window -> List DayRow
+daysOf window =
+    List.sortBy (\d -> d.dayKey)
+        (List.map
+            (\e ->
+                { dayKey = e.dayKey
+                , mood   = e.mood
+                , energy = e.energy
+                , note   = e.note
+                , picks  = List.filter (\c -> c.dayKey == e.dayKey) window.choices
+                }
+            )
+            window.entries
+        )
+
+
+dayAt : Int -> List DayRow -> Maybe DayRow
+dayAt key days =
+    List.head (List.filter (\d -> d.dayKey == key) days)
+
+
+pickOf : String -> DayRow -> Maybe Int
+pickOf key day =
+    List.head (List.map (\c -> c.value) (List.filter (\c -> c.key == key) day.picks))
+
+
+-- ===== The comparison =====
+--
+-- The main report, and the one the app is built around. For a given
+-- factor it splits the days into the ones answered near the top of the
+-- scale and the ones answered near the bottom, then compares the mood
+-- on each side.
+--
+-- The middle is left out deliberately. With four or five bands and a
+-- floor on how many days each side needs, comparing band against band
+-- would never have enough of anything; comparing the ends has enough
+-- much sooner and answers the same question.
+
+
+-- Which option indexes count as the low end and the high end. One
+-- third of the scale on each side, so a 2-option factor splits 1-1, a
+-- 5-option factor takes two from each end and drops the middle.
+bandWidth : Factor -> Int
+bandWidth factor =
+    (List.length factor.options - 1) // 3 + 1
+
+
+inLowBand : Factor -> Int -> Bool
+inLowBand factor value =
+    value < bandWidth factor
+
+
+inHighBand : Factor -> Int -> Bool
+inHighBand factor value =
+    value >= List.length factor.options - bandWidth factor
+
+
+-- Days needed on EACH side before anything is reported. Conservative
+-- on purpose: staying quiet a while longer costs a little patience,
+-- and speaking early costs the only thing the app has, which is being
+-- believed.
+minDaysPerSide : Int
+minDaysPerSide =
+    10
+
+
+-- Below this, the two sides are called the same. Noise does not get a
+-- headline.
+minTenths : Int
+minTenths =
+    5
+
+
+type alias Comparison =
+    { key      : String
+    , lag      : Int   -- 0 = the same day, 1 = the day after
+    , lowDays  : Int
+    , highDays : Int
+    , lowMood  : Int   -- tenths
+    , highMood : Int   -- tenths
+    , delta    : Int   -- tenths, high minus low
+    }
+
+
+-- What the app is able to say about one factor right now.
+--
+-- Three states, and the third is not an empty screen: telling somebody
+-- they are eleven days away from an answer is the most useful thing
+-- that can be said at day nine, and not saying it is the reason people
+-- quit apps like this in week three.
+type Reading
+    = Difference Comparison
+    | Level Comparison       -- both sides have the days, the gap is noise
+    | Waiting Int Int        -- days still needed on the low / high side
+
+
+-- The moods that follow a day, `lag` days later. lag 0 is the same
+-- day (caffeine, workload, exercise act now); lag 1 is the morning
+-- after (sleep and alcohol act then). Testing only the same day is
+-- what makes most apps of this kind miss alcohol entirely: on the
+-- night you drink, the mood is usually fine.
+outcomesFor : List DayRow -> Int -> List DayRow -> List Int
+outcomesFor days lag subset =
+    List.filterMap
+        (\d ->
+            if lag == 0 then
+                Just d.mood
+            else
+                Maybe.map (\o -> o.mood) (dayAt (nextDay d.dayKey) days)
+        )
+        subset
+
+
+compareAt : List DayRow -> Factor -> Int -> Reading
+compareAt days factor lag =
+    let
+        answered =
+            List.filterMap
+                (\d -> Maybe.map (\v -> { day = d, value = v }) (pickOf factor.key d))
+                days
+
+        lows  = List.map (\a -> a.day) (List.filter (\a -> inLowBand factor a.value) answered)
+        highs = List.map (\a -> a.day) (List.filter (\a -> inHighBand factor a.value) answered)
+
+        lowMoods  = outcomesFor days lag lows
+        highMoods = outcomesFor days lag highs
+
+        lowCount  = List.length lowMoods
+        highCount = List.length highMoods
+
+        low  = mean lowMoods
+        high = mean highMoods
+
+        comparison =
+            { key      = factor.key
+            , lag      = lag
+            , lowDays  = lowCount
+            , highDays = highCount
+            , lowMood  = low
+            , highMood = high
+            , delta    = high - low
+            }
+    in
+    if lowCount < minDaysPerSide || highCount < minDaysPerSide then
+        Waiting (max 0 (minDaysPerSide - lowCount)) (max 0 (minDaysPerSide - highCount))
+    else if abs (high - low) < minTenths then
+        Level comparison
+    else
+        Difference comparison
+
+
+-- Both lags, always, and report whichever moved more. Which one won is
+-- part of the answer, not a detail: "the day after" is a different
+-- claim about your life than "that same evening".
+readingFor : List DayRow -> Factor -> Reading
+readingFor days factor =
+    let
+        sameDay  = compareAt days factor 0
+        nextDay_ = compareAt days factor 1
+    in
+    case ( sameDay, nextDay_ ) of
+        ( Difference a, Difference b ) ->
+            if abs b.delta > abs a.delta then Difference b else Difference a
+
+        ( Difference a, _ ) ->
+            Difference a
+
+        ( _, Difference b ) ->
+            Difference b
+
+        ( Level a, _ ) ->
+            Level a
+
+        ( _, Level b ) ->
+            Level b
+
+        ( Waiting a b, Waiting c d ) ->
+            if a + b <= c + d then Waiting a b else Waiting c d
+
+
+-- ===== The week =====
+--
+-- The payoff that arrives long before any comparison does. Logging is
+-- the cost; a readable week is what pays for it while the app still
+-- has nothing else to say.
+
+
+type alias WeekSummary =
+    { days        : Int
+    , mood        : Int         -- tenths
+    , energy      : Int
+    , priorDays   : Int
+    , priorMood   : Int
+    , best        : Maybe DayRow
+    , worst       : Maybe DayRow
+    }
+
+
+inRange : Int -> Int -> List DayRow -> List DayRow
+inRange fromKey toKey days =
+    List.filter (\d -> d.dayKey >= fromKey && d.dayKey <= toKey) days
+
+
+weekSummary : Int -> List DayRow -> WeekSummary
+weekSummary todayKey days =
+    let
+        weekStart  = todayKey - 6 * dayMillis
+        priorStart = todayKey - 34 * dayMillis
+
+        week  = inRange weekStart todayKey days
+        prior = inRange priorStart (weekStart - dayMillis) days
+
+        ranked = List.sortBy (\d -> d.mood) week
+    in
+    { days      = List.length week
+    , mood      = mean (List.map (\d -> d.mood) week)
+    , energy    = mean (List.map (\d -> d.energy) week)
+    , priorDays = List.length prior
+    , priorMood = mean (List.map (\d -> d.mood) prior)
+    , best      = List.head (List.reverse ranked)
+    , worst     = List.head ranked
+    }
+
+
+-- ===== The cycle =====
+--
+-- Derived from the recorded starts, never asked. A start older than
+-- `cycleMaxDays` is treated as missing rather than stretched, because
+-- a 60-day "cycle day" is a gap in the log, not a phase.
+
+
+cycleMaxDays : Int
+cycleMaxDays =
+    40
+
+
+phaseNames : List String
+phaseNames =
+    [ "Period", "Follicular", "Ovulation", "Luteal" ]
+
+
+phaseOfDay : Int -> String
+phaseOfDay dayOfCycle =
+    if dayOfCycle <= 5 then
+        "Period"
+    else if dayOfCycle <= 13 then
+        "Follicular"
+    else if dayOfCycle <= 16 then
+        "Ovulation"
+    else
+        "Luteal"
+
+
+-- The most recent start on or before this day, if it is recent enough
+-- to be believable.
+cycleDayOf : List Int -> Int -> Maybe Int
+cycleDayOf startKeys key =
+    let
+        before = List.filter (\s -> s <= key) startKeys
+        latest = List.head (List.reverse (List.sort before))
+    in
+    case latest of
+        Nothing ->
+            Nothing
+
+        Just start ->
+            let
+                offset = daysBetween start key + 1
+            in
+            if offset <= cycleMaxDays then Just offset else Nothing
+
+
+type alias PhaseStat =
+    { phase  : String
+    , days   : Int
+    , mood   : Int
+    , energy : Int
+    }
+
+
+phaseStats : List CycleStart -> List DayRow -> List PhaseStat
+phaseStats starts days =
+    let
+        keys = List.map (\s -> s.dayKey) starts
+
+        tagged =
+            List.filterMap
+                (\d -> Maybe.map (\c -> { day = d, phase = phaseOfDay c }) (cycleDayOf keys d.dayKey))
+                days
+    in
+    List.map
+        (\name ->
+            let
+                mine = List.filter (\t -> t.phase == name) tagged
+            in
+            { phase  = name
+            , days   = List.length mine
+            , mood   = mean (List.map (\t -> t.day.mood) mine)
+            , energy = mean (List.map (\t -> t.day.energy) mine)
+            }
+        )
+        phaseNames
+
+
+-- ===== Typed outcomes =====
+
+
+type SaveOutcome
+    = DaySaved
+    | DayOutOfRange   -- older than the edit window, or in the future
+
+
+-- ===== Service contracts =====
+--
+-- Every handler is wrapped by Auth.protect, which injects the signed-in
+-- person as the second argument. There is no service that takes a user
+-- id: the caller is always the subject.
+
+
+-- What this person tracks. `done` is false only for an account that has
+-- never finished setup, which is what sends them there on first run.
+type alias SetupState =
+    { done    : Bool
+    , factors : List String
+    }
+
+
+getSetup : Service () SetupState
+getSetup = Service.declare GET "/api/setup"
+
+
+saveSetup : Service { factors : List String } ()
+saveSetup = Service.declare PUT "/api/setup"
+
+
+-- One round trip carries everything every report needs. A year of
+-- logging is a few hundred small rows, so paging it would buy nothing
+-- and cost the app its most useful property: once loaded, every screen
+-- is instant and works from the same numbers.
+loadWindow : Service { sinceDayKey : Int } Window
+loadWindow = Service.declare GET "/api/days/{sinceDayKey:Int}"
+
+
+type alias Pick =
+    { key   : String
+    , value : Int
+    }
+
+
+saveDay : Service
+    { dayKey : Int
+    , day    : Time
+    , mood   : Int
+    , energy : Int
+    , note   : String
+    , picks  : List Pick
+    }
+    SaveOutcome
+saveDay = Service.declare POST "/api/days"
+
+
+markPeriod : Service { dayKey : Int, day : Time } ()
+markPeriod = Service.declare POST "/api/cycle"
+
+
+clearPeriod : Service { dayKey : Int } ()
+clearPeriod = Service.declare DELETE "/api/cycle/{dayKey:Int}"
+
+
+-- Irreversible account deletion (App Store guideline 5.1.1(v): an app
+-- that creates accounts must let you delete yours from inside it). For
+-- an app holding this kind of data it is also the promise that makes
+-- the rest of the promises worth anything.
+deleteAccount : Service () ()
+deleteAccount = Service.declare DELETE "/api/account"

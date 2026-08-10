@@ -1,0 +1,24 @@
+module Backend.Account exposing (services)
+
+
+import Shared
+import Backend.Users
+import Backend.Log
+
+
+-- Account deletion. App Store guideline 5.1.1(v) requires it of any app
+-- that creates accounts; for this one it is also the thing that makes
+-- the rest of the privacy claims mean something. Nothing is archived,
+-- nothing is soft-deleted, nothing is kept "for analytics".
+--
+-- Auth.protect injects the caller, so a request can only ever delete
+-- its own account. The rows go bottom-up so nothing is ever left
+-- pointing at a parent that is gone.
+deleteAccountImpl : () -> Shared.User -> Task ()
+deleteAccountImpl _ user =
+    Backend.Log.deleteAllForUser user
+        |> Task.andThen (\_ -> Repo.deleteById Backend.Users.users user.id)
+
+
+services =
+    [ Auth.protect Shared.deleteAccount deleteAccountImpl ]

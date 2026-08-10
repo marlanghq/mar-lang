@@ -1,0 +1,423 @@
+module Frontend.DayEntry exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , title, subtitle, text, paragraph, span, bold
+    , textField, button, errorText
+    , hstack, spacer, centered, empty, disabled, submit
+    , width, fill
+    )
+
+
+-- One day, opened from the calendar. Presented over the month rather
+-- than pushed onto the stack, because looking a day up is a bounded
+-- errand: you open it, read or fix it, and come back to where you were
+-- (ADR 0012).
+--
+-- What the screen offers depends on how old the day is, and that is the
+-- product's most opinionated rule. Inside three days it is editable,
+-- because forgetting happens and a hole in the middle of the series
+-- hurts every comparison. Past three days it is read-only, because
+-- memory for how a Tuesday felt decays fast enough that a late entry is
+-- worse than a missing one — and because a log you can rewrite forever
+-- stops being a record and becomes a story.
+--
+-- Editing here is always one answer at a time, never a run: you came
+-- from a calendar square because something specific was wrong or
+-- missing, and walking a whole sequence to reach it would be the
+-- opposite of the errand.
+--
+-- Opened cold, from a shared link or a reload, a presented route
+-- renders full screen with nothing behind it, so the header carries its
+-- own way out.
+
+
+type Screen
+    = Listing
+    | Asking Int
+
+
+type alias Model =
+    { window  : Shared.Window
+    , factors : List String
+    , today   : Maybe Int
+    , screen  : Screen
+    , mood    : Maybe Int
+    , energy  : Maybe Int
+    , picks   : List Shared.Pick
+    , note    : String
+    , saved   : String
+    , loading : Bool
+    , saving  : Bool
+    , error   : Maybe String
+    }
+
+
+type Msg
+    = GotNow Time
+    | GotSetup (Result Service.Error Shared.SetupState)
+    | GotWindow (Result Service.Error Shared.Window)
+    | AskFor Int
+    | Answered Int
+    | Cleared
+    | BackToList
+    | NoteChanged String
+    | SaveClicked
+    | DaySaved (Result Service.Error Shared.SaveOutcome)
+    | Dismissed
+
+
+init : Shared.User -> { dayKey : Int } -> (Model, Cmd Msg)
+init _ params =
+    ( { window = Shared.emptyWindow
+      , factors = []
+      , today = Nothing
+      , screen = Listing
+      , mood = Nothing
+      , energy = Nothing
+      , picks = []
+      , note = ""
+      , saved = ""
+      , loading = True
+      , saving = False
+      , error = Nothing
+      }
+    , Cmd.batch
+        [ Cmd.perform GotNow Time.now
+        , Service.call Shared.getSetup () GotSetup
+        , Service.call Shared.loadWindow { sinceDayKey = params.dayKey } GotWindow
+        ]
+    )
+
+
+update : Shared.User -> { dayKey : Int } -> Msg -> Model -> (Model, Cmd Msg)
+update _ params msg model =
+    case msg of
+        GotNow now ->
+            ( { model | today = Just (Shared.dayKeyOf now) }, Cmd.none )
+
+        GotSetup (Ok state) ->
+            ( { model | factors = state.factors }, Cmd.none )
+
+        GotSetup (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+        GotWindow (Ok window) ->
+            ( seed params { model | window = window, loading = False }, Cmd.none )
+
+        GotWindow (Err why) ->
+            ( { model | loading = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        AskFor index ->
+            ( { model | screen = Asking index }, Cmd.none )
+
+        BackToList ->
+            ( { model | screen = Listing }, Cmd.none )
+
+        Answered value ->
+            save params (record value { model | screen = Listing })
+
+        Cleared ->
+            ( { model | screen = Listing }, Cmd.none )
+
+        NoteChanged value ->
+            ( { model | note = value }, Cmd.none )
+
+        SaveClicked ->
+            save params model
+
+        DaySaved (Ok Shared.DaySaved) ->
+            ( { model | saving = False, saved = model.note }, Cmd.none )
+
+        DaySaved (Ok Shared.DayOutOfRange) ->
+            ( { model | saving = False, error = Just "This day is outside the three-day window." }, Cmd.none )
+
+        DaySaved (Err why) ->
+            ( { model | saving = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        Dismissed ->
+            ( model, Nav.dismiss )
+
+
+-- ===== Model helpers =====
+
+
+askingIndex : Model -> Int
+askingIndex model =
+    case model.screen of
+        Asking index -> index
+        Listing      -> 0
+
+
+record : Int -> Model -> Model
+record value model =
+    case Shared.questionAt (askingIndex model) model.factors of
+        Nothing ->
+            model
+
+        Just Shared.AskMood ->
+            { model | mood = Just (value + 1) }
+
+        Just Shared.AskEnergy ->
+            { model | energy = Just (value + 1) }
+
+        Just (Shared.AskFactor factor) ->
+            { model | picks = setPick factor.key value model.picks }
+
+
+setPick : String -> Int -> List Shared.Pick -> List Shared.Pick
+setPick key value picks =
+    { key = key, value = value } :: List.filter (\p -> p.key /= key) picks
+
+
+pickValue : String -> List Shared.Pick -> Maybe Int
+pickValue key picks =
+    List.head (List.map (\p -> p.value) (List.filter (\p -> p.key == key) picks))
+
+
+answerOf : Shared.Question -> Model -> Maybe Int
+answerOf question model =
+    case question of
+        Shared.AskMood     -> Maybe.map (\v -> v - 1) model.mood
+        Shared.AskEnergy   -> Maybe.map (\v -> v - 1) model.energy
+        Shared.AskFactor f -> pickValue f.key model.picks
+
+
+seed : { dayKey : Int } -> Model -> Model
+seed params model =
+    case Shared.dayAt params.dayKey (Shared.daysOf model.window) of
+        Nothing ->
+            model
+
+        Just day ->
+            { model
+                | mood = Just day.mood
+                , energy = Just day.energy
+                , note = day.note
+                , saved = day.note
+                , picks = List.map (\c -> { key = c.key, value = c.value }) day.picks
+            }
+
+
+canEdit : { dayKey : Int } -> Model -> Bool
+canEdit params model =
+    case model.today of
+        Nothing  -> False
+        Just key -> Shared.editable key params.dayKey
+
+
+-- Both axes are required, so nothing is written until both exist. A day
+-- being filled in for the first time therefore saves on the second
+-- answer, and every answer after that.
+save : { dayKey : Int } -> Model -> (Model, Cmd Msg)
+save params model =
+    case ( model.mood, model.energy ) of
+        ( Just mood, Just energy ) ->
+            if model.saving then
+                ( model, Cmd.none )
+            else
+                ( { model | saving = True, error = Nothing }
+                , Service.call Shared.saveDay
+                    { dayKey = params.dayKey
+                    , day    = Shared.timeOfDayKey params.dayKey
+                    , mood   = mood
+                    , energy = energy
+                    , note   = model.note
+                    , picks  = model.picks
+                    }
+                    DaySaved
+                )
+
+        _ ->
+            ( model, Cmd.none )
+
+
+-- ===== View =====
+
+
+view : Shared.User -> { dayKey : Int } -> Model -> View Msg
+view _ params model =
+    if model.loading then
+        navigationStack [ navigationTitle (Shared.longDate params.dayKey) ]
+            [ centered (text [] "One moment.") ]
+
+    else
+        case model.screen of
+            Asking index ->
+                case Shared.questionAt index model.factors of
+                    Just question -> askView model question
+                    Nothing       -> dayView params model
+
+            Listing ->
+                dayView params model
+
+
+-- The sheet's own chrome: a presented route has no navigation bar, so
+-- the way out lives here, where iOS puts it.
+sheetHeader : String -> Msg -> View Msg
+sheetHeader label onLeft =
+    section []
+        [ hstack []
+            [ button [] onLeft label
+            , spacer
+            ]
+        ]
+
+
+askView : Model -> Shared.Question -> View Msg
+askView model question =
+    let
+        chosen = answerOf question model
+    in
+    navigationStack [ navigationTitle (Shared.questionPrompt question) ]
+        [ list []
+            [ sheetHeader "Back" BackToList
+            , section []
+                [ title (Shared.questionPrompt question)
+                , subtitle "Changing one answer."
+                ]
+            , section []
+                (List.indexedMap
+                    (\index label ->
+                        button [] (Answered index)
+                            (if chosen == Just index then "● " ++ label else label)
+                    )
+                    (Shared.questionOptions question)
+                )
+            , section [] [ button [] Cleared "Leave it as it is" ]
+            ]
+        ]
+
+
+dayView : { dayKey : Int } -> Model -> View Msg
+dayView params model =
+    navigationStack [ navigationTitle (Shared.longDate params.dayKey) ]
+        [ list []
+            (List.concat
+                [ [ sheetHeader "Done" Dismissed
+                  , section []
+                        [ title (Shared.longDate params.dayKey)
+                        , subtitle (dayStatus params model)
+                        ]
+                  , answersSection params model
+                  ]
+                , noteBlock params model
+                , [ section [] [ errorView model.error ] ]
+                ]
+            )
+        ]
+
+
+dayStatus : { dayKey : Int } -> Model -> String
+dayStatus params model =
+    if model.mood == Nothing then
+        if canEdit params model then
+            "Nothing logged. You can still fill it in."
+
+        else
+            "Nothing was logged, and it is too old to fill in now."
+
+    else if canEdit params model then
+        "Tap a line to change it."
+
+    else
+        "Too old to change. Here to be read."
+
+
+answersSection : { dayKey : Int } -> Model -> View Msg
+answersSection params model =
+    let
+        editable = canEdit params model
+    in
+    if model.mood == Nothing && not editable then
+        section []
+            [ paragraph
+                [ span [] "A gap is fine. The reports work from the days that exist and always say how many there are."
+                ]
+            ]
+
+    else
+        section
+            [ header "That day"
+            , footer
+                (if editable then
+                    "Days older than three can be read but not changed. This one is still inside the window."
+
+                 else
+                    "Filling a day in from memory this late tends to say more about today than about that day, so it is kept as it was."
+                )
+            ]
+            (List.indexedMap (answerRow editable model) (Shared.flow model.factors))
+
+
+answerRow : Bool -> Model -> Int -> Shared.Question -> View Msg
+answerRow editable model index question =
+    let
+        said =
+            case answerOf question model of
+                Just value ->
+                    case List.head (List.drop value (Shared.questionOptions question)) of
+                        Just label -> label
+                        Nothing    -> "-"
+
+                Nothing ->
+                    "not answered"
+
+        label = Shared.questionName question ++ ": " ++ said
+    in
+    if editable then
+        button [] (AskFor index) label
+
+    else
+        paragraph [ span [ bold ] (Shared.questionName question ++ ": "), span [] said ]
+
+
+noteBlock : { dayKey : Int } -> Model -> List (View Msg)
+noteBlock params model =
+    if canEdit params model then
+        section
+            [ header "Anything worth remembering?" ]
+            (List.concat
+                [ [ textField [ submit SaveClicked, width fill ] "A word about the day" model.note NoteChanged ]
+                , if model.note /= model.saved && model.mood /= Nothing then
+                    [ button [ disabled model.saving ] SaveClicked "Save note" ]
+
+                  else
+                    []
+                ]
+            )
+            :: []
+
+    else if model.note == "" then
+        []
+
+    else
+        [ section [ header "Note" ] [ paragraph [ span [] model.note ] ] ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just message ->
+            errorText message
+
+
+page : Page
+page =
+    Page.sheet
+        (Page.dynamicProtected
+            { path   = Frontend.Routes.day
+            , title  = "A day"
+            , init   = init
+            , update = update
+            , view   = view
+            , subscriptions = \_ _ _ -> Sub.none
+            }
+        )

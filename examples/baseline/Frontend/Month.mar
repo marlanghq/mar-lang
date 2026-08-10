@@ -1,0 +1,346 @@
+module Frontend.Month exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import Frontend.Ink
+import Canvas exposing ( canvas, rect, rgba, onTap, watchSize )
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , title, text, paragraph, span, bold, button, errorText
+    , hstack, spacer, centered, empty
+    , height, lines
+    )
+
+
+-- The month at a glance: one square a day, coloured by mood.
+--
+-- This is the recognition view. Nobody reads a table of numbers and
+-- feels anything; everybody looks at a grid and sees the bad week
+-- immediately, before reading a single word. It is also where the
+-- app's honesty about missing days is most visible — blanks are drawn
+-- as blanks, not filled in, not apologised for.
+--
+-- Tapping a day opens it. Inside the three-day window it opens for
+-- editing; older than that it opens to be read, which is the same rule
+-- the log itself follows.
+
+
+type alias Model =
+    { window  : Shared.Window
+    , today   : Maybe Int
+    , year    : Int
+    , month   : Int
+    , dark    : Bool
+    , w       : Int
+    , loading : Bool
+    , error   : Maybe String
+    }
+
+
+type Msg
+    = GotNow Time
+    | GotWindow (Result Service.Error Shared.Window)
+    | DeviceChanged Device
+    | Resized Int Int
+    | Tapped Int Int
+    | PrevMonth
+    | NextMonth
+
+
+-- A year and a bit, so paging back through the calendar never runs out
+-- of data mid-scroll.
+windowDays : Int
+windowDays =
+    400
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { window = Shared.emptyWindow
+      , today = Nothing
+      , year = 1970
+      , month = 1
+      , dark = False
+      , w = 340
+      , loading = True
+      , error = Nothing
+      }
+    , Cmd.perform GotNow Time.now
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        GotNow now ->
+            let
+                key = Shared.dayKeyOf now
+            in
+            ( { model | today = Just key, year = Time.year now, month = Time.month now }
+            , Service.call Shared.loadWindow
+                { sinceDayKey = key - windowDays * Shared.dayMillis }
+                GotWindow
+            )
+
+        GotWindow (Ok window) ->
+            ( { model | window = window, loading = False }, Cmd.none )
+
+        GotWindow (Err why) ->
+            ( { model | loading = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        DeviceChanged device ->
+            ( { model | dark = device.prefersDark }, Cmd.none )
+
+        Resized w _ ->
+            ( { model | w = w }, Cmd.none )
+
+        PrevMonth ->
+            ( shiftMonth (-1) model, Cmd.none )
+
+        NextMonth ->
+            ( shiftMonth 1 model, Cmd.none )
+
+        Tapped x y ->
+            case cellDayKey model x y of
+                Just key ->
+                    ( model, Nav.pushTo Frontend.Routes.day { dayKey = key } )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+
+-- Month arithmetic through Time rather than by hand, so December to
+-- January rolls the year over without a special case here.
+shiftMonth : Int -> Model -> Model
+shiftMonth delta model =
+    let
+        moved = Time.addMonths (Time.fromYMD model.year model.month 1) delta
+    in
+    { model | year = Time.year moved, month = Time.month moved }
+
+
+-- ===== Grid geometry =====
+--
+-- Shared by the drawing and the hit test, which is the only way the two
+-- can be guaranteed to agree about where Tuesday is.
+
+
+gridGap : Int
+gridGap =
+    6
+
+
+headerHeight : Int
+headerHeight =
+    22
+
+
+cellSize : Model -> Int
+cellSize model =
+    clamp 22 56 ((model.w - 6 * gridGap) // 7)
+
+
+gridWidth : Model -> Int
+gridWidth model =
+    7 * cellSize model + 6 * gridGap
+
+
+gridLeft : Model -> Int
+gridLeft model =
+    max 0 ((model.w - gridWidth model) // 2)
+
+
+firstKey : Model -> Int
+firstKey model =
+    Shared.dayKeyOf (Time.fromYMD model.year model.month 1)
+
+
+daysInMonth : Model -> Int
+daysInMonth model =
+    let
+        first = Time.fromYMD model.year model.month 1
+    in
+    Shared.daysBetween (Shared.dayKeyOf first) (Shared.dayKeyOf (Time.addMonths first 1))
+
+
+-- Which square holds day N of the month: the weekday of the 1st decides
+-- the offset, and the rest is division.
+slotOf : Model -> Int -> Int
+slotOf model index =
+    Shared.weekdayOf (firstKey model) + index
+
+
+rowCount : Model -> Int
+rowCount model =
+    (slotOf model (daysInMonth model - 1)) // 7 + 1
+
+
+canvasLines : Model -> Int
+canvasLines model =
+    (headerHeight + rowCount model * (cellSize model + gridGap) + 23) // 24
+
+
+cellDayKey : Model -> Int -> Int -> Maybe Int
+cellDayKey model x y =
+    let
+        size = cellSize model
+        col  = (x - gridLeft model) // (size + gridGap)
+        row  = (y - headerHeight) // (size + gridGap)
+        slot = row * 7 + col
+        index = slot - Shared.weekdayOf (firstKey model)
+    in
+    if col < 0 || col > 6 || row < 0 || index < 0 || index >= daysInMonth model then
+        Nothing
+    else
+        Just (firstKey model + index * Shared.dayMillis)
+
+
+-- ===== Drawing =====
+
+
+grid : Model -> View Msg
+grid model =
+    let
+        size = cellSize model
+        left = gridLeft model
+        days = Shared.daysOf model.window
+    in
+    canvas Crisp
+        [ watchSize Resized, onTap Tapped, height (lines (canvasLines model)) ]
+        (List.concat
+            [ List.indexedMap
+                (\i name ->
+                    Canvas.text (left + i * (size + gridGap) + size // 2) 10 10
+                        Canvas.Center (Frontend.Ink.mutedInk model.dark) name
+                )
+                Shared.weekdayNames
+            , List.map (daySquare model days size left) (List.range 0 (daysInMonth model - 1))
+            ]
+        )
+
+
+daySquare : Model -> List Shared.DayRow -> Int -> Int -> Int -> Shape
+daySquare model days size left index =
+    let
+        slot = slotOf model index
+        x    = left + modBy 7 slot * (size + gridGap)
+        y    = headerHeight + slot // 7 * (size + gridGap)
+        key  = firstKey model + index * Shared.dayMillis
+    in
+    case Shared.dayAt key days of
+        Just day ->
+            Canvas.group []
+                [ rect x y size size (Frontend.Ink.levelColor day.mood)
+                , Canvas.text (x + size // 2) (y + size // 2) 11 Canvas.Center
+                    Frontend.Ink.onLabel
+                    (String.fromInt (index + 1))
+                ]
+
+        Nothing ->
+            Canvas.group []
+                [ rect x y size size (Frontend.Ink.idleCell model.dark)
+                , Canvas.text (x + size // 2) (y + size // 2) 11 Canvas.Center
+                    (Frontend.Ink.idleLabel model.dark)
+                    (String.fromInt (index + 1))
+                ]
+
+
+-- The key, drawn with the same colours as the grid so it cannot drift
+-- from it. Five swatches, named with the same words the log used.
+legend : Model -> View Msg
+legend model =
+    let
+        cw = (model.w - 4 * 6) // 5
+    in
+    canvas Crisp [ height (lines 2) ]
+        (List.indexedMap
+            (\i label ->
+                Canvas.group []
+                    [ rect (i * (cw + 6)) 6 cw 14 (Frontend.Ink.levelColor (i + 1))
+                    , Canvas.text (i * (cw + 6) + cw // 2) 32 10 Canvas.Center
+                        (Frontend.Ink.mutedInk model.dark) label
+                    ]
+            )
+            Shared.moodLabels
+        )
+
+
+-- ===== View =====
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    if model.loading then
+        navigationStack [ navigationTitle "This month" ]
+            [ centered (text [] "Loading your log.") ]
+
+    else
+        navigationStack [ navigationTitle "This month" ]
+            [ list []
+                -- Month name on its own line, the two steps under it. Sharing
+                -- one row read fine on a desktop and wrapped the month onto
+                -- two lines on a phone, which is where this screen lives.
+                [ section []
+                    [ title (Shared.monthName model.month ++ " " ++ String.fromInt model.year)
+                    , hstack []
+                        [ button [] PrevMonth "Earlier"
+                        , spacer
+                        , button [] NextMonth "Later"
+                        ]
+                    ]
+                , section [ footer "Tap a day to open it. The last three days can still be changed; older ones are there to be read." ]
+                    [ grid model ]
+                , section [ header "Colours" ]
+                    [ legend model ]
+                , summarySection model
+                , errorSection model.error
+                ]
+            ]
+
+
+summarySection : Model -> View Msg
+summarySection model =
+    let
+        first = firstKey model
+        last  = first + (daysInMonth model - 1) * Shared.dayMillis
+        days  = Shared.inRange first last (Shared.daysOf model.window)
+    in
+    if List.isEmpty days then
+        section [ header "This month" ]
+            [ paragraph [ span [] "Nothing logged in this month." ] ]
+
+    else
+        section [ header "This month" ]
+            [ paragraph
+                [ span [ bold ] (String.fromInt (List.length days))
+                , span [] (" of " ++ String.fromInt (daysInMonth model) ++ " days logged. Mood ")
+                , span [ bold ] (Shared.formatTenths (Shared.mean (List.map (\d -> d.mood) days)))
+                , span [] ", energy "
+                , span [ bold ] (Shared.formatTenths (Shared.mean (List.map (\d -> d.energy) days)))
+                , span [] "."
+                ]
+            ]
+
+
+errorSection : Maybe String -> View Msg
+errorSection maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just message ->
+            section [] [ errorText message ]
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/month"
+        , title  = "This month"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Device.watch DeviceChanged
+        }

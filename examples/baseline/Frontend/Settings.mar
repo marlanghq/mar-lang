@@ -1,0 +1,139 @@
+module Frontend.Settings exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , text, paragraph, span, bold
+    , button, errorText, navigationLink, confirm
+    , empty, disabled
+    )
+
+
+-- Account and privacy. Small on purpose: the only settings worth having
+-- here are the ones that change what the app asks you and the ones that
+-- let you take your data back.
+
+
+type alias Model =
+    { confirming : Bool
+    , busy       : Bool
+    , error      : Maybe String
+    }
+
+
+type Msg
+    = DeleteClicked
+    | DeleteCancelled
+    | DeleteConfirmed
+    | Deleted (Result Service.Error ())
+    | SignOutClicked
+    | SignedOut (Result String ())
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { confirming = False, busy = False, error = Nothing }, Cmd.none )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        DeleteClicked ->
+            ( { model | confirming = True }, Cmd.none )
+
+        DeleteCancelled ->
+            ( { model | confirming = False }, Cmd.none )
+
+        DeleteConfirmed ->
+            ( { model | confirming = False, busy = True, error = Nothing }
+            , Service.call Shared.deleteAccount () Deleted
+            )
+
+        -- The rows are gone server-side; signing out drops the session
+        -- and the cookie, which is what actually returns the browser to
+        -- a signed-out state.
+        Deleted (Ok _) ->
+            ( { model | busy = False }, Auth.logout SignedOut )
+
+        Deleted (Err why) ->
+            ( { model | busy = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        SignOutClicked ->
+            ( { model | busy = True }, Auth.logout SignedOut )
+
+        SignedOut _ ->
+            ( { model | busy = False }, Nav.replaceTo Frontend.Routes.signIn {} )
+
+
+view : Shared.User -> Model -> View Msg
+view user model =
+    navigationStack [ navigationTitle "Settings" ]
+        [ list []
+            [ section [ header "Signed in as" ]
+                [ text [] user.email ]
+
+            , section
+                [ header "What you track"
+                , footer "Turning something off only stops it being asked. Everything already logged for it is kept, and the reports about that stretch stay valid."
+                ]
+                [ navigationLink [] Frontend.Routes.setup {} (text [] "Change the questions") ]
+
+            , section
+                [ header "Your data"
+                , footer "There is no analytics service, no advertising and no third party inside this app. Nobody is buying a year of your moods, because nobody is being sold it."
+                ]
+                [ paragraph
+                    [ span [] "Your log lives in this app's own database and is served to nobody but you. Deleting your account removes every entry, every answer and the account itself, straight away and for good."
+                    ]
+                ]
+
+            , section []
+                [ button [ disabled model.busy ] SignOutClicked "Sign out" ]
+
+            , section []
+                [ errorView model.error
+                , button [ disabled model.busy ] DeleteClicked "Delete my account"
+                , confirmView model
+                ]
+            ]
+        ]
+
+
+confirmView : Model -> View Msg
+confirmView model =
+    if model.confirming then
+        confirm
+            { title = "Delete your account and the whole log?"
+            , confirmLabel = "Delete everything"
+            , destructive = True
+            , onConfirm = DeleteConfirmed
+            , onCancel = DeleteCancelled
+            }
+
+    else
+        empty
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just message ->
+            errorText message
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/settings"
+        , title  = "Settings"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }

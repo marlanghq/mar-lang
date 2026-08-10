@@ -1,0 +1,76 @@
+module Main exposing (main)
+
+
+import Backend.Users
+import Backend.Log
+import Backend.Account
+import Frontend.SignIn
+import Frontend.VerifyCode
+import Frontend.Setup
+import Frontend.Today
+import Frontend.Month
+import Frontend.Patterns
+import Frontend.DayEntry
+import Frontend.Settings
+
+
+-- Baseline — a daily mood log that reports what moves it.
+--
+-- Sign in with an email and a one-time code, answer a few setup
+-- questions that decide which fields exist for you, then log a mood, an
+-- energy level and a handful of surroundings once a day. After enough
+-- days the app compares your best days against your worst and reports
+-- what showed up on each side — at the same day and at the next, since
+-- sleep and alcohol land the morning after.
+--
+-- This is the only module that sees both halves. Auth.config picks up
+-- the users entity; the services list gathers the protected endpoints;
+-- the pages list enumerates every route, and the runtime dispatches by
+-- path.
+--
+-- The unusual shape of this app is worth naming: the backend is four
+-- tables and six handlers, and every number the app reports is computed
+-- on the client by pure functions in Shared. That is not laziness about
+-- the server, it is where the value is — the reporting rules are the
+-- product, and keeping them in one readable file next to the wire
+-- types is what makes "it never claims more than the data supports"
+-- something a reader can check rather than take on faith.
+--
+-- Sign-in codes are printed to the server log in dev mode, so you can
+-- copy and paste without configuring SMTP. For production, set the
+-- mailer under "mail" in mar.json.
+--
+-- Open with:  mar dev examples/baseline
+
+
+auth : Auth { id : Int, email : String }
+auth =
+    Auth.config
+        { entity     = Backend.Users.users
+        , identify   = \u -> u.email
+        , signInPage = Frontend.SignIn.page
+        , email      = { subject = "Your Baseline sign-in code" }
+        , signup     = \userEmail -> { email = userEmail }
+        , sessionDuration = Time.days 30
+        }
+
+
+main : Cmd ()
+main =
+    App.fullstack
+        { services =
+            List.concat
+                [ Backend.Log.services
+                , Backend.Account.services
+                ]
+        , pages =
+            [ Frontend.SignIn.page
+            , Frontend.VerifyCode.page
+            , Frontend.Setup.page
+            , Frontend.Today.page
+            , Frontend.Month.page
+            , Frontend.Patterns.page
+            , Frontend.DayEntry.page
+            , Frontend.Settings.page
+            ]
+        }

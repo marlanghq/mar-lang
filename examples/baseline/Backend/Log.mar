@@ -1,0 +1,320 @@
+module Backend.Log exposing
+    ( services, entries, choices, tracked, cycleStarts, deleteAllForUser )
+
+
+import Shared
+
+
+-- The whole server side of Baseline, and it is deliberately small.
+--
+-- Four tables, five handlers, no analysis. Everything the app reports
+-- is derived on the client from the pure functions in Shared, so this
+-- module's entire job is: keep the rows, keep them the caller's own,
+-- and enforce the two rules that only the server can enforce — one row
+-- per day, and no rewriting a day older than the edit window.
+--
+-- Ownership works the same way in every handler: reads filter by
+-- `userId = caller.id`, writes stamp it. A request cannot name a user,
+-- so a forged field can at worst disturb the caller's own data.
+
+
+-- ===== Entities =====
+
+
+entries : Entity Shared.Entry
+entries =
+    Entity.define
+        { name = "entries"
+        , columns =
+            { id     = Entity.serial
+            , userId = Entity.int Entity.notNull
+            , dayKey = Entity.int Entity.notNull
+            , day    = Entity.timestamp Entity.notNull
+            , mood   = Entity.int Entity.notNull
+            , energy = Entity.int Entity.notNull
+            , note   = Entity.text Entity.notNull
+            }
+        -- One entry per person per day. This is what makes saving an
+        -- upsert rather than a growing pile of second opinions about
+        -- the same Tuesday — and it is also what keeps the reports
+        -- honest, since a day can never be counted twice.
+        , uniques = [ [ "userId", "dayKey" ] ]
+        }
+
+
+choices : Entity Shared.Choice
+choices =
+    Entity.define
+        { name = "choices"
+        , columns =
+            { id     = Entity.serial
+            , userId = Entity.int Entity.notNull
+            , dayKey = Entity.int Entity.notNull
+            , key    = Entity.text Entity.notNull
+            , value  = Entity.int Entity.notNull
+            }
+        , uniques = [ [ "userId", "dayKey", "key" ] ]
+        }
+
+
+tracked : Entity Shared.Tracked
+tracked =
+    Entity.define
+        { name = "tracked_factors"
+        , columns =
+            { id     = Entity.serial
+            , userId = Entity.int Entity.notNull
+            , key    = Entity.text Entity.notNull
+            }
+        , uniques = [ [ "userId", "key" ] ]
+        }
+
+
+cycleStarts : Entity Shared.CycleStart
+cycleStarts =
+    Entity.define
+        { name = "cycle_starts"
+        , columns =
+            { id     = Entity.serial
+            , userId = Entity.int Entity.notNull
+            , dayKey = Entity.int Entity.notNull
+            , day    = Entity.timestamp Entity.notNull
+            }
+        , uniques = [ [ "userId", "dayKey" ] ]
+        }
+
+
+-- ===== Setup =====
+--
+-- There is no "profile completed" column. Setup always writes at least
+-- the three factors everyone gets, so a person with no rows is a person
+-- who has not been through setup — one fact, stored once.
+
+
+getSetupImpl : () -> Shared.User -> Task Shared.SetupState
+getSetupImpl _ user =
+    Repo.findBy tracked { userId = user.id }
+        |> Task.map
+            (\rows ->
+                { done    = not (List.isEmpty rows)
+                , factors = List.map (\r -> r.key) rows
+                }
+            )
+
+
+-- Replaces the tracked set wholesale: whatever the setup screen (or
+-- Settings, which is the same screen) says is now the truth.
+--
+-- Turning a factor off deletes only the tracking row. Every answer
+-- already given for it stays, which is the point: a report over the
+-- months it WAS tracked is still a valid report, and turning it back
+-- on later picks up where it left off.
+saveSetupImpl : { factors : List String } -> Shared.User -> Task ()
+saveSetupImpl input user =
+    let
+        -- The three everyone gets are added here rather than trusted
+        -- from the request, so a client can never leave somebody with
+        -- an empty log — or with an empty tracked set, which would read
+        -- as "never set up" and bounce them back to setup forever.
+        fromCatalogue =
+            List.map (\f -> f.key)
+                (List.filter
+                    (\f -> List.member f.key input.factors || f.avail == Shared.Always)
+                    Shared.catalogue
+                )
+
+        -- The cycle is tracked like a factor but is not one (it is an
+        -- event, not a daily answer), so it is not in the catalogue and
+        -- has to be carried through by name.
+        withCycle =
+            if List.member Shared.cycleKey input.factors then
+                Shared.cycleKey :: fromCatalogue
+            else
+                fromCatalogue
+    in
+    Repo.findBy tracked { userId = user.id }
+        |> Task.andThen
+            (\existing ->
+                Task.sequence (List.map (\r -> Repo.deleteById tracked r.id) existing)
+            )
+        |> Task.andThen
+            (\_ ->
+                Task.sequence
+                    (List.map
+                        (\key -> Repo.create tracked { userId = user.id, key = key })
+                        withCycle
+                    )
+            )
+        |> Task.map (\_ -> ())
+
+
+-- ===== The window =====
+--
+-- One read for every screen. `sinceDayKey` bounds it so an account
+-- with years of history does not ship all of it to draw one month.
+
+
+loadWindowImpl : { sinceDayKey : Int } -> Shared.User -> Task Shared.Window
+loadWindowImpl input user =
+    Repo.findBy entries { userId = user.id }
+        |> Task.andThen
+            (\allEntries ->
+                Repo.findBy choices { userId = user.id }
+                    |> Task.andThen
+                        (\allChoices ->
+                            Repo.findBy cycleStarts { userId = user.id }
+                                |> Task.map
+                                    (\allCycles ->
+                                        { entries = List.filter (\e -> e.dayKey >= input.sinceDayKey) allEntries
+                                        , choices = List.filter (\c -> c.dayKey >= input.sinceDayKey) allChoices
+                                        , cycles  = List.filter (\c -> c.dayKey >= input.sinceDayKey) allCycles
+                                        }
+                                    )
+                        )
+            )
+
+
+-- ===== Saving a day =====
+--
+-- The edit window is enforced here and only here. A client that lets
+-- you scroll back a month would still be refused, and the refusal is a
+-- typed outcome the caller has to handle rather than an error string.
+
+
+saveDayImpl :
+    { dayKey : Int, day : Time, mood : Int, energy : Int, note : String, picks : List Shared.Pick }
+    -> Shared.User
+    -> Task Shared.SaveOutcome
+saveDayImpl input user =
+    Time.now
+        |> Task.andThen
+            (\now ->
+                if not (Shared.editable (Shared.dayKeyOf now) input.dayKey) then
+                    Task.succeed Shared.DayOutOfRange
+                else
+                    upsertEntry input user
+                        |> Task.andThen (\_ -> replaceChoices input user)
+                        |> Task.map (\_ -> Shared.DaySaved)
+            )
+
+
+upsertEntry :
+    { dayKey : Int, day : Time, mood : Int, energy : Int, note : String, picks : List Shared.Pick }
+    -> Shared.User
+    -> Task ()
+upsertEntry input user =
+    Repo.findBy entries { userId = user.id, dayKey = input.dayKey }
+        |> Task.andThen
+            (\existing ->
+                case List.head existing of
+                    Just row ->
+                        Repo.update entries row.id
+                            { mood = input.mood, energy = input.energy, note = input.note }
+                            |> Task.map (\_ -> ())
+
+                    Nothing ->
+                        Repo.create entries
+                            { userId = user.id
+                            , dayKey = input.dayKey
+                            , day    = input.day
+                            , mood   = input.mood
+                            , energy = input.energy
+                            , note   = input.note
+                            }
+                            |> Task.map (\_ -> ())
+            )
+
+
+-- Clear the day's answers and write the ones just sent. Wholesale
+-- rather than field by field, because the set of factors can change
+-- between two visits to the same day: a factor turned off since the
+-- last save has to disappear from that day, not linger as an orphan.
+replaceChoices :
+    { dayKey : Int, day : Time, mood : Int, energy : Int, note : String, picks : List Shared.Pick }
+    -> Shared.User
+    -> Task ()
+replaceChoices input user =
+    Repo.findBy choices { userId = user.id, dayKey = input.dayKey }
+        |> Task.andThen
+            (\existing ->
+                Task.sequence (List.map (\c -> Repo.deleteById choices c.id) existing)
+            )
+        |> Task.andThen
+            (\_ ->
+                Task.sequence
+                    (List.map
+                        (\p ->
+                            Repo.create choices
+                                { userId = user.id
+                                , dayKey = input.dayKey
+                                , key    = p.key
+                                , value  = p.value
+                                }
+                        )
+                        input.picks
+                    )
+            )
+        |> Task.map (\_ -> ())
+
+
+-- ===== The cycle =====
+--
+-- A factual event, not an impression, so unlike a day's mood it can be
+-- corrected at any date. Marking a day that is already marked is a
+-- no-op rather than an error: the gesture is a toggle on the screen and
+-- a double tap should not be able to break anything.
+
+
+markPeriodImpl : { dayKey : Int, day : Time } -> Shared.User -> Task ()
+markPeriodImpl input user =
+    Repo.findBy cycleStarts { userId = user.id, dayKey = input.dayKey }
+        |> Task.andThen
+            (\existing ->
+                if List.isEmpty existing then
+                    Repo.create cycleStarts
+                        { userId = user.id, dayKey = input.dayKey, day = input.day }
+                        |> Task.map (\_ -> ())
+                else
+                    Task.succeed ()
+            )
+
+
+clearPeriodImpl : { dayKey : Int } -> Shared.User -> Task ()
+clearPeriodImpl input user =
+    Repo.findBy cycleStarts { userId = user.id, dayKey = input.dayKey }
+        |> Task.andThen
+            (\rows -> Task.sequence (List.map (\r -> Repo.deleteById cycleStarts r.id) rows))
+        |> Task.map (\_ -> ())
+
+
+-- ===== Cascade =====
+--
+-- Called by Backend.Account when somebody deletes their account. Every
+-- read filters by the caller, so this can only ever erase the caller's
+-- own rows.
+
+
+deleteAllForUser : Shared.User -> Task ()
+deleteAllForUser user =
+    Repo.findBy entries { userId = user.id }
+        |> Task.andThen (\rows -> Task.sequence (List.map (\r -> Repo.deleteById entries r.id) rows))
+        |> Task.andThen (\_ -> Repo.findBy choices { userId = user.id })
+        |> Task.andThen (\rows -> Task.sequence (List.map (\r -> Repo.deleteById choices r.id) rows))
+        |> Task.andThen (\_ -> Repo.findBy cycleStarts { userId = user.id })
+        |> Task.andThen (\rows -> Task.sequence (List.map (\r -> Repo.deleteById cycleStarts r.id) rows))
+        |> Task.andThen (\_ -> Repo.findBy tracked { userId = user.id })
+        |> Task.andThen (\rows -> Task.sequence (List.map (\r -> Repo.deleteById tracked r.id) rows))
+        |> Task.map (\_ -> ())
+
+
+-- ===== Service wiring =====
+
+
+services =
+    [ Auth.protect Shared.getSetup    getSetupImpl
+    , Auth.protect Shared.saveSetup   saveSetupImpl
+    , Auth.protect Shared.loadWindow  loadWindowImpl
+    , Auth.protect Shared.saveDay     saveDayImpl
+    , Auth.protect Shared.markPeriod  markPeriodImpl
+    , Auth.protect Shared.clearPeriod clearPeriodImpl
+    ]

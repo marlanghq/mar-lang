@@ -1,0 +1,705 @@
+module Frontend.Today exposing (page)
+
+
+import Shared
+import Frontend.Routes
+import UI exposing
+    ( navigationStack, navigationTitle
+    , list, section, header, footer
+    , title, subtitle, text, paragraph, span, bold
+    , textField, button, picker, errorText, navigationLink
+    , centered, empty, disabled, submit
+    , width, fill
+    )
+
+
+-- The home screen and the whole daily ritual.
+--
+-- A blank day opens as a SEQUENCE: one question filling the screen,
+-- answered with one tap, which advances to the next. An already
+-- answered day opens as a SUMMARY: the day as a list of what you said,
+-- any row tappable to change just that one.
+--
+-- The two shapes exist because they are two different errands. Logging
+-- is a run of decisions you make once and want out of the way; going
+-- back is a single correction you should not have to walk a wizard to
+-- reach. An earlier draft used one scrolling form for both and did
+-- neither well: eleven questions stacked on a page read as work, and
+-- work is how a daily habit dies in week three.
+--
+-- Every option is a real button in the platform's own type. Nothing on
+-- this screen is drawn by the app, which is a deliberate reversal —
+-- the first version drew the answer strips on a canvas, and canvas
+-- text sitting beside native text never quite matches, however close
+-- the family and the size.
+
+
+-- How far back the window reaches. Wide enough for a year of
+-- comparisons in one request, which is what lets every other screen
+-- open instantly from data already in hand.
+windowDays : Int
+windowDays =
+    400
+
+
+-- Where the reader is. `Running` walks the sequence and keeps going;
+-- `Fixing` came from a summary row and returns there after one answer.
+type Screen
+    = Running Int
+    | Fixing Int
+    | Summary
+
+
+type alias Model =
+    { factors : List String
+    , window  : Shared.Window
+    , today   : Maybe Int
+    , screen  : Screen
+    , mood    : Maybe Int
+    , energy  : Maybe Int
+    , picks   : List Shared.Pick
+    , chooser : Int          -- which row the correction menu is pointing at
+    , pending : Bool         -- an answer arrived while a save was in flight
+    , note    : String
+    , saved   : String        -- the note as last written, to spot a dirty draft
+    , loading : Bool
+    , saving  : Bool
+    , error   : Maybe String
+    }
+
+
+type Msg
+    = GotNow Time
+    | GotSetup (Result Service.Error Shared.SetupState)
+    | GotWindow (Result Service.Error Shared.Window)
+    | Answered Int
+    | WentBack
+    | FixClicked Int
+    | NoteChanged String
+    | SaveClicked
+    | DaySaved (Result Service.Error Shared.SaveOutcome)
+    | PeriodStarted
+    | PeriodCleared
+    | CycleWritten (Result Service.Error ())
+
+
+init : Shared.User -> (Model, Cmd Msg)
+init _ =
+    ( { factors = []
+      , window  = Shared.emptyWindow
+      , today   = Nothing
+      , screen  = Summary
+      , mood    = Nothing
+      , energy  = Nothing
+      , picks   = []
+      , chooser = 0
+      , pending = False
+      , note    = ""
+      , saved   = ""
+      , loading = True
+      , saving  = False
+      , error   = Nothing
+      }
+    , Cmd.batch
+        [ Cmd.perform GotNow Time.now
+        , Service.call Shared.getSetup () GotSetup
+        ]
+    )
+
+
+update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
+update _ msg model =
+    case msg of
+        -- The clock is read once, here, and every day key on the screen
+        -- comes from it. A person logging at eleven at night means
+        -- tonight, not whatever the server's clock says.
+        GotNow now ->
+            let
+                key = Shared.dayKeyOf now
+            in
+            ( { model | today = Just key }
+            , Service.call Shared.loadWindow
+                { sinceDayKey = key - windowDays * Shared.dayMillis }
+                GotWindow
+            )
+
+        -- No tracked factors means setup was never finished, which is
+        -- the only thing that sends somebody off this page.
+        GotSetup (Ok state) ->
+            if state.done then
+                ( { model | factors = state.factors }, Cmd.none )
+            else
+                ( model, Nav.replaceTo Frontend.Routes.setup {} )
+
+        GotSetup (Err why) ->
+            ( { model | loading = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        GotWindow (Ok window) ->
+            ( seedFromToday { model | window = window, loading = False }, Cmd.none )
+
+        GotWindow (Err why) ->
+            ( { model | loading = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        -- Every answer writes, as soon as both axes exist. Leaving the
+        -- sequence half done therefore keeps what was already given
+        -- instead of losing it, which is also why there is no skip: a
+        -- factor that did not apply has an option that says so, and a
+        -- person who wants to stop can simply stop.
+        Answered value ->
+            save (nextScreen (record value model))
+
+        WentBack ->
+            case model.screen of
+                Running index ->
+                    ( { model | screen = if index <= 0 then Summary else Running (index - 1) }, Cmd.none )
+
+                Fixing _ ->
+                    ( { model | screen = Summary }, Cmd.none )
+
+                Summary ->
+                    ( model, Cmd.none )
+
+        FixClicked index ->
+            ( { model | screen = Fixing index, chooser = index }, Cmd.none )
+
+        NoteChanged value ->
+            ( { model | note = value }, Cmd.none )
+
+        SaveClicked ->
+            save model
+
+        -- Replaying the saved day into the local window is what lets the
+        -- week card update straight away instead of waiting on a refetch
+        -- that could only tell us what we already know.
+        DaySaved (Ok Shared.DaySaved) ->
+            let
+                settled =
+                    { model | saving = False, pending = False
+                    , saved = model.note, window = applyLocally model
+                    }
+            in
+            if model.pending then save settled else ( settled, Cmd.none )
+
+        DaySaved (Ok Shared.DayOutOfRange) ->
+            ( { model | saving = False, error = Just "That day is outside the three-day window." }, Cmd.none )
+
+        DaySaved (Err why) ->
+            ( { model | saving = False, error = Just (Service.errorToString why) }, Cmd.none )
+
+        PeriodStarted ->
+            case model.today of
+                Just key ->
+                    ( { model | window = addCycle key model.window }
+                    , Service.call Shared.markPeriod
+                        { dayKey = key, day = Shared.timeOfDayKey key }
+                        CycleWritten
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        PeriodCleared ->
+            case model.today of
+                Just key ->
+                    ( { model | window = removeCycle key model.window }
+                    , Service.call Shared.clearPeriod { dayKey = key } CycleWritten
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        CycleWritten (Ok _) ->
+            ( model, Cmd.none )
+
+        CycleWritten (Err why) ->
+            ( { model | error = Just (Service.errorToString why) }, Cmd.none )
+
+
+-- ===== Walking the sequence =====
+
+
+currentIndex : Model -> Int
+currentIndex model =
+    case model.screen of
+        Running index -> index
+        Fixing index  -> index
+        Summary       -> 0
+
+
+record : Int -> Model -> Model
+record value model =
+    case Shared.questionAt (currentIndex model) model.factors of
+        Nothing ->
+            model
+
+        Just Shared.AskMood ->
+            { model | mood = Just (value + 1) }
+
+        Just Shared.AskEnergy ->
+            { model | energy = Just (value + 1) }
+
+        Just (Shared.AskFactor factor) ->
+            { model | picks = setPick factor.key value model.picks }
+
+
+-- Where the next tap lands. A correction returns to the summary; a run
+-- steps forward, and the last question ends it.
+nextScreen : Model -> Model
+nextScreen model =
+    case model.screen of
+        Fixing _ ->
+            { model | screen = Summary }
+
+        Summary ->
+            model
+
+        Running index ->
+            if index + 1 >= List.length (Shared.flow model.factors) then
+                { model | screen = Summary }
+            else
+                { model | screen = Running (index + 1) }
+
+
+-- Nothing is written until both axes exist, since the server needs
+-- both. Once they do, every later answer writes the whole day again.
+--
+-- A save asked for while one is in flight is REMEMBERED, not dropped:
+-- answers can arrive faster than a round trip, and dropping the last
+-- one would quietly lose it.
+save : Model -> (Model, Cmd Msg)
+save model =
+    case ( model.today, model.mood, model.energy ) of
+        ( Just key, Just mood, Just energy ) ->
+            if model.saving then
+                ( { model | pending = True }, Cmd.none )
+            else
+                ( { model | saving = True, error = Nothing }
+                , Service.call Shared.saveDay
+                    { dayKey = key
+                    , day    = Shared.timeOfDayKey key
+                    , mood   = mood
+                    , energy = energy
+                    , note   = model.note
+                    , picks  = model.picks
+                    }
+                    DaySaved
+                )
+
+        _ ->
+            ( model, Cmd.none )
+
+
+-- ===== Model helpers =====
+
+
+setPick : String -> Int -> List Shared.Pick -> List Shared.Pick
+setPick key value picks =
+    { key = key, value = value } :: List.filter (\p -> p.key /= key) picks
+
+
+pickValue : String -> List Shared.Pick -> Maybe Int
+pickValue key picks =
+    List.head (List.map (\p -> p.value) (List.filter (\p -> p.key == key) picks))
+
+
+answerOf : Shared.Question -> Model -> Maybe Int
+answerOf question model =
+    case question of
+        Shared.AskMood       -> Maybe.map (\v -> v - 1) model.mood
+        Shared.AskEnergy     -> Maybe.map (\v -> v - 1) model.energy
+        Shared.AskFactor f   -> pickValue f.key model.picks
+
+
+-- A day already logged opens on its summary; a blank one starts the
+-- sequence. Opening the app twice in an evening should show what you
+-- already said, not a fresh run that quietly overwrites it.
+seedFromToday : Model -> Model
+seedFromToday model =
+    case model.today of
+        Nothing ->
+            model
+
+        Just key ->
+            case Shared.dayAt key (Shared.daysOf model.window) of
+                Nothing ->
+                    { model | screen = Running 0 }
+
+                Just day ->
+                    { model
+                        | screen = Summary
+                        , mood   = Just day.mood
+                        , energy = Just day.energy
+                        , note   = day.note
+                        , saved  = day.note
+                        , picks  = List.map (\c -> { key = c.key, value = c.value }) day.picks
+                    }
+
+
+applyLocally : Model -> Shared.Window
+applyLocally model =
+    case ( model.today, model.mood, model.energy ) of
+        ( Just key, Just mood, Just energy ) ->
+            let
+                window = model.window
+
+                entry =
+                    { id = 0, userId = 0, dayKey = key, day = Shared.timeOfDayKey key
+                    , mood = mood, energy = energy, note = model.note
+                    }
+
+                choices =
+                    List.map
+                        (\p -> { id = 0, userId = 0, dayKey = key, key = p.key, value = p.value })
+                        model.picks
+            in
+            { window
+                | entries = entry :: List.filter (\e -> e.dayKey /= key) window.entries
+                , choices = List.concat [ choices, List.filter (\c -> c.dayKey /= key) window.choices ]
+            }
+
+        _ ->
+            model.window
+
+
+addCycle : Int -> Shared.Window -> Shared.Window
+addCycle key window =
+    if List.any (\c -> c.dayKey == key) window.cycles then
+        window
+    else
+        { window
+            | cycles = { id = 0, userId = 0, dayKey = key, day = Shared.timeOfDayKey key } :: window.cycles
+        }
+
+
+removeCycle : Int -> Shared.Window -> Shared.Window
+removeCycle key window =
+    { window | cycles = List.filter (\c -> c.dayKey /= key) window.cycles }
+
+
+-- ===== View =====
+
+
+view : Shared.User -> Model -> View Msg
+view _ model =
+    case model.today of
+        Nothing ->
+            waiting
+
+        Just key ->
+            if model.loading then
+                waiting
+
+            else
+                case Shared.questionAt (currentIndex model) model.factors of
+                    Just question ->
+                        case model.screen of
+                            Summary  -> summaryView model key
+                            Running _ -> askView model question
+                            Fixing _  -> askView model question
+
+                    Nothing ->
+                        summaryView model key
+
+
+waiting : View Msg
+waiting =
+    navigationStack [ navigationTitle "Today" ]
+        [ centered (text [] "One moment.") ]
+
+
+-- ===== One question =====
+--
+-- The whole screen is the question and its answers. Each answer is a
+-- button, so it is a real control in the platform's type at the
+-- platform's tap size, and answering advances on its own.
+
+
+askView : Model -> Shared.Question -> View Msg
+askView model question =
+    let
+        index = currentIndex model
+        total = List.length (Shared.flow model.factors)
+        chosen = answerOf question model
+    in
+    navigationStack [ navigationTitle "Today" ]
+        [ list []
+            (List.concat
+                [ [ section []
+                        [ title (Shared.questionPrompt question)
+                        , subtitle (progressLine model index total)
+                        ]
+                  ]
+                , [ section []
+                        (List.indexedMap (optionButton chosen) (Shared.questionOptions question))
+                  ]
+                , [ section [] (footerButtons model index) ]
+                ]
+            )
+        ]
+
+
+progressLine : Model -> Int -> Int -> String
+progressLine model index total =
+    case model.screen of
+        Fixing _ ->
+            "Changing one answer."
+
+        _ ->
+            String.fromInt (index + 1) ++ " of " ++ String.fromInt total
+
+
+-- The marker shows what is already recorded, which matters when the
+-- reader came here from a summary row to change one thing. In a fresh
+-- run there is nothing recorded and every option shows plain.
+optionButton : Maybe Int -> Int -> String -> View Msg
+optionButton chosen index label =
+    button [] (Answered index)
+        (if chosen == Just index then "● " ++ label else label)
+
+
+footerButtons : Model -> Int -> List (View Msg)
+footerButtons model index =
+    if index > 0 || correcting model then
+        [ button [] WentBack "Back" ]
+
+    else
+        []
+
+
+correcting : Model -> Bool
+correcting model =
+    case model.screen of
+        Fixing _  -> True
+        Running _ -> False
+        Summary   -> False
+
+
+-- ===== The day as a list =====
+
+
+summaryView : Model -> Int -> View Msg
+summaryView model key =
+    navigationStack
+        [ navigationTitle "Today" ]
+        [ list []
+            (List.concat
+                [ [ section []
+                        [ title (Shared.longDate key)
+                        , subtitle
+                            (if model.mood == Nothing then
+                                "Nothing logged yet."
+
+                             else
+                                "Logged."
+                            )
+                        ]
+                  ]
+                , [ answersSection model ]
+                , [ cycleSection model key ]
+                , [ noteSection model ]
+                , [ weekSection model key ]
+                , [ linksSection ]
+                ]
+            )
+        ]
+
+
+-- What you said, as something to read rather than something to press.
+--
+-- The rows were buttons at first, one per answer, and eleven of them in
+-- a column read as eleven things demanding to be pressed — the same
+-- wall of noise the sequence was meant to replace. A recap is text; the
+-- only action here is correcting one line, which is rare enough to
+-- deserve a menu rather than eleven permanent buttons.
+answersSection : Model -> View Msg
+answersSection model =
+    if model.mood == Nothing then
+        section []
+            [ button [] (FixClicked 0) "Log today" ]
+
+    else
+        section
+            [ header "Today" ]
+            (List.concat
+                [ List.map (answerRow model) (Shared.flow model.factors)
+                , [ picker []
+                        model.chooser
+                        (List.range 0 (List.length (Shared.flow model.factors) - 1))
+                        (chooserLabel model)
+                        FixClicked
+                  ]
+                ]
+            )
+
+
+answerRow : Model -> Shared.Question -> View Msg
+answerRow model question =
+    paragraph
+        [ span [ bold ] (Shared.questionName question ++ ": ")
+        , span [] (answerLabel model question)
+        ]
+
+
+answerLabel : Model -> Shared.Question -> String
+answerLabel model question =
+    case answerOf question model of
+        Just value ->
+            case List.head (List.drop value (Shared.questionOptions question)) of
+                Just label -> label
+                Nothing    -> "-"
+
+        Nothing ->
+            "not answered"
+
+
+chooserLabel : Model -> Int -> String
+chooserLabel model index =
+    case Shared.questionAt index model.factors of
+        Just question -> "Change " ++ Shared.questionName question
+        Nothing       -> "Change an answer"
+
+
+-- One button, once a month, and only for people who asked for it. The
+-- app never puts a phase question in the daily sequence.
+cycleSection : Model -> Int -> View Msg
+cycleSection model key =
+    if not (Shared.tracksCycle model.factors) then
+        empty
+
+    else if List.any (\c -> c.dayKey == key) model.window.cycles then
+        section [ header "Cycle", footer "Marked as a first day. Tap again if that was a mistake." ]
+            [ button [] PeriodCleared "Undo first day" ]
+
+    else
+        section [ header "Cycle", footer "Only on the first day of a period. The app works out the rest." ]
+            [ button [] PeriodStarted "Period started today" ]
+
+
+-- The note lives here rather than in the sequence, because it is the
+-- one thing that is typed. A run of taps should not stop halfway for a
+-- keyboard.
+noteSection : Model -> View Msg
+noteSection model =
+    section
+        [ header "Anything worth remembering?"
+        , footer "Optional, and one line is plenty. This is what makes a bad week readable months later, when the number alone means nothing."
+        ]
+        (List.concat
+            [ [ textField [ submit SaveClicked, width fill ] "A word about today" model.note NoteChanged ]
+            , if model.note /= model.saved && model.mood /= Nothing then
+                [ button [ disabled model.saving ] SaveClicked "Save note" ]
+
+              else
+                []
+            , [ errorView model.error ]
+            ]
+        )
+
+
+-- ===== The week =====
+
+
+weekSection : Model -> Int -> View Msg
+weekSection model key =
+    let
+        summary = Shared.weekSummary key (Shared.daysOf model.window)
+    in
+    if summary.days < 2 then
+        section [ header "Your week" ]
+            [ paragraph
+                [ span [] "Two days is enough to start showing you a week. Nothing here yet, and a missed day costs you nothing."
+                ]
+            ]
+
+    else
+        section
+            [ header "Your week"
+            , footer (String.fromInt summary.days ++ " of the last 7 days logged.")
+            ]
+            (List.concat
+                [ [ paragraph
+                        [ span [] "Mood "
+                        , span [ bold ] (Shared.formatTenths summary.mood)
+                        , span [] ", energy "
+                        , span [ bold ] (Shared.formatTenths summary.energy)
+                        , span [] "."
+                        ]
+                  ]
+                , trendLine summary
+                , extremeLine "Best day" summary.best
+                , extremeLine "Hardest day" summary.worst
+                ]
+            )
+
+
+-- Only compared against the previous four weeks when there are enough
+-- days behind it to mean anything. A "you are up 0.9" built on two days
+-- is exactly the confident noise this app is trying not to be.
+trendLine : Shared.WeekSummary -> List (View Msg)
+trendLine summary =
+    if summary.priorDays < 7 then
+        []
+
+    else
+        let
+            delta = summary.mood - summary.priorMood
+        in
+        [ paragraph
+            [ span []
+                (if abs delta < Shared.minTenths then
+                    "About the same as the four weeks before."
+
+                 else if delta > 0 then
+                    "Up " ++ Shared.formatTenths delta ++ " on the four weeks before."
+
+                 else
+                    "Down " ++ Shared.formatTenths (abs delta) ++ " on the four weeks before."
+                )
+            ]
+        ]
+
+
+extremeLine : String -> Maybe Shared.DayRow -> List (View Msg)
+extremeLine label maybeDay =
+    case maybeDay of
+        Nothing ->
+            []
+
+        Just day ->
+            [ paragraph
+                [ span [ bold ] (label ++ ": ")
+                , span [] (Shared.longDate day.dayKey ++ ", " ++ Shared.moodLabel day.mood)
+                , span [] (if day.note == "" then "." else " — " ++ day.note)
+                ]
+            ]
+
+
+linksSection : View Msg
+linksSection =
+    section []
+        [ navigationLink [] Frontend.Routes.month {} (text [] "This month")
+        , navigationLink [] Frontend.Routes.patterns {} (text [] "What I can tell you")
+        , navigationLink [] Frontend.Routes.settings {} (text [] "Settings")
+        ]
+
+
+errorView : Maybe String -> View Msg
+errorView maybeErr =
+    case maybeErr of
+        Nothing ->
+            empty
+
+        Just message ->
+            errorText message
+
+
+page : Page
+page =
+    Page.protected
+        { path   = "/"
+        , title  = "Today"
+        , init   = init
+        , update = update
+        , view   = view
+        , subscriptions = \_ _ -> Sub.none
+        }
