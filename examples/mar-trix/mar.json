@@ -1,0 +1,13 @@
+{
+  "name": "mar-trix",
+  "server": {
+    "port": 3040
+  },
+  "deploy": {
+    "cloudflare-pages": {
+      "app": "mar-trix",
+      "account": "env:CLOUDFLARE_ACCOUNT_ID",
+      "apiToken": "env:CLOUDFLARE_API_TOKEN"
+    }
+  }
+}

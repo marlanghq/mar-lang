@@ -1,0 +1,2086 @@
+module Main exposing (main)
+
+
+-- Mar-Trix — a falling-block puzzle.
+--
+-- The playfield in this genre has a proper name: the matrix. That is the term
+-- the guideline uses and the one competitive players say out loud, and it sits
+-- one letter away from the language the game is written in. So the game is
+-- named after its own matrix, and the matrix is named after Mar.
+--
+-- What makes the genre feel good is not the falling, it is everything AROUND
+-- the falling, and all of it is here: a 7-bag so droughts cannot happen, a
+-- ghost so a hard drop is a decision and not a gamble, hold, lock delay with a
+-- reset budget, delayed auto-shift, wall kicks, combo and back-to-back. Take
+-- any one of those out and the game still runs and stops being fun.
+--
+-- Everything is integer arithmetic — Mar has no floats — including the
+-- gravity accumulator, which counts frames rather than seconds. That is not a
+-- workaround: it means a given piece sequence lands identically on the web and
+-- on iOS, frame for frame.
+--
+-- The effects follow the house rule: change the OBJECT, never the screen. A
+-- cleared row lights up and collapses, a hard-dropped piece flashes where it
+-- landed, the frame shifts colour on a level up. Nothing shakes, nothing
+-- jitters, and the matrix never moves under your hands.
+
+
+import Canvas exposing
+    ( canvas, rect, circle, group, rgb, rgba
+    , onTap, watchSize, watchPointers
+    )
+import Keyboard
+import Random
+import Sound
+import Time
+
+
+-- ---------------------------------------------------------------- dimensions
+
+
+cols : Int
+cols = 10
+
+
+rows : Int
+rows = 20
+
+
+-- Frames per second the whole game counts in. Gravity, lock delay and every
+-- animation are measured in ticks of this clock, never in wall time, so the
+-- run is reproducible.
+fps : Int
+fps = 60
+
+
+-- ------------------------------------------------------------------- pieces
+--
+-- Seven kinds, four rotations each, written out as literal cell offsets in a
+-- 4x4 box rather than derived by rotating an array. Rotation tables are how
+-- every good implementation of this genre does it: the derived version is
+-- shorter and gets the I piece and the O piece subtly wrong, and "subtly
+-- wrong rotation" is the difference between a game that feels right and one
+-- that feels off in a way players cannot name.
+
+
+type alias Cell =
+    { x : Int
+    , y : Int
+    }
+
+
+shapeOf : Int -> Int -> List Cell
+shapeOf kind rot =
+    let
+        r = modBy 4 rot
+    in
+    case kind of
+        1 ->
+            case r of
+                0 -> [ { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 3, y = 1 } ]
+                1 -> [ { x = 2, y = 0 }, { x = 2, y = 1 }, { x = 2, y = 2 }, { x = 2, y = 3 } ]
+                2 -> [ { x = 0, y = 2 }, { x = 1, y = 2 }, { x = 2, y = 2 }, { x = 3, y = 2 } ]
+                _ -> [ { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 1, y = 2 }, { x = 1, y = 3 } ]
+
+        2 ->
+            case r of
+                0 -> [ { x = 0, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 } ]
+                1 -> [ { x = 1, y = 0 }, { x = 2, y = 0 }, { x = 1, y = 1 }, { x = 1, y = 2 } ]
+                2 -> [ { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 2, y = 2 } ]
+                _ -> [ { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 0, y = 2 }, { x = 1, y = 2 } ]
+
+        3 ->
+            case r of
+                0 -> [ { x = 2, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 } ]
+                1 -> [ { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 1, y = 2 }, { x = 2, y = 2 } ]
+                2 -> [ { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 0, y = 2 } ]
+                _ -> [ { x = 0, y = 0 }, { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 1, y = 2 } ]
+
+        4 ->
+            [ { x = 1, y = 0 }, { x = 2, y = 0 }, { x = 1, y = 1 }, { x = 2, y = 1 } ]
+
+        5 ->
+            case r of
+                0 -> [ { x = 1, y = 0 }, { x = 2, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 } ]
+                1 -> [ { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 2, y = 2 } ]
+                2 -> [ { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 0, y = 2 }, { x = 1, y = 2 } ]
+                _ -> [ { x = 0, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 1, y = 2 } ]
+
+        6 ->
+            case r of
+                0 -> [ { x = 1, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 } ]
+                1 -> [ { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 1, y = 2 } ]
+                2 -> [ { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 1, y = 2 } ]
+                _ -> [ { x = 1, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 1, y = 2 } ]
+
+        _ ->
+            case r of
+                0 -> [ { x = 0, y = 0 }, { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 2, y = 1 } ]
+                1 -> [ { x = 2, y = 0 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 1, y = 2 } ]
+                2 -> [ { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 1, y = 2 }, { x = 2, y = 2 } ]
+                _ -> [ { x = 1, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 0, y = 2 } ]
+
+
+-- A glazed-tile palette rather than the usual neon: close enough in value that
+-- the matrix reads as one surface, far enough apart in hue that a piece is
+-- identifiable at a glance while it falls.
+inkOf : Int -> Color
+inkOf kind =
+    case kind of
+        1 -> rgb 86 200 199
+        2 -> rgb 92 128 214
+        3 -> rgb 224 150 66
+        4 -> rgb 226 196 84
+        5 -> rgb 122 194 108
+        6 -> rgb 168 116 210
+        _ -> rgb 219 96 106
+
+
+-- --------------------------------------------------------------------- model
+
+
+type Phase
+    = Title
+    | Playing
+    | Clearing
+    | Over
+
+
+type alias Piece =
+    { kind : Int
+    , rot  : Int
+    , x    : Int
+    , y    : Int
+    }
+
+
+type alias Pointer =
+    { id : Int
+    , x  : Int
+    , y  : Int
+    }
+
+
+-- What a finger on the matrix remembers. `px0` is the column the piece was in
+-- when the finger landed: every frame after that the piece is asked for
+-- `px0 + travelled columns`, so the piece stays pinned to the thumb instead of
+-- accumulating error. `travel` is what separates a drag from a tap, and
+-- `multi` records that a second finger joined, which is the counter-rotate.
+type alias Drag =
+    { id     : Int
+    , x0     : Int
+    , y0     : Int
+    , px0    : Int
+    , travel : Int
+    , multi  : Bool
+
+    -- A vertical swipe fires ONCE and then the finger is spent, so a thumb
+    -- that keeps sliding after the piece has already slammed does not slam
+    -- the next one too.
+    , fired  : Bool
+    }
+
+
+type alias Model =
+    { phase : Phase
+    , w     : Int
+    , h     : Int
+    , frame : Int
+
+    -- The matrix is rows of colour indexes, row 0 at the top. 0 is empty.
+    , matrix : List (List Int)
+    , piece : Piece
+    , bag   : List Int
+    , queue : List Int
+    , hold  : Int
+    , held  : Bool
+    , seed  : Random.Seed
+
+    -- Gravity and lock are frame counters, never clocks.
+    , fall     : Int
+    , lock     : Int
+    , resets   : Int
+    , dasL     : Int
+    , dasR     : Int
+    , softHeld : Int
+
+    -- Line-clear animation: which rows are lighting up, and how far along.
+    , flashRows : List Int
+    , flashAt   : Int
+
+    -- The banner is NOT the flash. The row collapse is over in fourteen
+    -- frames — right for the animation, far too short to read a word in — and
+    -- driving the banner off `flashRows` meant it vanished with the rows. So
+    -- it carries its own count and its own clock.
+    , banner   : Int
+    , bannerAt : Int
+
+    -- The best score this SESSION. Nothing is stored anywhere, so a reload
+    -- starts it over — which is the honest behaviour for a game with no
+    -- account and no server, and better than a "record" that quietly is not
+    -- one.
+    , best : Int
+
+    -- The cells of the piece that just slammed, lit for a few frames.
+    , slam   : List Cell
+    , slamAt : Int
+
+    , score  : Int
+    , lines  : Int
+    , level  : Int
+    , combo  : Int
+    , btb    : Bool
+    , levelAt : Int
+
+    , keys : List Keyboard.Key
+    , sfx  : List Int
+
+    -- Touch: the pads a finger is currently holding, expressed as the very
+    -- same keys the keyboard sends, and the live device record that decides
+    -- whether pads are drawn at all.
+    , touch : List Keyboard.Key
+
+    -- Controller: the SAME trick again. A pad snapshot is translated into the
+    -- keys it stands for and stored here, so delayed auto-shift, soft drop and
+    -- every edge-triggered action work on a controller without one line of
+    -- code knowing a controller exists. Three input devices, one vocabulary.
+    , padKeys : List Keyboard.Key
+    , padDown : List Gamepad.Button
+
+    -- The finger currently steering the piece, if any.
+    , drag : Maybe Drag
+
+    , dev : Maybe Device
+    }
+
+
+-- ---------------------------------------------------------------------- init
+
+
+emptyRow : List Int
+emptyRow =
+    List.map (\_ -> 0) (List.range 1 cols)
+
+
+emptyMatrix : List (List Int)
+emptyMatrix =
+    List.map (\_ -> emptyRow) (List.range 1 rows)
+
+
+init : (Model, Cmd Msg)
+init =
+    let
+        start =
+            { phase = Title
+            , w = 900
+            , h = 700
+            , frame = 0
+            , matrix = emptyMatrix
+            , piece = { kind = 1, rot = 0, x = 3, y = 0 }
+            , bag = []
+            , queue = []
+            , hold = 0
+            , held = False
+            , seed = Random.initialSeed 7311
+            , fall = 0
+            , lock = 0
+            , resets = 0
+            , dasL = 0
+            , dasR = 0
+            , softHeld = 0
+            , flashRows = []
+            , flashAt = 0
+            , banner = 0
+            , bannerAt = 0
+            , slam = []
+            , slamAt = 0
+            , score = 0
+            , lines = 0
+            , level = 1
+            , combo = 0
+            , btb = False
+            , levelAt = 0
+            , keys = []
+            , sfx = []
+            , touch = []
+            , padKeys = []
+            , padDown = []
+            , drag = Nothing
+            , best = 0
+            , dev = Nothing
+            }
+    in
+    ( start, Cmd.none )
+
+
+-- Every run starts from a fresh matrix, a refilled bag and level 1. The seed
+-- carries over from the previous run on purpose: replaying gives a different
+-- sequence, which is what a player expects from "again".
+newRun : Model -> Model
+newRun m =
+    let
+        m1 =
+            { m
+                | phase = Playing
+                , matrix = emptyMatrix
+                , bag = []
+                , queue = []
+                , hold = 0
+                , held = False
+                , fall = 0
+                , lock = 0
+                , resets = 0
+                , flashRows = []
+                , flashAt = 0
+                , banner = 0
+                , bannerAt = 0
+                , slam = []
+                , slamAt = 0
+                , score = 0
+                , lines = 0
+                , level = 1
+                , combo = 0
+                , btb = False
+                , levelAt = 0
+
+                -- The finger that pressed DROP on the game-over screen must
+                -- not still be steering when the new run spawns a piece.
+                , drag = Nothing
+                }
+    in
+    spawn (refill (refill m1))
+
+
+-- ------------------------------------------------------------------- the bag
+--
+-- A 7-bag: every seven pieces contains each kind exactly once, shuffled. This
+-- is the single rule that makes the game feel fair — pure random gives real
+-- droughts, and a player who waited eleven pieces for a line piece blames the
+-- game, correctly.
+
+
+shuffle : List Int -> Random.Seed -> (List Int, Random.Seed)
+shuffle items seed =
+    case items of
+        [] ->
+            ( [], seed )
+
+        _ ->
+            let
+                n = List.length items
+                (pick, seed1) = Random.step (Random.int 0 (n - 1)) seed
+                taken = List.take 1 (List.drop pick items)
+                rest = List.take pick items ++ List.drop (pick + 1) items
+                (tail, seed2) = shuffle rest seed1
+            in
+            ( taken ++ tail, seed2 )
+
+
+-- Tops the preview queue up to five, drawing a fresh shuffled bag whenever it
+-- runs dry.
+refill : Model -> Model
+refill m =
+    if List.length m.queue >= 5 then
+        m
+
+    else
+        case m.bag of
+            [] ->
+                let
+                    (fresh, seed1) = shuffle [ 1, 2, 3, 4, 5, 6, 7 ] m.seed
+                in
+                refill { m | bag = fresh, seed = seed1 }
+
+            next :: rest ->
+                refill { m | bag = rest, queue = m.queue ++ [ next ] }
+
+
+-- ---------------------------------------------------------------- the matrix
+
+
+rowAt : Int -> List (List Int) -> List Int
+rowAt i matrix =
+    case List.drop i matrix of
+        r :: _ -> r
+        [] -> emptyRow
+
+
+cellAt : Int -> Int -> List (List Int) -> Int
+cellAt x y matrix =
+    if x < 0 || x >= cols || y < 0 || y >= rows then
+        1
+
+    else
+        case List.drop x (rowAt y matrix) of
+            c :: _ -> c
+            [] -> 0
+
+
+-- A piece fits when none of its four cells is off the sides, below the floor,
+-- or on top of settled stone. Cells above the ceiling are allowed: a piece
+-- spawns partly outside and slides in, which is what lets a full stack still
+-- accept one more piece before the run ends.
+fits : Piece -> List (List Int) -> Bool
+fits p matrix =
+    List.all
+        (\c ->
+            let
+                bx = p.x + c.x
+                by = p.y + c.y
+            in
+            bx >= 0 && bx < cols && by < rows && (by < 0 || cellAt bx by matrix == 0)
+        )
+        (shapeOf p.kind p.rot)
+
+
+stamp : Piece -> List (List Int) -> List (List Int)
+stamp p matrix =
+    let
+        cells = List.map (\c -> { x = p.x + c.x, y = p.y + c.y }) (shapeOf p.kind p.rot)
+    in
+    List.indexedMap
+        (\y row ->
+            List.indexedMap
+                (\x c ->
+                    if List.any (\k -> k.x == x && k.y == y) cells then
+                        p.kind
+
+                    else
+                        c
+                )
+                row
+        )
+        matrix
+
+
+fullRows : List (List Int) -> List Int
+fullRows matrix =
+    List.filter
+        (\y -> List.all (\c -> c /= 0) (rowAt y matrix))
+        (List.range 0 (rows - 1))
+
+
+-- Drops everything above the cleared rows down by exactly the number of rows
+-- removed beneath it, and pads the top back out to twenty.
+collapse : List Int -> List (List Int) -> List (List Int)
+collapse gone matrix =
+    let
+        kept =
+            List.filter
+                (\y -> not (List.member y gone))
+                (List.range 0 (rows - 1))
+
+        survivors = List.map (\y -> rowAt y matrix) kept
+        pad = List.map (\_ -> emptyRow) (List.range 1 (List.length gone))
+    in
+    pad ++ survivors
+
+
+-- ------------------------------------------------------------------- pieces
+
+
+spawnAt : Int -> Piece
+spawnAt kind =
+    { kind = kind, rot = 0, x = 3, y = -1 }
+
+
+-- Takes the head of the queue onto the matrix. A piece that cannot fit where it
+-- spawns is the end of the run — the honest definition of topping out, and the
+-- only place the game ends.
+spawn : Model -> Model
+spawn m =
+    case m.queue of
+        [] ->
+            m
+
+        next :: rest ->
+            let
+                p = spawnAt next
+                m1 =
+                    refill
+                        { m
+                            | piece = p
+                            , queue = rest
+                            , held = False
+                            , fall = 0
+                            , lock = 0
+                            , resets = 0
+                        }
+            in
+            if fits p m1.matrix then
+                m1
+
+            else
+                { m1 | phase = Over, best = max m1.best m1.score, sfx = m1.sfx ++ [ 7 ] }
+
+
+-- Wall kicks. The full standard table is five offsets per rotation pair and
+-- forty lines of data; this shortlist covers the moves players actually feel —
+-- nudging off a wall, off a neighbour, and the floor kick that makes a piece
+-- rotate out of a well instead of refusing.
+kicks : List Cell
+kicks =
+    [ { x = 0, y = 0 }
+    , { x = -1, y = 0 }
+    , { x = 1, y = 0 }
+    , { x = -2, y = 0 }
+    , { x = 2, y = 0 }
+    , { x = 0, y = -1 }
+    , { x = -1, y = -1 }
+    , { x = 1, y = -1 }
+    ]
+
+
+tryRotate : Int -> Model -> Model
+tryRotate dir m =
+    let
+        target = modBy 4 (m.piece.rot + dir)
+
+        candidates =
+            List.map
+                (\k -> { kind = m.piece.kind, rot = target, x = m.piece.x + k.x, y = m.piece.y + k.y })
+                kicks
+
+        landed = List.filter (\p -> fits p m.matrix) candidates
+    in
+    case landed of
+        p :: _ ->
+            touch { m | piece = p, sfx = m.sfx ++ [ 2 ] }
+
+        [] ->
+            m
+
+
+tryShift : Int -> Model -> Model
+tryShift dx m =
+    let
+        moved = { kind = m.piece.kind, rot = m.piece.rot, x = m.piece.x + dx, y = m.piece.y }
+    in
+    if fits moved m.matrix then
+        touch { m | piece = moved, sfx = m.sfx ++ [ 1 ] }
+
+    else
+        m
+
+
+-- Lock delay with a reset budget. Moving a piece that is already resting
+-- restarts the countdown, so you can slide it into place — but only eight
+-- times. The guideline value is fifteen, which combined with a half-second
+-- delay is seven and a half seconds of floor time per piece: enough that a
+-- player never feels time pressure at all.
+touch : Model -> Model
+touch m =
+    if grounded m.piece m.matrix && m.resets < 8 then
+        { m | lock = 0, resets = m.resets + 1 }
+
+    else
+        m
+
+
+grounded : Piece -> List (List Int) -> Bool
+grounded p matrix =
+    not (fits { kind = p.kind, rot = p.rot, x = p.x, y = p.y + 1 } matrix)
+
+
+dropTo : Piece -> List (List Int) -> Piece
+dropTo p matrix =
+    let
+        below = { kind = p.kind, rot = p.rot, x = p.x, y = p.y + 1 }
+    in
+    if fits below matrix then
+        dropTo below matrix
+
+    else
+        p
+
+
+swapHold : Model -> Model
+swapHold m =
+    if m.held then
+        m
+
+    else if m.hold == 0 then
+        let
+            stored = m.piece.kind
+        in
+        case m.queue of
+            next :: rest ->
+                let
+                    m1 = spawn { m | hold = stored, queue = next :: rest }
+                in
+                { m1 | held = True, sfx = m1.sfx ++ [ 2 ] }
+
+            [] ->
+                m
+
+    else
+        let
+            swapped = spawnAt m.hold
+        in
+        if fits swapped m.matrix then
+            { m
+                | hold = m.piece.kind
+                , piece = swapped
+                , held = True
+                , lock = 0
+                , resets = 0
+                , sfx = m.sfx ++ [ 2 ]
+            }
+
+        else
+            m
+
+
+-- --------------------------------------------------------------- locking in
+
+
+-- Scoring follows the shape of the modern rules, in whole points: a clear is
+-- worth more the more rows go at once, a back-to-back four-row clear is worth
+-- half again, and a combo pays per consecutive clear. All of it is integer
+-- arithmetic, so the score is exact — there is no float to drift.
+clearScore : Int -> Int -> Int -> Bool -> Int
+clearScore n level combo btb =
+    let
+        base =
+            case n of
+                1 -> 100
+                2 -> 300
+                3 -> 500
+                _ -> 800
+
+        bonus =
+            if n >= 4 && btb then
+                base // 2
+
+            else
+                0
+    in
+    (base + bonus) * level + (50 * combo * level)
+
+
+lockPiece : Model -> Model
+lockPiece m =
+    let
+        settled = stamp m.piece m.matrix
+        gone = fullRows settled
+        n = List.length gone
+        cells = List.map (\c -> { x = m.piece.x + c.x, y = m.piece.y + c.y }) (shapeOf m.piece.kind m.piece.rot)
+    in
+    if n == 0 then
+        spawn
+            { m
+                | matrix = settled
+                , combo = 0
+                , slam = cells
+                , slamAt = m.frame
+
+                -- A hard drop already sounded the slam, and a slam IS a lock:
+                -- one instant, one sound. Appending the lock on top of it
+                -- played two cues a frame apart for a single event, which is
+                -- what made the landing sound cluttered as well as harsh.
+                , sfx = if List.member 8 m.sfx then m.sfx else m.sfx ++ [ 3 ]
+            }
+
+    else
+        let
+            combo1 = m.combo + 1
+            gained = clearScore n m.level combo1 m.btb
+            lines1 = m.lines + n
+            level1 = 1 + lines1 // 8
+            cue =
+                if n >= 4 then
+                    5
+
+                else
+                    4
+        in
+        { m
+            | matrix = settled
+            , phase = Clearing
+            , flashRows = gone
+            , flashAt = m.frame
+            , banner = List.length gone
+            , bannerAt = m.frame
+            , slam = cells
+            , slamAt = m.frame
+            , score = m.score + gained
+            , lines = lines1
+            , level = level1
+            , combo = combo1
+            , btb = n >= 4
+            , levelAt =
+                if level1 > m.level then
+                    m.frame
+
+                else
+                    m.levelAt
+            , sfx =
+                if level1 > m.level then
+                    m.sfx ++ [ cue, 6 ]
+
+                else
+                    m.sfx ++ [ cue ]
+        }
+
+
+-- How many frames a piece takes to fall one row. The curve is roughly
+-- geometric — each level is about four fifths of the last — rather than the
+-- straight line a first draft always uses. A straight line spends its whole
+-- length in the middle: every level feels like the one before, and the game
+-- is either sleepy for twenty levels or brutal from level three. Geometric
+-- gives a long comfortable start AND a real cliff, which is the shape every
+-- good game in this genre has.
+--
+-- The RATE is the second knob and they must be tuned one at a time. Steepening
+-- the curve and halving the lines-per-level at once made level 4 arrive in
+-- fifteen lines at a speed the old curve did not reach until thirty — three
+-- times the pressure at the same point in a run, from two changes that each
+-- looked reasonable. Eight lines a level puts level 4 back where it was and
+-- leaves the cliff around level 9, which is sixty-four lines away.
+gravityFrames : Int -> Int
+gravityFrames level =
+    case level of
+        1 -> 34
+        2 -> 30
+        3 -> 26
+        4 -> 22
+        5 -> 19
+        6 -> 16
+        7 -> 13
+        8 -> 11
+        9 -> 9
+        10 -> 7
+        11 -> 6
+        12 -> 5
+        13 -> 4
+        14 -> 3
+        _ -> 2
+
+
+-- ----------------------------------------------------------------- messages
+
+
+type Msg
+    = Tick
+    | KeysChanged { down : List Keyboard.Key }
+    | Resized Int Int
+    | Tapped Int Int
+    | Pointers (List { id : Int, x : Int, y : Int })
+    | DeviceChanged Device
+    | PadChanged { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button }
+
+
+-- A key is down if the KEYBOARD is holding it or a FINGER is on the pad that
+-- stands for it. Merging the two here is what lets delayed auto-shift, soft
+-- drop and every edge-triggered action work identically on both, with no
+-- second code path for touch.
+held : Keyboard.Key -> Model -> Bool
+held key m =
+    List.member key m.keys || List.member key m.touch || List.member key m.padKeys
+
+
+-- WHAT A CONTROLLER SAYS, IN KEYS.
+--
+-- The layout is the console one, because that is the one a player already has
+-- in their hands: the d-pad steers and soft-drops, UP hard-drops, the face
+-- buttons rotate, and the shoulders hold. Nothing here is a new action — each
+-- line names a key this game already understands, which is why the whole pad
+-- costs one function and no new rules.
+--
+-- Both rotations are given two buttons rather than one, because which face
+-- button turns which way is the single thing every falling-block game disagrees
+-- about, and a player who guesses wrong should get a rotation rather than
+-- nothing. UP is a hard drop and the stick's up is NOT: a thumb resting on an
+-- analog stick would slam pieces down all game.
+padKeysOf : { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button } -> List Keyboard.Key
+padKeysOf st =
+    let
+        on = \b -> List.member b st.down
+
+        pick = \cond key -> if cond then [ key ] else []
+    in
+    List.concat
+        [ pick (on Gamepad.Left || st.leftX < 0 - padDead) Keyboard.ArrowLeft
+        , pick (on Gamepad.Right || st.leftX > padDead) Keyboard.ArrowRight
+        , pick (on Gamepad.Down || st.leftY > padDead) Keyboard.ArrowDown
+        , pick (on Gamepad.Up) Keyboard.Space
+        , pick (on Gamepad.A || on Gamepad.X) Keyboard.KeyX
+        , pick (on Gamepad.B || on Gamepad.Y) Keyboard.KeyZ
+        , pick (on Gamepad.L1 || on Gamepad.R1 || on Gamepad.L2 || on Gamepad.R2) Keyboard.KeyC
+        , pick (on Gamepad.Start || on Gamepad.Select) Keyboard.Enter
+        ]
+
+
+-- Past the runtime's own deadzone, which already zeroes anything under a
+-- quarter deflection. A stick is a direction here, not a speed: the matrix
+-- moves one cell at a time on its own repeat clock, so there is nothing for a
+-- harder push to make faster.
+padDead : Int
+padDead = 30
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    let
+        m = step msg model
+    in
+    ( { m | sfx = [] }
+    , Cmd.batch (List.map (\c -> Sound.play (cue c)) m.sfx)
+    )
+
+
+step : Msg -> Model -> Model
+step msg m =
+    case msg of
+        Resized w h ->
+            -- A canvas that is not on screen reports zero, and a zero here is
+            -- not a small matrix — it is a DIVISOR of zero two functions later.
+            -- Clamping at the boundary keeps every derived number sane instead
+            -- of hunting for the one place that divides.
+            { m | w = max 1 w, h = max 1 h }
+
+        Tapped _ _ ->
+            case m.phase of
+                Title -> newRun m
+                Over -> newRun m
+                Playing -> m
+                Clearing -> m
+
+        KeysChanged st ->
+            let
+                fresh = List.filter (\k -> not (List.member k m.keys)) st.down
+                m1 = { m | keys = st.down }
+            in
+            List.foldl press m1 fresh
+
+        DeviceChanged d ->
+            { m | dev = Just d }
+
+        PadChanged st ->
+            let
+                now = padKeysOf st
+                fresh = List.filter (\k -> not (List.member k m.padKeys)) now
+            in
+            List.foldl press { m | padKeys = now, padDown = st.down } fresh
+
+        Pointers ps ->
+            -- Every finger on the screen steers the matrix now. There is
+            -- nothing else on it to hit.
+            gesture (layout m) ps m
+
+        Tick ->
+            tick { m | frame = m.frame + 1 }
+
+
+-- Edge-triggered keys: rotation, hard drop, hold and the menus fire once on
+-- the press. Movement and soft drop are held, and are handled in the tick with
+-- their own repeat timing — mixing the two is what makes a game feel either
+-- unresponsive or uncontrollably fast.
+press : Keyboard.Key -> Model -> Model
+press key m =
+    case m.phase of
+        Title ->
+            if key == Keyboard.Space || key == Keyboard.Enter then
+                newRun m
+
+            else
+                m
+
+        Over ->
+            if key == Keyboard.Space || key == Keyboard.Enter then
+                newRun m
+
+            else
+                m
+
+        Clearing ->
+            m
+
+        Playing ->
+            if key == Keyboard.ArrowUp || key == Keyboard.KeyX then
+                tryRotate 1 m
+
+            else if key == Keyboard.KeyZ then
+                tryRotate 3 m
+
+            else if key == Keyboard.Space then
+                let
+                    landed = dropTo m.piece m.matrix
+                    dist = landed.y - m.piece.y
+                in
+                lockPiece { m | piece = landed, score = m.score + dist * 2, sfx = m.sfx ++ [ 8 ] }
+
+            else if key == Keyboard.KeyC || key == Keyboard.ShiftLeft then
+                swapHold m
+
+            else if key == Keyboard.ArrowLeft || key == Keyboard.KeyA then
+                tryShift (-1) { m | dasL = 0 }
+
+            else if key == Keyboard.ArrowRight || key == Keyboard.KeyD then
+                tryShift 1 { m | dasR = 0 }
+
+            else
+                m
+
+
+tick : Model -> Model
+tick m =
+    case m.phase of
+        Title ->
+            m
+
+        Over ->
+            m
+
+        Clearing ->
+            -- The flash reads at fourteen frames: long enough to register as a
+            -- reward, short enough that it never interrupts a fast player.
+            if m.frame - m.flashAt >= 14 then
+                spawn
+                    { m
+                        | matrix = collapse m.flashRows m.matrix
+                        , flashRows = []
+                        , phase = Playing
+                    }
+
+            else
+                m
+
+        Playing ->
+            m
+                |> autoShift
+                |> gravity
+
+
+-- Delayed auto-shift: the first repeat waits ten frames, then a step every
+-- two. The pause is what lets you tap once for one column without the piece
+-- skating away, and the fast repeat afterwards is what makes crossing the
+-- matrix feel instant.
+autoShift : Model -> Model
+autoShift m =
+    let
+        left = held Keyboard.ArrowLeft m || held Keyboard.KeyA m
+        right = held Keyboard.ArrowRight m || held Keyboard.KeyD m
+
+        m1 =
+            if left then
+                let
+                    n = m.dasL + 1
+                in
+                if n >= 10 && modBy 2 n == 0 then
+                    tryShift (-1) { m | dasL = n }
+
+                else
+                    { m | dasL = n }
+
+            else
+                { m | dasL = 0 }
+
+        m2 =
+            if right then
+                let
+                    n = m1.dasR + 1
+                in
+                if n >= 10 && modBy 2 n == 0 then
+                    tryShift 1 { m1 | dasR = n }
+
+                else
+                    { m1 | dasR = n }
+
+            else
+                { m1 | dasR = 0 }
+    in
+    m2
+
+
+gravity : Model -> Model
+gravity m =
+    let
+        soft = held Keyboard.ArrowDown m || held Keyboard.KeyS m
+        every =
+            if soft then
+                2
+
+            else
+                gravityFrames m.level
+
+        m1 = { m | fall = m.fall + 1 }
+    in
+    if grounded m1.piece m1.matrix then
+        if m1.lock + 1 >= 30 then
+            lockPiece m1
+
+        else
+            { m1 | lock = m1.lock + 1 }
+
+    else if m1.fall >= every then
+        let
+            dropped = { kind = m1.piece.kind, rot = m1.piece.rot, x = m1.piece.x, y = m1.piece.y + 1 }
+        in
+        { m1
+            | piece = dropped
+            , fall = 0
+            , lock = 0
+            , score =
+                if soft then
+                    m1.score + 1
+
+                else
+                    m1.score
+        }
+
+    else
+        m1
+
+
+-- --------------------------------------------------------------------- sound
+--
+-- Chip voices, kept short and dry. The clear cues are the only ones with any
+-- length: a reward you cannot hear is not a reward, and everything else has to
+-- stay out of the way of a player dropping four pieces a second.
+
+
+cue : Int -> Sound
+cue n =
+    case n of
+        -- The three sounds you hear constantly are one family, and two things
+        -- decide how they land.
+        --
+        -- WAVE. A square's harmonics fall off as 1/n, so a 220 Hz square puts
+        -- real energy at 660, 1100, 1540, 2200 — straight through the band the
+        -- ear is most sensitive to. That is what "shrill" is. A triangle falls
+        -- off as 1/n²: same pitch, a fraction of the bite. Squares are for
+        -- sounds you want to cut through, and move and turn are not those.
+        --
+        -- PITCH. A phone or laptop speaker is a tiny transducer in a tiny box
+        -- and it stops moving air below roughly 300–400 Hz. Anything written
+        -- down there is not "deep", it is absent. So the lock sits at 340 and
+        -- FALLS, which is what gives it weight — the drop is the gesture, not
+        -- the depth.
+        1 -> Sound.volume 15 (Sound.tone Sound.Triangle 300 26)
+        2 -> Sound.volume 18 (Sound.tone Sound.Triangle 400 30)
+
+        -- The lock is the one that has to be PRESENT: it is the full stop at
+        -- the end of every piece, and a full stop you cannot hear leaves the
+        -- sentence hanging.
+        3 -> Sound.volume 30 (Sound.sweep (-90) (Sound.tone Sound.Triangle 340 55))
+        4 -> Sound.volume 44 (Sound.sweep 180 (Sound.tone Sound.Triangle 440 190))
+        5 ->
+            -- Four rows at once: a real chord, four voices of the SAME length,
+            -- because voices of different lengths drift apart on a loop and
+            -- the habit is worth keeping even where it cannot bite.
+            Sound.volume 52
+                (Sound.chord
+                    [ Sound.tone Sound.Triangle (Sound.a 4) 420
+                    , Sound.tone Sound.Triangle (Sound.c 5) 420
+                    , Sound.tone Sound.Triangle (Sound.e 5) 420
+                    , Sound.tone Sound.Triangle (Sound.a 5) 420
+                    ]
+                )
+
+        6 -> Sound.volume 46 (Sound.arp [ 0, 4, 7, 12 ] (Sound.tone Sound.Square (Sound.c 5) 260))
+        7 -> Sound.volume 50 (Sound.sweep (-260) (Sound.tone Sound.Triangle 380 700))
+        -- The slam. Noise was the wrong family here for the same reason it
+        -- was wrong on the lock: it is broadband, so it dumps energy across
+        -- the whole 2–6 kHz band the ear is sharpest in, and ninety
+        -- milliseconds of that on every hard drop is the harshest thing in
+        -- the game. An impact is a PITCH falling fast — the speed of the drop
+        -- is what reads as force, not the hiss.
+        _ -> Sound.volume 26 (Sound.sweep (-140) (Sound.tone Sound.Triangle 380 60))
+
+
+-- ---------------------------------------------------------------------- view
+
+
+type alias Layout =
+    { cell : Int
+    , bx   : Int
+    , by   : Int
+    , bw   : Int
+    , bh   : Int
+
+    -- Portrait puts everything in a strip ABOVE the matrix. Landscape has
+    -- width to burn, so it opens into two columns, one either side.
+    , stack : Bool
+
+    -- Where the side columns live in landscape. In portrait they are unused
+    -- and the strip spans `sx0 .. sx0 + sw`.
+    , lx : Int
+    , rx : Int
+    , col : Int
+    , sx0 : Int
+    , sw  : Int
+
+    -- Touch device: no keyboard, so the help text names gestures.
+    , handheld : Bool
+    }
+
+
+-- Reflow from the live canvas size. There are two shapes, not one, and the
+-- difference is not cosmetic: the matrix is ten by twenty, so a tall window
+-- runs out of WIDTH and a wide one runs out of HEIGHT, and whichever one is
+-- spare is where the panel belongs.
+--
+-- In portrait the spare is the band above the matrix, and the strip drawn
+-- there takes the FULL canvas width rather than the matrix width — the
+-- leftover margin either side of a ten-column matrix is dead space, and hold,
+-- previews and score were being crowded into the narrow part while it sat
+-- empty.
+--
+-- In landscape the spare is enormous: twenty rows in a phone's 375 points
+-- forces a small cell, and matrix plus one column came to barely a third of
+-- the window with the rest blank. So landscape opens into TWO columns, hold
+-- on the left and previews on the right, which is what fills the width and
+-- gives each of them room instead of stacking them in one narrow strip.
+layout : Model -> Layout
+layout m =
+    let
+        handheld =
+            case m.dev of
+                Just d -> Device.touchOnly d
+                Nothing -> False
+
+        portrait = m.w * 4 < m.h * 5
+    in
+    if portrait then
+        let
+            -- A ten-column matrix in a phone's width runs out of HEIGHT first,
+            -- so there is always a margin either side of it doing nothing.
+            -- Reserving that margin up front is what turns it into two real
+            -- columns: hold on the left, previews on the right, both beside
+            -- the piece they describe instead of crowded into a strip over it.
+            --
+            -- `sideMin` is what a four-cell preview needs to be legible. It is
+            -- deliberately taken out of the width BEFORE the cell is sized, so
+            -- the columns can never be squeezed to nothing by a wide window —
+            -- and on a phone it costs nothing, because the cell is bound by
+            -- height anyway.
+            sideMin = 46
+            gutter = 8
+            headRows = 2
+            cell =
+                max 8
+                    (min ((m.w - 2 * sideMin - 2 * gutter) // cols)
+                        ((m.h - 16) // (rows + headRows))
+                    )
+            bw = cell * cols
+            bh = cell * rows
+            margin = max 6 (cell // 3)
+            side = (m.w - bw) // 2
+            col = max 24 (side - gutter)
+            inset = (side - col) // 2
+        in
+        { cell = cell
+        , bx = (m.w - bw) // 2
+        , by = m.h - bh - margin
+        , bw = bw
+        , bh = bh
+        , stack = True
+        , lx = inset
+        , rx = m.w - side + inset
+        , col = col
+        , sx0 = margin
+        , sw = m.w - margin * 2
+        , handheld = handheld
+        }
+
+    else
+        let
+            -- Two columns of six cells each, one gap on each side of the
+            -- matrix: the whole arrangement is cols + 12 + 4 wide.
+            cell = max 8 (min ((m.h - 40) // rows) ((m.w - 40) // (cols + 16)))
+            bw = cell * cols
+            bh = cell * rows
+            col = cell * 6
+            gap = cell * 2
+            total = col + gap + bw + gap + col
+            x0 = (m.w - total) // 2
+        in
+        { cell = cell
+        , bx = x0 + col + gap
+        , by = (m.h - bh) // 2
+        , bw = bw
+        , bh = bh
+        , stack = False
+        , lx = x0
+        , rx = x0 + col + gap + bw + gap
+        , col = col
+        , sx0 = 0
+        , sw = 0
+        , handheld = handheld
+        }
+
+
+-- ------------------------------------------------------------------ touch
+--
+-- The matrix is the controller.
+--
+-- A key is binary; a thumb has a POSITION. So movement here is positional:
+-- drag anywhere on the matrix and the piece tracks the thumb, one column per
+-- cell of travel, measured from wherever the finger landed. A button can only
+-- say "left" and then make you wait for auto-repeat to say it again; a drag
+-- says "four columns left" in one motion, and says it without your hand
+-- parked over the piece you are aiming.
+--
+-- Two actions stay on buttons, and only two: hold and hard drop. They are the
+-- ones that COMMIT — the drop especially, which ends the piece where it
+-- stands. Hanging a hard drop off a downward flick is the classic mistake of
+-- the genre on touch, because a flick is a soft drop with a speed threshold,
+-- and a speed threshold on a finger is a coin toss. So: continuous, frequent
+-- and about precision goes on the matrix; discrete, rare and irreversible
+-- goes on a target you have to mean to hit.
+--
+-- The button half still goes through the KEY the keyboard would send, which
+-- is what lets hold, hard drop and soft drop work on a finger with no second
+-- implementation. Movement and rotation deliberately do NOT: a column is not
+-- a keypress, and routing it through one would drag delayed auto-shift along
+-- with it and fight the thumb.
+
+
+-- A finger that lands on the matrix anchors itself, and from then on the
+-- piece is asked to be wherever the thumb has travelled to. A finger that
+-- lifts having barely moved was never a drag — it was a tap, and a tap turns
+-- the piece.
+gesture : Layout -> List Pointer -> Model -> Model
+gesture lay free m =
+    if m.phase /= Playing then
+        { m | drag = Nothing }
+
+    else
+        case m.drag of
+            Nothing ->
+                case free of
+                    p :: _ ->
+                        { m
+                            | drag =
+                                Just
+                                    { id = p.id
+                                    , x0 = p.x
+                                    , y0 = p.y
+                                    , px0 = m.piece.x
+                                    , travel = 0
+                                    , multi = List.length free > 1
+                                    , fired = False
+                                    }
+                        }
+
+                    [] ->
+                        m
+
+            Just d ->
+                case List.filter (\p -> p.id == d.id) free of
+                    p :: _ ->
+                        dragTo lay d p (List.length free > 1) m
+
+                    [] ->
+                        lifted lay d m
+
+
+dragTo : Layout -> Drag -> Pointer -> Bool -> Model -> Model
+dragTo lay d p second m =
+    let
+        dx = p.x - d.x0
+        dy = p.y - d.y0
+
+        moved = { d | travel = max d.travel (max (abs dx) (abs dy)), multi = d.multi || second }
+
+        -- A swipe is DISTANCE and DIRECTION, never speed. Two cells of travel,
+        -- and twice as much of it vertical as horizontal, so the arc a thumb
+        -- makes while sliding sideways can never be mistaken for one. The same
+        -- finger path always does the same thing, which is the whole reason
+        -- these are not flicks.
+        far = lay.cell * 2
+        vertical = abs dy > abs dx * 2
+    in
+    if not d.fired && vertical && dy > far then
+        { m | drag = Just { moved | fired = True } }
+            |> press Keyboard.Space
+
+    else if not d.fired && vertical && dy < -far then
+        { m | drag = Just { moved | fired = True } }
+            |> press Keyboard.KeyC
+
+    else if d.fired then
+        -- Spent. The piece it was steering is gone or put away; anything more
+        -- from this finger belongs to no one until it lifts.
+        { m | drag = Just moved }
+
+    else
+        let
+            want = d.px0 + dx // lay.cell
+            m1 = shiftTo want m
+        in
+        if m1.piece.x == want then
+            { m1 | drag = Just moved }
+
+        else
+            -- The wall or the stack refused part of the move. Re-anchor on
+            -- where the piece actually got to, so it keeps following the thumb
+            -- from here instead of snapping across when the way clears.
+            { m1 | drag = Just { moved | x0 = p.x, px0 = m1.piece.x } }
+
+
+-- Walks the whole way in one frame and stops where the matrix stops it. One
+-- column per frame would lag a fast thumb, and a thumb that outruns the piece
+-- is the thing that makes touch controls feel like a suggestion.
+shiftTo : Int -> Model -> Model
+shiftTo want m =
+    if want == m.piece.x then
+        m
+
+    else
+        let
+            m1 = tryShift (if want > m.piece.x then 1 else -1) m
+        in
+        if m1.piece.x == m.piece.x then
+            m
+
+        else
+            shiftTo want m1
+
+
+-- The tap slop is a third of a cell: enough to forgive the wobble every real
+-- finger has, far short of a deliberate slide.
+lifted : Layout -> Drag -> Model -> Model
+lifted lay d m =
+    let
+        m1 = { m | drag = Nothing }
+    in
+    if not d.fired && d.travel * 3 < lay.cell then
+        press (if d.multi then Keyboard.KeyZ else Keyboard.ArrowUp) m1
+
+    else
+        m1
+
+
+-- A cell is five flat rectangles: a dark gap around it, the colour, a lit top
+-- edge, a shaded bottom edge, and a paler square set into the middle. No
+-- gradient and no image, and it still reads as a glazed tile rather than a
+-- coloured square.
+tile : Int -> Int -> Int -> Int -> List Shape
+tile px py cell kind =
+    let
+        ink = inkOf kind
+        inset = max 1 (cell // 7)
+        inner = cell - 2
+    in
+    [ rect px py cell cell (rgb 8 8 12)
+    , rect (px + 1) (py + 1) inner inner ink
+    , rect (px + 1) (py + 1) inner (max 1 (cell // 9)) (rgba 255 255 255 22)
+    , rect (px + 1) (py + cell - 1 - max 1 (cell // 9)) inner (max 1 (cell // 9)) (rgba 0 0 0 26)
+    , rect (px + inset) (py + inset) (cell - inset * 2) (cell - inset * 2) (rgba 255 255 255 12)
+    ]
+
+
+matrixTiles : Model -> Layout -> List Shape
+matrixTiles m lay =
+    List.concat
+        (List.map
+            (\y ->
+                List.concat
+                    (List.map
+                        (\x ->
+                            let
+                                k = cellAt x y m.matrix
+                            in
+                            if k == 0 then
+                                []
+
+                            else
+                                tile (lay.bx + x * lay.cell) (lay.by + y * lay.cell) lay.cell k
+                        )
+                        (List.range 0 (cols - 1))
+                    )
+            )
+            (List.range 0 (rows - 1))
+        )
+
+
+gridLines : Layout -> List Shape
+gridLines lay =
+    List.map
+        (\x -> rect (lay.bx + x * lay.cell) lay.by 1 lay.bh (rgba 255 255 255 5))
+        (List.range 1 (cols - 1))
+        ++ List.map
+            (\y -> rect lay.bx (lay.by + y * lay.cell) lay.bw 1 (rgba 255 255 255 4))
+            (List.range 1 (rows - 1))
+
+
+pieceTiles : Piece -> Layout -> List Shape
+pieceTiles p lay =
+    List.concat
+        (List.map
+            (\c ->
+                let
+                    y = p.y + c.y
+                in
+                if y < 0 then
+                    []
+
+                else
+                    tile (lay.bx + (p.x + c.x) * lay.cell) (lay.by + y * lay.cell) lay.cell p.kind
+            )
+            (shapeOf p.kind p.rot)
+        )
+
+
+-- The ghost is an outline in the piece's own colour, not a translucent copy: a
+-- filled ghost competes with the real piece for attention, and the whole point
+-- is that you read the landing spot without looking away from what you hold.
+--
+-- It is also deliberately quiet — a thin line at about half opacity. The ghost
+-- answers a question you ask once per piece ("where does this land"), and the
+-- moment it is loud enough to read without looking, it is loud enough to be
+-- mistaken for a piece already on the stack.
+--
+-- The whole outline goes in ONE Alpha group rather than carrying the fade on
+-- each rect: the four edges of a cell meet at the corners, and per-shape alpha
+-- would paint those corners twice and print a brighter dot at each one.
+ghostTiles : Model -> Layout -> List Shape
+ghostTiles m lay =
+    let
+        g = dropTo m.piece m.matrix
+        edge = max 1 (lay.cell // 14)
+        ink = inkOf g.kind
+    in
+    [ group [ Canvas.Alpha 55 ]
+        (List.concat
+            (List.map
+                (\c ->
+                    let
+                        px = lay.bx + (g.x + c.x) * lay.cell
+                        py = lay.by + (g.y + c.y) * lay.cell
+                    in
+                    if g.y + c.y < 0 then
+                        []
+
+                    else
+                        [ rect px py lay.cell edge ink
+                        , rect px (py + lay.cell - edge) lay.cell edge ink
+                        , rect px py edge lay.cell ink
+                        , rect (px + lay.cell - edge) py edge lay.cell ink
+                        ]
+                )
+                (shapeOf g.kind g.rot)
+            )
+        )
+    ]
+
+
+-- A cleared row lights from the middle outwards. The light is drawn in Add
+-- blend so stacked tiles brighten rather than average toward grey, which is
+-- what makes it read as light instead of paint.
+flashShapes : Model -> Layout -> List Shape
+flashShapes m lay =
+    let
+        t = m.frame - m.flashAt
+        reach = (t * (cols // 2 + 1)) // 14 + 1
+    in
+    List.concat
+        (List.map
+            (\y ->
+                List.map
+                    (\x ->
+                        rect (lay.bx + x * lay.cell) (lay.by + y * lay.cell) lay.cell lay.cell
+                            (rgba 255 250 226 (max 0 (82 - t * 4)))
+                    )
+                    (List.filter
+                        (\x -> abs (x * 2 - (cols - 1)) <= reach * 2)
+                        (List.range 0 (cols - 1))
+                    )
+            )
+            m.flashRows
+        )
+
+
+slamShapes : Model -> Layout -> List Shape
+slamShapes m lay =
+    let
+        t = m.frame - m.slamAt
+    in
+    if t > 8 then
+        []
+
+    else
+        List.map
+            (\c ->
+                rect (lay.bx + c.x * lay.cell) (lay.by + max 0 c.y * lay.cell) lay.cell lay.cell
+                    (rgba 255 255 255 (max 0 (44 - t * 5)))
+            )
+            (List.filter (\c -> c.y >= 0) m.slam)
+
+
+-- A preview, CENTRED on the point given rather than hung off its top-left.
+--
+-- The rotation tables put each kind wherever it happens to sit inside its 4x4
+-- box: the O one column in, the I a whole row down, the others two or three
+-- wide starting at zero. Drawing those offsets raw makes a row of previews
+-- look shaken loose — every piece at a different height, and the gaps between
+-- them uneven because a 2-wide O leaves the same pitch as a 4-wide I. So the
+-- piece is measured first and placed on its own middle, which is the only
+-- thing four different shapes have in common.
+miniPiece : Int -> Int -> Int -> Int -> List Shape
+miniPiece kind cx cy cell =
+    let
+        cells = shapeOf kind 0
+        xs = List.map (\c -> c.x) cells
+        ys = List.map (\c -> c.y) cells
+        minX = List.foldl min 3 xs
+        maxX = List.foldl max 0 xs
+        minY = List.foldl min 3 ys
+        maxY = List.foldl max 0 ys
+
+        px = cx - (maxX - minX + 1) * cell // 2 - minX * cell
+        py = cy - (maxY - minY + 1) * cell // 2 - minY * cell
+    in
+    List.concat
+        (List.map
+            (\c -> tile (px + c.x * cell) (py + c.y * cell) cell kind)
+            cells
+        )
+
+
+-- ---------------------------------------------------------------- background
+--
+-- Mar's canvas has no gradient primitive, and it turns out not to need one:
+-- eighteen flat bands of decreasing alpha read as a gradient, and the two
+-- circles behind the well in Add blend are the only light in the scene. Every
+-- value here is derived from the canvas size, so it fills a phone the same way.
+
+
+-- The wall cells are the palette at a tenth of its strength: enough to catch
+-- the light, never enough to compete with the matrix.
+wallInk : Int -> Color
+wallInk kind =
+    case kind of
+        1 -> rgba 86 200 199 4
+        2 -> rgba 92 128 214 4
+        3 -> rgba 224 150 66 3
+        4 -> rgba 226 196 84 3
+        5 -> rgba 122 194 108 3
+        6 -> rgba 168 116 210 5
+        _ -> rgba 219 96 106 3
+
+
+-- The wall behind the game is a dead matrix: one flat cell every two, hue
+-- picked by position, all of it barely above the background. A few hundred
+-- rectangles buy a texture that no flat fill can, and it is the right texture
+-- — the game is played against a dim, empty copy of the thing it is named
+-- after.
+backdropShapes : Model -> Layout -> List Shape
+backdropShapes m lay =
+    let
+        bands = 20
+        bandH = m.h // bands + 1
+        step = max 16 (lay.cell * 3)
+        gap = max 2 (step // 14)
+    in
+    [ rect 0 0 m.w m.h (rgb 9 10 16) ]
+        ++ List.map
+            (\i -> rect 0 (i * bandH) m.w bandH (rgba 70 58 124 (max 0 (12 - i))))
+            (List.range 0 (bands - 1))
+        ++ List.concat
+            (List.map
+                (\y ->
+                    List.map
+                        (\x ->
+                            rect (x * step + gap) (y * step + gap)
+                                (step - gap * 2) (step - gap * 2)
+                                (wallInk (1 + modBy 7 (x * 5 + y * 3)))
+                        )
+                        (List.range 0 (m.w // step))
+                )
+                (List.range 0 (m.h // step))
+            )
+
+
+-- Drawn last, over everything: the corners fall away and the eye lands on the
+-- well without anything having to be brighter.
+vignette : Model -> List Shape
+vignette m =
+    let
+        band = m.h // 40 + 2
+    in
+    List.concat
+        (List.map
+            (\i ->
+                let
+                    a = max 0 (6 - i)
+                    t = i * band
+                in
+                [ rect 0 t m.w band (rgba 0 0 0 a)
+                , rect 0 (m.h - t - band) m.w band (rgba 0 0 0 a)
+                , rect t 0 band m.h (rgba 0 0 0 a)
+                , rect (m.w - t - band) 0 band m.h (rgba 0 0 0 a)
+                ]
+            )
+            (List.range 0 7)
+        )
+
+
+-- A panel card: a pane of frosted glass with a lit top edge and a shadow under
+-- it. The same three rectangles behind NEXT, HOLD and the stats is what makes
+-- the right-hand column read as one object instead of floating text.
+card : Int -> Int -> Int -> Int -> List Shape
+card px py pw ph =
+    [ rect px py pw ph (rgba 255 255 255 7)
+    , rect px py pw 1 (rgba 255 255 255 16)
+    , rect px (py + ph - 1) pw 1 (rgba 0 0 0 35)
+    ]
+
+
+-- A triangle wave in whole numbers. Mar has no floats and therefore no sine,
+-- and it turns out a triangle is what you want anyway for a bob or a pulse:
+-- it spends no time loitering at the extremes.
+wave : Int -> Int -> Int
+wave span t =
+    abs (modBy (span * 2) t - span) - span // 2
+
+
+-- The frame breathes on a level up: a warm pulse around the border for half a
+-- second, the object changing rather than the screen.
+frameShapes : Model -> Layout -> List Shape
+frameShapes m lay =
+    let
+        t = m.frame - m.levelAt
+
+        glow =
+            if t < 36 && m.levelAt > 0 then
+                max 0 (58 - t * 2)
+
+            else
+                0
+
+        edge = max 3 (lay.cell // 5)
+        lip = max 1 (edge // 3)
+    in
+    [ rect (lay.bx - edge) (lay.by - edge) (lay.bw + edge * 2) (lay.bh + edge * 2) (rgb 44 48 66)
+    , rect (lay.bx - edge) (lay.by - edge) (lay.bw + edge * 2) lip (rgba 255 255 255 18)
+    , rect (lay.bx - edge) (lay.by + lay.bh + edge - lip) (lay.bw + edge * 2) lip (rgba 0 0 0 44)
+    , rect lay.bx lay.by lay.bw lay.bh (rgb 13 14 21)
+    , rect lay.bx lay.by lay.bw (max 1 (lay.cell // 10)) (rgba 0 0 0 50)
+    ]
+        ++ (if glow == 0 then
+                []
+
+            else
+                [ group [ Canvas.Blend Canvas.Add ]
+                    [ rect (lay.bx - edge) (lay.by - edge) (lay.bw + edge * 2) edge (rgba 226 196 84 glow)
+                    , rect (lay.bx - edge) (lay.by + lay.bh) (lay.bw + edge * 2) edge (rgba 226 196 84 glow)
+                    , rect (lay.bx - edge) (lay.by - edge) edge (lay.bh + edge * 2) (rgba 226 196 84 glow)
+                    , rect (lay.bx + lay.bw) (lay.by - edge) edge (lay.bh + edge * 2) (rgba 226 196 84 glow)
+                    ]
+                ]
+           )
+
+
+-- Landscape opens into TWO columns, one either side of the matrix: hold on
+-- the left, previews and score on the right. One narrow column beside the
+-- matrix left two thirds of a phone held sideways completely empty while the
+-- cards inside it were too cramped to breathe — the width was there the whole
+-- time, it was just all on one side of everything.
+panelShapes : Model -> Layout -> List Shape
+panelShapes m lay =
+    let
+        cell = lay.cell
+        pw = lay.col
+        mini = max 4 (cell * 3 // 5)
+        slot = mini * 4
+        pad = cell * 2 // 3
+        head = cell
+
+        label = \x y s -> Canvas.text (x + pad) y (max 10 (cell * 2 // 5)) Canvas.Left (rgba 255 255 255 47) s
+        value = \x y s -> Canvas.text (x + pw - pad) y (max 13 (cell * 7 // 10)) Canvas.Right (rgb 244 240 232) s
+
+        -- HOLD, alone on the left, sized for exactly what it holds.
+        holdH = pad + head + slot
+        holdY = lay.by
+        holdMid = lay.lx + pw // 2
+
+        holdBlock =
+            if m.hold == 0 then
+                [ rect (holdMid - mini * 2) (holdY + pad + head) (mini * 4) (mini * 2) (rgba 255 255 255 5)
+                , rect (holdMid - mini * 2) (holdY + pad + head) (mini * 4) 1 (rgba 255 255 255 16)
+                ]
+
+            else
+                miniPiece m.hold holdMid (holdY + pad + head + slot // 2) mini
+
+        -- NEXT and the score share the right column, stacked.
+        nextY = lay.by
+        nextH = pad + head + slot * 5
+        statY = nextY + nextH + pad
+        statH = pad + cell * 4 + pad // 2
+        nextMid = lay.rx + pw // 2
+        statRow = \i -> statY + pad + cell * i + cell // 2
+
+        nextBlocks =
+            List.concat
+                (List.indexedMap
+                    (\i k -> miniPiece k nextMid (nextY + pad + head + slot // 2 + i * slot) mini)
+                    (List.take 5 m.queue)
+                )
+    in
+    card lay.lx holdY pw holdH
+        ++ [ label lay.lx (holdY + pad + head // 2) "HOLD" ]
+        ++ holdBlock
+        ++ card lay.rx nextY pw nextH
+        ++ [ label lay.rx (nextY + pad + head // 2) "NEXT" ]
+        ++ nextBlocks
+        ++ card lay.rx statY pw statH
+        ++ [ label lay.rx (statRow 0) "SCORE"
+           , value lay.rx (statRow 0) (String.fromInt m.score)
+           , label lay.rx (statRow 1) "LINES"
+           , value lay.rx (statRow 1) (String.fromInt m.lines)
+           , label lay.rx (statRow 2) "LEVEL"
+           , value lay.rx (statRow 2) (String.fromInt m.level)
+           , label lay.rx (statRow 3) "BEST"
+           , value lay.rx (statRow 3) (String.fromInt m.best)
+           ]
+
+
+-- Portrait, on a phone: hold and previews go in the margins either side of
+-- the matrix, and only the score stays in the band above it.
+--
+-- They used to share one strip over the matrix, and that strip was the worst
+-- part of the game on a phone. Three previews laid out sideways read as a row
+-- of unrelated little shapes rather than a queue, hold sat next to them
+-- looking like a fourth, and all of it competed with the score for one line
+-- of width — while the margins either side of a ten-column matrix, which are
+-- always there because the matrix runs out of height first, stayed empty the
+-- whole time.
+--
+-- Beside the matrix, each one gets a column of its own: the queue reads
+-- downward, which is the direction the pieces are actually coming from, and
+-- hold sits opposite it where nothing else is competing for the eye.
+phoneShapes : Model -> Layout -> List Shape
+phoneShapes m lay =
+    let
+        cell = lay.cell
+        pw = lay.col
+        top = max 6 (cell // 3)
+        bandH = lay.by - top - cell // 3
+        pad = max 4 (cell // 4)
+        small = max 9 (cell * 2 // 5)
+        big = max 18 (cell * 6 // 5)
+
+        -- The preview size comes from the COLUMN, not from the cell: a piece
+        -- is up to four cells wide, and sizing it off the matrix cell would
+        -- let a big cell print an I piece wider than the column it lives in.
+        mini = max 4 (min (cell // 2) ((pw - pad * 2) // 4))
+        slot = mini * 4
+        head = max 12 (cell * 3 // 5)
+
+        holdMid = lay.lx + pw // 2
+        nextMid = lay.rx + pw // 2
+        holdY = lay.by
+        nextY = lay.by
+
+        -- Four previews, not three. The column has the height for them and a
+        -- deeper queue is what lets somebody plan a well two pieces early
+        -- instead of reacting.
+        shown = List.take 4 m.queue
+        holdH = pad + head + slot
+        nextH = pad + head + slot * List.length shown + pad
+
+        holdBlock =
+            if m.hold == 0 then
+                -- An empty hold is a fact worth showing: the slot stays, so a
+                -- player learns there is somewhere to put a piece. It needs an
+                -- edge to read as a container.
+                [ rect (holdMid - mini * 2) (holdY + pad + head) (mini * 4) (mini * 2) (rgba 255 255 255 5)
+                , rect (holdMid - mini * 2) (holdY + pad + head) (mini * 4) 1 (rgba 255 255 255 16)
+                ]
+
+            else
+                miniPiece m.hold holdMid (holdY + pad + head + slot // 2) mini
+
+        nextBlocks =
+            List.concat
+                (List.indexedMap
+                    (\i k -> miniPiece k nextMid (nextY + pad + head + slot // 2 + i * slot) mini)
+                    shown
+                )
+    in
+    card lay.lx holdY pw holdH
+        ++ [ Canvas.text holdMid (holdY + pad + head // 2) small Canvas.Center (rgba 255 255 255 47) "HOLD" ]
+        ++ holdBlock
+        ++ card lay.rx nextY pw nextH
+        ++ [ Canvas.text nextMid (nextY + pad + head // 2) small Canvas.Center (rgba 255 255 255 47) "NEXT" ]
+        ++ nextBlocks
+        ++ [ Canvas.text (lay.bx + lay.bw // 2) (top + bandH * 2 // 5) big Canvas.Center (rgb 244 240 232)
+                (String.fromInt m.score)
+           , Canvas.text (lay.bx + lay.bw // 2) (top + bandH * 3 // 4) small Canvas.Center (rgba 255 255 255 40)
+                ("best " ++ String.fromInt m.best ++ "    level " ++ String.fromInt m.level
+                    ++ "    " ++ String.fromInt m.lines ++ " lines")
+           ]
+
+
+-- The reward for a clear is named over the matrix and fades out with the light.
+-- It is the one piece of text that moves, so it is the one you read.
+clearBanner : Model -> Layout -> List Shape
+clearBanner m lay =
+    let
+        n = m.banner
+        t = m.frame - m.bannerAt
+
+        -- Half a second at full strength, then half a second fading. A word
+        -- has to be ON the screen long enough for an eye that is busy watching
+        -- the stack to leave it, land, and come back.
+        alpha =
+            if t < 30 then
+                100
+
+            else
+                max 0 (100 - (t - 30) * 3)
+
+        -- Genre convention: the four-row clear is named after the game. It is
+        -- the only clear that needs a well set up several pieces in advance,
+        -- so it earns the title.
+        word =
+            if n >= 4 then
+                "MAR-TRIX"
+
+            else if n == 3 then
+                "TRIPLE"
+
+            else if n == 2 then
+                "DOUBLE"
+
+            else
+                "LINE"
+
+        cx = lay.bx + lay.bw // 2
+        cy = lay.by + lay.bh // 4
+    in
+    if n == 0 || alpha == 0 then
+        []
+
+    else
+        [ Canvas.text (cx + 2) (cy + 2) (lay.cell * 5 // 4) Canvas.Center (rgba 0 0 0 alpha) word
+        , Canvas.text cx cy (lay.cell * 5 // 4) Canvas.Center (rgba 232 204 96 alpha) word
+        ]
+            ++ (if m.combo > 1 then
+                    [ Canvas.text cx (cy + lay.cell * 5 // 4) (max 11 (lay.cell * 3 // 5)) Canvas.Center
+                        (rgba 255 255 255 alpha)
+                        (String.fromInt m.combo ++ " IN A ROW")
+                    ]
+
+                else
+                    []
+               )
+
+
+-- ------------------------------------------------------------------ screens
+
+
+-- One tile drifting down the title background. The frame counter IS the
+-- animation: position is a pure function of it, so nothing has to be stored
+-- and the loop never accumulates drift. They fall in the two side margins
+-- only, so the wordmark always sits on clean background.
+driftPiece : Model -> Int -> Int -> Shape
+driftPiece m cell i =
+    let
+        kind = 1 + modBy 7 (i * 3)
+
+        -- max 1: the only divisor in the game derived from the canvas size.
+        -- `modBy 0` is defined to be 0, but a divisor that can be zero is a
+        -- smell whatever the runtime does with it.
+        band = max 1 (m.w // 4)
+        speed = 1 + modBy 3 i
+
+        px =
+            if modBy 2 i == 0 then
+                modBy band (i * 137 + 20)
+
+            else
+                m.w - band + modBy band (i * 91 + 30)
+
+        py = modBy (m.h + 200) (m.frame * speed // 2 + i * 190) - 100
+    in
+    group [ Canvas.Alpha 18 ] (miniPiece kind px py (cell // 2))
+
+
+-- The title screen shows the seven pieces bobbing above the wordmark, which
+-- says what the game is before a word of it is read.
+titleShapes : Model -> Layout -> List Shape
+titleShapes m lay =
+    let
+        cell = lay.cell
+        cx = m.w // 2
+        cy = m.h // 2
+        mark = max 16 (cell * 5 // 4)
+        step = mark * 5 // 4
+        markW = step * 7
+        pulse = 51 + wave 44 m.frame * 2
+
+        -- The wordmark is eight glyphs, and at this weight eight glyphs run
+        -- about 4.7 times the point size wide. On a desktop the cell decides;
+        -- on a phone the SCREEN decides, or MAR-TRIX runs off both edges —
+        -- which is exactly what a size derived only from the cell did.
+        wordSize = min (cell * 3) ((m.w - cell) * 10 // 47)
+
+        -- A soft column of shade down the middle so the wordmark sits on
+        -- something quiet instead of on the backdrop. Never wider than the
+        -- canvas, or the "column" is just the whole screen.
+        plateW = min m.w (max 320 (cell * 15))
+    in
+    List.map (\i -> driftPiece m cell i) (List.range 0 11)
+        ++ [ rect (cx - plateW // 2) 0 plateW m.h (rgba 9 10 16 45) ]
+        ++ List.concat
+            (List.map
+                (\i ->
+                    tile (cx - markW // 2 + i * step)
+                        (cy - cell * 5 + wave 26 (m.frame + i * 8))
+                        mark
+                        (i + 1)
+                )
+                (List.range 0 6)
+            )
+        ++ [ Canvas.text (cx + 3) (cy - cell * 2 + 3) wordSize Canvas.Center (rgba 0 0 0 66) "MAR-TRIX"
+           , Canvas.text cx (cy - cell * 2) wordSize Canvas.Center (rgb 246 240 228) "MAR-TRIX"
+           , rect (cx - cell * 4) (cy - cell // 2) (cell * 8) 2 (rgba 226 196 84 31)
+           , Canvas.text cx (cy + cell // 2) (max 12 (cell * 3 // 5)) Canvas.Center (rgba 255 255 255 51)
+                "stack, clear, repeat"
+           , Canvas.text cx (cy + cell * 5 // 2) (max 14 (cell * 4 // 5)) Canvas.Center (rgba 232 204 96 pulse)
+                (if lay.handheld then "tap to start" else "press SPACE to start")
+
+           -- Two different games to explain, because they really are two
+           -- different games to play: one has a key per action, the other
+           -- steers the piece with the thumb that is already on the glass.
+           , Canvas.text cx (cy + cell * 9 // 2) (max 10 (cell // 2)) Canvas.Center (rgba 255 255 255 39)
+                (if lay.handheld then
+                    "drag to move        tap to turn"
+
+                 else
+                    "arrows move    up rotates    Z counter-rotates    C holds"
+                )
+           , Canvas.text cx (cy + cell * 11 // 2) (max 10 (cell // 2)) Canvas.Center (rgba 255 255 255 39)
+                (if lay.handheld then "swipe down to drop        swipe up to hold" else "space hard-drops")
+           ]
+
+
+overShapes : Model -> Layout -> List Shape
+overShapes m lay =
+    let
+        cell = lay.cell
+        cx = lay.bx + lay.bw // 2
+        cy = lay.by + lay.bh // 2
+        pulse = 51 + wave 44 m.frame * 2
+
+        cardW = lay.bw - cell
+        cardX = lay.bx + cell // 2
+        cardH = cell * 7
+        cardY = cy - cardH // 2
+
+        -- Every size here is derived from the CARD, not from the cell: a
+        -- character is about six tenths of the font size wide, so the longest
+        -- line of each row decides its divisor. Sizing from the cell is what
+        -- let the headline run out of its own box on a wide matrix.
+        titleSize = max 14 (cardW // 9)
+        scoreSize = max 12 (cardW // 14)
+        detailSize = max 10 (cardW // 20)
+        promptSize = max 11 (cardW // 17)
+    in
+    -- The matrix stays visible under the scrim — the shape of the stack that
+    -- ended the run is the most interesting thing on the screen — and the card
+    -- is translucent for the same reason, so the stack reads THROUGH the
+    -- numbers instead of being boxed out by them. 88% still leaves the text
+    -- far clear of the scrimmed tiles behind it.
+    [ rect lay.bx lay.by lay.bw lay.bh (rgba 8 9 14 78)
+    , rect cardX cardY cardW cardH (rgba 22 24 34 88)
+    , rect cardX cardY cardW 2 (rgba 232 204 96 55)
+    ]
+        ++ [ Canvas.text cx (cardY + cardH * 24 // 100) titleSize Canvas.Center (rgb 246 240 228) "NO ROOM LEFT"
+           , Canvas.text cx (cardY + cardH * 47 // 100) scoreSize Canvas.Center (rgba 255 255 255 63)
+                (String.fromInt m.score ++ " points")
+           , Canvas.text cx (cardY + cardH * 63 // 100) detailSize Canvas.Center (rgba 255 255 255 47)
+                (if m.score >= m.best then
+                    "best of the session"
+
+                 else
+                    "best " ++ String.fromInt m.best
+                )
+           -- The way back has to name the input the player actually has. A
+           -- phone has no space bar, and the tap that restarts works anywhere
+           -- on the screen.
+           , Canvas.text cx (cardY + cardH * 83 // 100) promptSize Canvas.Center (rgba 232 204 96 pulse)
+                (if lay.handheld then "tap to play again" else "press SPACE to play again")
+           ]
+
+
+view : Model -> View Msg
+view m =
+    let
+        lay = layout m
+
+        sidebar =
+            if lay.stack then
+                phoneShapes m lay
+
+            else
+                panelShapes m lay
+
+        playing =
+            frameShapes m lay
+                ++ gridLines lay
+                ++ matrixTiles m lay
+                ++ ghostTiles m lay
+                ++ pieceTiles m.piece lay
+                ++ [ group [ Canvas.Blend Canvas.Add ] (slamShapes m lay ++ flashShapes m lay) ]
+                ++ clearBanner m lay
+                ++ sidebar
+
+        scene =
+            case m.phase of
+                Title ->
+                    titleShapes m lay
+
+                Over ->
+                    frameShapes m lay
+                        ++ gridLines lay
+                        ++ matrixTiles m lay
+                        ++ sidebar
+                        ++ overShapes m lay
+
+                Playing ->
+                    playing
+
+                Clearing ->
+                    playing
+    in
+    canvas Crisp
+        [ onTap Tapped, watchSize Resized, watchPointers Pointers ]
+        (backdropShapes m lay ++ scene ++ vignette m)
+
+
+
+-- Every phase ticks, including the two that are not playing: the title
+-- screen drifts and the game-over prompt pulses, and both read the frame
+-- counter. A phase that drew something moving but subscribed to nothing would
+-- render one frozen frame and look broken.
+subscriptions : Model -> Sub Msg
+subscriptions m =
+    Sub.batch
+        [ Time.every (Time.millis (1000 // fps)) (\_ -> Tick)
+        , Keyboard.watch KeysChanged
+        , Gamepad.watch PadChanged
+        , Device.watch DeviceChanged
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Mar-Trix"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]
