@@ -34,6 +34,7 @@ import Canvas exposing ( canvas, rect, circle, group, rgb, rgba
 type Screen
     = STitle
     | SSelect
+    | SProlog
     | SBrief
     | SPlay
     | SWin
@@ -87,6 +88,8 @@ type alias Model =
     , simAcc : Int
     , muted : Bool
     , help : Bool
+    , log : Bool             -- the story log overlay (L)
+    , reBrief : Bool         -- the briefing is being RE-read, not delivered
     , shownCredits : Int
     , briefLine : Int
     , progress : Dict Int Int
@@ -135,6 +138,8 @@ freshModel =
     , simAcc = 0
     , muted = False
     , help = False
+    , log = False
+    , reBrief = False
     , shownCredits = 0
     , briefLine = 0
     , progress = Dict.empty
@@ -201,9 +206,15 @@ launch m model =
         , atkArmed = False
         , superArmed = False
         , rmbGuard = False
+        -- Every overlay that FREEZES the simulation has to be cleared here, and
+        -- the list has to stay in step with the guard in `frame`. The log was
+        -- added later and missed: open it, escape to the menu, quit, start
+        -- another mission, and the new mission came up already frozen with no
+        -- overlay on screen to explain why.
         , paused = False
         , menuOpen = False
         , help = False
+        , log = False
         , simAcc = 0
         , shownCredits = startCreditsOf g
         , screen = SPlay
@@ -297,7 +308,7 @@ frame : Model -> (Model, Cmd Msg)
 frame model =
     case model.screen of
         SPlay ->
-            if model.paused || model.menuOpen || model.help then
+            if model.paused || model.menuOpen || model.help || model.log then
                 ( panCamera model, Cmd.none )
             else
                 let
@@ -813,8 +824,8 @@ objectivesOf model =
     in
     case model.mission of
         1 ->
-            [ { text = "Establish the field base", done = countMy g Refinery > 0 || g.tick > 1800 }
-            , { text = "Destroy the raider camp", done = enemyBldCount g == 0 }
+            [ { text = "Build the field base, the convoy needs a depot", done = countMy g Refinery > 0 || g.tick > 1800 }
+            , { text = "Burn the raider camp, it is cutting the supply line", done = enemyBldCount g == 0 }
             ]
 
         2 ->
@@ -829,23 +840,23 @@ objectivesOf model =
 
                 holdTicks = flagAt g 1
             in
-            [ { text = "Capture three silos (" ++ String.fromInt held ++ "/3)", done = held >= 3 }
-            , { text = "Hold them (" ++ String.fromInt (holdTicks // 1800) ++ "/6 min)", done = holdTicks >= 10800 }
-            , { text = "Break the Combine base", done = enemyBldCount g == 0 }
+            [ { text = "Capture three silos (" ++ String.fromInt held ++ "/3), they pay for the war", done = held >= 3 }
+            , { text = "Hold them (" ++ String.fromInt (holdTicks // 1800) ++ "/6 min) until the grid takes over", done = holdTicks >= 10800 }
+            , { text = "Break the Combine forward base to end the argument", done = enemyBldCount g == 0 }
             ]
 
         3 ->
             -- The survivors are hidden in the fog to the south-east (the
             -- tick-300 ping points the way). Reaching them relieves the
             -- huddle; flag 10 is set the moment that happens.
-            [ { text = "Rescue the Erebus survivors (far south-east)", done = flagAt g 10 == 1 }
-            , { text = "Survive the warp surges", done = g.tick >= 12000 }
-            , { text = "Destroy the lattice nexus", done = bnot (hasEnemyKindGate g) }
+            [ { text = "Find the Erebus survivors, far to the south-east", done = flagAt g 10 == 1 }
+            , { text = "Survive the surges coming off the tone", done = g.tick >= 12000 }
+            , { text = "Destroy the nexus that is jamming the post", done = bnot (hasEnemyKindGate g) }
             ]
 
         4 ->
-            [ { text = "Relieve the crawler city", done = flagAt g 1 == 1 }
-            , { text = "Destroy both Genesis Fonts", done = fontCount g == 0 }
+            [ { text = "Reach the crawler city before its walls fall", done = flagAt g 1 == 1 }
+            , { text = "Destroy both Genesis Fonts, they grow the rest", done = fontCount g == 0 }
             ]
 
         5 ->
@@ -854,8 +865,8 @@ objectivesOf model =
             let
                 left = conduitCount g
             in
-            [ { text = "Destroy the Prime Conduit ring (" ++ String.fromInt (4 - left) ++ "/4)", done = left == 0 }
-            , { text = "Survive the purge cycles", done = g.tick >= 9900 }
+            [ { text = "Break the four conduit spires (" ++ String.fromInt (4 - left) ++ "/4), NOT the Engine", done = left == 0 }
+            , { text = "Survive the purge cycles, they telegraph first", done = g.tick >= 9900 }
             ]
 
         _ ->
@@ -983,7 +994,7 @@ press : Int -> Int -> Model -> Model
 press x y model =
     case model.screen of
         SPlay ->
-            if model.menuOpen || model.help then
+            if model.menuOpen || model.help || model.log then
                 model
             else if x >= model.w - sideW then
                 pressSidebar x y model
@@ -1107,7 +1118,7 @@ altTap : Int -> Int -> Model -> (Model, Cmd Msg)
 altTap x y model =
     case model.screen of
         SPlay ->
-            if model.menuOpen || model.help then
+            if model.menuOpen || model.help || model.log then
                 ( { model | rmbGuard = True }, Cmd.none )
             else if x >= model.w - sideW then
                 -- right-click on a UNITS-tab cell cancels one queued unit of
@@ -1179,7 +1190,7 @@ wheel : Int -> Int -> Model -> Model
 wheel dx dy model =
     case model.screen of
         SPlay ->
-            if model.menuOpen || model.help then
+            if model.menuOpen || model.help || model.log then
                 model
             else
                 let
@@ -1211,7 +1222,7 @@ wheel dx dy model =
 pressSidebar : Int -> Int -> Model -> Model
 pressSidebar x y model =
     let
-        mx = mmX { w = model.w, h = model.h, tab = model.tab, kbMode = model.kbMode, shownCredits = 0, sel = [], attackArmed = False, superArmed = False, paused = False, muted = False, speed = 0, helpOpen = False, objectives = [], clock = 0, hoverCell = 0 - 1, selB = 0 - 1 }
+        mx = mmX { w = model.w, h = model.h, tab = model.tab, kbMode = model.kbMode, shownCredits = 0, sel = [], attackArmed = False, superArmed = False, paused = False, muted = False, speed = 0, helpOpen = False, logOpen = False, logFactions = [], logCast = [], logSoFar = [], objectives = [], clock = 0, hoverCell = 0 - 1, selB = 0 - 1 }
     in
     if x >= mx && x < mx + mmSizeOf model.h && y >= mmY && y < mmY + mmSizeOf model.h then
         -- minimap: jump the camera, keep panning while dragging
@@ -1368,6 +1379,9 @@ release x y model =
 
         SSelect ->
             selectClick x y model
+
+        SProlog ->
+            ( { model | screen = SBrief, briefLine = 0 }, menuBlip model )
 
         SBrief ->
             briefClick x y model
@@ -1715,6 +1729,11 @@ keyDown k model =
         SPlay ->
             playKey k model
 
+        SProlog ->
+            case k of
+                Keyboard.Escape -> ( { model | screen = SSelect }, Cmd.none )
+                _ -> ( { model | screen = SBrief, briefLine = 0 }, Cmd.none )
+
         SBrief ->
             case k of
                 Keyboard.Enter -> ( advanceBrief model, Cmd.none )
@@ -1745,7 +1764,21 @@ playKey k model =
             ( escAction model, Cmd.none )
 
         Keyboard.KeyH ->
-            ( { model | help = bnot model.help }, Cmd.none )
+            ( { model | help = bnot model.help, log = False }, Cmd.none )
+
+        -- The story used to be told once and then be gone. L brings it back:
+        -- who the three sides are, who is on the radio, and where things
+        -- currently stand.
+        Keyboard.KeyL ->
+            ( { model | log = bnot model.log, help = False }, Cmd.none )
+
+        -- ...and from there, R replays this mission's briefing word for word.
+        Keyboard.KeyR ->
+            if model.log then
+                ( { model | screen = SBrief, briefLine = 0, reBrief = True, log = False }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
 
         Keyboard.KeyP ->
             ( { model | paused = bnot model.paused }, Cmd.none )
@@ -2006,7 +2039,10 @@ selectClick x y model =
     in
     case hit of
         Just i ->
-            ( { model | mission = i + 1, screen = SBrief, briefLine = 0 }, menuBlip model )
+            -- The premise screen runs once, ahead of the first briefing. Every
+            -- later mission goes straight to its briefing, which now carries
+            -- its own recap line.
+            ( { model | mission = i + 1, screen = (if i == 0 then SProlog else SBrief), briefLine = 0, reBrief = False }, menuBlip model )
 
         Nothing ->
             if btnHit x y (cx - 60) (model.h // 2 + 140) 120 30 then
@@ -2021,7 +2057,15 @@ advanceBrief model =
         total = List.length (briefing model.mission)
     in
     if model.briefLine + 1 >= total then
-        launch model.mission model
+        -- Reached the end. If this was a RE-read (opened from the log during
+        -- play) the mission is already running, so going through `launch`
+        -- again would throw the game away and start it over.
+        if model.reBrief then
+            { model | screen = SPlay, reBrief = False }
+
+        else
+            launch model.mission model
+
     else
         { model | briefLine = model.briefLine + 1 }
 
@@ -2127,6 +2171,10 @@ hudStateOf model =
         else if model.speed == 1 then 100
         else 200
     , helpOpen = model.help
+    , logOpen = model.log
+    , logFactions = logFactions
+    , logCast = logCast
+    , logSoFar = logSoFar model.mission
     , objectives = objectivesOf model
     , clock = model.g.tick // 30
     , hoverCell = model.hoverCell
@@ -2142,6 +2190,7 @@ view model =
         (case model.screen of
             STitle -> titleShapes model
             SSelect -> selectShapes model
+            SProlog -> prologShapes model
             SBrief -> briefShapes model
             SSkirmish -> skirmishShapes model
             SWin -> winShapes model
@@ -2567,9 +2616,17 @@ briefShapes model =
         rowPitch = 16
         contentH = List.length allRows * rowPitch
 
-        boxH = 96 + contentH + 60
+        -- One sentence of what just happened, above the dialogue. A campaign
+        -- gets played across several evenings, and without this the player
+        -- opens mission 4 with no idea why they are suddenly fighting
+        -- alongside the enemy from mission 2.
+        recapRows = wrapText 72 (recap model.mission)
+        recapH = if List.isEmpty recapRows then 0 else List.length recapRows * 14 + 14
+
+        boxH = 96 + recapH + contentH + 60
         top = max 24 (model.h // 2 - boxH // 2)
-        rowsY = top + 80
+        recapY = top + 76
+        rowsY = top + 80 + recapH
         textX = cx - 246
 
         rowShapes =
@@ -2598,7 +2655,12 @@ briefShapes model =
                 ("MISSION " ++ (if model.mission > 0 then String.fromInt model.mission else "X") ++ ": " ++ missionTitle model.mission)
           , Canvas.text (cx - 310) (top + 50) 10 Canvas.Left (rgb 150 145 150) (missionPlace model.mission)
           ]
-        , portraitShapes current (cx - 322) (top + 62)
+        -- +recapH so the portrait sits beside the DIALOGUE, not beside the
+        -- recap line, which belongs to nobody.
+        , portraitShapes current (cx - 322) (top + 62 + recapH)
+        , List.indexedMap
+            (\i t -> Canvas.text textX (recapY + i * 14) 10 Canvas.Left (rgb 150 175 150) t)
+            recapRows
         , rowShapes
         , [ rect (cx - 110) btnY 220 30 (rgb 44 38 44)
           , Canvas.text cx (btnY + 20) 11 Canvas.Center (rgb 220 214 206)
@@ -2694,6 +2756,42 @@ loseShapes model =
           , rect (cx - 110) (by + 44) 220 34 (rgb 34 28 32)
           , Canvas.text cx (by + 66) 11 Canvas.Center (rgb 190 185 190) "TITLE"
           ]
+        ]
+
+
+-- The premise, once, before the first briefing. This is the screen the
+-- campaign was missing: without it, mission 1 opened on four proper nouns and
+-- a war whose sides the player could not name.
+prologShapes : Model -> List Shape
+prologShapes model =
+    let
+        cx = model.w // 2
+        lines = prologue
+        top = max 20 (model.h // 2 - List.length lines * 8)
+    in
+    List.concat
+        -- No Mars disc here, unlike the other full-screen text screens: this
+        -- one is nothing but words, and the planet sat behind the middle third
+        -- of them.
+        [ [ rect 0 0 model.w model.h (rgb 13 9 12) ]
+        , starfield model
+        , List.concat
+            (List.indexedMap
+                (\i t ->
+                    -- A heading is a line with no leading space and a colon or
+                    -- a full stop early on; cheaper than a second data column,
+                    -- and the only thing it buys is a colour.
+                    [ Canvas.text cx (top + i * 16) 11 Canvas.Center
+                        (if String.startsWith "MARS." t || String.startsWith "THE " t || String.startsWith "AND " t then
+                            rgb 255 214 120
+
+                         else
+                            rgb 214 208 202)
+                        t
+                    ]
+                )
+                lines)
+        , [ Canvas.text cx (model.h - 40) 10 Canvas.Center (rgb 150 145 150) "click or press any key" ]
         ]
 
 

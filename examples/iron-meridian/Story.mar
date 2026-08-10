@@ -1,9 +1,29 @@
 module Story exposing (..)
 
 
--- IRON MERIDIAN: campaign text. Mars, 2231. Terraforming half done,
--- Earth eleven years silent (the Quiet), and something old under the
--- equatorial ridge keeping the new air breathable.
+-- IRON MERIDIAN: campaign text.
+--
+-- WHAT THIS FILE LEARNED. The premise used to live up here, in a comment, and
+-- the player never saw a word of it: they arrived at mission 1 not knowing the
+-- planet, the year, what happened to Earth, or which of the three names being
+-- thrown around was their own side. Every proper noun was already assumed, the
+-- two plots ran together from the first line with nothing telling them apart,
+-- and the reveal that gives the whole campaign its point sat in two lines of
+-- the LAST briefing. Miss those two lines and the game never explained itself.
+--
+-- So the rules here now are:
+--
+--   * The premise is on screen. `prologue` runs once before mission 1.
+--   * Every briefing opens with a SYSTEM line stating the situation plainly,
+--     before anyone gets to be clever about it.
+--   * Every briefing after the first opens with `recap`, one sentence of what
+--     just happened, because a player comes back a day later.
+--   * A name is either introduced when it arrives or it does not appear.
+--     The exception is a name the player can READ ON A BUILDING (Genesis
+--     Font, the conduits): those stay, and the briefing introduces them.
+--   * The reveal arrives in three parts (mission 3, 4, 5) instead of one, and
+--     each part restates the one before. Repetition is what makes a thing
+--     stick; a single line is what makes a player feel stupid.
 --
 -- Cast:
 --   REA    Warden-Commander Rea Sol, the player's voice on the ground
@@ -19,14 +39,17 @@ type alias Line =
     }
 
 
+-- The label carries the AFFILIATION, not just the name. A first-time player
+-- had no way to tell that Voss is their commanding officer and Kesk is the
+-- enemy: both were just capitalised names shouting at them.
 speakerName : Int -> String
 speakerName who =
     case who of
-        0 -> "CMDR REA SOL"
-        1 -> "CHIEF OKO ADEYEMI"
-        2 -> "MARSHAL VOSS"
-        3 -> "VARA KESK"
-        4 -> "THE CHORUS"
+        0 -> "CMDR REA SOL / WARDENS (YOU)"
+        1 -> "CHIEF OKO ADEYEMI / YOUR BASE"
+        2 -> "MARSHAL VOSS / COMPACT COMMAND"
+        3 -> "VARA KESK / IRON COMBINE"
+        4 -> "THE CHORUS / UNKNOWN"
         _ -> "MERIDIAN NET"
 
 
@@ -43,68 +66,121 @@ missionTitle m =
 missionPlace : Int -> String
 missionPlace m =
     case m of
-        1 -> "Tharsis scrapfields, day 4102 of the Quiet"
+        1 -> "Tharsis scrapfields, eleven years into the Quiet"
         2 -> "Coprates canyon belt, six days later"
         3 -> "Listening post Erebus, north ice margin"
-        4 -> "Kesk's crawler city, the Rust Meridian"
+        4 -> "Kesk's crawler city, the deep scrap country"
         _ -> "The Engine crater, equatorial ridge"
+
+
+-- ===== the premise, on screen, once =====
+--
+-- Shown before mission 1. It answers, in order: where, when, what went wrong,
+-- who is who, and who are you. Nothing else in the campaign is allowed to
+-- assume anything this screen does not say.
+prologue : List String
+prologue =
+    [ "MARS. YEAR 2231."
+    , ""
+    , "A century of terraforming, half finished. The air is thin and"
+    , "cold, but it is air, and it has been holding for longer than"
+    , "the engineers can explain."
+    , ""
+    , "Eleven years ago Earth stopped answering. No warning, no last"
+    , "message, nothing since. The colonies call it the Quiet."
+    , ""
+    , "Three powers were left holding the planet."
+    , ""
+    , "THE COMPACT. The old colonial government, still flying Earth's"
+    , "flag at a government that may not exist. Its army is the"
+    , "Wardens. You are Warden-Commander Rea Sol, and the Wardens are"
+    , "who you command."
+    , ""
+    , "THE IRON COMBINE. The settlements that walked out during the"
+    , "Quiet. No capital, no fixed cities, just crawlers and salvage."
+    , "Vara Kesk speaks for them, mostly by shooting."
+    , ""
+    , "AND SOMETHING ELSE. Under the equatorial ridge, buried, older"
+    , "than either of you. You have not met it yet."
+    , ""
+    , "The war starts over scrap metal. It does not stay there."
+    ]
+
+
+-- ===== one sentence of what just happened =====
+--
+-- Drawn at the top of every briefing from mission 2 on. The campaign is
+-- played over days, not in one sitting, and without this the player opens
+-- mission 4 with no idea why they are suddenly friends with the enemy.
+recap : Int -> String
+recap m =
+    case m of
+        2 -> "LAST TIME: raiders hit a Compact convoy, you burned their camp out of the ridge, and Oko pulled a strange shard of alloy from the wreck. It hums."
+
+        3 -> "LAST TIME: you took three canyon silos from the Combine. Under them, the rock is veined with something that glows and is not ore."
+
+        4 -> "LAST TIME: machines climbed out of the ice at Erebus. They call themselves the Chorus, they say they keep a clock, and you broke the nexus that was jamming the post."
+
+        5 -> "LAST TIME: you disobeyed the Marshal to save Kesk's crawler city from the Chorus. She owes you the truth about what is under the ridge, and she is about to pay it."
+
+        _ -> ""
 
 
 briefing : Int -> List Line
 briefing m =
     case m of
         1 ->
-            [ { who = 5, text = "Supply convoy Meridian-7 lost contact in the Tharsis scrapfields." }
-            , { who = 2, text = "Commander Sol. Scrapline raiders hit the convoy at dawn. Wardens do not lose convoys." }
+            [ { who = 5, text = "SITUATION: a Compact supply convoy was ambushed in the Tharsis scrapfields. The survivors are stranded and the supply line to the northern settlements is cut." }
+            , { who = 2, text = "Commander Sol. Scrap raiders took the convoy at dawn. Wardens do not lose convoys." }
             , { who = 0, text = "Survivors?" }
-            , { who = 2, text = "A construction detachment and half the escort. Enough for a field base. Make it count." }
-            , { who = 1, text = "Oko here. I can have power and a refinery running before the raiders regroup. Ferrite in the rocks looks decent." }
-            , { who = 2, text = "Restore the line, then burn their camp out of the north ridge. No negotiations." }
-            , { who = 3, text = "Warden channel, this is Kesk. Go home. The fields feed my people. You are the strangers here." }
-            , { who = 0, text = "Then keep your bikes away from my convoy routes, Kesk. Wardens, dig in." }
+            , { who = 2, text = "A construction crew and half the escort. Enough to build a field base out there. Make it count." }
+            , { who = 1, text = "Oko here, Commander. Give me a power plant and a refinery and I will have credits coming in before the raiders regroup. There is good ore in these rocks." }
+            , { who = 2, text = "Build your base, then burn the raider camp off the north ridge. The line reopens today." }
+            , { who = 3, text = "Warden channel. This is Vara Kesk, and those raiders are my people. The scrapfields feed the Combine. You are the strangers here, so go home." }
+            , { who = 0, text = "Keep your riders off Compact convoys, Kesk, and we can both stay alive. Wardens, dig in." }
             ]
 
         2 ->
-            [ { who = 5, text = "Derelict extraction silos located across the Coprates canyon belt. Ownership: contested." }
-            , { who = 2, text = "Five pre-Quiet silos, still pressurized. The Combine wants them. Take three and hold them." }
-            , { who = 1, text = "Send sappers to the silo doors and they will fold the plumbing into our grid. Steady credits, no crews." }
-            , { who = 0, text = "And when Kesk objects?" }
-            , { who = 2, text = "She already has. Her warthogs are rolling into the belt now. Hold three silos, then break her forward base." }
-            , { who = 1, text = "One more thing. That shard I pulled from the convoy wreck. It hums, Rea. It hums at the canyon." }
+            [ { who = 5, text = "SITUATION: five sealed extraction silos, abandoned before the Quiet, are still pressurised in the Coprates canyon belt. Whoever captures them gets their output. The Combine is moving on them now." }
+            , { who = 2, text = "Take three silos and hold them, Commander. They are old but they still pump." }
+            , { who = 1, text = "Send an engineer to a silo door and it folds into our grid. Free credits, no crew to feed." }
+            , { who = 0, text = "And Kesk?" }
+            , { who = 2, text = "Already rolling into the belt. Hold your three, then break her forward base and end the argument." }
+            , { who = 1, text = "One thing first. That shard from the convoy wreck. It hums, Commander, and it hums louder the closer we get to this canyon." }
             , { who = 2, text = "Mars is dead rock, Engineer. Dead rock does not hum. Move out." }
             ]
 
         3 ->
-            [ { who = 5, text = "Listening post Erebus dark for 31 hours. Last packet: a repeating tone, non-human." }
-            , { who = 1, text = "The tone matches my shard. Same pitch. Same pulse. It is a clock, and something is winding it." }
+            [ { who = 5, text = "SITUATION: listening post Erebus, on the north ice, has been dark for 31 hours. Its last transmission was a repeating tone. The tone is not human." }
+            , { who = 1, text = "It is the same pitch as my shard. Same pulse, over and over. Commander, that is a clock, and something is winding it." }
             , { who = 0, text = "Survivors first. Theories after." }
-            , { who = 2, text = "Whatever jams the post, kill it. The ice margin is Compact ground." }
-            , { who = 5, text = "Thermal returns show constructs rising FROM the ice. No dropships. No entry burn." }
-            , { who = 1, text = "They are not landing, Marshal. They were always here. Watch for shielding, rockets will crack it." }
+            , { who = 2, text = "Whatever is jamming that post, kill it. The ice margin is Compact ground." }
+            , { who = 5, text = "WARNING: thermal returns show machines rising OUT OF the ice. No ships. No landing burn. They were already down there." }
+            , { who = 1, text = "They did not arrive, Marshal. They have been here longer than we have. They shield themselves, so bring rockets." }
             , { who = 4, text = "YOU WOKE THE CLOCK. WE KEEP THE CLOCK." }
-            , { who = 0, text = "Erebus, hold on. We are coming." }
+            , { who = 0, text = "Find the survivors, kill whatever is broadcasting, and get me one of those things to look at." }
             ]
 
         4 ->
-            [ { who = 5, text = "Priority intercept: Combine crawler city under siege by unknown constructs. Casualties heavy." }
-            , { who = 3, text = "Warden channel. Kesk. I am eating my pride here. They rise out of the ground and my walls mean nothing." }
-            , { who = 2, text = "Denied. The Combine made their bed. Wardens hold position." }
-            , { who = 0, text = "Marshal, if the city falls the constructs hold the whole Rust Meridian by winter." }
+            [ { who = 5, text = "SITUATION: the Combine crawler city is under attack by the same machines from the ice. Casualties are heavy. The Combine is asking the Compact for help." }
+            , { who = 3, text = "Warden channel. Kesk. I am eating my pride here. They come up through the floor and my walls mean nothing." }
+            , { who = 2, text = "Request denied. The Combine walked out on us. Wardens hold position." }
+            , { who = 0, text = "Marshal, those machines took a listening post in a night. If the crawler city falls they own the whole southern scrap country by winter, and then they are on our doorstep." }
             , { who = 2, text = "I said denied, Commander." }
-            , { who = 0, text = "Then log my insubordination. Oko, spin up the crawlers. We fight beside the Combine today." }
-            , { who = 3, text = "You will want the truth after this. Why we seceded. What we found under the ridge. All of it." }
-            , { who = 1, text = "Her city, our line. Two colors, one wall. I like it." }
+            , { who = 0, text = "Then log my insubordination. Oko, roll the crawlers. We fight beside the Combine today." }
+            , { who = 1, text = "Two of those things dig in and grow the rest. We call them Genesis Fonts. Kill both and the attack stops." }
+            , { who = 3, text = "Do this and I will tell you the truth. Why we seceded. What is buried under the equatorial ridge, and why Earth wanted it buried. All of it." }
             ]
 
         _ ->
-            [ { who = 3, text = "The truth, as promised. We found the Engine first. Earth's last order was to bury it and say nothing." }
-            , { who = 1, text = "It is not a weapon. It is the thermostat of this world. And its custodians think we broke the house." }
-            , { who = 5, text = "Engine crater activity critical. Purge cycle charging. Projected sterilization: the settled belt." }
+            [ { who = 5, text = "SITUATION: the crater on the equatorial ridge is active. A machine the size of a city is charging something, and it is aimed at the settled belt." }
+            , { who = 3, text = "The truth I owe you. The Combine found it first, and that is why we seceded. It is called the Engine. Earth's last order before the Quiet was to bury it and never speak of it." }
+            , { who = 1, text = "And it is not a weapon, Commander. It is the thermostat of this planet. It is the reason the air held for eleven years while nobody maintained it. The Chorus are its caretakers, and they think we broke the house." }
             , { who = 4, text = "THE SURFACE IS UNSTABLE. THE CLOCK WILL BE CLEANED." }
-            , { who = 0, text = "Then we take the hand off the clock. We kill the Prime Conduit ring, not the Engine." }
-            , { who = 3, text = "My warband disagrees. They want the whole thing slagged. They will shoot at you too. Watch the east." }
-            , { who = 2, text = "Sol. If you do this, do it fast. I was wrong about the rock. Do not make me wrong about you." }
-            , { who = 1, text = "Purge beams telegraph before they land. Spread the army, watch the rings, break the conduits." }
+            , { who = 0, text = "Cleaned means us. So we do not touch the Engine, because without it we all suffocate. We break the ring of conduits feeding the purge and take its hand off the trigger." }
+            , { who = 3, text = "Fair warning. Half my warband wants the whole thing slagged and they will shoot at you to get there. Watch your east." }
+            , { who = 2, text = "Sol. I was wrong about the rock. Do not make me wrong about you too. Go fast." }
+            , { who = 1, text = "The purge beams telegraph before they land, so keep the army spread. Four conduit spires. Break all four." }
             ]
 
 
@@ -114,70 +190,87 @@ radio m idx =
     case m of
         1 ->
             case idx of
-                0 -> "Kesk: Last warning, Warden. Pack up."
-                1 -> "Oko: Raider camp is on the north ridge."
-                _ -> "Oko: That shard in the wreck... it is humming."
+                0 -> "Kesk: Last warning, Warden. Pack up and leave the fields."
+                1 -> "Oko: Raider camp is on the north ridge. Burn it and the line reopens."
+                _ -> "Oko: That shard from the wreck is still humming."
 
         2 ->
             case idx of
                 0 -> "Oko: Silo folded into our grid. Credits flowing."
                 1 -> "Voss: Hold those silos, Commander."
-                _ -> "Oko: The canyon floor is veined with light. That is not ferrite."
+                _ -> "Oko: The canyon floor is veined with light. That is not ore."
 
         3 ->
             case idx of
                 0 -> "Oko: Survivors aboard. Patching their suits now."
-                1 -> "Oko: Surge incoming on the Engine pulse. Brace."
+                1 -> "Oko: Surge coming off the tone. Brace the line."
                 _ -> "Chorus: WE KEEP THE CLOCK."
 
         4 ->
             case idx of
                 0 -> "Kesk: My walls thank you, Warden."
-                1 -> "Kesk: Push east, I will anchor the west."
-                _ -> "Oko: Two colors, one wall."
+                1 -> "Kesk: Push east and I will anchor the west."
+                _ -> "Oko: Two flags, one wall. I like it."
 
         _ ->
             case idx of
                 0 -> "Oko: Purge beam charging. MOVE the army."
-                1 -> "Kesk: My rogues are shooting at everyone. Told you."
-                _ -> "Voss: The belt is watching, Sol. Finish it."
+                1 -> "Kesk: My rogues are shooting at everyone. I did warn you."
+                _ -> "Voss: The whole belt is watching, Sol. Finish it."
 
 
 victoryText : Int -> List String
 victoryText m =
     case m of
         1 ->
-            [ "The raider camp burns. The convoy line is whole again."
-            , "In the wreckage, Oko finds a shard of alloy that belongs"
-            , "to nobody's foundry. It hums, very quietly, toward the east."
+            [ "The raider camp burns and the convoy line is whole again."
+            , ""
+            , "In the wreckage Oko finds a shard of alloy that came from"
+            , "nobody's foundry. It hums, very quietly, and it hums"
+            , "toward the east."
             ]
 
         2 ->
-            [ "Three silos fold their old lungs into the Compact grid."
-            , "Under the sinkhole, conduit veins run glowing to the horizon."
-            , "Voss logs the report as a geological anomaly. Oko does not."
+            [ "Three silos fold their old lungs into the Compact grid,"
+            , "and the Combine pulls back out of the canyon belt."
+            , ""
+            , "Under the sinkhole, veins of light run to the horizon."
+            , "Voss files the report as a geological anomaly."
+            , "Oko does not."
             ]
 
         3 ->
             [ "The nexus collapses and the static clears off the ice."
-            , "Erebus survivors speak of shapes that rose without ships."
-            , "The Chorus said eight words. Oko has not slept since."
+            , "The Erebus survivors are alive, and they all say the"
+            , "same thing: the machines rose out of the ground."
+            , ""
+            , "So they were here before us. They are older than the"
+            , "colony, older than the terraforming, and they are"
+            , "counting something."
             ]
 
         4 ->
             [ "The siege breaks. A Combine crawler city owes its walls"
-            , "to Warden armor, and Kesk pays her debt in truth:"
-            , "the Engine, the burial order, eleven years of silence."
+            , "to Warden armour, and Kesk pays what she promised."
+            , ""
+            , "There is a machine under the equatorial ridge. It is"
+            , "what keeps the air breathable. Earth knew, and Earth's"
+            , "last order was to bury it and say nothing."
+            , ""
+            , "Eleven years of silence, and that was the secret."
             ]
 
         _ ->
-            [ "The Prime Conduit ring is down. The purge charge bleeds"
-            , "away into the regolith, and for the first time in eleven"
-            , "years the Quiet answers: the Chorus agrees to parley."
+            [ "The conduit ring is down. The purge charge bleeds away"
+            , "into the regolith, and the Engine goes back to doing"
+            , "the only thing it ever did: keeping Mars breathing."
             , ""
-            , "Mars keeps breathing. Voss is relieved of command."
-            , "On the crater rim, three flags stand in the same wind:"
-            , "Compact blue, Combine rust, and a color nobody can name."
+            , "For the first time in eleven years something answers a"
+            , "hail. The Chorus agrees to talk."
+            , ""
+            , "Voss is relieved of command. On the crater rim three"
+            , "flags stand in the same thin wind: Compact blue,"
+            , "Combine rust, and a colour nobody can name."
             , ""
             , "IRON MERIDIAN. Thank you for playing."
             ]
@@ -187,11 +280,76 @@ defeatText : Int -> List String
 defeatText m =
     case m of
         3 ->
-            [ "The ice margin goes quiet again, and this time"
-            , "nothing answers at all. Regroup and try once more."
+            [ "The ice margin goes quiet again, and this time nothing"
+            , "answers at all. Regroup and try once more."
             ]
 
         _ ->
             [ "The line breaks. The Meridian remembers those who held it."
             , "Regroup, Commander. The map is not done with you."
+            ]
+
+
+-- ===== the log =====
+--
+-- Everything above is shown once and then gone forever, which is fine for a
+-- film and wrong for a game played across several evenings. `L` opens this
+-- during a mission: who the three sides are, who is talking to you, and where
+-- the story currently stands.
+logFactions : List String
+logFactions =
+    [ "THE COMPACT (blue). The old colonial government, and your"
+    , "side. Its army is the Wardens. You command them."
+    , ""
+    , "THE IRON COMBINE (rust). Settlements that seceded during the"
+    , "Quiet. Crawlers and salvage. Vara Kesk speaks for them."
+    , ""
+    , "THE CHORUS. Machines that live under the ground and were"
+    , "here before the colony. They call the Engine a clock and"
+    , "they keep it."
+    ]
+
+
+logCast : List String
+logCast =
+    [ "REA SOL, you. Warden-Commander, in the field."
+    , "OKO ADEYEMI, your chief engineer. Notices things."
+    , "MARSHAL VOSS, your commanding officer. Certain."
+    , "VARA KESK, Combine warlord. Enemy, then something else."
+    ]
+
+
+-- Where the story stands as of the mission being played, in one or two lines.
+logSoFar : Int -> List String
+logSoFar m =
+    case m of
+        1 ->
+            [ "Earth has been silent for eleven years. A Compact convoy"
+            , "has been ambushed in the scrapfields and the Combine"
+            , "says the scrapfields are theirs."
+            ]
+
+        2 ->
+            [ "The raiders are burned out. Oko is carrying a shard of"
+            , "alloy from the wreck that hums, and it hums louder the"
+            , "further east you go."
+            ]
+
+        3 ->
+            [ "The canyons are veined with light that is not ore, and a"
+            , "listening post on the ice has gone dark broadcasting a"
+            , "tone at the same pitch as Oko's shard."
+            ]
+
+        4 ->
+            [ "The machines are called the Chorus. They rose out of the"
+            , "ice, not out of a ship. Now they are tearing apart the"
+            , "Combine's crawler city, and Kesk is asking you for help."
+            ]
+
+        _ ->
+            [ "There is a machine under the equatorial ridge called the"
+            , "Engine. It is what keeps Mars breathable, Earth ordered"
+            , "it buried, and its caretakers have decided the surface"
+            , "needs cleaning."
             ]

@@ -37,6 +37,10 @@ type alias HudState =
     , muted : Bool
     , speed : Int            -- percent
     , helpOpen : Bool
+    , logOpen : Bool         -- the story log (L)
+    , logFactions : List String
+    , logCast : List String
+    , logSoFar : List String
     , objectives : List { text : String, done : Bool }
     , clock : Int            -- mission seconds
     , hoverCell : Int        -- hovered build/train slot, -1 = none
@@ -59,6 +63,7 @@ drawHud g cam miniTerrain hs =
         , drawObjectives hs
         , drawBanners g hs
         , if hs.helpOpen then drawHelp hs else []
+        , if hs.logOpen then drawLog hs else []
         , if hs.paused then drawPaused hs else []
         ]
 
@@ -1066,6 +1071,40 @@ drawPaused hs =
     , Canvas.text (hs.w // 2) (hs.h // 2) 26 Canvas.Center (rgb 235 225 210) "PAUSED"
     , Canvas.text (hs.w // 2) (hs.h // 2 + 22) 11 Canvas.Center (rgb 160 155 160) "P resumes"
     ]
+
+
+-- ===== the log =====
+--
+-- The campaign used to tell you the story once, in a briefing you could not
+-- reopen, and then expect you to carry it for five missions. This is the
+-- answer to "wait, who is Kesk again": the three sides, the four voices, and
+-- where things currently stand, on one key.
+drawLog : HudState -> List Shape
+drawLog hs =
+    let
+        x0 = hs.w // 2 - 250
+        y0 = hs.h // 2 - 200
+    in
+    List.concat
+        [ [ rect x0 y0 500 400 (rgba 18 15 18 244)
+          , rect x0 y0 500 3 (rgb 255 214 120)
+          , Canvas.text (hs.w // 2) (y0 + 28) 15 Canvas.Center (rgb 235 225 210) "CAMPAIGN LOG"
+          , Canvas.text (x0 + 24) (y0 + 56) 10 Canvas.Left (rgb 255 214 120) "WHO IS FIGHTING"
+          ]
+        , logRows (x0 + 24) (y0 + 74) hs.logFactions
+        , [ Canvas.text (x0 + 24) (y0 + 208) 10 Canvas.Left (rgb 255 214 120) "ON THE RADIO" ]
+        , logRows (x0 + 24) (y0 + 226) hs.logCast
+        , [ Canvas.text (x0 + 24) (y0 + 292) 10 Canvas.Left (rgb 255 214 120) "WHERE WE ARE" ]
+        , logRows (x0 + 24) (y0 + 310) hs.logSoFar
+        , [ Canvas.text (hs.w // 2) (y0 + 380) 10 Canvas.Center (rgb 150 145 150) "L closes    R replays this mission's briefing" ]
+        ]
+
+
+logRows : Int -> Int -> List String -> List Shape
+logRows x y rows =
+    List.indexedMap
+        (\i t -> Canvas.text x (y + i * 13) 10 Canvas.Left (rgb 205 200 196) t)
+        rows
 
 
 -- ===== help =====
