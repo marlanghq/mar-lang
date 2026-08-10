@@ -39,6 +39,49 @@
   const VTuple  = (xs)       => ({ k: 'T', xs });
   const VRecord = (fields, order) => ({ k: 'R', fields, order });
   const VCtor   = (tag, args)=> ({ k: 'C', tag, args: args || [] });
+
+  // Reading a field a record does not have. The typechecker makes this
+  // unreachable for records that came from this program's types, so it
+  // only fires when a record arrives from OUTSIDE them — in practice the
+  // model `mar dev` preserved across a hot reload, from before the Model
+  // gained or lost a field.
+  //
+  // It is worth a real message because the alternative is terrible: the
+  // missing field reads as `undefined`, travels on as if it were a Mar
+  // value, and blows up much later wherever something finally
+  // dereferences it. The reported error then points at the runtime's own
+  // innards ("undefined is not an object (evaluating 'c.b')") rather than
+  // at the field nobody had.
+  //
+  // Callers guard on `=== undefined` before calling, so the `in` check
+  // never runs on the hot path — and a legitimate Mar value is never
+  // `undefined`, since every one of them is a tagged object.
+  // Do two values have the same top-level shape? Used to decide whether a
+  // model preserved across a hot reload still fits the program that just
+  // replaced the one it came from. Records compare by field set; anything
+  // else compares by kind, which catches a Model that changed from a
+  // record to a union but not one that changed between two unions.
+  function sameShape(a, b) {
+    if (!a || !b) return false;
+    if (a.k !== b.k) return false;
+    if (a.k !== 'R') return true;
+    const ak = Object.keys(a.fields);
+    if (ak.length !== Object.keys(b.fields).length) return false;
+    for (const k of ak) if (!(k in b.fields)) return false;
+    return true;
+  }
+
+  function missingField(rec, name) {
+    if (name in rec.fields) return;   // the field exists and holds undefined: not ours
+    const had = (rec.order || Object.keys(rec.fields)).join(', ');
+    throw new Error(
+      'record has no field `' + name + '`\n\n' +
+      'this record has: ' + (had || '(no fields)') + '\n\n' +
+      'reading a field that does not exist is a type error, so this record ' +
+      'did not come from this program\'s types. Under `mar dev` that usually ' +
+      'means the page is still holding the model it loaded with, from before ' +
+      'the Model changed. Reload the page.');
+  }
   // VChar — Unicode code point, distinct from a 1-char VString. Same
   // model as Go's rune / Swift's Unicode.Scalar. JSON wire format is
   // {"__char": "x"} (see jsToMar / marToJs below). `c` is the integer
@@ -313,12 +356,15 @@
         }
         return s;
       }
+      // Sorted, for the same reason marToJs sorts on the way out: a
+      // decoded record has no source order to inherit, and the three
+      // runtimes have to land on the same one. Go decodes through a map
+      // and cannot see the document order at all, so sorted is the only
+      // order all three can produce. `order` is what Display and the
+      // missing-field error print.
       const fields = {};
-      const order = [];
-      for (const k of Object.keys(v)) {
-        fields[k] = jsToMar(v[k]);
-        order.push(k);
-      }
+      const order = Object.keys(v).slice().sort();
+      for (const k of order) fields[k] = jsToMar(v[k]);
       return VRecord(fields, order);
     }
     return VString(String(v));
@@ -934,13 +980,17 @@
       case 'EFieldAccess': {
         const r = evalExpr(e.record, env);
         if (r.k !== 'R') throw new Error('field access on non-record');
-        return r.fields[e.field];
+        const v = r.fields[e.field];
+        if (v === undefined) missingField(r, e.field);
+        return v;
       }
       case 'EFieldAccessor':
         return native(1, args => {
           const rec = args[0];
           if (rec.k !== 'R') throw new Error('field accessor on non-record');
-          return rec.fields[e.field];
+          const v = rec.fields[e.field];
+          if (v === undefined) missingField(rec, e.field);
+          return v;
         });
       case 'ECase': {
         const subj = evalExpr(e.subject, env);
@@ -969,6 +1019,109 @@
       }
     }
     throw new Error('unsupported expr: ' + e.kind);
+  }
+
+  // ---------- The deploy moved under an open tab ----------
+  //
+  // A page load pins runtime.js and the program together: the HTML
+  // carries the program inline and both revalidate on every load, so a
+  // fresh load is always internally consistent. What a fresh load
+  // cannot fix is the tab that never reloads. Leave an app open, deploy
+  // twice, and that tab is still running last week's code while its
+  // service calls land on today's server.
+  //
+  // The server already says who it is on every single response (see
+  // internal/jsserve/version_headers.go):
+  //
+  //   X-Mar-Program  hash of the program.json being served
+  //   X-Mar-Runtime  the mar version that built the server
+  //
+  // So the check is just: remember what we saw first, and notice when a
+  // later response disagrees. No polling, no extra request — the
+  // evidence rides along with traffic the app was making anyway.
+  //
+  // The two headers differ in what they mean, and the difference is
+  // worth keeping even though the remedy is the same reload:
+  //
+  //   program changed  the app's own code was redeployed. The running
+  //                    page still works; it is just old.
+  //   runtime changed  the framework itself changed under us, so the
+  //                    wire format this page speaks may no longer be
+  //                    the one the server answers in. Service calls can
+  //                    start failing in ways that look like app bugs.
+  //
+  // Never in `mar dev`: hot reload owns that case, and every save
+  // changes the program hash, so the bar would be permanent furniture.
+  let seenProgramHash = null;
+  let seenRuntimeVersion = null;
+  let staleKind = null;      // null | 'program' | 'runtime'
+
+  function noteServerIdentity(resp) {
+    if (!resp || typeof resp.headers === 'undefined') return;
+    if (global.__marDevMode) return;
+    let program = null, runtime = null;
+    try {
+      program = resp.headers.get('X-Mar-Program');
+      runtime = resp.headers.get('X-Mar-Runtime');
+    } catch (_) {
+      // Opaque response (cross-origin, no CORS expose): headers are
+      // unreadable rather than absent. Nothing to compare.
+      return;
+    }
+    // A response with neither header is not this server talking — an
+    // older build, or a proxy that drops what it does not recognise.
+    // Silence is not evidence of a change.
+    if (runtime) {
+      if (seenRuntimeVersion === null) seenRuntimeVersion = runtime;
+      else if (runtime !== seenRuntimeVersion) markStale('runtime');
+    }
+    if (program) {
+      if (seenProgramHash === null) seenProgramHash = program;
+      else if (program !== seenProgramHash) markStale('program');
+    }
+  }
+
+  // A runtime change outranks a program change and cannot be downgraded:
+  // once the framework has moved, learning that the app code also moved
+  // does not make the situation less serious.
+  function markStale(kind) {
+    if (staleKind === 'runtime') return;
+    if (staleKind === kind) return;
+    staleKind = kind;
+    showStaleDeployBar();
+  }
+
+  // A bar, not a modal. The page still works — it is running a complete,
+  // internally consistent version of the app, just not the newest one —
+  // and interrupting someone mid-form to tell them about a deploy would
+  // cost more than it saves. Appended to <body> rather than into
+  // #mar-root so the next render does not wipe it.
+  function showStaleDeployBar() {
+    if (typeof document === 'undefined' || !document.body) return;
+    let bar = document.getElementById('mar-stale-deploy');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'mar-stale-deploy';
+      bar.setAttribute('role', 'status');
+      const label = document.createElement('span');
+      label.id = 'mar-stale-deploy-text';
+      bar.appendChild(label);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = 'Reload';
+      // location.reload() rather than a cache-busting dance: every
+      // asset is served no-cache with an ETag, so a plain reload
+      // already revalidates and picks up the new deploy.
+      btn.addEventListener('click', () => { window.location.reload(); });
+      bar.appendChild(btn);
+      document.body.appendChild(bar);
+    }
+    const text = document.getElementById('mar-stale-deploy-text');
+    if (text) {
+      text.textContent = staleKind === 'runtime'
+        ? 'This page is out of date. Reload to keep going.'
+        : 'A new version is available.';
+    }
   }
 
   // ---------- Builtins ----------
@@ -2951,13 +3104,23 @@
     }));
     // modBy takes the DIVISOR's sign (floor modulo), remainderBy the
     // DIVIDEND's (truncated, in step with `//`). Both total at 0.
+    //
+    // Every comparison here is against `0`, never `0n`. An Int's `.n` is a
+    // plain Number in this runtime — the overflow check is
+    // Number.isSafeInteger — so `x === 0n` is false for every Int that exists.
+    // These guards were written with BigInt literals and were therefore dead
+    // code: `modBy 0` fell through to `x % 0` and put a NaN inside a value
+    // typed Int, and `modBy (-4) 8` took the sign correction it should have
+    // skipped and answered -4 instead of 0. Neither showed up until the NaN
+    // reached an addition, frames or hours later, in a place with nothing to
+    // do with modulo. Go and Swift compare against 0 and were always right.
     def('modBy', native(2, ([d, n]) => {
-      if (d.n === 0n) return VInt(0n);
+      if (d.n === 0) return VInt(0);
       let r = n.n % d.n;
-      if (r !== 0n && (r < 0n) !== (d.n < 0n)) r += d.n;
+      if (r !== 0 && (r < 0) !== (d.n < 0)) r += d.n;
       return VInt(r);
     }));
-    def('remainderBy', native(2, ([d, n]) => (d.n === 0n ? VInt(0n) : VInt(n.n % d.n))));
+    def('remainderBy', native(2, ([d, n]) => (d.n === 0 ? VInt(0) : VInt(n.n % d.n))));
 
     // Tuple — 2-tuple helpers. Tuples are VTuple values with .xs.
     const tupleFirstImpl = native(1, ([t]) => t.xs[0]);
@@ -5086,6 +5249,12 @@
           init.headers['Content-Type'] = 'application/json';
         }
         fetch(built.url, init)
+          // Read the server's identity here, while the Response still
+          // exists — the next step reduces it to {ok, body, status} and
+          // the headers are gone. Service calls are the traffic a
+          // long-lived tab actually generates, which makes this the
+          // one hook that matters.
+          .then(r => { noteServerIdentity(r); return r; })
           .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
           .then(r => {
             // Auth-expiry interceptor: a 401 on a Service.call means
@@ -5167,7 +5336,7 @@
     //      verifyCode, so the next legitimate session expiry will
     //      redirect again.
     //   3. Otherwise: capture the current path as `?next=`, navigate
-    //      to the sign-in URL via Nav.replace (which also invalidates
+    //      to the sign-in URL via replaceFresh (which also invalidates
     //      the cached user — without that the next protected render
     //      would still see Just user and loop back to 401).
     //
@@ -5381,6 +5550,10 @@
       // irrelevant to the user's intent. The .catch on the fetch
       // just swallows the error so it doesn't surface in console.
       return VEffect(() => {
+        // Forget the cached user here rather than leaving it to whatever
+        // navigation the app does next: signing out is the moment the
+        // answer to "who is this" changes, so it is the moment to drop it.
+        if (globalThis.__marAuthForget) globalThis.__marAuthForget();
         fetch('/_auth/logout', {
           method: 'POST',
           credentials: 'same-origin',
@@ -7838,6 +8011,34 @@
       '}',
       '@media (prefers-color-scheme: dark) {',
       '  .mar-error-text { color: #ff6961; }',
+      '}',
+      // "A deploy happened while this tab was open." Bottom-left rather
+      // than full width: the news is real but small, and a bar across
+      // the screen would read as an error. One z-index below the runtime
+      // failure banner, which always outranks it — if the app is broken,
+      // "there is a newer version" is not the headline.
+      '#mar-stale-deploy {',
+      '  position: fixed; z-index: 2147482999;',
+      '  left: 12px;',
+      '  bottom: calc(12px + env(safe-area-inset-bottom, 0px));',
+      '  display: flex; align-items: center; gap: 10px;',
+      '  padding: 8px 10px 8px 14px;',
+      '  border-radius: 999px;',
+      '  background: #1c1c1e; color: #f2f2f7;',
+      '  font-size: 13px; line-height: 1;',
+      '  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.22);',
+      '  max-width: calc(100vw - 24px);',
+      '}',
+      '#mar-stale-deploy button {',
+      '  font: inherit; font-weight: 600;',
+      '  color: #1c1c1e; background: #f2f2f7;',
+      '  border: 0; border-radius: 999px;',
+      '  padding: 6px 12px; cursor: pointer;',
+      '}',
+      // Hover only where hovering exists: on iOS Safari a :hover rule
+      // sticks to the element after a tap and the button stays lit.
+      '@media (hover: hover) {',
+      '  #mar-stale-deploy button:hover { background: #ffffff; }',
       '}',
       // Runtime failures (ADR 0020). Deliberately plain: no animation, no
       // entrance, nothing that moves. The message is already the worst news
@@ -10565,6 +10766,9 @@
     // A fresh mount (cold load or hot reload) owns the live timers; clear any
     // the previous mountPages left running so they do not double-fire.
     teardownAllSubs();
+    // `halted` needs no reset here: it is declared inside this function, so a
+    // hot reload re-enters mountPages and gets a fresh binding that starts
+    // false. That is the developer saying "try again", and it costs nothing.
     const pages = {};
     let firstPath = null;
 
@@ -10577,6 +10781,9 @@
     function fetchAuthMe() {
       if (authPending) return authPending;
       authPending = fetch('/_auth/whoami', { credentials: 'same-origin' })
+        // Covers the app that navigates between protected pages without
+        // ever calling a service — whoami is the only traffic it makes.
+        .then(r => { noteServerIdentity(r); return r; })
         .then(r => r.ok ? r.text() : Promise.reject('HTTP ' + r.status))
         .then(t => {
           const raw = t ? JSON.parse(t) : null;
@@ -10623,8 +10830,24 @@
         if (initializedKeys[key]) return;
         initializedKeys[key] = true;
         const initFnApplied = applyExtras(fns().init, user, params);
+        // initFnApplied IS the (model, effect) tuple by now: plain
+        // pages declare init as the tuple value itself, and the
+        // protected/dynamic flavors became it once applyExtras fed
+        // them User/Params. No vestigial unit argument. Unwrapping is
+        // pure — the effect is only run if we go on to adopt it — so it
+        // is safe to do here, before deciding whether to keep `prior`.
+        const initial = unwrapModelTuple(initFnApplied);
         const prior = preservedScreenModels[key];
-        if (prior !== undefined) {
+        // A preserved model is kept only if it still has the SHAPE this
+        // program's init produces. Rendering it was the old test, and it
+        // let a mismatch through whenever the view happened not to read
+        // the field that changed — the failure then surfaced on the first
+        // `update` that did, as a runtime error far from its cause.
+        //
+        // The comparison is the top-level field set only. A nested change
+        // still slips past, which is why missingField() above exists: the
+        // probe stops the common case, the message explains the rest.
+        if (prior !== undefined && sameShape(prior, initial.model)) {
           const viewFnApplied = applyExtras(fns().view, user, params);
           try {
             apply(viewFnApplied, prior);
@@ -10632,15 +10855,12 @@
             return;
           } catch (_) {
             if (typeof console !== 'undefined') {
-              console.info('[mar reload] page ' + path + ' model shape changed, fresh init');
+              console.info('[mar reload] page ' + path + ' view rejected the kept model, fresh init');
             }
           }
+        } else if (prior !== undefined && typeof console !== 'undefined') {
+          console.info('[mar reload] page ' + path + ' model shape changed, fresh init');
         }
-        // initFnApplied IS the (model, effect) tuple by now: plain
-        // pages declare init as the tuple value itself, and the
-        // protected/dynamic flavors became it once applyExtras fed
-        // them User/Params. No vestigial unit argument.
-        const initial = unwrapModelTuple(initFnApplied);
         models[key] = initial.model;
         initEffects[key] = initial.effect;
         preservedScreenModels[key] = initial.model;
@@ -10845,6 +11065,7 @@
     // further down would be in its temporal dead zone.
     let dispatchErrorBanner = null;  // the banner over a still-usable screen
     let pageFailure = null;          // signature of the failure currently painted
+    let halted = false;              // a view failed; the program is stopped (ADR 0028)
     // A presented route (Page.sheet) paints into an overlay while the
     // page it was reached from stays untouched in #mar-root.
     let coveredKey = null;     // page left painted UNDERNEATH the presentation
@@ -11222,7 +11443,31 @@
 
       if (!initEffectsRun[pg.activeKey] && pg.initEffect !== null) {
         initEffectsRun[pg.activeKey] = true;
+        // AN INIT EFFECT CAN NAVIGATE, AND THAT RE-ENTERS THIS FUNCTION.
+        //
+        // Redirecting out of `init` is a supported pattern and the natural
+        // way to write a bootstrap gate — "no handle yet, go and pick one"
+        // — because deciding in the view means a flash of the page you were
+        // never meant to see. So the effect below can call Nav.replaceTo,
+        // which navigates and calls render() itself, and that nested pass
+        // runs to completion before this line returns.
+        //
+        // Everything decided above (which page, which model, which user)
+        // describes the route we have just left. Carrying on paints it
+        // anyway, over the top of what the nested pass drew, using state
+        // the nested pass was entitled to invalidate. The reported bug:
+        // signing up put you on a protected page whose init redirected to
+        // /setup, and the outer render went on to draw the page you had
+        // left with a user it no longer knew — the view threw, the failure
+        // screen flashed, and the app was wedged with the DOM and the
+        // runtime disagreeing about which page was mounted.
+        //
+        // Every navigation path ends in its own render(), so stopping here
+        // drops nothing: the screen the app actually moved to has already
+        // been drawn, or is waiting on a fetch that will draw it.
+        const pathBefore = window.location.pathname;
         runEffect(pg.initEffect);
+        if (window.location.pathname !== pathBefore) return;
       }
       // Per-page browser-tab title. Empty title (the default when the
       // user omits `title` from Page.create) leaves whatever the host
@@ -11521,9 +11766,26 @@
       replace: (path) => {
         pendingNavKind = 'replace';
         replaceNav(path);
-        // Auth state may have changed (login/logout drives most replace
-        // calls). Invalidate the cache so the next protected page
-        // re-fetches /_auth/whoami.
+        // DROPPING THE CACHED USER HERE IS LOAD-BEARING, and it is worth
+        // saying why, because it reads like superstition and was very
+        // nearly removed as such.
+        //
+        // It is not really "auth may have changed" — it is a refetch
+        // before the destination draws. Nulling the cache makes the
+        // protected-page gate in renderPage block, fetch /_auth/whoami,
+        // and only then render. That is the one thing that makes an edit
+        // to the user's OWN record visible: save a handle, replace to the
+        // timeline, and the destination sees the handle you just chose.
+        //
+        // Removing it (on the theory that a bootstrap redirect has nothing
+        // to do with auth, so why pay a round trip) turns the mini-twitter
+        // signup into a loop: /setup saves, replaces to /, and / re-reads
+        // the STALE user, still handle-less, and bounces straight back to
+        // /setup. Measured, not imagined.
+        //
+        // The cost is one round trip per replace. The alternative is an
+        // explicit "the user changed" signal from app code, which is a
+        // language decision and not a thing to slip in here.
         authUser = null;
         render();
       },
@@ -11541,6 +11803,13 @@
         render();
       },
     };
+
+    // Forget who is signed in. Exposed on globalThis because the builtin
+    // that needs it (Auth.logout) is built in makeBuiltinEnv, outside this
+    // closure — the same reason __marNav is exposed. Logout used to rely on
+    // the app happening to follow it with a Nav.replace, which is not a
+    // contract, just a habit most sign-out handlers share.
+    globalThis.__marAuthForget = () => { authUser = null; };
 
     // ---------- Time-travel ----------
     //
@@ -12184,9 +12453,29 @@
       // detached tree instead of mounting fresh.
       mounted = null;
       drawnPath = null;
+
+      // STOP. `view` is a pure function of the model, so the same model will
+      // fail the same way on every future frame: there is no state the program
+      // can reach on its own where it starts working again. Left running, a
+      // game whose view throws keeps ticking sixty times a second behind a dead
+      // screen — a laptop left overnight burned eleven hours of battery and
+      // recorded 2.4 million actions nobody would ever see.
+      //
+      // Only the subscriptions are cut, and only after the message is painted:
+      // that is what makes the app quiet without taking anything away from the
+      // person debugging it. The dev dock keeps its history, so time travel
+      // still scrubs back to the frame before the failure, and a hot reload
+      // remounts and clears the halt.
+      halted = true;
+      teardownAllSubs();
     }
 
     currentDispatch = (msg) => {
+      // A halted program accepts no more messages. Subscriptions are already
+      // torn down; this catches the in-flight ones — an effect that resolves
+      // after the failure, a DOM handler on the dead screen — so the model
+      // cannot advance past the state the failure is being reported about.
+      if (halted) return;
       const pg = currentPage();
       if (!pg) return;
 
