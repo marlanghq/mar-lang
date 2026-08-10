@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 
 	"mar/internal/ast"
@@ -292,7 +293,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 		}
 		v, ok := rec.Fields[n.Field]
 		if !ok {
-			return nil, errorf(n.Pos, "no field %q in record", n.Field)
+			return nil, errorf(n.Pos, "%s", missingFieldMessage(n.Field, rec))
 		}
 		return v, nil
 
@@ -307,7 +308,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 				}
 				v, ok := rec.Fields[field]
 				if !ok {
-					return nil, fmt.Errorf("field accessor .%s: missing field", field)
+					return nil, fmt.Errorf("%s", missingFieldMessage(field, rec))
 				}
 				return v, nil
 			},
@@ -545,4 +546,35 @@ func bindPattern(pat ast.Pattern, v Value, env *Env) *Env {
 		return env
 	}
 	return env.BindMany(bindings)
+}
+
+// missingFieldMessage names the field that is not there and lists the ones
+// that are. The wording matches the JS and Swift runtimes, so the same mistake
+// reads the same wherever a program runs; only the browser adds a line about
+// reloading the page, which is the one place that advice applies.
+//
+// The typechecker makes this unreachable for records built from this program's
+// types, so reaching it means a record arrived from outside them — decoded wire
+// data, or a model a dev server preserved across a reload.
+//
+// Field order is the record's own where it has one; a record built by decoding
+// may not, and sorted names beat map iteration order, which would print a
+// different list every run.
+func missingFieldMessage(name string, rec VRecord) string {
+	had := rec.Order
+	if len(had) == 0 {
+		had = make([]string, 0, len(rec.Fields))
+		for k := range rec.Fields {
+			had = append(had, k)
+		}
+		sort.Strings(had)
+	}
+	list := strings.Join(had, ", ")
+	if list == "" {
+		list = "(no fields)"
+	}
+	return "record has no field `" + name + "`\n\n" +
+		"this record has: " + list + "\n\n" +
+		"reading a field that does not exist is a type error, so this record " +
+		"did not come from this program's types."
 }

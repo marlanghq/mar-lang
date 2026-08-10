@@ -60,6 +60,18 @@ enum Eval {
 
     // MARK: - Expressions
 
+    // Mirrors the JS runtime's message word for word, so the same mistake
+    // reads the same on both platforms. `order` is the declaration order,
+    // which makes the list stable rather than hash-shuffled.
+    static func missingField(_ name: String, _ fields: [String: MarValue], _ order: [String]) -> MarRuntimeError {
+        let had = (order.isEmpty ? Array(fields.keys).sorted() : order).joined(separator: ", ")
+        return MarRuntimeError.message(
+            "record has no field `\(name)`\n\n"
+            + "this record has: \(had.isEmpty ? "(no fields)" : had)\n\n"
+            + "reading a field that does not exist is a type error, so this record "
+            + "did not come from this program's types.")
+    }
+
     static func eval(_ expr: Expr, _ env: Env) throws -> MarValue {
         switch expr {
         case .int(let n):       return .int(n)
@@ -211,19 +223,27 @@ enum Eval {
             }
             return .record(fields: fs, order: baseOrder)
 
+        // A missing field THROWS. It used to fall back to `.unit`, which was
+        // the worst of the three runtimes: a record without the field kept
+        // running and carried a wrong value forward, silently, with nothing
+        // to point at. The typechecker makes this unreachable for records
+        // that came from this program's types — so if it fires, a record
+        // arrived from outside them and that is worth stopping for.
         case .fieldAccess(let recordE, let field):
             let r = try eval(recordE, env)
-            guard case .record(let fs, _) = r else {
+            guard case .record(let fs, let order) = r else {
                 throw MarRuntimeError.typeMismatch(expected: "record", got: typeOf(r))
             }
-            return fs[field] ?? .unit
+            guard let v = fs[field] else { throw Eval.missingField(field, fs, order) }
+            return v
 
         case .fieldAccessor(let field):
             return .fn(MarFn.native(1) { args in
-                guard case .record(let fs, _) = args[0] else {
+                guard case .record(let fs, let order) = args[0] else {
                     throw MarRuntimeError.typeMismatch(expected: "record", got: typeOf(args[0]))
                 }
-                return fs[field] ?? .unit
+                guard let v = fs[field] else { throw Eval.missingField(field, fs, order) }
+                return v
             })
 
         case .caseExpr(let subject, let branches):
