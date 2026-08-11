@@ -103,6 +103,27 @@ func (v VDuration) Display() string {
 	return fmt.Sprintf("%gs", v.Seconds)
 }
 
+// VAngle is a rotation, carried as a whole number of deci-degrees in
+// 0..3599. Built only via Math.degrees / Math.deciDegrees / Math.turns —
+// the constructor names the unit and it is the only place a bare Int
+// appears (ADR 0029), which is what makes passing degrees where
+// deci-degrees were meant a compile error instead of a game that turns
+// ten times too slowly.
+//
+// The deci-degree representation is normative (it fixes the resolution:
+// a program can tell 45.0° from 45.1° and nothing finer) but not
+// observable — no builtin hands the number back. Wire format on the JSON
+// boundary is `{"__angle": 450}`.
+type VAngle struct{ Deci int64 }
+
+func (VAngle) isValue() {}
+func (v VAngle) Display() string {
+	if v.Deci%10 == 0 {
+		return fmt.Sprintf("%d°", v.Deci/10)
+	}
+	return fmt.Sprintf("%d.%d°", v.Deci/10, v.Deci%10)
+}
+
 // VTime is an absolute moment in time, as Unix milliseconds. Built
 // via Time.now (an effect that reads the wall clock) or
 // Time.fromIso. Use Time.add / Time.sub to shift by a Duration;

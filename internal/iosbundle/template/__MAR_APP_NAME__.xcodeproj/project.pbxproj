@@ -32,15 +32,18 @@
 		9B73AA11605EB14AF43FE988 /* program.json in Resources */ = {isa = PBXBuildFile; fileRef = 6654885C23C163D12E1D05A3 /* program.json */; };
 		9EBCC3CD90B7AFD22B80077C /* MarJSONCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A87CE1F15247B2227EE9907 /* MarJSONCodec.swift */; };
 		A1A11AF07CC0095511A28656 /* MarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2601D2B11FA17DA79E7C5038 /* MarApp.swift */; };
+		A307EF9C8C87DB03BF666217 /* MarMathTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00F580760830045A6160A79D /* MarMathTable.swift */; };
 		ACFDBA1661EBFB6A10831879 /* MarRuntimeIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8CBCB8DB09D9A40304B3DAA /* MarRuntimeIOSApp.swift */; };
 		C602AA40E91B863F11433084 /* MarHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E68B48D2583997A1EFC3A94 /* MarHTTP.swift */; };
 		CFFC0F50675D399FB5599585 /* MarDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 232B6AA41600028041EB6429 /* MarDispatcher.swift */; };
 		DF2886C32E7C23599EFB1A1B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2E7793FD50D2411F55A093 /* ContentView.swift */; };
 		E6ACB982CD28754600CF3F10 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0841188545EE6482E82F797 /* AppViewModel.swift */; };
 		F880A0113972CE9CE5F8602F /* MarBuiltins.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17AA2A49371B78A0E17CA081 /* MarBuiltins.swift */; };
+		FBA266607F60546DB86E7538 /* MarMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B5426D39360C64FA93BDAD /* MarMath.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		00F580760830045A6160A79D /* MarMathTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarMathTable.swift; sourceTree = "<group>"; };
 		17AA2A49371B78A0E17CA081 /* MarBuiltins.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarBuiltins.swift; sourceTree = "<group>"; };
 		188C4335F604FB991926BD68 /* MarSound.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarSound.swift; sourceTree = "<group>"; };
 		232B6AA41600028041EB6429 /* MarDispatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarDispatcher.swift; sourceTree = "<group>"; };
@@ -55,6 +58,7 @@
 		5BD25436BE07553942EAB5F8 /* MarIntRange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarIntRange.swift; sourceTree = "<group>"; };
 		63F190E7937B558BFD757B19 /* MarRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarRenderer.swift; sourceTree = "<group>"; };
 		6654885C23C163D12E1D05A3 /* program.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = program.json; sourceTree = "<group>"; };
+		66B5426D39360C64FA93BDAD /* MarMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarMath.swift; sourceTree = "<group>"; };
 		698C9F8D49856062A3E6029F /* MarAppContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarAppContext.swift; sourceTree = "<group>"; };
 		69950D21362193B50C7F15BD /* __MAR_APP_NAME__.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = __MAR_APP_NAME__.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7514C4E0930E690C37F202EA /* MarSharedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarSharedStore.swift; sourceTree = "<group>"; };
@@ -127,6 +131,8 @@
 				5A87CE1F15247B2227EE9907 /* MarJSONCodec.swift */,
 				F2F47775647F77B2B2DBD640 /* MarKeychain.swift */,
 				79888DFD3A4BC98247BD5AA1 /* MarLoader.swift */,
+				66B5426D39360C64FA93BDAD /* MarMath.swift */,
+				00F580760830045A6160A79D /* MarMathTable.swift */,
 				49572645D20DFF429518E618 /* MarPageRuntime.swift */,
 				C316B9C7635C3035FFE027AE /* MarPath.swift */,
 				63F190E7937B558BFD757B19 /* MarRenderer.swift */,
@@ -232,6 +238,8 @@
 				9EBCC3CD90B7AFD22B80077C /* MarJSONCodec.swift in Sources */,
 				60C37209F73BD3AFFA4C4A12 /* MarKeychain.swift in Sources */,
 				9AEBE17711083E8BEB18294A /* MarLoader.swift in Sources */,
+				FBA266607F60546DB86E7538 /* MarMath.swift in Sources */,
+				A307EF9C8C87DB03BF666217 /* MarMathTable.swift in Sources */,
 				493D3C02C5420E09DC9A9D58 /* MarPageRuntime.swift in Sources */,
 				8DA57DCA7363582700087898 /* MarPath.swift in Sources */,
 				95E175645730190913F5A4F0 /* MarRenderer.swift in Sources */,

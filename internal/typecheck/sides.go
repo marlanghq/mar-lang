@@ -109,6 +109,7 @@ var sideByModule = map[string]Side{
 	"Dict":    SideBoth,
 	"Set":     SideBoth,
 	"Decimal": SideBoth,
+	"Math":    SideBoth,
 	"Time":    SideBoth,
 	"Random":  SideBoth,
 	"JSON":    SideBoth,

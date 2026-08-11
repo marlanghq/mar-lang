@@ -84,6 +84,12 @@ enum MarJSONCodec {
                let dec = DecMath.parseDecimalString(s) {
                 return .decimal(dec)
             }
+            // Angle round-trip — `{__angle: 450}`, deci-degrees. Wrapped
+            // rather than trusted: the payload crossed a network boundary,
+            // and every other way to build an Angle normalizes.
+            if let d = dict["__angle"] as? Int, dict.count == 1 {
+                return .angle(MarMath.posMod(d, MarMath.deciFull))
+            }
             // Time round-trip — `{__time: "ISO 8601"}` rebuilds a
             // VTime so user code typed as `createdAt : Time`
             // actually receives a Time, not a String.
@@ -144,6 +150,7 @@ enum MarJSONCodec {
         case .bool(let b): return b
         case .unit: return NSNull()
         case .duration(let s): return s     // Duration → seconds (whole renders as int, sub-second keeps the fraction)
+        case .angle(let d): return ["__angle": d] as [String: Any]
         case .time(let ms):
             let d = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
             let f = ISO8601DateFormatter()

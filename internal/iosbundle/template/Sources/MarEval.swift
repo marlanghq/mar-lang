@@ -441,6 +441,7 @@ enum Eval {
         case .bool: return "Bool"
         case .unit: return "Unit"
         case .duration: return "Duration"
+        case .angle: return "Angle"
         case .time: return "Time"
         case .list: return "List"
         case .tuple: return "Tuple"

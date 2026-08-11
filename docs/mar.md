@@ -235,7 +235,39 @@ split = Decimal.withRemainder 2 (100.00 / 3)
 
 Rounding modes: `Decimal.HalfEven` (banker's), `HalfUp`, `Down`, `Up`, `Floor`, `Ceiling`. The rest of the module: `Decimal.zero`, `fromInt`, `fromCents` / `toCents`, `fromString` / `toString`, `toScale`, `round` / `floor` / `ceiling` / `truncate` (to `Int`), `toIntWith`, `abs`, `negate`, `compare`. On the wire (services, JSON) a Decimal travels as a string under a marker, so no JSON parser ever routes the digits through binary floats; `Json.decode` also reads plain fractional JSON numbers textually into Decimals.
 
-### 3.3 Nominal IDs
+### 3.3 Angles and trigonometry (`Math`)
+
+An angle is not an `Int`. It is an `Angle`, and the constructor names the unit — the same rule `Duration` and `Width`/`Height` already follow (ADR 0029):
+
+```elm
+Math.degrees 45          -- whole degrees
+Math.deciDegrees 450     -- tenths of a degree: the same angle, said finer
+Math.turns 64            -- brads, 256 to a turn: also the same angle
+```
+
+Any `Int` is a valid argument, because every constructor wraps: `Math.degrees 360` is `Math.degrees 0` and `Math.degrees -90` is `Math.degrees 270`. The algebra comes with the type, so nothing in a game ever writes the wrap by hand:
+
+```elm
+heading = Math.add model.heading (Math.deciDegrees (turn * 15))
+away    = Math.opposite model.heading
+```
+
+Trigonometry answers in **thousandths**, the fixed-point convention the rest of the API already uses for percent:
+
+```elm
+Math.sin : Angle -> Int          -- -1000 .. 1000
+Math.cos : Angle -> Int
+Math.atan2 : Int -> Int -> Angle -- atan2 y x, y first (as in Elm); y points up
+Math.isqrt : Int -> Int          -- floor of the square root; 0 at or below zero
+```
+
+Every one of them is total: `Math.atan2 0 0` is 0°, `Math.isqrt -5` is 0. There is nothing to guard.
+
+Two things follow from the type. The first is that a unit mix-up is a compile error rather than a game that turns ten times too slowly — `Canvas.Rotate` and `Math.sin` take the same `Angle`. The second is that the answers are **identical on every runtime**: all three read one generated quarter-wave table (`internal/mathgen`) instead of calling the host's trigonometry, which is what lets a rules engine be replayed on the server and the client, a recorded bot run prove a level, and time travel re-run old messages.
+
+The internal resolution is a tenth of a degree — a program can tell 45.0° from 45.1° and nothing finer. That number is not observable: no function hands it back.
+
+### 3.4 Nominal IDs
 
 Every entity ID is a nominal wrap of a primitive:
 
@@ -247,7 +279,7 @@ type SlugId = SlugId String
 
 This prevents mixing IDs of different entities at compile time. Mar's auto-derived codecs encode them transparently (the wrapper disappears on the wire).
 
-### 3.4 Task a and Cmd msg
+### 3.5 Task a and Cmd msg
 
 Side effects are values of two distinct types, one per side of the app.
 
@@ -280,7 +312,7 @@ The two types stay separate on purpose. They used to be one `Effect a` that carr
 
 Neither type carries an error index. On the backend a `Task` aborts with `Task.fail`, whose String becomes the `Err` the frontend receives; reserve it for genuine failures and keep matchable domain errors in the service's response value (a typed union) instead. On the frontend a failure travels inside the value: a `Service.call` delivers `Result Service.Error resp`, where `Service.Error` is a union (`Offline` / `Unauthorized` / `ServerError String`) the frontend cases on.
 
-### 3.5 Task chaining: `let <-`
+### 3.6 Task chaining: `let <-`
 
 Sugar for `Task.andThen`, on the backend. Each `<-` binds the result of one `Task` before the next runs:
 
@@ -296,7 +328,7 @@ toggle id =
 
 Equivalent to `Repo.findById tasks id |> Task.andThen (\found -> ...)`.
 
-### 3.6 Error handling
+### 3.7 Error handling
 
 Three kinds of failure, three homes. The rule of thumb: transport is a
 shared union, domain is a per-endpoint outcome in the response value, and

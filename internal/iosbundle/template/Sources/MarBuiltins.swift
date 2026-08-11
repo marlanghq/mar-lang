@@ -2474,6 +2474,7 @@ enum MarBuiltins {
         // capability sources. Registered from their own files to keep this
         // dispatch table readable.
         MarBuiltinCtors.register(env)
+        MarMath.register(env)
         MarCanvas.register(env)
         MarSound.register(env)
         MarInput.register(env)

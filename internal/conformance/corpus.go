@@ -362,9 +362,59 @@ jsonCases =
         ]
 
 
+mathCases : String
+mathCases =
+    String.join ";"
+        [ "degEqDeci=" ++ yn (Math.degrees 45 == Math.deciDegrees 450)
+        , "degWraps=" ++ yn (Math.degrees 360 == Math.degrees 0)
+        , "degNegative=" ++ yn (Math.degrees (0 - 90) == Math.degrees 270)
+        , "turnsQuarter=" ++ yn (Math.turns 64 == Math.degrees 90)
+        , "turnsFull=" ++ yn (Math.turns 256 == Math.degrees 0)
+        , "turnsOne=" ++ String.fromInt (Math.sin (Math.turns 1))
+        , "sin0=" ++ String.fromInt (Math.sin (Math.degrees 0))
+        , "sin30=" ++ String.fromInt (Math.sin (Math.degrees 30))
+        , "sin45=" ++ String.fromInt (Math.sin (Math.degrees 45))
+        , "sin60=" ++ String.fromInt (Math.sin (Math.degrees 60))
+        , "sin90=" ++ String.fromInt (Math.sin (Math.degrees 90))
+        , "sin180=" ++ String.fromInt (Math.sin (Math.degrees 180))
+        , "sin270=" ++ String.fromInt (Math.sin (Math.degrees 270))
+        , "sin360=" ++ String.fromInt (Math.sin (Math.degrees 360))
+        , "sinNeg90=" ++ String.fromInt (Math.sin (Math.degrees (0 - 90)))
+        , "sinHalfStep=" ++ String.fromInt (Math.sin (Math.deciDegrees 455))
+        , "cos0=" ++ String.fromInt (Math.cos (Math.degrees 0))
+        , "cos60=" ++ String.fromInt (Math.cos (Math.degrees 60))
+        , "cos90=" ++ String.fromInt (Math.cos (Math.degrees 90))
+        , "cos180=" ++ String.fromInt (Math.cos (Math.degrees 180))
+        , "cos270=" ++ String.fromInt (Math.cos (Math.degrees 270))
+        , "addWraps=" ++ yn (Math.add (Math.degrees 350) (Math.degrees 20) == Math.degrees 10)
+        , "subWraps=" ++ yn (Math.subtract (Math.degrees 10) (Math.degrees 20) == Math.degrees 350)
+        , "opposite=" ++ yn (Math.opposite (Math.degrees 30) == Math.degrees 210)
+        , "oppositeTwice=" ++ yn (Math.opposite (Math.opposite (Math.degrees 30)) == Math.degrees 30)
+        , "atan2Origin=" ++ yn (Math.atan2 0 0 == Math.degrees 0)
+        , "atan2E=" ++ yn (Math.atan2 0 1 == Math.degrees 0)
+        , "atan2NE=" ++ yn (Math.atan2 1 1 == Math.degrees 45)
+        , "atan2N=" ++ yn (Math.atan2 1 0 == Math.degrees 90)
+        , "atan2NW=" ++ yn (Math.atan2 1 (0 - 1) == Math.degrees 135)
+        , "atan2W=" ++ yn (Math.atan2 0 (0 - 1) == Math.degrees 180)
+        , "atan2SW=" ++ yn (Math.atan2 (0 - 1) (0 - 1) == Math.degrees 225)
+        , "atan2S=" ++ yn (Math.atan2 (0 - 1) 0 == Math.degrees 270)
+        , "atan2SE=" ++ yn (Math.atan2 (0 - 1) 1 == Math.degrees 315)
+        , "atan2Thirty=" ++ yn (Math.atan2 1000 1732 == Math.degrees 30)
+        , "atan2RoundTrip=" ++ String.fromInt (Math.sin (Math.atan2 500 866))
+        , "isqrtZero=" ++ String.fromInt (Math.isqrt 0)
+        , "isqrtNegative=" ++ String.fromInt (Math.isqrt (0 - 5))
+        , "isqrtOne=" ++ String.fromInt (Math.isqrt 1)
+        , "isqrtBelowSquare=" ++ String.fromInt (Math.isqrt 15)
+        , "isqrtSquare=" ++ String.fromInt (Math.isqrt 16)
+        , "isqrtAboveSquare=" ++ String.fromInt (Math.isqrt 17)
+        , "isqrtMillion=" ++ String.fromInt (Math.isqrt 1000000)
+        , "isqrtBig=" ++ String.fromInt (Math.isqrt 999999999999)
+        ]
+
+
 results : String
 results =
-    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases ]
+    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases ]
 `
 
 // Entry is the value each runtime is asked to evaluate.
@@ -374,7 +424,7 @@ const Entry = "Conform.results"
 // across modules — `map`, `foldl`, `filter`, `toList` — so a case is named for
 // the block it landed in: `Dict.map`, not `map`.
 var Blocks = []string{
-	"Basics", "String", "List", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "JSON",
+	"Basics", "String", "List", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "JSON", "Math",
 }
 
 // Scope is the set of modules whose meaning must be identical everywhere: pure
@@ -384,6 +434,10 @@ var Blocks = []string{
 var Scope = map[string]bool{
 	"String": true, "List": true, "Maybe": true, "Result": true,
 	"Tuple": true, "Char": true, "Dict": true, "Set": true, "JSON": true,
+	// Math is the reason the corpus exists, in miniature: three hand-ported
+	// kernels reading one generated table, where a single wrong fold would
+	// make a game aim differently on the phone than in the browser.
+	"Math": true,
 }
 
 // OutOfScopeBare is the bare-global counterpart to OutOfScope: a name spelled
@@ -619,6 +673,51 @@ JSON.encodeIgnoresFieldOrder=T
 JSON.decodeInt=7
 JSON.decodeBad=err
 JSON.roundTrip=5
+
+Math.degEqDeci=T
+Math.degWraps=T
+Math.degNegative=T
+Math.turnsQuarter=T
+Math.turnsFull=T
+Math.turnsOne=24
+Math.sin0=0
+Math.sin30=500
+Math.sin45=707
+Math.sin60=866
+Math.sin90=1000
+Math.sin180=0
+Math.sin270=-1000
+Math.sin360=0
+Math.sinNeg90=-1000
+Math.sinHalfStep=713
+Math.cos0=1000
+Math.cos60=500
+Math.cos90=0
+Math.cos180=-1000
+Math.cos270=0
+Math.addWraps=T
+Math.subWraps=T
+Math.opposite=T
+Math.oppositeTwice=T
+Math.atan2Origin=T
+Math.atan2E=T
+Math.atan2NE=T
+Math.atan2N=T
+Math.atan2NW=T
+Math.atan2W=T
+Math.atan2SW=T
+Math.atan2S=T
+Math.atan2SE=T
+Math.atan2Thirty=T
+Math.atan2RoundTrip=500
+Math.isqrtZero=0
+Math.isqrtNegative=0
+Math.isqrtOne=1
+Math.isqrtBelowSquare=3
+Math.isqrtSquare=4
+Math.isqrtAboveSquare=4
+Math.isqrtMillion=1000
+Math.isqrtBig=999999
 `
 
 // Expectations parses the hand-written answers. Blank lines only group them for

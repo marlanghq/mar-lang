@@ -59,6 +59,9 @@ func BaseEnv() *Env {
 	for name, v := range decimalBuiltins() {
 		env.Define(name, v)
 	}
+	for name, v := range mathBuiltins() {
+		env.Define(name, v)
+	}
 	for name, v := range dictBuiltins() {
 		env.Define(name, v)
 	}
@@ -266,6 +269,16 @@ func qualifiedAliasMapping() map[string]string {
 		"Random.initialSeed": "randomInitialSeed",
 		"Random.step":        "randomStep",
 		"Random.seed":        "randomSeed",
+		"Math.degrees":       "mathDegrees",
+		"Math.deciDegrees":   "mathDeciDegrees",
+		"Math.turns":         "mathTurns",
+		"Math.add":           "mathAdd",
+		"Math.subtract":      "mathSubtract",
+		"Math.opposite":      "mathOpposite",
+		"Math.sin":           "mathSin",
+		"Math.cos":           "mathCos",
+		"Math.atan2":         "mathAtan2",
+		"Math.isqrt":         "mathIsqrt",
 		"Time.millis":        "timeMillis",
 		"Time.seconds":       "timeSeconds",
 		"Time.minutes":       "timeMinutes",
@@ -800,6 +813,28 @@ func equalValues(a, b Value) bool {
 	case VChar:
 		bv, ok := b.(VChar)
 		return ok && av.V == bv.V
+	case VAngle:
+		// Constructed values are always wrapped into 0..3599, so equality
+		// on the representation IS equality of the rotation. An Angle sits
+		// in models — a heading, a turret facing — and models go through
+		// time travel, App.shared and (in lendas) a rules engine replayed
+		// on both sides, so this arm is load-bearing rather than decorative.
+		bv, ok := b.(VAngle)
+		return ok && av.Deci == bv.Deci
+	case VDuration:
+		// Durations normalize to seconds at construction, so
+		// Time.seconds 60 and Time.minutes 1 ARE the same interval and
+		// compare equal. Without this arm a Duration fell through to
+		// the `return false` below: `Time.seconds 1 == Time.seconds 1`
+		// answered False, and so did a record holding one.
+		bv, ok := b.(VDuration)
+		return ok && av.Seconds == bv.Seconds
+	case VTime:
+		// Same moment = same Unix millisecond. A Time sits in models
+		// and in entity rows (Entity.time), so this arm is reached by
+		// `==`, by List.member, and by every container case below.
+		bv, ok := b.(VTime)
+		return ok && av.Millis == bv.Millis
 	case VBool:
 		bv, ok := b.(VBool)
 		return ok && av.V == bv.V
@@ -851,7 +886,43 @@ func equalValues(a, b Value) bool {
 			}
 		}
 		return true
+	case VDict:
+		// Pairs are kept sorted by key, so equal dicts are equal
+		// pairwise in order — no set-difference walk needed. These two
+		// arms were missing HERE ONLY: the JS and Swift runtimes have
+		// always compared dicts and sets structurally, so the same
+		// program answered True in the browser and on iOS and False on
+		// the server. Same shape as the record-equality gap, with the
+		// runtimes swapped.
+		bv, ok := b.(VDict)
+		if !ok || len(av.Pairs) != len(bv.Pairs) {
+			return false
+		}
+		for i := range av.Pairs {
+			if !equalValues(av.Pairs[i].Key, bv.Pairs[i].Key) {
+				return false
+			}
+			if !equalValues(av.Pairs[i].Value, bv.Pairs[i].Value) {
+				return false
+			}
+		}
+		return true
+	case VSet:
+		bv, ok := b.(VSet)
+		if !ok || len(av.Items) != len(bv.Items) {
+			return false
+		}
+		for i := range av.Items {
+			if !equalValues(av.Items[i], bv.Items[i]) {
+				return false
+			}
+		}
+		return true
 	}
+	// Reached only by VFn (functions have no equality) and VDivision
+	// (an unresolved quotient is opaque by design — see VDivision).
+	// Everything else in value.go has an arm above; if you add a value
+	// kind, add it here too, or `==` will quietly answer False for it.
 	return false
 }
 

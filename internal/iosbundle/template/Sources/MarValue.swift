@@ -43,6 +43,12 @@ enum MarValue: @unchecked Sendable {
     /// Absolute moment, Unix milliseconds. Built via Time.now or
     /// Time.fromIso. Wire format is `{"__time": "ISO 8601"}`.
     case time(Int)
+    /// A rotation, carried as deci-degrees in 0..3599. Built only via
+    /// Math.degrees / .deciDegrees / .turns, so the unit is named at
+    /// construction and nowhere else (ADR 0029). The representation is
+    /// normative — it fixes the resolution — but not observable, since no
+    /// builtin hands it back. Wire format: `{"__angle": 450}`.
+    case angle(Int)
     /// A single Unicode code point — Elm-style Char, NOT a grapheme
     /// cluster. We use `Unicode.Scalar` (not Swift's default
     /// `Character`) so semantics line up exactly with Go's `rune` and
@@ -214,6 +220,19 @@ extension MarValue {
         case (.decimal(let a), .decimal(let b)): return DecMath.decCompare(a, b) == 0
         case (.string(let a), .string(let b)): return a == b
         case (.char(let a),   .char(let b)):   return a == b
+        // Every constructor wraps into 0..3599, so equality on the
+        // representation IS equality of the rotation. Load-bearing: an
+        // Angle lives in models, and models go through time travel,
+        // App.shared and a rules engine replayed on both sides.
+        case (.angle(let a),  .angle(let b)):  return a == b
+        // Durations normalize to seconds at construction, so
+        // Time.seconds 60 and Time.minutes 1 ARE the same interval. A
+        // Time is the same moment when it is the same Unix
+        // millisecond. Both fell through to `default: return false`
+        // here, in Go and in JS too — the three runtimes agreed on the
+        // wrong answer, which is exactly what a drift test cannot see.
+        case (.duration(let a), .duration(let b)): return a == b
+        case (.time(let a),   .time(let b)):   return a == b
         case (.bool(let a),   .bool(let b)):   return a == b
         case (.unit, .unit):                   return true
         case (.list(let a),   .list(let b)),

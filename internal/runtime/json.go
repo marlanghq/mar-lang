@@ -97,6 +97,14 @@ func encodeValue(v Value) (string, error) {
 		// still serialize as integers ("2") — only sub-second ones carry
 		// a fraction ("1.5"). Keeps the wire format stable for existing data.
 		return strconv.FormatFloat(x.Seconds, 'f', -1, 64), nil
+	case VAngle:
+		// Wire format is `{"__angle": 450}` — deci-degrees, the same
+		// marker-object shape as __char / __time / __dec, so the client
+		// and iOS decoders rebuild an Angle instead of a plain Int. An
+		// angle in a model has to survive the wire: it goes to App.shared,
+		// through time travel, and into a rules engine replayed on both
+		// sides.
+		return `{"__angle":` + strconv.FormatInt(x.Deci, 10) + `}`, nil
 	case VTime:
 		// Wire format is `{"__time": "ISO 8601"}` — marker keeps the
 		// type round-trippable on the client (jsToMar / iOS decoder
@@ -432,6 +440,13 @@ func convertJSON(raw any) (Value, error) {
 				return VChar{V: r}, nil
 			}
 			return nil, fmt.Errorf("JSON.decode: empty __char")
+		}
+		// Tagged angle — `{"__angle": 450}`, deci-degrees. Counterpart to
+		// the VAngle encoder. Wrapped on the way in rather than trusted:
+		// the payload crossed a network boundary, and every other way to
+		// build an Angle normalizes, so this one does too.
+		if d, ok := x["__angle"].(float64); ok && len(x) == 1 {
+			return VAngle{Deci: posMod(int64(d), deciFull)}, nil
 		}
 		// Tagged time — `{"__time": "ISO 8601"}`. Counterpart to the
 		// VTime encoder; reconstructing a VTime here keeps round-trip

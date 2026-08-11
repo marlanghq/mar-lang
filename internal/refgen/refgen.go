@@ -36,7 +36,7 @@ const DataMarRelPath = "examples/mar-website/Frontend/Reference/Data.mar"
 // categorized and described, so a module is in here all of it or not at all.
 // Mar.Admin is deliberately absent — it is the admin panel's own API, not one
 // apps call.
-var Modules = []string{"Basics", "List", "String", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "Decimal", "Time", "Random", "App", "Page", "Nav", "UI", "Canvas", "Sound", "Keyboard", "Gamepad", "Device", "Cmd", "Sub", "Task", "Service", "Entity", "Repo", "Auth", "Http", "JSON"}
+var Modules = []string{"Basics", "List", "String", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "Decimal", "Math", "Time", "Random", "App", "Page", "Nav", "UI", "Canvas", "Sound", "Keyboard", "Gamepad", "Device", "Cmd", "Sub", "Task", "Service", "Entity", "Repo", "Auth", "Http", "JSON"}
 
 // BasicsModule is the display name for the builtins that live in no module —
 // the ones written bare, without a qualifier. There is no `import Basics` in

@@ -55,6 +55,12 @@ var categories = map[string][]CatGroup{
 		{"Functions", []string{"always"}},
 		{"Links", []string{"linkTo"}},
 	},
+	"Math": {
+		{"Build an angle", []string{"degrees", "deciDegrees", "turns"}},
+		{"Angle arithmetic", []string{"add", "subtract", "opposite"}},
+		{"Trigonometry", []string{"sin", "cos", "atan2"}},
+		{"Roots", []string{"isqrt"}},
+	},
 	"Tuple": {
 		{"Read", []string{"first", "second"}},
 		{"Build", []string{"pair"}},
@@ -235,6 +241,17 @@ var descriptions = map[string]string{
 	"Set.toList":    "Every value, in ascending order.",
 
 	// --- Decimal ---
+	"Math.degrees":     "An angle in whole degrees. Any Int works: 360 is the same angle as 0, and -90 is the same as 270.",
+	"Math.deciDegrees": "An angle in tenths of a degree, which is as fine as an Angle goes. Reach for it when whole degrees are too coarse — a turn rate, a slow sweep.",
+	"Math.turns":       "An angle in brads: 256 to a full turn, the unit a game usually counts a heading in. One brad is not a whole number of tenths, so it floors; a full turn is exact.",
+	"Math.add":         "Two angles added, wrapped back into one turn. This is how a heading turns without anyone writing the wrap.",
+	"Math.subtract":    "One angle minus another, wrapped back into one turn.",
+	"Math.opposite":    "The angle pointing the other way — half a turn from this one. Facing away, bouncing back.",
+	"Math.sin":         "The sine of an angle in thousandths, so -1000 to 1000. The same integer on every runtime, because it comes from one checked-in table rather than the host's trigonometry.",
+	"Math.cos":         "The cosine of an angle in thousandths, so -1000 to 1000.",
+	"Math.atan2":       "The angle of the vector (x, y) — note that y comes first, as in Elm. The y axis points UP here, so a canvas whose y grows downward negates it at the call site. atan2 0 0 is 0 degrees rather than an error.",
+	"Math.isqrt":       "The whole part of a square root. Anything at or below zero gives 0, so there is nothing to guard. For a distance, square first and then take the root: Math.isqrt (dx * dx + dy * dy).",
+
 	"Decimal.fromInt":       "An exact Decimal from a whole number.",
 	"Decimal.fromCents":     "A Decimal from a count of hundredths, which is how money usually arrives from a database or an API.",
 	"Decimal.fromString":    "Parses a Decimal, giving Nothing when the text is not one. The scale comes from the text, so \"2.50\" keeps its two places.",
@@ -376,6 +393,17 @@ var examples = map[string][]string{
 	"Set.toList":    {"Set.toList (Set.fromList [3, 1, 2]) == [1, 2, 3]"},
 
 	// --- Decimal ---
+	"Math.degrees":     {"Math.sin (Math.degrees 30) == 500", "Math.degrees 360 == Math.degrees 0"},
+	"Math.deciDegrees": {"Math.deciDegrees 450 == Math.degrees 45"},
+	"Math.turns":       {"Math.turns 64 == Math.degrees 90"},
+	"Math.add":         {"Math.add (Math.degrees 350) (Math.degrees 20) == Math.degrees 10"},
+	"Math.subtract":    {"Math.subtract (Math.degrees 10) (Math.degrees 20) == Math.degrees 350"},
+	"Math.opposite":    {"Math.opposite (Math.degrees 30) == Math.degrees 210"},
+	"Math.sin":         {"Math.sin (Math.degrees 90) == 1000"},
+	"Math.cos":         {"Math.cos (Math.degrees 60) == 500"},
+	"Math.atan2":       {"Math.atan2 1 1 == Math.degrees 45", "Math.atan2 0 0 == Math.degrees 0"},
+	"Math.isqrt":       {"Math.isqrt 17 == 4", "Math.isqrt (0 - 5) == 0"},
+
 	"Decimal.fromInt":       {"Decimal.toCents (Decimal.fromInt 3) == 300"},
 	"Decimal.fromCents":     {"Decimal.toCents (Decimal.fromCents 250) == 250"},
 	"Decimal.fromString":    {"Maybe.map Decimal.toCents (Decimal.fromString \"2.50\") == Just 250", "Decimal.fromString \"abc\" == Nothing"},
@@ -450,6 +478,7 @@ var blurbs = map[string]string{
 	"Dict":    "Look values up by key, in sorted order.",
 	"Set":     "A collection with no duplicates and no order of its own.",
 	"Decimal": "Exact decimal arithmetic, with rounding you choose rather than inherit.",
+	"Math":    "Angles, trigonometry, and square roots — in whole numbers, identical on every runtime.",
 }
 
 // moduleGroups is how the reference index is carved up: not by layer or by
@@ -475,7 +504,7 @@ var blurbs = map[string]string{
 // coverage test below requires every module in Modules to appear in exactly one
 // group, so a module cannot be added and then silently belong to no section.
 var moduleGroups = []ModuleGroup{
-	{"Data", []string{"Basics", "List", "String", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "Decimal", "Time", "Random"}},
+	{"Data", []string{"Basics", "List", "String", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "Decimal", "Math", "Time", "Random"}},
 	{"Screens", []string{"App", "Page", "Nav", "UI"}},
 	{"Games and media", []string{"Canvas", "Sound", "Keyboard", "Gamepad", "Device"}},
 	{"Effects", []string{"Cmd", "Sub", "Task"}},

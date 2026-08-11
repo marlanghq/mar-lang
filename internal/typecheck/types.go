@@ -325,6 +325,17 @@ var (
 	TChar     = TCon{Name: "Char"}
 	TDuration = TCon{Name: "Duration"}
 	TTime     = TCon{Name: "Time"}
+	// TAngle — a rotation. The third quantity in the language that carries a
+	// unit and therefore has a type (ADR 0029, after Duration and
+	// Width/Height): the constructor names the unit (Math.degrees,
+	// Math.deciDegrees, Math.turns) and that is the only place a bare Int
+	// appears. Canvas.Rotate and Math.sin take the SAME type, so the
+	// degrees-versus-deci-degrees mix-up that would rotate a game 10× too
+	// slowly is a compile error rather than bad game feel.
+	//
+	// Internally a whole number of deci-degrees in 0..3599 — normative
+	// (it fixes the resolution) but not observable: no accessor returns it.
+	TAngle = TCon{Name: "Angle"}
 	// TOrder — three-way comparison result. Inhabited by LT, EQ, GT
 	// (constructors registered in typecheck.builtinCustomTypes and
 	// the value envs of all three runtimes). Used by List.sortWith

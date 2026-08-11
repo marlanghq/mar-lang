@@ -88,7 +88,7 @@ var bareBuiltinCtors = map[string]string{
 // words app authors legitimately model.
 var reservedTypeNames = map[string]bool{
 	"Int": true, "String": true, "Bool": true, "Char": true, "Decimal": true,
-	"Time": true, "Duration": true, "Order": true,
+	"Time": true, "Duration": true, "Angle": true, "Order": true,
 	"List": true, "Dict": true, "Set": true,
 	"Maybe": true, "Result": true,
 	"Task": true, "Cmd": true, "Sub": true, "View": true, "Service": true, "Entity": true,

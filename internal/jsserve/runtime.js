@@ -32,6 +32,12 @@
   // VTime — absolute moment, Unix milliseconds. Constructed via
   // Time.now (effect) or Time.fromIso. Wire format is ISO 8601.
   const VTime = (millis) => ({ k: 'TM', millis });
+  // VAngle — a rotation, carried as deci-degrees in 0..3599. Built only
+  // via Math.degrees / .deciDegrees / .turns, so the unit is named at
+  // construction and nowhere else (ADR 0029); `deci` is normative but not
+  // observable, since no builtin hands it back. Wire format is
+  // `{"__angle": 450}`.
+  const VAngle = (deci) => ({ k: 'A', deci });
   const VString = (s)        => ({ k: 'S', s });
   const VBool   = (b)        => ({ k: 'B', b });
   const VUnit   = ()         => ({ k: 'U' });
@@ -267,6 +273,152 @@
     ({ k: 'V', tag, attrs: attrs || [], children: children || [], text: text || '', msg: msg });
   const VEffect = (run, tag) => ({ k: 'E', run, tag: tag || '' });
 
+  // ---------- Math (integer trigonometry) ----------
+  //
+  // Semantics mirror internal/runtime/math.go and MarMath.swift exactly —
+  // the conformance vectors in math_conformance_test.go must produce
+  // identical integers on all three. No Math.sin from the host anywhere:
+  // three libms would be three answers, and a replayed rules engine, a
+  // bot-verified level and time travel all need one.
+
+  // BEGIN GENERATED SINE TABLE (go generate ./internal/mathgen) — DO NOT EDIT
+  // sin(θ) × 1000, half-even, at every deci-degree from 0.0° to 90.0°.
+  // 901 entries: index i is i/10 degrees, sinQuarter[900] is exactly 1000.
+  // The other three quadrants fold onto this one; atan2 searches the same
+  // numbers, so it cannot disagree with sin about where an angle is.
+  const SIN_QUARTER = [
+    0, 2, 3, 5, 7, 9, 10, 12, 14, 16, 17, 19, 21, 23, 24, 26,
+    28, 30, 31, 33, 35, 37, 38, 40, 42, 44, 45, 47, 49, 51, 52, 54,
+    56, 58, 59, 61, 63, 65, 66, 68, 70, 71, 73, 75, 77, 78, 80, 82,
+    84, 85, 87, 89, 91, 92, 94, 96, 98, 99, 101, 103, 105, 106, 108, 110,
+    111, 113, 115, 117, 118, 120, 122, 124, 125, 127, 129, 131, 132, 134, 136, 137,
+    139, 141, 143, 144, 146, 148, 150, 151, 153, 155, 156, 158, 160, 162, 163, 165,
+    167, 168, 170, 172, 174, 175, 177, 179, 181, 182, 184, 186, 187, 189, 191, 193,
+    194, 196, 198, 199, 201, 203, 204, 206, 208, 210, 211, 213, 215, 216, 218, 220,
+    222, 223, 225, 227, 228, 230, 232, 233, 235, 237, 239, 240, 242, 244, 245, 247,
+    249, 250, 252, 254, 255, 257, 259, 261, 262, 264, 266, 267, 269, 271, 272, 274,
+    276, 277, 279, 281, 282, 284, 286, 287, 289, 291, 292, 294, 296, 297, 299, 301,
+    302, 304, 306, 307, 309, 311, 312, 314, 316, 317, 319, 321, 322, 324, 326, 327,
+    329, 331, 332, 334, 335, 337, 339, 340, 342, 344, 345, 347, 349, 350, 352, 353,
+    355, 357, 358, 360, 362, 363, 365, 367, 368, 370, 371, 373, 375, 376, 378, 379,
+    381, 383, 384, 386, 388, 389, 391, 392, 394, 396, 397, 399, 400, 402, 404, 405,
+    407, 408, 410, 412, 413, 415, 416, 418, 419, 421, 423, 424, 426, 427, 429, 431,
+    432, 434, 435, 437, 438, 440, 442, 443, 445, 446, 448, 449, 451, 452, 454, 456,
+    457, 459, 460, 462, 463, 465, 466, 468, 469, 471, 473, 474, 476, 477, 479, 480,
+    482, 483, 485, 486, 488, 489, 491, 492, 494, 495, 497, 498, 500, 502, 503, 505,
+    506, 508, 509, 511, 512, 514, 515, 517, 518, 520, 521, 522, 524, 525, 527, 528,
+    530, 531, 533, 534, 536, 537, 539, 540, 542, 543, 545, 546, 548, 549, 550, 552,
+    553, 555, 556, 558, 559, 561, 562, 564, 565, 566, 568, 569, 571, 572, 574, 575,
+    576, 578, 579, 581, 582, 584, 585, 586, 588, 589, 591, 592, 593, 595, 596, 598,
+    599, 600, 602, 603, 605, 606, 607, 609, 610, 612, 613, 614, 616, 617, 618, 620,
+    621, 623, 624, 625, 627, 628, 629, 631, 632, 633, 635, 636, 637, 639, 640, 641,
+    643, 644, 645, 647, 648, 649, 651, 652, 653, 655, 656, 657, 659, 660, 661, 663,
+    664, 665, 667, 668, 669, 670, 672, 673, 674, 676, 677, 678, 679, 681, 682, 683,
+    685, 686, 687, 688, 690, 691, 692, 693, 695, 696, 697, 698, 700, 701, 702, 703,
+    705, 706, 707, 708, 710, 711, 712, 713, 714, 716, 717, 718, 719, 721, 722, 723,
+    724, 725, 727, 728, 729, 730, 731, 733, 734, 735, 736, 737, 738, 740, 741, 742,
+    743, 744, 745, 747, 748, 749, 750, 751, 752, 754, 755, 756, 757, 758, 759, 760,
+    762, 763, 764, 765, 766, 767, 768, 769, 771, 772, 773, 774, 775, 776, 777, 778,
+    779, 780, 782, 783, 784, 785, 786, 787, 788, 789, 790, 791, 792, 793, 794, 795,
+    797, 798, 799, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 810, 811, 812,
+    813, 814, 815, 816, 817, 818, 819, 820, 821, 822, 823, 824, 825, 826, 827, 828,
+    829, 830, 831, 832, 833, 834, 835, 836, 837, 838, 839, 840, 841, 842, 842, 843,
+    844, 845, 846, 847, 848, 849, 850, 851, 852, 853, 854, 854, 855, 856, 857, 858,
+    859, 860, 861, 862, 863, 863, 864, 865, 866, 867, 868, 869, 869, 870, 871, 872,
+    873, 874, 875, 875, 876, 877, 878, 879, 880, 880, 881, 882, 883, 884, 885, 885,
+    886, 887, 888, 889, 889, 890, 891, 892, 893, 893, 894, 895, 896, 896, 897, 898,
+    899, 900, 900, 901, 902, 903, 903, 904, 905, 906, 906, 907, 908, 909, 909, 910,
+    911, 911, 912, 913, 914, 914, 915, 916, 916, 917, 918, 918, 919, 920, 921, 921,
+    922, 923, 923, 924, 925, 925, 926, 927, 927, 928, 928, 929, 930, 930, 931, 932,
+    932, 933, 934, 934, 935, 935, 936, 937, 937, 938, 938, 939, 940, 940, 941, 941,
+    942, 943, 943, 944, 944, 945, 946, 946, 947, 947, 948, 948, 949, 949, 950, 951,
+    951, 952, 952, 953, 953, 954, 954, 955, 955, 956, 956, 957, 957, 958, 958, 959,
+    959, 960, 960, 961, 961, 962, 962, 963, 963, 964, 964, 965, 965, 965, 966, 966,
+    967, 967, 968, 968, 969, 969, 969, 970, 970, 971, 971, 972, 972, 972, 973, 973,
+    974, 974, 974, 975, 975, 976, 976, 976, 977, 977, 977, 978, 978, 979, 979, 979,
+    980, 980, 980, 981, 981, 981, 982, 982, 982, 983, 983, 983, 984, 984, 984, 985,
+    985, 985, 985, 986, 986, 986, 987, 987, 987, 987, 988, 988, 988, 988, 989, 989,
+    989, 990, 990, 990, 990, 991, 991, 991, 991, 991, 992, 992, 992, 992, 993, 993,
+    993, 993, 993, 994, 994, 994, 994, 994, 995, 995, 995, 995, 995, 995, 996, 996,
+    996, 996, 996, 996, 996, 997, 997, 997, 997, 997, 997, 997, 998, 998, 998, 998,
+    998, 998, 998, 998, 998, 999, 999, 999, 999, 999, 999, 999, 999, 999, 999, 999,
+    999, 999, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000,
+    1000, 1000, 1000, 1000, 1000,
+  ];
+  // END GENERATED SINE TABLE
+
+  const DECI_FULL = 3600;
+  const DECI_QUARTER = 900;
+
+  // Positive modulo: every Angle constructor wraps through here, so any Int
+  // is a valid argument and a negative angle means what it should.
+  const posMod = (n, m) => ((n % m) + m) % m;
+
+  // sin/cos fold the whole circle onto the one quarter-wave table. Quadrant
+  // 1 and 3 read it backwards, 2 and 3 negate — no interpolation, because
+  // the table already holds every representable input.
+  function sinDeci(a) {
+    const q = Math.floor(a / DECI_QUARTER);
+    const r = a - q * DECI_QUARTER;
+    const v = (q & 1) === 0 ? SIN_QUARTER[r] : SIN_QUARTER[DECI_QUARTER - r];
+    return (q & 2) === 0 ? v : -v;
+  }
+  const cosDeci = (a) => sinDeci(posMod(a + DECI_QUARTER, DECI_FULL));
+
+  // Integer Newton, floored. Converges from above and stops the moment it
+  // would go back up, which is exactly floor(sqrt(n)) for every n >= 1.
+  function isqrtInt(n) {
+    if (n <= 0) return 0;
+    let x = n;
+    let y = Math.floor((x + 1) / 2);
+    while (y < x) {
+      x = y;
+      y = Math.floor((x + Math.floor(n / x)) / 2);
+    }
+    return x;
+  }
+
+  // atan2 searches the SAME table sin reads, which is what makes the two
+  // structurally unable to disagree about where an angle is. See math.go
+  // for the full derivation; this is a line-for-line port.
+  function atan2Deci(y, x) {
+    if (x === 0 && y === 0) return 0;
+    let ax = Math.abs(x);
+    let ay = Math.abs(y);
+    // Fold into the first octant so the search range is 0..450, then halve
+    // both legs until a product with a table entry (< 2^10) stays inside
+    // 53 bits. Halving is exact integer arithmetic, so all three runtimes
+    // drop the same bits.
+    const swapped = ay > ax;
+    if (swapped) { const t = ax; ax = ay; ay = t; }
+    while (ax >= 1099511627776) { // 2^40
+      ax = Math.floor(ax / 2);
+      ay = Math.floor(ay / 2);
+    }
+    // Largest k with tan(k) <= ay/ax, i.e. sin(k)*ax <= cos(k)*ay.
+    let lo = 0;
+    let hi = 450;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi + 1) / 2);
+      if (SIN_QUARTER[mid] * ax <= SIN_QUARTER[DECI_QUARTER - mid] * ay) lo = mid;
+      else hi = mid - 1;
+    }
+    let inner = lo;
+    if (inner < 450) {
+      // Round to the nearer of k and k+1 by comparing the two cross
+      // products — each is |v| times the sine of the angular error, so the
+      // smaller one is the closer angle. A tie keeps the lower angle.
+      const d0 = SIN_QUARTER[DECI_QUARTER - inner] * ay - SIN_QUARTER[inner] * ax;
+      const d1 = SIN_QUARTER[inner + 1] * ax - SIN_QUARTER[DECI_QUARTER - inner - 1] * ay;
+      if (d1 < d0) inner += 1;
+    }
+    if (swapped) inner = DECI_QUARTER - inner;
+    let a;
+    if (x >= 0) a = y >= 0 ? inner : DECI_FULL - inner;
+    else a = y >= 0 ? 1800 - inner : 1800 + inner;
+    return posMod(a, DECI_FULL);
+  }
+
   // ---------- JSON ⇄ MarValue ----------
   //
   // Lifted to the IIFE level (rather than inside makeBuiltinEnv)
@@ -322,6 +474,13 @@
       if (typeof v.__time === 'string') {
         const ms = Date.parse(v.__time);
         if (!isNaN(ms)) return VTime(ms);
+      }
+      // Angle round-trip — `{__angle: 450}` (deci-degrees) from the Go
+      // encoder. Wrapped rather than trusted: the payload crossed a
+      // network boundary and every other way to build an Angle
+      // normalizes, so this one does too.
+      if (typeof v.__angle === 'number') {
+        return VAngle(posMod(Math.trunc(v.__angle), DECI_FULL));
       }
       // Char round-trip — `{__char: "x"}` from the Go encoder. Take
       // the FIRST code point (covers BMP + supplementary planes). A
@@ -413,6 +572,7 @@
         if (!v.args || v.args.length === 0) return { __ctor: v.tag };
         return { __args: v.args.map(marToJs), __ctor: v.tag };
       case 'D': return v.seconds;
+      case 'A': return { __angle: v.deci };
       case 'TM': return { __time: new Date(v.millis).toISOString() };
       case 'Ch': return { __char: String.fromCodePoint(v.c) };
       case 'De': return { __dec: decStr(v) };
@@ -798,6 +958,7 @@
       case 'V': return 'View<' + v.tag + '>';
       case 'E': return 'Effect<' + (v.tag || '?') + '>';
       case 'D': return 'Duration ' + v.seconds + 's';
+      case 'A': return 'Angle ' + (v.deci / 10) + '°';
       case 'TM': return 'Time ' + v.millis + 'ms';
     }
     return 'unknown';
@@ -1134,6 +1295,18 @@
       case 'De': return decCmpV(a, b) === 0;
       case 'S': return a.s === b.s;
       case 'Ch': return a.c === b.c;
+      // Every constructor wraps into 0..3599, so equality on the
+      // representation IS equality of the rotation. Load-bearing: an Angle
+      // lives in models, and models go through time travel, App.shared and
+      // (in lendas) a rules engine replayed on both sides.
+      case 'A': return a.deci === b.deci;
+      // Durations normalize to seconds at construction, so Time.seconds 60
+      // and Time.minutes 1 ARE the same interval. A Time is the same moment
+      // when it is the same Unix millisecond. Both were missing and fell
+      // through to `return false` below, in all three runtimes at once —
+      // which is why the drift tests never saw it: they agreed on the lie.
+      case 'D': return a.seconds === b.seconds;
+      case 'TM': return a.millis === b.millis;
       case 'B': return a.b === b.b;
       case 'U': return true;
       case 'C':
@@ -1645,12 +1818,51 @@
       mutedByTimeTravel = false; soundMuted = false; applyMaster();
     }
   }
-  // Browsers block audio until a user gesture — resume on the first tap/key.
-  if (typeof document !== 'undefined') {
+  // Browsers block audio until a user gesture, so a program that makes
+  // sound opens (and resumes) its AudioContext on the first tap/key —
+  // inside the gesture, where every browser allows it.
+  //
+  // Armed only for programs that actually reference Sound. An open
+  // AudioContext wired to the destination is what makes the browser badge
+  // the tab with the "playing audio" speaker, so arming this everywhere
+  // put that badge on silent apps: click once anywhere in a CRUD app and
+  // it claimed to be playing audio forever after. See armAudioUnlock's
+  // caller in marRun.
+  let audioUnlockArmed = false;
+  function armAudioUnlock() {
+    if (audioUnlockArmed || typeof document === 'undefined') return;
+    audioUnlockArmed = true;
     const wake = () => ensureAudio();
     document.addEventListener('pointerdown', wake);
     document.addEventListener('keydown', wake);
   }
+  // Does the loaded program reference the Sound module anywhere? Every
+  // reference carries the module the same way whatever the node kind —
+  // `module: ["Sound"]` on EQualified for Sound.play, on ECtor/PCtor for
+  // Sound.Wave, on the import decl for `import Sound`. Walks the AST with
+  // an early exit rather than stringifying it, so a silent app pays a
+  // scan that stops at the first hit and a game pays it once at boot.
+  function referencesSound(node) {
+    if (node === null || typeof node !== 'object') return false;
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) {
+        if (referencesSound(node[i])) return true;
+      }
+      return false;
+    }
+    const m = node.module;
+    if (Array.isArray(m) && m.length === 1 && m[0] === 'Sound') return true;
+    for (const k in node) {
+      if (k === 'module') continue;
+      if (referencesSound(node[k])) return true;
+    }
+    return false;
+  }
+  // Exposed so the rule can be tested against REAL serializer output —
+  // it reads a shape (`module: ["Sound"]`) that only the Go serializer
+  // produces, and if that shape ever changes every game goes silent with
+  // no error anywhere. See TestSilentProgramsDoNotArmAudio.
+  if (typeof globalThis !== 'undefined') globalThis.__marReferencesSound = referencesSound;
   // preview/test hook: window.marSoundMute(true) silences everything.
   if (typeof window !== 'undefined') window.marSoundMute = (b) => { soundMuted = !!b; applyMaster(); };
   // A looping white-noise clip, DE-CLICKED at the loop point. Two artefacts to beat:
@@ -4826,6 +5038,39 @@
     }, 'perform'));
     def('cmdPerform', cmdPerformImpl);
     def('Cmd.perform', cmdPerformImpl);
+
+    // Math — Angle constructors, angle algebra, and the four functions.
+    // Mirrors internal/runtime/math.go; the kernels themselves live in the
+    // "Math (integer trigonometry)" section above, next to the generated
+    // table. Each constructor reduces into one turn BEFORE scaling, so
+    // `Math.degrees` of a huge Int cannot overflow on the way to a value
+    // that was always going to land in 0..3599.
+    const mkAngle = (perTurn, scale) =>
+      native(1, ([n]) => VAngle(posMod(n.n, perTurn) * scale));
+    const degreesImpl = mkAngle(360, 10);
+    const deciDegreesImpl = mkAngle(DECI_FULL, 1);
+    // turns counts in brads — 256 to the turn, the unit seasons-gp and
+    // vortex already use. 3600/256 is not whole, so one brad floors; a
+    // full turn is exact.
+    const turnsImpl = native(1, ([n]) =>
+      VAngle(Math.floor(posMod(n.n, 256) * DECI_FULL / 256)));
+    def('mathDegrees', degreesImpl);         def('Math.degrees', degreesImpl);
+    def('mathDeciDegrees', deciDegreesImpl); def('Math.deciDegrees', deciDegreesImpl);
+    def('mathTurns', turnsImpl);             def('Math.turns', turnsImpl);
+    const angleAdd = native(2, ([a, b]) => VAngle(posMod(a.deci + b.deci, DECI_FULL)));
+    const angleSub = native(2, ([a, b]) => VAngle(posMod(a.deci - b.deci, DECI_FULL)));
+    const angleOpp = native(1, ([a]) => VAngle(posMod(a.deci + 1800, DECI_FULL)));
+    def('mathAdd', angleAdd);           def('Math.add', angleAdd);
+    def('mathSubtract', angleSub);      def('Math.subtract', angleSub);
+    def('mathOpposite', angleOpp);      def('Math.opposite', angleOpp);
+    const sinImpl = native(1, ([a]) => VInt(sinDeci(a.deci)));
+    const cosImpl = native(1, ([a]) => VInt(cosDeci(a.deci)));
+    const atan2Impl = native(2, ([y, x]) => VAngle(atan2Deci(y.n, x.n)));
+    const isqrtImpl = native(1, ([n]) => VInt(isqrtInt(n.n)));
+    def('mathSin', sinImpl);            def('Math.sin', sinImpl);
+    def('mathCos', cosImpl);            def('Math.cos', cosImpl);
+    def('mathAtan2', atan2Impl);        def('Math.atan2', atan2Impl);
+    def('mathIsqrt', isqrtImpl);        def('Math.isqrt', isqrtImpl);
 
     // Time — Duration-typed unit smart constructors. Mirrors the Go
     // runtime's timeBuiltins (internal/runtime/time.go). Each
@@ -12780,6 +13025,11 @@
     if (program.auth && typeof program.auth.signInPath === 'string') {
       globalThis.__marAuthSignInPath = program.auth.signInPath;
     }
+    // Only a program that makes sound gets the audio-unlock listeners.
+    // Arming them unconditionally opened an AudioContext on the first
+    // click of EVERY app, which is what put the browser's "playing audio"
+    // speaker on the tab of apps that never make a noise.
+    if (referencesSound(program.modules || program.module)) armAudioUnlock();
     const env = makeBuiltinEnv();
     // Modern wire format: a list of modules, loaded in dependency
     // order (the server topo-sorted them). Each module's decls get

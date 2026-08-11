@@ -671,17 +671,17 @@ var appExamples = map[string][]string{
 	"Random.seed":        {"Task.map (\\s -> Random.step (Random.int 1 6) s) Random.seed"},
 
 	// UI
-	"UI.title":           {"UI.title \"Settings\""},
-	"UI.subtitle":        {"UI.subtitle \"Signed in as you@example.com\""},
-	"UI.text":            {"UI.text [] \"Hello\"", "UI.text [ UI.width UI.fill ] \"Stretches across the row\""},
-	"UI.errorText":       {"UI.errorText \"That code has expired.\""},
-	"UI.paragraph":       {"UI.paragraph [ UI.span [] \"Built with \", UI.span [ UI.bold ] \"Mar\" ]"},
-	"UI.span":            {"UI.span [ UI.italic ] \"quietly\""},
-	"UI.bold":            {"UI.span [ UI.bold ] \"important\""},
-	"UI.italic":          {"UI.span [ UI.italic ] \"aside\""},
-	"UI.code":            {"UI.span [ UI.code ] \"List.map\""},
-	"UI.strikethrough":   {"UI.span [ UI.strikethrough ] \"9.99\""},
-	"UI.link":            {"UI.span [ UI.link \"https://mar-lang.dev\" ] \"the site\""},
+	"UI.title":         {"UI.title \"Settings\""},
+	"UI.subtitle":      {"UI.subtitle \"Signed in as you@example.com\""},
+	"UI.text":          {"UI.text [] \"Hello\"", "UI.text [ UI.width UI.fill ] \"Stretches across the row\""},
+	"UI.errorText":     {"UI.errorText \"That code has expired.\""},
+	"UI.paragraph":     {"UI.paragraph [ UI.span [] \"Built with \", UI.span [ UI.bold ] \"Mar\" ]"},
+	"UI.span":          {"UI.span [ UI.italic ] \"quietly\""},
+	"UI.bold":          {"UI.span [ UI.bold ] \"important\""},
+	"UI.italic":        {"UI.span [ UI.italic ] \"aside\""},
+	"UI.code":          {"UI.span [ UI.code ] \"List.map\""},
+	"UI.strikethrough": {"UI.span [ UI.strikethrough ] \"9.99\""},
+	"UI.link":          {"UI.span [ UI.link \"https://mar-lang.dev\" ] \"the site\""},
 	// The free `a` in these signatures is the APP'S MSG, and a bare literal
 	// in that slot type-checks into nonsense: `UI.button [] 0 "Save"` infers
 	// a `View Int`, which no page can ever return, and it reads as if the

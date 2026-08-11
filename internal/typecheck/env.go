@@ -1495,6 +1495,44 @@ func stdlibBindings() map[string]Type {
 		"timeWeeks":     TArrow{From: TInt, To: TDuration},
 		"timeToSeconds": TArrow{From: TDuration, To: TInt},
 
+		// Math — deterministic integer trigonometry and roots
+		// (docs/proposals/math.md). Every runtime reads the SAME
+		// generated quarter-wave table, so `Math.sin` gives the same
+		// integer on Go, on the browser and on iOS — which is what a
+		// replayed rules engine, a recorded bot run and time travel all
+		// depend on. No libm anywhere; no floats in the answer.
+		//
+		//   Math.degrees     : Int -> Angle
+		//   Math.deciDegrees : Int -> Angle
+		//   Math.turns       : Int -> Angle      -- 256 brads to the turn
+		//   Math.add         : Angle -> Angle -> Angle
+		//   Math.subtract    : Angle -> Angle -> Angle
+		//   Math.opposite    : Angle -> Angle
+		//   Math.sin         : Angle -> Int      -- milli-units, -1000..1000
+		//   Math.cos         : Angle -> Int
+		//   Math.atan2       : Int -> Int -> Angle
+		//   Math.isqrt       : Int -> Int
+		//
+		// The unit is named at construction and nowhere else (ADR 0029);
+		// every constructor wraps by positive modulo, so any Int is a
+		// valid argument and negative angles work. The algebra ships WITH
+		// the type on purpose: an angle you cannot add is not a safer Int,
+		// it is one every caller converts out of, adds, and converts back
+		// — restoring the hazard with more ceremony.
+		"mathDegrees":     TArrow{From: TInt, To: TAngle},
+		"mathDeciDegrees": TArrow{From: TInt, To: TAngle},
+		"mathTurns":       TArrow{From: TInt, To: TAngle},
+		"mathAdd":         TArrow{From: TAngle, To: TArrow{From: TAngle, To: TAngle}},
+		"mathSubtract":    TArrow{From: TAngle, To: TArrow{From: TAngle, To: TAngle}},
+		"mathOpposite":    TArrow{From: TAngle, To: TAngle},
+		"mathSin":         TArrow{From: TAngle, To: TInt},
+		"mathCos":         TArrow{From: TAngle, To: TInt},
+		"mathAtan2":       TArrow{From: TInt, To: TArrow{From: TInt, To: TAngle}},
+		// isqrt keeps a bare Int on both sides: a square root has no unit,
+		// so there is no second reading to confuse it with. ADR 0029 is
+		// about quantities that carry a unit, not about wrapping every Int.
+		"mathIsqrt": TArrow{From: TInt, To: TInt},
+
 		// Time — absolute moments. Stored as Unix milliseconds.
 		// Time.now is a Task because it reads the wall clock;
 		// .add / .sub shift a moment by a Duration; .diff gives
@@ -3662,6 +3700,16 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Random.initialSeed": "randomInitialSeed",
 		"Random.step":        "randomStep",
 		"Random.seed":        "randomSeed",
+		"Math.degrees":       "mathDegrees",
+		"Math.deciDegrees":   "mathDeciDegrees",
+		"Math.turns":         "mathTurns",
+		"Math.add":           "mathAdd",
+		"Math.subtract":      "mathSubtract",
+		"Math.opposite":      "mathOpposite",
+		"Math.sin":           "mathSin",
+		"Math.cos":           "mathCos",
+		"Math.atan2":         "mathAtan2",
+		"Math.isqrt":         "mathIsqrt",
 		"Time.millis":        "timeMillis",
 		"Time.seconds":       "timeSeconds",
 		"Time.minutes":       "timeMinutes",
