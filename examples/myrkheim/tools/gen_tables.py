@@ -1,46 +1,23 @@
 #!/usr/bin/env python3
-"""Myrkheim data generator.
+"""Myrkheim map generator.
 
-Emits the two data blocks that get pasted into Main.mar:
-  1. dirTable — 240 direction records (heading quantized at 1.5 deg, x1024
-     fixed point). Mar has no trig; the game rotates by stepping an index
-     into this table, which is drift-free forever.
-  2. The three barrow maps, built programmatically (carve rooms out of rock,
-     then place glyphs) so the 24x24 shape, the solid border and the glyph
-     placement can be ASSERTED instead of eyeballed. BFS validates that the
-     player can reach the rune without crossing a rune door, and the
-     waystone only THROUGH one.
+Emits the barrow maps that get pasted into Main.mar. They are built
+programmatically (carve rooms out of rock, then place glyphs) so the 24x24
+shape, the solid border and the glyph placement can be ASSERTED instead of
+eyeballed. BFS validates that the player can reach the rune without crossing
+a rune door, and the waystone only THROUGH one.
+
+Headings used to live here too, as a table of 240 sines and cosines. They
+are gone: the game asks Math.sin and Math.cos directly now (see dirAt).
 
 Run: python3 tools/gen_tables.py > tools/gen_output.txt
 """
 
-import math
 import sys
 from collections import deque
 
 N = 24
 SOLID = set("#%T")          # rune door D / plain door d handled per-check
-
-
-# ---------------------------------------------------------------- dir table
-
-def dir_table():
-    out = []
-    for h in range(240):
-        a = math.radians(h * 1.5)
-        out.append((round(1024 * math.cos(a)), round(1024 * math.sin(a))))
-    return out
-
-
-def emit_dir_table(tab):
-    print("dirTable : List { x : Int, y : Int }")
-    print("dirTable =")
-    rows = []
-    for i in range(0, 240, 4):
-        cells = ", ".join("{ x = %d, y = %d }" % p for p in tab[i:i + 4])
-        rows.append(cells)
-    print("    [ " + "\n    , ".join(rows))
-    print("    ]")
 
 
 # ---------------------------------------------------------------- map maker
@@ -394,7 +371,6 @@ def emit_map(name, ident, m):
 
 
 def main():
-    emit_dir_table(dir_table())
     emit_map("HOWE OF ASH", "map1", barrow1())
     emit_map("IRON DEEP", "map2", barrow2())
     emit_map("HELS THRESHOLD", "map3", barrow3())

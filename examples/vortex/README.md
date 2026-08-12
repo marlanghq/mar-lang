@@ -149,9 +149,9 @@ is.
 
 - Mar has no floating point, so everything is fixed point at 1024 and every
   angle is a **brad**: one 256th of a turn, which makes wrapping a `modBy 256`
-  instead of a division by 360. `sinQuarter` is a pasted table — regenerate it
-  with `python3 tools/gen_tables.py`. No trig runs at runtime, so a given run
-  plays identically on the web and on iOS.
+  instead of a division by 360. Sine and cosine come from `Math`, which reads
+  one table built into every runtime, so a given run plays identically on the
+  web and on iOS.
 - Canvas has rectangles, circles and triangles but no line, and this game is
   nothing but lines at arbitrary angles. `seg` builds one as two triangles from
   the perpendicular of its own direction. The perpendicular is computed in

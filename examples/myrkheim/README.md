@@ -75,7 +75,7 @@ waystone.
   ~10 cells the world is barrow-black — the dark is the art direction, and
   draugr eyes glow through it.
 - **No trig at runtime**: the heading is quantized to 240 steps of 1.5° and
-  the direction vector comes from a pasted table (`tools/gen_tables.py`),
+  the direction vector comes from `Math.sin` and `Math.cos`,
   which also makes rotation drift-free. The camera plane is derived from it.
 - **Clean stone**: walls are deliberately flat — face-side shade + fog
   bands only, so torches and cracked walls pop as landmarks. (A busier
