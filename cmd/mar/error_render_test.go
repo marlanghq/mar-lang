@@ -68,13 +68,16 @@ func TestPrintError_HintedError_SplitsSummaryAndHint(t *testing.T) {
 // structured-error type used by the migrator. printError unwraps both
 // types via errorParts and renders identically.
 func TestPrintError_BlockedMigrationError_SplitsSummaryAndHint(t *testing.T) {
+	// Identifiers arrive backtick-marked from the runtime, in the
+	// summary as well as the hint. With colors off both blocks render
+	// as plain prose with the markers stripped.
 	err := &runtime.BlockedMigrationError{
-		Summary: "migration blocked for entity tasks: cannot add required column \"userId\".",
+		Summary: "migration blocked for entity `tasks`: cannot add required column `userId`.",
 		Hint:    "Existing rows would violate the NOT NULL constraint.\n\n    ALTER TABLE tasks ADD COLUMN userId INTEGER;",
 	}
 	out := captureStderr(t, func() { printError("", err) })
 
-	if !strings.Contains(out, "Error: migration blocked for entity tasks: cannot add required column \"userId\".") {
+	if !strings.Contains(out, "Error: migration blocked for entity tasks: cannot add required column userId.") {
 		t.Errorf("Error block missing:\n%s", out)
 	}
 	if !strings.Contains(out, "Hint: Existing rows would violate the NOT NULL constraint.") {

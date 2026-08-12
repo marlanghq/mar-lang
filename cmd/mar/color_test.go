@@ -270,3 +270,42 @@ func TestColorizeHint_PreservesEmbeddedANSI(t *testing.T) {
 		t.Errorf("second green span missing or broken; got: %q", got)
 	}
 }
+
+// The Error: line marks identifiers the same way the Hint: line does,
+// so the table and column a migration is blocked on read as the same
+// words in both blocks. Before this, the summary was the one place a
+// schema name went by in plain text while the hint right under it
+// showed it in cyan, which read as two unrelated messages.
+func TestColorizeSummary_MarksIdentifiers(t *testing.T) {
+	SetColorEnabled(true)
+	defer SetColorEnabled(false)
+
+	summary := "migration blocked for entity `jobs`: cannot add required " +
+		"column `done` (BOOLEAN) to non-empty table `jobs`."
+
+	got := colorizeSummary(summary)
+
+	for _, name := range []string{"jobs", "done"} {
+		if !strings.Contains(got, colorCyan(name)) {
+			t.Errorf("identifier %q not colored; got: %q", name, got)
+		}
+	}
+	if strings.Contains(got, "`") {
+		t.Errorf("markers survived into the rendered line: %q", got)
+	}
+	// The type is a value, not a name in the schema: leaving it
+	// uncolored is what keeps cyan meaning "this is your identifier".
+	if strings.Contains(got, colorCyan("BOOLEAN")) {
+		t.Errorf("column type should not be colored; got: %q", got)
+	}
+}
+
+// The plain-text copy that reaches the dev banner and the SSE channel
+// carries neither ANSI nor leftover markers.
+func TestStripBackticks_LeavesPlainProse(t *testing.T) {
+	in := "migration blocked for entity `jobs`: cannot add required column `done`."
+	want := "migration blocked for entity jobs: cannot add required column done."
+	if got := stripBackticks(in); got != want {
+		t.Errorf("stripBackticks(%q) = %q, want %q", in, got, want)
+	}
+}

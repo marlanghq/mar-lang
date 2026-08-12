@@ -1427,22 +1427,23 @@ func printError(prefix string, err error) string {
 		if prefix != "" {
 			head = prefix + ": " + summary
 		}
-		fprintError("%s", head)
+		// Both halves follow the same convention: the runtime emits
+		// raw text (no ANSI) because it doesn't know about TTY
+		// state, marking identifiers with backticks, and the
+		// coloring happens here so non-TTY output stays plain. The
+		// summary gets the prose pass only; the hint additionally
+		// dims its indented code blocks.
+		fprintError("%s", colorizeSummary(head))
 		if hint != "" {
-			// colorizeHint turns backtick-spans cyan and dims
-			// indented code blocks, giving the hint body visual
-			// hierarchy. The runtime emits raw text (no ANSI)
-			// because it doesn't know about TTY state; coloring
-			// lives here so non-TTY output stays plain.
 			fprintHint("%s", colorizeHint(hint))
 		}
 		if hint == "" {
-			return head
+			return stripBackticks(head)
 		}
 		// The returned string is plumbed into the dev banner /
-		// SSE channel where colors would be noise; pass the raw
-		// (un-colorized) hint there.
-		return head + "\n\n" + hint
+		// SSE channel where colors would be noise; pass it there
+		// with the markers removed but no ANSI added.
+		return stripBackticks(head) + "\n\n" + stripBackticks(hint)
 	}
 	pretty := diag.Format(err)
 	if prefix != "" {

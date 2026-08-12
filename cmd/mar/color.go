@@ -304,6 +304,28 @@ func colorizeHint(body string) string {
 	return out.String()
 }
 
+// colorizeSummary colors the one-line summary of a structured error,
+// using the same backtick convention as colorizeHint: the runtime
+// marks the identifiers, the CLI picks the color. Only the prose pass
+// applies, because a summary is a single sentence and never an
+// indented code block.
+//
+// Without this the Error: line was the one place a table or column
+// name went by in plain text while the Hint: line right under it
+// showed the same word in cyan, which read as if the two lines were
+// talking about different things.
+func colorizeSummary(line string) string {
+	return colorizeProseLine(line)
+}
+
+// stripBackticks removes the identifier markers without coloring
+// anything. Used for the plain-text copy of an error that goes to the
+// dev banner and the SSE channel: ANSI would be noise there, and a
+// leftover backtick reads as a typo.
+func stripBackticks(s string) string {
+	return strings.ReplaceAll(s, "`", "")
+}
+
 // isCodeLine returns true for lines that should be tokenized and
 // rendered as code (SQL snippets, command examples). 4+ leading
 // spaces is the threshold — high enough to skip standard 2-space
