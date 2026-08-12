@@ -311,11 +311,19 @@ func TestMigrate_BlockedErrorIsStructured(t *testing.T) {
 	if strings.Contains(be.Summary, "\n") {
 		t.Errorf("Summary should be a one-liner, got:\n%s", be.Summary)
 	}
-	if !strings.Contains(be.Summary, "migration blocked for entity notes") {
+	// Identifiers are backtick-marked, not quoted: the CLI turns the
+	// marked spans cyan (colorizeSummary) so the Error: line
+	// highlights the same words the Hint: line does. Assert on the
+	// markers, since dropping them silently would make the two lines
+	// disagree again.
+	if !strings.Contains(be.Summary, "migration blocked for entity `notes`") {
 		t.Errorf("Summary missing expected prefix: %q", be.Summary)
 	}
-	if !strings.Contains(be.Summary, `"category"`) {
+	if !strings.Contains(be.Summary, "`category`") {
 		t.Errorf("Summary missing column name: %q", be.Summary)
+	}
+	if strings.Contains(be.Summary, `"category"`) {
+		t.Errorf("Summary should mark the column, not quote it: %q", be.Summary)
 	}
 	if be.Hint == "" {
 		t.Fatal("Hint is empty for a remediation-eligible case")
@@ -434,4 +442,167 @@ func TestMigrate_NullabilityChange_NonEmpty_Blocked(t *testing.T) {
 	if !strings.Contains(err.Error(), "nullability changed") {
 		t.Errorf("unexpected error message:\n%s", err.Error())
 	}
+}
+
+// Every blocked migration prints a script, and every one of those
+// scripts is run here, verbatim, against a table with data in it. Two
+// things have to hold afterwards: the migration goes through, and the
+// rows are still there.
+//
+// The suite exists because these hints have been wrong three times,
+// each in a way that reads perfectly. One promised a second step that
+// nothing implemented. One prescribed a full table copy for something
+// SQLite does as a schema-only change. And one, the expensive kind of
+// wrong, told you to rename a table, copy into a table that did not
+// exist yet, and then DROP the rename — which, since `sqlite3` does
+// not stop at a failed statement unless you pass -bail, deleted the
+// data it was supposed to be preserving. Prose review caught none of
+// the three. Running them catches all three.
+func TestMigrate_BlockedHintScriptsAreSafeAndSufficient(t *testing.T) {
+	serialID := EntityField{Name: "id", SQLType: "INTEGER", Serial: true}
+
+	cases := []struct {
+		name   string
+		create string
+		seed   string
+		entity VEntity
+		fill   string                    // replaces <value>
+		verify func(*testing.T, *sql.DB) // the data, after
+	}{
+		{
+			name:   "required column added",
+			create: `CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL)`,
+			seed:   `INSERT INTO notes (body) VALUES ('keep me')`,
+			entity: VEntity{Table: "notes", Fields: []EntityField{
+				serialID,
+				{Name: "body", SQLType: "TEXT", NotNull: true},
+				{Name: "category", SQLType: "TEXT", NotNull: true},
+			}},
+			fill: "'none'",
+			verify: func(t *testing.T, db *sql.DB) {
+				assertRow(t, db, `SELECT body || '/' || category FROM notes WHERE id = 1`, "keep me/none")
+			},
+		},
+		{
+			name:   "primary key introduced",
+			create: `CREATE TABLE plain (a TEXT NOT NULL)`,
+			seed:   `INSERT INTO plain (a) VALUES ('keep me')`,
+			entity: VEntity{Table: "plain", Fields: []EntityField{
+				serialID,
+				{Name: "a", SQLType: "TEXT", NotNull: true},
+			}},
+			verify: func(t *testing.T, db *sql.DB) {
+				assertRow(t, db, `SELECT a FROM plain WHERE id = 1`, "keep me")
+			},
+		},
+		{
+			name:   "column type changed",
+			create: `CREATE TABLE counts (id INTEGER PRIMARY KEY AUTOINCREMENT, n TEXT NOT NULL)`,
+			seed:   `INSERT INTO counts (n) VALUES ('42')`,
+			entity: VEntity{Table: "counts", Fields: []EntityField{
+				serialID,
+				{Name: "n", SQLType: "INTEGER", NotNull: true},
+			}},
+			verify: func(t *testing.T, db *sql.DB) {
+				assertRow(t, db, `SELECT n + 1 FROM counts WHERE id = 1`, "43")
+			},
+		},
+		{
+			name:   "column becomes required",
+			create: `CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT)`,
+			seed:   `INSERT INTO notes (body) VALUES ('keep me'), (NULL)`,
+			entity: VEntity{Table: "notes", Fields: []EntityField{
+				serialID,
+				{Name: "body", SQLType: "TEXT", NotNull: true},
+			}},
+			fill: "'none'",
+			verify: func(t *testing.T, db *sql.DB) {
+				assertRow(t, db, `SELECT group_concat(body, ',') FROM notes`, "keep me,none")
+			},
+		},
+		{
+			name:   "column becomes optional",
+			create: `CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL)`,
+			seed:   `INSERT INTO notes (body) VALUES ('keep me')`,
+			entity: VEntity{Table: "notes", Fields: []EntityField{
+				serialID,
+				{Name: "body", SQLType: "TEXT"},
+			}},
+			verify: func(t *testing.T, db *sql.DB) {
+				assertRow(t, db, `SELECT body FROM notes WHERE id = 1`, "keep me")
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openTempDB(t)
+			if _, err := db.Exec(tc.create); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(tc.seed); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := NewMigrator(db, []VEntity{tc.entity}).Run()
+			var be *BlockedMigrationError
+			if !errors.As(err, &be) {
+				t.Fatalf("expected *BlockedMigrationError, got %T (%v)", err, err)
+			}
+
+			script := indentedBlock(be.Hint)
+			if script == "" {
+				t.Fatalf("hint carries no script:\n%s", be.Hint)
+			}
+
+			// A hint must never tell you to drop a table. `sqlite3`
+			// continues past a failed statement by default, so a DROP
+			// anywhere in a pasted script runs even when the copy
+			// before it failed, and takes the rows with it. Renaming
+			// is enough: the operator drops the leftover themselves
+			// once the app boots and the data looks right.
+			if strings.Contains(strings.ToUpper(script), "DROP TABLE") {
+				t.Errorf("script drops a table, which loses data if an earlier line fails:\n%s", script)
+			}
+
+			if tc.fill != "" {
+				script = strings.ReplaceAll(script, "<value>", tc.fill)
+			}
+			if strings.Contains(script, "<value>") {
+				t.Fatalf("script still has an unfilled placeholder:\n%s", script)
+			}
+			if _, err := db.Exec(script); err != nil {
+				t.Fatalf("hint SQL does not run: %v\n\n%s", err, script)
+			}
+
+			// Same migration, second attempt: nothing left to block on.
+			if _, err := NewMigrator(db, []VEntity{tc.entity}).Run(); err != nil {
+				t.Fatalf("still blocked after following the hint: %v", err)
+			}
+			tc.verify(t, db)
+		})
+	}
+}
+
+func assertRow(t *testing.T, db *sql.DB, query, want string) {
+	t.Helper()
+	var got string
+	if err := db.QueryRow(query).Scan(&got); err != nil {
+		t.Fatalf("data did not survive: %v (%s)", err, query)
+	}
+	if got != want {
+		t.Errorf("%s = %q, want %q", query, got, want)
+	}
+}
+
+// indentedBlock returns the code lines of a hint (4+ spaces of indent,
+// the same bar the CLI colorizer uses), dedented and joined.
+func indentedBlock(hint string) string {
+	var out []string
+	for _, line := range strings.Split(hint, "\n") {
+		if strings.HasPrefix(line, "    ") {
+			out = append(out, strings.TrimPrefix(line, "    "))
+		}
+	}
+	return strings.Join(out, "\n")
 }

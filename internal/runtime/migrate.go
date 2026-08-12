@@ -532,7 +532,7 @@ func (m *Migrator) planEntity(ent VEntity) ([]MigrationStep, error) {
 	for _, f := range ent.Fields {
 		row, found := liveByName[f.Name]
 		if !found {
-			step, err := planAddColumn(ent, f, hasRows)
+			step, err := planAddColumn(ent, f, hasRows, liveByName)
 			if err != nil {
 				return nil, err
 			}
@@ -540,7 +540,7 @@ func (m *Migrator) planEntity(ent VEntity) ([]MigrationStep, error) {
 			continue
 		}
 		// Column present — assert compatible.
-		if blocked := assertCompatibleColumn(ent, f, row, hasRows); blocked != nil {
+		if blocked := assertCompatibleColumn(ent, f, row, hasRows, liveByName); blocked != nil {
 			if blocked.Kind == StepRecreateEmpty {
 				steps = append(steps, *blocked)
 				continue
@@ -613,11 +613,16 @@ func buildCreateUniqueIndexSQL(table, name string, cols []string) string {
 //     NOT NULL on empty tables.
 //
 // BLOCKED cases:
-//   - NOT NULL on a non-empty table → user must either make the
-//     column optional or backfill manually before re-running.
+//   - NOT NULL on a non-empty table → SQLite would take it with a
+//     constant DEFAULT, but what the existing rows should say is a
+//     decision only the operator can make (entity columns carry no
+//     default), so we stop and hand them the one-line ALTER to run.
 //   - Serial column (auto-incrementing PK) — SQLite doesn't support
 //     adding AUTOINCREMENT via ALTER TABLE.
-func planAddColumn(ent VEntity, f EntityField, hasRows bool) (MigrationStep, error) {
+//
+// liveByName is the live schema, used to tell which columns carry over
+// in the rebuild and which ones are being added.
+func planAddColumn(ent VEntity, f EntityField, hasRows bool, liveByName map[string]tableInfoRow) (MigrationStep, error) {
 	if f.Serial {
 		return MigrationStep{
 			Kind:        StepBlocked,
@@ -625,20 +630,18 @@ func planAddColumn(ent VEntity, f EntityField, hasRows bool) (MigrationStep, err
 			Column:      f.Name,
 			Description: fmt.Sprintf("blocked: cannot add auto-increment primary key to existing table %s", ent.Table),
 			Error: &BlockedMigrationError{
+				// Backticks mark identifiers here for the same reason
+				// they do in the hints below: the runtime doesn't know
+				// about TTY state, so it marks the words and the CLI
+				// decides the color. Anything that is not a table or a
+				// column name stays unmarked, so cyan keeps meaning
+				// "this is a name in your schema".
 				Summary: fmt.Sprintf(
-					`migration blocked for entity %s: cannot add auto-increment primary key %q to existing table %s.`,
+					"migration blocked for entity `%s`: cannot add auto-increment primary key `%s` to existing table `%s`.",
 					ent.Table, f.Name, ent.Table),
-				Hint: fmt.Sprintf(`SQLite doesn't allow adding AUTOINCREMENT via ALTER TABLE. To migrate manually:
-
-    BEGIN TRANSACTION;
-    ALTER TABLE %s RENAME TO %s_old;
-    -- Recreate %s with the new schema (let the app boot create it).
-    -- Then copy the data back, omitting %s so the new id is auto-generated:
-    INSERT INTO %s (<other columns>) SELECT <other columns> FROM %s_old;
-    DROP TABLE %s_old;
-    COMMIT;`,
-					ent.Table, ent.Table, ent.Table, f.Name,
-					ent.Table, ent.Table, ent.Table),
+				Hint: fmt.Sprintf("SQLite cannot add a primary key to an existing table, so `%s` has to be rebuilt.\n\n%s\n\n"+
+					"Run it and restart. The copies get new ids.\n%s",
+					ent.Table, buildRebuildSQL(ent, liveByName, nil), backupLine(ent)),
 			},
 		}, nil
 	}
@@ -651,25 +654,22 @@ func planAddColumn(ent VEntity, f EntityField, hasRows bool) (MigrationStep, err
 			Description: fmt.Sprintf("blocked: cannot add NOT NULL column %q to non-empty table %s", f.Name, ent.Table),
 			Error: &BlockedMigrationError{
 				Summary: fmt.Sprintf(
-					`migration blocked for entity %s: cannot add required column %q (%s) to non-empty table %s.`,
+					"migration blocked for entity `%s`: cannot add required column `%s` (%s) to non-empty table `%s`.",
 					ent.Table, f.Name, f.SQLType, ent.Table),
 				// Backticks mark identifiers; the CLI colorizer turns
 				// them cyan in the prose AND finds the same tokens
 				// in the SQL block to highlight there too. Don't
 				// rephrase without checking colorizeHint stays in
 				// sync — bare `tasks` / `position` in either spot
-				// is what makes the two halves visually match.
-				Hint: fmt.Sprintf(`Existing rows in `+"`"+`%s`+"`"+` would violate the NOT NULL constraint on `+"`"+`%s`+"`"+`.
+				// is what makes the two halves visually match, and
+				// `<value>` verbatim is what makes the placeholder
+				// stand out yellow.
+				Hint: fmt.Sprintf(`The rows already in `+"`"+`%s`+"`"+` need a value for `+"`"+`%s`+"`"+`, and entity columns carry no default.
 
-Either drop `+"`"+`Entity.notNull`+"`"+` from the declaration to make the column optional, or backfill manually:
+%s
 
-    ALTER TABLE %s ADD COLUMN %s %s;
-    UPDATE %s SET %s = <value>;
-
-After backfilling, re-run — the next boot detects the populated column and adds the NOT NULL constraint automatically.`,
-					ent.Table, f.Name,
-					ent.Table, f.Name, sqlTypeForDDL(f.SQLType),
-					ent.Table, f.Name),
+Fill in a constant and restart, or drop `+"`"+`Entity.notNull`+"`"+` to make the column optional.`,
+					ent.Table, f.Name, buildAddColumnSQL(ent, liveByName)),
 			},
 		}, nil
 	}
@@ -683,6 +683,89 @@ After backfilling, re-run — the next boot detects the populated column and add
 	}, nil
 }
 
+// buildAddColumnSQL writes the ALTER that unblocks a required column
+// on a populated table: one line per column the entity declares and
+// the table doesn't have yet.
+//
+// A DEFAULT is the whole trick. SQLite refuses `ADD COLUMN ... NOT
+// NULL` on its own ("Cannot add a NOT NULL column with default value
+// NULL") but accepts it with a constant default, which it records in
+// the schema and hands back for the rows that predate the column. No
+// table copy, no rewrite of existing rows: it is a schema-only change
+// whatever the table's size. The default must be a literal, since
+// SQLite also refuses a non-constant one.
+//
+// Every missing required column is listed, not just the one that
+// tripped the plan, so following the hint once doesn't land on the
+// same block for the next column.
+//
+// Identifiers go in unquoted. Safe, because entity and field names are
+// Mar identifiers, and it lets the CLI colorizer match them against
+// the backtick spans in the prose above. Indented 4 spaces so
+// colorizeHint reads the block as code.
+func buildAddColumnSQL(ent VEntity, liveByName map[string]tableInfoRow) string {
+	var lines []string
+	for _, f := range ent.Fields {
+		if _, live := liveByName[f.Name]; live || f.Serial || !f.NotNull {
+			continue
+		}
+		lines = append(lines, "    ALTER TABLE "+ent.Table+" ADD COLUMN "+
+			columnDefSQL(f)+" DEFAULT <value>;")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// buildRebuildSQL writes the rename-and-copy that a change SQLite
+// cannot make in place needs: a new column type, a new primary key, a
+// NOT NULL added or dropped.
+//
+// IT NEVER DROPS THE ORIGINAL. The old rows stay under `<table>_old`
+// and the operator removes that table themselves once the app boots
+// and the data looks right. This is not politeness, it is the whole
+// point: `sqlite3` does NOT stop at the first failed statement unless
+// you pass -bail, so a script that ends in DROP TABLE will run that
+// DROP even after the copy failed, and take the data with it. The
+// version this function emits cannot lose a row no matter which line
+// fails.
+//
+// `expr` overrides the SELECT expression for a column (a CAST when the
+// type changed, a COALESCE when a NULL has to become a value);
+// anything not overridden is copied across by name. A serial column
+// that does not exist yet is left out of the copy so SQLite assigns
+// it; one that already exists is copied so the ids survive.
+//
+// Identifiers go in unquoted so the CLI colorizer can match them
+// against the backtick spans in the prose. Indented 4 spaces to read
+// as code, 8 for continuations.
+func buildRebuildSQL(ent VEntity, liveByName map[string]tableInfoRow, expr map[string]string) string {
+	defs := make([]string, 0, len(ent.Fields))
+	names := make([]string, 0, len(ent.Fields))
+	values := make([]string, 0, len(ent.Fields))
+	for _, f := range ent.Fields {
+		defs = append(defs, "        "+columnDefSQL(f))
+		_, live := liveByName[f.Name]
+		if f.Serial && !live {
+			continue
+		}
+		names = append(names, f.Name)
+		switch {
+		case expr[f.Name] != "":
+			values = append(values, expr[f.Name])
+		case live:
+			values = append(values, f.Name)
+		default:
+			values = append(values, "<value>")
+		}
+	}
+	old := ent.Table + "_old"
+	return "    ALTER TABLE " + ent.Table + " RENAME TO " + old + ";\n" +
+		"    CREATE TABLE " + ent.Table + " (\n" +
+		strings.Join(defs, ",\n") + "\n" +
+		"    );\n" +
+		"    INSERT INTO " + ent.Table + " (" + strings.Join(names, ", ") + ")\n" +
+		"        SELECT " + strings.Join(values, ", ") + " FROM " + old + ";"
+}
+
 // assertCompatibleColumn checks that a live column matches the
 // declared field. Returns a Blocked step on incompatibility, or nil
 // when the column is fine.
@@ -693,7 +776,7 @@ After backfilling, re-run — the next boot detects the populated column and add
 // scratch since no rows are at risk. The dev-time UX matters here —
 // most projects edit entity fields before any production data
 // exists, and a hard "incompatible change" error would feel hostile.
-func assertCompatibleColumn(ent VEntity, f EntityField, live tableInfoRow, hasRows bool) *MigrationStep {
+func assertCompatibleColumn(ent VEntity, f EntityField, live tableInfoRow, hasRows bool, liveByName map[string]tableInfoRow) *MigrationStep {
 	expectedType := strings.ToUpper(sqlTypeForDDL(f.SQLType))
 	liveType := strings.ToUpper(strings.TrimSpace(live.Type))
 	if liveType != "" && expectedType != "" && liveType != expectedType {
@@ -704,19 +787,15 @@ func assertCompatibleColumn(ent VEntity, f EntityField, live tableInfoRow, hasRo
 			Description: fmt.Sprintf("blocked: type changed for %s.%s", ent.Table, f.Name),
 			Error: &BlockedMigrationError{
 				Summary: fmt.Sprintf(
-					`migration blocked for entity %s.%s: column type changed from %s to %s in table %s.`,
+					"migration blocked for entity `%s.%s`: column type changed from %s to %s in table `%s`.",
 					ent.Table, f.Name, liveType, expectedType, ent.Table),
-				Hint: fmt.Sprintf(`SQLite cannot change column types in place. To migrate manually:
-
-    BEGIN TRANSACTION;
-    ALTER TABLE %s RENAME TO %s_old;
-    -- Boot the app to create %s with the new schema.
-    -- Then copy + cast the data back:
-    INSERT INTO %s (<columns>) SELECT <columns, casting %s as needed> FROM %s_old;
-    DROP TABLE %s_old;
-    COMMIT;`,
-					ent.Table, ent.Table, ent.Table,
-					ent.Table, f.Name, ent.Table, ent.Table),
+				Hint: fmt.Sprintf("SQLite cannot change a column's type in place, so `%s` has to be rebuilt.\n\n%s\n\n"+
+					"Adjust the cast if you need to, run it and restart.\n%s",
+					ent.Table,
+					buildRebuildSQL(ent, liveByName, map[string]string{
+						f.Name: "CAST(" + f.Name + " AS " + expectedType + ")",
+					}),
+					backupLine(ent)),
 			},
 		}
 	}
@@ -730,7 +809,7 @@ func assertCompatibleColumn(ent VEntity, f EntityField, live tableInfoRow, hasRo
 			Description: fmt.Sprintf("blocked: primary-key shape changed for %s.%s", ent.Table, f.Name),
 			Error: &BlockedMigrationError{
 				Summary: fmt.Sprintf(
-					`migration blocked for entity %s.%s: primary-key shape changed in table %s.`,
+					"migration blocked for entity `%s.%s`: primary-key shape changed in table `%s`.",
 					ent.Table, f.Name, ent.Table),
 				Hint: "Mar does not auto-migrate primary-key changes; rename + rebuild the table manually.",
 			},
@@ -757,22 +836,37 @@ func assertCompatibleColumn(ent VEntity, f EntityField, live tableInfoRow, hasRo
 				Description: fmt.Sprintf("blocked: nullability changed for %s.%s", ent.Table, f.Name),
 				Error: &BlockedMigrationError{
 					Summary: fmt.Sprintf(
-						`migration blocked for entity %s.%s: nullability changed from %s to %s in table %s.`,
+						"migration blocked for entity `%s.%s`: nullability changed from %s to %s in table `%s`.",
 						ent.Table, f.Name, nullabilityLabel(liveNotNull), nullabilityLabel(expectedNotNull), ent.Table),
-					Hint: fmt.Sprintf(`SQLite cannot change NOT NULL constraints in place when data exists. To migrate manually:
-
-    BEGIN TRANSACTION;
-    ALTER TABLE %s RENAME TO %s_old;
-    -- Boot the app to create %s with the new schema.
-    INSERT INTO %s (<columns>) SELECT <columns> FROM %s_old;
-    DROP TABLE %s_old;
-    COMMIT;`,
-						ent.Table, ent.Table, ent.Table, ent.Table, ent.Table, ent.Table),
+					Hint: nullabilityHint(ent, f, expectedNotNull, liveByName),
 				},
 			}
 		}
 	}
 	return nil
+}
+
+// nullabilityHint covers both directions of the same rebuild. Going
+// required is the one that needs a human: a row already holding NULL
+// has to become something, so the copy wraps the column in a COALESCE
+// with a placeholder. Going optional just copies.
+func nullabilityHint(ent VEntity, f EntityField, expectedNotNull bool, liveByName map[string]tableInfoRow) string {
+	expr := map[string]string{}
+	action := "Run it and restart."
+	if expectedNotNull {
+		expr[f.Name] = "COALESCE(" + f.Name + ", <value>)"
+		action = "Fill in a constant for the rows holding NULL, run it and restart."
+	}
+	return fmt.Sprintf("SQLite cannot add or drop NOT NULL in place, so `%s` has to be rebuilt.\n\n%s\n\n%s\n%s",
+		ent.Table, buildRebuildSQL(ent, liveByName, expr), action, backupLine(ent))
+}
+
+// backupLine is the sentence every rebuild hint ends on. It is the
+// counterpart to buildRebuildSQL never dropping anything: the script
+// leaves a copy behind, so the hint has to say where it is and that
+// removing it is the operator's call.
+func backupLine(ent VEntity) string {
+	return fmt.Sprintf("`%s_old` keeps the original rows until you drop it.", ent.Table)
 }
 
 func nullabilityLabel(notNull bool) string {
