@@ -7571,6 +7571,28 @@
       '  font-size: 16px;',
       '}',
       '.mar-section-body > *:last-child { border-bottom: none; }',
+      // Mobile browsers paint their OWN press highlight on a tapped link or
+      // button, and they paint it over the element's border box. Every
+      // interactive surface here already paints its own press feedback, and
+      // the two disagree about the shape: a navigation link's tint bleeds
+      // -16px sideways to cover the card's padding and read as a full row
+      // (see `a.mar-navigation-link::before`), while the browser's paints
+      // only the link box and leaves an untinted strip down each side of the
+      // card. On iOS that mismatched rectangle is what shows on tap and
+      // stays on screen through the whole interactive back-swipe.
+      //
+      // So the OS highlight is turned off exactly where this stylesheet has
+      // a press state of its own. Anything not on this list (an inline link
+      // inside a paragraph, say) keeps the browser's highlight, because
+      // there it is the only feedback a touch gets.
+      'a.mar-navigation-link,',
+      '.mar-section-body > button,',
+      '.mar-hstack > button,',
+      '.mar-picker, .mar-picker-select,',
+      '.mar-nav-back,',
+      '.mar-nav-side button, .mar-nav-side a.mar-inline {',
+      '  -webkit-tap-highlight-color: transparent;',
+      '}',
       // A section with an empty body (e.g. `section [ footer "..." ] []`,
       // a footer- or header-only section) must not paint an empty glass
       // card between its neighbors. Collapse the body so only the
