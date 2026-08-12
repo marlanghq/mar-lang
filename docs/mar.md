@@ -263,9 +263,9 @@ Math.isqrt : Int -> Int          -- floor of the square root; 0 at or below zero
 
 Every one of them is total: `Math.atan2 0 0` is 0°, `Math.isqrt -5` is 0. There is nothing to guard.
 
-Two things follow from the type. The first is that a unit mix-up is a compile error rather than a game that turns ten times too slowly — `Canvas.Rotate` and `Math.sin` take the same `Angle`. The second is that the answers are **identical on every runtime**: all three read one generated quarter-wave table (`internal/mathgen`) instead of calling the host's trigonometry, which is what lets a rules engine be replayed on the server and the client, a recorded bot run prove a level, and time travel re-run old messages.
+Two things follow from the type. The first is that a unit mix-up is a compile error rather than a game that turns ten times too slowly: `Canvas.Rotate` and `Math.sin` take the same `Angle`, so a heading goes straight from `Math` to the canvas. The second is that the answers are **identical on every runtime**: all three read one generated quarter-wave table (`internal/mathgen`) instead of calling the host's trigonometry, which is what lets a rules engine be replayed on the server and the client, a recorded bot run prove a level, and time travel re-run old messages.
 
-The internal resolution is a tenth of a degree — a program can tell 45.0° from 45.1° and nothing finer. That number is not observable: no function hands it back.
+The internal resolution is a tenth of a degree: a program can tell 45.0° from 45.1° and nothing finer. That number is not observable: no function hands it back.
 
 ### 3.4 Nominal IDs
 

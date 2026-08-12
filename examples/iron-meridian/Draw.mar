@@ -305,7 +305,7 @@ bldArt g b px py w h =
                 , [ rect (px + 8) (py + 10) (w - 16) (h - 24) (col paint)
                   , rect (px + 12) (py + 4) (w - 24) 10 (col light)
                   , rect (px + w // 2 - 2) (py - 4) 4 12 (rgb 190 198 205)
-                  , group [ Canvas.Translate (px + w // 2) (py + 4), Canvas.Rotate spin ]
+                  , group [ Canvas.Translate (px + w // 2) (py + 4), Canvas.Rotate (Math.degrees spin) ]
                         [ rect (0 - 9) (0 - 1) 18 2 (rgb 220 228 235) ]
                   , rect (px + 10) (py + h - 12) 10 6 (rgb 40 46 54)
                   , rect (px + w - 20) (py + h - 12) 10 6 (rgb 40 46 54)
@@ -352,7 +352,7 @@ bldArt g b px py w h =
             [ rect px (py + 6) w (h - 6) (col dark)
             , rect (px + 3) (py + 9) (w - 6) (h - 12) (rgb 92 74 52)
             , rect (px + w // 2 - 2) (py - 6) 4 16 (rgb 120 100 80)
-            , group [ Canvas.Translate (px + w // 2) (py - 2), Canvas.Rotate spin ]
+            , group [ Canvas.Translate (px + w // 2) (py - 2), Canvas.Rotate (Math.degrees spin) ]
                 [ rect (0 - 10) (0 - 1) 20 3 (rgb 180 160 130)
                 , rect (0 - 1) (0 - 10) 3 20 (rgb 180 160 130)
                 ]
@@ -618,7 +618,7 @@ towerArt g b px py w h steel aa =
           , rect (px + 4) (py + 10) (w - 8) (h - 12) steel
           , circle (px + w // 2) (py + 8) 7 (col (sidePaint g b.side))
           ]
-        , [ group [ Canvas.Translate (px + w // 2) (py + 8), Canvas.Rotate spin ]
+        , [ group [ Canvas.Translate (px + w // 2) (py + 8), Canvas.Rotate (Math.degrees spin) ]
                 (if aa == 1 then
                     [ rect 0 (0 - 2) 11 2 (rgb 40 46 54)
                     , rect 0 1 11 2 (rgb 40 46 54)
@@ -713,7 +713,7 @@ unitHpPct u =
 -- turret helper: a rotated group at the unit center
 turret : Int -> Int -> Int -> List Shape -> Shape
 turret px py face parts =
-    group [ Canvas.Translate px py, Canvas.Rotate (face * 225 // 10) ] parts
+    group [ Canvas.Translate px py, Canvas.Rotate (Math.deciDegrees (face * 225)) ] parts
 
 
 unitArt : Game -> Unit -> Int -> Int -> List Shape
@@ -942,16 +942,16 @@ airArt g u px py paint dark flavor =
                 [ rect (px - 8) (ay - 3) 16 6 (col dark)
                 , rect (px - 6) (ay - 2) 12 4 (col paint)
                 , rect (px + 6) (ay - 1) 5 2 (col dark)
-                , group [ Canvas.Translate px (ay - 4), Canvas.Rotate rotor ]
+                , group [ Canvas.Translate px (ay - 4), Canvas.Rotate (Math.degrees rotor) ]
                     [ rect (0 - 9) (0 - 1) 18 1 (rgba 220 228 235 130) ]
                 ]
 
             1 ->
                 [ rect (px - 7) (ay - 2) 14 5 (rgb 100 78 54)
                 , rect (px - 5) (ay - 1) 10 3 (col paint)
-                , group [ Canvas.Translate (px - 4) (ay - 3), Canvas.Rotate rotor ]
+                , group [ Canvas.Translate (px - 4) (ay - 3), Canvas.Rotate (Math.degrees rotor) ]
                     [ rect (0 - 6) 0 12 1 (rgba 220 210 190 130) ]
-                , group [ Canvas.Translate (px + 4) (ay - 3), Canvas.Rotate (0 - rotor) ]
+                , group [ Canvas.Translate (px + 4) (ay - 3), Canvas.Rotate (Math.degrees (0 - rotor)) ]
                     [ rect (0 - 6) 0 12 1 (rgba 220 210 190 130) ]
                 ]
 
@@ -1138,7 +1138,7 @@ fxArt g f =
                 ]
 
         FxMuzzle ->
-            [ group [ Canvas.Translate f.x f.y, Canvas.Rotate (f.a * 225 // 10), Canvas.Blend Canvas.Add ]
+            [ group [ Canvas.Translate f.x f.y, Canvas.Rotate (Math.deciDegrees (f.a * 225)), Canvas.Blend Canvas.Add ]
                 [ triangle 6 (0 - 3) 14 0 6 3 (rgba 255 230 150 200) ]
             ]
 
@@ -1244,7 +1244,7 @@ beamSeg x y bx by c =
         len = max 2 (octd dx dy)
         face = faceOf dx dy
     in
-    group [ Canvas.Translate x y, Canvas.Rotate (face * 225 // 10) ]
+    group [ Canvas.Translate x y, Canvas.Rotate (Math.deciDegrees (face * 225)) ]
         [ rect 0 (0 - 1) len 2 c ]
 
 

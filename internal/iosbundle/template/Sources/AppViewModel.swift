@@ -269,6 +269,10 @@ final class AppViewModel {
             return "[" + xs.map(dumpValue).joined(separator: ",") + "]"
         case .tuple(let xs):
             return "(" + xs.map(dumpValue).joined(separator: ",") + ")"
+        case .angle(let deci):
+            // Deci-degrees, matching webdriver.go: the resolution is
+            // normative, so an angle off by a tenth reads as a difference.
+            return "\(deci)ddeg"
         case .ctor(let tag, let args, _):
             let name = canonicalTag(tag)
             if args.isEmpty { return name }

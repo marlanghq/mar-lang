@@ -181,6 +181,9 @@ struct MarCanvasView: View {
     }
     private static func d(_ v: MarValue) -> Double { if case .int(let n) = v { return Double(n) }; if case .float(let x) = v { return x }; return 0 }
 
+    /// An Angle carries deci-degrees (0..3599), so whole degrees are a tenth of it.
+    private static func deg(_ v: MarValue) -> Double { if case .angle(let deci) = v { return Double(deci) / 10 }; return 0 }
+
     private static func drawShape(_ s: MarValue, into ctx: GraphicsContext) {
         guard case .ctor(let tag, let a, _) = s else { return }
         switch tag {
@@ -250,8 +253,8 @@ struct MarCanvasView: View {
     }
 
     /// Apply one Transform to a (copied) context. Scale is percent (100 = 1x)
-    /// and Rotate is whole degrees, matching the Int-only Canvas model.
-    /// Alpha is not a matrix op — groupAlpha pulls it out before this runs.
+    /// and Rotate takes an Angle, whose unit is named at construction.
+    /// Alpha is not a matrix op: groupAlpha pulls it out before this runs.
     private static func apply(_ t: MarValue, to ctx: inout GraphicsContext) {
         guard case .ctor(let tag, let a, _) = t else { return }
         switch tag {
@@ -260,7 +263,7 @@ struct MarCanvasView: View {
         case "Scale" where a.count == 2:
             ctx.scaleBy(x: d(a[0]) / 100, y: d(a[1]) / 100)
         case "Rotate" where a.count == 1:
-            ctx.rotate(by: .degrees(d(a[0])))
+            ctx.rotate(by: .degrees(deg(a[0])))
         default:
             break
         }

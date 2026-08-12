@@ -38,7 +38,7 @@ type alias Dot =
 type alias Model =
     { w : Int          -- live width of the demo strips, from watchSize
     , dots : List Dot  -- tap-to-paint marks
-    , ang : Int        -- windmill angle, degrees
+    , ang : Angle      -- windmill angle; Math names the unit
     }
 
 
@@ -49,7 +49,7 @@ type Msg
 
 
 init : (Model, Cmd Msg)
-init = ({ w = 340, dots = [], ang = 0 }, Cmd.none)
+init = ({ w = 340, dots = [], ang = Math.degrees 0 }, Cmd.none)
 
 
 update : Msg -> Model -> (Model, Cmd Msg)
@@ -62,7 +62,8 @@ update msg model =
             ({ model | dots = List.concat [ model.dots, [ { x = x, y = y } ] ] }, Cmd.none)
 
         Tick _ ->
-            ({ model | ang = modBy 360 (model.ang + 3) }, Cmd.none)
+            -- Math.add wraps at a full turn, so nobody writes the modBy.
+            ({ model | ang = Math.add model.ang (Math.degrees 3) }, Cmd.none)
 
 
 -- ===== strip 1: every shape primitive =====
@@ -115,7 +116,7 @@ paintStrip m =
 -- ===== strip 3: group + Translate/Rotate (a windmill on a timer) =====
 
 
-blade : Int -> Shape
+blade : Angle -> Shape
 blade turn =
     group [ Canvas.Rotate turn ]
         [ triangle 0 0 60 (0 - 12) 60 12 (rgb 226 220 205) ]
@@ -131,7 +132,11 @@ windmillStrip m =
         , rect 0 176 m.w 40 (rgb 96 140 80)
         , triangle (cx - 20) 176 cx 80 (cx + 20) 176 (rgb 150 100 70)
         , group [ Canvas.Translate cx 84, Canvas.Rotate m.ang ]
-            [ blade 0, blade 90, blade 180, blade 270 ]
+            [ blade (Math.degrees 0)
+            , blade (Math.degrees 90)
+            , blade (Math.degrees 180)
+            , blade (Math.degrees 270)
+            ]
         , circle cx 84 6 (rgb 70 50 40)
         ]
 

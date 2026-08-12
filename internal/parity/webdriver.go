@@ -319,6 +319,9 @@ function dumpValue(v) {
     case 'U': return '()';
     case 'L': return '[' + (v.xs || []).map(dumpValue).join(',') + ']';
     case 'T': return '(' + (v.xs || []).map(dumpValue).join(',') + ')';
+    // An Angle prints its deci-degrees, the one number both runtimes agree
+    // on, so a rotation that came out a tenth of a degree apart is a diff.
+    case 'A': return v.deci + 'ddeg';
     case 'C': {
       const bare = canonicalTag(v.tag);
       if (!v.args || v.args.length === 0) return bare;

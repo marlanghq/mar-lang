@@ -246,7 +246,7 @@ scene n =
     , circle (100 - n) 50 (8 + n) (rgba 200 100 50 128)
     , triangle 0 0 (10 + n) 0 5 (20 + n) (rgb 0 0 0)
     , Canvas.text (5 + n) 60 9 Canvas.Left (rgb 255 255 255) ("n=" ++ String.fromInt n)
-    , group [ Canvas.Translate n 7, Canvas.Rotate (n * 15), Canvas.Scale 2 2 ]
+    , group [ Canvas.Translate n 7, Canvas.Rotate (Math.degrees (n * 15)), Canvas.Scale 2 2 ]
         [ rect 1 2 3 4 (rgb 1 2 3)
         , group [ Canvas.Blend Canvas.Add, Canvas.Alpha 128 ]
             [ circle 0 0 (n + 1) (rgb 9 9 9) ]

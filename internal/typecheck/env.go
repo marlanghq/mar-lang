@@ -305,9 +305,13 @@ func builtinCustomTypes() map[string]CustomType {
 			Constructors: map[string]CustomCtor{
 				"Translate": {Args: []Type{TInt, TInt}, Result: TTransform},
 				"Scale":     {Args: []Type{TInt, TInt}, Result: TTransform},
-				"Rotate":    {Args: []Type{TInt}, Result: TTransform},
-				"Alpha":     {Args: []Type{TInt}, Result: TTransform},
-				"Blend":     {Args: []Type{TBlend}, Result: TTransform},
+				// Rotate takes an Angle, not a bare Int: the unit is named
+				// at construction (Math.degrees / .deciDegrees / .turns)
+				// like everywhere else a rotation appears, and a heading
+				// computed with Math can be handed straight to the canvas.
+				"Rotate": {Args: []Type{TAngle}, Result: TTransform},
+				"Alpha":  {Args: []Type{TInt}, Result: TTransform},
+				"Blend":  {Args: []Type{TBlend}, Result: TTransform},
 			},
 			CtorOrder: []string{"Translate", "Scale", "Rotate", "Alpha", "Blend"},
 		},
@@ -834,11 +838,12 @@ func baseBindings() map[string]Type {
 	// union is unimplemented, so `exposing (Transform(..))` parses and then
 	// leaves `Translate` unbound.
 	out["Canvas.Translate"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TTransform}}
-	// Scale takes percent ints (100 = 1×, 150 = 1.5×); Rotate takes whole
-	// degrees. Mar has no Float, so continuous transforms are integer-encoded
-	// and the renderer divides Scale by 100.
+	// Scale takes percent ints (100 = 1×, 150 = 1.5×). Mar has no Float, so
+	// continuous transforms are integer-encoded and the renderer divides
+	// Scale by 100. Rotate is the exception: an angle is a quantity with a
+	// unit, so it has a type (ADR 0029) and Math builds it.
 	out["Canvas.Scale"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TTransform}}
-	out["Canvas.Rotate"] = TArrow{From: TInt, To: TTransform}
+	out["Canvas.Rotate"] = TArrow{From: TAngle, To: TTransform}
 	// Alpha takes a percent int too (100 = opaque). It fades the group as ONE
 	// composited image, not shape by shape: a sprite built from overlapping
 	// parts fades as a whole instead of turning into glass, and a cloud drawn

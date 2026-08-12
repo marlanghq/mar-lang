@@ -3916,15 +3916,16 @@ miniMap m =
         -- marker center on the minimap; a fixed-size arrowhead rotated by the
         -- heading so it reads which way you face. Drawn as a rotated template
         -- (not by scaling dirAt's components) so integer truncation can't make
-        -- it grow/shrink at diagonal headings — the size stays constant.
-        -- heading is 240 steps of 1.5 degrees (index 0 = east), so the angle
-        -- is heading * 3 / 2 degrees clockwise.
+        -- it grow/shrink at diagonal headings: the size stays constant.
+        -- heading is 240 steps of 1.5 degrees (index 0 = east), which is 15
+        -- tenths of a degree per step, the same angle dirAt builds. The arrow
+        -- therefore points exactly where the rays are cast.
         cxm = ox + m.px * 3 // 2048 + 1
         cym = oy + m.py * 3 // 2048 + 1
         me =
             [ group
                 [ Canvas.Translate cxm cym
-                , Canvas.Rotate (m.heading * 3 // 2)
+                , Canvas.Rotate (Math.deciDegrees (m.heading * 15))
                 , Canvas.Scale 75 75
                 ]
                 [ triangle 4 0 (0 - 2) (0 - 2) (0 - 2) 2 (rgb 250 250 250) ]

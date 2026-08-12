@@ -1914,7 +1914,7 @@ playerShapes m =
             ]
     in
     List.concat
-        [ [ group [ Canvas.Translate cx (y + 11), Canvas.Rotate yaw ] car ]
+        [ [ group [ Canvas.Translate cx (y + 11), Canvas.Rotate (Math.degrees yaw) ] car ]
         , if dust then
             [ rect (cx - 20) (y + 16) 3 3 dustC
             , rect (cx + 17) (y + 18) 3 3 dustC

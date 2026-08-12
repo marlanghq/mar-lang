@@ -2666,7 +2666,7 @@ foeShapes m =
                             , rect (x + 7) (y - 2) 3 4 th.farD
                             ]
                         else if f.kind == 3 then
-                            [ group [ Canvas.Translate x y, Canvas.Rotate (modBy 360 (f.t * 6)) ]
+                            [ group [ Canvas.Translate x y, Canvas.Rotate (Math.degrees (f.t * 6)) ]
                                 [ rect (0 - 5) (0 - 5) 10 10 th.acc
                                 , rect (0 - 2) (0 - 2) 4 4 (rgb 20 20 30)
                                 ]
@@ -3032,7 +3032,7 @@ bossShapes m =
                                     \ax turn ->
                                         [ circle ax auxY 13 th.farD
                                         , circle ax auxY 10 th.far
-                                        , group [ Canvas.Translate ax auxY, Canvas.Rotate turn ]
+                                        , group [ Canvas.Translate ax auxY, Canvas.Rotate (Math.degrees turn) ]
                                             [ rect (0 - 2) (0 - 10) 4 20 th.det
                                             , rect (0 - 10) (0 - 2) 20 4 th.det
                                             ]
@@ -3084,7 +3084,7 @@ bossShapes m =
                                   , triangle (x - 27) (y + 14) (x - 15) (y + 25) (x - 3) (y + 14) (rgb 70 180 230)
                                   , triangle (x + 3) (y + 14) (x + 15) (y + 25) (x + 27) (y + 14) (rgb 70 180 230)
                                   , circle x y 16 th.far
-                                  , group [ Canvas.Translate x y, Canvas.Rotate spin ]
+                                  , group [ Canvas.Translate x y, Canvas.Rotate (Math.degrees spin) ]
                                         [ rect (0 - 2) (0 - 15) 4 30 th.det
                                         , rect (0 - 15) (0 - 2) 30 4 th.det
                                         , triangle (0 - 4) (0 - 13) 4 (0 - 13) 0 (0 - 20) th.det
@@ -3215,7 +3215,7 @@ bossShapes m =
                                 gateWarn = (cycle >= 78 && cycle < 94) || (b.ph == 2 && cycle >= 150 && cycle < 166)
                             in
                             List.concat
-                                [ [ group [ Canvas.Translate x (y - 2), Canvas.Rotate (modBy 360 (b.t * 4)) ]
+                                [ [ group [ Canvas.Translate x (y - 2), Canvas.Rotate (Math.degrees (b.t * 4)) ]
                                         [ rect (0 - 30) (0 - 2) 60 4 (rgb 240 190 70)
                                         , rect (0 - 2) (0 - 30) 4 60 (rgb 240 190 70)
                                         , circle 0 (0 - 28) 4 th.acc
@@ -3270,7 +3270,7 @@ bossShapes m =
                                 turn = modBy 360 (b.t * 3)
                             in
                             List.concat
-                                [ [ group [ Canvas.Translate x y, Canvas.Rotate turn ]
+                                [ [ group [ Canvas.Translate x y, Canvas.Rotate (Math.degrees turn) ]
                                         [ rect (0 - 34) (0 - 3) 22 6 th.farD
                                         , rect 12 (0 - 3) 22 6 th.farD
                                         , rect (0 - 3) (0 - 34) 6 22 th.farD
@@ -3309,13 +3309,13 @@ bossShapes m =
                                     , circle x y (pulse - 9) (rgb 95 35 65)
                                     ]
                                   else []
-                                , [ group [ Canvas.Translate x y, Canvas.Rotate turn ]
+                                , [ group [ Canvas.Translate x y, Canvas.Rotate (Math.degrees turn) ]
                                         [ triangle (0 - 18) 0 18 0 0 (0 - 25) (rgb 225 220 220)
                                         , triangle (0 - 18) 0 18 0 0 25 (rgb 160 164 180)
                                         , circle 0 0 8 hurtC
                                         , circle 0 0 3 (rgb 255 245 180)
                                         ]
-                                  , group [ Canvas.Translate x y, Canvas.Rotate (0 - turn) ]
+                                  , group [ Canvas.Translate x y, Canvas.Rotate (Math.degrees (0 - turn)) ]
                                         [ circle (0 - 38) 0 7 th.farD
                                         , circle 38 0 7 th.farD
                                         , circle 0 (0 - 34) 7 th.farD

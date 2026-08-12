@@ -10064,6 +10064,9 @@
   }
 
   function canvasNum(v) { return v && (v.k === 'I' || v.k === 'F') ? v.n : 0; }
+  // An Angle carries deci-degrees (0..3599). Radians are what the 2D
+  // context wants, so the conversion divides by 1800 instead of 180.
+  function canvasRadians(v) { return v && v.k === 'A' ? v.deci * Math.PI / 1800 : 0; }
   function canvasStr(v) { return v && v.k === 'S' ? v.s : ''; }
 
   function canvasColor(c) {
@@ -10091,9 +10094,9 @@
     if (!t || t.k !== 'C') return;
     switch (t.tag) {
       case 'Translate': ctx.translate(canvasNum(t.args[0]), canvasNum(t.args[1])); break;
-      // Scale args are percent ints (100 = 1×); Rotate args are whole degrees.
+      // Scale args are percent ints (100 = 1×); Rotate takes an Angle.
       case 'Scale':     ctx.scale(canvasNum(t.args[0]) / 100, canvasNum(t.args[1]) / 100); break;
-      case 'Rotate':    ctx.rotate(canvasNum(t.args[0]) * Math.PI / 180); break;
+      case 'Rotate':    ctx.rotate(canvasRadians(t.args[0])); break;
       // Alpha / Blend are not matrix ops — groupAlpha and groupBlend pull
       // them out before this runs.
     }

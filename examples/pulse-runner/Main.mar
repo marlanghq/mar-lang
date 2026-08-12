@@ -1402,7 +1402,7 @@ playerShapes m cx =
             o = 0 - pw // 2
             f = o + pw - 2
         in
-        [ group [ Canvas.Translate (x + pw // 2) (top + pw // 2), Canvas.Rotate deg ]
+        [ group [ Canvas.Translate (x + pw // 2) (top + pw // 2), Canvas.Rotate (Math.degrees deg) ]
             [ rect o o pw pw orange
             , rect o o pw 2 edge
             , rect o f pw 2 edge
@@ -1490,7 +1490,7 @@ titleShapes m =
           ]
         , [ group
                 [ Canvas.Translate (46 + pw // 2) (hopY - 13 + pw // 2)
-                , Canvas.Rotate (min 90 (hopT * 90 // 28))
+                , Canvas.Rotate (Math.degrees (min 90 (hopT * 90 // 28)))
                 ]
                 [ rect (0 - pw // 2) (0 - pw // 2) pw pw orange ]
           ]

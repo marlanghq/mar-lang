@@ -276,7 +276,7 @@ playfield model =
         , [ rect 0 (h - band) w band (zoneColor P1 model) ]        -- player 1 zone (bottom fifth)
         , [ rect 0 (h - band) w 3 (rgb 150 150 150) ]              -- its edge line
         , [ text (w // 2) (h - band // 2) (band // 3) Canvas.Center (rgb 255 255 255) (String.fromInt model.p1) ]
-        , [ group [ Canvas.Translate (w // 2) (band // 2), Canvas.Rotate 180 ]   -- P2 score faces the far player
+        , [ group [ Canvas.Translate (w // 2) (band // 2), Canvas.Rotate (Math.degrees 180) ]   -- P2 score faces the far player
               [ text 0 0 (band // 3) Canvas.Center (rgb 255 255 255) (String.fromInt model.p2) ]
           ]
         , centerContent model band gap r midY
@@ -307,7 +307,7 @@ gameOverContent : Model -> Int -> List Shape
 gameOverContent model midY =
     [ group [ Canvas.Translate (model.w // 2) (midY + model.h // 8) ]
         (gameOverLines model)
-    , group [ Canvas.Translate (model.w // 2) (midY - model.h // 8), Canvas.Rotate 180 ]
+    , group [ Canvas.Translate (model.w // 2) (midY - model.h // 8), Canvas.Rotate (Math.degrees 180) ]
         (gameOverLines model)
     ]
 
