@@ -51,7 +51,7 @@ allEntries =
 
 -- Spaces removed and case folded, so a typed signature matches however the
 -- author spaced it: "String->Int", "String -> Int" and "String  ->  Int" all
--- come out the same. Only the signature comparison uses this — squeezing the
+-- come out the same. Only the signature comparison uses this, because squeezing the
 -- description would glue unrelated words into accidental matches.
 squeeze : String -> String
 squeeze s =
@@ -60,7 +60,7 @@ squeeze s =
 
 -- WHERE a query hit, lowest first. The name is what you almost always mean,
 -- the signature is what you mean when you type an arrow, and the description
--- is the long shot — it finds things by concept but it also matches passing
+-- is the long shot: it finds things by concept but it also matches passing
 -- mentions, including negative ones ("the result is not a string").
 --
 -- 3 means no match at all; `matches` is defined in terms of this so the two

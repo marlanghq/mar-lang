@@ -8,11 +8,11 @@ import UI exposing
     )
 
 
--- Demo: `picker` — single-selection field for enum-like inputs.
+-- Demo: `picker` - single-selection field for enum-like inputs.
 --
 -- Mirrors SwiftUI's `Picker(selection: $value)`. Use it instead of
 -- a vertical stack of toggles whenever the candidate set has more
--- than ~2 variants — a picker stays one row tall regardless of
+-- than ~2 variants, because a picker stays one row tall regardless of
 -- how many options there are, and the platform gives users the
 -- right affordance for free (menu on macOS / iOS, dropdown on web,
 -- wheel on watchOS).
@@ -26,7 +26,7 @@ import UI exposing
 --     -> (a -> msg)              -- onChange
 --     -> View msg
 --
--- The `a` is polymorphic — works with enums, Ints, Strings,
+-- The `a` is polymorphic: it works with enums, Ints, Strings,
 -- records. Equality on `selected` is structural.
 
 

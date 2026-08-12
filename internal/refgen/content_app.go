@@ -364,7 +364,7 @@ var appDescriptions = map[string]string{
 	"Random.map3":        "Combines three generators with a function of three arguments.",
 	"Random.andThen":     "Chains generators, where the second one depends on what the first produced. This is how you roll a die and then draw that many cards.",
 	"Random.generate":    "Turns a generator into a command that produces a value and hands it back as a message. Nothing is random until this runs, which is what keeps generators themselves pure and reusable.",
-	"Random.initialSeed": "Makes a Seed from any Int. The same Int always makes the same Seed, so a whole run is reproducible from one number — which is how a shared game replays identically on the server and the client.",
+	"Random.initialSeed": "Makes a Seed from any Int. The same Int always makes the same Seed, so a whole run is reproducible from one number, which is how a shared game replays identically on the server and the client.",
 	"Random.step":        "Runs a generator against a Seed, purely: it returns the value AND the next Seed to thread into the following draw. Unlike generate it needs no command and runs on any side, so the server can shuffle a deck fairly.",
 	"Random.seed":        "A task that reads real operating-system entropy and returns a fresh, unpredictable Seed. It runs on the client and the server, so it is the honest source for a shuffle nobody can guess.",
 

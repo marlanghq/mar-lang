@@ -9,7 +9,7 @@ import UI exposing
     )
 
 
--- "Get started" page — the four-command path from zero to a deployed
+-- "Get started" page: the four-command path from zero to a deployed
 -- app. Each step gets its own section so the reader can scan the
 -- shape before reading the body text.
 

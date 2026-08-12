@@ -13,7 +13,7 @@ import Frontend.Reference.Routes
 -- One function's detail page. A dynamic route: the /reference/{moduleName}/{fn}
 -- segments are matched by the runtime and threaded, as a `params` record, into
 -- init/update/view. The list pages and the search link here. The page is
--- otherwise stateless — everything it shows comes from the URL plus the
+-- otherwise stateless. Everything it shows comes from the URL plus the
 -- generated data.
 
 

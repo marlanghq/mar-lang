@@ -4,7 +4,7 @@ module Frontend.Routes exposing
 
 -- Central URL surface for the site. One file, one screen,
 -- typed paths everywhere. Renaming a URL flips every `navigationLink`
--- call site into a compile-time error — the upside of doing routing
+-- call site into a compile-time error. That is the upside of doing routing
 -- in the type system instead of stringly-typed lookup tables.
 --
 -- `getStarted` (not `start` or `try`) on purpose: `try` is a Swift

@@ -12,17 +12,17 @@ import UI exposing
 
 -- Demo: the layout model (SwiftUI-style).
 --
---   hstack      : children in a horizontal row — each stays its
+--   hstack      : children in a horizontal row, each stays its
 --                 content's width
 --   vstack      : children stacked vertically, filling the width
---   width fill  : a child claims the free space on that axis — the
+--   width fill  : a child claims the free space on that axis, the
 --                 equal-columns workhorse (height fill is its vertical
 --                 twin)
---   spacer      : flex filler — pushes siblings apart on the MAIN axis
+--   spacer      : flex filler that pushes siblings apart on the MAIN axis
 --   align       : positions the children that DON'T fill, on the CROSS
 --                 axis (vstack: leading / center / trailing)
 --   centered    : fills the space its parent provides and centers its
---                 child — pure alignment, it never invents a size
+--                 child. Pure alignment: it never invents a size
 --
 -- Rule of thumb: columns fill the width, rows stay content-width.
 -- Size is `width` / `height`
@@ -56,7 +56,7 @@ update _ _ = ((), Cmd.none)
 
 -- Default hstack: each child stays its content's width and clusters
 -- at the leading edge. Nothing stretches. Each cell shows the code
--- that placed it — here a plain `text` with no sizing attr.
+-- that placed it, here a plain `text` with no sizing attr.
 defaultRow : View Msg
 defaultRow =
     hstack []
@@ -91,7 +91,7 @@ labelWithAction =
 
 -- `align` positions the children that DON'T fill, on the cross axis.
 -- Three width-fill columns share the row; each aligns its own lines
--- differently. Without the attr this was inexpressible — vstack
+-- differently. Without the attr this was inexpressible: vstack
 -- children always stretched.
 alignedColumns : View Msg
 alignedColumns =
@@ -124,7 +124,7 @@ nestedStacks =
 
 -- The centered-card pattern: `align center` sits the children in the
 -- middle (instead of stretching them); `width (chars 24)` bounds the
--- field. Size comes from width, position from align — composed, not
+-- field. Size comes from width, position from align. Composed, not
 -- conflated.
 centeredForm : View Msg
 centeredForm =

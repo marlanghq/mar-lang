@@ -13,11 +13,11 @@ import UI exposing
 -- Demo: interactive controls.
 --
 --   button [ disabled flag ] msg label
---       — taps dispatch `msg`. Pass `disabled True` to grey it out
+--       - taps dispatch `msg`. Pass `disabled True` to grey it out
 --         and ignore taps.
 --
 --   toggle [ disabled flag ] label isOn onChange
---       — iOS-style switch. The current state is passed in; the
+--       - iOS-style switch. The current state is passed in; the
 --         callback receives the new value on flip. Pass
 --         `disabled True` in the attrs list to grey it out and
 --         block flips (same shape as button / textField / picker).
@@ -25,7 +25,7 @@ import UI exposing
 -- The page is split into two small demos: a +/- counter showing
 -- button + disabled, and a short row of unrelated toggles showing
 -- how the same primitive looks in different states. Nothing is
--- connected to any real preferences — the toggles just show the
+-- connected to any real preferences, the toggles just show the
 -- switch flipping.
 
 

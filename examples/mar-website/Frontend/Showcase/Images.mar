@@ -9,7 +9,7 @@ import UI exposing
     )
 
 
--- Demo: `image` — display an image from a URL (or an app path).
+-- Demo: `image` - display an image from a URL (or an app path).
 --
 -- Signature:
 --   UI.image
@@ -22,9 +22,9 @@ import UI exposing
 -- text/CLI renderer where alt IS the rendering. "" means decorative.
 --
 -- Attrs (all optional, Image-hosted):
---   size (px w) (px h) — fixed dimensions in points (e.g. avatars)
---   fit                — show the whole image, no crop (default)
---   cover               — crop to fill the frame
+--   size (px w) (px h) - fixed dimensions in points (e.g. avatars)
+--   fit                - show the whole image, no crop (default)
+--   cover               - crop to fill the frame
 --
 -- Pixel sizing is scoped to images on purpose: `px` only builds an
 -- image size, and the input units (`chars` / `lines`) don't, so the

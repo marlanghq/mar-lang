@@ -12,7 +12,7 @@ import Canvas exposing
     )
 
 
--- Demo: `canvas` — the 2D draw-list for games and graphics.
+-- Demo: `canvas` - the 2D draw-list for games and graphics.
 --
 -- Signature:
 --   Canvas.canvas
@@ -154,9 +154,9 @@ alphaStrip m =
     in
     canvas Pixelated [ height (lines 7) ]
         [ rect 0 0 m.w 168 sky
-        -- left: rgba on each circle — the overlap paints twice and shows a seam
+        -- left: rgba on each circle - the overlap paints twice and shows a seam
         , group [] (puff lx (rgba 232 238 246 45) (rgba 190 200 215 45))
-        -- right: opaque circles inside one Alpha group — composited once, even
+        -- right: opaque circles inside one Alpha group - composited once, even
         , group [ Canvas.Alpha 45 ] (puff rx (rgb 232 238 246) (rgb 190 200 215))
         , Canvas.text (lx + 52) 110 10 Canvas.Center (rgb 170 180 195) "rgba each"
         , Canvas.text (rx + 52) 110 10 Canvas.Center (rgb 170 180 195) "Alpha group"

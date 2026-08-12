@@ -31,31 +31,31 @@ import Frontend.Reference.ModuleDoc
 import Frontend.Reference.Detail
 
 
--- Public site for the Mar language. Frontend-only (App.frontend) —
+-- Public site for the Mar language. Frontend-only (App.frontend):
 -- nothing here needs a database, an auth flow, or a backend service,
 -- so the deploy is a static bundle.
 --
 -- Page order matches the natural reading flow:
 --
---   /              — landing page, hero + nav to the rest
---   /why           — why Mar exists, the design pillars, trade-offs
---   /get-started   — install, scaffold, run, deploy
---   /credits       — author, license, inspirations, source
---   /showcase      — UI primitive tour (sub-section, see below)
+--   /              - landing page, hero + nav to the rest
+--   /why           - why Mar exists, the design pillars, trade-offs
+--   /get-started   - install, scaffold, run, deploy
+--   /credits       - author, license, inspirations, source
+--   /showcase      - UI primitive tour (sub-section, see below)
 --
 -- The showcase sub-section is a live tour of every UI primitive
 -- the framework ships. Lives under /showcase/* so the URLs stay
 -- self-contained:
 --
---   /showcase             — index of demos
---   /showcase/layout      — hstack, vstack, spacer, centered
---   /showcase/typography  — title, subtitle, text, errorText
---   /showcase/forms       — textField + textArea + input kinds
---   /showcase/controls    — button + toggle
---   /showcase/lists       — sections + reorder + delete
---   /showcase/pickers     — picker over enum / Int / String
---   /showcase/disabled    — every interactive primitive disabled
---   /showcase/modals      — sheet + confirm
+--   /showcase             - index of demos
+--   /showcase/layout      - hstack, vstack, spacer, centered
+--   /showcase/typography  - title, subtitle, text, errorText
+--   /showcase/forms       - textField + textArea + input kinds
+--   /showcase/controls    - button + toggle
+--   /showcase/lists       - sections + reorder + delete
+--   /showcase/pickers     - picker over enum / Int / String
+--   /showcase/disabled    - every interactive primitive disabled
+--   /showcase/modals      - sheet + confirm
 --
 -- The site is the proof-of-concept: dogfooding Mar's UI primitives
 -- to build the site that pitches Mar. If something looks awkward

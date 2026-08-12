@@ -27,7 +27,7 @@ import UI exposing
 --   navigationLink → click swallowed (no navigation)
 --
 -- The "Master" toggle below flips the same flag through every row
--- so the visual contrast is obvious — the same form, half the
+-- so the visual contrast is obvious: the same form, half the
 -- time inert.
 
 

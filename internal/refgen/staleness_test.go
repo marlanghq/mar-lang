@@ -2,6 +2,7 @@ package refgen
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -124,6 +125,39 @@ func TestModuleGroupsCoverAllModules(t *testing.T) {
 	for _, m := range Modules {
 		if !grouped[m] {
 			t.Errorf("%s is in the reference but in no group (add it to moduleGroups in content.go)", m)
+		}
+	}
+}
+
+// Every string in here ends up on the reference pages of the website,
+// so it follows the house copy rule: no em dashes. They read as a
+// dramatic pause the rest of the site never takes, and one slipping in
+// is invisible in review because the source and the page look the
+// same. A colon, a comma, or a second sentence always fits.
+func TestContent_NoEmDashInPublishedProse(t *testing.T) {
+	maps := []struct {
+		name string
+		m    map[string]string
+	}{
+		{"descriptions", descriptions},
+		{"blurbs", blurbs},
+		{"appDescriptions", appDescriptions},
+		{"appBlurbs", appBlurbs},
+		{"keyProse", keyProse},
+	}
+	for _, group := range maps {
+		for key, text := range group.m {
+			if strings.Contains(text, "—") {
+				t.Errorf("%s[%q] has an em dash; use a colon, a comma, or two sentences:\n  %s",
+					group.name, key, text)
+			}
+		}
+	}
+	for name, groups := range examples {
+		for _, line := range groups {
+			if strings.Contains(line, "—") {
+				t.Errorf("examples[%q] has an em dash: %s", name, line)
+			}
 		}
 	}
 }

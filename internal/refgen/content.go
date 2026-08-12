@@ -242,14 +242,14 @@ var descriptions = map[string]string{
 
 	// --- Decimal ---
 	"Math.degrees":     "An angle in whole degrees. Any Int works: 360 is the same angle as 0, and -90 is the same as 270.",
-	"Math.deciDegrees": "An angle in tenths of a degree, which is as fine as an Angle goes. Reach for it when whole degrees are too coarse — a turn rate, a slow sweep.",
+	"Math.deciDegrees": "An angle in tenths of a degree, which is as fine as an Angle goes. Reach for it when whole degrees are too coarse: a turn rate, a slow sweep.",
 	"Math.turns":       "An angle in brads: 256 to a full turn, the unit a game usually counts a heading in. One brad is not a whole number of tenths, so it floors; a full turn is exact.",
 	"Math.add":         "Two angles added, wrapped back into one turn. This is how a heading turns without anyone writing the wrap.",
 	"Math.subtract":    "One angle minus another, wrapped back into one turn.",
-	"Math.opposite":    "The angle pointing the other way — half a turn from this one. Facing away, bouncing back.",
+	"Math.opposite":    "The angle pointing the other way, half a turn from this one. Facing away, bouncing back.",
 	"Math.sin":         "The sine of an angle in thousandths, so -1000 to 1000. The same integer on every runtime, because it comes from one checked-in table rather than the host's trigonometry.",
 	"Math.cos":         "The cosine of an angle in thousandths, so -1000 to 1000.",
-	"Math.atan2":       "The angle of the vector (x, y) — note that y comes first, as in Elm. The y axis points UP here, so a canvas whose y grows downward negates it at the call site. atan2 0 0 is 0 degrees rather than an error.",
+	"Math.atan2":       "The angle of the vector (x, y). Note that y comes first. The y axis points UP here, so a canvas whose y grows downward negates it at the call site. atan2 0 0 is 0 degrees rather than an error.",
 	"Math.isqrt":       "The whole part of a square root. Anything at or below zero gives 0, so there is nothing to guard. For a distance, square first and then take the root: Math.isqrt (dx * dx + dy * dy).",
 
 	"Decimal.fromInt":       "An exact Decimal from a whole number.",
@@ -478,7 +478,7 @@ var blurbs = map[string]string{
 	"Dict":    "Look values up by key, in sorted order.",
 	"Set":     "A collection with no duplicates and no order of its own.",
 	"Decimal": "Exact decimal arithmetic, with rounding you choose rather than inherit.",
-	"Math":    "Angles, trigonometry, and square roots — in whole numbers, identical on every runtime.",
+	"Math":    "Angles, trigonometry, and square roots in whole numbers, identical on every runtime.",
 }
 
 // moduleGroups is how the reference index is carved up: not by layer or by

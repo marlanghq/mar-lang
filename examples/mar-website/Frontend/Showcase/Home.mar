@@ -11,7 +11,7 @@ import UI exposing
 import Frontend.Showcase.Routes
 
 
--- Index page. The model is `()` — nothing changes here, the page
+-- Index page. The model is `()`, since nothing changes here: the page
 -- is a pure listing of links to each demo. Mar still requires a
 -- Model + Msg + update so the MVU contract holds; we just give
 -- them no-op shapes.

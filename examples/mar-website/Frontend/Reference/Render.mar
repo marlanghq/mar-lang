@@ -15,10 +15,10 @@ import Frontend.Reference.Routes
 
 -- Shared rendering for the reference, in two forms:
 --
---   entryRow  — a compact, tappable row: qualified name + signature only.
+--   entryRow  - a compact, tappable row: qualified name + signature only.
 --               Used in the module lists and the search results. Tapping it
 --               navigates to the function's detail page.
---   entryCard — the full detail: name + signature, description, and any worked
+--   entryCard - the full detail: name + signature, description, and any worked
 --               examples. Used on the detail page.
 --
 -- Both are pure and static, so they type as `View msg` for any msg. Entries,

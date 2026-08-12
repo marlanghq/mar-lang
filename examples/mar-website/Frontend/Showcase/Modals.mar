@@ -23,15 +23,15 @@ import UI exposing
 -- Both share the same architectural shape: parent owns presence
 -- as part of its Model, view returns the modal view when active,
 -- the renderer mounts it as an overlay above the rest of the
--- page. No imperative show()/hide() — pure MVU.
+-- page. No imperative show()/hide(), just MVU.
 
 
 -- ====================================================================
 -- MODEL
 -- ====================================================================
 --
--- showSheet      : Bool         — whether UI.sheet is currently up
--- confirmingItem : Maybe String — task awaiting confirm (the modal
+-- showSheet      : Bool         - whether UI.sheet is currently up
+-- confirmingItem : Maybe String - task awaiting confirm (the modal
 --                                 is open iff this is Just; Nothing
 --                                 means no modal showing)
 type alias Model =
@@ -107,7 +107,7 @@ view model =
             , outlet    = "demo-sheet"
             }
             [ sheetContent model ]
-        -- Same idea for the confirm dialog — view function returns
+        -- Same idea for the confirm dialog: the view function returns
         -- `confirm {...}` when active, `empty` when not. Renderer
         -- mounts / unmounts the overlay accordingly. No "isOpen"
         -- field; presence-in-the-tree IS the open state.
@@ -144,7 +144,7 @@ confirmSection =
 -- a body below it. The title sits centered because the two
 -- spacers around it equalize the leading/trailing slack.
 --
--- Mar doesn\'t need a dedicated `UI.sheetToolbar` primitive —
+-- Mar doesn\'t need a dedicated `UI.sheetToolbar` primitive:
 -- this hstack + spacer + title pattern produces the same shape
 -- and is short enough to inline at the call site. Apps that
 -- want consistency across multiple sheets typically wrap it in
@@ -163,7 +163,7 @@ sheetContent _ =
             , button [] CloseSheet "Done"
             ]
         , -- Body. Mar sheets accept any view tree, so this could
-          -- be a form, a list, a navigationStack of its own —
+          -- be a form, a list, a navigationStack of its own,
           -- whatever the workflow needs. We use a section card to
           -- keep the visual consistent with the rest of the
           -- showcase.
@@ -178,7 +178,7 @@ sheetContent _ =
 
 -- The dialog is conditionally rendered. When `confirmingItem` is
 -- Nothing, `empty` returns a view that the renderer treats as
--- "nothing to mount" — the modal isn't in the DOM / scene graph at
+-- "nothing to mount": the modal isn't in the DOM / scene graph at
 -- all. Just-state mounts the actual overlay with the task name in
 -- the prompt.
 confirmDialog : Model -> View Msg

@@ -422,7 +422,7 @@ sectionsFor m =
             [ { category = "Build an angle"
               , entries =
                     [ { moduleName = "Math", name = "degrees", signature = "Int -> Angle", side = "both", description = "An angle in whole degrees. Any Int works: 360 is the same angle as 0, and -90 is the same as 270.", examples = [ [ "Math.sin (Math.degrees 30)    -- 500" ], [ "Math.degrees 360    -- Math.degrees 0" ] ] }
-                    , { moduleName = "Math", name = "deciDegrees", signature = "Int -> Angle", side = "both", description = "An angle in tenths of a degree, which is as fine as an Angle goes. Reach for it when whole degrees are too coarse — a turn rate, a slow sweep.", examples = [ [ "Math.deciDegrees 450    -- Math.degrees 45" ] ] }
+                    , { moduleName = "Math", name = "deciDegrees", signature = "Int -> Angle", side = "both", description = "An angle in tenths of a degree, which is as fine as an Angle goes. Reach for it when whole degrees are too coarse: a turn rate, a slow sweep.", examples = [ [ "Math.deciDegrees 450    -- Math.degrees 45" ] ] }
                     , { moduleName = "Math", name = "turns", signature = "Int -> Angle", side = "both", description = "An angle in brads: 256 to a full turn, the unit a game usually counts a heading in. One brad is not a whole number of tenths, so it floors; a full turn is exact.", examples = [ [ "Math.turns 64    -- Math.degrees 90" ] ] }
                     ]
               }
@@ -430,14 +430,14 @@ sectionsFor m =
               , entries =
                     [ { moduleName = "Math", name = "add", signature = "Angle -> Angle -> Angle", side = "both", description = "Two angles added, wrapped back into one turn. This is how a heading turns without anyone writing the wrap.", examples = [ [ "Math.add (Math.degrees 350) (Math.degrees 20)    -- Math.degrees 10" ] ] }
                     , { moduleName = "Math", name = "subtract", signature = "Angle -> Angle -> Angle", side = "both", description = "One angle minus another, wrapped back into one turn.", examples = [ [ "Math.subtract (Math.degrees 10) (Math.degrees 20)    -- Math.degrees 350" ] ] }
-                    , { moduleName = "Math", name = "opposite", signature = "Angle -> Angle", side = "both", description = "The angle pointing the other way — half a turn from this one. Facing away, bouncing back.", examples = [ [ "Math.opposite (Math.degrees 30)    -- Math.degrees 210" ] ] }
+                    , { moduleName = "Math", name = "opposite", signature = "Angle -> Angle", side = "both", description = "The angle pointing the other way, half a turn from this one. Facing away, bouncing back.", examples = [ [ "Math.opposite (Math.degrees 30)    -- Math.degrees 210" ] ] }
                     ]
               }
             , { category = "Trigonometry"
               , entries =
                     [ { moduleName = "Math", name = "sin", signature = "Angle -> Int", side = "both", description = "The sine of an angle in thousandths, so -1000 to 1000. The same integer on every runtime, because it comes from one checked-in table rather than the host's trigonometry.", examples = [ [ "Math.sin (Math.degrees 90)    -- 1000" ] ] }
                     , { moduleName = "Math", name = "cos", signature = "Angle -> Int", side = "both", description = "The cosine of an angle in thousandths, so -1000 to 1000.", examples = [ [ "Math.cos (Math.degrees 60)    -- 500" ] ] }
-                    , { moduleName = "Math", name = "atan2", signature = "Int -> Int -> Angle", side = "both", description = "The angle of the vector (x, y) — note that y comes first, as in Elm. The y axis points UP here, so a canvas whose y grows downward negates it at the call site. atan2 0 0 is 0 degrees rather than an error.", examples = [ [ "Math.atan2 1 1    -- Math.degrees 45" ], [ "Math.atan2 0 0    -- Math.degrees 0" ] ] }
+                    , { moduleName = "Math", name = "atan2", signature = "Int -> Int -> Angle", side = "both", description = "The angle of the vector (x, y). Note that y comes first. The y axis points UP here, so a canvas whose y grows downward negates it at the call site. atan2 0 0 is 0 degrees rather than an error.", examples = [ [ "Math.atan2 1 1    -- Math.degrees 45" ], [ "Math.atan2 0 0    -- Math.degrees 0" ] ] }
                     ]
               }
             , { category = "Roots"
@@ -530,7 +530,7 @@ sectionsFor m =
               }
             , { category = "Seeded (pure, runs anywhere)"
               , entries =
-                    [ { moduleName = "Random", name = "initialSeed", signature = "Int -> Random.Seed", side = "both", description = "Makes a Seed from any Int. The same Int always makes the same Seed, so a whole run is reproducible from one number — which is how a shared game replays identically on the server and the client.", examples = [ [ "Random.initialSeed 42" ] ] }
+                    [ { moduleName = "Random", name = "initialSeed", signature = "Int -> Random.Seed", side = "both", description = "Makes a Seed from any Int. The same Int always makes the same Seed, so a whole run is reproducible from one number, which is how a shared game replays identically on the server and the client.", examples = [ [ "Random.initialSeed 42" ] ] }
                     , { moduleName = "Random", name = "step", signature = "Random.Generator a -> Random.Seed -> (a, Random.Seed)", side = "both", description = "Runs a generator against a Seed, purely: it returns the value AND the next Seed to thread into the following draw. Unlike generate it needs no command and runs on any side, so the server can shuffle a deck fairly.", examples = [ [ "Random.step (Random.int 1 6) (Random.initialSeed 42)" ] ] }
                     , { moduleName = "Random", name = "seed", signature = "Task Random.Seed", side = "both", description = "A task that reads real operating-system entropy and returns a fresh, unpredictable Seed. It runs on the client and the server, so it is the honest source for a shuffle nobody can guess.", examples = [ [ "Task.map (\\s -> Random.step (Random.int 1 6) s) Random.seed" ] ] }
                     ]
@@ -1258,7 +1258,7 @@ blurbFor m =
             "Exact decimal arithmetic, with rounding you choose rather than inherit."
 
         "Math" ->
-            "Angles, trigonometry, and square roots — in whole numbers, identical on every runtime."
+            "Angles, trigonometry, and square roots in whole numbers, identical on every runtime."
 
         "Time" ->
             "Points in time and the distances between them."

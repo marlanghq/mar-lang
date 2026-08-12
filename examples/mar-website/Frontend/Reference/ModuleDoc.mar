@@ -12,7 +12,7 @@ import Frontend.Reference.Routes
 
 -- One module's page, for every module at once. This used to be one near-identical
 -- file per module (ListDoc, StringDoc, MaybeDoc), which meant a new module in the
--- reference cost a file here, an import, a route and a registration — four edits
+-- reference cost a file here, an import, a route and a registration, four edits
 -- to say something the generated data already knew. It is a dynamic route now, so
 -- adding a module is purely a content change in internal/refgen: the site learns
 -- about it for free.

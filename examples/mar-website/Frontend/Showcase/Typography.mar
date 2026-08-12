@@ -15,10 +15,10 @@ import UI exposing
 --
 -- Block leaves (each on its own line, full width of the section):
 --
---   title     : large, bold — section openers and hero text
---   subtitle : muted, smaller — captions, metadata, timestamps
---   text     : body — the default
---   errorText : red + semi-bold — destructive-intent messages
+--   title     : large, bold - section openers and hero text
+--   subtitle : muted, smaller - captions, metadata, timestamps
+--   text     : body - the default
+--   errorText : red + semi-bold - destructive-intent messages
 --
 -- Block of flowing inline content:
 --

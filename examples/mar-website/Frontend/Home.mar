@@ -12,7 +12,7 @@ import UI exposing
 import Frontend.Routes
 
 
--- Landing page. Static — no model state, just a structured pitch
+-- Landing page. Static: no model state, just a structured pitch
 -- followed by navigation links to the secondary pages. The MVU
 -- contract still applies, so we ship the no-op Model + Msg pair.
 
