@@ -4,7 +4,7 @@ module Frontend.Reference.Render exposing (moduleDoc, entryRow, detailSections, 
 import UI exposing
     ( navigationStack, navigationTitle
     , list, section, header, footer
-    , text, paragraph, span, navigationLink
+    , paragraph, span, navigationLink
     , vstack
     , code, bold, italic
     )
@@ -90,6 +90,32 @@ sideTag side =
         "  (app and server)"
 
 
+-- Prose from the generator, with its inline code rendered as code.
+--
+-- Descriptions and blurbs are authored in internal/refgen/content.go with the
+-- backtick convention the rest of the docs use, because a few of them need to
+-- name code mid-sentence: `not busy` rather than `!busy`, or the lambda
+-- `\_ -> x`. Nothing rendered those, so the backticks reached the page as
+-- literal characters and the code read as punctuation.
+--
+-- Splitting on the backtick alternates the two kinds: even pieces are prose,
+-- odd pieces are what sat between a pair. A refgen test keeps every string's
+-- backticks balanced, so a stray one cannot silently set the rest of a
+-- sentence in monospace.
+prose : String -> View msg
+prose s =
+    paragraph
+        (List.indexedMap
+            (\i piece ->
+                if modBy 2 i == 0 then
+                    span [] piece
+
+                else
+                    span [ code ] piece
+            )
+            (String.split "`" s))
+
+
 -- An Inline, not a View: it sits inside the same paragraph as the signature.
 -- Empty for all but the handful of functions that disagree with their module,
 -- and the empty case is `span [] ""` rather than `empty`, which is a View and
@@ -138,8 +164,8 @@ detailSections e =
                     [ span [ code, bold ] (displayName e.moduleName e.name)
                     , span [ code ] (" : " ++ e.signature)
                     ]
-                , text [] e.description
-                , text [] (sideLine e.side)
+                , prose e.description
+                , prose (sideLine e.side)
                 ]
           ]
         , if List.isEmpty e.examples then
@@ -183,8 +209,8 @@ moduleDoc mod =
             (List.concat
                 [ [ section
                         [ footer (String.fromInt (List.length (entriesFor mod)) ++ " functions") ]
-                        [ text [] (blurb mod)
-                        , text [] (sideLine (sideFor mod))
+                        [ prose (blurb mod)
+                        , prose (sideLine (sideFor mod))
                         ]
                   ]
                 , List.map sectionView (sectionsFor mod)

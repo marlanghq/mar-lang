@@ -129,6 +129,26 @@ func TestModuleGroupsCoverAllModules(t *testing.T) {
 	}
 }
 
+// The website renders a backtick pair as inline code (Reference/Render.mar).
+// An odd count means one is unclosed, which silently sets the rest of the
+// sentence in monospace on the page while the source still looks fine.
+func TestContent_BackticksArePaired(t *testing.T) {
+	maps := map[string]map[string]string{
+		"descriptions":    descriptions,
+		"blurbs":          blurbs,
+		"appDescriptions": appDescriptions,
+		"appBlurbs":       appBlurbs,
+		"keyProse":        keyProse,
+	}
+	for name, m := range maps {
+		for key, text := range m {
+			if strings.Count(text, "`")%2 != 0 {
+				t.Errorf("%s[%q] has an unclosed backtick:\n  %s", name, key, text)
+			}
+		}
+	}
+}
+
 // Every string in here ends up on the reference pages of the website,
 // so it follows the house copy rule: no em dashes. They read as a
 // dramatic pause the rest of the site never takes, and one slipping in

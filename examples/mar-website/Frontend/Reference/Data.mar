@@ -76,7 +76,7 @@ sectionsFor m =
               }
             , { category = "Functions"
               , entries =
-                    [ { moduleName = "Basics", name = "always", signature = "a -> b -> a", side = "both", description = "Ignores its second argument and returns the first. `always x` is the constant function `\\_ -> x`, which is how a page says `subscriptions = always Sub.none`.", examples = [ [ "always 7 \"ignored\"    -- 7" ] ] }
+                    [ { moduleName = "Basics", name = "always", signature = "a -> b -> a", side = "both", description = "Ignores its second argument and returns the first. `always x` is the constant function `\\_ -> x`, for the places that want a function where the argument does not matter.", examples = [ [ "List.map (always 0) [ 1, 2, 3 ]    -- [ 0, 0, 0 ]" ], [ "subscriptions = always Sub.none" ] ] }
                     ]
               }
             , { category = "Links"
