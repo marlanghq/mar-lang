@@ -7460,8 +7460,21 @@
       // again. Applies cleanly to nav-bar action buttons (back,
       // Done, Sign out) which are tap-only — no pinch or scroll.
       '  touch-action: manipulation;',
+      // A nav button is a UI.button like any other, so it carries
+      // `mar-button` and picks up that rule's spacing. The bar does its
+      // own spacing with `gap`, so cancel the margin here rather than
+      // letting a stray 8px push the pills off the baseline.
+      '  margin: 0;',
       '}',
       '@media (hover: hover) { .mar-nav-side button:hover, .mar-nav-side a.mar-inline:hover { background: #f2f2f2; } }',
+      // Disabled in the bar stays a quiet pill: the base rule would paint
+      // it the filled gray of a disabled CTA, which is a different object.
+      '.mar-nav-side .mar-button:disabled {',
+      '  background: #ffffff;',
+      '  color: rgba(0, 0, 0, 0.28);',
+      '  box-shadow: none;',
+      '  opacity: 1;',
+      '}',
       '.mar-nav-side button:active, .mar-nav-side a.mar-inline:active { transform: scale(0.96); }',
 
       // Auto-inserted back button — circular glass pill with the
@@ -7586,8 +7599,7 @@
       // inside a paragraph, say) keeps the browser's highlight, because
       // there it is the only feedback a touch gets.
       'a.mar-navigation-link,',
-      '.mar-section-body > button,',
-      '.mar-hstack > button,',
+      '.mar-button,',
       '.mar-picker, .mar-picker-select,',
       '.mar-nav-back,',
       '.mar-nav-side button, .mar-nav-side a.mar-inline {',
@@ -8126,7 +8138,7 @@
       //                  "Delete" in a task row). Glass pill with
       //                  link-blue TEXT instead of solid blue —
       //                  quiet-action treatment.
-      '.mar-section-body > button {',
+      '.mar-button {',
       '  display: block;',
       '  width: auto;',
       '  margin: 8px 16px;',
@@ -8145,11 +8157,11 @@
       // tap once, see the highlight, and nothing happens. Touch gets a
       // transient :active press instead, which clears on release.
       '@media (hover: hover) {',
-      '  .mar-section-body > button:hover { background: #0077ed; }',
-      '  .mar-section-body > button:disabled:hover { background: #c7c7cc; }',
+      '  .mar-button:hover { background: #0077ed; }',
+      '  .mar-button:disabled:hover { background: #c7c7cc; }',
       '}',
-      '.mar-section-body > button:active:not(:disabled) { transform: scale(0.97); }',
-      '.mar-section-body > button:disabled {',
+      '.mar-button:active:not(:disabled) { transform: scale(0.97); }',
+      '.mar-button:disabled {',
       '  background: #c7c7cc; color: rgba(255, 255, 255, 0.85);',
       '  cursor: not-allowed; opacity: 0.55;',
       '}',
@@ -8171,7 +8183,7 @@
       // the delete button + drag handle get appended INTO that
       // hstack, where they would otherwise inherit these styles via
       // selector specificity ((0,1,1) > (0,1,0)).
-      '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete) {',
+      '.mar-hstack > .mar-button {',
       '  background: rgba(255, 255, 255, 0.62);',
       '  -webkit-backdrop-filter: blur(20px) saturate(180%);',
       '  backdrop-filter: blur(20px) saturate(180%);',
@@ -8193,19 +8205,20 @@
       // Same iOS sticky-hover gate as the section-body button above; the
       // :active press stays (it already gave touch its feedback).
       '@media (hover: hover) {',
-      '  .mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):hover { background: rgba(255, 255, 255, 0.88); }',
-      '  .mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):disabled:hover { background: rgba(0, 0, 0, 0.04); }',
+      '  .mar-hstack > .mar-button:hover { background: rgba(255, 255, 255, 0.88); }',
+      '  .mar-hstack > .mar-button:disabled:hover { background: rgba(0, 0, 0, 0.04); }',
       '}',
-      '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):active { transform: scale(0.96); }',
-      '.mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):disabled {',
+      '.mar-hstack > .mar-button:active { transform: scale(0.96); }',
+      '.mar-hstack > .mar-button:disabled {',
       '  background: rgba(0, 0, 0, 0.04);',
       '  color: rgba(0, 0, 0, 0.28);',
       '  cursor: not-allowed;',
       '  box-shadow: none;',
       '}',
       // Inline pill (next to an input).
-      '.mar-hstack > button {',
+      '.mar-hstack > .mar-button {',
       '  flex: 0 0 auto;',
+      '  margin: 0;',
       '  padding: 6px 16px;',
       '  font-size: 14px;',
       '}',
@@ -9127,23 +9140,23 @@
       '  .mar-textfield:disabled::placeholder { color: rgba(255, 255, 255, 0.3); }',
       // Primary CTAs stay solid blue, just brighter for legibility
       // on the darker surface.
-      '  .mar-section-body > button {',
+      '  .mar-button {',
       '    background: #0a84ff; color: white;',
       '  }',
-      '  .mar-section-body > button:disabled {',
+      '  .mar-button:disabled {',
       '    background: #3a3a3c; color: rgba(255, 255, 255, 0.4);',
       '  }',
       // hover tint gated to real pointers (iOS sticky-hover fix), same as
       // the light-mode rules above
       '  @media (hover: hover) {',
-      '    .mar-section-body > button:hover { background: #2997ff; }',
-      '    .mar-section-body > button:disabled:hover { background: #3a3a3c; }',
+      '    .mar-button:hover { background: #2997ff; }',
+      '    .mar-button:disabled:hover { background: #3a3a3c; }',
       '  }',
-      // Secondary (hstack) buttons in dark mode — same glass
-      // treatment with blue text. Exclusions match the light-mode
-      // selectors above (drag handle + delete button keep their
-      // own chrome).
-      '  .mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete) {',
+      // Secondary (hstack) buttons in dark mode: same glass treatment
+      // with blue text. The drag handle and the delete circle are built
+      // by the runtime with their own classes, so they never carry
+      // `mar-button` and keep their own chrome.
+      '  .mar-hstack > .mar-button {',
       '    background: rgba(255, 255, 255, 0.08);',
       '    border: 0.5px solid rgba(255, 255, 255, 0.12);',
       '    box-shadow:',
@@ -9151,14 +9164,14 @@
       '      0 2px 8px rgba(0, 0, 0, 0.3);',
       '    color: #0a84ff;',
       '  }',
-      '  .mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):disabled {',
+      '  .mar-hstack > .mar-button:disabled {',
       '    background: rgba(255, 255, 255, 0.04);',
       '    color: rgba(255, 255, 255, 0.3);',
       '    box-shadow: none;',
       '  }',
       '  @media (hover: hover) {',
-      '    .mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):hover { background: rgba(255, 255, 255, 0.14); }',
-      '    .mar-hstack > button:not(.mar-drag-handle):not(.mar-row-delete):disabled:hover { background: rgba(255, 255, 255, 0.04); }',
+      '    .mar-hstack > .mar-button:hover { background: rgba(255, 255, 255, 0.14); }',
+      '    .mar-hstack > .mar-button:disabled:hover { background: rgba(255, 255, 255, 0.04); }',
       '  }',
       // Toggle in dark mode: off-track turns dark grey, on-track
       // keeps the same iOS green; thumb stays white.
@@ -9415,6 +9428,15 @@
         applyImageAttrs(e, view);
         break;
       case 'button':
+        // Every button carries `mar-button`, and the stylesheet keys on
+        // that class rather than on where the button sits. The rules used
+        // to read `.mar-section-body > button`, so a button one level
+        // deeper (inside a vstack, a form, a sheet header) matched
+        // nothing and rendered as a bare browser button with no press
+        // state. Position still selects the VARIANT (the compact glass
+        // pill inside an hstack), which is a real difference; it no
+        // longer decides whether the button is styled at all.
+        e.className = 'mar-button';
         e.textContent = view.text;
         applyDisabledAttr(e, view);
         attachClickDispatcher(e);
